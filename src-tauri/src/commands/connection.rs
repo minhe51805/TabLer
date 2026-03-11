@@ -1,0 +1,103 @@
+use crate::database::manager::DatabaseManager;
+use crate::database::models::{ConnectionConfig, DatabaseInfo};
+use crate::storage::connection_storage::ConnectionStorage;
+use tauri::State;
+
+#[tauri::command]
+pub async fn connect_database(
+    config: ConnectionConfig,
+    db_manager: State<'_, DatabaseManager>,
+    conn_storage: State<'_, ConnectionStorage>,
+) -> Result<String, String> {
+    db_manager
+        .connect(&config)
+        .await
+        .map_err(|e| format!("Connection failed: {}", e))?;
+
+    // Save connection (without password) to storage
+    conn_storage
+        .save_connection(&config)
+        .map_err(|e| format!("Failed to save connection: {}", e))?;
+
+    Ok(config.id.clone())
+}
+
+#[tauri::command]
+pub async fn disconnect_database(
+    connection_id: String,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<(), String> {
+    db_manager
+        .disconnect(&connection_id)
+        .await
+        .map_err(|e| format!("Disconnect failed: {}", e))
+}
+
+#[tauri::command]
+pub async fn test_connection(config: ConnectionConfig) -> Result<String, String> {
+    let temp_manager = DatabaseManager::new();
+    temp_manager
+        .connect(&config)
+        .await
+        .map_err(|e| format!("Connection test failed: {}", e))?;
+    temp_manager
+        .disconnect(&config.id)
+        .await
+        .map_err(|e| format!("Cleanup failed: {}", e))?;
+    Ok("Connection successful".to_string())
+}
+
+#[tauri::command]
+pub async fn list_databases(
+    connection_id: String,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<Vec<DatabaseInfo>, String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    driver.list_databases().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn use_database(
+    connection_id: String,
+    database: String,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<(), String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    driver
+        .use_database(&database)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_saved_connections(
+    conn_storage: State<'_, ConnectionStorage>,
+) -> Result<Vec<ConnectionConfig>, String> {
+    conn_storage
+        .load_connections()
+        .map_err(|e| format!("Failed to load connections: {}", e))
+}
+
+#[tauri::command]
+pub async fn delete_saved_connection(
+    connection_id: String,
+    conn_storage: State<'_, ConnectionStorage>,
+) -> Result<(), String> {
+    conn_storage
+        .delete_connection(&connection_id)
+        .map_err(|e| format!("Failed to delete connection: {}", e))
+}
+
+#[tauri::command]
+pub async fn check_connection_status(
+    connection_id: String,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<bool, String> {
+    Ok(db_manager.is_connected(&connection_id).await)
+}

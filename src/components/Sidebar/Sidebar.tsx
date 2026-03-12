@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Database,
   Table,
@@ -21,12 +21,17 @@ export function Sidebar() {
     tables,
     isLoadingTables,
     fetchDatabases,
+    fetchTables,
     switchDatabase,
     addTab,
   } = useAppStore();
 
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const compactDatabaseName = currentDatabase && currentDatabase.length > 40
+    ? `${currentDatabase.slice(0, 24)}...${currentDatabase.slice(-12)}`
+    : currentDatabase;
 
   const toggleDb = async (db: DatabaseInfo) => {
     if (!activeConnectionId) return;
@@ -70,11 +75,37 @@ export function Sidebar() {
   const handleRefresh = async () => {
     if (!activeConnectionId) return;
     await fetchDatabases(activeConnectionId);
+    if (currentDatabase) {
+      await fetchTables(activeConnectionId, currentDatabase);
+    }
   };
 
   const filteredTables = search
     ? tables.filter((t) => t.name.toLowerCase().includes(search.toLowerCase()))
     : tables;
+  const hasSearch = search.trim().length > 0;
+  const visibleTableCount = filteredTables.length;
+
+  useEffect(() => {
+    if (!currentDatabase) return;
+
+    setExpandedDbs((prev) => {
+      if (prev.has(currentDatabase)) return prev;
+      const next = new Set(prev);
+      next.add(currentDatabase);
+      return next;
+    });
+  }, [currentDatabase]);
+
+  useEffect(() => {
+    const handleFocusSearch = () => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+
+    window.addEventListener("focus-explorer-search", handleFocusSearch);
+    return () => window.removeEventListener("focus-explorer-search", handleFocusSearch);
+  }, []);
 
   if (!activeConnectionId || !connectedIds.has(activeConnectionId)) {
     return (
@@ -87,107 +118,142 @@ export function Sidebar() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="panel-header">
-        <span className="panel-header-title">Explorer</span>
-        <button onClick={handleRefresh} className="panel-header-action" title="Refresh">
-          <RefreshCw className="w-3.5 h-3.5" />
-        </button>
-      </div>
+    <div className="explorer-shell">
+      <div className="panel-header panel-header-rich explorer-header">
+        <div className="panel-header-copy">
+          <span className="panel-kicker">Explorer</span>
+          <h2 className="panel-title-lg">Database browser</h2>
+          <p className="panel-subtitle" title={currentDatabase || undefined}>
+            {currentDatabase
+              ? `Browsing ${compactDatabaseName}. Open a table to inspect data or structure.`
+              : "Select a database to browse its tables."}
+          </p>
+        </div>
 
-      <div className="!px-3 !py-3 border-b border-[var(--border-color)] bg-[rgba(255,255,255,0.015)]">
-        <div className="sidebar-search">
-          <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filter tables..."
-            className="sidebar-search-input"
-          />
+        <div className="explorer-header-side">
+          <div className="explorer-header-stats">
+            <span className="explorer-stat-pill">
+              {visibleTableCount} {hasSearch ? "shown" : "tables"}
+            </span>
+          </div>
+
+          <button onClick={handleRefresh} className="panel-header-action explorer-refresh-btn" title="Refresh">
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto !py-2 !px-2">
+      <div className="explorer-search-panel">
+        <div className="sidebar-search">
+          <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Find a table in this database..."
+            className="sidebar-search-input"
+          />
+        </div>
+        <div className="explorer-search-hint">
+          <span>{hasSearch ? `${visibleTableCount} matches` : "Open table data or inspect structure"}</span>
+        </div>
+      </div>
+
+      <div className="explorer-tree-scroll">
         {databases.map((db) => {
           const isExpanded = expandedDbs.has(db.name);
           const isCurrent = currentDatabase === db.name;
+          const tableCount = isCurrent ? tables.length : null;
 
           return (
-            <div key={db.name} className="!p-1">
+            <section
+              key={db.name}
+              className={`explorer-db-section ${isCurrent ? "active" : ""}`}
+            >
               <button
                 onClick={() => toggleDb(db)}
-                className={`
-                  flex items-center !gap-2 w-full !px-3 !py-2 text-left transition-all text-[13px] rounded-sm border
-                  ${isCurrent
-                    ? "text-[var(--accent-hover)] bg-[var(--accent-dim)] border-[rgba(110,168,255,0.3)]"
-                    : "text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/30 border-transparent hover:border-white/10"
-                  }
-                `}
+                className={`explorer-db-button ${isCurrent ? "active" : ""}`}
               >
                 {isExpanded ? (
-                  <ChevronDown className="!w-4 !h-4 shrink-0 text-[var(--text-muted)]" />
+                  <ChevronDown className="w-4 h-4 shrink-0 explorer-db-chevron" />
                 ) : (
-                  <ChevronRight className="!w-4 !h-4 shrink-0 text-[var(--text-muted)]" />
+                  <ChevronRight className="w-4 h-4 shrink-0 explorer-db-chevron" />
                 )}
-                <Database className="!w-4 !h-4 shrink-0 text-[var(--accent)]" />
-                <span className="truncate flex-1">{db.name}</span>
-                {db.size && (
-                  <span className="text-[10px] text-[var(--text-muted)] !ml-auto shrink-0">
-                    {db.size}
+                <div className="explorer-db-icon">
+                  <Database className="w-4 h-4 shrink-0" />
+                </div>
+                <div className="explorer-db-copy">
+                  <span className="explorer-db-name">{db.name}</span>
+                  <span className="explorer-db-meta">
+                    {isCurrent
+                      ? `${tableCount ?? 0} tables ready to browse`
+                      : "Switch workspace to browse tables"}
                   </span>
-                )}
+                </div>
+                <div className="explorer-db-badges">
+                  {isCurrent && <span className="explorer-db-pill active">Active</span>}
+                  {db.size && <span className="explorer-db-pill">{db.size}</span>}
+                </div>
               </button>
 
               {isExpanded && isCurrent && (
-                <div className="pb-1 mt-1">
+                <div className="explorer-table-panel">
+                  <div className="explorer-table-panel-head">
+                    <span>Tables</span>
+                    <span>
+                      {hasSearch ? `${visibleTableCount} of ${tables.length}` : `${tables.length} total`}
+                    </span>
+                  </div>
                   {isLoadingTables ? (
-                    <div className="flex items-center gap-2 px-4 py-2 ml-4 text-xs text-[var(--text-muted)]">
+                    <div className="explorer-table-status">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       Loading tables...
                     </div>
                   ) : filteredTables.length === 0 ? (
-                    <div className="px-4 py-2 ml-4 text-xs text-[var(--text-muted)] opacity-60">
+                    <div className="explorer-table-status empty">
                       {search ? "No tables match filter" : "No tables found"}
                     </div>
                   ) : (
                     filteredTables.map((table) => (
                       <div
                         key={`${table.schema || "public"}.${table.name}`}
-                        onClick={() => handleTableClick(table)}
-                        className="group flex items-center gap-2 w-full pl-8 pr-2! !py-[6px] text-left
-                          hover:bg-[var(--bg-hover)]/25 rounded-md cursor-pointer transition-colors text-[13px]"
+                        className="explorer-table-row"
                       >
-                        <Table className="w-3.5 h-3.5 shrink-0 text-[var(--success)] opacity-70" />
-                        <span className="truncate flex-1 text-[var(--text-secondary)]">
-                          {table.name}
-                        </span>
-
+                        <button
+                          onClick={() => handleTableClick(table)}
+                          className="explorer-table-main"
+                        >
+                          <div className="explorer-table-icon">
+                            <Table className="w-3.5 h-3.5 shrink-0" />
+                          </div>
+                          <div className="explorer-table-copy">
+                            <span className="explorer-table-name">{table.name}</span>
+                            <span className="explorer-table-meta">
+                              {table.schema ? `Schema ${table.schema}` : "Open data rows"}
+                              {table.row_count != null ? ` • ${table.row_count.toLocaleString()} rows` : ""}
+                            </span>
+                          </div>
+                        </button>
                         <button
                           onClick={(e) => handleStructureClick(e, table)}
-                          className="opacity-0 group-hover:opacity-100 p-1 rounded-sm! hover:bg-[var(--bg-surface)]
-                            text-[var(--text-muted)] hover:text-[var(--accent)] transition-all shrink-0"
+                          className="explorer-structure-btn"
                           title="View structure"
                         >
-                          <Columns className="w-3 h-3" />
+                          <Columns className="w-3.5 h-3.5" />
+                          <span>Structure</span>
                         </button>
-
-                        {table.row_count != null && (
-                          <span className="text-[10px] text-[var(--text-muted)] tabular-nums shrink-0 group-hover:hidden">
-                            {table.row_count.toLocaleString()}
-                          </span>
-                        )}
                       </div>
                     ))
                   )}
                 </div>
               )}
-            </div>
+            </section>
           );
         })}
 
         {databases.length === 0 && (
-          <div className="flex items-center justify-center h-20 text-xs text-[var(--text-muted)]">
+          <div className="explorer-empty">
             No databases found
           </div>
         )}

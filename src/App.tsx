@@ -135,6 +135,30 @@ function App() {
     setIsSidebarCollapsed((collapsed) => !collapsed);
   }, []);
 
+  const handleStartWindowDrag = useCallback(
+    (e: ReactMouseEvent<HTMLElement>) => {
+      if (!isDesktopWindow || e.button !== 0) return;
+
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.closest(
+          "button, input, textarea, select, option, a, [role='button'], [contenteditable='true'], [data-no-window-drag='true']",
+        )
+      ) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          await getCurrentWindow().startDragging();
+        } catch (windowError) {
+          console.error("Failed to start dragging window", windowError);
+        }
+      })();
+    },
+    [isDesktopWindow],
+  );
+
   const handleMinimizeWindow = useCallback(() => {
     if (!isDesktopWindow) return;
 
@@ -513,20 +537,22 @@ function App() {
 
   return (
     <div className={`app-root ${isWindowMaximized ? "window-maximized" : ""}`}>
-      <header className={`titlebar ${isWindowFocused ? "" : "inactive"}`}>
+      <header
+        className={`titlebar ${isWindowFocused ? "" : "inactive"}`}
+        onMouseDown={handleStartWindowDrag}
+      >
         <div
           className="titlebar-drag-strip"
-          data-tauri-drag-region
           onDoubleClick={handleToggleMaximizeWindow}
         >
-          <div className="titlebar-brand" data-tauri-drag-region>
+          <div className="titlebar-brand">
             <Database className="w-4 h-4 text-[var(--accent)]" />
             <span className="titlebar-name">TableR</span>
           </div>
 
-          <div className="titlebar-divider" data-tauri-drag-region />
+          <div className="titlebar-divider" />
 
-          <div className="titlebar-context" data-tauri-drag-region>
+          <div className="titlebar-context">
             <span className="titlebar-context-label">Workspace</span>
             {isConnected && activeConn ? (
               <div className="titlebar-badge" title={`${activeConn.name || activeConn.host}${currentDatabase ? ` / ${currentDatabase}` : ""}`}>
@@ -547,10 +573,10 @@ function App() {
             )}
           </div>
 
-          <div className="titlebar-spacer" data-tauri-drag-region />
+          <div className="titlebar-spacer" />
         </div>
 
-        <div className="titlebar-actions">
+        <div className="titlebar-actions" data-no-window-drag="true">
           <button
             onClick={() => setShowAISettings(true)}
             className="titlebar-icon-btn"
@@ -569,7 +595,7 @@ function App() {
         </div>
 
         {isDesktopWindow && (
-          <div className="titlebar-window-controls">
+          <div className="titlebar-window-controls" data-no-window-drag="true">
             <button
               type="button"
               onClick={handleMinimizeWindow}

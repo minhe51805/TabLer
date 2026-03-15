@@ -55,6 +55,10 @@ interface Props {
   editConnection?: ConnectionConfig;
 }
 
+function isSupportedDatabase(db: DbEntry | null): db is DbEntry {
+  return Boolean(db?.supported);
+}
+
 export function ConnectionForm({ onClose, editConnection }: Props) {
   const { connectToDatabase, testConnection, isConnecting } = useAppStore();
 
@@ -83,6 +87,8 @@ export function ConnectionForm({ onClose, editConnection }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
+  const supportedCount = ALL_DATABASES.filter((db) => db.supported).length;
+  const roadmapCount = ALL_DATABASES.length - supportedCount;
 
   const isSqlite = formData.db_type === "sqlite";
 
@@ -91,9 +97,11 @@ export function ConnectionForm({ onClose, editConnection }: Props) {
     setTestResult(null);
   };
 
-  const handlePickDb = (db: DbEntry) => {
-    if (!db.supported) return;
+  const handleSelectDb = (db: DbEntry) => {
     setSelectedDb(db);
+  };
+
+  const handleContinueFromPicker = (db: DbEntry) => {
     setFormData((prev) => ({
       ...prev,
       db_type: db.key as DatabaseType,
@@ -129,64 +137,155 @@ export function ConnectionForm({ onClose, editConnection }: Props) {
 
   if (step === "pick") {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center px-14 py-12 bg-[rgba(2,8,23,0.72)] backdrop-blur-md">
-        <div className="w-full max-w-[860px] bg-[var(--bg-secondary)] border border-white/10 rounded-md !p-4 flex flex-col gap-3 shadow-[0_30px_80px_rgba(0,0,0,0.55)] max-h-[84vh]">
-          <div className="!mx-4 !mt4 flex items-center gap-3 rounded-md border border-white/10 bg-[rgba(255,255,255,0.02)] pl-4 pr-4 py-2.5">
-            <Search className="h-4 w-4 ml-3! shrink-0 text-[var(--text-muted)]" />
-            <input
-              type="text"
-              value={pickerSearch}
-              onChange={(e) => setPickerSearch(e.target.value)}
-              placeholder="Search database type..."
-              className="h-9 flex-1 bg-transparent border-none outline-none text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
-              autoFocus
-            />
+      <div className="connection-picker-overlay">
+        <div className="connection-picker-modal">
+          <div className="connection-picker-head">
+            <div className="connection-picker-copy">
+              <span className="panel-kicker">New connection</span>
+              <h2 className="connection-picker-title">Choose a database engine</h2>
+              <p className="connection-picker-subtitle">
+                Pick an engine that is ready now, or browse upcoming integrations that are already on the roadmap.
+              </p>
+              <div className="connection-picker-stats">
+                <span className="connection-picker-stat accent">
+                  <strong>{supportedCount}</strong>
+                  <span>Ready</span>
+                </span>
+                <span className="connection-picker-stat">
+                  <strong>{roadmapCount}</strong>
+                  <span>Roadmap</span>
+                </span>
+                <span className="connection-picker-stat">
+                  <strong>{filteredDbs.length}</strong>
+                  <span>Shown</span>
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="connection-picker-close"
+              title="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto !px-2 !py-1">
-            <div className="grid grid-cols-6 gap-4">
-              {filteredDbs.map((db) => {
-                const brandStyle = { "--db-brand": db.color } as CSSProperties;
-                return (
-                  <button
-                    key={db.key}
-                    onClick={() => handlePickDb(db)}
-                    disabled={!db.supported}
-                    className={[
-                      "group flex flex-col items-center gap-2.5 !py-3.5 !px-2 rounded-md border transition-all",
-                      db.supported
-                        ? "border-white/10 hover:border-[var(--accent)]/45 hover:bg-[rgba(255,255,255,0.03)] cursor-pointer"
-                        : "border-white/6 opacity-50 cursor-not-allowed",
-                      selectedDb?.key === db.key ? "border-[var(--accent)]! bg-[var(--accent-dim)]" : "",
-                    ].join(" ")}
-                  >
-                    <div className="connection-db-tile-icon" style={brandStyle}>
-                      <DatabaseBrandIcon
-                        dbKey={db.key}
-                        label={db.label}
-                        className="connection-db-brand-lg"
-                        fallbackClassName="!w-6 !h-6 text-white"
-                      />
-                    </div>
-                    <span className="text-[11px] text-[var(--text-secondary)] text-center leading-tight whitespace-nowrap font-semibold">
-                      {db.label}
-                    </span>
-                    {!db.supported && <span className="text-[9px] text-[var(--text-muted)]">Soon</span>}
-                  </button>
-                );
-              })}
+          <div className="connection-picker-body">
+            <div className="connection-picker-searchbar">
+              <Search className="connection-picker-search-icon h-4 w-4 shrink-0" />
+              <input
+                type="text"
+                value={pickerSearch}
+                onChange={(e) => setPickerSearch(e.target.value)}
+                placeholder="Search database type..."
+                className="connection-picker-search-input"
+                autoFocus
+              />
+            </div>
+
+            <div className="connection-picker-grid-shell">
+              {filteredDbs.length === 0 ? (
+                <div className="connection-picker-empty">
+                  <Search className="w-4 h-4" />
+                  <span>No database types match that search.</span>
+                </div>
+              ) : (
+                <div className="connection-picker-grid">
+                  {filteredDbs.map((db) => {
+                    const brandStyle = { "--db-brand": db.color } as CSSProperties;
+                    const isSelected = selectedDb?.key === db.key;
+                    const statusLabel = db.supported ? "Ready" : "Soon";
+                    const metaLabel = db.isFile
+                      ? "File-based workflow"
+                      : db.defaultPort
+                        ? `Default port ${db.defaultPort}`
+                        : "Cloud-native flow";
+
+                    return (
+                      <button
+                        key={db.key}
+                        type="button"
+                        onClick={() => handleSelectDb(db)}
+                        onDoubleClick={() => {
+                          if (db.supported) {
+                            handleContinueFromPicker(db);
+                          }
+                        }}
+                        className={[
+                          "connection-picker-card",
+                          db.supported ? "supported" : "coming-soon",
+                          isSelected ? "selected" : "",
+                        ].join(" ")}
+                      >
+                        <div className="connection-picker-card-top">
+                          <div className="connection-db-tile-icon" style={brandStyle}>
+                            <DatabaseBrandIcon
+                              dbKey={db.key}
+                              label={db.label}
+                              className="connection-db-brand-lg"
+                              fallbackClassName="!w-6 !h-6 text-white"
+                            />
+                          </div>
+
+                          <span
+                            className={`connection-picker-card-status ${db.supported ? "supported" : "soon"}`}
+                          >
+                            {statusLabel}
+                          </span>
+                        </div>
+
+                        <div className="connection-picker-card-copy">
+                          <span className="connection-picker-card-title">{db.label}</span>
+                          <span className="connection-picker-card-meta">{metaLabel}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="flex items-center justify-between px-4 py-3 border border-white/10 rounded-md bg-[rgba(255,255,255,0.02)]">
-            <button onClick={onClose} className="btn btn-secondary">Cancel</button>
-            <button
-              onClick={() => selectedDb && handlePickDb(selectedDb)}
-              disabled={!selectedDb}
-              className="btn btn-primary"
-            >
-              Continue
-            </button>
+          <div className="connection-picker-footer">
+            <div className="connection-picker-footer-copy">
+              {selectedDb ? (
+                <>
+                  <span className="connection-picker-footer-label">Selected engine</span>
+                  <div className="connection-picker-footer-selection">
+                    <strong>{selectedDb.label}</strong>
+                    <span
+                      className={`connection-picker-footer-pill ${selectedDb.supported ? "supported" : "soon"}`}
+                    >
+                      {selectedDb.supported ? "Ready now" : "Coming soon"}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span className="connection-picker-footer-label">Selection</span>
+                  <div className="connection-picker-footer-selection muted">
+                    <strong>Pick a database type to continue</strong>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="connection-picker-footer-actions">
+              <button onClick={onClose} className="btn btn-secondary">Cancel</button>
+              <button
+                onClick={() => {
+                  if (isSupportedDatabase(selectedDb)) {
+                    handleContinueFromPicker(selectedDb);
+                  }
+                }}
+                disabled={!isSupportedDatabase(selectedDb)}
+                className="btn btn-primary"
+              >
+                Continue
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Loader2,
   Columns,
+  PlugZap,
   Search,
 } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
@@ -20,6 +21,7 @@ export function Sidebar() {
     currentDatabase,
     tables,
     isLoadingTables,
+    disconnectFromDatabase,
     fetchDatabases,
     fetchTables,
     switchDatabase,
@@ -80,6 +82,11 @@ export function Sidebar() {
     }
   };
 
+  const handleDisconnect = async () => {
+    if (!activeConnectionId) return;
+    await disconnectFromDatabase(activeConnectionId);
+  };
+
   const filteredTables = search
     ? tables.filter((t) => t.name.toLowerCase().includes(search.toLowerCase()))
     : tables;
@@ -137,9 +144,26 @@ export function Sidebar() {
             </span>
           </div>
 
-          <button onClick={handleRefresh} className="panel-header-action explorer-refresh-btn" title="Refresh">
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
+          <div className="explorer-header-actions">
+            <button
+              type="button"
+              onClick={() => void handleDisconnect()}
+              className="explorer-header-btn danger"
+              title="Disconnect current database"
+            >
+              <PlugZap className="w-3.5 h-3.5" />
+              <span>Disconnect</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleRefresh()}
+              className="panel-header-action explorer-refresh-btn"
+              title="Refresh"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 

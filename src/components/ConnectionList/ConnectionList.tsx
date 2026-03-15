@@ -5,13 +5,20 @@ import {
   Database,
   Zap,
   ArrowRight,
+  LayoutGrid,
+  LayoutList,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useAppStore } from "../../stores/appStore";
 import type { ConnectionConfig } from "../../types";
 
 interface Props {
   onNewConnection: () => void;
 }
+
+type ConnectionLayoutMode = "stacked" | "inline";
+
+const CONNECTION_LAYOUT_STORAGE_KEY = "tabler.connection-list-layout";
 
 const DB_LABELS: Record<string, { abbr: string; color: string }> = {
   mysql:      { abbr: "Ms", color: "#c0392b" },
@@ -34,6 +41,13 @@ const DB_LABELS: Record<string, { abbr: string; color: string }> = {
   cloudflared1:{ abbr: "D1", color: "#f39c12" },
 };
 
+function getInitialLayoutMode(): ConnectionLayoutMode {
+  if (typeof window === "undefined") return "stacked";
+
+  const stored = window.localStorage.getItem(CONNECTION_LAYOUT_STORAGE_KEY);
+  return stored === "inline" ? "inline" : "stacked";
+}
+
 export function ConnectionList({ onNewConnection }: Props) {
   const {
     connections,
@@ -44,6 +58,11 @@ export function ConnectionList({ onNewConnection }: Props) {
     deleteSavedConnection,
   } = useAppStore();
   const connectedCount = connectedIds.size;
+  const [layoutMode, setLayoutMode] = useState<ConnectionLayoutMode>(getInitialLayoutMode);
+
+  useEffect(() => {
+    window.localStorage.setItem(CONNECTION_LAYOUT_STORAGE_KEY, layoutMode);
+  }, [layoutMode]);
 
   const handleConnect = async (conn: ConnectionConfig) => {
     if (connectedIds.has(conn.id)) {
@@ -73,22 +92,59 @@ export function ConnectionList({ onNewConnection }: Props) {
     <div className="flex flex-col h-full">
       <div className="panel-header panel-header-rich connection-list-header">
         <div className="panel-header-copy">
-          <span className="panel-kicker">Connections</span>
-          <div className="connection-list-summary">
-            <h2 className="panel-title-lg">Saved connections</h2>
+          <div className="connection-list-kicker-row">
+            <span className="panel-kicker">Connections</span>
+            <span className="connection-list-mini-pill">Workspace access</span>
+          </div>
+          <h2 className="panel-title-lg">Saved connections</h2>
+          <p className="connection-list-note">
+            Keep database profiles ready so you can jump between workspaces without retyping credentials.
+          </p>
+          <div className="connection-list-overview">
             <span className="connection-list-stat">
-              {connections.length} saved
-              {connectedCount > 0 ? ` / ${connectedCount} active` : ""}
+              <strong>{connections.length}</strong>
+              <span>Saved</span>
+            </span>
+            <span className="connection-list-stat accent">
+              <strong>{connectedCount}</strong>
+              <span>Active</span>
             </span>
           </div>
         </div>
 
-        <button onClick={onNewConnection} className="panel-header-action" title="New Connection">
-          <Plus className="w-4 h-4" />
-        </button>
+        <div className="connection-list-header-actions">
+          <div className="connection-layout-toggle" role="group" aria-label="Connection layout">
+            <button
+              type="button"
+              className={`connection-layout-btn ${layoutMode === "stacked" ? "active" : ""}`}
+              onClick={() => setLayoutMode("stacked")}
+              title="Stacked cards"
+              aria-pressed={layoutMode === "stacked"}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              className={`connection-layout-btn ${layoutMode === "inline" ? "active" : ""}`}
+              onClick={() => setLayoutMode("inline")}
+              title="Inline rows"
+              aria-pressed={layoutMode === "inline"}
+            >
+              <LayoutList className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <button
+            onClick={onNewConnection}
+            className="panel-header-action connection-list-create-btn"
+            title="New Connection"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto connection-list-scroll">
         {connections.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full px-6 text-center">
             <Database className="w-10 h-10 text-[var(--text-muted)] opacity-20 !mb-3" />
@@ -102,40 +158,67 @@ export function ConnectionList({ onNewConnection }: Props) {
             </button>
           </div>
         ) : (
-          <div className="py-4 px-4 space-y-3">
+          <div className={`connection-list-stack ${layoutMode}`}>
             {connections.map((conn) => {
               const isConnected = connectedIds.has(conn.id);
               const isActive = activeConnectionId === conn.id;
               const dbInfo = DB_LABELS[conn.db_type] || { abbr: "??", color: "var(--text-muted)" };
+              const endpointLabel =
+                conn.db_type === "sqlite"
+                  ? conn.file_path || "SQLite file"
+                  : `${conn.host || "localhost"}${conn.port ? `:${conn.port}` : ""}`;
+              const secondaryLabel =
+                conn.db_type === "sqlite"
+                  ? "Mode"
+                  : conn.database
+                    ? "Database"
+                    : "User";
+              const secondaryValue =
+                conn.db_type === "sqlite"
+                  ? "Local file access"
+                  : conn.database || conn.username || "Credentials saved";
+              const stateLabel = isActive
+                ? "Active workspace"
+                : isConnected
+                  ? "Connected"
+                  : "Saved profile";
+              const openLabel = isActive
+                ? "Continue Workspace"
+                : isConnected
+                  ? "Open Workspace"
+                  : "Connect";
 
               return (
                 <div
                   key={conn.id}
                   onClick={() => handleConnect(conn)}
-                  className={`connection-card ${isActive ? "active" : ""}`}
+                  className={`connection-card ${layoutMode} ${isActive ? "active" : ""} ${isConnected ? "online" : ""}`}
                 >
                   <div className="connection-card-top">
-                    <div
-                      className="connection-card-avatar"
-                      style={{ backgroundColor: conn.color || dbInfo.color }}
-                    >
-                      {dbInfo.abbr}
-                    </div>
-
-                    <div className="connection-card-copy">
-                      <div className="connection-card-title-row">
-                        <span className="connection-card-title">
-                          {conn.name || conn.host || "Untitled"}
-                        </span>
-                        {isConnected && (
-                          <Zap className="w-3 h-3 text-[var(--success)] shrink-0 fill-current" />
-                        )}
+                    <div className="connection-card-identity">
+                      <div
+                        className="connection-card-avatar"
+                        style={{ backgroundColor: conn.color || dbInfo.color }}
+                      >
+                        {dbInfo.abbr}
                       </div>
-                      <div className="connection-card-host">
-                        {conn.db_type === "sqlite"
-                          ? conn.file_path || "SQLite"
-                          : `${conn.host || "localhost"}:${conn.port}`}
-                        {conn.database ? ` / ${conn.database}` : ""}
+
+                      <div className="connection-card-copy">
+                        <div className="connection-card-title-row">
+                          <span className="connection-card-title">
+                            {conn.name || conn.host || "Untitled"}
+                          </span>
+                          {isConnected && (
+                            <Zap className="connection-card-live-icon w-3.5 h-3.5 shrink-0 fill-current" />
+                          )}
+                        </div>
+
+                        <div className="connection-card-status-row">
+                          <span
+                            className={`connection-card-status-dot ${isActive ? "active" : isConnected ? "online" : ""}`}
+                          />
+                          <span className="connection-card-state">{stateLabel}</span>
+                        </div>
                       </div>
                     </div>
 
@@ -143,7 +226,7 @@ export function ConnectionList({ onNewConnection }: Props) {
                       {isConnected && (
                         <button
                           onClick={(e) => handleDisconnect(e, conn.id)}
-                          className="connection-icon-btn"
+                          className="connection-icon-btn accent"
                           title="Disconnect"
                         >
                           <PlugZap className="w-3.5 h-3.5" />
@@ -159,9 +242,30 @@ export function ConnectionList({ onNewConnection }: Props) {
                     </div>
                   </div>
 
+                  <div className="connection-card-metadata">
+                    <div className="connection-meta-tile">
+                      <span className="connection-meta-label">
+                        {conn.db_type === "sqlite" ? "File" : "Endpoint"}
+                      </span>
+                      <span className="connection-meta-value" title={endpointLabel}>
+                        {endpointLabel}
+                      </span>
+                    </div>
+
+                    <div className="connection-meta-tile">
+                      <span className="connection-meta-label">{secondaryLabel}</span>
+                      <span className="connection-meta-value" title={secondaryValue}>
+                        {secondaryValue}
+                      </span>
+                    </div>
+                  </div>
+
                   <div className="connection-card-footer">
                     <div className="connection-card-badges">
                       <span className="connection-type-pill">{conn.db_type}</span>
+                      {conn.use_ssl && conn.db_type !== "sqlite" && (
+                        <span className="connection-status-pill secure">SSL</span>
+                      )}
                       <span
                         className={`connection-status-pill ${isActive ? "active" : isConnected ? "online" : ""}`}
                       >
@@ -169,17 +273,19 @@ export function ConnectionList({ onNewConnection }: Props) {
                       </span>
                     </div>
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleConnect(conn);
-                      }}
-                      className="connection-open-btn full"
-                      title={isConnected ? "Open workspace" : "Connect"}
-                    >
-                      <span>{isConnected ? "Open Workspace" : "Connect"}</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="connection-card-actions">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleConnect(conn);
+                        }}
+                        className="connection-open-btn full"
+                        title={isConnected ? "Open workspace" : "Connect"}
+                      >
+                        <span>{openLabel}</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );

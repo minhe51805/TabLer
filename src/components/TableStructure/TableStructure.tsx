@@ -379,6 +379,7 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
   const dbType = activeConnection?.db_type || "postgresql";
   const structureKey = `${connectionId}|${database || ""}|${tableName}`;
   const displayTableName = tableName.split(".").pop() || tableName;
+  const { schema: tableSchema } = splitQualifiedTableName(tableName);
   const canFastLoadColumns = dbType === "postgresql";
 
   const [columns, setColumns] = useState<ColumnDetail[]>([]);
@@ -400,8 +401,15 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [isApplyingChanges, setIsApplyingChanges] = useState(false);
+  const [isTopbarCondensed, setIsTopbarCondensed] = useState(false);
   const [toast, setToast] = useState<StructureToast | null>(null);
+  const metadataStatusCopy = hasLoadedMetadata
+    ? "Indexes and foreign keys are loaded and ready to inspect."
+    : isLoadingMetadata
+      ? "Metadata is loading now."
+      : "Indexes and foreign keys stay deferred until you open them.";
 
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const sectionRefs = useRef<Record<SectionKey, HTMLElement | null>>({
     columns: null,
     indexes: null,
@@ -958,7 +966,25 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
     setStagedColumnChanges({});
     setIsReviewOpen(false);
     setReviewError(null);
+    setIsTopbarCondensed(false);
   }, [setFromColumns, setFromFullStructure, structureKey]);
+
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+
+    const handleScroll = () => {
+      const nextCondensed = shell.scrollTop > 96;
+      setIsTopbarCondensed((prev) => (prev === nextCondensed ? prev : nextCondensed));
+    };
+
+    handleScroll();
+    shell.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      shell.removeEventListener("scroll", handleScroll);
+    };
+  }, [structureKey]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -1026,7 +1052,61 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
 
   return (
     <>
-      <div className="structure-shell">
+      <div ref={shellRef} className="structure-shell">
+        <div className={`structure-topbar-mini ${isTopbarCondensed ? "active" : ""}`}>
+          <div className="structure-topbar-mini-main">
+            <div className="structure-topbar-mini-title-row">
+              <span className="structure-topbar-mini-icon">
+                <Columns3 className="w-4 h-4" />
+              </span>
+              <strong className="structure-topbar-mini-title">{displayTableName}</strong>
+            </div>
+            <div className="structure-topbar-mini-meta">
+              <span className="structure-topbar-mini-badge accent">{dbType.toUpperCase()}</span>
+              <span className="structure-topbar-mini-badge">{tableSchema}</span>
+              <span className="structure-topbar-mini-badge">{columns.length} columns</span>
+              {hasLoadedMetadata && (
+                <span className="structure-topbar-mini-badge soft">
+                  {indexes.length} idx / {foreignKeys.length} fk
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="structure-topbar-mini-actions">
+            {pendingChangeCount > 0 ? (
+              <>
+                <span className="structure-pending-pill">{pendingChangeCount} pending</span>
+                <button type="button" className="btn btn-secondary" onClick={() => setIsReviewOpen(true)}>
+                  Review
+                </button>
+                <button type="button" className="btn btn-primary" onClick={() => void applyStagedChanges()}>
+                  {isApplyingChanges ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  <span>Apply</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="btn btn-secondary" onClick={() => focusSection("columns")}>
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => focusSection("indexes")}
+                  disabled={isLoadingMetadata}
+                >
+                  {isLoadingMetadata ? "Loading..." : hasLoadedMetadata ? "Metadata" : "Load meta"}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
         <div className="structure-topbar">
           <div className="structure-topbar-copy">
             <span className="structure-topbar-kicker">Table Structure</span>
@@ -1037,51 +1117,132 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
             <p className="structure-topbar-subtitle">
               Columns load first. Indexes and foreign keys load when you open those sections.
             </p>
+            <div className="structure-topbar-meta">
+              <span className="structure-topbar-badge accent">{dbType.toUpperCase()}</span>
+              <span className="structure-topbar-badge">{tableSchema} schema</span>
+              <span className="structure-topbar-badge">{displayTableName}</span>
+              {database && <span className="structure-topbar-badge soft">{database}</span>}
+            </div>
+            <div className="structure-topbar-story">
+              <span className="structure-topbar-story-line">
+                Edit columns in memory first, then review generated SQL before applying.
+              </span>
+              <span className="structure-topbar-story-line">{metadataStatusCopy}</span>
+            </div>
           </div>
 
           <div className="structure-topbar-side">
-            {pendingChangeCount > 0 && (
-              <div className="structure-topbar-actions">
-                <span className="structure-pending-pill">{pendingChangeCount} pending</span>
-                <button type="button" className="btn btn-secondary" onClick={() => setIsReviewOpen(true)}>
-                  Review SQL
-                </button>
-                <button type="button" className="btn btn-secondary" onClick={discardStagedChanges}>
-                  Discard
-                </button>
-                <button type="button" className="btn btn-primary" onClick={() => void applyStagedChanges()}>
-                  {isApplyingChanges ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Check className="w-4 h-4" />
-                  )}
-                  <span>Apply</span>
-                </button>
-              </div>
-            )}
-
-            <div className="structure-topbar-stats">
+            <div className="structure-topbar-insights">
               <button
                 type="button"
-                className={`structure-stat-pill ${activeSection === "columns" ? "active" : ""}`}
+                className={`structure-insight-card ${activeSection === "columns" ? "active" : ""}`}
                 onClick={() => focusSection("columns")}
               >
-                {columns.length} columns
+                <span className="structure-insight-icon">
+                  <Columns3 className="w-4 h-4" />
+                </span>
+                <span className="structure-insight-copy">
+                  <span className="structure-insight-label">Columns</span>
+                  <strong className="structure-insight-value">{columns.length}</strong>
+                  <span className="structure-insight-meta">Ready to edit</span>
+                </span>
               </button>
               <button
                 type="button"
-                className={`structure-stat-pill ${activeSection === "indexes" ? "active" : ""}`}
+                className={`structure-insight-card ${activeSection === "indexes" ? "active" : ""}`}
                 onClick={() => focusSection("indexes")}
               >
-                {hasLoadedMetadata ? `${indexes.length} indexes` : "Load indexes"}
+                <span className="structure-insight-icon">
+                  <ListTree className="w-4 h-4" />
+                </span>
+                <span className="structure-insight-copy">
+                  <span className="structure-insight-label">Indexes</span>
+                  <strong className="structure-insight-value">
+                    {hasLoadedMetadata ? indexes.length : isLoadingMetadata ? "..." : "Load"}
+                  </strong>
+                  <span className="structure-insight-meta">
+                    {hasLoadedMetadata ? "Metadata ready" : isLoadingMetadata ? "Fetching now" : "Open to fetch"}
+                  </span>
+                </span>
               </button>
               <button
                 type="button"
-                className={`structure-stat-pill ${activeSection === "foreign_keys" ? "active" : ""}`}
+                className={`structure-insight-card ${activeSection === "foreign_keys" ? "active" : ""}`}
                 onClick={() => focusSection("foreign_keys")}
               >
-                {hasLoadedMetadata ? `${foreignKeys.length} foreign keys` : "Load foreign keys"}
+                <span className="structure-insight-icon">
+                  <Link2 className="w-4 h-4" />
+                </span>
+                <span className="structure-insight-copy">
+                  <span className="structure-insight-label">Foreign Keys</span>
+                  <strong className="structure-insight-value">
+                    {hasLoadedMetadata ? foreignKeys.length : isLoadingMetadata ? "..." : "Load"}
+                  </strong>
+                  <span className="structure-insight-meta">
+                    {hasLoadedMetadata ? "Relations loaded" : isLoadingMetadata ? "Fetching now" : "Open to fetch"}
+                  </span>
+                </span>
               </button>
+            </div>
+
+            <div className={`structure-topbar-queue ${pendingChangeCount > 0 ? "active" : ""}`}>
+              <div className="structure-topbar-queue-copy">
+                <span className="structure-topbar-queue-kicker">
+                  {pendingChangeCount > 0 ? "Staged changes" : "Working tree"}
+                </span>
+                <div className="structure-topbar-queue-title-row">
+                  {pendingChangeCount > 0 && (
+                    <span className="structure-pending-pill">{pendingChangeCount} pending</span>
+                  )}
+                  <strong className="structure-topbar-queue-title">
+                    {pendingChangeCount > 0 ? "Review and apply when ready" : "Everything is synced"}
+                  </strong>
+                </div>
+                <p className="structure-topbar-queue-description">
+                  {pendingChangeCount > 0
+                    ? "Your edits are staged in memory. Review the generated SQL, discard it, or apply it to the table."
+                    : "Open a column to start composing structure changes. Nothing is waiting to be applied yet."}
+                </p>
+              </div>
+
+              <div className="structure-topbar-actions">
+                {pendingChangeCount > 0 ? (
+                  <>
+                    <button type="button" className="btn btn-secondary" onClick={() => setIsReviewOpen(true)}>
+                      Review SQL
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={discardStagedChanges}>
+                      Discard
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => void applyStagedChanges()}
+                    >
+                      {isApplyingChanges ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Check className="w-4 h-4" />
+                      )}
+                      <span>Apply</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button type="button" className="btn btn-secondary" onClick={() => focusSection("columns")}>
+                      Edit Columns
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => focusSection("indexes")}
+                      disabled={isLoadingMetadata}
+                    >
+                      {isLoadingMetadata ? "Loading..." : hasLoadedMetadata ? "Inspect Metadata" : "Load Metadata"}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>

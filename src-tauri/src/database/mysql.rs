@@ -188,7 +188,9 @@ impl DatabaseDriver for MySqlDriver {
 
         // Detect if it's a SELECT query
         let trimmed = sql.trim().to_uppercase();
-        if trimmed.starts_with("SELECT") || trimmed.starts_with("SHOW") || trimmed.starts_with("DESCRIBE") || trimmed.starts_with("EXPLAIN") {
+        let is_select = trimmed.starts_with("SELECT") || trimmed.starts_with("SHOW") || trimmed.starts_with("DESCRIBE") || trimmed.starts_with("EXPLAIN");
+
+        if is_select {
             let rows: Vec<MySqlRow> = sqlx::query(sql).fetch_all(&self.pool).await?;
             let elapsed = start.elapsed().as_millis();
 
@@ -240,13 +242,34 @@ impl DatabaseDriver for MySqlDriver {
                 query: sql.to_string(),
             })
         } else {
-            let result = sqlx::query(sql).execute(&self.pool).await?;
-            let elapsed = start.elapsed().as_millis();
+            // For non-SELECT queries, split by semicolon and execute each statement
+            let statements: Vec<&str> = sql
+                .split(';')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            let mut total_affected: u64 = 0;
+            let elapsed;
+
+            if statements.len() > 1 {
+                // Execute each statement separately for multiple statements
+                for statement in &statements {
+                    let result = sqlx::query(statement).execute(&self.pool).await?;
+                    total_affected += result.rows_affected();
+                }
+                elapsed = start.elapsed().as_millis();
+            } else {
+                // Single statement - execute directly
+                let result = sqlx::query(sql).execute(&self.pool).await?;
+                total_affected = result.rows_affected();
+                elapsed = start.elapsed().as_millis();
+            }
 
             Ok(QueryResult {
                 columns: Vec::new(),
                 rows: Vec::new(),
-                affected_rows: result.rows_affected(),
+                affected_rows: total_affected,
                 execution_time_ms: elapsed,
                 query: sql.to_string(),
             })

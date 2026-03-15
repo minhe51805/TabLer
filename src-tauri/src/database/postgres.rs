@@ -2,11 +2,12 @@ use super::driver::DatabaseDriver;
 use super::models::*;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sqlx::postgres::{PgPool, PgRow};
+use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Row, TypeInfo};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
+use tokio::time::{timeout, Duration};
 
 pub struct PostgresDriver {
     pool: PgPool,
@@ -15,12 +16,40 @@ pub struct PostgresDriver {
 
 impl PostgresDriver {
     pub async fn connect(url: &str, database: Option<&str>) -> Result<Self> {
-        let pool = PgPool::connect(url)
-            .await
-            .context("Failed to connect to PostgreSQL")?;
-
-        let current_db = Arc::new(RwLock::new(database.map(String::from)));
-        Ok(Self { pool, current_db })
+        eprintln!("[DEBUG] Connecting to PostgreSQL with URL (password hidden): {}", 
+            url.replace(|c: char| !c.is_alphanumeric() && c != '@' && c != ':' && c != '/' && c != '?' && c != '=', "*"));
+        
+        // Increase timeout and add retry for cloud connections (Supabase, Neon, etc.)
+        let _pool_options = PgPoolOptions::new()
+            .max_lifetime(std::time::Duration::from_secs(1800))
+            .acquire_timeout(std::time::Duration::from_secs(30))
+            .idle_timeout(std::time::Duration::from_secs(600));
+        
+        // Try to connect with retry logic
+        let mut last_error = None;
+        for attempt in 1..=3 {
+            let pool_opts = PgPoolOptions::new()
+                .max_lifetime(std::time::Duration::from_secs(1800))
+                .acquire_timeout(std::time::Duration::from_secs(30))
+                .idle_timeout(std::time::Duration::from_secs(600));
+            
+            match pool_opts.connect(url).await {
+                Ok(pool) => {
+                    eprintln!("[DEBUG] PostgreSQL connection established on attempt {}", attempt);
+                    let current_db = Arc::new(RwLock::new(database.map(String::from)));
+                    return Ok(Self { pool, current_db });
+                }
+                Err(e) => {
+                    eprintln!("[DEBUG] Connection attempt {} failed: {}", attempt, e);
+                    last_error = Some(e);
+                    if attempt < 3 {
+                        tokio::time::sleep(std::time::Duration::from_millis(500 * attempt)).await;
+                    }
+                }
+            }
+        }
+        
+        Err(anyhow::anyhow!("Failed to connect to PostgreSQL after 3 attempts: {}", last_error.unwrap()))
     }
 
     fn split_schema_table(table: &str) -> (String, String) {
@@ -92,29 +121,45 @@ impl DatabaseDriver for PostgresDriver {
     ) -> Result<TableStructure> {
         let (schema, table_name) = Self::split_schema_table(table);
 
-        let col_rows: Vec<PgRow> = sqlx::query(
-            "SELECT c.column_name, c.data_type, c.is_nullable, c.column_default, \
-             c.udt_name, \
-             CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN true ELSE false END as is_pk \
-             FROM information_schema.columns c \
-             LEFT JOIN information_schema.key_column_usage kcu \
-               ON c.column_name = kcu.column_name AND c.table_name = kcu.table_name AND c.table_schema = kcu.table_schema \
-             LEFT JOIN information_schema.table_constraints tc \
-               ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema AND tc.constraint_type = 'PRIMARY KEY' \
-             WHERE c.table_name = $1 AND c.table_schema = $2 \
-             ORDER BY c.ordinal_position",
-        )
-        .bind(&table_name)
-        .bind(&schema)
-        .fetch_all(&self.pool)
-        .await?;
+        let col_rows: Vec<PgRow> = timeout(Duration::from_secs(6), async {
+            sqlx::query(
+                "WITH target AS ( \
+                   SELECT c.oid AS relid \
+                   FROM pg_class c \
+                   JOIN pg_namespace n ON n.oid = c.relnamespace \
+                   WHERE n.nspname = $2 AND c.relname = $1 \
+                   LIMIT 1 \
+                 ) \
+                 SELECT a.attname, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull, \
+                        pg_get_expr(ad.adbin, ad.adrelid), \
+                        format_type(a.atttypid, a.atttypmod), \
+                        EXISTS ( \
+                          SELECT 1 \
+                          FROM pg_constraint con \
+                          WHERE con.conrelid = a.attrelid \
+                            AND con.contype = 'p' \
+                            AND a.attnum = ANY(con.conkey) \
+                        ) AS is_pk \
+                 FROM target t \
+                 JOIN pg_attribute a ON a.attrelid = t.relid \
+                 LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
+                 WHERE a.attnum > 0 AND NOT a.attisdropped \
+                 ORDER BY a.attnum",
+            )
+            .bind(&table_name)
+            .bind(&schema)
+            .fetch_all(&self.pool)
+            .await
+        })
+        .await
+        .with_context(|| format!("Timed out loading columns for {}.{}", schema, table_name))??;
 
         let columns = col_rows
             .iter()
             .map(|row| ColumnDetail {
                 name: row.get(0),
                 data_type: row.get(1),
-                is_nullable: row.get::<String, _>(2) == "YES",
+                is_nullable: row.try_get::<bool, _>(2).unwrap_or(false),
                 default_value: row.try_get(3).ok(),
                 column_type: row.try_get(4).ok(),
                 is_primary_key: row.try_get::<bool, _>(5).unwrap_or(false),
@@ -123,21 +168,93 @@ impl DatabaseDriver for PostgresDriver {
             })
             .collect();
 
-        let idx_rows: Vec<PgRow> = sqlx::query(
-            "SELECT i.relname, ix.indisunique, a.attname, am.amname \
-             FROM pg_index ix \
-             JOIN pg_class t ON t.oid = ix.indrelid \
-             JOIN pg_namespace ns ON ns.oid = t.relnamespace \
-             JOIN pg_class i ON i.oid = ix.indexrelid \
-             JOIN pg_am am ON am.oid = i.relam \
-             JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) \
-             WHERE t.relname = $1 AND ns.nspname = $2 \
-             ORDER BY i.relname",
-        )
-        .bind(&table_name)
-        .bind(&schema)
-        .fetch_all(&self.pool)
-        .await?;
+        let idx_query = async {
+            sqlx::query(
+                "WITH target AS ( \
+                   SELECT c.oid AS relid \
+                   FROM pg_class c \
+                   JOIN pg_namespace n ON n.oid = c.relnamespace \
+                   WHERE n.nspname = $2 AND c.relname = $1 \
+                   LIMIT 1 \
+                 ) \
+                 SELECT idx.relname, ix.indisunique, att.attname, am.amname \
+                 FROM target t \
+                 JOIN pg_index ix ON ix.indrelid = t.relid \
+                 JOIN pg_class idx ON idx.oid = ix.indexrelid \
+                 JOIN pg_am am ON am.oid = idx.relam \
+                 JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS key(attnum, ord) ON TRUE \
+                 JOIN pg_attribute att ON att.attrelid = t.relid AND att.attnum = key.attnum \
+                 ORDER BY idx.relname, key.ord",
+            )
+            .bind(&table_name)
+            .bind(&schema)
+            .fetch_all(&self.pool)
+            .await
+        };
+
+        let fk_query = async {
+            sqlx::query(
+                "WITH target AS ( \
+                   SELECT c.oid AS relid \
+                   FROM pg_class c \
+                   JOIN pg_namespace n ON n.oid = c.relnamespace \
+                   WHERE n.nspname = $2 AND c.relname = $1 \
+                   LIMIT 1 \
+                 ) \
+                 SELECT con.conname, src_att.attname, ref_tbl.relname, ref_att.attname, \
+                        CASE con.confupdtype \
+                          WHEN 'a' THEN 'NO ACTION' \
+                          WHEN 'r' THEN 'RESTRICT' \
+                          WHEN 'c' THEN 'CASCADE' \
+                          WHEN 'n' THEN 'SET NULL' \
+                          WHEN 'd' THEN 'SET DEFAULT' \
+                          ELSE NULL \
+                        END AS update_rule, \
+                        CASE con.confdeltype \
+                          WHEN 'a' THEN 'NO ACTION' \
+                          WHEN 'r' THEN 'RESTRICT' \
+                          WHEN 'c' THEN 'CASCADE' \
+                          WHEN 'n' THEN 'SET NULL' \
+                          WHEN 'd' THEN 'SET DEFAULT' \
+                          ELSE NULL \
+                        END AS delete_rule \
+                 FROM target t \
+                 JOIN pg_constraint con ON con.conrelid = t.relid AND con.contype = 'f' \
+                 JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS src(attnum, ord) ON TRUE \
+                 JOIN LATERAL unnest(con.confkey) WITH ORDINALITY AS dst(attnum, ord) ON dst.ord = src.ord \
+                 JOIN pg_attribute src_att ON src_att.attrelid = t.relid AND src_att.attnum = src.attnum \
+                 JOIN pg_class ref_tbl ON ref_tbl.oid = con.confrelid \
+                 JOIN pg_attribute ref_att ON ref_att.attrelid = con.confrelid AND ref_att.attnum = dst.attnum \
+                 ORDER BY con.conname, src.ord",
+            )
+            .bind(&table_name)
+            .bind(&schema)
+            .fetch_all(&self.pool)
+            .await
+        };
+
+        let (idx_result, fk_result) = tokio::join!(
+            timeout(Duration::from_secs(4), idx_query),
+            timeout(Duration::from_secs(4), fk_query)
+        );
+
+        let idx_rows: Vec<PgRow> = match idx_result {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => {
+                eprintln!(
+                    "Failed to load PostgreSQL indexes for {}.{}: {:?}",
+                    schema, table_name, error
+                );
+                Vec::new()
+            }
+            Err(_) => {
+                eprintln!(
+                    "Timed out loading PostgreSQL indexes for {}.{}",
+                    schema, table_name
+                );
+                Vec::new()
+            }
+        };
 
         let mut index_map: std::collections::HashMap<String, IndexInfo> =
             std::collections::HashMap::new();
@@ -158,20 +275,23 @@ impl DatabaseDriver for PostgresDriver {
         }
         let indexes = index_map.into_values().collect();
 
-        let fk_rows: Vec<PgRow> = sqlx::query(
-            "SELECT tc.constraint_name, kcu.column_name, \
-             ccu.table_name AS referenced_table, ccu.column_name AS referenced_column, \
-             rc.update_rule, rc.delete_rule \
-             FROM information_schema.table_constraints tc \
-             JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
-             JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name AND ccu.constraint_schema = tc.table_schema \
-             JOIN information_schema.referential_constraints rc ON rc.constraint_name = tc.constraint_name AND rc.constraint_schema = tc.table_schema \
-             WHERE tc.table_name = $1 AND tc.table_schema = $2 AND tc.constraint_type = 'FOREIGN KEY'",
-        )
-        .bind(&table_name)
-        .bind(&schema)
-        .fetch_all(&self.pool)
-        .await?;
+        let fk_rows: Vec<PgRow> = match fk_result {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => {
+                eprintln!(
+                    "Failed to load PostgreSQL foreign keys for {}.{}: {:?}",
+                    schema, table_name, error
+                );
+                Vec::new()
+            }
+            Err(_) => {
+                eprintln!(
+                    "Timed out loading PostgreSQL foreign keys for {}.{}",
+                    schema, table_name
+                );
+                Vec::new()
+            }
+        };
 
         let foreign_keys = fk_rows
             .iter()
@@ -196,11 +316,13 @@ impl DatabaseDriver for PostgresDriver {
         let start = Instant::now();
         let trimmed = sql.trim().to_uppercase();
 
-        if trimmed.starts_with("SELECT")
+        // Check if it's a SELECT-like query
+        let is_select = trimmed.starts_with("SELECT")
             || trimmed.starts_with("SHOW")
             || trimmed.starts_with("EXPLAIN")
-            || trimmed.starts_with("WITH")
-        {
+            || trimmed.starts_with("WITH");
+
+        if is_select {
             let rows: Vec<PgRow> = sqlx::query(sql).fetch_all(&self.pool).await?;
             let elapsed = start.elapsed().as_millis();
 
@@ -253,13 +375,34 @@ impl DatabaseDriver for PostgresDriver {
                 query: sql.to_string(),
             })
         } else {
-            let result = sqlx::query(sql).execute(&self.pool).await?;
-            let elapsed = start.elapsed().as_millis();
+            // For non-SELECT queries, split by semicolon and execute each statement
+            let statements: Vec<&str> = sql
+                .split(';')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+
+            let mut total_affected: u64 = 0;
+            let elapsed;
+
+            if statements.len() > 1 {
+                // Execute each statement separately for multiple statements
+                for statement in &statements {
+                    let result = sqlx::query(statement).execute(&self.pool).await?;
+                    total_affected += result.rows_affected();
+                }
+                elapsed = start.elapsed().as_millis();
+            } else {
+                // Single statement - execute directly
+                let result = sqlx::query(sql).execute(&self.pool).await?;
+                total_affected = result.rows_affected();
+                elapsed = start.elapsed().as_millis();
+            }
 
             Ok(QueryResult {
                 columns: Vec::new(),
                 rows: Vec::new(),
-                affected_rows: result.rows_affected(),
+                affected_rows: total_affected,
                 execution_time_ms: elapsed,
                 query: sql.to_string(),
             })

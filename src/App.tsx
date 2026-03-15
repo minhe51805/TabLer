@@ -8,17 +8,21 @@ import {
 import {
   AlertCircle,
   Cable,
+  Copy,
   Database,
   FolderTree,
+  Minus,
   PanelRightClose,
   Plus,
   RotateCcw,
   Search,
   Settings2,
+  Square,
   Sparkles,
   Terminal,
   X,
 } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "./stores/appStore";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
@@ -56,12 +60,16 @@ function App() {
   const [showEmbeddedTerminal, setShowEmbeddedTerminal] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+  const [isWindowFocused, setIsWindowFocused] = useState(true);
 
   const isResizing = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(300);
+  const isDesktopWindow = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
   const activeConn = connections.find((conn) => conn.id === activeConnectionId);
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
   const isConnected = !!(activeConnectionId && connectedIds.has(activeConnectionId));
   const queryTabCount = tabs.filter(
     (tab) => tab.type === "query" && tab.connectionId === activeConnectionId,
@@ -127,6 +135,44 @@ function App() {
     setIsSidebarCollapsed((collapsed) => !collapsed);
   }, []);
 
+  const handleMinimizeWindow = useCallback(() => {
+    if (!isDesktopWindow) return;
+
+    void (async () => {
+      try {
+        await getCurrentWindow().minimize();
+      } catch (windowError) {
+        console.error("Failed to minimize window", windowError);
+      }
+    })();
+  }, [isDesktopWindow]);
+
+  const handleToggleMaximizeWindow = useCallback(() => {
+    if (!isDesktopWindow) return;
+
+    void (async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        await appWindow.toggleMaximize();
+        setIsWindowMaximized(await appWindow.isMaximized());
+      } catch (windowError) {
+        console.error("Failed to toggle maximize window", windowError);
+      }
+    })();
+  }, [isDesktopWindow]);
+
+  const handleCloseWindow = useCallback(() => {
+    if (!isDesktopWindow) return;
+
+    void (async () => {
+      try {
+        await getCurrentWindow().close();
+      } catch (windowError) {
+        console.error("Failed to close window", windowError);
+      }
+    })();
+  }, [isDesktopWindow]);
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing.current) return;
@@ -188,6 +234,49 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!isDesktopWindow) return;
+
+    const appWindow = getCurrentWindow();
+    let isMounted = true;
+    let unlistenResized: (() => void) | undefined;
+    let unlistenFocusChanged: (() => void) | undefined;
+
+    const syncWindowState = async () => {
+      const [maximized, focused] = await Promise.all([
+        appWindow.isMaximized(),
+        appWindow.isFocused(),
+      ]);
+
+      if (!isMounted) return;
+
+      setIsWindowMaximized(maximized);
+      setIsWindowFocused(focused);
+    };
+
+    void syncWindowState();
+
+    void appWindow.onResized(async () => {
+      if (!isMounted) return;
+      setIsWindowMaximized(await appWindow.isMaximized());
+    }).then((unlisten) => {
+      unlistenResized = unlisten;
+    });
+
+    void appWindow.onFocusChanged(({ payload }) => {
+      if (!isMounted) return;
+      setIsWindowFocused(payload);
+    }).then((unlisten) => {
+      unlistenFocusChanged = unlisten;
+    });
+
+    return () => {
+      isMounted = false;
+      unlistenResized?.();
+      unlistenFocusChanged?.();
+    };
+  }, [isDesktopWindow]);
+
+  useEffect(() => {
     if (activeConnectionId && connectedIds.has(activeConnectionId)) {
       setLeftPanel("database");
       return;
@@ -200,17 +289,56 @@ function App() {
     if (!isConnected) {
       return (
         <div className="workspace-empty">
-          <Database className="w-16 h-16 mb-5 opacity-35 text-[var(--accent)]" />
-          <p className="text-base font-semibold opacity-95">No active connection</p>
-          <p className="text-xs mt-2 opacity-90 max-w-md text-center">
-            Start by creating or opening a connection. Once connected, Explorer and SQL Editor
-            become available immediately.
-          </p>
-          <div className="workspace-empty-actions">
-            <button onClick={() => setShowConnectionForm(true)} className="btn btn-primary">
-              <Plus className="w-3.5 h-3.5" />
-              New Connection
-            </button>
+          <div className="workspace-empty-panel">
+            <div className="workspace-empty-hero">
+              <div className="workspace-empty-icon">
+                <Database className="w-10 h-10 text-[var(--accent)]" />
+              </div>
+
+              <div className="workspace-empty-copy">
+                <span className="workspace-empty-kicker">Get Started</span>
+                <h2 className="workspace-empty-title">No active connection</h2>
+                <p className="workspace-empty-description">
+                  Create or open a saved connection to unlock Explorer, SQL Editor, and table
+                  tools in this workspace.
+                </p>
+              </div>
+            </div>
+
+            <div className="workspace-empty-actions">
+              <button onClick={() => setShowConnectionForm(true)} className="btn btn-primary">
+                <Plus className="w-3.5 h-3.5" />
+                New Connection
+              </button>
+            </div>
+
+            <div className="workspace-empty-grid">
+              <div className="workspace-empty-card">
+                <span className="workspace-empty-card-kicker">Connections</span>
+                <strong className="workspace-empty-card-title">Saved workspaces</strong>
+                <p className="workspace-empty-card-copy">
+                  Reopen an existing connection from the left panel or create a new one here.
+                </p>
+              </div>
+
+              <div className="workspace-empty-card">
+                <span className="workspace-empty-card-kicker">Supported</span>
+                <strong className="workspace-empty-card-title">Primary engines</strong>
+                <p className="workspace-empty-card-copy">
+                  MySQL, PostgreSQL, and SQLite are ready now. Other engines stay visible as the
+                  roadmap.
+                </p>
+              </div>
+
+              <div className="workspace-empty-card">
+                <span className="workspace-empty-card-kicker">Workflow</span>
+                <strong className="workspace-empty-card-title">From connect to query</strong>
+                <p className="workspace-empty-card-copy">
+                  Connect first, then browse tables from Explorer or open a query tab to start
+                  working.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       );
@@ -218,31 +346,80 @@ function App() {
 
     return (
       <div className="workspace-empty">
-        <Sparkles className="w-16 h-16 mb-5 opacity-35 text-[var(--accent)]" />
-        <p className="text-base font-semibold opacity-95">Workspace is ready</p>
-        <p className="text-xs mt-2 opacity-90 max-w-lg text-center">
-          Create a new query to run SQL, or open a table from Explorer to inspect data and
-          structure.
-        </p>
-        <div className="workspace-empty-actions">
-          <button onClick={handleNewQuery} className="btn btn-primary">
-            <Plus className="w-3.5 h-3.5" />
-            New Query
-          </button>
-          <button onClick={handleFocusExplorerSearch} className="btn btn-secondary">
-            <Search className="w-3.5 h-3.5" />
-            Find Table
-          </button>
+        <div className="workspace-empty-panel">
+          <div className="workspace-empty-hero">
+            <div className="workspace-empty-icon">
+              <Sparkles className="w-10 h-10 text-[var(--accent)]" />
+            </div>
+
+            <div className="workspace-empty-copy">
+              <span className="workspace-empty-kicker">Workspace</span>
+              <h2 className="workspace-empty-title">Workspace is ready</h2>
+              <p className="workspace-empty-description">
+                Start with a fresh query, browse a table from Explorer, or open AI assistance to
+                generate and explain SQL faster.
+              </p>
+            </div>
+          </div>
+
+          <div className="workspace-empty-actions">
+            <button onClick={handleNewQuery} className="btn btn-primary">
+              <Plus className="w-3.5 h-3.5" />
+              New Query
+            </button>
+            <button onClick={handleFocusExplorerSearch} className="btn btn-secondary">
+              <Search className="w-3.5 h-3.5" />
+              Find Table
+            </button>
+            <button onClick={() => setShowAISlidePanel(true)} className="btn btn-secondary">
+              <Sparkles className="w-3.5 h-3.5" />
+              Ask AI
+            </button>
+          </div>
+
+          <div className="workspace-empty-grid">
+            <div className="workspace-empty-card">
+              <span className="workspace-empty-card-kicker">SQL Editor</span>
+              <strong className="workspace-empty-card-title">Write a new query</strong>
+              <p className="workspace-empty-card-copy">
+                Open a fresh tab and run statements immediately against the active database.
+              </p>
+              <div className="workspace-empty-card-shortcut">
+                <kbd className="kbd">Ctrl+N</kbd>
+                <span>new query</span>
+              </div>
+            </div>
+
+            <div className="workspace-empty-card">
+              <span className="workspace-empty-card-kicker">Explorer</span>
+              <strong className="workspace-empty-card-title">Jump to a table</strong>
+              <p className="workspace-empty-card-copy">
+                Search the current database, then open data rows or inspect structure.
+              </p>
+              <div className="workspace-empty-card-shortcut">
+                <kbd className="kbd">Ctrl+B</kbd>
+                <span>toggle sidebar</span>
+              </div>
+            </div>
+
+            <div className="workspace-empty-card">
+              <span className="workspace-empty-card-kicker">AI Assist</span>
+              <strong className="workspace-empty-card-title">Generate and explain SQL</strong>
+              <p className="workspace-empty-card-copy">
+                Use AI when you want faster drafts, query explanations, or schema-aware help.
+              </p>
+              <div className="workspace-empty-card-shortcut">
+                <kbd className="kbd">Ctrl+Shift+K</kbd>
+                <span>open AI</span>
+              </div>
+            </div>
+          </div>
         </div>
-        <p className="text-[11px] text-[var(--text-muted)] mt-4">
-          Shortcuts: <kbd className="kbd">Ctrl+N</kbd> creates a query,{" "}
-          <kbd className="kbd">Ctrl+Shift+K</kbd> opens AI.
-        </p>
       </div>
     );
   };
 
-  const renderSingleTab = (tab: Tab) => {
+  const renderSingleTab = (tab: Tab, isActive: boolean) => {
     switch (tab.type) {
       case "query":
         return (
@@ -266,6 +443,7 @@ function App() {
             connectionId={tab.connectionId}
             tableName={tab.tableName}
             database={tab.database}
+            isActive={isActive}
           />
         );
       case "structure":
@@ -275,6 +453,7 @@ function App() {
             connectionId={tab.connectionId}
             tableName={tab.tableName || ""}
             database={tab.database}
+            isActive={isActive}
           />
         );
       default:
@@ -333,16 +512,43 @@ function App() {
   );
 
   return (
-    <div className="app-root">
-      <header className="titlebar">
-        <div className="titlebar-brand" data-tauri-drag-region>
-          <Database className="w-4 h-4 text-[var(--accent)]" />
-          <span className="titlebar-name">TableR</span>
+    <div className={`app-root ${isWindowMaximized ? "window-maximized" : ""}`}>
+      <header className={`titlebar ${isWindowFocused ? "" : "inactive"}`}>
+        <div
+          className="titlebar-drag-strip"
+          data-tauri-drag-region
+          onDoubleClick={handleToggleMaximizeWindow}
+        >
+          <div className="titlebar-brand" data-tauri-drag-region>
+            <Database className="w-4 h-4 text-[var(--accent)]" />
+            <span className="titlebar-name">TableR</span>
+          </div>
+
+          <div className="titlebar-divider" data-tauri-drag-region />
+
+          <div className="titlebar-context" data-tauri-drag-region>
+            <span className="titlebar-context-label">Workspace</span>
+            {isConnected && activeConn ? (
+              <div className="titlebar-badge" title={`${activeConn.name || activeConn.host}${currentDatabase ? ` / ${currentDatabase}` : ""}`}>
+                <span
+                  className="w-2 h-2 rounded-sm shrink-0"
+                  style={{ backgroundColor: activeConn.color || "var(--success)" }}
+                />
+                <span className="truncate">
+                  {activeConn.name || activeConn.host}
+                  {currentDatabase ? ` / ${currentDatabase}` : ""}
+                </span>
+              </div>
+            ) : (
+              <div className="titlebar-badge muted">
+                <span className="w-2 h-2 rounded-sm shrink-0 bg-white/25" />
+                <span className="truncate">No active connection</span>
+              </div>
+            )}
+          </div>
+
+          <div className="titlebar-spacer" data-tauri-drag-region />
         </div>
-
-
-
-        <div className="titlebar-spacer" data-tauri-drag-region />
 
         <div className="titlebar-actions">
           <button
@@ -362,16 +568,39 @@ function App() {
           </button>
         </div>
 
-        {isConnected && activeConn && (
-          <div className="titlebar-badge">
-            <span
-              className="w-2 h-2 rounded-sm shrink-0"
-              style={{ backgroundColor: activeConn.color || "var(--success)" }}
-            />
-            <span className="truncate">
-              {activeConn.name || activeConn.host}
-              {currentDatabase ? ` / ${currentDatabase}` : ""}
-            </span>
+        {isDesktopWindow && (
+          <div className="titlebar-window-controls">
+            <button
+              type="button"
+              onClick={handleMinimizeWindow}
+              className="titlebar-window-btn"
+              title="Minimize"
+              aria-label="Minimize window"
+            >
+              <Minus className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleMaximizeWindow}
+              className="titlebar-window-btn"
+              title={isWindowMaximized ? "Restore" : "Maximize"}
+              aria-label={isWindowMaximized ? "Restore window" : "Maximize window"}
+            >
+              {isWindowMaximized ? (
+                <Copy className="w-3.5 h-3.5" />
+              ) : (
+                <Square className="w-3.5 h-3.5" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={handleCloseWindow}
+              className="titlebar-window-btn danger"
+              title="Close"
+              aria-label="Close window"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
       </header>
@@ -408,6 +637,29 @@ function App() {
 
         <main className="main-content">
           <div className="workspace-toolbar">
+            <div className="workspace-toolbar-copy">
+              <span className="workspace-toolbar-kicker">
+                {activeTab
+                  ? activeTab.type === "query"
+                    ? "SQL Workspace"
+                    : activeTab.type === "table"
+                      ? "Table View"
+                      : "Structure View"
+                  : "Workspace"}
+              </span>
+              <div className="workspace-toolbar-title-row">
+                <span className="workspace-toolbar-title">
+                  {activeTab?.title || (isConnected ? "Ready for queries" : "No active connection")}
+                </span>
+                {isConnected && activeConn && (
+                  <span className="workspace-toolbar-chip">
+                    {activeConn.name || activeConn.host}
+                    {currentDatabase ? ` / ${currentDatabase}` : ""}
+                  </span>
+                )}
+              </div>
+            </div>
+
             <div className="workspace-toolbar-actions">
               <button
                 onClick={handleNewQuery}
@@ -471,7 +723,7 @@ function App() {
                     width: "100%",
                   }}
                 >
-                  {renderSingleTab(tab)}
+                  {renderSingleTab(tab, tab.id === activeTabId)}
                 </div>
               ))
             )}

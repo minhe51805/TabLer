@@ -37,6 +37,8 @@ pub fn run() {
             get_saved_connections,
             delete_saved_connection,
             check_connection_status,
+            parse_connection_url,
+            parse_url_details,
             // Query commands
             execute_query,
             // Table commands

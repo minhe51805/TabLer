@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import {
   Eye,
   EyeOff,
@@ -9,17 +9,10 @@ import {
   Search,
   ArrowLeft,
   Plug,
-  Database,
-  File,
-  Server,
-  Cloud,
-  Cpu,
-  Leaf,
-  Boxes,
-  type LucideIcon,
 } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import type { ConnectionConfig, DatabaseType } from "../../types";
+import { DatabaseBrandIcon } from "./DatabaseBrandIcon";
 
 interface DbEntry {
   key: string;
@@ -51,27 +44,6 @@ const ALL_DATABASES: DbEntry[] = [
   { key: "libsql", abbr: "Ls", label: "LibSQL", color: "#2ecc71", supported: false, defaultPort: 8080 },
   { key: "cloudflared1", abbr: "D1", label: "Cloudflare D1", color: "#f39c12", supported: false, defaultPort: 0 },
 ];
-
-const DB_ICONS: Record<string, LucideIcon> = {
-  mysql: Database,
-  mariadb: Database,
-  sqlite: File,
-  duckdb: File,
-  cassandra: Boxes,
-  cockroachdb: Cpu,
-  snowflake: Cloud,
-  postgresql: Database,
-  greenplum: Leaf,
-  redshift: Cloud,
-  mssql: Server,
-  redis: Cpu,
-  mongodb: Leaf,
-  vertica: Server,
-  clickhouse: Boxes,
-  bigquery: Cloud,
-  libsql: Database,
-  cloudflared1: Cloud,
-};
 
 const COLORS = [
   "#f38ba8", "#c49a78", "#b8ab86", "#7fb07f",
@@ -174,7 +146,7 @@ export function ConnectionForm({ onClose, editConnection }: Props) {
           <div className="flex-1 overflow-y-auto !px-2 !py-1">
             <div className="grid grid-cols-6 gap-4">
               {filteredDbs.map((db) => {
-                const Icon = DB_ICONS[db.key] || Database;
+                const brandStyle = { "--db-brand": db.color } as CSSProperties;
                 return (
                   <button
                     key={db.key}
@@ -188,11 +160,13 @@ export function ConnectionForm({ onClose, editConnection }: Props) {
                       selectedDb?.key === db.key ? "border-[var(--accent)]! bg-[var(--accent-dim)]" : "",
                     ].join(" ")}
                   >
-                    <div
-                      className="!w-14 !h-14 rounded-md flex items-center justify-center text-white shadow-lg"
-                      style={{ backgroundColor: db.color }}
-                    >
-                      <Icon className="!w-6 !h-6" />
+                    <div className="connection-db-tile-icon" style={brandStyle}>
+                      <DatabaseBrandIcon
+                        dbKey={db.key}
+                        label={db.label}
+                        className="connection-db-brand-lg"
+                        fallbackClassName="!w-6 !h-6 text-white"
+                      />
                     </div>
                     <span className="text-[11px] text-[var(--text-secondary)] text-center leading-tight whitespace-nowrap font-semibold">
                       {db.label}
@@ -234,10 +208,15 @@ export function ConnectionForm({ onClose, editConnection }: Props) {
             )}
             {selectedDb && (
               <div
-                className="w-8 h-8 rounded-md flex items-center justify-center text-white text-[11px] font-bold shrink-0"
-                style={{ backgroundColor: selectedDb.color }}
+                className="connection-db-header-icon"
+                style={{ "--db-brand": selectedDb.color } as CSSProperties}
               >
-                {selectedDb.abbr}
+                <DatabaseBrandIcon
+                  dbKey={selectedDb.key}
+                  label={selectedDb.label}
+                  className="connection-db-brand-sm"
+                  fallbackClassName="!w-4.5 !h-4.5 text-white"
+                />
               </div>
             )}
             <div className="min-w-0 py-4!">
@@ -365,6 +344,24 @@ export function ConnectionForm({ onClose, editConnection }: Props) {
                   className="input h-10"
                 />
               </div>
+
+              {!isSqlite && (
+                <div className="flex items-center gap-3 py-2">
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.use_ssl}
+                      onChange={(e) => updateField("use_ssl", e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-[var(--bg-surface)] peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[var(--accent)]/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[var(--accent)]"></div>
+                    <span className="ml-3 text-sm font-medium text-[var(--text-secondary)]">Use SSL/TLS</span>
+                  </label>
+                  <span className="text-xs text-[var(--text-muted)]">
+                    (Recommended for cloud databases like Supabase, Neon, etc.)
+                  </span>
+                </div>
+              )}
             </>
           )}
 

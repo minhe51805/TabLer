@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import type { QueryResult } from "../../types";
+import { splitSqlStatements } from "../../utils/sqlStatements";
 import { DataGrid } from "../DataGrid";
 import { TerminalPanel } from "../TerminalPanel";
 
@@ -21,6 +22,11 @@ interface Props {
   initialContent?: string;
   tabId?: string;
   onTerminalToggle?: (show: boolean) => void;
+}
+
+function formatExecutionError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/^Error:\s*/, "");
 }
 
 export function SQLEditor({ connectionId, database, initialContent = "", tabId, onTerminalToggle }: Props) {
@@ -33,6 +39,7 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
   const [queryCount, setQueryCount] = useState(0);
   const [editorHeight, setEditorHeight] = useState(42);
   const [showTerminal, setShowTerminal] = useState(false);
+  const [isBatchExecuting, setIsBatchExecuting] = useState(false);
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -165,7 +172,7 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
 
   const handleExecute = useCallback(async () => {
     const editor = editorRef.current;
-    if (!editor) return;
+    if (!editor || isBatchExecuting) return;
 
     const selection = editor.getSelection();
     let sql = "";
@@ -176,17 +183,63 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
     }
     if (!sql.trim()) return;
 
+    const statements = splitSqlStatements(sql);
+    if (statements.length === 0) return;
+
     setError(null);
+    setIsBatchExecuting(true);
     try {
-      const queryResult = await executeQuery(connectionId, sql);
-      setResult(queryResult);
+      if (statements.length === 1) {
+        const queryResult = await executeQuery(connectionId, statements[0]);
+        setResult(queryResult);
+      } else {
+        let totalAffectedRows = 0;
+        let totalExecutionTimeMs = 0;
+        let lastSelectResult: QueryResult | null = null;
+
+        for (const [index, statement] of statements.entries()) {
+          try {
+            const queryResult = await executeQuery(connectionId, statement);
+            totalAffectedRows += queryResult.affected_rows;
+            totalExecutionTimeMs += queryResult.execution_time_ms;
+
+            if (queryResult.columns.length > 0) {
+              lastSelectResult = queryResult;
+            }
+          } catch (executionError) {
+            throw new Error(
+              `Statement ${index + 1}/${statements.length} failed.\n${formatExecutionError(executionError)}`
+            );
+          }
+        }
+
+        setResult(
+          lastSelectResult
+            ? {
+                ...lastSelectResult,
+                affected_rows: totalAffectedRows,
+                execution_time_ms: totalExecutionTimeMs,
+                query: statements.join(";\n"),
+              }
+            : {
+                columns: [],
+                rows: [],
+                affected_rows: totalAffectedRows,
+                execution_time_ms: totalExecutionTimeMs,
+                query: statements.join(";\n"),
+              }
+        );
+      }
+
       setQueryCount((c) => c + 1);
       setShowTerminal(false);
     } catch (e) {
-      setError(String(e));
+      setError(formatExecutionError(e));
       setResult(null);
+    } finally {
+      setIsBatchExecuting(false);
     }
-  }, [connectionId, executeQuery]);
+  }, [connectionId, executeQuery, isBatchExecuting]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -274,11 +327,11 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
       <div className="flex items-center gap-2 px-3 py-2 bg-[rgba(255,255,255,0.02)] border-b border-[var(--border-color)] flex-shrink-0">
         <button
           onClick={handleExecute}
-          disabled={isExecutingQuery}
+          disabled={isExecutingQuery || isBatchExecuting}
           className="btn btn-primary flex items-center gap-1.5"
           title="Execute (Ctrl+Enter)"
         >
-          {isExecutingQuery ? (
+          {isExecutingQuery || isBatchExecuting ? (
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
           ) : (
             <Play className="w-3.5 h-3.5" />

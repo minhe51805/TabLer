@@ -1,5 +1,5 @@
 use crate::database::manager::DatabaseManager;
-use crate::database::models::{ConnectionConfig, DatabaseInfo};
+use crate::database::models::{ConnectionConfig, DatabaseInfo, ParsedConnectionUrl};
 use crate::storage::connection_storage::ConnectionStorage;
 use tauri::State;
 
@@ -100,4 +100,17 @@ pub async fn check_connection_status(
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<bool, String> {
     Ok(db_manager.is_connected(&connection_id).await)
+}
+
+/// Parse a connection URL string into ConnectionConfig
+/// Supports: postgresql://, postgres://, mysql://, mariadb://, sqlite://
+#[tauri::command]
+pub fn parse_connection_url(url: String) -> Result<ConnectionConfig, String> {
+    ConnectionConfig::from_url(&url, None)
+}
+
+/// Get parsed details from a connection URL without creating a config
+#[tauri::command]
+pub fn parse_url_details(url: String) -> Result<ParsedConnectionUrl, String> {
+    ParsedConnectionUrl::parse(&url)
 }

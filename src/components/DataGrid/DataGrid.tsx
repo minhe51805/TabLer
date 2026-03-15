@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -16,6 +16,7 @@ import {
   Loader2,
   Key,
   Copy,
+  Database,
 } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import type { QueryResult } from "../../types";
@@ -25,6 +26,7 @@ interface Props {
   tableName?: string;
   database?: string;
   queryResult?: QueryResult;
+  isActive?: boolean;
 }
 
 const PAGE_SIZE = 200;
@@ -34,6 +36,7 @@ export function DataGrid({
   tableName,
   database,
   queryResult: externalResult,
+  isActive = true,
 }: Props) {
   const { getTableData, countRows } = useAppStore();
 
@@ -45,11 +48,17 @@ export function DataGrid({
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+  const isMountedRef = useRef(true);
+  const isActiveRef = useRef(isActive);
 
   const fetchData = useCallback(
     async (page: number) => {
-      if (!tableName) return;
+      if (!tableName || !isActive) return;
+
+      const requestId = ++requestIdRef.current;
       setIsLoading(true);
+
       try {
         const result = await getTableData(connectionId, tableName, {
           database,
@@ -58,33 +67,63 @@ export function DataGrid({
           orderBy: sortColumn || undefined,
           orderDir: sortColumn ? sortDir : undefined,
         });
+
+        if (!isMountedRef.current || requestId !== requestIdRef.current) return;
+
         setData(result);
-        if (page === 0) {
-          const count = await countRows(connectionId, tableName, database);
-          setTotalRows(count);
+        setIsLoading(false);
+
+        if (page === 0 && isActiveRef.current) {
+          void countRows(connectionId, tableName, database)
+            .then((count) => {
+              if (!isMountedRef.current || requestId !== requestIdRef.current || !isActiveRef.current) {
+                return;
+              }
+              setTotalRows(count);
+            })
+            .catch((error) => {
+              console.error("Failed to count table rows:", error);
+            });
         }
       } catch (e) {
+        if (!isMountedRef.current || requestId !== requestIdRef.current) return;
         console.error("Failed to fetch table data:", e);
+        setIsLoading(false);
       }
-      setIsLoading(false);
     },
-    [connectionId, tableName, database, sortColumn, sortDir, getTableData, countRows]
+    [connectionId, tableName, database, sortColumn, sortDir, getTableData, countRows, isActive]
   );
 
   useEffect(() => {
     if (externalResult) {
       setData(externalResult);
       setTotalRows(externalResult.rows.length);
-    } else if (tableName) {
-      fetchData(0);
+      setIsLoading(false);
+      return;
     }
-  }, [tableName, externalResult]);
+
+    setData(null);
+    setTotalRows(0);
+    setCurrentPage(0);
+    requestIdRef.current += 1;
+  }, [tableName, connectionId, database, externalResult]);
 
   useEffect(() => {
-    if (tableName && !externalResult) {
-      fetchData(currentPage);
-    }
-  }, [currentPage, sortColumn, sortDir]);
+    if (!tableName || externalResult || !isActive) return;
+    void fetchData(currentPage);
+  }, [currentPage, externalResult, fetchData, isActive, tableName]);
+
+  useEffect(() => {
+    isActiveRef.current = isActive;
+  }, [isActive]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      requestIdRef.current += 1;
+    };
+  }, []);
 
   const handleSort = (colName: string) => {
     if (sortColumn === colName) {
@@ -108,13 +147,13 @@ export function DataGrid({
     return [
       {
         id: "_row_num",
-        header: "#",
+        header: () => <span className="datagrid-index-label">#</span>,
         cell: ({ row }) => (
-          <span className="text-[var(--text-muted)] text-[11px] tabular-nums select-none">
+          <span className="datagrid-index-value">
             {currentPage * PAGE_SIZE + row.index + 1}
           </span>
         ),
-        size: 58,
+        size: 72,
       },
       ...data.columns.map((col, idx) => ({
         id: col.name,
@@ -171,6 +210,18 @@ export function DataGrid({
   });
 
   const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+  const visibleRowCount = data?.rows.length ?? 0;
+  const columnCount = data?.columns.length ?? 0;
+  const compactQuery = externalResult?.query?.replace(/\s+/g, " ").trim() ?? "";
+  const dataViewTitle = tableName ? tableName.split(".").pop() || tableName : "Result set";
+  const dataViewSubtitle = tableName
+    ? database
+      ? `Browsing rows from ${database}. Double-click a cell to copy its value.`
+      : "Browsing table rows. Double-click a cell to copy its value."
+    : compactQuery
+      ? compactQuery
+      : "Rows returned from the latest SQL execution.";
+  const activeSortLabel = sortColumn ? `${sortColumn} ${sortDir}` : "Natural order";
 
   if (!data && !isLoading) {
     return (
@@ -182,26 +233,45 @@ export function DataGrid({
   }
 
   return (
-    <div className="flex flex-col h-full !px-2">
-      <div className="flex-1 overflow-auto relative">
+    <div className="datagrid-shell">
+      <div className="datagrid-topbar">
+        <div className="datagrid-topbar-copy">
+          <span className="datagrid-topbar-kicker">{tableName ? "Table Data" : "Query Result"}</span>
+          <div className="datagrid-topbar-title-row">
+            <Database className="w-4 h-4 text-[var(--accent-hover)]" />
+            <h3 className="datagrid-topbar-title">{dataViewTitle}</h3>
+          </div>
+          <p className="datagrid-topbar-subtitle" title={dataViewSubtitle}>
+            {dataViewSubtitle}
+          </p>
+        </div>
+
+        <div className="datagrid-topbar-stats">
+          <span className="datagrid-stat-pill">{columnCount} columns</span>
+          <span className="datagrid-stat-pill">{visibleRowCount} loaded</span>
+          <span className={`datagrid-stat-pill ${sortColumn ? "active" : ""}`}>{activeSortLabel}</span>
+        </div>
+      </div>
+
+      <div className="datagrid-table-wrap">
         {isLoading && (
-          <div className="absolute inset-0 bg-[var(--bg-primary)]/70 flex items-center justify-center z-10 backdrop-blur-[1px]">
-            <div className="flex items-center gap-2.5 !px-4 !py-2.5 bg-[var(--bg-surface)] border border-white/10 rounded-md shadow-lg">
+          <div className="datagrid-loading-overlay">
+            <div className="datagrid-loading-card">
               <Loader2 className="!w-4 !h-4 animate-spin text-[var(--accent)]" />
               <span className="text-xs text-[var(--text-secondary)]">Loading data...</span>
             </div>
           </div>
         )}
 
-        <table className="w-full border-collapse text-[13px]">
-          <thead className="sticky top-0 z-[5]">
+        <table className="datagrid-table">
+          <thead className="datagrid-head">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
                 {hg.headers.map((header) => (
                   <th
                     key={header.id}
-                    className="!px-2.5 !py-2 text-left bg-[var(--bg-secondary)] border-b border-r border-[var(--border-color)] text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider whitespace-nowrap"
-                    style={{ width: header.getSize() }}
+                    className={`datagrid-th ${header.column.id === "_row_num" ? "datagrid-th-index" : ""}`}
+                    style={{ width: header.getSize(), minWidth: header.getSize() }}
                   >
                     {header.isPlaceholder
                       ? null
@@ -215,16 +285,12 @@ export function DataGrid({
             {table.getRowModel().rows.map((row, rowIdx) => (
               <tr
                 key={row.id}
-                className={`
-                  border-b border-[var(--border-color)] transition-colors
-                  hover:bg-[var(--bg-hover)]/25
-                  ${rowIdx % 2 !== 0 ? "bg-[rgba(255,255,255,0.015)]" : ""}
-                `}
+                className={`datagrid-row ${rowIdx % 2 !== 0 ? "alt" : ""}`}
               >
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className="!px-0 !py-0 border-r border-[var(--border-color)] max-w-[420px] relative"
+                    className={`datagrid-td ${cell.column.id === "_row_num" ? "datagrid-td-index" : ""}`}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
@@ -235,59 +301,59 @@ export function DataGrid({
         </table>
 
         {data && data.rows.length === 0 && (
-          <div className="flex items-center justify-center py-16 text-[var(--text-muted)] text-sm">
+          <div className="datagrid-empty">
             No rows to display
           </div>
         )}
       </div>
 
-      <div className="flex items-center justify-between !px-3 !py-2 bg-[rgba(255,255,255,0.02)] border-t border-[var(--border-color)] text-[11px] text-[var(--text-muted)] flex-shrink-0">
-        <div className="flex items-center !gap-3">
+      <div className="datagrid-footer">
+        <div className="datagrid-footer-meta">
           {data && (
             <>
-              <span className="font-semibold tabular-nums">
-                {data.rows.length} row{data.rows.length !== 1 ? "s" : ""}
+              <span className="datagrid-footer-pill strong">
+                {visibleRowCount} row{visibleRowCount !== 1 ? "s" : ""}
               </span>
               {totalRows > 0 && (
-                <span className="opacity-70">of {totalRows.toLocaleString()} total</span>
+                <span className="datagrid-footer-pill">of {totalRows.toLocaleString()} total</span>
               )}
               {data.execution_time_ms > 0 && (
-                <span className="text-[var(--success)]">{data.execution_time_ms}ms</span>
+                <span className="datagrid-footer-pill success">{data.execution_time_ms}ms</span>
               )}
             </>
           )}
         </div>
 
         {!externalResult && tableName && totalPages > 1 && (
-          <div className="flex items-center gap-0.5">
+          <div className="datagrid-pagination">
             <button
               onClick={() => setCurrentPage(0)}
               disabled={currentPage === 0}
-              className="btn-ghost p-1 disabled:opacity-20"
+              className="datagrid-page-btn"
             >
               <ChevronsLeft className="!w-3.5 !h-3.5" />
             </button>
             <button
               onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
               disabled={currentPage === 0}
-              className="btn-ghost p-1 disabled:opacity-20"
+              className="datagrid-page-btn"
             >
               <ChevronLeft className="!w-3.5 !h-3.5" />
             </button>
-            <span className="!px-2 tabular-nums font-semibold">
+            <span className="datagrid-page-status">
               {currentPage + 1} / {totalPages}
             </span>
             <button
               onClick={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
               disabled={currentPage >= totalPages - 1}
-              className="btn-ghost p-1 disabled:opacity-20"
+              className="datagrid-page-btn"
             >
               <ChevronRight className="!w-3.5 !h-3.5" />
             </button>
             <button
               onClick={() => setCurrentPage(totalPages - 1)}
               disabled={currentPage >= totalPages - 1}
-              className="btn-ghost p-1 disabled:opacity-20"
+              className="datagrid-page-btn"
             >
               <ChevronsRight className="!w-3.5 !h-3.5" />
             </button>

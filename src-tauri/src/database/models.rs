@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DatabaseType {
     MySQL,
@@ -24,8 +25,170 @@ pub struct ConnectionConfig {
     pub color: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ParsedConnectionUrl {
+    pub db_type: DatabaseType,
+    pub host: String,
+    pub port: Option<u16>,
+    pub username: String,
+    pub password: String,
+    pub database: String,
+    pub use_ssl: bool,
+}
+
+impl ParsedConnectionUrl {
+    /// Parse a full connection URL (e.g., postgresql://user:pass@host:5432/db?sslmode=require)
+    pub fn parse(url: &str) -> Result<Self, String> {
+        let url = url.trim();
+        if url.is_empty() {
+            return Err("Connection URL cannot be empty".to_string());
+        }
+
+        // Extract scheme
+        let (scheme, rest) = url.split_once("://")
+            .ok_or_else(|| "Invalid URL: missing scheme (e.g., postgresql://)".to_string())?;
+
+        let db_type = match scheme.to_lowercase().as_str() {
+            "postgresql" | "postgres" => DatabaseType::PostgreSQL,
+            "mysql" | "mariadb" => DatabaseType::MySQL,
+            "sqlite" => DatabaseType::SQLite,
+            _ => return Err(format!("Unsupported database scheme: {}", scheme)),
+        };
+
+        // Handle SQLite specially
+        if db_type == DatabaseType::SQLite {
+            return Ok(Self {
+                db_type: DatabaseType::SQLite,
+                host: String::new(),
+                port: None,
+                username: String::new(),
+                password: String::new(),
+                database: rest.to_string(),
+                use_ssl: false,
+            });
+        }
+
+        // Parse user:pass@host:port/database?params
+        let (auth_part, rest) = rest.split_once('@')
+            .ok_or_else(|| "Invalid URL: missing credentials or host".to_string())?;
+
+        // Parse username:password
+        let (username, password) = if let Some((u, p)) = auth_part.split_once(':') {
+            (
+                url_decode(u),
+                url_decode(p),
+            )
+        } else {
+            (url_decode(auth_part), String::new())
+        };
+
+        // Parse host:port/database?params
+        let (host_port, path_query) = rest.split_once('/')
+            .unwrap_or((rest, ""));
+
+        // Parse host and port
+        let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
+            // Handle IPv6 addresses like [::1]:5432
+            if h.starts_with('[') {
+                let closing = h.find(']')
+                    .ok_or_else(|| "Invalid URL: unclosed IPv6 address".to_string())?;
+                let ipv6_host = &h[1..closing];
+                let port_str = &h[closing+1..];
+                let port = port_str.parse().ok();
+                (ipv6_host.to_string(), port)
+            } else {
+                let port = p.parse().ok();
+                (h.to_string(), port)
+            }
+        } else {
+            (host_port.to_string(), None)
+        };
+
+        // Parse database and query params
+        let (database, use_ssl) = if let Some((db, query)) = path_query.split_once('?') {
+            let ssl = query.contains("sslmode=require") || query.contains("ssl=true") || query.contains("sslmode=verify-full");
+            (db.to_string(), ssl)
+        } else {
+            (path_query.to_string(), false)
+        };
+
+        // Default ports
+        let port = port.or_else(|| match db_type {
+            DatabaseType::MySQL => Some(3306),
+            DatabaseType::PostgreSQL => Some(5432),
+            DatabaseType::SQLite => None,
+        });
+
+        Ok(Self {
+            db_type,
+            host,
+            port,
+            username,
+            password,
+            database: database.to_string(),
+            use_ssl,
+        })
+    }
+}
+
+fn url_decode(s: &str) -> String {
+    // Simple URL decode - handle common cases
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            let hex: String = chars.by_ref().take(2).collect();
+            if hex.len() == 2 {
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    result.push(byte as char);
+                    continue;
+                }
+            }
+            result.push('%');
+            result.push_str(&hex);
+        } else if c == '+' {
+            result.push(' ');
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 #[allow(dead_code)]
 impl ConnectionConfig {
+    /// Create connection config from a full URL string
+    pub fn from_url(url: &str, name: Option<String>) -> Result<Self, String> {
+        let parsed = ParsedConnectionUrl::parse(url)?;
+
+        let id = Uuid::new_v4().to_string();
+        let db_type = parsed.db_type.clone();
+        let host = parsed.host.clone();
+        let database = parsed.database.clone();
+        let use_ssl = parsed.use_ssl;
+
+        Ok(Self {
+            id,
+            name: name.unwrap_or_else(|| {
+                if database.is_empty() {
+                    format!("{:?} {}", db_type, host)
+                } else {
+                    format!("{:?} {} / {}", db_type, host, database)
+                }
+            }),
+            db_type,
+            host: Some(host),
+            port: parsed.port,
+            username: Some(parsed.username),
+            password: Some(parsed.password),
+            database: if database.is_empty() { None } else { Some(database) },
+            file_path: if parsed.db_type == DatabaseType::SQLite { Some(parsed.database) } else { None },
+            use_ssl,
+            color: None,
+        })
+    }
+
     pub fn connection_url(&self) -> String {
         match self.db_type {
             DatabaseType::MySQL => {
@@ -34,10 +197,12 @@ impl ConnectionConfig {
                 let user = self.username.as_deref().unwrap_or("root");
                 let pass = self.password.as_deref().unwrap_or("");
                 let db = self.database.as_deref().unwrap_or("");
+                // Add sslmode for cloud MySQL connections
+                let ssl_param = if self.use_ssl { "?ssl=true" } else { "" };
                 if db.is_empty() {
-                    format!("mysql://{}:{}@{}:{}", user, pass, host, port)
+                    format!("mysql://{}:{}@{}:{}{}", user, pass, host, port, ssl_param)
                 } else {
-                    format!("mysql://{}:{}@{}:{}/{}", user, pass, host, port, db)
+                    format!("mysql://{}:{}@{}:{}/{}{}", user, pass, host, port, db, ssl_param)
                 }
             }
             DatabaseType::PostgreSQL => {
@@ -46,7 +211,9 @@ impl ConnectionConfig {
                 let user = self.username.as_deref().unwrap_or("postgres");
                 let pass = self.password.as_deref().unwrap_or("");
                 let db = self.database.as_deref().unwrap_or("postgres");
-                format!("postgres://{}:{}@{}:{}/{}", user, pass, host, port, db)
+                // Use postgresql:// scheme (more standard) with sslmode=require for cloud connections
+                let ssl_mode = if self.use_ssl { "?sslmode=require" } else { "" };
+                format!("postgresql://{}:{}@{}:{}/{}{}", user, pass, host, port, db, ssl_mode)
             }
             DatabaseType::SQLite => {
                 let path = self.file_path.as_deref().unwrap_or(":memory:");

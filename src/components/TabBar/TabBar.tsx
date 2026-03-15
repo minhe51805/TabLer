@@ -1,11 +1,19 @@
-import { X, Table, Code, Columns } from "lucide-react";
+import { Plus, X, Table, Code, Columns } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 
-export function TabBar() {
-  const { tabs, activeTabId, setActiveTab, removeTab, addTab, activeConnectionId } =
-    useAppStore();
+interface Props {
+  onNewQuery?: () => void;
+}
+
+export function TabBar({ onNewQuery }: Props) {
+  const { tabs, activeTabId, setActiveTab, removeTab, addTab, activeConnectionId } = useAppStore();
 
   const handleNewQuery = () => {
+    if (onNewQuery) {
+      onNewQuery();
+      return;
+    }
+
     if (!activeConnectionId) return;
     const id = `query-${Date.now()}`;
     addTab({
@@ -32,9 +40,14 @@ export function TabBar() {
 
   return (
     <div
-      className="flex h-10 items-stretch bg-[rgba(255,255,255,0.02)] border-b border-[var(--border-color)] overflow-x-auto flex-shrink-0"
+      className="flex h-11 items-stretch bg-[rgba(255,255,255,0.02)] border-b border-[var(--border-color)] overflow-x-auto flex-shrink-0"
       style={{ scrollbarWidth: "thin" }}
     >
+      <div className="tabbar-summary">
+        <span className="tabbar-summary-count">{tabs.length}</span>
+        <span>{tabs.length === 1 ? "tab" : "tabs"}</span>
+      </div>
+
       <div className="flex h-full items-stretch flex-1 min-w-0">
         {tabs.map((tab) => {
           const isActive = activeTabId === tab.id;
@@ -42,7 +55,7 @@ export function TabBar() {
             <div
               key={tab.id}
               className={[
-                "group relative flex h-full items-center !gap-2 !px-2 cursor-pointer",
+                "group relative flex h-full items-center gap-2.5 px-4 cursor-pointer",
                 "text-[12px] min-w-0 max-w-[240px] shrink-0 select-none transition-all duration-150",
                 "border-r border-[var(--border-color)] leading-none",
                 isActive
@@ -82,11 +95,11 @@ export function TabBar() {
       {activeConnectionId && (
         <button
           onClick={handleNewQuery}
-          className="w-20 mx-2 my-1 flex items-center justify-center gap-1.5 px-3 py-1 !justify-center rounded-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]
-            hover:bg-[rgba(122,162,255,0.18)] transition-colors text-[12px] shrink-0 leading-none"
+          className="mx-3 my-1.5 flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-[var(--text-secondary)] hover:text-[var(--text-primary)]
+            hover:bg-[rgba(122,162,255,0.18)] transition-colors text-[12px] shrink-0 leading-none border border-transparent hover:border-[rgba(122,162,255,0.26)]"
           title="New Query (Ctrl+N)"
         >
-          {/* <Plus className="w-3.5 h-3.5" /> */}
+          <Plus className="w-3.5 h-3.5" />
           Query
         </button>
       )}

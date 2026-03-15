@@ -1,4 +1,24 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+import {
+  AlertCircle,
+  Cable,
+  Database,
+  FolderTree,
+  PanelRightClose,
+  Plus,
+  RotateCcw,
+  Search,
+  Settings2,
+  Sparkles,
+  Terminal,
+  X,
+} from "lucide-react";
 import { useAppStore } from "./stores/appStore";
 import { ConnectionList } from "./components/ConnectionList";
 import { ConnectionForm } from "./components/ConnectionForm";
@@ -8,24 +28,9 @@ import { DataGrid } from "./components/DataGrid";
 import { SQLEditor } from "./components/SQLEditor";
 import { TableStructure } from "./components/TableStructure";
 import { TerminalPanel } from "./components/TerminalPanel";
-import {
-  Database,
-  Cable,
-  FolderTree,
-  AlertCircle,
-  X,
-  Terminal,
-  Sparkles,
-  Plus,
-  RotateCcw,
-  Filter,
-  Download,
-  Upload,
-  Search,
-  PanelRightClose,
-} from "lucide-react";
 import { AISettingsModal } from "./components/AISettingsModal";
 import { AISlidePanel } from "./components/AISlidePanel/AISlidePanel";
+import type { Tab } from "./types";
 import "./index.css";
 
 function App() {
@@ -39,6 +44,9 @@ function App() {
     error,
     clearError,
     loadSavedConnections,
+    addTab,
+    fetchDatabases,
+    fetchTables,
   } = useAppStore();
 
   const [showConnectionForm, setShowConnectionForm] = useState(false);
@@ -46,32 +54,94 @@ function App() {
   const [showAISlidePanel, setShowAISlidePanel] = useState(false);
   const [leftPanel, setLeftPanel] = useState<"connections" | "database">("connections");
   const [showEmbeddedTerminal, setShowEmbeddedTerminal] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(300);
 
-  const [sidebarWidth, setSidebarWidth] = useState(280);
   const isResizing = useRef(false);
   const startX = useRef(0);
-  const startWidth = useRef(280);
+  const startWidth = useRef(300);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    isResizing.current = true;
-    startX.current = e.clientX;
-    startWidth.current = sidebarWidth;
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, [sidebarWidth]);
+  const activeConn = connections.find((conn) => conn.id === activeConnectionId);
+  const isConnected = !!(activeConnectionId && connectedIds.has(activeConnectionId));
+  const queryTabCount = tabs.filter(
+    (tab) => tab.type === "query" && tab.connectionId === activeConnectionId,
+  ).length;
+
+  const handleMouseDown = useCallback(
+    (e: ReactMouseEvent) => {
+      if (isSidebarCollapsed) return;
+
+      isResizing.current = true;
+      startX.current = e.clientX;
+      startWidth.current = sidebarWidth;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [isSidebarCollapsed, sidebarWidth],
+  );
+
+  const handleNewQuery = useCallback(() => {
+    if (!activeConnectionId) return;
+
+    const nextIndex = queryTabCount + 1;
+    addTab({
+      id: `query-${crypto.randomUUID()}`,
+      type: "query",
+      title: nextIndex === 1 ? "Query" : `Query ${nextIndex}`,
+      connectionId: activeConnectionId,
+      database: currentDatabase || undefined,
+      content: "",
+    });
+  }, [activeConnectionId, addTab, currentDatabase, queryTabCount]);
+
+  const handleRefreshWorkspace = useCallback(async () => {
+    if (!activeConnectionId) return;
+
+    await fetchDatabases(activeConnectionId);
+    if (currentDatabase) {
+      await fetchTables(activeConnectionId, currentDatabase);
+    }
+  }, [activeConnectionId, currentDatabase, fetchDatabases, fetchTables]);
+
+  const handleFocusExplorerSearch = useCallback(() => {
+    if (!isConnected) return;
+
+    setIsSidebarCollapsed(false);
+    setLeftPanel("database");
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("focus-explorer-search"));
+    }, 0);
+  }, [isConnected]);
+
+  const handleToggleEmbeddedTerminal = useCallback(() => {
+    setShowEmbeddedTerminal((visible) => {
+      const nextVisible = !visible;
+      if (nextVisible) {
+        window.dispatchEvent(new CustomEvent("close-sql-terminal"));
+      }
+      return nextVisible;
+    });
+  }, []);
+
+  const handleToggleSidebar = useCallback(() => {
+    setIsSidebarCollapsed((collapsed) => !collapsed);
+  }, []);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing.current) return;
+
       const delta = e.clientX - startX.current;
-      const newW = Math.max(220, Math.min(500, startWidth.current + delta));
-      setSidebarWidth(newW);
+      const nextWidth = Math.max(260, Math.min(440, startWidth.current + delta));
+      setSidebarWidth(nextWidth);
     };
+
     const handleMouseUp = () => {
       isResizing.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
+
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
     return () => {
@@ -81,107 +151,98 @@ function App() {
   }, []);
 
   useEffect(() => {
-    loadSavedConnections();
-  }, []);
+    void loadSavedConnections();
+  }, [loadSavedConnections]);
 
-  // Global keyboard shortcut: Ctrl+Shift+K to open AI Slide Panel
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'k') {
+      const metaPressed = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+
+      if (metaPressed && e.shiftKey && key === "k") {
         e.preventDefault();
-        setShowAISlidePanel(prev => !prev);
+        setShowAISlidePanel((prev) => !prev);
+        return;
+      }
+
+      if (metaPressed && key === "n") {
+        e.preventDefault();
+        handleNewQuery();
+        return;
+      }
+
+      if (metaPressed && key === "b") {
+        e.preventDefault();
+        handleToggleSidebar();
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
-  // Listen for open AI slide panel events from child components
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleNewQuery, handleToggleSidebar]);
+
   useEffect(() => {
     const handleOpenAI = () => setShowAISlidePanel(true);
-    window.addEventListener('open-ai-slide-panel', handleOpenAI);
-    return () => window.removeEventListener('open-ai-slide-panel', handleOpenAI);
-  });
-
-  // Toolbar button handlers
-  useEffect(() => {
-    const handleNewTab = () => {
-      // Trigger new tab creation
-      const event = new CustomEvent('new-tab');
-      window.dispatchEvent(event);
-    };
-    const handleRefreshTables = () => {
-      window.dispatchEvent(new CustomEvent('refresh-tables'));
-    };
-    const handleSearch = () => {
-      window.dispatchEvent(new CustomEvent('focus-search'));
-    };
-    const handleFilter = () => {
-      window.dispatchEvent(new CustomEvent('toggle-filter'));
-    };
-    const handleExport = () => {
-      window.dispatchEvent(new CustomEvent('export-data'));
-    };
-    const handleImport = () => {
-      window.dispatchEvent(new CustomEvent('import-data'));
-    };
-    const handleToggleRight = () => {
-      // Toggle right panel visibility - dispatch to Sidebar component
-      window.dispatchEvent(new CustomEvent('toggle-right-panel'));
-    };
-
-    window.addEventListener('new-tab', handleNewTab);
-    window.addEventListener('refresh-tables', handleRefreshTables);
-    window.addEventListener('focus-search', handleSearch);
-    window.addEventListener('toggle-filter', handleFilter);
-    window.addEventListener('export-data', handleExport);
-    window.addEventListener('import-data', handleImport);
-    window.addEventListener('toggle-right-panel', handleToggleRight);
-
-    return () => {
-      window.removeEventListener('new-tab', handleNewTab);
-      window.removeEventListener('refresh-tables', handleRefreshTables);
-      window.removeEventListener('focus-search', handleSearch);
-      window.removeEventListener('toggle-filter', handleFilter);
-      window.removeEventListener('export-data', handleExport);
-      window.removeEventListener('import-data', handleImport);
-      window.removeEventListener('toggle-right-panel', handleToggleRight);
-    };
-  }, [isConnected]);
+    window.addEventListener("open-ai-slide-panel", handleOpenAI);
+    return () => window.removeEventListener("open-ai-slide-panel", handleOpenAI);
+  }, []);
 
   useEffect(() => {
     if (activeConnectionId && connectedIds.has(activeConnectionId)) {
       setLeftPanel("database");
-    } else {
-      setLeftPanel("connections");
+      return;
     }
+
+    setLeftPanel("connections");
   }, [activeConnectionId, connectedIds]);
 
-  const activeTab = tabs.find((t) => t.id === activeTabId);
-  const activeConn = connections.find((c) => c.id === activeConnectionId);
-  const isConnected = !!(activeConnectionId && connectedIds.has(activeConnectionId));
-
   const renderTabContent = () => {
-    if (!activeTab || !activeConnectionId) {
+    if (!isConnected) {
       return (
-        <div className="flex flex-col items-center justify-center h-full text-[var(--text-secondary)] select-none">
+        <div className="workspace-empty">
           <Database className="w-16 h-16 mb-5 opacity-35 text-[var(--accent)]" />
-          <p className="text-base font-semibold opacity-95">No tab open</p>
-          <p className="text-xs mt-2 opacity-90">
-            Open a table from the sidebar or press{" "}
-            <kbd className="px-1.5 py-0.5 bg-[var(--bg-surface)] rounded-sm text-[10px] font-mono">
-              Ctrl+N
-            </kbd>{" "}
-            for a new query
+          <p className="text-base font-semibold opacity-95">No active connection</p>
+          <p className="text-xs mt-2 opacity-90 max-w-md text-center">
+            Start by creating or opening a connection. Once connected, Explorer and SQL Editor
+            become available immediately.
           </p>
+          <div className="workspace-empty-actions">
+            <button onClick={() => setShowConnectionForm(true)} className="btn btn-primary">
+              <Plus className="w-3.5 h-3.5" />
+              New Connection
+            </button>
+          </div>
         </div>
       );
     }
 
-    return null;
+    return (
+      <div className="workspace-empty">
+        <Sparkles className="w-16 h-16 mb-5 opacity-35 text-[var(--accent)]" />
+        <p className="text-base font-semibold opacity-95">Workspace is ready</p>
+        <p className="text-xs mt-2 opacity-90 max-w-lg text-center">
+          Create a new query to run SQL, or open a table from Explorer to inspect data and
+          structure.
+        </p>
+        <div className="workspace-empty-actions">
+          <button onClick={handleNewQuery} className="btn btn-primary">
+            <Plus className="w-3.5 h-3.5" />
+            New Query
+          </button>
+          <button onClick={handleFocusExplorerSearch} className="btn btn-secondary">
+            <Search className="w-3.5 h-3.5" />
+            Find Table
+          </button>
+        </div>
+        <p className="text-[11px] text-[var(--text-muted)] mt-4">
+          Shortcuts: <kbd className="kbd">Ctrl+N</kbd> creates a query,{" "}
+          <kbd className="kbd">Ctrl+Shift+K</kbd> opens AI.
+        </p>
+      </div>
+    );
   };
 
-  const renderSingleTab = (tab: import("./types").Tab) => {
+  const renderSingleTab = (tab: Tab) => {
     switch (tab.type) {
       case "query":
         return (
@@ -212,7 +273,7 @@ function App() {
           <TableStructure
             key={tab.id}
             connectionId={tab.connectionId}
-            tableName={tab.tableName!}
+            tableName={tab.tableName || ""}
             database={tab.database}
           />
         );
@@ -221,122 +282,88 @@ function App() {
     }
   };
 
+  const renderSidebarRail = () => (
+    <div className="sidebar-rail">
+      <button
+        type="button"
+        className={`sidebar-rail-btn ${leftPanel === "connections" ? "active" : ""}`}
+        onClick={() => {
+          setIsSidebarCollapsed(false);
+          setLeftPanel("connections");
+        }}
+        title="Connections"
+      >
+        <Cable className="w-4 h-4" />
+      </button>
+
+      <button
+        type="button"
+        className={`sidebar-rail-btn ${leftPanel === "database" ? "active" : ""}`}
+        onClick={() => {
+          if (!isConnected) return;
+          setIsSidebarCollapsed(false);
+          setLeftPanel("database");
+        }}
+        title="Explorer"
+        disabled={!isConnected}
+      >
+        <FolderTree className="w-4 h-4" />
+      </button>
+
+      <button
+        type="button"
+        className="sidebar-rail-btn"
+        onClick={() => setShowConnectionForm(true)}
+        title="New Connection"
+      >
+        <Plus className="w-4 h-4" />
+      </button>
+
+      <div className="sidebar-rail-spacer" />
+
+      <button
+        type="button"
+        className="sidebar-rail-btn"
+        onClick={handleToggleSidebar}
+        title="Expand Sidebar"
+      >
+        <PanelRightClose className="w-4 h-4 rotate-180" />
+      </button>
+    </div>
+  );
+
   return (
     <div className="app-root">
-      <header className="titlebar" data-tauri-drag-region>
+      <header className="titlebar">
         <div className="titlebar-brand" data-tauri-drag-region>
-          <Database className="!w-4 !h-4 text-[var(--accent)]" />
+          <Database className="w-4 h-4 text-[var(--accent)]" />
           <span className="titlebar-name">TableR</span>
         </div>
 
-        <nav className="titlebar-nav">
-          <button
-            onClick={() => setLeftPanel("connections")}
-            className={`titlebar-nav-btn ${leftPanel === "connections" ? "active" : ""}`}
-          >
-            <Cable className="!w-3.5 !h-3.5" />
-            <span>Connections</span>
-          </button>
-          <button
-            onClick={() => setLeftPanel("database")}
-            disabled={!isConnected}
-            className={`titlebar-nav-btn ${leftPanel === "database" ? "active" : ""}`}
-          >
-            <FolderTree className="w-3.5 h-3.5" />
-            <span>Explorer</span>
-          </button>
+
+
+        <div className="titlebar-spacer" data-tauri-drag-region />
+
+        <div className="titlebar-actions">
           <button
             onClick={() => setShowAISettings(true)}
-            className="titlebar-nav-btn"
+            className="titlebar-icon-btn"
             title="AI Settings"
           >
-            <Sparkles className="w-3.5 h-3.5" />
+            <Settings2 className="w-4 h-4" />
           </button>
 
           <button
-            onClick={() => {
-              // Trigger new tab
-              window.dispatchEvent(new CustomEvent('new-tab'));
-            }}
-            className="titlebar-nav-btn"
-            title="New Tab"
+            onClick={handleToggleSidebar}
+            className="titlebar-icon-btn"
+            title={isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           >
-            <Plus className="w-3.5 h-3.5" />
+            <PanelRightClose className={`w-4 h-4 ${isSidebarCollapsed ? "rotate-180" : ""}`} />
           </button>
-
-          <button
-            onClick={() => {
-              // Trigger refresh tables
-              window.dispatchEvent(new CustomEvent('refresh-tables'));
-            }}
-            disabled={!isConnected}
-            className="titlebar-nav-btn"
-            title="Refresh Tables"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            onClick={() => {
-              // Focus search
-              window.dispatchEvent(new CustomEvent('focus-search'));
-            }}
-            disabled={!isConnected}
-            className="titlebar-nav-btn"
-            title="Search Tables"
-          >
-            <Search className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            onClick={() => {
-              // Toggle filter panel
-              window.dispatchEvent(new CustomEvent('toggle-filter'));
-            }}
-            disabled={!isConnected}
-            className="titlebar-nav-btn"
-            title="Filters"
-          >
-            <Filter className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            onClick={() => {
-              // Export
-              window.dispatchEvent(new CustomEvent('export-data'));
-            }}
-            disabled={!isConnected}
-            className="titlebar-nav-btn"
-            title="Export"
-          >
-            <Download className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            onClick={() => {
-              // Import
-              window.dispatchEvent(new CustomEvent('import-data'));
-            }}
-            disabled={!isConnected}
-            className="titlebar-nav-btn"
-            title="Import"
-          >
-            <Upload className="w-3.5 h-3.5" />
-          </button>
-
-          <button
-            onClick={() => {
-              // Toggle right panel
-            }}
-            className="titlebar-nav-btn"
-            title="Toggle Sidebar"
-          >
-            <PanelRightClose className="w-3.5 h-3.5" style={{ transform: 'rotate(180deg)' }} />
-          </button>
-        </nav>
+        </div>
 
         {isConnected && activeConn && (
-          <div className="titlebar-badge" data-tauri-drag-region>
+          <div className="titlebar-badge">
             <span
               className="w-2 h-2 rounded-sm shrink-0"
               style={{ backgroundColor: activeConn.color || "var(--success)" }}
@@ -359,21 +386,77 @@ function App() {
         </div>
       )}
 
-      <div className="main-container !px-2">
-        <aside className="sidebar" style={{ width: sidebarWidth }}>
-          {leftPanel === "connections" ? (
+      <div className="main-container">
+        <aside
+          className={`sidebar ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}
+          style={{ width: isSidebarCollapsed ? 76 : sidebarWidth }}
+        >
+          {isSidebarCollapsed ? (
+            renderSidebarRail()
+          ) : leftPanel === "connections" ? (
             <ConnectionList onNewConnection={() => setShowConnectionForm(true)} />
           ) : (
             <Sidebar />
           )}
         </aside>
 
-        <div className="resize-handle" onMouseDown={handleMouseDown}>
-          <div className="resize-handle-line" />
-        </div>
+        {!isSidebarCollapsed && (
+          <div className="resize-handle" onMouseDown={handleMouseDown}>
+            <div className="resize-handle-line" />
+          </div>
+        )}
 
         <main className="main-content">
-          <TabBar />
+          <div className="workspace-toolbar">
+            <div className="workspace-toolbar-actions">
+              <button
+                onClick={handleNewQuery}
+                disabled={!isConnected}
+                className="toolbar-btn primary"
+                title="New Query (Ctrl+N)"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>New Query</span>
+              </button>
+
+              <button
+                onClick={() => void handleRefreshWorkspace()}
+                disabled={!isConnected}
+                className="toolbar-btn"
+                title="Refresh"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                onClick={handleFocusExplorerSearch}
+                disabled={!isConnected}
+                className="toolbar-btn"
+                title="Find Table"
+              >
+                <Search className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                onClick={() => setShowAISlidePanel(true)}
+                className="toolbar-btn"
+                title="Ask AI (Ctrl+Shift+K)"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+              </button>
+
+              <button
+                onClick={handleToggleEmbeddedTerminal}
+                className="toolbar-btn"
+                title="Toggle Terminal"
+              >
+                <Terminal className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          <TabBar onNewQuery={handleNewQuery} />
+
           <div className="tab-content" style={{ display: showEmbeddedTerminal ? "none" : "block" }}>
             {tabs.length === 0 || !activeTabId ? (
               renderTabContent()
@@ -411,44 +494,33 @@ function App() {
           {isConnected && activeConn && (
             <span className="statusbar-info">
               {activeConn.db_type.toUpperCase()}
-              {currentDatabase ? ` · ${currentDatabase}` : ""}
+              {currentDatabase ? ` | ${currentDatabase}` : ""}
             </span>
           )}
         </div>
+
         <div className="statusbar-right">
           <button
             type="button"
             className="terminal-launch-btn"
-            onClick={() => {
-              setShowEmbeddedTerminal((v) => {
-                const newValue = !v;
-                if (newValue) {
-                  // When terminal large is opened, close any terminal in SQL Editor
-                  // We'll use a custom event to notify SQL Editor
-                  window.dispatchEvent(new CustomEvent("close-sql-terminal"));
-                }
-                return newValue;
-              });
-            }}
+            onClick={handleToggleEmbeddedTerminal}
             title="Toggle embedded terminal"
             aria-label="Toggle embedded terminal"
           >
             <Terminal className="w-4 h-4" />
           </button>
+          <span className="statusbar-shortcuts">
+            <kbd className="kbd">Ctrl+N</kbd>
+            <kbd className="kbd">Ctrl+B</kbd>
+            <kbd className="kbd">Ctrl+Shift+K</kbd>
+          </span>
           <span>TableR v0.1.0</span>
         </div>
       </footer>
 
-      {showConnectionForm && (
-        <ConnectionForm onClose={() => setShowConnectionForm(false)} />
-      )}
-      {showAISettings && (
-        <AISettingsModal onClose={() => setShowAISettings(false)} />
-      )}
-      <AISlidePanel
-        isOpen={showAISlidePanel}
-        onClose={() => setShowAISlidePanel(false)}
-      />
+      {showConnectionForm && <ConnectionForm onClose={() => setShowConnectionForm(false)} />}
+      {showAISettings && <AISettingsModal onClose={() => setShowAISettings(false)} />}
+      <AISlidePanel isOpen={showAISlidePanel} onClose={() => setShowAISlidePanel(false)} />
     </div>
   );
 }

@@ -291,7 +291,6 @@ impl ConnectionConfig {
                     }
                 }
             }
-            _ => Err(format!("{:?} connections are not wired into this build yet.", self.db_type)),
         }
 
         Ok(())

@@ -32,6 +32,7 @@ interface Props {
 
 type SectionKey = "columns" | "indexes" | "foreign_keys";
 type DefaultMode = "keep" | "set" | "drop";
+type SqlDialectFamily = "mysql" | "postgresql" | "sqlite";
 
 interface ColumnEditorState {
   originalName: string;
@@ -125,21 +126,46 @@ function asBoolean(value: string | number | boolean | null | undefined) {
   return false;
 }
 
+function resolveSqlDialect(dbType: DatabaseType): SqlDialectFamily {
+  switch (dbType) {
+    case "mysql":
+    case "mariadb":
+      return "mysql";
+    case "sqlite":
+    case "duckdb":
+    case "libsql":
+    case "cloudflared1":
+      return "sqlite";
+    default:
+      return "postgresql";
+  }
+}
+
+function isPostgresCompatibleDatabase(dbType: DatabaseType) {
+  return (
+    dbType === "postgresql" ||
+    dbType === "cockroachdb" ||
+    dbType === "greenplum" ||
+    dbType === "redshift"
+  );
+}
+
 function quoteIdentifier(dbType: DatabaseType, value: string) {
   const normalized = value.trim();
-  if (dbType === "mysql") {
+  if (resolveSqlDialect(dbType) === "mysql") {
     return `\`${normalized.replace(/`/g, "``")}\``;
   }
   return `"${normalized.replace(/"/g, "\"\"")}"`;
 }
 
 function qualifyTableName(dbType: DatabaseType, tableName: string, database?: string) {
+  const dialect = resolveSqlDialect(dbType);
   const parts = tableName
     .split(".")
     .map((part) => part.trim())
     .filter(Boolean);
 
-  if (dbType === "mysql" && parts.length === 1 && database) {
+  if (dialect === "mysql" && parts.length === 1 && database) {
     parts.unshift(database);
   }
 
@@ -153,7 +179,9 @@ function buildColumnAlterStatements(
   original: ColumnDetail,
   editor: ColumnEditorState
 ): BuildColumnSqlResult {
-  if (dbType === "sqlite") {
+  const dialect = resolveSqlDialect(dbType);
+
+  if (dialect === "sqlite") {
     return {
       statements: [],
       error: "SQLite column changes are not wired into direct actions yet.",
@@ -185,7 +213,7 @@ function buildColumnAlterStatements(
     currentName = nextName;
   }
 
-  if (dbType === "postgresql") {
+  if (dialect === "postgresql") {
     if (nextType !== originalType) {
       statements.push(
         `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} TYPE ${nextType}`
@@ -380,7 +408,7 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
   const structureKey = `${connectionId}|${database || ""}|${tableName}`;
   const displayTableName = tableName.split(".").pop() || tableName;
   const { schema: tableSchema } = splitQualifiedTableName(tableName);
-  const canFastLoadColumns = dbType === "postgresql";
+  const canFastLoadColumns = isPostgresCompatibleDatabase(dbType);
 
   const [columns, setColumns] = useState<ColumnDetail[]>([]);
   const [indexes, setIndexes] = useState<IndexInfo[]>([]);

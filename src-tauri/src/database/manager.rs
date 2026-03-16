@@ -24,17 +24,28 @@ impl DatabaseManager {
 
     /// Connect to a database using the provided config
     pub async fn connect(&self, config: &ConnectionConfig) -> Result<()> {
-        let url = config.connection_url();
         let driver: Box<dyn DatabaseDriver> = match config.db_type {
-            DatabaseType::MySQL => {
+            DatabaseType::MySQL | DatabaseType::MariaDB => {
+                let url = config.connection_url().map_err(anyhow::Error::msg)?;
                 Box::new(MySqlDriver::connect(&url, config.database.as_deref()).await?)
             }
-            DatabaseType::PostgreSQL => {
+            DatabaseType::PostgreSQL
+            | DatabaseType::CockroachDB
+            | DatabaseType::Greenplum
+            | DatabaseType::Redshift => {
+                let url = config.connection_url().map_err(anyhow::Error::msg)?;
                 Box::new(PostgresDriver::connect(&url, config.database.as_deref()).await?)
             }
             DatabaseType::SQLite => {
+                let url = config.connection_url().map_err(anyhow::Error::msg)?;
                 let path = config.file_path.as_deref().unwrap_or(":memory:");
                 Box::new(SqliteDriver::connect(&url, path).await?)
+            }
+            _ => {
+                return Err(anyhow!(
+                    "{:?} connections are not implemented in this build yet.",
+                    config.db_type
+                ));
             }
         };
 

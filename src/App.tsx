@@ -29,13 +29,22 @@ import { ConnectionForm } from "./components/ConnectionForm";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { DataGrid } from "./components/DataGrid";
-import { SQLEditor } from "./components/SQLEditor";
+import { SQLEditor, type QueryEditorSessionState } from "./components/SQLEditor";
 import { TableStructure } from "./components/TableStructure";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { AISettingsModal } from "./components/AISettingsModal";
 import { AISlidePanel } from "./components/AISlidePanel/AISlidePanel";
 import type { Tab } from "./types";
 import "./index.css";
+
+interface QueryChromeState {
+  isRunning: boolean;
+  executionTimeMs?: number;
+  rowCount?: number;
+  affectedRows?: number;
+  queryCount?: number;
+  sandboxed?: boolean;
+}
 
 function App() {
   const {
@@ -62,6 +71,8 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [isWindowFocused, setIsWindowFocused] = useState(true);
+  const [queryChromeByTab, setQueryChromeByTab] = useState<Record<string, QueryChromeState>>({});
+  const [querySessionByTab, setQuerySessionByTab] = useState<Record<string, QueryEditorSessionState>>({});
 
   const isResizing = useRef(false);
   const startX = useRef(0);
@@ -71,6 +82,11 @@ function App() {
   const activeConn = connections.find((conn) => conn.id === activeConnectionId);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
   const isConnected = !!(activeConnectionId && connectedIds.has(activeConnectionId));
+  const isQueryWorkspace = activeTab?.type === "query";
+  const activeQueryChrome =
+    activeTab?.type === "query" ? queryChromeByTab[activeTab.id] ?? { isRunning: false } : null;
+  const activeQuerySession =
+    activeTab?.type === "query" ? querySessionByTab[activeTab.id] ?? null : null;
   const queryTabCount = tabs.filter(
     (tab) => tab.type === "query" && tab.connectionId === activeConnectionId,
   ).length;
@@ -129,6 +145,93 @@ function App() {
       }
       return nextVisible;
     });
+  }, []);
+
+  const handleToggleWorkspaceTerminal = useCallback(() => {
+    if (isQueryWorkspace) {
+      setShowEmbeddedTerminal(false);
+      window.dispatchEvent(new CustomEvent("toggle-sql-terminal"));
+      return;
+    }
+
+    handleToggleEmbeddedTerminal();
+  }, [handleToggleEmbeddedTerminal, isQueryWorkspace]);
+
+  const handleRunActiveQuery = useCallback(() => {
+    if (activeTab?.type !== "query") return;
+
+    window.dispatchEvent(
+      new CustomEvent("execute-sql-tab", {
+        detail: { tabId: activeTab.id },
+      }),
+    );
+  }, [activeTab]);
+
+  const handleQueryChromeChange = useCallback((tabId: string, state: QueryChromeState) => {
+    setQueryChromeByTab((prev) => {
+      const current = prev[tabId];
+      if (
+        current?.isRunning === state.isRunning &&
+        current?.executionTimeMs === state.executionTimeMs &&
+        current?.rowCount === state.rowCount &&
+        current?.affectedRows === state.affectedRows &&
+        current?.queryCount === state.queryCount &&
+        current?.sandboxed === state.sandboxed
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [tabId]: state,
+      };
+    });
+  }, []);
+
+  const handleQuerySessionChange = useCallback((tabId: string, state: QueryEditorSessionState) => {
+    setQuerySessionByTab((prev) => {
+      const current = prev[tabId];
+      if (
+        current?.result === state.result &&
+        current?.error === state.error &&
+        current?.queryCount === state.queryCount &&
+        current?.editorHeight === state.editorHeight &&
+        current?.showTerminal === state.showTerminal &&
+        current?.sandboxEnabled === state.sandboxEnabled
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [tabId]: state,
+      };
+    });
+  }, []);
+
+  const handleToggleActiveQuerySandbox = useCallback(() => {
+    if (activeTab?.type !== "query") return;
+
+    setQuerySessionByTab((prev) => {
+      const current = prev[activeTab.id];
+      const nextSandboxEnabled = !(current?.sandboxEnabled ?? true);
+
+      return {
+        ...prev,
+        [activeTab.id]: {
+          result: current?.result ?? null,
+          error: current?.error ?? null,
+          queryCount: current?.queryCount ?? 0,
+          editorHeight: current?.editorHeight ?? 42,
+          showTerminal: current?.showTerminal ?? false,
+          sandboxEnabled: nextSandboxEnabled,
+        },
+      };
+    });
+  }, [activeTab]);
+
+  const handleOpenAISlidePanel = useCallback(() => {
+    setShowAISlidePanel(true);
   }, []);
 
   const handleToggleSidebar = useCallback(() => {
@@ -229,9 +332,10 @@ function App() {
       const metaPressed = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
 
-      if (metaPressed && e.shiftKey && key === "k") {
+      if (metaPressed && !e.altKey && key === "p") {
         e.preventDefault();
-        setShowAISlidePanel((prev) => !prev);
+        e.stopPropagation();
+        handleOpenAISlidePanel();
         return;
       }
 
@@ -247,15 +351,15 @@ function App() {
       }
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleNewQuery, handleToggleSidebar]);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [handleNewQuery, handleOpenAISlidePanel, handleToggleSidebar]);
 
   useEffect(() => {
-    const handleOpenAI = () => setShowAISlidePanel(true);
+    const handleOpenAI = () => handleOpenAISlidePanel();
     window.addEventListener("open-ai-slide-panel", handleOpenAI);
     return () => window.removeEventListener("open-ai-slide-panel", handleOpenAI);
-  }, []);
+  }, [handleOpenAISlidePanel]);
 
   useEffect(() => {
     if (!isDesktopWindow) return;
@@ -308,6 +412,30 @@ function App() {
 
     setLeftPanel("connections");
   }, [activeConnectionId, connectedIds]);
+
+  useEffect(() => {
+    const liveQueryTabIds = new Set(
+      tabs.filter((tab) => tab.type === "query").map((tab) => tab.id)
+    );
+
+    setQueryChromeByTab((prev) => {
+      const prevKeys = Object.keys(prev);
+      if (prevKeys.length === liveQueryTabIds.size && prevKeys.every((tabId) => liveQueryTabIds.has(tabId))) {
+        return prev;
+      }
+      const nextEntries = Object.entries(prev).filter(([tabId]) => liveQueryTabIds.has(tabId));
+      return Object.fromEntries(nextEntries);
+    });
+
+    setQuerySessionByTab((prev) => {
+      const prevKeys = Object.keys(prev);
+      if (prevKeys.length === liveQueryTabIds.size && prevKeys.every((tabId) => liveQueryTabIds.has(tabId))) {
+        return prev;
+      }
+      const nextEntries = Object.entries(prev).filter(([tabId]) => liveQueryTabIds.has(tabId));
+      return Object.fromEntries(nextEntries);
+    });
+  }, [tabs]);
 
   const renderTabContent = () => {
     if (!isConnected) {
@@ -386,21 +514,6 @@ function App() {
             </div>
           </div>
 
-          <div className="workspace-empty-actions">
-            <button onClick={handleNewQuery} className="btn btn-primary">
-              <Plus className="w-3.5 h-3.5" />
-              New Query
-            </button>
-            <button onClick={handleFocusExplorerSearch} className="btn btn-secondary">
-              <Search className="w-3.5 h-3.5" />
-              Find Table
-            </button>
-            <button onClick={() => setShowAISlidePanel(true)} className="btn btn-secondary">
-              <Sparkles className="w-3.5 h-3.5" />
-              Ask AI
-            </button>
-          </div>
-
           <div className="workspace-empty-grid">
             <div className="workspace-empty-card">
               <span className="workspace-empty-card-kicker">SQL Editor</span>
@@ -433,7 +546,7 @@ function App() {
                 Use AI when you want faster drafts, query explanations, or schema-aware help.
               </p>
               <div className="workspace-empty-card-shortcut">
-                <kbd className="kbd">Ctrl+Shift+K</kbd>
+                <kbd className="kbd">Ctrl+Shift+P</kbd>
                 <span>open AI</span>
               </div>
             </div>
@@ -450,9 +563,12 @@ function App() {
           <SQLEditor
             key={tab.id}
             connectionId={tab.connectionId}
-            database={tab.database}
             initialContent={tab.content || ""}
             tabId={tab.id}
+            initialState={querySessionByTab[tab.id]}
+            sandboxEnabled={querySessionByTab[tab.id]?.sandboxEnabled ?? true}
+            onChromeChange={(state) => handleQueryChromeChange(tab.id, state)}
+            onStateChange={(state) => handleQuerySessionChange(tab.id, state)}
             onTerminalToggle={(show) => {
               if (show) {
                 setShowEmbeddedTerminal(false);
@@ -683,74 +799,112 @@ function App() {
                     {currentDatabase ? ` / ${currentDatabase}` : ""}
                   </span>
                 )}
+                {activeQueryChrome?.executionTimeMs !== undefined && (
+                  <div className="workspace-toolbar-status">
+                    <span className="workspace-toolbar-status-pill success">Success</span>
+                    {activeQueryChrome.sandboxed && (
+                      <span className="workspace-toolbar-status-pill warning">Sandbox</span>
+                    )}
+                    <span className="workspace-toolbar-status-pill">
+                      {activeQueryChrome.executionTimeMs}ms
+                    </span>
+                    {typeof activeQueryChrome.rowCount === "number" && activeQueryChrome.rowCount > 0 && (
+                      <span className="workspace-toolbar-status-pill">
+                        {activeQueryChrome.rowCount} rows
+                      </span>
+                    )}
+                    {typeof activeQueryChrome.affectedRows === "number" && activeQueryChrome.affectedRows > 0 && (
+                      <span className="workspace-toolbar-status-pill warning">
+                        {activeQueryChrome.affectedRows} affected
+                      </span>
+                    )}
+                    {typeof activeQueryChrome.queryCount === "number" && activeQueryChrome.queryCount > 1 && (
+                      <span className="workspace-toolbar-status-pill">
+                        #{activeQueryChrome.queryCount}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="workspace-toolbar-actions">
-              <button
-                onClick={handleNewQuery}
-                disabled={!isConnected}
-                className="toolbar-btn primary"
-                title="New Query (Ctrl+N)"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>New Query</span>
-              </button>
+              {isConnected && (
+                <>
+                  <button
+                    onClick={handleNewQuery}
+                    className="toolbar-btn primary"
+                    title="New Query (Ctrl+N)"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>New Query</span>
+                  </button>
 
-              <button
-                onClick={() => void handleRefreshWorkspace()}
-                disabled={!isConnected}
-                className="toolbar-btn"
-                title="Refresh"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
+                  <div className="workspace-toolbar-utility">
+                    <button
+                      onClick={() => void handleRefreshWorkspace()}
+                      className="toolbar-btn icon-only"
+                      title="Refresh workspace"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
 
-              <button
-                onClick={handleFocusExplorerSearch}
-                disabled={!isConnected}
-                className="toolbar-btn"
-                title="Find Table"
-              >
-                <Search className="w-3.5 h-3.5" />
-              </button>
+                    <button
+                      onClick={handleFocusExplorerSearch}
+                      className="toolbar-btn icon-only"
+                      title="Find Table"
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                    </button>
 
-              <button
-                onClick={() => setShowAISlidePanel(true)}
-                className="toolbar-btn"
-                title="Ask AI (Ctrl+Shift+K)"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-              </button>
+                    <button
+                      onClick={handleOpenAISlidePanel}
+                      className="toolbar-btn icon-only"
+                      title="Ask AI (Ctrl+Shift+P or Ctrl+P)"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                    </button>
 
-              <button
-                onClick={handleToggleEmbeddedTerminal}
-                className="toolbar-btn"
-                title="Toggle Terminal"
-              >
-                <Terminal className="w-3.5 h-3.5" />
-              </button>
+                    {isQueryWorkspace && (
+                      <button
+                        onClick={handleToggleWorkspaceTerminal}
+                        className="toolbar-btn icon-only"
+                        title="Toggle SQL terminal (Ctrl+J)"
+                      >
+                        <Terminal className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
-          <TabBar onNewQuery={handleNewQuery} />
+          <TabBar
+            queryChrome={activeQueryChrome}
+            sandboxEnabled={activeQuerySession?.sandboxEnabled ?? true}
+            onToggleSandbox={handleToggleActiveQuerySandbox}
+            onRunActiveQuery={handleRunActiveQuery}
+          />
 
           <div className="tab-content" style={{ display: showEmbeddedTerminal ? "none" : "block" }}>
             {tabs.length === 0 || !activeTabId ? (
               renderTabContent()
             ) : (
               tabs.map((tab) => (
-                <div
-                  key={tab.id}
-                  style={{
-                    display: tab.id === activeTabId ? "flex" : "none",
-                    flexDirection: "column",
-                    height: "100%",
-                    width: "100%",
-                  }}
-                >
-                  {renderSingleTab(tab, tab.id === activeTabId)}
-                </div>
+                tab.type === "query" && tab.id !== activeTabId ? null : (
+                  <div
+                    key={tab.id}
+                    style={{
+                      display: tab.id === activeTabId ? "flex" : "none",
+                      flexDirection: "column",
+                      height: "100%",
+                      width: "100%",
+                    }}
+                  >
+                    {renderSingleTab(tab, tab.id === activeTabId)}
+                  </div>
+                )
               ))
             )}
           </div>
@@ -778,19 +932,21 @@ function App() {
         </div>
 
         <div className="statusbar-right">
-          <button
-            type="button"
-            className="terminal-launch-btn"
-            onClick={handleToggleEmbeddedTerminal}
-            title="Toggle embedded terminal"
-            aria-label="Toggle embedded terminal"
-          >
-            <Terminal className="w-4 h-4" />
-          </button>
+          {(!isQueryWorkspace || showEmbeddedTerminal) && (
+            <button
+              type="button"
+              className="terminal-launch-btn"
+              onClick={handleToggleEmbeddedTerminal}
+              title="Toggle embedded terminal"
+              aria-label="Toggle embedded terminal"
+            >
+              <Terminal className="w-4 h-4" />
+            </button>
+          )}
           <span className="statusbar-shortcuts">
             <kbd className="kbd">Ctrl+N</kbd>
             <kbd className="kbd">Ctrl+B</kbd>
-            <kbd className="kbd">Ctrl+Shift+K</kbd>
+            <kbd className="kbd">Ctrl+Shift+P</kbd>
           </span>
           <span>TableR v0.1.0</span>
         </div>

@@ -41,6 +41,7 @@ pub fn run() {
             parse_url_details,
             // Query commands
             execute_query,
+            execute_sandboxed_query,
             // Table commands
             list_tables,
             get_table_structure,

@@ -51,6 +51,19 @@ export interface ColumnInfo {
   default_value?: string;
 }
 
+export interface RowKeyValue {
+  column: string;
+  value: string | number | boolean | null;
+}
+
+export interface TableCellUpdateRequest {
+  table: string;
+  database?: string;
+  target_column: string;
+  value: string | number | boolean | null;
+  primary_keys: RowKeyValue[];
+}
+
 export interface TableInfo {
   name: string;
   schema?: string;

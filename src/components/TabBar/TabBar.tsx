@@ -1,4 +1,5 @@
 import { X, Table, Code, Columns, Play, Loader2, Shield } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
 
 interface QueryChromeState {
@@ -13,7 +14,14 @@ interface Props {
 }
 
 export function TabBar({ queryChrome, sandboxEnabled = true, onToggleSandbox, onRunActiveQuery }: Props) {
-  const { tabs, activeTabId, setActiveTab, removeTab } = useAppStore();
+  const { tabs, activeTabId, setActiveTab, removeTab } = useAppStore(
+    useShallow((state) => ({
+      tabs: state.tabs,
+      activeTabId: state.activeTabId,
+      setActiveTab: state.setActiveTab,
+      removeTab: state.removeTab,
+    }))
+  );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
 
   const getTabIcon = (type: string) => {

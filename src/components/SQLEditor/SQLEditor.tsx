@@ -1,11 +1,28 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, lazy, Suspense } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { AlertCircle, Terminal } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import type { QueryResult } from "../../types";
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import { DataGrid } from "../DataGrid";
-import { TerminalPanel } from "../TerminalPanel";
+
+interface QueryChromeState {
+  isRunning: boolean;
+  executionTimeMs?: number;
+  rowCount?: number;
+  affectedRows?: number;
+  queryCount?: number;
+  sandboxed?: boolean;
+}
+
+export interface QueryEditorSessionState {
+  result: QueryResult | null;
+  error: string | null;
+  queryCount: number;
+  editorHeight: number;
+  showTerminal: boolean;
+  sandboxEnabled: boolean;
+}
 
 interface QueryChromeState {
   isRunning: boolean;
@@ -31,6 +48,7 @@ interface Props {
   tabId?: string;
   initialState?: QueryEditorSessionState;
   sandboxEnabled?: boolean;
+  runRequestNonce?: number;
   onChromeChange?: (state: QueryChromeState) => void;
   onStateChange?: (state: QueryEditorSessionState) => void;
   onTerminalToggle?: (show: boolean) => void;
@@ -44,6 +62,10 @@ function formatExecutionError(error: unknown) {
 const INLINE_COMPLETION_CACHE_MS = 15_000;
 const INLINE_COMPLETION_MIN_INTERVAL_MS = 450;
 const INLINE_COMPLETION_TABLE_LIMIT = 40;
+const TERMINAL_FEATURE_ENABLED = false;
+const TerminalPanel = TERMINAL_FEATURE_ENABLED
+  ? lazy(() => import("../TerminalPanel").then((module) => ({ default: module.TerminalPanel })))
+  : null;
 
 function normalizeInlineSuggestion(rawSuggestion: string, textUntilPosition: string) {
   let suggestion = rawSuggestion
@@ -64,11 +86,14 @@ export function SQLEditor({
   tabId,
   initialState,
   sandboxEnabled,
+  runRequestNonce = 0,
   onChromeChange,
   onStateChange,
   onTerminalToggle,
 }: Props) {
-  const { executeQuery, executeSandboxQuery, updateTab } = useAppStore();
+  const executeQuery = useAppStore((state) => state.executeQuery);
+  const executeSandboxQuery = useAppStore((state) => state.executeSandboxQuery);
+  const updateTab = useAppStore((state) => state.updateTab);
   const editorRef = useRef<any>(null);
   const splitRef = useRef<HTMLDivElement>(null);
   const inlineCompletionDisposableRef = useRef<{ dispose: () => void } | null>(null);
@@ -80,6 +105,7 @@ export function SQLEditor({
   const inlineCompletionCacheRef = useRef<{ key: string; value: string; timestamp: number } | null>(null);
   const inlineCompletionInFlightRef = useRef<{ key: string; promise: Promise<string> } | null>(null);
   const lastInlineCompletionAtRef = useRef(0);
+  const lastRunRequestNonceRef = useRef(runRequestNonce);
 
   const [result, setResult] = useState<QueryResult | null>(() => initialState?.result ?? null);
   const [error, setError] = useState<string | null>(() => initialState?.error ?? null);
@@ -117,6 +143,8 @@ export function SQLEditor({
   );
 
   const toggleTerminalPanel = useCallback(() => {
+    if (!TERMINAL_FEATURE_ENABLED) return;
+
     setShowTerminal((visible) => {
       const nextVisible = !visible;
       if (onTerminalToggle) {
@@ -417,6 +445,28 @@ export function SQLEditor({
   }, [isBatchExecuting, isExecutingCurrent, queryCount, result]);
 
   useEffect(() => {
+    if (!result || result.execution_time_ms < 0) return;
+
+    const activityLabel = result.sandboxed
+      ? "Sandbox"
+      : result.rows.length > 0
+        ? "Query"
+        : result.affected_rows > 0
+          ? "Write"
+          : "Run";
+
+    window.dispatchEvent(
+      new CustomEvent("workspace-activity", {
+        detail: {
+          connectionId,
+          label: activityLabel,
+          durationMs: result.execution_time_ms,
+        },
+      })
+    );
+  }, [connectionId, result]);
+
+  useEffect(() => {
     if (!onStateChangeRef.current) return;
 
     onStateChangeRef.current({
@@ -430,29 +480,6 @@ export function SQLEditor({
   }, [editorHeight, error, isSandboxEnabled, queryCount, result, showTerminal]);
 
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (!e.ctrlKey) return;
-      const key = e.key.toLowerCase();
-      if (key === "`" || key === "j") {
-        e.preventDefault();
-        toggleTerminalPanel();
-      }
-    };
-
-    const onToggleTerminal = () => {
-      toggleTerminalPanel();
-    };
-
-    const onExternalExecute = (event: Event) => {
-      const customEvent = event as CustomEvent<{ tabId?: string }>;
-      if (!tabId || customEvent.detail?.tabId !== tabId) return;
-      void handleExecute();
-    };
-
-    const onCloseTerminal = () => {
-      setShowTerminal(false);
-    };
-
     const onInsertSQLFromAI = (e: Event) => {
       const customEvent = e as CustomEvent;
       if (customEvent.detail?.sql && editorRef.current) {
@@ -479,17 +506,45 @@ export function SQLEditor({
       }
     };
 
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("execute-sql-tab", onExternalExecute);
-    window.addEventListener("toggle-sql-terminal", onToggleTerminal);
-    window.addEventListener("close-sql-terminal", onCloseTerminal);
     window.addEventListener("insert-sql-from-ai", onInsertSQLFromAI);
     return () => {
+      window.removeEventListener("insert-sql-from-ai", onInsertSQLFromAI);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (runRequestNonce <= lastRunRequestNonceRef.current) return;
+    lastRunRequestNonceRef.current = runRequestNonce;
+    void handleExecute();
+  }, [handleExecute, runRequestNonce]);
+
+  useEffect(() => {
+    if (!TERMINAL_FEATURE_ENABLED) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "`" || key === "j") {
+        e.preventDefault();
+        toggleTerminalPanel();
+      }
+    };
+
+    const onToggleTerminal = () => {
+      toggleTerminalPanel();
+    };
+
+    const onCloseTerminal = () => {
+      setShowTerminal(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("toggle-sql-terminal", onToggleTerminal);
+    window.addEventListener("close-sql-terminal", onCloseTerminal);
+    return () => {
       window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("execute-sql-tab", onExternalExecute);
       window.removeEventListener("toggle-sql-terminal", onToggleTerminal);
       window.removeEventListener("close-sql-terminal", onCloseTerminal);
-      window.removeEventListener("insert-sql-from-ai", onInsertSQLFromAI);
     };
   }, [handleExecute, tabId, toggleTerminalPanel]);
 
@@ -577,8 +632,10 @@ export function SQLEditor({
         </div>
 
         <div className="flex-1 min-h-0 overflow-hidden">
-          {showTerminal ? (
-            <TerminalPanel initialCwd="." />
+          {TERMINAL_FEATURE_ENABLED && TerminalPanel && showTerminal ? (
+            <Suspense fallback={null}>
+              <TerminalPanel initialCwd="." />
+            </Suspense>
           ) : error ? (
             <div className="flex items-start gap-3 p-4 m-3 bg-[var(--error)]/10 border border-[var(--error)]/30 rounded-md">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--error)]" />
@@ -597,9 +654,11 @@ export function SQLEditor({
               <p className="text-[12px] opacity-95">
                 Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[11px] font-mono">Ctrl+Enter</kbd> to execute
               </p>
-              <p className="text-[11px] opacity-70">
-                Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[10px] font-mono">Ctrl+J</kbd> to open terminal
-              </p>
+              {TERMINAL_FEATURE_ENABLED && (
+                <p className="text-[11px] opacity-70">
+                  Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[10px] font-mono">Ctrl+J</kbd> to open terminal
+                </p>
+              )}
             </div>
           )}
         </div>

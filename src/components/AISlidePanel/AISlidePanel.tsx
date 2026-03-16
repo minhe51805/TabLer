@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Sparkles, Bot, X, Send, Copy } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
 
 interface Props {
@@ -80,7 +81,25 @@ function summarizeStructure(tableName: string, columns: Array<{ name: string; da
 }
 
 export function AISlidePanel({ isOpen, onClose }: Props) {
-  const { askAI, aiConfigs, tables, getTableStructure, fetchTables, activeConnectionId: connectionId, currentDatabase } = useAppStore();
+  const {
+    askAI,
+    aiConfigs,
+    tables,
+    getTableStructure,
+    fetchTables,
+    activeConnectionId: connectionId,
+    currentDatabase,
+  } = useAppStore(
+    useShallow((state) => ({
+      askAI: state.askAI,
+      aiConfigs: state.aiConfigs,
+      tables: state.tables,
+      getTableStructure: state.getTableStructure,
+      fetchTables: state.fetchTables,
+      activeConnectionId: state.activeConnectionId,
+      currentDatabase: state.currentDatabase,
+    }))
+  );
   const [prompt, setPrompt] = useState("");
   const [response, setResponse] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::{Component, Path};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -109,11 +110,11 @@ impl ParsedConnectionUrl {
         let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
             // Handle IPv6 addresses like [::1]:5432
             if h.starts_with('[') {
-                let closing = h.find(']')
+                let ipv6_host = h
+                    .strip_prefix('[')
+                    .and_then(|value| value.strip_suffix(']'))
                     .ok_or_else(|| "Invalid URL: unclosed IPv6 address".to_string())?;
-                let ipv6_host = &h[1..closing];
-                let port_str = &h[closing+1..];
-                let port = port_str.parse().ok();
+                let port = p.parse().ok();
                 (ipv6_host.to_string(), port)
             } else {
                 let port = p.parse().ok();
@@ -223,43 +224,6 @@ impl ConnectionConfig {
         })
     }
 
-    pub fn connection_url(&self) -> Result<String, String> {
-        match self.db_type {
-            DatabaseType::MySQL | DatabaseType::MariaDB => {
-                let host = self.host.as_deref().unwrap_or("127.0.0.1");
-                let port = self.port.unwrap_or_else(|| self.default_port());
-                let user = self.username.as_deref().unwrap_or("root");
-                let pass = self.password.as_deref().unwrap_or("");
-                let db = self.database.as_deref().unwrap_or("");
-                // Add sslmode for cloud MySQL connections
-                let ssl_param = if self.use_ssl { "?ssl=true" } else { "" };
-                if db.is_empty() {
-                    Ok(format!("mysql://{}:{}@{}:{}{}", user, pass, host, port, ssl_param))
-                } else {
-                    Ok(format!("mysql://{}:{}@{}:{}/{}{}", user, pass, host, port, db, ssl_param))
-                }
-            }
-            DatabaseType::PostgreSQL
-            | DatabaseType::CockroachDB
-            | DatabaseType::Greenplum
-            | DatabaseType::Redshift => {
-                let host = self.host.as_deref().unwrap_or("127.0.0.1");
-                let port = self.port.unwrap_or_else(|| self.default_port());
-                let user = self.username.as_deref().unwrap_or("postgres");
-                let pass = self.password.as_deref().unwrap_or("");
-                let db = self.database.as_deref().unwrap_or("postgres");
-                // Use postgresql:// scheme (more standard) with sslmode=require for cloud connections
-                let ssl_mode = if self.use_ssl { "?sslmode=require" } else { "" };
-                Ok(format!("postgresql://{}:{}@{}:{}/{}{}", user, pass, host, port, db, ssl_mode))
-            }
-            DatabaseType::SQLite => {
-                let path = self.file_path.as_deref().unwrap_or(":memory:");
-                Ok(format!("sqlite:{}", path))
-            }
-            _ => Err(format!("{:?} connections are not wired into this build yet.", self.db_type)),
-        }
-    }
-
     pub fn default_port(&self) -> u16 {
         match self.db_type {
             DatabaseType::MySQL => 3306,
@@ -282,6 +246,94 @@ impl ConnectionConfig {
             DatabaseType::CloudflareD1 => 0,
         }
     }
+
+    /// Validate connection config before attempting to connect
+    pub fn validate(&self) -> Result<(), String> {
+        if self.name.trim().is_empty() {
+            return Err("Connection name cannot be empty".to_string());
+        }
+
+        // Validate ID format (UUID)
+        if self.id.trim().is_empty() {
+            return Err("Connection ID cannot be empty".to_string());
+        }
+
+        // SQLite only requires file_path, other databases require host
+        match self.db_type {
+            DatabaseType::SQLite => {
+                let path = self
+                    .file_path
+                    .as_deref()
+                    .ok_or_else(|| "SQLite file path is required".to_string())?;
+                validate_sqlite_file_path(path)?;
+            }
+            DatabaseType::DuckDB | DatabaseType::BigQuery | DatabaseType::CloudflareD1 => {
+                if let Some(ref path) = self.file_path {
+                    if path.trim().is_empty() {
+                        return Err("File path cannot be empty for SQLite/DuckDB".to_string());
+                    }
+                }
+            }
+            _ => {
+                // For network databases, host is required
+                if let Some(ref host) = self.host {
+                    if host.trim().is_empty() {
+                        return Err("Host cannot be empty".to_string());
+                    }
+                } else {
+                    return Err("Host is required for this database type".to_string());
+                }
+
+                // Validate port if provided
+                if let Some(port) = self.port {
+                    if port == 0 {
+                        return Err("Port cannot be zero".to_string());
+                    }
+                }
+            }
+            _ => Err(format!("{:?} connections are not wired into this build yet.", self.db_type)),
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_sqlite_file_path(path: &str) -> Result<(), String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("SQLite file path cannot be empty".to_string());
+    }
+
+    if trimmed == ":memory:" {
+        return Ok(());
+    }
+
+    if trimmed
+        .chars()
+        .any(|ch| matches!(ch, '\0' | '\r' | '\n' | '\t'))
+    {
+        return Err("SQLite file path contains invalid control characters".to_string());
+    }
+
+    let sqlite_path = Path::new(trimmed);
+    if sqlite_path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(
+            "SQLite file path cannot contain parent directory traversal segments".to_string(),
+        );
+    }
+
+    let extension = sqlite_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+
+    match extension.as_deref() {
+        Some("db") | Some("sqlite") | Some("sqlite3") => Ok(()),
+        _ => Err("SQLite file path must use a .db, .sqlite, or .sqlite3 extension".to_string()),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,6 +354,21 @@ pub struct ColumnInfo {
     pub is_primary_key: bool,
     pub max_length: Option<u32>,
     pub default_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowKeyValue {
+    pub column: String,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableCellUpdateRequest {
+    pub table: String,
+    pub database: Option<String>,
+    pub target_column: String,
+    pub value: serde_json::Value,
+    pub primary_keys: Vec<RowKeyValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -606,6 +606,12 @@ body {
   box-shadow: 0 0 10px rgba(102, 224, 179, 0.6);
 }
 
+.statusbar-info {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .panel-header {
   display: flex;
   align-items: center;

@@ -60,7 +60,9 @@ function isSupportedDatabase(db: DbEntry | null): db is DbEntry {
 }
 
 export function ConnectionForm({ onClose, editConnection }: Props) {
-  const { connectToDatabase, testConnection, isConnecting } = useAppStore();
+  const connectToDatabase = useAppStore((state) => state.connectToDatabase);
+  const testConnection = useAppStore((state) => state.testConnection);
+  const isConnecting = useAppStore((state) => state.isConnecting);
 
   const [step, setStep] = useState<"pick" | "form">(editConnection ? "form" : "pick");
   const [pickerSearch, setPickerSearch] = useState("");

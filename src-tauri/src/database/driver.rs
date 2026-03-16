@@ -47,6 +47,9 @@ pub trait DatabaseDriver: Send + Sync {
     /// Count rows in a table
     async fn count_rows(&self, table: &str, database: Option<&str>) -> Result<i64>;
 
+    /// Update a single cell in a table using a primary-key based row selector.
+    async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64>;
+
     /// Switch to a different database
     async fn use_database(&self, database: &str) -> Result<()>;
 

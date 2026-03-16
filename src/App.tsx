@@ -3,6 +3,8 @@ import {
   useEffect,
   useRef,
   useCallback,
+  lazy,
+  Suspense,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import {
@@ -23,17 +25,12 @@ import {
   X,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "./stores/appStore";
 import { ConnectionList } from "./components/ConnectionList";
-import { ConnectionForm } from "./components/ConnectionForm";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
-import { DataGrid } from "./components/DataGrid";
-import { SQLEditor, type QueryEditorSessionState } from "./components/SQLEditor";
-import { TableStructure } from "./components/TableStructure";
-import { TerminalPanel } from "./components/TerminalPanel";
-import { AISettingsModal } from "./components/AISettingsModal";
-import { AISlidePanel } from "./components/AISlidePanel/AISlidePanel";
+import type { QueryEditorSessionState } from "./components/SQLEditor";
 import type { Tab } from "./types";
 import "./index.css";
 
@@ -44,6 +41,31 @@ interface QueryChromeState {
   affectedRows?: number;
   queryCount?: number;
   sandboxed?: boolean;
+}
+
+interface WorkspaceActivityState {
+  label: string;
+  durationMs: number;
+  at: number;
+}
+
+const TERMINAL_FEATURE_ENABLED = false;
+const SQLEditor = lazy(() => import("./components/SQLEditor").then((module) => ({ default: module.SQLEditor })));
+const DataGrid = lazy(() => import("./components/DataGrid").then((module) => ({ default: module.DataGrid })));
+const TableStructure = lazy(() => import("./components/TableStructure").then((module) => ({ default: module.TableStructure })));
+const ConnectionForm = lazy(() => import("./components/ConnectionForm").then((module) => ({ default: module.ConnectionForm })));
+const AISettingsModal = lazy(() => import("./components/AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
+const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel").then((module) => ({ default: module.AISlidePanel })));
+const TerminalPanel = TERMINAL_FEATURE_ENABLED
+  ? lazy(() => import("./components/TerminalPanel").then((module) => ({ default: module.TerminalPanel })))
+  : null;
+
+function LazyPanelFallback() {
+  return (
+    <div className="flex items-center justify-center h-full min-h-[220px] text-sm text-[var(--text-muted)]">
+      Loading workspace...
+    </div>
+  );
 }
 
 function App() {
@@ -60,7 +82,22 @@ function App() {
     addTab,
     fetchDatabases,
     fetchTables,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      activeConnectionId: state.activeConnectionId,
+      connectedIds: state.connectedIds,
+      connections: state.connections,
+      tabs: state.tabs,
+      activeTabId: state.activeTabId,
+      currentDatabase: state.currentDatabase,
+      error: state.error,
+      clearError: state.clearError,
+      loadSavedConnections: state.loadSavedConnections,
+      addTab: state.addTab,
+      fetchDatabases: state.fetchDatabases,
+      fetchTables: state.fetchTables,
+    }))
+  );
 
   const [showConnectionForm, setShowConnectionForm] = useState(false);
   const [showAISettings, setShowAISettings] = useState(false);
@@ -73,6 +110,10 @@ function App() {
   const [isWindowFocused, setIsWindowFocused] = useState(true);
   const [queryChromeByTab, setQueryChromeByTab] = useState<Record<string, QueryChromeState>>({});
   const [querySessionByTab, setQuerySessionByTab] = useState<Record<string, QueryEditorSessionState>>({});
+  const [queryRunRequestByTab, setQueryRunRequestByTab] = useState<Record<string, number>>({});
+  const [workspaceActivityByConnection, setWorkspaceActivityByConnection] = useState<
+    Record<string, WorkspaceActivityState>
+  >({});
 
   const isResizing = useRef(false);
   const startX = useRef(0);
@@ -87,6 +128,8 @@ function App() {
     activeTab?.type === "query" ? queryChromeByTab[activeTab.id] ?? { isRunning: false } : null;
   const activeQuerySession =
     activeTab?.type === "query" ? querySessionByTab[activeTab.id] ?? null : null;
+  const activeWorkspaceActivity =
+    activeConnectionId ? workspaceActivityByConnection[activeConnectionId] ?? null : null;
   const queryTabCount = tabs.filter(
     (tab) => tab.type === "query" && tab.connectionId === activeConnectionId,
   ).length;
@@ -138,6 +181,8 @@ function App() {
   }, [isConnected]);
 
   const handleToggleEmbeddedTerminal = useCallback(() => {
+    if (!TERMINAL_FEATURE_ENABLED) return;
+
     setShowEmbeddedTerminal((visible) => {
       const nextVisible = !visible;
       if (nextVisible) {
@@ -148,6 +193,8 @@ function App() {
   }, []);
 
   const handleToggleWorkspaceTerminal = useCallback(() => {
+    if (!TERMINAL_FEATURE_ENABLED) return;
+
     if (isQueryWorkspace) {
       setShowEmbeddedTerminal(false);
       window.dispatchEvent(new CustomEvent("toggle-sql-terminal"));
@@ -160,11 +207,10 @@ function App() {
   const handleRunActiveQuery = useCallback(() => {
     if (activeTab?.type !== "query") return;
 
-    window.dispatchEvent(
-      new CustomEvent("execute-sql-tab", {
-        detail: { tabId: activeTab.id },
-      }),
-    );
+    setQueryRunRequestByTab((prev) => ({
+      ...prev,
+      [activeTab.id]: (prev[activeTab.id] ?? 0) + 1,
+    }));
   }, [activeTab]);
 
   const handleQueryChromeChange = useCallback((tabId: string, state: QueryChromeState) => {
@@ -229,6 +275,35 @@ function App() {
       };
     });
   }, [activeTab]);
+
+  useEffect(() => {
+    setQueryChromeByTab((prev) => {
+      const activeTabIds = new Set(tabs.filter((tab) => tab.type === "query").map((tab) => tab.id));
+      const nextEntries = Object.entries(prev).filter(([tabId]) => activeTabIds.has(tabId));
+      if (nextEntries.length === Object.keys(prev).length) {
+        return prev;
+      }
+      return Object.fromEntries(nextEntries);
+    });
+
+    setQuerySessionByTab((prev) => {
+      const activeTabIds = new Set(tabs.filter((tab) => tab.type === "query").map((tab) => tab.id));
+      const nextEntries = Object.entries(prev).filter(([tabId]) => activeTabIds.has(tabId));
+      if (nextEntries.length === Object.keys(prev).length) {
+        return prev;
+      }
+      return Object.fromEntries(nextEntries);
+    });
+
+    setQueryRunRequestByTab((prev) => {
+      const activeTabIds = new Set(tabs.filter((tab) => tab.type === "query").map((tab) => tab.id));
+      const nextEntries = Object.entries(prev).filter(([tabId]) => activeTabIds.has(tabId));
+      if (nextEntries.length === Object.keys(prev).length) {
+        return prev;
+      }
+      return Object.fromEntries(nextEntries);
+    });
+  }, [tabs]);
 
   const handleOpenAISlidePanel = useCallback(() => {
     setShowAISlidePanel(true);
@@ -360,6 +435,37 @@ function App() {
     window.addEventListener("open-ai-slide-panel", handleOpenAI);
     return () => window.removeEventListener("open-ai-slide-panel", handleOpenAI);
   }, [handleOpenAISlidePanel]);
+
+  useEffect(() => {
+    const handleWorkspaceActivity = (
+      event: Event,
+    ) => {
+      const detail = (event as CustomEvent<{
+        connectionId?: string;
+        label?: string;
+        durationMs?: number;
+      }>).detail;
+
+      if (!detail?.connectionId || typeof detail.durationMs !== "number" || detail.durationMs < 0) {
+        return;
+      }
+
+      const connectionId = detail.connectionId;
+      const durationMs = detail.durationMs;
+
+      setWorkspaceActivityByConnection((prev) => ({
+        ...prev,
+        [connectionId]: {
+          label: detail.label?.trim() || "Load",
+          durationMs: Math.round(durationMs),
+          at: Date.now(),
+        },
+      }));
+    };
+
+    window.addEventListener("workspace-activity", handleWorkspaceActivity);
+    return () => window.removeEventListener("workspace-activity", handleWorkspaceActivity);
+  }, []);
 
   useEffect(() => {
     if (!isDesktopWindow) return;
@@ -560,41 +666,48 @@ function App() {
     switch (tab.type) {
       case "query":
         return (
-          <SQLEditor
-            key={tab.id}
-            connectionId={tab.connectionId}
-            initialContent={tab.content || ""}
-            tabId={tab.id}
-            initialState={querySessionByTab[tab.id]}
-            sandboxEnabled={querySessionByTab[tab.id]?.sandboxEnabled ?? true}
-            onChromeChange={(state) => handleQueryChromeChange(tab.id, state)}
-            onStateChange={(state) => handleQuerySessionChange(tab.id, state)}
-            onTerminalToggle={(show) => {
-              if (show) {
-                setShowEmbeddedTerminal(false);
-              }
-            }}
-          />
+          <Suspense fallback={<LazyPanelFallback />}>
+            <SQLEditor
+              key={tab.id}
+              connectionId={tab.connectionId}
+              initialContent={tab.content || ""}
+              tabId={tab.id}
+              initialState={querySessionByTab[tab.id]}
+              sandboxEnabled={querySessionByTab[tab.id]?.sandboxEnabled ?? true}
+              runRequestNonce={queryRunRequestByTab[tab.id] ?? 0}
+              onChromeChange={(state) => handleQueryChromeChange(tab.id, state)}
+              onStateChange={(state) => handleQuerySessionChange(tab.id, state)}
+              onTerminalToggle={(show) => {
+                if (show) {
+                  setShowEmbeddedTerminal(false);
+                }
+              }}
+            />
+          </Suspense>
         );
       case "table":
         return (
-          <DataGrid
-            key={tab.id}
-            connectionId={tab.connectionId}
-            tableName={tab.tableName}
-            database={tab.database}
-            isActive={isActive}
-          />
+          <Suspense fallback={<LazyPanelFallback />}>
+            <DataGrid
+              key={tab.id}
+              connectionId={tab.connectionId}
+              tableName={tab.tableName}
+              database={tab.database}
+              isActive={isActive}
+            />
+          </Suspense>
         );
       case "structure":
         return (
-          <TableStructure
-            key={tab.id}
-            connectionId={tab.connectionId}
-            tableName={tab.tableName || ""}
-            database={tab.database}
-            isActive={isActive}
-          />
+          <Suspense fallback={<LazyPanelFallback />}>
+            <TableStructure
+              key={tab.id}
+              connectionId={tab.connectionId}
+              tableName={tab.tableName || ""}
+              database={tab.database}
+              isActive={isActive}
+            />
+          </Suspense>
         );
       default:
         return null;
@@ -865,7 +978,7 @@ function App() {
                       <Sparkles className="w-3.5 h-3.5" />
                     </button>
 
-                    {isQueryWorkspace && (
+                    {TERMINAL_FEATURE_ENABLED && isQueryWorkspace && (
                       <button
                         onClick={handleToggleWorkspaceTerminal}
                         className="toolbar-btn icon-only"
@@ -888,30 +1001,28 @@ function App() {
           />
 
           <div className="tab-content" style={{ display: showEmbeddedTerminal ? "none" : "block" }}>
-            {tabs.length === 0 || !activeTabId ? (
+            {tabs.length === 0 || !activeTab ? (
               renderTabContent()
             ) : (
-              tabs.map((tab) => (
-                tab.type === "query" && tab.id !== activeTabId ? null : (
-                  <div
-                    key={tab.id}
-                    style={{
-                      display: tab.id === activeTabId ? "flex" : "none",
-                      flexDirection: "column",
-                      height: "100%",
-                      width: "100%",
-                    }}
-                  >
-                    {renderSingleTab(tab, tab.id === activeTabId)}
-                  </div>
-                )
-              ))
+              <div
+                key={activeTab.id}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  height: "100%",
+                  width: "100%",
+                }}
+              >
+                {renderSingleTab(activeTab, true)}
+              </div>
             )}
           </div>
 
-          {showEmbeddedTerminal && (
+          {TERMINAL_FEATURE_ENABLED && TerminalPanel && showEmbeddedTerminal && (
             <div className="embedded-terminal-panel">
-              <TerminalPanel initialCwd="." />
+              <Suspense fallback={null}>
+                <TerminalPanel initialCwd="." />
+              </Suspense>
             </div>
           )}
         </main>
@@ -927,12 +1038,13 @@ function App() {
             <span className="statusbar-info">
               {activeConn.db_type.toUpperCase()}
               {currentDatabase ? ` | ${currentDatabase}` : ""}
+              {activeWorkspaceActivity ? ` | ${activeWorkspaceActivity.label} ${activeWorkspaceActivity.durationMs}ms` : ""}
             </span>
           )}
         </div>
 
         <div className="statusbar-right">
-          {(!isQueryWorkspace || showEmbeddedTerminal) && (
+          {TERMINAL_FEATURE_ENABLED && (!isQueryWorkspace || showEmbeddedTerminal) && (
             <button
               type="button"
               className="terminal-launch-btn"
@@ -952,9 +1064,21 @@ function App() {
         </div>
       </footer>
 
-      {showConnectionForm && <ConnectionForm onClose={() => setShowConnectionForm(false)} />}
-      {showAISettings && <AISettingsModal onClose={() => setShowAISettings(false)} />}
-      <AISlidePanel isOpen={showAISlidePanel} onClose={() => setShowAISlidePanel(false)} />
+      {showConnectionForm && (
+        <Suspense fallback={null}>
+          <ConnectionForm onClose={() => setShowConnectionForm(false)} />
+        </Suspense>
+      )}
+      {showAISettings && (
+        <Suspense fallback={null}>
+          <AISettingsModal onClose={() => setShowAISettings(false)} />
+        </Suspense>
+      )}
+      {showAISlidePanel && (
+        <Suspense fallback={null}>
+          <AISlidePanel isOpen={showAISlidePanel} onClose={() => setShowAISlidePanel(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }

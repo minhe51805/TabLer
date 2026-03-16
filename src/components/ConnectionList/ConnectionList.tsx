@@ -9,6 +9,7 @@ import {
   LayoutList,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
 import type { ConnectionConfig } from "../../types";
 
@@ -56,10 +57,19 @@ export function ConnectionList({ onNewConnection }: Props) {
     connections,
     activeConnectionId,
     connectedIds,
-    connectToDatabase,
+    connectSavedConnection,
     disconnectFromDatabase,
     deleteSavedConnection,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      connections: state.connections,
+      activeConnectionId: state.activeConnectionId,
+      connectedIds: state.connectedIds,
+      connectSavedConnection: state.connectSavedConnection,
+      disconnectFromDatabase: state.disconnectFromDatabase,
+      deleteSavedConnection: state.deleteSavedConnection,
+    }))
+  );
   const connectedCount = connectedIds.size;
   const [layoutMode, setLayoutMode] = useState<ConnectionLayoutMode>(getInitialLayoutMode);
   const showLayoutToggle = connections.length >= MIN_CONNECTIONS_FOR_LAYOUT_TOGGLE;
@@ -78,7 +88,7 @@ export function ConnectionList({ onNewConnection }: Props) {
         await useAppStore.getState().fetchTables(conn.id, conn.database);
       }
     } else {
-      await connectToDatabase(conn);
+      await connectSavedConnection(conn.id);
     }
   };
 

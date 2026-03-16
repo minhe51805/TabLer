@@ -18,8 +18,9 @@ import {
   Copy,
   Database,
 } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
-import type { ColumnDetail, ColumnInfo, DatabaseType, QueryResult } from "../../types";
+import type { ColumnDetail, ColumnInfo, QueryResult } from "../../types";
 
 interface Props {
   connectionId: string;
@@ -39,47 +40,6 @@ type ResolvedColumn = ColumnInfo & { column_type?: string };
 type StructureStatus = "idle" | "loading" | "ready" | "failed";
 
 const PAGE_SIZE = 200;
-
-function escapeSqlLiteral(value: string) {
-  return value.replace(/'/g, "''");
-}
-
-function resolveSqlDialect(dbType: DatabaseType) {
-  switch (dbType) {
-    case "mysql":
-    case "mariadb":
-      return "mysql";
-    case "sqlite":
-    case "duckdb":
-    case "libsql":
-    case "cloudflared1":
-      return "sqlite";
-    default:
-      return "postgresql";
-  }
-}
-
-function quoteIdentifier(dbType: DatabaseType, value: string) {
-  const normalized = value.trim();
-  if (resolveSqlDialect(dbType) === "mysql") {
-    return `\`${normalized.replace(/`/g, "``")}\``;
-  }
-  return `"${normalized.replace(/"/g, "\"\"")}"`;
-}
-
-function qualifyTableName(dbType: DatabaseType, tableName: string, database?: string) {
-  const dialect = resolveSqlDialect(dbType);
-  const parts = tableName
-    .split(".")
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (dialect === "mysql" && parts.length === 1 && database) {
-    parts.unshift(database);
-  }
-
-  return parts.map((part) => quoteIdentifier(dbType, part)).join(".");
-}
 
 function isBooleanColumn(column: ResolvedColumn) {
   return /(bool)/i.test(column.column_type || column.data_type || "");
@@ -148,23 +108,6 @@ function parseEditorValue(rawValue: string, column: ResolvedColumn): GridCellVal
   return rawValue;
 }
 
-function sqlLiteralForValue(value: GridCellValue, column: ResolvedColumn) {
-  if (value === null) return "NULL";
-  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
-  if (typeof value === "number") return String(value);
-
-  const textValue = String(value);
-  if (isNumericColumn(column) && /^[-+]?\d+(\.\d+)?$/.test(textValue.trim())) {
-    return textValue.trim();
-  }
-  if (isBooleanColumn(column)) {
-    if (/^(true|t|1|yes)$/i.test(textValue)) return "TRUE";
-    if (/^(false|f|0|no)$/i.test(textValue)) return "FALSE";
-  }
-
-  return `'${escapeSqlLiteral(textValue)}'`;
-}
-
 export function DataGrid({
   connectionId,
   tableName,
@@ -176,10 +119,17 @@ export function DataGrid({
     getTableData,
     countRows,
     getTableStructure,
-    executeQuery,
-    connections,
+    updateTableCell,
     setError,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      getTableData: state.getTableData,
+      countRows: state.countRows,
+      getTableStructure: state.getTableStructure,
+      updateTableCell: state.updateTableCell,
+      setError: state.setError,
+    }))
+  );
 
   const [data, setData] = useState<QueryResult | null>(externalResult || null);
   const [structureColumns, setStructureColumns] = useState<ColumnDetail[]>([]);
@@ -210,9 +160,6 @@ export function DataGrid({
     editorRef.current = element;
   }, []);
 
-  const connection = connections.find((item) => item.id === connectionId);
-  const dbType = connection?.db_type ?? "postgresql";
-
   const fetchData = useCallback(
     async (page: number) => {
       if (!tableName || !isActive) return;
@@ -233,6 +180,18 @@ export function DataGrid({
 
         setData(result);
         setIsLoading(false);
+
+        if (result.execution_time_ms >= 0) {
+          window.dispatchEvent(
+            new CustomEvent("workspace-activity", {
+              detail: {
+                connectionId,
+                label: "Load",
+                durationMs: result.execution_time_ms,
+              },
+            })
+          );
+        }
 
         if (page === 0 && isActiveRef.current) {
           const needsExactCount = result.rows.length === PAGE_SIZE;
@@ -477,22 +436,25 @@ export function DataGrid({
         return;
       }
 
-      const pkConditions = primaryKeyColumns.map((pkColumn) => {
+      const primaryKeys = primaryKeyColumns.map((pkColumn) => {
         const pkIndex = resolvedColumns.findIndex((column) => column.name === pkColumn.name);
         const pkValue = rowValues[pkIndex] as GridCellValue;
-        return `${quoteIdentifier(dbType, pkColumn.name)} = ${sqlLiteralForValue(pkValue, pkColumn)}`;
+        return {
+          column: pkColumn.name,
+          value: pkValue,
+        };
       });
 
-      const sql = [
-        `UPDATE ${qualifyTableName(dbType, tableName, database)}`,
-        `SET ${quoteIdentifier(dbType, targetColumn.name)} = ${sqlLiteralForValue(nextValue, targetColumn)}`,
-        `WHERE ${pkConditions.join(" AND ")}`
-      ].join(" ");
-
       setSavingCell(editingCell);
-      const queryResult = await executeQuery(connectionId, sql);
+      const affectedRows = await updateTableCell(connectionId, {
+        table: tableName,
+        database,
+        target_column: targetColumn.name,
+        value: nextValue,
+        primary_keys: primaryKeys,
+      });
 
-      if (queryResult.affected_rows === 0) {
+      if (affectedRows === 0) {
         throw new Error(
           "Database did not persist the change. The row may not be updatable or the key match returned 0 rows."
         );
@@ -517,15 +479,14 @@ export function DataGrid({
     connectionId,
     data,
     database,
-    dbType,
     editingCell,
-    executeQuery,
     fetchData,
     currentPage,
     primaryKeyColumns,
     resolvedColumns,
     setError,
     tableName,
+    updateTableCell,
   ]);
 
   const columns = useMemo<ColumnDef<any, any>[]>(() => {

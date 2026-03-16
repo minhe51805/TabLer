@@ -1,9 +1,14 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::safety::{
+    normalize_order_dir, quote_sqlite_identifier, quote_sqlite_order_by,
+    sanitize_sqlite_filter_clause,
+};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sqlx::sqlite::{SqlitePool, SqliteRow};
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqliteRow};
+use sqlx::{Column, ConnectOptions, QueryBuilder, Row, Sqlite, TypeInfo};
+use std::str::FromStr;
 use std::time::Instant;
 
 pub struct SqliteDriver {
@@ -12,8 +17,13 @@ pub struct SqliteDriver {
 }
 
 impl SqliteDriver {
-    pub async fn connect(url: &str, file_path: &str) -> Result<Self> {
-        let pool = SqlitePool::connect(url)
+    pub async fn connect(file_path: &str) -> Result<Self> {
+        let mut options = SqliteConnectOptions::from_str(file_path)
+            .or_else(|_| SqliteConnectOptions::from_str(&format!("sqlite:{file_path}")))
+            .context("Failed to parse SQLite connection options")?;
+        options = options.disable_statement_logging();
+
+        let pool = SqlitePool::connect_with(options)
             .await
             .context("Failed to connect to SQLite")?;
 
@@ -30,6 +40,11 @@ impl SqliteDriver {
             || trimmed.starts_with("EXPLAIN")
             || trimmed.starts_with("WITH")
             || trimmed.contains(" RETURNING ")
+    }
+
+    fn sandbox_can_bypass_transaction(sql: &str) -> bool {
+        let trimmed = sql.trim().to_uppercase();
+        trimmed.starts_with("SELECT") || trimmed.starts_with("PRAGMA")
     }
 
     fn build_result_from_rows(
@@ -87,6 +102,47 @@ impl SqliteDriver {
             sandboxed,
         }
     }
+
+    fn push_bound_value(
+        builder: &mut QueryBuilder<'_, Sqlite>,
+        value: &serde_json::Value,
+    ) -> Result<()> {
+        match value {
+            serde_json::Value::Null => {
+                builder.push("NULL");
+            }
+            serde_json::Value::Bool(value) => {
+                builder.push_bind(*value);
+            }
+            serde_json::Value::Number(value) => {
+                if let Some(int_value) = value.as_i64() {
+                    builder.push_bind(int_value);
+                } else if let Some(uint_value) = value.as_u64() {
+                    if let Ok(signed_value) = i64::try_from(uint_value) {
+                        builder.push_bind(signed_value);
+                    } else if let Some(float_value) = value.as_f64() {
+                        builder.push_bind(float_value);
+                    } else {
+                        return Err(anyhow::anyhow!("Unsupported numeric value"));
+                    }
+                } else if let Some(float_value) = value.as_f64() {
+                    builder.push_bind(float_value);
+                } else {
+                    return Err(anyhow::anyhow!("Unsupported numeric value"));
+                }
+            }
+            serde_json::Value::String(value) => {
+                builder.push_bind(value.clone());
+            }
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Only string, number, boolean, and null values are supported"
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -140,8 +196,9 @@ impl DatabaseDriver for SqliteDriver {
         table: &str,
         _database: Option<&str>,
     ) -> Result<TableStructure> {
+        let quoted_table = quote_sqlite_identifier(table)?;
         // Columns via PRAGMA
-        let col_rows: Vec<SqliteRow> = sqlx::query(&format!("PRAGMA table_info('{}')", table))
+        let col_rows: Vec<SqliteRow> = sqlx::query(&format!("PRAGMA table_info({})", quoted_table))
             .fetch_all(&self.pool)
             .await?;
 
@@ -164,7 +221,7 @@ impl DatabaseDriver for SqliteDriver {
 
         // Indexes
         let idx_rows: Vec<SqliteRow> =
-            sqlx::query(&format!("PRAGMA index_list('{}')", table))
+            sqlx::query(&format!("PRAGMA index_list({})", quoted_table))
                 .fetch_all(&self.pool)
                 .await?;
 
@@ -174,7 +231,10 @@ impl DatabaseDriver for SqliteDriver {
             let is_unique: i32 = row.get(2);
 
             let info_rows: Vec<SqliteRow> =
-                sqlx::query(&format!("PRAGMA index_info('{}')", name))
+                sqlx::query(&format!(
+                    "PRAGMA index_info({})",
+                    quote_sqlite_identifier(&name)?
+                ))
                     .fetch_all(&self.pool)
                     .await?;
 
@@ -190,7 +250,7 @@ impl DatabaseDriver for SqliteDriver {
 
         // Foreign keys
         let fk_rows: Vec<SqliteRow> =
-            sqlx::query(&format!("PRAGMA foreign_key_list('{}')", table))
+            sqlx::query(&format!("PRAGMA foreign_key_list({})", quoted_table))
                 .fetch_all(&self.pool)
                 .await?;
 
@@ -263,6 +323,34 @@ impl DatabaseDriver for SqliteDriver {
 
     async fn execute_sandboxed(&self, statements: &[String]) -> Result<QueryResult> {
         let start = Instant::now();
+        let combined_query = statements.join(";\n");
+
+        if statements
+            .iter()
+            .all(|statement| Self::sandbox_can_bypass_transaction(statement))
+        {
+            let mut last_result: Option<QueryResult> = None;
+
+            for statement in statements {
+                let rows: Vec<SqliteRow> = sqlx::query(statement).fetch_all(&self.pool).await?;
+                last_result = Some(Self::build_result_from_rows(
+                    &rows,
+                    0,
+                    combined_query.clone(),
+                    0,
+                    true,
+                ));
+            }
+
+            let elapsed = start.elapsed().as_millis();
+            if let Some(mut result) = last_result {
+                result.execution_time_ms = elapsed;
+                result.query = combined_query;
+                result.sandboxed = true;
+                return Ok(result);
+            }
+        }
+
         let mut tx = self.pool.begin().await?;
         let mut total_affected = 0;
         let mut last_result: Option<QueryResult> = None;
@@ -273,7 +361,7 @@ impl DatabaseDriver for SqliteDriver {
                 last_result = Some(Self::build_result_from_rows(
                     &rows,
                     0,
-                    statements.join(";\n"),
+                    combined_query.clone(),
                     total_affected,
                     true,
                 ));
@@ -289,7 +377,7 @@ impl DatabaseDriver for SqliteDriver {
         if let Some(mut result) = last_result {
             result.execution_time_ms = elapsed;
             result.affected_rows = total_affected;
-            result.query = statements.join(";\n");
+            result.query = combined_query.clone();
             result.sandboxed = true;
             return Ok(result);
         }
@@ -299,7 +387,7 @@ impl DatabaseDriver for SqliteDriver {
             rows: Vec::new(),
             affected_rows: total_affected,
             execution_time_ms: elapsed,
-            query: statements.join(";\n"),
+            query: combined_query,
             sandboxed: true,
         })
     }
@@ -314,15 +402,13 @@ impl DatabaseDriver for SqliteDriver {
         order_dir: Option<&str>,
         filter: Option<&str>,
     ) -> Result<QueryResult> {
-        let mut sql = format!("SELECT * FROM \"{}\"", table);
-        if let Some(f) = filter {
-            if !f.is_empty() {
-                sql.push_str(&format!(" WHERE {}", f));
-            }
+        let mut sql = format!("SELECT * FROM {}", quote_sqlite_identifier(table)?);
+        if let Some(filter_clause) = sanitize_sqlite_filter_clause(filter)? {
+            sql.push_str(&format!(" WHERE {}", filter_clause));
         }
         if let Some(ob) = order_by {
-            let dir = order_dir.unwrap_or("ASC");
-            sql.push_str(&format!(" ORDER BY \"{}\" {}", ob, dir));
+            let dir = normalize_order_dir(order_dir)?;
+            sql.push_str(&format!(" ORDER BY {} {}", quote_sqlite_order_by(ob)?, dir));
         }
         sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
 
@@ -330,10 +416,43 @@ impl DatabaseDriver for SqliteDriver {
     }
 
     async fn count_rows(&self, table: &str, _database: Option<&str>) -> Result<i64> {
-        let sql = format!("SELECT COUNT(*) FROM \"{}\"", table);
+        let sql = format!("SELECT COUNT(*) FROM {}", quote_sqlite_identifier(table)?);
         let row: SqliteRow = sqlx::query(&sql).fetch_one(&self.pool).await?;
         let count: i64 = row.get(0);
         Ok(count)
+    }
+
+    async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
+        if request.primary_keys.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
+        }
+
+        let mut builder = QueryBuilder::<Sqlite>::new("UPDATE ");
+        builder.push(quote_sqlite_identifier(&request.table)?);
+        builder.push(" SET ");
+        builder.push(quote_sqlite_order_by(&request.target_column)?);
+        builder.push(" = ");
+        Self::push_bound_value(&mut builder, &request.value)?;
+        builder.push(" WHERE ");
+
+        for (index, primary_key) in request.primary_keys.iter().enumerate() {
+            if index > 0 {
+                builder.push(" AND ");
+            }
+
+            builder.push(quote_sqlite_order_by(&primary_key.column)?);
+            if primary_key.value.is_null() {
+                builder.push(" IS NULL");
+            } else {
+                builder.push(" = ");
+                Self::push_bound_value(&mut builder, &primary_key.value)?;
+            }
+        }
+
+        let result = builder.build().execute(&self.pool).await?;
+        Ok(result.rows_affected())
     }
 
     async fn use_database(&self, _database: &str) -> Result<()> {

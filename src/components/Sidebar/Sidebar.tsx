@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import {
   Database,
   Table,
@@ -26,7 +27,21 @@ export function Sidebar() {
     fetchTables,
     switchDatabase,
     addTab,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      activeConnectionId: state.activeConnectionId,
+      connectedIds: state.connectedIds,
+      databases: state.databases,
+      currentDatabase: state.currentDatabase,
+      tables: state.tables,
+      isLoadingTables: state.isLoadingTables,
+      disconnectFromDatabase: state.disconnectFromDatabase,
+      fetchDatabases: state.fetchDatabases,
+      fetchTables: state.fetchTables,
+      switchDatabase: state.switchDatabase,
+      addTab: state.addTab,
+    }))
+  );
 
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");

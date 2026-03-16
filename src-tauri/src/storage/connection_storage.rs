@@ -1,5 +1,6 @@
 use crate::database::models::ConnectionConfig;
 use anyhow::{Context, Result};
+use keyring::Error as KeyringError;
 use std::fs;
 use std::path::PathBuf;
 
@@ -23,7 +24,7 @@ impl ConnectionStorage {
     }
 
     pub fn save_connection(&self, config: &ConnectionConfig) -> Result<()> {
-        let mut connections = self.load_connections().unwrap_or_default();
+        let mut connections = self.load_connections()?;
 
         // Update existing or add new
         if let Some(pos) = connections.iter().position(|c| c.id == config.id) {
@@ -34,9 +35,11 @@ impl ConnectionStorage {
 
         // Store password in keyring (cross-platform secure storage)
         if let Some(ref password) = config.password {
-            if let Ok(entry) = keyring::Entry::new("TableR", &config.id) {
-                let _ = entry.set_password(password);
-            }
+            let entry = keyring::Entry::new("TableR", &config.id)
+                .context("Failed to open secure storage for the connection password")?;
+            entry
+                .set_password(password)
+                .context("Failed to store the connection password in secure storage")?;
         }
 
         // Save config without password to JSON
@@ -61,27 +64,50 @@ impl ConnectionStorage {
         }
 
         let content = fs::read_to_string(&self.storage_path)?;
-        let mut connections: Vec<ConnectionConfig> = serde_json::from_str(&content)?;
+        serde_json::from_str(&content).context("Failed to parse saved connections")
+    }
 
-        // Restore passwords from keyring
-        for conn in &mut connections {
-            if let Ok(entry) = keyring::Entry::new("TableR", &conn.id) {
-                if let Ok(password) = entry.get_password() {
-                    conn.password = Some(password);
-                }
+    pub fn load_connection_by_id(&self, connection_id: &str) -> Result<ConnectionConfig> {
+        let mut connection = self
+            .load_connections()?
+            .into_iter()
+            .find(|connection| connection.id == connection_id)
+            .ok_or_else(|| anyhow::anyhow!("Saved connection '{}' not found", connection_id))?;
+
+        let entry = keyring::Entry::new("TableR", connection_id)
+            .context("Failed to open secure storage for the saved connection")?;
+
+        match entry.get_password() {
+            Ok(password) => {
+                connection.password = Some(password);
+            }
+            Err(KeyringError::NoEntry) => {
+                connection.password = None;
+            }
+            Err(error) => {
+                return Err(anyhow::Error::new(error).context(
+                    "Failed to read the saved connection password from secure storage",
+                ));
             }
         }
 
-        Ok(connections)
+        Ok(connection)
     }
 
     pub fn delete_connection(&self, connection_id: &str) -> Result<()> {
-        let mut connections = self.load_connections().unwrap_or_default();
+        let mut connections = self.load_connections()?;
         connections.retain(|c| c.id != connection_id);
 
         // Remove password from keyring
-        if let Ok(entry) = keyring::Entry::new("TableR", connection_id) {
-            let _ = entry.delete_credential();
+        let entry = keyring::Entry::new("TableR", connection_id)
+            .context("Failed to open secure storage for deleting the saved connection")?;
+        match entry.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => {}
+            Err(error) => {
+                return Err(anyhow::Error::new(error).context(
+                    "Failed to delete the saved connection password from secure storage",
+                ));
+            }
         }
 
         let safe_connections: Vec<ConnectionConfig> = connections
@@ -97,11 +123,5 @@ impl ConnectionStorage {
         fs::write(&self.storage_path, json)?;
 
         Ok(())
-    }
-}
-
-impl Default for ConnectionStorage {
-    fn default() -> Self {
-        Self::new().expect("Failed to initialize connection storage")
     }
 }

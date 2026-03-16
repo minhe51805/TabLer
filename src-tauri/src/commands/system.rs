@@ -8,6 +8,7 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+const TERMINAL_ACCESS_ENABLED: bool = false;
 
 #[derive(Clone)]
 struct TerminalSession {
@@ -29,56 +30,11 @@ fn sessions() -> &'static Arc<Mutex<HashMap<String, TerminalSession>>> {
 }
 
 #[tauri::command]
-pub async fn open_system_terminal() -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        const CREATE_NEW_CONSOLE: u32 = 0x00000010;
-
-        Command::new("cmd")
-            .creation_flags(CREATE_NEW_CONSOLE)
-            .spawn()
-            .map_err(|e| format!("Failed to open terminal: {}", e))?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg("-a")
-            .arg("Terminal")
-            .spawn()
-            .map_err(|e| format!("Failed to open terminal: {}", e))?;
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let candidates = [
-            "x-terminal-emulator",
-            "gnome-terminal",
-            "konsole",
-            "xfce4-terminal",
-            "alacritty",
-            "kitty",
-            "wezterm",
-            "xterm",
-        ];
-
-        for terminal in candidates {
-            if Command::new(terminal).spawn().is_ok() {
-                return Ok(());
-            }
-        }
-
-        return Err("Failed to open terminal: no known terminal emulator found".to_string());
-    }
-
-    #[allow(unreachable_code)]
-    Err("Unsupported OS".to_string())
-}
-
-#[tauri::command]
 pub async fn start_terminal_session(app: AppHandle, cwd: Option<String>) -> Result<String, String> {
+    if !TERMINAL_ACCESS_ENABLED {
+        return Err("Integrated terminal is disabled in secure mode.".to_string());
+    }
+
     let session_id = Uuid::new_v4().to_string();
 
     let mut cmd = if cfg!(target_os = "windows") {
@@ -172,6 +128,10 @@ pub async fn start_terminal_session(app: AppHandle, cwd: Option<String>) -> Resu
 
 #[tauri::command]
 pub async fn send_terminal_input(session_id: String, input: String) -> Result<(), String> {
+    if !TERMINAL_ACCESS_ENABLED {
+        return Err("Integrated terminal is disabled in secure mode.".to_string());
+    }
+
     let map = sessions().lock().await;
     let session = map
         .get(&session_id)
@@ -194,6 +154,10 @@ pub async fn send_terminal_input(session_id: String, input: String) -> Result<()
 
 #[tauri::command]
 pub async fn stop_terminal_session(session_id: String) -> Result<(), String> {
+    if !TERMINAL_ACCESS_ENABLED {
+        return Err("Integrated terminal is disabled in secure mode.".to_string());
+    }
+
     let mut map = sessions().lock().await;
     let session = map
         .remove(&session_id)

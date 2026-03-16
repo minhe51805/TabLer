@@ -28,6 +28,31 @@ pub struct AIRequest {
     pub provider_id: String,
 }
 
+impl AIRequest {
+    /// Validate AI request before processing
+    pub fn validate(&self) -> Result<(), String> {
+        if self.provider_id.trim().is_empty() {
+            return Err("AI provider ID cannot be empty".to_string());
+        }
+
+        if self.prompt.trim().is_empty() {
+            return Err("Prompt cannot be empty".to_string());
+        }
+
+        // Limit prompt size to prevent abuse (max 10KB)
+        if self.prompt.len() > 10_000 {
+            return Err("Prompt is too long (max 10,000 characters)".to_string());
+        }
+
+        // Limit context size
+        if self.context.len() > 50_000 {
+            return Err("Context is too long (max 50,000 characters)".to_string());
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AIResponse {
     pub text: String,

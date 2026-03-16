@@ -24,6 +24,24 @@ export interface QueryEditorSessionState {
   sandboxEnabled: boolean;
 }
 
+interface QueryChromeState {
+  isRunning: boolean;
+  executionTimeMs?: number;
+  rowCount?: number;
+  affectedRows?: number;
+  queryCount?: number;
+  sandboxed?: boolean;
+}
+
+export interface QueryEditorSessionState {
+  result: QueryResult | null;
+  error: string | null;
+  queryCount: number;
+  editorHeight: number;
+  showTerminal: boolean;
+  sandboxEnabled: boolean;
+}
+
 interface Props {
   connectionId: string;
   initialContent?: string;

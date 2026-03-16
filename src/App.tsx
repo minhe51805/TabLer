@@ -519,6 +519,30 @@ function App() {
     setLeftPanel("connections");
   }, [activeConnectionId, connectedIds]);
 
+  useEffect(() => {
+    const liveQueryTabIds = new Set(
+      tabs.filter((tab) => tab.type === "query").map((tab) => tab.id)
+    );
+
+    setQueryChromeByTab((prev) => {
+      const prevKeys = Object.keys(prev);
+      if (prevKeys.length === liveQueryTabIds.size && prevKeys.every((tabId) => liveQueryTabIds.has(tabId))) {
+        return prev;
+      }
+      const nextEntries = Object.entries(prev).filter(([tabId]) => liveQueryTabIds.has(tabId));
+      return Object.fromEntries(nextEntries);
+    });
+
+    setQuerySessionByTab((prev) => {
+      const prevKeys = Object.keys(prev);
+      if (prevKeys.length === liveQueryTabIds.size && prevKeys.every((tabId) => liveQueryTabIds.has(tabId))) {
+        return prev;
+      }
+      const nextEntries = Object.entries(prev).filter(([tabId]) => liveQueryTabIds.has(tabId));
+      return Object.fromEntries(nextEntries);
+    });
+  }, [tabs]);
+
   const renderTabContent = () => {
     if (!isConnected) {
       return (

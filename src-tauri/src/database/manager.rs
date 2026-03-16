@@ -35,8 +35,15 @@ impl DatabaseManager {
                 Box::new(PostgresDriver::connect(config).await?)
             }
             DatabaseType::SQLite => {
+                let url = config.connection_url().map_err(anyhow::Error::msg)?;
                 let path = config.file_path.as_deref().unwrap_or(":memory:");
                 Box::new(SqliteDriver::connect(path).await?)
+            }
+            _ => {
+                return Err(anyhow!(
+                    "{:?} connections are not implemented in this build yet.",
+                    config.db_type
+                ));
             }
             _ => {
                 return Err(anyhow!(

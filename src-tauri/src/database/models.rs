@@ -1,12 +1,27 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DatabaseType {
     MySQL,
+    MariaDB,
     PostgreSQL,
+    CockroachDB,
+    Greenplum,
+    Redshift,
     SQLite,
+    DuckDB,
+    Cassandra,
+    Snowflake,
+    MSSQL,
+    Redis,
+    MongoDB,
+    Vertica,
+    ClickHouse,
+    BigQuery,
+    LibSQL,
+    CloudflareD1,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +65,11 @@ impl ParsedConnectionUrl {
 
         let db_type = match scheme.to_lowercase().as_str() {
             "postgresql" | "postgres" => DatabaseType::PostgreSQL,
-            "mysql" | "mariadb" => DatabaseType::MySQL,
+            "cockroachdb" | "cockroach" => DatabaseType::CockroachDB,
+            "greenplum" => DatabaseType::Greenplum,
+            "redshift" => DatabaseType::Redshift,
+            "mysql" => DatabaseType::MySQL,
+            "mariadb" => DatabaseType::MariaDB,
             "sqlite" => DatabaseType::SQLite,
             _ => return Err(format!("Unsupported database scheme: {}", scheme)),
         };
@@ -115,8 +134,23 @@ impl ParsedConnectionUrl {
         // Default ports
         let port = port.or_else(|| match db_type {
             DatabaseType::MySQL => Some(3306),
+            DatabaseType::MariaDB => Some(3306),
             DatabaseType::PostgreSQL => Some(5432),
+            DatabaseType::CockroachDB => Some(26257),
+            DatabaseType::Greenplum => Some(5432),
+            DatabaseType::Redshift => Some(5439),
             DatabaseType::SQLite => None,
+            DatabaseType::DuckDB => None,
+            DatabaseType::Cassandra => Some(9042),
+            DatabaseType::Snowflake => Some(443),
+            DatabaseType::MSSQL => Some(1433),
+            DatabaseType::Redis => Some(6379),
+            DatabaseType::MongoDB => Some(27017),
+            DatabaseType::Vertica => Some(5433),
+            DatabaseType::ClickHouse => Some(8123),
+            DatabaseType::BigQuery => None,
+            DatabaseType::LibSQL => Some(8080),
+            DatabaseType::CloudflareD1 => None,
         });
 
         Ok(Self {
@@ -189,44 +223,63 @@ impl ConnectionConfig {
         })
     }
 
-    pub fn connection_url(&self) -> String {
+    pub fn connection_url(&self) -> Result<String, String> {
         match self.db_type {
-            DatabaseType::MySQL => {
+            DatabaseType::MySQL | DatabaseType::MariaDB => {
                 let host = self.host.as_deref().unwrap_or("127.0.0.1");
-                let port = self.port.unwrap_or(3306);
+                let port = self.port.unwrap_or_else(|| self.default_port());
                 let user = self.username.as_deref().unwrap_or("root");
                 let pass = self.password.as_deref().unwrap_or("");
                 let db = self.database.as_deref().unwrap_or("");
                 // Add sslmode for cloud MySQL connections
                 let ssl_param = if self.use_ssl { "?ssl=true" } else { "" };
                 if db.is_empty() {
-                    format!("mysql://{}:{}@{}:{}{}", user, pass, host, port, ssl_param)
+                    Ok(format!("mysql://{}:{}@{}:{}{}", user, pass, host, port, ssl_param))
                 } else {
-                    format!("mysql://{}:{}@{}:{}/{}{}", user, pass, host, port, db, ssl_param)
+                    Ok(format!("mysql://{}:{}@{}:{}/{}{}", user, pass, host, port, db, ssl_param))
                 }
             }
-            DatabaseType::PostgreSQL => {
+            DatabaseType::PostgreSQL
+            | DatabaseType::CockroachDB
+            | DatabaseType::Greenplum
+            | DatabaseType::Redshift => {
                 let host = self.host.as_deref().unwrap_or("127.0.0.1");
-                let port = self.port.unwrap_or(5432);
+                let port = self.port.unwrap_or_else(|| self.default_port());
                 let user = self.username.as_deref().unwrap_or("postgres");
                 let pass = self.password.as_deref().unwrap_or("");
                 let db = self.database.as_deref().unwrap_or("postgres");
                 // Use postgresql:// scheme (more standard) with sslmode=require for cloud connections
                 let ssl_mode = if self.use_ssl { "?sslmode=require" } else { "" };
-                format!("postgresql://{}:{}@{}:{}/{}{}", user, pass, host, port, db, ssl_mode)
+                Ok(format!("postgresql://{}:{}@{}:{}/{}{}", user, pass, host, port, db, ssl_mode))
             }
             DatabaseType::SQLite => {
                 let path = self.file_path.as_deref().unwrap_or(":memory:");
-                format!("sqlite:{}", path)
+                Ok(format!("sqlite:{}", path))
             }
+            _ => Err(format!("{:?} connections are not wired into this build yet.", self.db_type)),
         }
     }
 
     pub fn default_port(&self) -> u16 {
         match self.db_type {
             DatabaseType::MySQL => 3306,
+            DatabaseType::MariaDB => 3306,
             DatabaseType::PostgreSQL => 5432,
+            DatabaseType::CockroachDB => 26257,
+            DatabaseType::Greenplum => 5432,
+            DatabaseType::Redshift => 5439,
             DatabaseType::SQLite => 0,
+            DatabaseType::DuckDB => 0,
+            DatabaseType::Cassandra => 9042,
+            DatabaseType::Snowflake => 443,
+            DatabaseType::MSSQL => 1433,
+            DatabaseType::Redis => 6379,
+            DatabaseType::MongoDB => 27017,
+            DatabaseType::Vertica => 5433,
+            DatabaseType::ClickHouse => 8123,
+            DatabaseType::BigQuery => 0,
+            DatabaseType::LibSQL => 8080,
+            DatabaseType::CloudflareD1 => 0,
         }
     }
 }
@@ -238,6 +291,7 @@ pub struct QueryResult {
     pub affected_rows: u64,
     pub execution_time_ms: u128,
     pub query: String,
+    pub sandboxed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

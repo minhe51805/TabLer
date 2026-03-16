@@ -59,6 +59,73 @@ impl PostgresDriver {
             ("public".to_string(), table.to_string())
         }
     }
+
+    fn query_returns_rows(sql: &str) -> bool {
+        let trimmed = sql.trim().to_uppercase();
+        trimmed.starts_with("SELECT")
+            || trimmed.starts_with("SHOW")
+            || trimmed.starts_with("EXPLAIN")
+            || trimmed.starts_with("WITH")
+            || trimmed.contains(" RETURNING ")
+    }
+
+    fn build_result_from_rows(
+        rows: &[PgRow],
+        elapsed: u128,
+        query: String,
+        affected_rows: u64,
+        sandboxed: bool,
+    ) -> QueryResult {
+        let columns = if let Some(first) = rows.first() {
+            first.columns()
+                .iter()
+                .map(|c| ColumnInfo {
+                    name: c.name().to_string(),
+                    data_type: c.type_info().name().to_string(),
+                    is_nullable: true,
+                    is_primary_key: false,
+                    max_length: None,
+                    default_value: None,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let result_rows: Vec<Vec<serde_json::Value>> = rows
+            .iter()
+            .map(|row| {
+                row.columns()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| {
+                        if let Ok(v) = row.try_get::<String, _>(i) {
+                            serde_json::Value::String(v)
+                        } else if let Ok(v) = row.try_get::<i64, _>(i) {
+                            serde_json::json!(v)
+                        } else if let Ok(v) = row.try_get::<i32, _>(i) {
+                            serde_json::json!(v)
+                        } else if let Ok(v) = row.try_get::<f64, _>(i) {
+                            serde_json::json!(v)
+                        } else if let Ok(v) = row.try_get::<bool, _>(i) {
+                            serde_json::json!(v)
+                        } else {
+                            serde_json::Value::Null
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
+
+        QueryResult {
+            columns,
+            rows: result_rows,
+            affected_rows,
+            execution_time_ms: elapsed,
+            query,
+            sandboxed,
+        }
+    }
 }
 
 #[async_trait]
@@ -314,66 +381,16 @@ impl DatabaseDriver for PostgresDriver {
 
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
         let start = Instant::now();
-        let trimmed = sql.trim().to_uppercase();
-
-        // Check if it's a SELECT-like query
-        let is_select = trimmed.starts_with("SELECT")
-            || trimmed.starts_with("SHOW")
-            || trimmed.starts_with("EXPLAIN")
-            || trimmed.starts_with("WITH");
-
-        if is_select {
+        if Self::query_returns_rows(sql) {
             let rows: Vec<PgRow> = sqlx::query(sql).fetch_all(&self.pool).await?;
             let elapsed = start.elapsed().as_millis();
-
-            let columns = if let Some(first) = rows.first() {
-                first.columns()
-                    .iter()
-                    .map(|c| ColumnInfo {
-                        name: c.name().to_string(),
-                        data_type: c.type_info().name().to_string(),
-                        is_nullable: true,
-                        is_primary_key: false,
-                        max_length: None,
-                        default_value: None,
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-            let result_rows: Vec<Vec<serde_json::Value>> = rows
-                .iter()
-                .map(|row| {
-                    row.columns()
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| {
-                            if let Ok(v) = row.try_get::<String, _>(i) {
-                                serde_json::Value::String(v)
-                            } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                                serde_json::json!(v)
-                            } else if let Ok(v) = row.try_get::<i32, _>(i) {
-                                serde_json::json!(v)
-                            } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                                serde_json::json!(v)
-                            } else if let Ok(v) = row.try_get::<bool, _>(i) {
-                                serde_json::json!(v)
-                            } else {
-                                serde_json::Value::Null
-                            }
-                        })
-                        .collect()
-                })
-                .collect();
-
-            Ok(QueryResult {
-                columns,
-                rows: result_rows,
-                affected_rows: 0,
-                execution_time_ms: elapsed,
-                query: sql.to_string(),
-            })
+            Ok(Self::build_result_from_rows(
+                &rows,
+                elapsed,
+                sql.to_string(),
+                0,
+                false,
+            ))
         } else {
             // For non-SELECT queries, split by semicolon and execute each statement
             let statements: Vec<&str> = sql
@@ -405,8 +422,52 @@ impl DatabaseDriver for PostgresDriver {
                 affected_rows: total_affected,
                 execution_time_ms: elapsed,
                 query: sql.to_string(),
+                sandboxed: false,
             })
         }
+    }
+
+    async fn execute_sandboxed(&self, statements: &[String]) -> Result<QueryResult> {
+        let start = Instant::now();
+        let mut tx = self.pool.begin().await?;
+        let mut total_affected = 0;
+        let mut last_result: Option<QueryResult> = None;
+
+        for statement in statements {
+            if Self::query_returns_rows(statement) {
+                let rows: Vec<PgRow> = sqlx::query(statement).fetch_all(&mut *tx).await?;
+                last_result = Some(Self::build_result_from_rows(
+                    &rows,
+                    0,
+                    statements.join(";\n"),
+                    total_affected,
+                    true,
+                ));
+            } else {
+                let result = sqlx::query(statement).execute(&mut *tx).await?;
+                total_affected += result.rows_affected();
+            }
+        }
+
+        tx.rollback().await?;
+        let elapsed = start.elapsed().as_millis();
+
+        if let Some(mut result) = last_result {
+            result.execution_time_ms = elapsed;
+            result.affected_rows = total_affected;
+            result.query = statements.join(";\n");
+            result.sandboxed = true;
+            return Ok(result);
+        }
+
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: total_affected,
+            execution_time_ms: elapsed,
+            query: statements.join(";\n"),
+            sandboxed: true,
+        })
     }
 
     async fn get_table_data(

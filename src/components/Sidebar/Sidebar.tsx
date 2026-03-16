@@ -92,6 +92,26 @@ export function Sidebar() {
     : tables;
   const hasSearch = search.trim().length > 0;
   const visibleTableCount = filteredTables.length;
+  const sortedTables = [...filteredTables].sort((left, right) => {
+    const leftSchema = left.schema || "public";
+    const rightSchema = right.schema || "public";
+
+    if (leftSchema !== rightSchema) {
+      return leftSchema.localeCompare(rightSchema);
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+  const tablesBySchema = sortedTables.reduce<Record<string, TableInfo[]>>((groups, table) => {
+    const schemaName = table.schema || "public";
+    if (!groups[schemaName]) {
+      groups[schemaName] = [];
+    }
+    groups[schemaName].push(table);
+    return groups;
+  }, {});
+  const schemaSections = Object.entries(tablesBySchema);
+  const visibleSchemaCount = schemaSections.length;
 
   useEffect(() => {
     if (!currentDatabase) return;
@@ -127,21 +147,20 @@ export function Sidebar() {
   return (
     <div className="explorer-shell">
       <div className="panel-header panel-header-rich explorer-header">
-        <div className="panel-header-copy">
-          <span className="panel-kicker">Explorer</span>
-          <h2 className="panel-title-lg">Database browser</h2>
-          <p className="panel-subtitle" title={currentDatabase || undefined}>
-            {currentDatabase
-              ? `Browsing ${compactDatabaseName}. Open a table to inspect data or structure.`
-              : "Select a database to browse its tables."}
-          </p>
-        </div>
-
-        <div className="explorer-header-side">
-          <div className="explorer-header-stats">
-            <span className="explorer-stat-pill">
-              {visibleTableCount} {hasSearch ? "shown" : "tables"}
-            </span>
+        <div className="explorer-header-bar">
+          <div className="explorer-header-identity">
+            <div className="explorer-header-line">
+              <h2 className="explorer-header-title">Explorer</h2>
+              <div className="explorer-workspace-pill" title={currentDatabase || undefined}>
+                <span className="explorer-workspace-dot" />
+                <span className="explorer-workspace-label">{compactDatabaseName || "Workspace"}</span>
+              </div>
+            </div>
+            <div className="explorer-header-summary-text">
+              {hasSearch
+                ? `${visibleTableCount} shown`
+                : `${visibleTableCount} tables`} · {visibleSchemaCount} {visibleSchemaCount === 1 ? "schema" : "schemas"}
+            </div>
           </div>
 
           <div className="explorer-header-actions">
@@ -168,7 +187,7 @@ export function Sidebar() {
       </div>
 
       <div className="explorer-search-panel">
-        <div className="sidebar-search">
+        <div className="sidebar-search explorer-searchbar">
           <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
           <input
             ref={searchInputRef}
@@ -180,7 +199,11 @@ export function Sidebar() {
           />
         </div>
         <div className="explorer-search-hint">
-          <span>{hasSearch ? `${visibleTableCount} matches` : "Open table data or inspect structure"}</span>
+          <span>
+            {hasSearch
+              ? `${visibleTableCount} matches across ${visibleSchemaCount} schemas`
+              : "Select a row to open data, or jump straight to schema."}
+          </span>
         </div>
       </div>
 
@@ -208,7 +231,10 @@ export function Sidebar() {
                   <Database className="w-4 h-4 shrink-0" />
                 </div>
                 <div className="explorer-db-copy">
-                  <span className="explorer-db-name">{db.name}</span>
+                  <div className="explorer-db-title-row">
+                    <span className="explorer-db-name">{db.name}</span>
+                    {isCurrent && <span className="explorer-db-pill active">Active</span>}
+                  </div>
                   <span className="explorer-db-meta">
                     {isCurrent
                       ? `${tableCount ?? 0} tables ready to browse`
@@ -216,7 +242,7 @@ export function Sidebar() {
                   </span>
                 </div>
                 <div className="explorer-db-badges">
-                  {isCurrent && <span className="explorer-db-pill active">Active</span>}
+                  <span className="explorer-db-count">{tableCount ?? "--"}</span>
                   {db.size && <span className="explorer-db-pill">{db.size}</span>}
                 </div>
               </button>
@@ -224,11 +250,15 @@ export function Sidebar() {
               {isExpanded && isCurrent && (
                 <div className="explorer-table-panel">
                   <div className="explorer-table-panel-head">
-                    <span>Tables</span>
-                    <span>
+                    <div className="explorer-table-panel-copy">
+                      <span>Tables</span>
+                      <span className="explorer-table-panel-caption">Grouped by schema</span>
+                    </div>
+                    <span className="explorer-table-panel-total">
                       {hasSearch ? `${visibleTableCount} of ${tables.length}` : `${tables.length} total`}
                     </span>
                   </div>
+
                   {isLoadingTables ? (
                     <div className="explorer-table-status">
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -239,35 +269,46 @@ export function Sidebar() {
                       {search ? "No tables match filter" : "No tables found"}
                     </div>
                   ) : (
-                    filteredTables.map((table) => (
-                      <div
-                        key={`${table.schema || "public"}.${table.name}`}
-                        className="explorer-table-row"
-                      >
-                        <button
-                          onClick={() => handleTableClick(table)}
-                          className="explorer-table-main"
-                        >
-                          <div className="explorer-table-icon">
-                            <Table className="w-3.5 h-3.5 shrink-0" />
-                          </div>
-                          <div className="explorer-table-copy">
-                            <span className="explorer-table-name">{table.name}</span>
-                            <span className="explorer-table-meta">
-                              {table.schema ? `Schema ${table.schema}` : "Open data rows"}
-                              {table.row_count != null ? ` • ${table.row_count.toLocaleString()} rows` : ""}
-                            </span>
-                          </div>
-                        </button>
-                        <button
-                          onClick={(e) => handleStructureClick(e, table)}
-                          className="explorer-structure-btn"
-                          title="View structure"
-                        >
-                          <Columns className="w-3.5 h-3.5" />
-                          <span>Structure</span>
-                        </button>
-                      </div>
+                    schemaSections.map(([schemaName, schemaTables]) => (
+                      <section key={schemaName} className="explorer-schema-group">
+                        <div className="explorer-schema-head">
+                          <span className="explorer-schema-name">{schemaName}</span>
+                          <span className="explorer-schema-count">{schemaTables.length}</span>
+                        </div>
+
+                        <div className="explorer-schema-list">
+                          {schemaTables.map((table) => (
+                            <div
+                              key={`${table.schema || "public"}.${table.name}`}
+                              className="explorer-table-row"
+                            >
+                              <button
+                                onClick={() => handleTableClick(table)}
+                                className="explorer-table-main"
+                              >
+                                <div className="explorer-table-icon">
+                                  <Table className="w-3.5 h-3.5 shrink-0" />
+                                </div>
+                                <div className="explorer-table-copy">
+                                  <span className="explorer-table-name">{table.name}</span>
+                                  <span className="explorer-table-meta">
+                                    {table.table_type === "VIEW" ? "View" : "Open data rows"}
+                                    {table.row_count != null ? ` | ${table.row_count.toLocaleString()} rows` : ""}
+                                  </span>
+                                </div>
+                              </button>
+                              <button
+                                onClick={(e) => handleStructureClick(e, table)}
+                                className="explorer-structure-btn"
+                                title="View structure"
+                              >
+                                <Columns className="w-3.5 h-3.5" />
+                                <span>Schema</span>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
                     ))
                   )}
                 </div>

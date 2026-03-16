@@ -19,7 +19,7 @@ import {
   Database,
 } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
-import type { QueryResult } from "../../types";
+import type { ColumnDetail, ColumnInfo, DatabaseType, QueryResult } from "../../types";
 
 interface Props {
   connectionId: string;
@@ -29,7 +29,141 @@ interface Props {
   isActive?: boolean;
 }
 
+interface EditingCell {
+  row: number;
+  col: number;
+}
+
+type GridCellValue = string | number | boolean | null;
+type ResolvedColumn = ColumnInfo & { column_type?: string };
+type StructureStatus = "idle" | "loading" | "ready" | "failed";
+
 const PAGE_SIZE = 200;
+
+function escapeSqlLiteral(value: string) {
+  return value.replace(/'/g, "''");
+}
+
+function resolveSqlDialect(dbType: DatabaseType) {
+  switch (dbType) {
+    case "mysql":
+    case "mariadb":
+      return "mysql";
+    case "sqlite":
+    case "duckdb":
+    case "libsql":
+    case "cloudflared1":
+      return "sqlite";
+    default:
+      return "postgresql";
+  }
+}
+
+function quoteIdentifier(dbType: DatabaseType, value: string) {
+  const normalized = value.trim();
+  if (resolveSqlDialect(dbType) === "mysql") {
+    return `\`${normalized.replace(/`/g, "``")}\``;
+  }
+  return `"${normalized.replace(/"/g, "\"\"")}"`;
+}
+
+function qualifyTableName(dbType: DatabaseType, tableName: string, database?: string) {
+  const dialect = resolveSqlDialect(dbType);
+  const parts = tableName
+    .split(".")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (dialect === "mysql" && parts.length === 1 && database) {
+    parts.unshift(database);
+  }
+
+  return parts.map((part) => quoteIdentifier(dbType, part)).join(".");
+}
+
+function isBooleanColumn(column: ResolvedColumn) {
+  return /(bool)/i.test(column.column_type || column.data_type || "");
+}
+
+function isNumericColumn(column: ResolvedColumn) {
+  return /(int|numeric|decimal|float|double|real|serial|money)/i.test(
+    column.column_type || column.data_type || ""
+  );
+}
+
+function editorValueFromCell(value: GridCellValue) {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return String(value);
+}
+
+function buildResolvedColumns(
+  dataColumns: ColumnInfo[],
+  structureColumns: ColumnDetail[]
+): ResolvedColumn[] {
+  if (dataColumns.length === 0) return [];
+
+  const structureByName = new Map(structureColumns.map((column) => [column.name, column]));
+  return dataColumns.map((column) => {
+    const structureColumn = structureByName.get(column.name);
+    if (!structureColumn) return column;
+
+    return {
+      ...column,
+      data_type: structureColumn.data_type || column.data_type,
+      column_type: structureColumn.column_type,
+      is_nullable: structureColumn.is_nullable,
+      is_primary_key: structureColumn.is_primary_key,
+      default_value: structureColumn.default_value,
+    };
+  });
+}
+
+function areCellValuesEqual(left: GridCellValue, right: GridCellValue) {
+  if (left === right) return true;
+  if (left === null || right === null) return left === right;
+  return String(left) === String(right);
+}
+
+function parseEditorValue(rawValue: string, column: ResolvedColumn): GridCellValue {
+  const trimmed = rawValue.trim();
+
+  if (/^null$/i.test(trimmed)) {
+    return null;
+  }
+
+  if (isBooleanColumn(column)) {
+    if (/^(true|t|1|yes)$/i.test(trimmed)) return true;
+    if (/^(false|f|0|no)$/i.test(trimmed)) return false;
+    throw new Error("Boolean values must be true or false.");
+  }
+
+  if (isNumericColumn(column)) {
+    if (!/^[-+]?\d+(\.\d+)?$/.test(trimmed)) {
+      throw new Error("Numeric columns only accept valid numbers.");
+    }
+    return Number(trimmed);
+  }
+
+  return rawValue;
+}
+
+function sqlLiteralForValue(value: GridCellValue, column: ResolvedColumn) {
+  if (value === null) return "NULL";
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  if (typeof value === "number") return String(value);
+
+  const textValue = String(value);
+  if (isNumericColumn(column) && /^[-+]?\d+(\.\d+)?$/.test(textValue.trim())) {
+    return textValue.trim();
+  }
+  if (isBooleanColumn(column)) {
+    if (/^(true|t|1|yes)$/i.test(textValue)) return "TRUE";
+    if (/^(false|f|0|no)$/i.test(textValue)) return "FALSE";
+  }
+
+  return `'${escapeSqlLiteral(textValue)}'`;
+}
 
 export function DataGrid({
   connectionId,
@@ -38,19 +172,46 @@ export function DataGrid({
   queryResult: externalResult,
   isActive = true,
 }: Props) {
-  const { getTableData, countRows } = useAppStore();
+  const {
+    getTableData,
+    countRows,
+    getTableStructure,
+    executeQuery,
+    connections,
+    setError,
+  } = useAppStore();
 
   const [data, setData] = useState<QueryResult | null>(externalResult || null);
+  const [structureColumns, setStructureColumns] = useState<ColumnDetail[]>([]);
   const [totalRows, setTotalRows] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [structureStatus, setStructureStatus] = useState<StructureStatus>(
+    externalResult ? "ready" : "idle"
+  );
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
+  const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
+  const [editingSeedValue, setEditingSeedValue] = useState("");
+  const [savingCell, setSavingCell] = useState<EditingCell | null>(null);
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+  const structureRequestIdRef = useRef(0);
+  const structurePromiseRef = useRef<Promise<ColumnDetail[]> | null>(null);
   const isMountedRef = useRef(true);
   const isActiveRef = useRef(isActive);
+  const editorRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
+  const editingDraftRef = useRef("");
+  const assignInputRef = useCallback((element: HTMLInputElement | null) => {
+    editorRef.current = element;
+  }, []);
+  const assignSelectRef = useCallback((element: HTMLSelectElement | null) => {
+    editorRef.current = element;
+  }, []);
+
+  const connection = connections.find((item) => item.id === connectionId);
+  const dbType = connection?.db_type ?? "postgresql";
 
   const fetchData = useCallback(
     async (page: number) => {
@@ -74,16 +235,25 @@ export function DataGrid({
         setIsLoading(false);
 
         if (page === 0 && isActiveRef.current) {
-          void countRows(connectionId, tableName, database)
-            .then((count) => {
-              if (!isMountedRef.current || requestId !== requestIdRef.current || !isActiveRef.current) {
-                return;
-              }
-              setTotalRows(count);
-            })
-            .catch((error) => {
-              console.error("Failed to count table rows:", error);
-            });
+          const needsExactCount = result.rows.length === PAGE_SIZE;
+          setTotalRows(needsExactCount ? PAGE_SIZE + 1 : result.rows.length);
+
+          if (needsExactCount) {
+            void countRows(connectionId, tableName, database)
+              .then((count) => {
+                if (
+                  !isMountedRef.current ||
+                  requestId !== requestIdRef.current ||
+                  !isActiveRef.current
+                ) {
+                  return;
+                }
+                setTotalRows(count);
+              })
+              .catch((error) => {
+                console.error("Failed to count table rows:", error);
+              });
+          }
         }
       } catch (e) {
         if (!isMountedRef.current || requestId !== requestIdRef.current) return;
@@ -97,21 +267,82 @@ export function DataGrid({
   useEffect(() => {
     if (externalResult) {
       setData(externalResult);
+      setStructureColumns([]);
       setTotalRows(externalResult.rows.length);
       setIsLoading(false);
+      setStructureStatus("ready");
+      structurePromiseRef.current = null;
       return;
     }
 
     setData(null);
+    setStructureColumns([]);
     setTotalRows(0);
     setCurrentPage(0);
+    setStructureStatus("idle");
+    structurePromiseRef.current = null;
     requestIdRef.current += 1;
+    structureRequestIdRef.current += 1;
   }, [tableName, connectionId, database, externalResult]);
 
   useEffect(() => {
     if (!tableName || externalResult || !isActive) return;
     void fetchData(currentPage);
   }, [currentPage, externalResult, fetchData, isActive, tableName]);
+
+  const ensureStructureLoaded = useCallback(async () => {
+    if (!tableName || externalResult) {
+      return [] as ColumnDetail[];
+    }
+
+    if (structureStatus === "ready" && structureColumns.length > 0) {
+      return structureColumns;
+    }
+
+    if (structurePromiseRef.current) {
+      return structurePromiseRef.current;
+    }
+
+    const requestId = ++structureRequestIdRef.current;
+    setStructureStatus("loading");
+
+    const structurePromise = getTableStructure(connectionId, tableName, database)
+      .then((structure) => {
+        if (!isMountedRef.current || requestId !== structureRequestIdRef.current) {
+          return [] as ColumnDetail[];
+        }
+
+        setStructureColumns(structure.columns);
+        setStructureStatus("ready");
+        return structure.columns;
+      })
+      .catch((error) => {
+        if (!isMountedRef.current || requestId !== structureRequestIdRef.current) {
+          return [] as ColumnDetail[];
+        }
+
+        console.error("Failed to load table structure for inline edit:", error);
+        setStructureColumns([]);
+        setStructureStatus("failed");
+        throw error;
+      })
+      .finally(() => {
+        if (structurePromiseRef.current === structurePromise) {
+          structurePromiseRef.current = null;
+        }
+      });
+
+    structurePromiseRef.current = structurePromise;
+    return structurePromise;
+  }, [
+    connectionId,
+    database,
+    externalResult,
+    getTableStructure,
+    structureColumns,
+    structureStatus,
+    tableName,
+  ]);
 
   useEffect(() => {
     isActiveRef.current = isActive;
@@ -122,8 +353,32 @@ export function DataGrid({
     return () => {
       isMountedRef.current = false;
       requestIdRef.current += 1;
+      structureRequestIdRef.current += 1;
+      structurePromiseRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    setEditingCell(null);
+    setEditingSeedValue("");
+    editingDraftRef.current = "";
+    setSavingCell(null);
+  }, [tableName, currentPage, sortColumn, sortDir, externalResult]);
+
+  useEffect(() => {
+    if (!editingCell) return;
+
+    const rafId = window.requestAnimationFrame(() => {
+      const element = editorRef.current;
+      if (!element) return;
+      element.focus();
+      if ("select" in element) {
+        element.select();
+      }
+    });
+
+    return () => window.cancelAnimationFrame(rafId);
+  }, [editingCell]);
 
   const handleSort = (colName: string) => {
     if (sortColumn === colName) {
@@ -135,14 +390,146 @@ export function DataGrid({
     setCurrentPage(0);
   };
 
-  const handleCopyValue = (value: any, cellKey: string) => {
+  const handleCopyValue = (value: GridCellValue, cellKey: string) => {
     navigator.clipboard.writeText(value === null ? "NULL" : String(value));
     setCopiedCell(cellKey);
     setTimeout(() => setCopiedCell(null), 1200);
   };
 
-  const columns = useMemo<ColumnDef<any, any>[]>(() => {
+  const resolvedColumns = useMemo<ResolvedColumn[]>(() => {
     if (!data || data.columns.length === 0) return [];
+    return buildResolvedColumns(data.columns, structureColumns);
+  }, [data, structureColumns]);
+
+  const primaryKeyColumns = useMemo(
+    () => resolvedColumns.filter((column) => column.is_primary_key),
+    [resolvedColumns]
+  );
+  const canAttemptInlineEdit = Boolean(tableName && !externalResult);
+  const isTableEditable = Boolean(
+    tableName && !externalResult && structureStatus === "ready" && primaryKeyColumns.length > 0
+  );
+
+  const startEditingCell = useCallback(
+    async (rowIndex: number, colIndex: number) => {
+      if (!canAttemptInlineEdit || !data || !tableName) return;
+
+      setSelectedCell({ row: rowIndex, col: colIndex });
+
+      let nextResolvedColumns = resolvedColumns;
+      if (structureStatus !== "ready") {
+        try {
+          const loadedStructure = await ensureStructureLoaded();
+          nextResolvedColumns = buildResolvedColumns(data.columns, loadedStructure);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setError(`Inline edit unavailable: ${message}`);
+          return;
+        }
+      }
+
+      const primaryKeys = nextResolvedColumns.filter((column) => column.is_primary_key);
+      const column = nextResolvedColumns[colIndex];
+      const rowValues = data.rows[rowIndex];
+
+      if (!column || !rowValues || column.is_primary_key || primaryKeys.length === 0) {
+        return;
+      }
+
+      const seedValue = editorValueFromCell(rowValues[colIndex] as GridCellValue);
+      setEditingSeedValue(seedValue);
+      editingDraftRef.current = seedValue;
+      setEditingCell({ row: rowIndex, col: colIndex });
+    },
+    [
+      canAttemptInlineEdit,
+      data,
+      ensureStructureLoaded,
+      resolvedColumns,
+      setError,
+      structureStatus,
+      tableName,
+    ]
+  );
+
+  const cancelEditingCell = useCallback(() => {
+    setEditingCell(null);
+    setEditingSeedValue("");
+    editingDraftRef.current = "";
+  }, []);
+
+  const commitEditingCell = useCallback(async () => {
+    if (!editingCell || !data || !tableName) return;
+
+    const targetColumn = resolvedColumns[editingCell.col];
+    const rowValues = data.rows[editingCell.row];
+    if (!targetColumn || !rowValues || targetColumn.is_primary_key || primaryKeyColumns.length === 0) {
+      cancelEditingCell();
+      return;
+    }
+
+    try {
+      const nextValue = parseEditorValue(editingDraftRef.current, targetColumn);
+      const currentValue = rowValues[editingCell.col] as GridCellValue;
+
+      if (areCellValuesEqual(currentValue, nextValue)) {
+        cancelEditingCell();
+        return;
+      }
+
+      const pkConditions = primaryKeyColumns.map((pkColumn) => {
+        const pkIndex = resolvedColumns.findIndex((column) => column.name === pkColumn.name);
+        const pkValue = rowValues[pkIndex] as GridCellValue;
+        return `${quoteIdentifier(dbType, pkColumn.name)} = ${sqlLiteralForValue(pkValue, pkColumn)}`;
+      });
+
+      const sql = [
+        `UPDATE ${qualifyTableName(dbType, tableName, database)}`,
+        `SET ${quoteIdentifier(dbType, targetColumn.name)} = ${sqlLiteralForValue(nextValue, targetColumn)}`,
+        `WHERE ${pkConditions.join(" AND ")}`
+      ].join(" ");
+
+      setSavingCell(editingCell);
+      const queryResult = await executeQuery(connectionId, sql);
+
+      if (queryResult.affected_rows === 0) {
+        throw new Error(
+          "Database did not persist the change. The row may not be updatable or the key match returned 0 rows."
+        );
+      }
+
+      cancelEditingCell();
+      await fetchData(currentPage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setError(`Inline update failed: ${message}`);
+      window.setTimeout(() => {
+        editorRef.current?.focus();
+        if (editorRef.current && "select" in editorRef.current) {
+          editorRef.current.select();
+        }
+      }, 0);
+    } finally {
+      setSavingCell(null);
+    }
+  }, [
+    cancelEditingCell,
+    connectionId,
+    data,
+    database,
+    dbType,
+    editingCell,
+    executeQuery,
+    fetchData,
+    currentPage,
+    primaryKeyColumns,
+    resolvedColumns,
+    setError,
+    tableName,
+  ]);
+
+  const columns = useMemo<ColumnDef<any, any>[]>(() => {
+    if (!data || resolvedColumns.length === 0) return [];
 
     return [
       {
@@ -155,7 +542,7 @@ export function DataGrid({
         ),
         size: 72,
       },
-      ...data.columns.map((col, idx) => ({
+      ...resolvedColumns.map((col, idx) => ({
         id: col.name,
         header: () => (
           <button
@@ -177,29 +564,129 @@ export function DataGrid({
         ),
         accessorFn: (row: any[]) => row[idx],
         cell: ({ getValue, row: tableRow }: any) => {
-          const value = getValue();
-          const isSelected = selectedCell?.row === tableRow.index && selectedCell?.col === idx;
-          const cellKey = `${tableRow.index}-${idx}`;
+          const value = getValue() as GridCellValue;
+          const rowIndex = tableRow.index;
+          const isSelected = selectedCell?.row === rowIndex && selectedCell?.col === idx;
+          const isEditing = editingCell?.row === rowIndex && editingCell?.col === idx;
+          const isSaving = savingCell?.row === rowIndex && savingCell?.col === idx;
+          const isEditableColumn =
+            canAttemptInlineEdit && (structureStatus !== "ready" || !col.is_primary_key);
+          const cellKey = `${rowIndex}-${idx}`;
 
           return (
             <div
-              className={`datagrid-cell ${isSelected ? "selected" : ""} ${value === null ? "null-value" : ""}`}
-              onClick={() => setSelectedCell({ row: tableRow.index, col: idx })}
-              onDoubleClick={() => handleCopyValue(value, cellKey)}
+              className={[
+                "datagrid-cell",
+                isSelected ? "selected" : "",
+                value === null ? "null-value" : "",
+                isEditableColumn ? "editable" : "",
+                isEditing ? "editing" : "",
+                isSaving ? "saving" : "",
+              ].join(" ")}
+              onClick={() => {
+                if (
+                  isEditableColumn &&
+                  !isEditing &&
+                  selectedCell?.row === rowIndex &&
+                  selectedCell?.col === idx
+                ) {
+                  void startEditingCell(rowIndex, idx);
+                  return;
+                }
+                setSelectedCell({ row: rowIndex, col: idx });
+              }}
+              onDoubleClick={() => {
+                if (isEditableColumn) {
+                  void startEditingCell(rowIndex, idx);
+                  return;
+                }
+                handleCopyValue(value, cellKey);
+              }}
             >
               {copiedCell === cellKey && (
                 <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] bg-[var(--accent)] text-[var(--bg-primary)] px-1.5 py-0.5 rounded-md whitespace-nowrap z-10 font-semibold">
                   Copied
                 </span>
               )}
-              {value === null ? "NULL" : String(value)}
+
+              {isEditing ? (
+                isBooleanColumn(col) ? (
+                  <select
+                    ref={assignSelectRef}
+                    className="datagrid-cell-editor datagrid-cell-select"
+                    defaultValue={editingSeedValue}
+                    onChange={(event) => {
+                      editingDraftRef.current = event.target.value;
+                    }}
+                    onBlur={() => void commitEditingCell()}
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void commitEditingCell();
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelEditingCell();
+                      }
+                    }}
+                  >
+                    <option value="true">true</option>
+                    <option value="false">false</option>
+                    <option value="NULL">NULL</option>
+                  </select>
+                ) : (
+                  <input
+                    ref={assignInputRef}
+                    defaultValue={editingSeedValue}
+                    className="datagrid-cell-editor"
+                    placeholder={col.is_nullable ? "Type NULL to clear" : ""}
+                    onChange={(event) => {
+                      editingDraftRef.current = event.target.value;
+                    }}
+                    onBlur={() => void commitEditingCell()}
+                    onClick={(event) => event.stopPropagation()}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void commitEditingCell();
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelEditingCell();
+                      }
+                    }}
+                  />
+                )
+              ) : (
+                <>
+                  {isSaving && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--accent)] shrink-0" />}
+                  <span className="datagrid-cell-value">{value === null ? "NULL" : String(value)}</span>
+                </>
+              )}
             </div>
           );
         },
         size: 180,
       })),
     ];
-  }, [data, sortColumn, sortDir, selectedCell, currentPage, copiedCell]);
+  }, [
+    cancelEditingCell,
+    canAttemptInlineEdit,
+    commitEditingCell,
+    copiedCell,
+    currentPage,
+    data,
+    editingCell,
+    editingSeedValue,
+    resolvedColumns,
+    savingCell,
+    selectedCell,
+    sortColumn,
+    sortDir,
+    startEditingCell,
+    structureStatus,
+  ]);
 
   const tableData = useMemo(() => data?.rows || [], [data]);
 
@@ -211,13 +698,25 @@ export function DataGrid({
 
   const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
   const visibleRowCount = data?.rows.length ?? 0;
-  const columnCount = data?.columns.length ?? 0;
+  const columnCount = resolvedColumns.length;
   const compactQuery = externalResult?.query?.replace(/\s+/g, " ").trim() ?? "";
+  const showTopbar = !externalResult;
   const dataViewTitle = tableName ? tableName.split(".").pop() || tableName : "Result set";
+  const inlineEditStatusLabel = isTableEditable
+    ? "Inline edit ready"
+    : structureStatus === "loading"
+      ? "Loading edit metadata..."
+      : structureStatus === "idle"
+        ? "Edit on demand"
+        : "Retry edit load";
   const dataViewSubtitle = tableName
-    ? database
-      ? `Browsing rows from ${database}. Double-click a cell to copy its value.`
-      : "Browsing table rows. Double-click a cell to copy its value."
+    ? isTableEditable
+      ? "Click once to select, click again or double-click to edit. Press Enter to save or type NULL to clear."
+      : structureStatus === "loading"
+        ? "Loading inline edit metadata for this table..."
+      : structureStatus === "idle"
+          ? "Browsing table rows. Inline edit metadata loads the first time you edit a cell."
+          : "Browsing table rows. Inline edit metadata could not be loaded. Click a cell to retry."
     : compactQuery
       ? compactQuery
       : "Rows returned from the latest SQL execution.";
@@ -233,25 +732,27 @@ export function DataGrid({
   }
 
   return (
-    <div className="datagrid-shell">
-      <div className="datagrid-topbar">
-        <div className="datagrid-topbar-copy">
-          <span className="datagrid-topbar-kicker">{tableName ? "Table Data" : "Query Result"}</span>
-          <div className="datagrid-topbar-title-row">
-            <Database className="w-4 h-4 text-[var(--accent-hover)]" />
-            <h3 className="datagrid-topbar-title">{dataViewTitle}</h3>
+    <div className={`datagrid-shell ${showTopbar ? "" : "compact"}`}>
+      {showTopbar && (
+        <div className="datagrid-topbar">
+          <div className="datagrid-topbar-copy">
+            <span className="datagrid-topbar-kicker">{tableName ? "Table Data" : "Query Result"}</span>
+            <div className="datagrid-topbar-title-row">
+              <Database className="w-4 h-4 text-[var(--accent-hover)]" />
+              <h3 className="datagrid-topbar-title">{dataViewTitle}</h3>
+            </div>
+            <p className="datagrid-topbar-subtitle" title={dataViewSubtitle}>
+              {dataViewSubtitle}
+            </p>
           </div>
-          <p className="datagrid-topbar-subtitle" title={dataViewSubtitle}>
-            {dataViewSubtitle}
-          </p>
-        </div>
 
-        <div className="datagrid-topbar-stats">
-          <span className="datagrid-stat-pill">{columnCount} columns</span>
-          <span className="datagrid-stat-pill">{visibleRowCount} loaded</span>
-          <span className={`datagrid-stat-pill ${sortColumn ? "active" : ""}`}>{activeSortLabel}</span>
+          <div className="datagrid-topbar-stats">
+            <span className="datagrid-stat-pill">{columnCount} columns</span>
+            <span className="datagrid-stat-pill">{visibleRowCount} loaded</span>
+            <span className={`datagrid-stat-pill ${sortColumn ? "active" : ""}`}>{activeSortLabel}</span>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="datagrid-table-wrap">
         {isLoading && (
@@ -320,6 +821,11 @@ export function DataGrid({
               {data.execution_time_ms > 0 && (
                 <span className="datagrid-footer-pill success">{data.execution_time_ms}ms</span>
               )}
+              {tableName && !externalResult && (
+                <span className={`datagrid-footer-pill ${isTableEditable ? "info" : ""}`}>
+                  {inlineEditStatusLabel}
+                </span>
+              )}
             </>
           )}
         </div>
@@ -334,7 +840,7 @@ export function DataGrid({
               <ChevronsLeft className="!w-3.5 !h-3.5" />
             </button>
             <button
-              onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+              onClick={() => setCurrentPage((page) => Math.max(0, page - 1))}
               disabled={currentPage === 0}
               className="datagrid-page-btn"
             >
@@ -344,7 +850,7 @@ export function DataGrid({
               {currentPage + 1} / {totalPages}
             </span>
             <button
-              onClick={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
+              onClick={() => setCurrentPage((page) => Math.min(totalPages - 1, page + 1))}
               disabled={currentPage >= totalPages - 1}
               className="datagrid-page-btn"
             >

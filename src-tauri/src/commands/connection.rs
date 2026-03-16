@@ -103,7 +103,7 @@ pub async fn check_connection_status(
 }
 
 /// Parse a connection URL string into ConnectionConfig
-/// Supports: postgresql://, postgres://, mysql://, mariadb://, sqlite://
+/// Supports: postgresql://, postgres://, cockroachdb://, greenplum://, redshift://, mysql://, mariadb://, sqlite://
 #[tauri::command]
 pub fn parse_connection_url(url: String) -> Result<ConnectionConfig, String> {
     ConnectionConfig::from_url(&url, None)

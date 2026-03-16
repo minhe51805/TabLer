@@ -52,6 +52,7 @@ interface AppState {
   fetchTables: (connectionId: string, database?: string) => Promise<void>;
 
   executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
+  executeSandboxQuery: (connectionId: string, statements: string[]) => Promise<QueryResult>;
   getTableData: (
     connectionId: string,
     table: string,
@@ -261,6 +262,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ isExecutingQuery: true });
     try {
       const result = await invoke<QueryResult>("execute_query", { connectionId, sql });
+      set({ isExecutingQuery: false });
+      return result;
+    } catch (e) {
+      set({ isExecutingQuery: false });
+      throw e;
+    }
+  },
+
+  executeSandboxQuery: async (connectionId: string, statements: string[]) => {
+    set({ isExecutingQuery: true });
+    try {
+      const result = await invoke<QueryResult>("execute_sandboxed_query", {
+        connectionId,
+        statements,
+      });
       set({ isExecutingQuery: false });
       return result;
     } catch (e) {

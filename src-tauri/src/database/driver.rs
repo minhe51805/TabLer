@@ -29,6 +29,9 @@ pub trait DatabaseDriver: Send + Sync {
     /// Execute a raw SQL query and return results
     async fn execute_query(&self, sql: &str) -> Result<QueryResult>;
 
+    /// Execute statements inside an isolated transaction and always roll them back.
+    async fn execute_sandboxed(&self, statements: &[String]) -> Result<QueryResult>;
+
     /// Get rows from a table with pagination
     async fn get_table_data(
         &self,

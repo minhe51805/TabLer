@@ -9,15 +9,28 @@ pub async fn connect_database(
     db_manager: State<'_, DatabaseManager>,
     conn_storage: State<'_, ConnectionStorage>,
 ) -> Result<String, String> {
+    // Validate connection config before attempting to connect
+    config.validate().map_err(|e| format!("Invalid connection config: {}", e))?;
+
     db_manager
         .connect(&config)
         .await
         .map_err(|e| format!("Connection failed: {}", e))?;
 
     // Save connection (without password) to storage
-    conn_storage
-        .save_connection(&config)
-        .map_err(|e| format!("Failed to save connection: {}", e))?;
+    if let Err(error) = conn_storage.save_connection(&config) {
+        let disconnect_message = db_manager
+            .disconnect(&config.id)
+            .await
+            .err()
+            .map(|disconnect_error| format!(" Cleanup failed: {}", disconnect_error))
+            .unwrap_or_default();
+
+        return Err(format!(
+            "Failed to save connection: {}. The live connection was rolled back.{}",
+            error, disconnect_message
+        ));
+    }
 
     Ok(config.id.clone())
 }
@@ -35,6 +48,9 @@ pub async fn disconnect_database(
 
 #[tauri::command]
 pub async fn test_connection(config: ConnectionConfig) -> Result<String, String> {
+    // Validate connection config before testing
+    config.validate().map_err(|e| format!("Invalid connection config: {}", e))?;
+
     let temp_manager = DatabaseManager::new();
     temp_manager
         .connect(&config)
@@ -81,7 +97,34 @@ pub async fn get_saved_connections(
 ) -> Result<Vec<ConnectionConfig>, String> {
     conn_storage
         .load_connections()
+        .map(|connections| {
+            connections
+                .into_iter()
+                .map(|mut connection| {
+                    connection.password = None;
+                    connection
+                })
+                .collect()
+        })
         .map_err(|e| format!("Failed to load connections: {}", e))
+}
+
+#[tauri::command]
+pub async fn connect_saved_connection(
+    connection_id: String,
+    db_manager: State<'_, DatabaseManager>,
+    conn_storage: State<'_, ConnectionStorage>,
+) -> Result<String, String> {
+    let config = conn_storage
+        .load_connection_by_id(&connection_id)
+        .map_err(|e| format!("Failed to load saved connection: {}", e))?;
+
+    db_manager
+        .connect(&config)
+        .await
+        .map_err(|e| format!("Connection failed: {}", e))?;
+
+    Ok(config.id)
 }
 
 #[tauri::command]
@@ -103,7 +146,7 @@ pub async fn check_connection_status(
 }
 
 /// Parse a connection URL string into ConnectionConfig
-/// Supports: postgresql://, postgres://, mysql://, mariadb://, sqlite://
+/// Supports: postgresql://, postgres://, cockroachdb://, greenplum://, redshift://, mysql://, mariadb://, sqlite://
 #[tauri::command]
 pub fn parse_connection_url(url: String) -> Result<ConnectionConfig, String> {
     ConnectionConfig::from_url(&url, None)

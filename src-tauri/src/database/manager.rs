@@ -24,17 +24,25 @@ impl DatabaseManager {
 
     /// Connect to a database using the provided config
     pub async fn connect(&self, config: &ConnectionConfig) -> Result<()> {
-        let url = config.connection_url();
         let driver: Box<dyn DatabaseDriver> = match config.db_type {
-            DatabaseType::MySQL => {
-                Box::new(MySqlDriver::connect(&url, config.database.as_deref()).await?)
+            DatabaseType::MySQL | DatabaseType::MariaDB => {
+                Box::new(MySqlDriver::connect(config).await?)
             }
-            DatabaseType::PostgreSQL => {
-                Box::new(PostgresDriver::connect(&url, config.database.as_deref()).await?)
+            DatabaseType::PostgreSQL
+            | DatabaseType::CockroachDB
+            | DatabaseType::Greenplum
+            | DatabaseType::Redshift => {
+                Box::new(PostgresDriver::connect(config).await?)
             }
             DatabaseType::SQLite => {
                 let path = config.file_path.as_deref().unwrap_or(":memory:");
-                Box::new(SqliteDriver::connect(&url, path).await?)
+                Box::new(SqliteDriver::connect(path).await?)
+            }
+            _ => {
+                return Err(anyhow!(
+                    "{:?} connections are not implemented in this build yet.",
+                    config.db_type
+                ));
             }
         };
 
@@ -42,7 +50,12 @@ impl DatabaseManager {
         driver.ping().await?;
 
         let mut conns = self.connections.write().await;
-        conns.insert(config.id.clone(), driver);
+        let previous_driver = conns.insert(config.id.clone(), driver);
+        drop(conns);
+
+        if let Some(previous_driver) = previous_driver {
+            let _ = previous_driver.disconnect().await;
+        }
 
         Ok(())
     }
@@ -69,13 +82,8 @@ impl DatabaseManager {
     /// Get a reference to a driver by connection ID
     pub async fn get_driver(&self, connection_id: &str) -> Result<impl std::ops::Deref<Target = Box<dyn DatabaseDriver>> + '_> {
         let conns = self.connections.read().await;
-        if !conns.contains_key(connection_id) {
-            return Err(anyhow!("Connection '{}' not found. Please connect first.", connection_id));
-        }
-        // We need to use a mapped guard
-        Ok(tokio::sync::RwLockReadGuard::map(conns, |map| {
-            map.get(connection_id).unwrap()
-        }))
+        tokio::sync::RwLockReadGuard::try_map(conns, |map| map.get(connection_id))
+            .map_err(|_| anyhow!("Connection '{}' not found. Please connect first.", connection_id))
     }
 
     /// Check if a connection exists and is alive

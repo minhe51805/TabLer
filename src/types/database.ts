@@ -1,5 +1,23 @@
-// Database types matching Rust backend
-export type DatabaseType = "mysql" | "postgresql" | "sqlite";
+// Database types matching the frontend picker and Rust backend
+export type DatabaseType =
+  | "mysql"
+  | "mariadb"
+  | "sqlite"
+  | "duckdb"
+  | "cassandra"
+  | "cockroachdb"
+  | "snowflake"
+  | "postgresql"
+  | "greenplum"
+  | "redshift"
+  | "mssql"
+  | "redis"
+  | "mongodb"
+  | "vertica"
+  | "clickhouse"
+  | "bigquery"
+  | "libsql"
+  | "cloudflared1";
 
 export interface ConnectionConfig {
   id: string;
@@ -21,6 +39,7 @@ export interface QueryResult {
   affected_rows: number;
   execution_time_ms: number;
   query: string;
+  sandboxed: boolean;
 }
 
 export interface ColumnInfo {
@@ -30,6 +49,19 @@ export interface ColumnInfo {
   is_primary_key: boolean;
   max_length?: number;
   default_value?: string;
+}
+
+export interface RowKeyValue {
+  column: string;
+  value: string | number | boolean | null;
+}
+
+export interface TableCellUpdateRequest {
+  table: string;
+  database?: string;
+  target_column: string;
+  value: string | number | boolean | null;
+  primary_keys: RowKeyValue[];
 }
 
 export interface TableInfo {

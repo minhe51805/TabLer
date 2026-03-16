@@ -29,6 +29,9 @@ pub trait DatabaseDriver: Send + Sync {
     /// Execute a raw SQL query and return results
     async fn execute_query(&self, sql: &str) -> Result<QueryResult>;
 
+    /// Execute statements inside an isolated transaction and always roll them back.
+    async fn execute_sandboxed(&self, statements: &[String]) -> Result<QueryResult>;
+
     /// Get rows from a table with pagination
     async fn get_table_data(
         &self,
@@ -43,6 +46,9 @@ pub trait DatabaseDriver: Send + Sync {
 
     /// Count rows in a table
     async fn count_rows(&self, table: &str, database: Option<&str>) -> Result<i64>;
+
+    /// Update a single cell in a table using a primary-key based row selector.
+    async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64>;
 
     /// Switch to a different database
     async fn use_database(&self, database: &str) -> Result<()>;

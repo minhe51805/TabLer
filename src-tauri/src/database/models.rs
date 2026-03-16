@@ -1,12 +1,28 @@
 use serde::{Deserialize, Serialize};
+use std::path::{Component, Path};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DatabaseType {
     MySQL,
+    MariaDB,
     PostgreSQL,
+    CockroachDB,
+    Greenplum,
+    Redshift,
     SQLite,
+    DuckDB,
+    Cassandra,
+    Snowflake,
+    MSSQL,
+    Redis,
+    MongoDB,
+    Vertica,
+    ClickHouse,
+    BigQuery,
+    LibSQL,
+    CloudflareD1,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,7 +66,11 @@ impl ParsedConnectionUrl {
 
         let db_type = match scheme.to_lowercase().as_str() {
             "postgresql" | "postgres" => DatabaseType::PostgreSQL,
-            "mysql" | "mariadb" => DatabaseType::MySQL,
+            "cockroachdb" | "cockroach" => DatabaseType::CockroachDB,
+            "greenplum" => DatabaseType::Greenplum,
+            "redshift" => DatabaseType::Redshift,
+            "mysql" => DatabaseType::MySQL,
+            "mariadb" => DatabaseType::MariaDB,
             "sqlite" => DatabaseType::SQLite,
             _ => return Err(format!("Unsupported database scheme: {}", scheme)),
         };
@@ -90,11 +110,11 @@ impl ParsedConnectionUrl {
         let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
             // Handle IPv6 addresses like [::1]:5432
             if h.starts_with('[') {
-                let closing = h.find(']')
+                let ipv6_host = h
+                    .strip_prefix('[')
+                    .and_then(|value| value.strip_suffix(']'))
                     .ok_or_else(|| "Invalid URL: unclosed IPv6 address".to_string())?;
-                let ipv6_host = &h[1..closing];
-                let port_str = &h[closing+1..];
-                let port = port_str.parse().ok();
+                let port = p.parse().ok();
                 (ipv6_host.to_string(), port)
             } else {
                 let port = p.parse().ok();
@@ -115,8 +135,23 @@ impl ParsedConnectionUrl {
         // Default ports
         let port = port.or_else(|| match db_type {
             DatabaseType::MySQL => Some(3306),
+            DatabaseType::MariaDB => Some(3306),
             DatabaseType::PostgreSQL => Some(5432),
+            DatabaseType::CockroachDB => Some(26257),
+            DatabaseType::Greenplum => Some(5432),
+            DatabaseType::Redshift => Some(5439),
             DatabaseType::SQLite => None,
+            DatabaseType::DuckDB => None,
+            DatabaseType::Cassandra => Some(9042),
+            DatabaseType::Snowflake => Some(443),
+            DatabaseType::MSSQL => Some(1433),
+            DatabaseType::Redis => Some(6379),
+            DatabaseType::MongoDB => Some(27017),
+            DatabaseType::Vertica => Some(5433),
+            DatabaseType::ClickHouse => Some(8123),
+            DatabaseType::BigQuery => None,
+            DatabaseType::LibSQL => Some(8080),
+            DatabaseType::CloudflareD1 => None,
         });
 
         Ok(Self {
@@ -189,45 +224,114 @@ impl ConnectionConfig {
         })
     }
 
-    pub fn connection_url(&self) -> String {
-        match self.db_type {
-            DatabaseType::MySQL => {
-                let host = self.host.as_deref().unwrap_or("127.0.0.1");
-                let port = self.port.unwrap_or(3306);
-                let user = self.username.as_deref().unwrap_or("root");
-                let pass = self.password.as_deref().unwrap_or("");
-                let db = self.database.as_deref().unwrap_or("");
-                // Add sslmode for cloud MySQL connections
-                let ssl_param = if self.use_ssl { "?ssl=true" } else { "" };
-                if db.is_empty() {
-                    format!("mysql://{}:{}@{}:{}{}", user, pass, host, port, ssl_param)
-                } else {
-                    format!("mysql://{}:{}@{}:{}/{}{}", user, pass, host, port, db, ssl_param)
-                }
-            }
-            DatabaseType::PostgreSQL => {
-                let host = self.host.as_deref().unwrap_or("127.0.0.1");
-                let port = self.port.unwrap_or(5432);
-                let user = self.username.as_deref().unwrap_or("postgres");
-                let pass = self.password.as_deref().unwrap_or("");
-                let db = self.database.as_deref().unwrap_or("postgres");
-                // Use postgresql:// scheme (more standard) with sslmode=require for cloud connections
-                let ssl_mode = if self.use_ssl { "?sslmode=require" } else { "" };
-                format!("postgresql://{}:{}@{}:{}/{}{}", user, pass, host, port, db, ssl_mode)
-            }
-            DatabaseType::SQLite => {
-                let path = self.file_path.as_deref().unwrap_or(":memory:");
-                format!("sqlite:{}", path)
-            }
-        }
-    }
-
     pub fn default_port(&self) -> u16 {
         match self.db_type {
             DatabaseType::MySQL => 3306,
+            DatabaseType::MariaDB => 3306,
             DatabaseType::PostgreSQL => 5432,
+            DatabaseType::CockroachDB => 26257,
+            DatabaseType::Greenplum => 5432,
+            DatabaseType::Redshift => 5439,
             DatabaseType::SQLite => 0,
+            DatabaseType::DuckDB => 0,
+            DatabaseType::Cassandra => 9042,
+            DatabaseType::Snowflake => 443,
+            DatabaseType::MSSQL => 1433,
+            DatabaseType::Redis => 6379,
+            DatabaseType::MongoDB => 27017,
+            DatabaseType::Vertica => 5433,
+            DatabaseType::ClickHouse => 8123,
+            DatabaseType::BigQuery => 0,
+            DatabaseType::LibSQL => 8080,
+            DatabaseType::CloudflareD1 => 0,
         }
+    }
+
+    /// Validate connection config before attempting to connect
+    pub fn validate(&self) -> Result<(), String> {
+        if self.name.trim().is_empty() {
+            return Err("Connection name cannot be empty".to_string());
+        }
+
+        // Validate ID format (UUID)
+        if self.id.trim().is_empty() {
+            return Err("Connection ID cannot be empty".to_string());
+        }
+
+        // SQLite only requires file_path, other databases require host
+        match self.db_type {
+            DatabaseType::SQLite => {
+                let path = self
+                    .file_path
+                    .as_deref()
+                    .ok_or_else(|| "SQLite file path is required".to_string())?;
+                validate_sqlite_file_path(path)?;
+            }
+            DatabaseType::DuckDB | DatabaseType::BigQuery | DatabaseType::CloudflareD1 => {
+                if let Some(ref path) = self.file_path {
+                    if path.trim().is_empty() {
+                        return Err("File path cannot be empty for SQLite/DuckDB".to_string());
+                    }
+                }
+            }
+            _ => {
+                // For network databases, host is required
+                if let Some(ref host) = self.host {
+                    if host.trim().is_empty() {
+                        return Err("Host cannot be empty".to_string());
+                    }
+                } else {
+                    return Err("Host is required for this database type".to_string());
+                }
+
+                // Validate port if provided
+                if let Some(port) = self.port {
+                    if port == 0 {
+                        return Err("Port cannot be zero".to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_sqlite_file_path(path: &str) -> Result<(), String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("SQLite file path cannot be empty".to_string());
+    }
+
+    if trimmed == ":memory:" {
+        return Ok(());
+    }
+
+    if trimmed
+        .chars()
+        .any(|ch| matches!(ch, '\0' | '\r' | '\n' | '\t'))
+    {
+        return Err("SQLite file path contains invalid control characters".to_string());
+    }
+
+    let sqlite_path = Path::new(trimmed);
+    if sqlite_path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(
+            "SQLite file path cannot contain parent directory traversal segments".to_string(),
+        );
+    }
+
+    let extension = sqlite_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+
+    match extension.as_deref() {
+        Some("db") | Some("sqlite") | Some("sqlite3") => Ok(()),
+        _ => Err("SQLite file path must use a .db, .sqlite, or .sqlite3 extension".to_string()),
     }
 }
 
@@ -238,6 +342,7 @@ pub struct QueryResult {
     pub affected_rows: u64,
     pub execution_time_ms: u128,
     pub query: String,
+    pub sandboxed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +353,21 @@ pub struct ColumnInfo {
     pub is_primary_key: bool,
     pub max_length: Option<u32>,
     pub default_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowKeyValue {
+    pub column: String,
+    pub value: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableCellUpdateRequest {
+    pub table: String,
+    pub database: Option<String>,
+    pub target_column: String,
+    pub value: serde_json::Value,
+    pub primary_keys: Vec<RowKeyValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

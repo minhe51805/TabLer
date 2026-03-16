@@ -44,10 +44,22 @@ interface Props {
   fallbackClassName?: string;
 }
 
+function isSafeInlineSvg(markup: string) {
+  const normalized = markup.trim();
+  return (
+    normalized.startsWith("<svg") &&
+    normalized.endsWith("</svg>") &&
+    !/<script/i.test(normalized) &&
+    !/<foreignObject/i.test(normalized) &&
+    !/\son[a-z]+\s*=/i.test(normalized) &&
+    !/javascript:/i.test(normalized)
+  );
+}
+
 export function DatabaseBrandIcon({ dbKey, label, className = "", fallbackClassName = "" }: Props) {
   const svgMarkup = REAL_DATABASE_LOGOS[dbKey];
 
-  if (svgMarkup) {
+  if (svgMarkup && isSafeInlineSvg(svgMarkup)) {
     return (
       <span
         className={`db-brand-mark ${className}`.trim()}

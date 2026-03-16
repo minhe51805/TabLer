@@ -1,5 +1,6 @@
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Sparkles, Bot, X, Send, Copy } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
 
 interface Props {
@@ -7,13 +8,110 @@ interface Props {
   onClose: () => void;
 }
 
+const PROMPT_IDEAS = [
+  {
+    title: "Create table",
+    prompt: "Create a users table with id, name, email, role, and created_at.",
+  },
+  {
+    title: "Alter schema",
+    prompt: "Add a last_login_at column to the users table and backfill it with CURRENT_TIMESTAMP.",
+  },
+  {
+    title: "Write query",
+    prompt: "Write a query that shows the top 10 users by order count in the last 30 days.",
+  },
+];
+
+const MAX_TABLE_NAMES_IN_CONTEXT = 40;
+const MAX_SCHEMA_SUMMARIES = 8;
+const MAX_COLUMNS_PER_SUMMARY = 12;
+
+function rankTableForPrompt(promptText: string, tableName: string) {
+  const normalizedPrompt = promptText.toLowerCase();
+  const normalizedTable = tableName.toLowerCase();
+  const tokens = normalizedTable.split(/[^a-z0-9]+/).filter((token) => token.length > 1);
+
+  let score = normalizedPrompt.includes(normalizedTable) ? 10 : 0;
+  for (const token of tokens) {
+    if (normalizedPrompt.includes(token)) {
+      score += token.length >= 5 ? 4 : 2;
+    }
+  }
+
+  return score;
+}
+
+function pickRelevantTables(promptText: string, tables: Array<{ name: string }>) {
+  const ranked = tables
+    .map((table) => ({
+      table,
+      score: rankTableForPrompt(promptText, table.name),
+    }))
+    .sort((left, right) => right.score - left.score || left.table.name.localeCompare(right.table.name));
+
+  const matched = ranked.filter((item) => item.score > 0).slice(0, MAX_SCHEMA_SUMMARIES);
+  if (matched.length === MAX_SCHEMA_SUMMARIES) {
+    return matched.map((item) => item.table);
+  }
+
+  const usedNames = new Set(matched.map((item) => item.table.name));
+  const fallbacks = ranked
+    .filter((item) => !usedNames.has(item.table.name))
+    .slice(0, MAX_SCHEMA_SUMMARIES - matched.length)
+    .map((item) => item.table);
+
+  return [...matched.map((item) => item.table), ...fallbacks];
+}
+
+function summarizeStructure(tableName: string, columns: Array<{ name: string; data_type: string }>) {
+  if (columns.length === 0) {
+    return `Table ${tableName}`;
+  }
+
+  const preview = columns
+    .slice(0, MAX_COLUMNS_PER_SUMMARY)
+    .map((column) => `${column.name} ${column.data_type}`)
+    .join(", ");
+  const remaining = columns.length - MAX_COLUMNS_PER_SUMMARY;
+
+  return remaining > 0
+    ? `Table ${tableName} (${preview}, +${remaining} more columns)`
+    : `Table ${tableName} (${preview})`;
+}
+
 export function AISlidePanel({ isOpen, onClose }: Props) {
-  const { askAI, aiConfigs, tables, getTableStructure, fetchTables, activeConnectionId: connectionId, currentDatabase } = useAppStore();
+  const {
+    askAI,
+    aiConfigs,
+    tables,
+    getTableStructure,
+    fetchTables,
+    activeConnectionId: connectionId,
+    currentDatabase,
+  } = useAppStore(
+    useShallow((state) => ({
+      askAI: state.askAI,
+      aiConfigs: state.aiConfigs,
+      tables: state.tables,
+      getTableStructure: state.getTableStructure,
+      fetchTables: state.fetchTables,
+      activeConnectionId: state.activeConnectionId,
+      currentDatabase: state.currentDatabase,
+    }))
+  );
   const [prompt, setPrompt] = useState("");
   const [response, setResponse] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const schemaSummaryCacheRef = useRef(new Map<string, string>());
+  const activeProvider = aiConfigs.find((c) => c.is_enabled);
+  const tableContextCount = tables?.length || 0;
+
+  useEffect(() => {
+    schemaSummaryCacheRef.current.clear();
+  }, [connectionId, currentDatabase]);
 
   const handleGenerate = async () => {
     if (!prompt.trim() || !connectionId) {
@@ -21,7 +119,6 @@ export function AISlidePanel({ isOpen, onClose }: Props) {
       return;
     }
 
-    const activeProvider = aiConfigs.find(c => c.is_enabled);
     if (!activeProvider) {
       setError("No AI provider enabled. Please configure an AI provider in Settings first.");
       return;
@@ -45,22 +142,43 @@ export function AISlidePanel({ isOpen, onClose }: Props) {
         }
       }
 
-      // Use all tables from store - get schema for each (limit to 30 to avoid slowdowns)
+      // Keep broad table awareness, but only fetch deep schema for a small relevant subset.
       const latestTables = useAppStore.getState().tables;
-      const tablesToFetch = latestTables.slice(0, 30);
+      const availableTableNames = latestTables
+        .map((table) => table.name)
+        .slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
+      const tablesToFetch = pickRelevantTables(prompt, latestTables);
       const tableSchemas = await Promise.all(
         tablesToFetch.map(async (t) => {
+          const cacheKey = `${connectionId}:${currentDatabase || "default"}:${t.name}`;
+          const cachedSummary = schemaSummaryCacheRef.current.get(cacheKey);
+          if (cachedSummary) {
+            return cachedSummary;
+          }
+
           try {
             const structure = await getTableStructure(connectionId, t.name, currentDatabase || undefined);
-            const columns = structure.columns.map((c: any) => c.name + " " + c.data_type).join(", ");
-            return "Table " + t.name + " (" + columns + ")";
+            const summary = summarizeStructure(t.name, structure.columns);
+            schemaSummaryCacheRef.current.set(cacheKey, summary);
+            return summary;
           } catch {
-            return "Table " + t.name;
+            const summary = "Table " + t.name;
+            schemaSummaryCacheRef.current.set(cacheKey, summary);
+            return summary;
           }
         })
       );
 
-      const context = "Database: " + (currentDatabase || "Default") + "\n\nIMPORTANT - Only use these tables in your SQL query:\n" + tableSchemas.join("\n") + "\n\nDo NOT use any table that is not listed above. If you need a table that doesn't exist, ask the user to create it first.";
+      const context = [
+        `Database: ${currentDatabase || "Default"}`,
+        "",
+        `Available tables (${latestTables.length}): ${availableTableNames.join(", ")}${latestTables.length > MAX_TABLE_NAMES_IN_CONTEXT ? ", ..." : ""}`,
+        "",
+        "Detailed schemas for the most relevant tables:",
+        tableSchemas.join("\n"),
+        "",
+        "Only use tables from the available list above. If a needed table is missing, ask the user to create it first.",
+      ].join("\n");
       let aiResponse = await askAI(activeProvider.id, prompt, context);
 
       // Extract SQL - try multiple approaches
@@ -142,78 +260,169 @@ export function AISlidePanel({ isOpen, onClose }: Props) {
     }
   };
 
+  const handleUseSuggestion = (nextPrompt: string) => {
+    setPrompt(nextPrompt);
+    setError(null);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextPrompt.length, nextPrompt.length);
+    });
+  };
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-y-0 right-0 w-[400px] bg-[var(--bg-secondary)] border-l border-[var(--border-color)] shadow-xl flex flex-col z-50 animate-in slide-in-from-right duration-200">
-      <div className="flex items-center justify-between !px-4 !py-4 bg-[rgba(255,255,255,0.03)] border-b border-[var(--border-color)]">
-        <div className="flex items-center !gap-3">
-          <Sparkles className="!w-4 !h-4 text-[var(--accent)]" />
-          <span className="text-[13px] font-semibold">Ask AI Assistant</span>
+    <div className="ai-slide-panel">
+      <div className="ai-slide-panel-header">
+        <div className="ai-slide-panel-titlebar">
+          <div className="ai-slide-panel-icon">
+            <Sparkles className="w-4 h-4" />
+          </div>
+          <div className="ai-slide-panel-copy">
+            <span className="ai-slide-panel-kicker">AI Workspace</span>
+            <h3 className="ai-slide-panel-title">Ask AI Assistant</h3>
+            <p className="ai-slide-panel-subtitle">
+              Draft SQL from plain language using the current database context.
+            </p>
+          </div>
         </div>
-        <button onClick={onClose} className="!p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.1)]">
-          <X className="!w-4 !h-4 text-[var(--text-muted)]" />
+        <button onClick={onClose} className="ai-slide-panel-close" title="Close AI Assistant">
+          <X className="w-4 h-4" />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto !p-4 !space-y-4">
-        <div className="!space-y-2">
-          <div className="!pb-1">
-            <label className="text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wider">Your Request</label>
+      <div className="ai-slide-panel-body">
+        <div className="ai-slide-context-strip">
+          <span className="ai-slide-context-pill accent">
+            {currentDatabase || "No database"}
+          </span>
+          <span className="ai-slide-context-pill">
+            {tableContextCount} {tableContextCount === 1 ? "table" : "tables"}
+          </span>
+          <span className={`ai-slide-context-pill ${activeProvider ? "success" : "warning"}`}>
+            {activeProvider ? activeProvider.name : "No provider"}
+          </span>
+        </div>
 
+        <div className="ai-slide-composer-card">
+          <div className="ai-slide-composer-head">
+            <label className="ai-slide-section-label">Your Request</label>
+            <span className="ai-slide-hotkey">Enter to generate</span>
           </div>
+
           <textarea
             ref={textareaRef}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask AI to generate or modify SQL... (e.g. 'Create users table')"
-            className="w-full bg-[rgba(0,0,0,0.2)] border border-white/10 rounded-md !p-3 text-[13px] min-h-[100px] outline-none focus:border-[var(--accent)]/50 resize-none placeholder:text-[var(--text-muted)]"
+            placeholder="Describe the SQL you want to create, modify, or debug..."
+            className="ai-slide-textarea"
             autoFocus
           />
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] text-[var(--text-muted)]">Press Enter to generate</span>
-            <button onClick={handleGenerate} disabled={isLoading || !prompt.trim()} className="btn btn-primary !px-4 !py-1.5 h-auto text-[12px] flex items-center gap-2">
-              {isLoading ? <Loader2 className="!w-3.5 !h-3.5 animate-spin" /> : <Bot className="!w-3.5 !h-3.5" />}
+
+          <div className="ai-slide-composer-footer">
+            <div className="ai-slide-helper-copy">
+              <span className="ai-slide-helper-title">Context-aware</span>
+              <span className="ai-slide-helper-text">
+                Uses your current schema so the output stays grounded in real tables.
+              </span>
+            </div>
+
+            <button
+              onClick={handleGenerate}
+              disabled={isLoading || !prompt.trim()}
+              className="btn btn-primary ai-slide-submit-btn"
+            >
+              {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bot className="w-3.5 h-3.5" />}
               {isLoading ? "Generating..." : "Generate SQL"}
             </button>
           </div>
         </div>
 
         {error && (
-          <div className="!p-3 bg-[var(--error)]/10 border border-[var(--error)]/30 rounded-md">
-            <p className="text-[12px] text-[var(--error)]">{error}</p>
-          </div>
-        )}
-
-        {response && (
-          <div className="!space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wider">Generated SQL</label>
-              <div className="flex items-center gap-3">
-                <button onClick={handleInsert} className="text-[11px] text-[var(--accent)] hover:underline flex items-center !gap-1">
-                  <Send className="!w-3 !h-3" /> Insert
-                </button>
-                <button onClick={handleCopy} className="text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center !gap-1">
-                  <Copy className="!w-3 !h-3" /> Copy
-                </button>
-              </div>
-            </div>
-            <pre className="!p-4 bg-[var(--bg-surface)] border border-white/10 rounded-md text-[13px] font-mono text-[var(--text-primary)] whitespace-pre-wrap overflow-x-auto">{response}</pre>
+          <div className="ai-slide-alert error">
+            <p>{error}</p>
           </div>
         )}
 
         {!prompt && !response && !isLoading && (
-          <div className="flex flex-col items-center justify-center !py-12 text-center">
-            <Bot className="!w-12 !h-12 text-[var(--accent)] opacity-40 !mb-4" />
-            <p className="text-[13px] text-[var(--text-muted)]">Describe the SQL you want to create or modify</p>
-            <p className="text-[11px] text-[var(--text-muted)] !mt-2 opacity-70">e.g., "Create a users table with name and email"</p>
+          <div className="ai-slide-suggestions-card">
+            <div className="ai-slide-suggestions-head">
+              <span className="ai-slide-section-label">Quick Starts</span>
+              <span className="ai-slide-suggestions-note">Tap to fill the prompt</span>
+            </div>
+
+            <div className="ai-slide-suggestions-grid">
+              {PROMPT_IDEAS.map((idea) => (
+                <button
+                  key={idea.title}
+                  type="button"
+                  className="ai-slide-suggestion-btn"
+                  onClick={() => handleUseSuggestion(idea.prompt)}
+                >
+                  <span className="ai-slide-suggestion-title">{idea.title}</span>
+                  <span className="ai-slide-suggestion-copy">{idea.prompt}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {isLoading && (
+          <div className="ai-slide-loading-card">
+            <div className="ai-slide-loading-icon">
+              <Loader2 className="w-5 h-5 animate-spin" />
+            </div>
+            <div className="ai-slide-loading-copy">
+              <span className="ai-slide-loading-title">Generating SQL</span>
+              <span className="ai-slide-loading-text">
+                Reviewing your schema and composing a query that fits the current database.
+              </span>
+            </div>
+          </div>
+        )}
+
+        {response && (
+          <div className="ai-slide-response-card">
+            <div className="ai-slide-response-head">
+              <div className="ai-slide-response-copy">
+                <label className="ai-slide-section-label">Generated SQL</label>
+                <span className="ai-slide-response-note">Review it, then insert it into the editor.</span>
+              </div>
+
+              <div className="ai-slide-response-actions">
+                <button onClick={handleInsert} className="ai-slide-inline-action primary">
+                  <Send className="w-3.5 h-3.5" /> Insert
+                </button>
+                <button onClick={handleCopy} className="ai-slide-inline-action">
+                  <Copy className="w-3.5 h-3.5" /> Copy
+                </button>
+              </div>
+            </div>
+
+            <pre className="ai-slide-response-code">{response}</pre>
+          </div>
+        )}
+
+        {!prompt && !response && !isLoading && (
+          <div className="ai-slide-empty-card">
+            <div className="ai-slide-empty-icon">
+              <Bot className="w-6 h-6" />
+            </div>
+            <div className="ai-slide-empty-copy">
+              <p className="ai-slide-empty-title">Describe the SQL you need</p>
+              <p className="ai-slide-empty-text">
+                Try asking for a new table, an index, a reporting query, or help changing an existing schema.
+              </p>
+            </div>
           </div>
         )}
       </div>
 
-      <div className="!px-4 !py-2 bg-[rgba(255,255,255,0.02)] border-t border-[var(--border-color)]">
-        <span className="text-[10px] text-[var(--text-muted)]">Press Esc to close</span>
+      <div className="ai-slide-panel-footer">
+        <span className="ai-slide-footer-note">Enter to generate</span>
+        <span className="ai-slide-footer-note">Shift+Enter for a new line</span>
+        <span className="ai-slide-footer-note">Esc to close</span>
       </div>
     </div>
   );

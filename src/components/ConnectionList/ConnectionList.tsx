@@ -9,6 +9,7 @@ import {
   LayoutList,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
 import type { ConnectionConfig } from "../../types";
 
@@ -19,6 +20,7 @@ interface Props {
 type ConnectionLayoutMode = "stacked" | "inline";
 
 const CONNECTION_LAYOUT_STORAGE_KEY = "tabler.connection-list-layout";
+const MIN_CONNECTIONS_FOR_LAYOUT_TOGGLE = 3;
 
 const DB_LABELS: Record<string, { abbr: string; color: string }> = {
   mysql:      { abbr: "Ms", color: "#c0392b" },
@@ -45,7 +47,9 @@ function getInitialLayoutMode(): ConnectionLayoutMode {
   if (typeof window === "undefined") return "stacked";
 
   const stored = window.localStorage.getItem(CONNECTION_LAYOUT_STORAGE_KEY);
-  return stored === "inline" ? "inline" : "stacked";
+  if (stored === "inline") return "inline";
+  if (stored === "list") return "inline";
+  return "stacked";
 }
 
 export function ConnectionList({ onNewConnection }: Props) {
@@ -53,12 +57,23 @@ export function ConnectionList({ onNewConnection }: Props) {
     connections,
     activeConnectionId,
     connectedIds,
-    connectToDatabase,
+    connectSavedConnection,
     disconnectFromDatabase,
     deleteSavedConnection,
-  } = useAppStore();
+  } = useAppStore(
+    useShallow((state) => ({
+      connections: state.connections,
+      activeConnectionId: state.activeConnectionId,
+      connectedIds: state.connectedIds,
+      connectSavedConnection: state.connectSavedConnection,
+      disconnectFromDatabase: state.disconnectFromDatabase,
+      deleteSavedConnection: state.deleteSavedConnection,
+    }))
+  );
   const connectedCount = connectedIds.size;
   const [layoutMode, setLayoutMode] = useState<ConnectionLayoutMode>(getInitialLayoutMode);
+  const showLayoutToggle = connections.length >= MIN_CONNECTIONS_FOR_LAYOUT_TOGGLE;
+  const effectiveLayoutMode = showLayoutToggle ? layoutMode : "stacked";
 
   useEffect(() => {
     window.localStorage.setItem(CONNECTION_LAYOUT_STORAGE_KEY, layoutMode);
@@ -73,7 +88,7 @@ export function ConnectionList({ onNewConnection }: Props) {
         await useAppStore.getState().fetchTables(conn.id, conn.database);
       }
     } else {
-      await connectToDatabase(conn);
+      await connectSavedConnection(conn.id);
     }
   };
 
@@ -91,48 +106,44 @@ export function ConnectionList({ onNewConnection }: Props) {
   return (
     <div className="flex flex-col h-full">
       <div className="panel-header panel-header-rich connection-list-header">
-        <div className="panel-header-copy">
-          <div className="connection-list-kicker-row">
+        <div className="connection-list-header-bar">
+          <div className="connection-list-header-identity">
             <span className="panel-kicker">Connections</span>
-            <span className="connection-list-mini-pill">Workspace access</span>
-          </div>
-          <h2 className="panel-title-lg">Saved connections</h2>
-          <p className="connection-list-note">
-            Keep database profiles ready so you can jump between workspaces without retyping credentials.
-          </p>
-          <div className="connection-list-overview">
-            <span className="connection-list-stat">
-              <strong>{connections.length}</strong>
-              <span>Saved</span>
-            </span>
-            <span className="connection-list-stat accent">
-              <strong>{connectedCount}</strong>
-              <span>Active</span>
-            </span>
+            <div className="connection-list-header-line">
+              <h2 className="connection-list-title">Saved connections</h2>
+              <span className="connection-list-mini-pill">
+                {connections.length} saved
+              </span>
+              <span className="connection-list-mini-pill accent">
+                {connectedCount} active
+              </span>
+            </div>
           </div>
         </div>
 
-        <div className="connection-list-header-actions">
-          <div className="connection-layout-toggle" role="group" aria-label="Connection layout">
-            <button
-              type="button"
-              className={`connection-layout-btn ${layoutMode === "stacked" ? "active" : ""}`}
-              onClick={() => setLayoutMode("stacked")}
-              title="Stacked cards"
-              aria-pressed={layoutMode === "stacked"}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              className={`connection-layout-btn ${layoutMode === "inline" ? "active" : ""}`}
-              onClick={() => setLayoutMode("inline")}
-              title="Inline rows"
-              aria-pressed={layoutMode === "inline"}
-            >
-              <LayoutList className="w-3.5 h-3.5" />
-            </button>
-          </div>
+        <div className={`connection-list-header-actions ${showLayoutToggle ? "" : "compact"}`}>
+          {showLayoutToggle && (
+            <div className="connection-layout-toggle" role="group" aria-label="Connection layout">
+              <button
+                type="button"
+                className={`connection-layout-btn ${layoutMode === "stacked" ? "active" : ""}`}
+                onClick={() => setLayoutMode("stacked")}
+                title="Vertical layout"
+                aria-pressed={layoutMode === "stacked"}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                className={`connection-layout-btn ${layoutMode === "inline" ? "active" : ""}`}
+                onClick={() => setLayoutMode("inline")}
+                title="Horizontal layout"
+                aria-pressed={layoutMode === "inline"}
+              >
+                <LayoutList className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
 
           <button
             onClick={onNewConnection}
@@ -158,7 +169,7 @@ export function ConnectionList({ onNewConnection }: Props) {
             </button>
           </div>
         ) : (
-          <div className={`connection-list-stack ${layoutMode}`}>
+          <div className={`connection-list-stack ${effectiveLayoutMode}`}>
             {connections.map((conn) => {
               const isConnected = connectedIds.has(conn.id);
               const isActive = activeConnectionId === conn.id;
@@ -178,21 +189,21 @@ export function ConnectionList({ onNewConnection }: Props) {
                   ? "Local file access"
                   : conn.database || conn.username || "Credentials saved";
               const stateLabel = isActive
-                ? "Active workspace"
+                ? "Active"
                 : isConnected
                   ? "Connected"
-                  : "Saved profile";
+                  : "Saved";
               const openLabel = isActive
-                ? "Continue Workspace"
+                ? "Continue"
                 : isConnected
-                  ? "Open Workspace"
+                  ? "Open"
                   : "Connect";
 
               return (
                 <div
                   key={conn.id}
                   onClick={() => handleConnect(conn)}
-                  className={`connection-card ${layoutMode} ${isActive ? "active" : ""} ${isConnected ? "online" : ""}`}
+                  className={`connection-card ${effectiveLayoutMode} ${isActive ? "active" : ""} ${isConnected ? "online" : ""}`}
                 >
                   <div className="connection-card-top">
                     <div className="connection-card-identity">

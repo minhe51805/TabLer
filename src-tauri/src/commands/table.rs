@@ -1,5 +1,5 @@
 use crate::database::manager::DatabaseManager;
-use crate::database::models::{QueryResult, TableInfo, TableStructure};
+use crate::database::models::{QueryResult, TableCellUpdateRequest, TableInfo, TableStructure};
 use tauri::State;
 
 #[tauri::command]
@@ -78,6 +78,22 @@ pub async fn count_table_rows(
         .map_err(|e| e.to_string())?;
     driver
         .count_rows(&table, database.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_table_cell(
+    connection_id: String,
+    request: TableCellUpdateRequest,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<u64, String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    driver
+        .update_table_cell(&request)
         .await
         .map_err(|e| e.to_string())
 }

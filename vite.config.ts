@@ -8,6 +8,29 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("@monaco-editor") || id.includes("monaco-editor")) return "vendor-monaco";
+          if (id.includes("@tanstack")) return "vendor-table";
+          if (id.includes("@tauri-apps")) return "vendor-tauri";
+          if (id.includes("lucide-react")) return "vendor-icons";
+          if (id.includes("zustand")) return "vendor-react";
+          if (
+            id.includes("/react/") ||
+            id.includes("\\react\\") ||
+            id.includes("react-dom") ||
+            id.includes("scheduler")
+          ) {
+            return "vendor-react";
+          }
+          return "vendor-misc";
+        },
+      },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

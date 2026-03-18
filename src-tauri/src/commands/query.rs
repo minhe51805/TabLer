@@ -1,5 +1,6 @@
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryResult;
+use crate::utils::sql::split_sql_statements;
 use tauri::State;
 use tokio::time::{timeout, Duration};
 
@@ -44,7 +45,12 @@ fn strip_leading_sql_noise(statement: &str) -> Result<&str, String> {
 }
 
 fn validate_sandbox_statement(statement: &str) -> Result<(), String> {
-    let normalized = strip_leading_sql_noise(statement)?.to_ascii_uppercase();
+    let fragments = split_sql_statements(statement);
+    if fragments.len() != 1 {
+        return Err("Sandbox mode requires exactly one SQL statement per execution item.".to_string());
+    }
+
+    let normalized = strip_leading_sql_noise(&fragments[0])?.to_ascii_uppercase();
     if normalized.is_empty() {
         return Err("Sandbox mode requires a non-empty SQL statement.".to_string());
     }
@@ -80,6 +86,21 @@ fn is_likely_read_only_statement(statement: &str) -> bool {
         return !normalized.contains('=');
     }
 
+    if normalized.starts_with("WITH") {
+        return ![
+            "INSERT ",
+            "UPDATE ",
+            "DELETE ",
+            "MERGE ",
+            "ALTER ",
+            "CREATE ",
+            "DROP ",
+            "TRUNCATE ",
+        ]
+        .iter()
+        .any(|keyword| normalized.contains(keyword));
+    }
+
     normalized.starts_with("SELECT")
         || normalized.starts_with("SHOW")
         || normalized.starts_with("EXPLAIN")
@@ -107,7 +128,8 @@ pub async fn execute_query(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    let timeout_window = timeout_for_statements(sql.split(';'));
+    let statements = split_sql_statements(&sql);
+    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
     timeout(timeout_window, driver.execute_query(&sql))
         .await
         .map_err(|_| format!("Query timed out after {} seconds.", timeout_window.as_secs()))?

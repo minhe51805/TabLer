@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ColumnDetail,
   ConnectionConfig,
   DatabaseInfo,
   SchemaObjectInfo,
@@ -162,9 +163,21 @@ interface AppState {
     table: string,
     database?: string
   ) => Promise<TableStructure>;
+  getTableColumnsPreview: (
+    connectionId: string,
+    table: string,
+    database?: string
+  ) => Promise<ColumnDetail[]>;
   countRows: (connectionId: string, table: string, database?: string) => Promise<number>;
+  countTableNullValues: (
+    connectionId: string,
+    table: string,
+    column: string,
+    database?: string
+  ) => Promise<number>;
   updateTableCell: (connectionId: string, request: TableCellUpdateRequest) => Promise<number>;
   deleteTableRows: (connectionId: string, request: TableRowDeleteRequest) => Promise<number>;
+  executeStructureStatements: (connectionId: string, statements: string[]) => Promise<number>;
 
   addTab: (tab: Tab) => void;
   removeTab: (tabId: string) => void;
@@ -233,11 +246,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     clearedProviderIds: string[]
   ) => {
     try {
-      await invokeMutation(
+      const [aiConfigs, aiKeyStatus] = await invokeMutation<
+        [AIProviderConfig[], Record<string, boolean>]
+      >(
         "save_ai_configs",
         { providers: configs, apiKeyUpdates, clearedProviderIds },
       );
-      await get().loadAIConfigs();
+      set({ aiConfigs, aiKeyStatus });
     } catch (e) {
       set({ error: `Failed to save AI configs: ${e}` });
       throw e;
@@ -372,7 +387,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         newState.currentDatabase = null;
       }
 
-      set(newState as any);
+      set(newState);
     } catch (e) {
       set({ error: `Disconnect failed: ${e}` });
     }
@@ -558,6 +573,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       "Loading table structure"
     ),
 
+  getTableColumnsPreview: async (connectionId, table, database) =>
+    invokeWithTimeout<ColumnDetail[]>(
+      "get_table_columns_preview",
+      {
+        connectionId,
+        table,
+        database: database || null,
+      },
+      FRONTEND_TIMEOUTS.metadata,
+      "Loading table columns"
+    ),
+
   countRows: async (connectionId, table, database) =>
     invokeWithTimeout<number>(
       "count_table_rows",
@@ -568,6 +595,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
       FRONTEND_TIMEOUTS.rowCount,
       "Counting table rows"
+    ),
+
+  countTableNullValues: async (connectionId, table, column, database) =>
+    invokeWithTimeout<number>(
+      "count_table_null_values",
+      {
+        connectionId,
+        table,
+        column,
+        database: database || null,
+      },
+      FRONTEND_TIMEOUTS.rowCount,
+      "Counting NULL values"
     ),
 
   updateTableCell: async (connectionId, request) =>
@@ -591,6 +631,15 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...request,
           database: request.database || null,
         },
+      },
+    ),
+
+  executeStructureStatements: async (connectionId, statements) =>
+    invokeMutation<number>(
+      "execute_structure_statements",
+      {
+        connectionId,
+        statements,
       },
     ),
 

@@ -6,7 +6,7 @@ use super::safety::{
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlRow, MySqlSslMode};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode};
 use sqlx::{Column, ConnectOptions, MySql, QueryBuilder, Row, TypeInfo};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -41,7 +41,13 @@ impl MySqlDriver {
         });
         options = options.disable_statement_logging();
 
-        let pool = MySqlPool::connect_with(options)
+        let pool = MySqlPoolOptions::new()
+            .min_connections(1)
+            .max_lifetime(std::time::Duration::from_secs(1800))
+            .acquire_timeout(std::time::Duration::from_secs(30))
+            .idle_timeout(std::time::Duration::from_secs(600))
+            .test_before_acquire(false)
+            .connect_with(options)
             .await
             .context("Failed to connect to MySQL")?;
 
@@ -235,6 +241,131 @@ impl DatabaseDriver for MySqlDriver {
         Ok(tables)
     }
 
+    async fn list_schema_objects(&self, database: Option<&str>) -> Result<Vec<SchemaObjectInfo>> {
+        let db = database
+            .map(String::from)
+            .or_else(|| {
+                let current = self.current_db.try_read().ok();
+                current.and_then(|guard| guard.clone())
+            });
+
+        let mut objects = Vec::new();
+
+        let view_rows: Vec<MySqlRow> = if let Some(ref db_name) = db {
+            sqlx::query(
+                "SELECT TABLE_SCHEMA, TABLE_NAME, VIEW_DEFINITION \
+                 FROM information_schema.VIEWS \
+                 WHERE TABLE_SCHEMA = ? \
+                 ORDER BY TABLE_SCHEMA, TABLE_NAME",
+            )
+            .bind(db_name)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT TABLE_SCHEMA, TABLE_NAME, VIEW_DEFINITION \
+                 FROM information_schema.VIEWS \
+                 WHERE TABLE_SCHEMA = DATABASE() \
+                 ORDER BY TABLE_SCHEMA, TABLE_NAME",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        objects.extend(view_rows.iter().map(|row| SchemaObjectInfo {
+            name: row.get(1),
+            schema: row.try_get::<String, _>(0).ok(),
+            object_type: "VIEW".to_string(),
+            related_table: None,
+            definition: row.try_get(2).ok(),
+        }));
+
+        let trigger_rows: Vec<MySqlRow> = if let Some(ref db_name) = db {
+            sqlx::query(
+                "SELECT TRIGGER_SCHEMA, TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, EVENT_OBJECT_TABLE, ACTION_STATEMENT \
+                 FROM information_schema.TRIGGERS \
+                 WHERE TRIGGER_SCHEMA = ? \
+                 ORDER BY TRIGGER_SCHEMA, EVENT_OBJECT_TABLE, TRIGGER_NAME",
+            )
+            .bind(db_name)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT TRIGGER_SCHEMA, TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, EVENT_OBJECT_TABLE, ACTION_STATEMENT \
+                 FROM information_schema.TRIGGERS \
+                 WHERE TRIGGER_SCHEMA = DATABASE() \
+                 ORDER BY TRIGGER_SCHEMA, EVENT_OBJECT_TABLE, TRIGGER_NAME",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        objects.extend(trigger_rows.iter().map(|row| {
+            let schema = row.try_get::<String, _>(0).ok();
+            let table_name = row.try_get::<String, _>(4).ok();
+            let timing = row.try_get::<String, _>(2).ok();
+            let event = row.try_get::<String, _>(3).ok();
+            let statement = row.try_get::<String, _>(5).ok();
+            let related_table = match (schema.clone(), table_name.clone()) {
+                (Some(schema), Some(table)) => Some(format!("{schema}.{table}")),
+                (None, Some(table)) => Some(table),
+                _ => None,
+            };
+            let definition_table_name = table_name.clone().unwrap_or_default();
+            SchemaObjectInfo {
+                name: row.get(1),
+                schema: schema.clone(),
+                object_type: "TRIGGER".to_string(),
+                related_table,
+                definition: Some(
+                    [
+                        timing.unwrap_or_default(),
+                        event.unwrap_or_default(),
+                        "ON".to_string(),
+                        definition_table_name,
+                    ]
+                    .join(" ")
+                    .trim()
+                    .to_string()
+                        + "\n"
+                        + statement.unwrap_or_default().trim(),
+                ),
+            }
+        }));
+
+        let routine_rows: Vec<MySqlRow> = if let Some(ref db_name) = db {
+            sqlx::query(
+                "SELECT ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE, ROUTINE_DEFINITION \
+                 FROM information_schema.ROUTINES \
+                 WHERE ROUTINE_SCHEMA = ? \
+                 ORDER BY ROUTINE_SCHEMA, ROUTINE_TYPE, ROUTINE_NAME",
+            )
+            .bind(db_name)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT ROUTINE_SCHEMA, ROUTINE_NAME, ROUTINE_TYPE, ROUTINE_DEFINITION \
+                 FROM information_schema.ROUTINES \
+                 WHERE ROUTINE_SCHEMA = DATABASE() \
+                 ORDER BY ROUTINE_SCHEMA, ROUTINE_TYPE, ROUTINE_NAME",
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        objects.extend(routine_rows.iter().map(|row| SchemaObjectInfo {
+            name: row.get(1),
+            schema: row.try_get::<String, _>(0).ok(),
+            object_type: row.get::<String, _>(2).to_ascii_uppercase(),
+            related_table: None,
+            definition: row.try_get(3).ok(),
+        }));
+
+        Ok(objects)
+    }
+
     async fn get_table_structure(
         &self,
         table: &str,
@@ -356,10 +487,83 @@ impl DatabaseDriver for MySqlDriver {
             })
             .collect();
 
+        let object_type = if let Some(db_name) = database {
+            sqlx::query(
+                "SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? LIMIT 1",
+            )
+            .bind(db_name)
+            .bind(table)
+            .fetch_optional(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1",
+            )
+            .bind(table)
+            .fetch_optional(&self.pool)
+            .await?
+        }
+        .and_then(|row| row.try_get::<String, _>(0).ok());
+
+        let view_definition = if let Some(db_name) = database {
+            sqlx::query(
+                "SELECT VIEW_DEFINITION FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? LIMIT 1",
+            )
+            .bind(db_name)
+            .bind(table)
+            .fetch_optional(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT VIEW_DEFINITION FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1",
+            )
+            .bind(table)
+            .fetch_optional(&self.pool)
+            .await?
+        }
+        .and_then(|row| row.try_get::<String, _>(0).ok());
+
+        let trigger_rows: Vec<MySqlRow> = if let Some(db_name) = database {
+            sqlx::query(
+                "SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, EVENT_OBJECT_TABLE, ACTION_STATEMENT \
+                 FROM information_schema.TRIGGERS \
+                 WHERE TRIGGER_SCHEMA = ? AND EVENT_OBJECT_TABLE = ? \
+                 ORDER BY TRIGGER_NAME",
+            )
+            .bind(db_name)
+            .bind(table)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, EVENT_OBJECT_TABLE, ACTION_STATEMENT \
+                 FROM information_schema.TRIGGERS \
+                 WHERE TRIGGER_SCHEMA = DATABASE() AND EVENT_OBJECT_TABLE = ? \
+                 ORDER BY TRIGGER_NAME",
+            )
+            .bind(table)
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        let triggers = trigger_rows
+            .iter()
+            .map(|row| TriggerInfo {
+                name: row.get(0),
+                timing: row.try_get(1).ok(),
+                event: row.try_get(2).ok(),
+                related_table: row.try_get(3).ok(),
+                definition: row.try_get(4).ok(),
+            })
+            .collect();
+
         Ok(TableStructure {
             columns,
             indexes,
             foreign_keys,
+            triggers,
+            view_definition,
+            object_type,
         })
     }
 
@@ -367,14 +571,15 @@ impl DatabaseDriver for MySqlDriver {
         let start = Instant::now();
         if Self::query_returns_rows(sql) {
             let rows: Vec<MySqlRow> = sqlx::query(sql).fetch_all(&self.pool).await?;
-            let elapsed = start.elapsed().as_millis();
-            Ok(Self::build_result_from_rows(
+            let mut result = Self::build_result_from_rows(
                 &rows,
-                elapsed,
+                0,
                 sql.to_string(),
                 0,
                 false,
-            ))
+            );
+            result.execution_time_ms = start.elapsed().as_millis();
+            Ok(result)
         } else {
             // For non-SELECT queries, split by semicolon and execute each statement
             let statements: Vec<&str> = sql
@@ -546,6 +751,52 @@ impl DatabaseDriver for MySqlDriver {
 
         let result = builder.build().execute(&self.pool).await?;
         Ok(result.rows_affected())
+    }
+
+    async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
+        if request.rows.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Deleting rows requires at least one selected row"
+            ));
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let mut total_affected = 0u64;
+
+        for row_keys in &request.rows {
+            if row_keys.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Each deleted row must include at least one primary key value"
+                ));
+            }
+
+            let mut builder = QueryBuilder::<MySql>::new("DELETE FROM ");
+            builder.push(qualify_mysql_table_name(
+                &request.table,
+                request.database.as_deref(),
+            )?);
+            builder.push(" WHERE ");
+
+            for (index, primary_key) in row_keys.iter().enumerate() {
+                if index > 0 {
+                    builder.push(" AND ");
+                }
+
+                builder.push(quote_mysql_order_by(&primary_key.column)?);
+                if primary_key.value.is_null() {
+                    builder.push(" IS NULL");
+                } else {
+                    builder.push(" = ");
+                    Self::push_bound_value(&mut builder, &primary_key.value)?;
+                }
+            }
+
+            let result = builder.build().execute(&mut *tx).await?;
+            total_affected += result.rows_affected();
+        }
+
+        tx.commit().await?;
+        Ok(total_affected)
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {

@@ -15,6 +15,7 @@ import type { ConnectionConfig } from "../../types";
 
 interface Props {
   onNewConnection: () => void;
+  onCreateLocalDatabase: () => void;
 }
 
 type ConnectionLayoutMode = "stacked" | "inline";
@@ -23,24 +24,24 @@ const CONNECTION_LAYOUT_STORAGE_KEY = "tabler.connection-list-layout";
 const MIN_CONNECTIONS_FOR_LAYOUT_TOGGLE = 3;
 
 const DB_LABELS: Record<string, { abbr: string; color: string }> = {
-  mysql:      { abbr: "Ms", color: "#c0392b" },
-  mariadb:    { abbr: "Mr", color: "#6c7a89" },
-  sqlite:     { abbr: "Sl", color: "#3498db" },
-  duckdb:     { abbr: "Du", color: "#2c3e50" },
-  cassandra:  { abbr: "Cs", color: "#27ae60" },
-  cockroachdb:{ abbr: "Cr", color: "#3ddc84" },
-  snowflake:  { abbr: "Nf", color: "#29b5e8" },
+  mysql: { abbr: "Ms", color: "#c0392b" },
+  mariadb: { abbr: "Mr", color: "#6c7a89" },
+  sqlite: { abbr: "Sl", color: "#3498db" },
+  duckdb: { abbr: "Du", color: "#2c3e50" },
+  cassandra: { abbr: "Cs", color: "#27ae60" },
+  cockroachdb: { abbr: "Cr", color: "#3ddc84" },
+  snowflake: { abbr: "Nf", color: "#29b5e8" },
   postgresql: { abbr: "Pg", color: "#336791" },
-  greenplum:  { abbr: "Gp", color: "#2ecc71" },
-  redshift:   { abbr: "Rs", color: "#16a085" },
-  mssql:      { abbr: "Ss", color: "#7f8c8d" },
-  redis:      { abbr: "Re", color: "#e74c3c" },
-  mongodb:    { abbr: "Mg", color: "#27ae60" },
-  vertica:    { abbr: "Ve", color: "#95a5a6" },
+  greenplum: { abbr: "Gp", color: "#2ecc71" },
+  redshift: { abbr: "Rs", color: "#16a085" },
+  mssql: { abbr: "Ss", color: "#7f8c8d" },
+  redis: { abbr: "Re", color: "#e74c3c" },
+  mongodb: { abbr: "Mg", color: "#27ae60" },
+  vertica: { abbr: "Ve", color: "#95a5a6" },
   clickhouse: { abbr: "Ch", color: "#5b9bd5" },
-  bigquery:   { abbr: "Bq", color: "#8e44ad" },
-  libsql:     { abbr: "Ls", color: "#2ecc71" },
-  cloudflared1:{ abbr: "D1", color: "#f39c12" },
+  bigquery: { abbr: "Bq", color: "#8e44ad" },
+  libsql: { abbr: "Ls", color: "#2ecc71" },
+  cloudflared1: { abbr: "D1", color: "#f39c12" },
 };
 
 function getInitialLayoutMode(): ConnectionLayoutMode {
@@ -52,7 +53,7 @@ function getInitialLayoutMode(): ConnectionLayoutMode {
   return "stacked";
 }
 
-export function ConnectionList({ onNewConnection }: Props) {
+export function ConnectionList({ onNewConnection, onCreateLocalDatabase }: Props) {
   const {
     connections,
     activeConnectionId,
@@ -111,17 +112,22 @@ export function ConnectionList({ onNewConnection }: Props) {
             <span className="panel-kicker">Connections</span>
             <div className="connection-list-header-line">
               <h2 className="connection-list-title">Saved connections</h2>
-              <span className="connection-list-mini-pill">
-                {connections.length} saved
-              </span>
-              <span className="connection-list-mini-pill accent">
-                {connectedCount} active
-              </span>
+              <span className="connection-list-mini-pill">{connections.length} saved</span>
+              <span className="connection-list-mini-pill accent">{connectedCount} active</span>
             </div>
           </div>
         </div>
 
         <div className={`connection-list-header-actions ${showLayoutToggle ? "" : "compact"}`}>
+          <button
+            onClick={onCreateLocalDatabase}
+            className="connection-list-bootstrap-btn"
+            title="Create Local Database"
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>Local DB</span>
+          </button>
+
           {showLayoutToggle && (
             <div className="connection-layout-toggle" role="group" aria-label="Connection layout">
               <button
@@ -163,10 +169,16 @@ export function ConnectionList({ onNewConnection }: Props) {
             <p className="text-xs text-[var(--text-muted)] opacity-60 mb-4">
               Add a connection to get started
             </p>
-            <button onClick={onNewConnection} className="btn btn-primary text-xs">
-              <Plus className="w-3.5 h-3.5" />
-              New Connection
-            </button>
+            <div className="connection-list-empty-actions">
+              <button onClick={onNewConnection} className="btn btn-primary text-xs">
+                <Plus className="w-3.5 h-3.5" />
+                New Connection
+              </button>
+              <button onClick={onCreateLocalDatabase} className="btn btn-secondary text-xs">
+                <Database className="w-3.5 h-3.5" />
+                Create Local DB
+              </button>
+            </div>
           </div>
         ) : (
           <div className={`connection-list-stack ${effectiveLayoutMode}`}>
@@ -188,16 +200,8 @@ export function ConnectionList({ onNewConnection }: Props) {
                 conn.db_type === "sqlite"
                   ? "Local file access"
                   : conn.database || conn.username || "Credentials saved";
-              const stateLabel = isActive
-                ? "Active"
-                : isConnected
-                  ? "Connected"
-                  : "Saved";
-              const openLabel = isActive
-                ? "Continue"
-                : isConnected
-                  ? "Open"
-                  : "Connect";
+              const stateLabel = isActive ? "Active" : isConnected ? "Connected" : "Saved";
+              const openLabel = isActive ? "Continue" : isConnected ? "Open" : "Connect";
 
               return (
                 <div
@@ -254,18 +258,20 @@ export function ConnectionList({ onNewConnection }: Props) {
                   </div>
 
                   <div className="connection-card-metadata">
-                    <div className="connection-meta-tile">
-                      <span className="connection-meta-label">
+                    <div className="connection-meta-inline-item">
+                      <span className="connection-meta-inline-label">
                         {conn.db_type === "sqlite" ? "File" : "Endpoint"}
                       </span>
-                      <span className="connection-meta-value" title={endpointLabel}>
+                      <span className="connection-meta-inline-value" title={endpointLabel}>
                         {endpointLabel}
                       </span>
                     </div>
 
-                    <div className="connection-meta-tile">
-                      <span className="connection-meta-label">{secondaryLabel}</span>
-                      <span className="connection-meta-value" title={secondaryValue}>
+                    <span className="connection-meta-inline-divider" />
+
+                    <div className="connection-meta-inline-item">
+                      <span className="connection-meta-inline-label">{secondaryLabel}</span>
+                      <span className="connection-meta-inline-value" title={secondaryValue}>
                         {secondaryValue}
                       </span>
                     </div>
@@ -277,11 +283,6 @@ export function ConnectionList({ onNewConnection }: Props) {
                       {conn.use_ssl && conn.db_type !== "sqlite" && (
                         <span className="connection-status-pill secure">SSL</span>
                       )}
-                      <span
-                        className={`connection-status-pill ${isActive ? "active" : isConnected ? "online" : ""}`}
-                      >
-                        {isActive ? "Active" : isConnected ? "Connected" : "Saved"}
-                      </span>
                     </div>
 
                     <div className="connection-card-actions">

@@ -7,7 +7,8 @@ use super::safety::{
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode};
-use sqlx::{Column, ConnectOptions, Postgres, QueryBuilder, Row, TypeInfo};
+use sqlx::types::Json;
+use sqlx::{Column, ConnectOptions, Postgres, QueryBuilder, Row, TypeInfo, ValueRef};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -43,9 +44,11 @@ impl PostgresDriver {
         let mut last_error = None;
         for attempt in 1..=3 {
             let pool_opts = PgPoolOptions::new()
+                .min_connections(1)
                 .max_lifetime(std::time::Duration::from_secs(1800))
                 .acquire_timeout(std::time::Duration::from_secs(30))
-                .idle_timeout(std::time::Duration::from_secs(600));
+                .idle_timeout(std::time::Duration::from_secs(600))
+                .test_before_acquire(false);
 
             match pool_opts.connect_with(options.clone()).await {
                 Ok(pool) => {
@@ -118,27 +121,24 @@ impl PostgresDriver {
             Vec::new()
         };
 
+        let column_types = rows
+            .first()
+            .map(|first| {
+                first
+                    .columns()
+                    .iter()
+                    .map(|column| column.type_info().name().to_ascii_uppercase())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
         let result_rows: Vec<Vec<serde_json::Value>> = rows
             .iter()
             .map(|row| {
                 row.columns()
                     .iter()
                     .enumerate()
-                    .map(|(i, _)| {
-                        if let Ok(v) = row.try_get::<String, _>(i) {
-                            serde_json::Value::String(v)
-                        } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                            serde_json::json!(v)
-                        } else if let Ok(v) = row.try_get::<i32, _>(i) {
-                            serde_json::json!(v)
-                        } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                            serde_json::json!(v)
-                        } else if let Ok(v) = row.try_get::<bool, _>(i) {
-                            serde_json::json!(v)
-                        } else {
-                            serde_json::Value::Null
-                        }
-                    })
+                    .map(|(i, _)| Self::pg_cell_to_json(row, i, column_types.get(i).map(String::as_str)))
                     .collect()
             })
             .collect();
@@ -150,6 +150,59 @@ impl PostgresDriver {
             execution_time_ms: elapsed,
             query,
             sandboxed,
+        }
+    }
+
+    fn pg_cell_to_json(row: &PgRow, index: usize, type_name: Option<&str>) -> serde_json::Value {
+        if row
+            .try_get_raw(index)
+            .map(|value| value.is_null())
+            .unwrap_or(false)
+        {
+            return serde_json::Value::Null;
+        }
+
+        match type_name.unwrap_or_default() {
+            "BOOL" => row
+                .try_get::<bool, _>(index)
+                .map(serde_json::Value::from)
+                .unwrap_or(serde_json::Value::Null),
+            "INT2" | "INT4" | "INT8" | "OID" => row
+                .try_get::<i64, _>(index)
+                .map(serde_json::Value::from)
+                .or_else(|_| row.try_get::<i32, _>(index).map(serde_json::Value::from))
+                .unwrap_or(serde_json::Value::Null),
+            "FLOAT4" | "FLOAT8" | "NUMERIC" | "MONEY" => row
+                .try_get::<f64, _>(index)
+                .map(serde_json::Value::from)
+                .unwrap_or(serde_json::Value::Null),
+            "JSON" | "JSONB" => row
+                .try_get::<Json<serde_json::Value>, _>(index)
+                .map(|value| value.0)
+                .unwrap_or(serde_json::Value::Null),
+            "DATE" => row
+                .try_get::<chrono::NaiveDate, _>(index)
+                .map(|value| serde_json::Value::String(value.to_string()))
+                .unwrap_or(serde_json::Value::Null),
+            "TIME" => row
+                .try_get::<chrono::NaiveTime, _>(index)
+                .map(|value| serde_json::Value::String(value.to_string()))
+                .unwrap_or(serde_json::Value::Null),
+            "TIMESTAMP" => row
+                .try_get::<chrono::NaiveDateTime, _>(index)
+                .map(|value| serde_json::Value::String(value.to_string()))
+                .unwrap_or(serde_json::Value::Null),
+            "TIMESTAMPTZ" => row
+                .try_get::<chrono::DateTime<chrono::Utc>, _>(index)
+                .map(|value| serde_json::Value::String(value.to_rfc3339()))
+                .unwrap_or(serde_json::Value::Null),
+            _ => row
+                .try_get::<String, _>(index)
+                .map(serde_json::Value::String)
+                .or_else(|_| row.try_get::<i64, _>(index).map(serde_json::Value::from))
+                .or_else(|_| row.try_get::<f64, _>(index).map(serde_json::Value::from))
+                .or_else(|_| row.try_get::<bool, _>(index).map(serde_json::Value::from))
+                .unwrap_or(serde_json::Value::Null),
         }
     }
 
@@ -246,6 +299,90 @@ impl DatabaseDriver for PostgresDriver {
                 engine: None,
             })
             .collect())
+    }
+
+    async fn list_schema_objects(&self, _database: Option<&str>) -> Result<Vec<SchemaObjectInfo>> {
+        let mut objects = Vec::new();
+
+        let view_rows: Vec<PgRow> = sqlx::query(
+            "SELECT table_schema, table_name, view_definition \
+             FROM information_schema.views \
+             WHERE table_schema NOT IN ('pg_catalog', 'information_schema') \
+             ORDER BY table_schema, table_name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        objects.extend(view_rows.iter().map(|row| SchemaObjectInfo {
+            name: row.get(1),
+            schema: row.try_get::<String, _>(0).ok(),
+            object_type: "VIEW".to_string(),
+            related_table: None,
+            definition: row.try_get(2).ok(),
+        }));
+
+        let trigger_rows: Vec<PgRow> = sqlx::query(
+            "SELECT trigger_schema, trigger_name, event_object_schema, event_object_table, action_timing, \
+                    string_agg(event_manipulation, ', ' ORDER BY event_manipulation) AS events, action_statement \
+             FROM information_schema.triggers \
+             WHERE trigger_schema NOT IN ('pg_catalog', 'information_schema') \
+             GROUP BY trigger_schema, trigger_name, event_object_schema, event_object_table, action_timing, action_statement \
+             ORDER BY trigger_schema, event_object_table, trigger_name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        objects.extend(trigger_rows.iter().map(|row| {
+            let schema = row.try_get::<String, _>(0).ok();
+            let table_schema = row.try_get::<String, _>(2).ok();
+            let table_name = row.try_get::<String, _>(3).ok();
+            let timing = row.try_get::<String, _>(4).ok();
+            let events = row.try_get::<String, _>(5).ok();
+            let statement = row.try_get::<String, _>(6).ok();
+
+            SchemaObjectInfo {
+                name: row.get(1),
+                schema,
+                object_type: "TRIGGER".to_string(),
+                related_table: match (table_schema, table_name.clone()) {
+                    (Some(schema), Some(table)) => Some(format!("{schema}.{table}")),
+                    (None, Some(table)) => Some(table),
+                    _ => table_name,
+                },
+                definition: Some(
+                    [
+                        timing.unwrap_or_default(),
+                        events.unwrap_or_default(),
+                        "ON".to_string(),
+                        row.try_get::<String, _>(3).unwrap_or_default(),
+                    ]
+                    .join(" ")
+                    .trim()
+                    .to_string()
+                        + "\n"
+                        + statement.unwrap_or_default().trim(),
+                ),
+            }
+        }));
+
+        let routine_rows: Vec<PgRow> = sqlx::query(
+            "SELECT routine_schema, routine_name, routine_type, routine_definition \
+             FROM information_schema.routines \
+             WHERE routine_schema NOT IN ('pg_catalog', 'information_schema') \
+             ORDER BY routine_schema, routine_type, routine_name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        objects.extend(routine_rows.iter().map(|row| SchemaObjectInfo {
+            name: row.get(1),
+            schema: row.try_get::<String, _>(0).ok(),
+            object_type: row.get::<String, _>(2).to_ascii_uppercase(),
+            related_table: None,
+            definition: row.try_get(3).ok(),
+        }));
+
+        Ok(objects)
     }
 
     async fn get_table_structure(
@@ -439,10 +576,62 @@ impl DatabaseDriver for PostgresDriver {
             })
             .collect();
 
+        let object_type = sqlx::query(
+            "SELECT table_type \
+             FROM information_schema.tables \
+             WHERE table_schema = $1 AND table_name = $2 \
+             LIMIT 1",
+        )
+        .bind(&schema)
+        .bind(&table_name)
+        .fetch_optional(&self.pool)
+        .await?
+        .and_then(|row| row.try_get::<String, _>(0).ok());
+
+        let view_definition = sqlx::query(
+            "SELECT view_definition \
+             FROM information_schema.views \
+             WHERE table_schema = $1 AND table_name = $2 \
+             LIMIT 1",
+        )
+        .bind(&schema)
+        .bind(&table_name)
+        .fetch_optional(&self.pool)
+        .await?
+        .and_then(|row| row.try_get::<String, _>(0).ok());
+
+        let trigger_rows: Vec<PgRow> = sqlx::query(
+            "SELECT trigger_name, action_timing, \
+                    string_agg(event_manipulation, ', ' ORDER BY event_manipulation) AS events, \
+                    action_statement \
+             FROM information_schema.triggers \
+             WHERE event_object_schema = $1 AND event_object_table = $2 \
+             GROUP BY trigger_name, action_timing, action_statement \
+             ORDER BY trigger_name",
+        )
+        .bind(&schema)
+        .bind(&table_name)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let triggers = trigger_rows
+            .iter()
+            .map(|row| TriggerInfo {
+                name: row.get(0),
+                timing: row.try_get(1).ok(),
+                event: row.try_get(2).ok(),
+                related_table: Some(format!("{}.{}", schema, table_name)),
+                definition: row.try_get(3).ok(),
+            })
+            .collect();
+
         Ok(TableStructure {
             columns,
             indexes,
             foreign_keys,
+            triggers,
+            view_definition,
+            object_type,
         })
     }
 
@@ -450,14 +639,15 @@ impl DatabaseDriver for PostgresDriver {
         let start = Instant::now();
         if Self::query_returns_rows(sql) {
             let rows: Vec<PgRow> = sqlx::query(sql).fetch_all(&self.pool).await?;
-            let elapsed = start.elapsed().as_millis();
-            Ok(Self::build_result_from_rows(
+            let mut result = Self::build_result_from_rows(
                 &rows,
-                elapsed,
+                0,
                 sql.to_string(),
                 0,
                 false,
-            ))
+            );
+            result.execution_time_ms = start.elapsed().as_millis();
+            Ok(result)
         } else {
             // For non-SELECT queries, split by semicolon and execute each statement
             let statements: Vec<&str> = sql
@@ -632,6 +822,49 @@ impl DatabaseDriver for PostgresDriver {
 
         let result = builder.build().execute(&self.pool).await?;
         Ok(result.rows_affected())
+    }
+
+    async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
+        if request.rows.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Deleting rows requires at least one selected row"
+            ));
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let mut total_affected = 0u64;
+
+        for row_keys in &request.rows {
+            if row_keys.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Each deleted row must include at least one primary key value"
+                ));
+            }
+
+            let mut builder = QueryBuilder::<Postgres>::new("DELETE FROM ");
+            builder.push(qualify_postgres_table_name(&request.table, "public")?);
+            builder.push(" WHERE ");
+
+            for (index, primary_key) in row_keys.iter().enumerate() {
+                if index > 0 {
+                    builder.push(" AND ");
+                }
+
+                builder.push(quote_postgres_order_by(&primary_key.column)?);
+                if primary_key.value.is_null() {
+                    builder.push(" IS NULL");
+                } else {
+                    builder.push(" = ");
+                    Self::push_bound_value(&mut builder, &primary_key.value)?;
+                }
+            }
+
+            let result = builder.build().execute(&mut *tx).await?;
+            total_affected += result.rows_affected();
+        }
+
+        tx.commit().await?;
+        Ok(total_affected)
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {

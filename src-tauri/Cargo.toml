@@ -28,3 +28,4 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "sync-s
 log = "0.4"
 env_logger = "0.11"
 async-trait = "0.1"
+rfd = "0.15"

@@ -1,6 +1,13 @@
 use crate::database::manager::DatabaseManager;
-use crate::database::models::{QueryResult, TableCellUpdateRequest, TableInfo, TableStructure};
+use crate::database::models::{
+    QueryResult, SchemaObjectInfo, TableCellUpdateRequest, TableInfo, TableRowDeleteRequest,
+    TableStructure,
+};
 use tauri::State;
+use tokio::time::{timeout, Duration};
+
+const TABLE_QUERY_TIMEOUT: Duration = Duration::from_secs(120);
+const TABLE_METADATA_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tauri::command]
 pub async fn list_tables(
@@ -12,9 +19,9 @@ pub async fn list_tables(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    driver
-        .list_tables(database.as_deref())
+    timeout(TABLE_METADATA_TIMEOUT, driver.list_tables(database.as_deref()))
         .await
+        .map_err(|_| "Listing tables timed out after 60 seconds.".to_string())?
         .map_err(|e| e.to_string())
 }
 
@@ -29,10 +36,32 @@ pub async fn get_table_structure(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    driver
-        .get_table_structure(&table, database.as_deref())
+    timeout(
+        TABLE_METADATA_TIMEOUT,
+        driver.get_table_structure(&table, database.as_deref()),
+    )
+    .await
+    .map_err(|_| "Loading table structure timed out after 60 seconds.".to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_schema_objects(
+    connection_id: String,
+    database: Option<String>,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<Vec<SchemaObjectInfo>, String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    timeout(
+        TABLE_METADATA_TIMEOUT,
+        driver.list_schema_objects(database.as_deref()),
+    )
+    .await
+    .map_err(|_| "Listing schema objects timed out after 60 seconds.".to_string())?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -51,8 +80,9 @@ pub async fn get_table_data(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    driver
-        .get_table_data(
+    timeout(
+        TABLE_QUERY_TIMEOUT,
+        driver.get_table_data(
             &table,
             database.as_deref(),
             offset,
@@ -60,9 +90,11 @@ pub async fn get_table_data(
             order_by.as_deref(),
             order_dir.as_deref(),
             filter.as_deref(),
-        )
-        .await
-        .map_err(|e| e.to_string())
+        ),
+    )
+    .await
+    .map_err(|_| "Loading table data timed out after 120 seconds.".to_string())?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -76,9 +108,9 @@ pub async fn count_table_rows(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    driver
-        .count_rows(&table, database.as_deref())
+    timeout(TABLE_METADATA_TIMEOUT, driver.count_rows(&table, database.as_deref()))
         .await
+        .map_err(|_| "Counting table rows timed out after 60 seconds.".to_string())?
         .map_err(|e| e.to_string())
 }
 
@@ -92,8 +124,24 @@ pub async fn update_table_cell(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    driver
-        .update_table_cell(&request)
+    timeout(TABLE_QUERY_TIMEOUT, driver.update_table_cell(&request))
         .await
+        .map_err(|_| "Inline update timed out after 120 seconds.".to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_table_rows(
+    connection_id: String,
+    request: TableRowDeleteRequest,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<u64, String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    timeout(TABLE_QUERY_TIMEOUT, driver.delete_table_rows(&request))
+        .await
+        .map_err(|_| "Row deletion timed out after 120 seconds.".to_string())?
         .map_err(|e| e.to_string())
 }

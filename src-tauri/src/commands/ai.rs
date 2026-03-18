@@ -1,6 +1,8 @@
 use reqwest::Client;
+use reqwest::Url;
 use serde_json::json;
-use crate::database::ai_models::{AIProviderConfig, AIProviderType, AIRequest, AIResponse};
+use std::net::IpAddr;
+use crate::database::ai_models::{AIProviderConfig, AIProviderType, AIRequest, AIRequestMode, AIResponse};
 
 use tauri::State;
 use std::collections::HashMap;
@@ -8,6 +10,55 @@ use crate::storage::ai_storage::AIStorage;
 
 fn provider_requires_api_key(provider_type: &AIProviderType) -> bool {
     !matches!(provider_type, AIProviderType::Ollama | AIProviderType::Custom)
+}
+
+fn provider_allows_local_endpoint(provider_type: &AIProviderType) -> bool {
+    matches!(provider_type, AIProviderType::Ollama | AIProviderType::Custom)
+}
+
+fn is_local_domain(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+        || host.eq_ignore_ascii_case("localhost")
+        || host.ends_with(".local")
+}
+
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => {
+            ipv4.is_private() || ipv4.is_loopback() || ipv4.is_link_local() || ipv4.is_broadcast()
+        }
+        IpAddr::V6(ipv6) => ipv6.is_loopback() || ipv6.is_unique_local() || ipv6.is_unicast_link_local(),
+    }
+}
+
+fn validate_ai_endpoint(config: &AIProviderConfig, endpoint: &str) -> Result<(), String> {
+    let url = Url::parse(endpoint).map_err(|error| format!("Invalid AI endpoint URL: {error}"))?;
+
+    match url.scheme() {
+        "https" => {}
+        "http" => {
+            let host = url
+                .host_str()
+                .ok_or_else(|| "AI endpoint is missing a host".to_string())?;
+            if !provider_allows_local_endpoint(&config.provider_type) || !is_local_domain(host) {
+                return Err("Only localhost endpoints may use plain HTTP.".to_string());
+            }
+        }
+        _ => return Err("AI endpoint must use http or https.".to_string()),
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| "AI endpoint is missing a host".to_string())?;
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_ip(&ip) && !provider_allows_local_endpoint(&config.provider_type) {
+            return Err("Private/internal AI endpoints are only allowed for Ollama or Custom providers.".to_string());
+        }
+    } else if !provider_allows_local_endpoint(&config.provider_type) && is_local_domain(host) {
+        return Err("Local AI endpoints are only allowed for Ollama or Custom providers.".to_string());
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -36,6 +87,12 @@ pub async fn ask_ai(request: AIRequest, storage: State<'_, AIStorage>) -> Result
     let config = storage
         .get_provider_config(&request.provider_id)
         .map_err(|e| e.to_string())?;
+    if !config.is_enabled {
+        return Err("Selected AI provider is disabled.".to_string());
+    }
+    if request.mode == AIRequestMode::Inline && !config.allow_inline_completion {
+        return Err("Inline AI completion is disabled for this provider.".to_string());
+    }
     let api_key = if provider_requires_api_key(&config.provider_type) {
         Some(
             storage
@@ -47,10 +104,22 @@ pub async fn ask_ai(request: AIRequest, storage: State<'_, AIStorage>) -> Result
             .get_api_key_optional(&request.provider_id)
             .map_err(|e| e.to_string())?
     };
-    let prompt = format!(
-        "You are an expert SQL assistant. Given the following database context:\n{}\n\nTask: {}\n\nProvide ONLY the raw SQL query. Do not include markdown blocks or explanations.",
-        request.context, request.prompt
-    );
+    let effective_context = if config.allow_schema_context {
+        request.context.trim()
+    } else {
+        ""
+    };
+    let prompt = if effective_context.is_empty() {
+        format!(
+            "You are an expert SQL assistant. Task: {}\n\nProvide ONLY the raw SQL query. Do not include markdown blocks or explanations.",
+            request.prompt
+        )
+    } else {
+        format!(
+            "You are an expert SQL assistant. Given the following database context:\n{}\n\nTask: {}\n\nProvide ONLY the raw SQL query. Do not include markdown blocks or explanations.",
+            effective_context, request.prompt
+        )
+    };
 
     match config.provider_type {
         AIProviderType::OpenAI | AIProviderType::OpenRouter | AIProviderType::Ollama | AIProviderType::Custom => {
@@ -72,6 +141,7 @@ pub async fn ask_ai(request: AIRequest, storage: State<'_, AIStorage>) -> Result
             } else {
                 &config.endpoint
             };
+            validate_ai_endpoint(&config, endpoint)?;
 
             let mut req = client.post(endpoint);
             if let Some(ref api_key) = api_key {
@@ -115,6 +185,7 @@ pub async fn ask_ai(request: AIRequest, storage: State<'_, AIStorage>) -> Result
             } else {
                 &config.endpoint
             };
+            validate_ai_endpoint(&config, endpoint)?;
 
             let req = client.post(endpoint)
                 .header("x-api-key", api_key.as_deref().unwrap_or_default())
@@ -155,6 +226,7 @@ pub async fn ask_ai(request: AIRequest, storage: State<'_, AIStorage>) -> Result
             } else {
                 config.endpoint.clone()
             };
+            validate_ai_endpoint(&config, &endpoint)?;
 
             let req = client.post(&endpoint)
                 .header("x-goog-api-key", api_key.as_deref().unwrap_or_default())

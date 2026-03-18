@@ -17,10 +17,11 @@ import {
   Key,
   Copy,
   Database,
+  Trash2,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
-import type { ColumnDetail, ColumnInfo, QueryResult } from "../../types";
+import type { ColumnDetail, ColumnInfo, QueryResult, RowKeyValue } from "../../types";
 
 interface Props {
   connectionId: string;
@@ -39,7 +40,141 @@ type GridCellValue = string | number | boolean | null;
 type ResolvedColumn = ColumnInfo & { column_type?: string };
 type StructureStatus = "idle" | "loading" | "ready" | "failed";
 
-const PAGE_SIZE = 200;
+interface CachedTablePage {
+  result: QueryResult;
+  totalRows: number;
+  cachedAt: number;
+}
+
+const PAGE_SIZE = 100;
+const TABLE_PAGE_CACHE_TTL_MS = 120_000;
+const TABLE_COUNT_CACHE_TTL_MS = 600_000;
+const COUNT_ROWS_DEBOUNCE_MS = 800;
+const MAX_TABLE_PAGE_CACHE_ENTRIES = 160;
+const MAX_TABLE_COUNT_CACHE_ENTRIES = 96;
+const MAX_INLINE_STRUCTURE_CACHE_ENTRIES = 96;
+const tablePageCache = new Map<string, CachedTablePage>();
+const tableCountCache = new Map<string, { totalRows: number; cachedAt: number }>();
+const inlineStructureCache = new Map<string, ColumnDetail[]>();
+
+function buildTableScopeKey(connectionId: string, tableName: string, database?: string) {
+  return `${connectionId}|${database || ""}|${tableName}`;
+}
+
+function buildTableCacheKey(
+  connectionId: string,
+  tableName: string,
+  database?: string,
+  page?: number,
+  sortColumn?: string | null,
+  sortDir?: "ASC" | "DESC"
+) {
+  return [
+    connectionId,
+    database || "",
+    tableName,
+    page ?? 0,
+    sortColumn || "",
+    sortDir || "",
+  ].join("|");
+}
+
+function isFreshCacheEntry(cachedAt: number, ttlMs: number) {
+  return Date.now() - cachedAt <= ttlMs;
+}
+
+function setBoundedMapEntry<K, V>(map: Map<K, V>, key: K, value: V, maxEntries: number) {
+  if (map.has(key)) {
+    map.delete(key);
+  }
+  map.set(key, value);
+
+  while (map.size > maxEntries) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
+function matchesCacheScope(
+  key: string,
+  connectionId: string,
+  database?: string,
+  tableName?: string
+) {
+  const [cachedConnectionId, cachedDatabase = "", cachedTableName] = key.split("|", 3);
+  if (cachedConnectionId !== connectionId) return false;
+  if (database !== undefined && cachedDatabase !== (database || "")) return false;
+  if (tableName !== undefined && cachedTableName !== tableName) return false;
+  return true;
+}
+
+function buildColumnSignature(
+  columns: Array<{
+    name: string;
+    data_type?: string;
+    column_type?: string;
+    is_nullable?: boolean;
+    is_primary_key?: boolean;
+    default_value?: string;
+    extra?: string;
+  }>
+) {
+  return columns
+    .map(
+      (column) =>
+        [
+          column.name,
+          column.column_type || column.data_type || "",
+          column.is_nullable ? "nullable" : "required",
+          column.is_primary_key ? "pk" : "col",
+          column.default_value || "",
+          column.extra || "",
+        ].join(":")
+    )
+    .join("|");
+}
+
+function invalidateTableCaches(
+  connectionId: string,
+  tableName: string,
+  database?: string,
+  options?: { invalidateStructure?: boolean }
+) {
+  invalidateTableScopeCaches(
+    connectionId,
+    database,
+    tableName,
+    Boolean(options?.invalidateStructure)
+  );
+}
+
+function invalidateTableScopeCaches(
+  connectionId: string,
+  database?: string,
+  tableName?: string,
+  invalidateStructure = false
+) {
+  for (const key of tableCountCache.keys()) {
+    if (matchesCacheScope(key, connectionId, database, tableName)) {
+      tableCountCache.delete(key);
+    }
+  }
+
+  for (const key of tablePageCache.keys()) {
+    if (matchesCacheScope(key, connectionId, database, tableName)) {
+      tablePageCache.delete(key);
+    }
+  }
+
+  if (invalidateStructure) {
+    for (const key of inlineStructureCache.keys()) {
+      if (matchesCacheScope(key, connectionId, database, tableName)) {
+        inlineStructureCache.delete(key);
+      }
+    }
+  }
+}
 
 function isBooleanColumn(column: ResolvedColumn) {
   return /(bool)/i.test(column.column_type || column.data_type || "");
@@ -108,6 +243,20 @@ function parseEditorValue(rawValue: string, column: ResolvedColumn): GridCellVal
   return rawValue;
 }
 
+function buildRowPrimaryKeys(
+  rowValues: unknown[],
+  resolvedColumns: ResolvedColumn[],
+  primaryKeyColumns: ResolvedColumn[]
+): RowKeyValue[] {
+  return primaryKeyColumns.map((pkColumn) => {
+    const pkIndex = resolvedColumns.findIndex((column) => column.name === pkColumn.name);
+    return {
+      column: pkColumn.name,
+      value: (rowValues[pkIndex] as GridCellValue) ?? null,
+    };
+  });
+}
+
 export function DataGrid({
   connectionId,
   tableName,
@@ -120,6 +269,7 @@ export function DataGrid({
     countRows,
     getTableStructure,
     updateTableCell,
+    deleteTableRows,
     setError,
   } = useAppStore(
     useShallow((state) => ({
@@ -127,6 +277,7 @@ export function DataGrid({
       countRows: state.countRows,
       getTableStructure: state.getTableStructure,
       updateTableCell: state.updateTableCell,
+      deleteTableRows: state.deleteTableRows,
       setError: state.setError,
     }))
   );
@@ -142,17 +293,23 @@ export function DataGrid({
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [editingSeedValue, setEditingSeedValue] = useState("");
   const [savingCell, setSavingCell] = useState<EditingCell | null>(null);
+  const [isDeletingRows, setIsDeletingRows] = useState(false);
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
   const requestIdRef = useRef(0);
   const structureRequestIdRef = useRef(0);
   const structurePromiseRef = useRef<Promise<ColumnDetail[]> | null>(null);
+  const countTimeoutRef = useRef<number | null>(null);
   const isMountedRef = useRef(true);
   const isActiveRef = useRef(isActive);
   const editorRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
   const editingDraftRef = useRef("");
+  const editingOpenedAtRef = useRef(0);
+  const rowSelectionAnchorRef = useRef<number | null>(null);
+  const dataGridInstanceIdRef = useRef(`datagrid-${Math.random().toString(36).slice(2)}`);
   const assignInputRef = useCallback((element: HTMLInputElement | null) => {
     editorRef.current = element;
   }, []);
@@ -165,6 +322,35 @@ export function DataGrid({
       if (!tableName || !isActive) return;
 
       const requestId = ++requestIdRef.current;
+      const tableCacheKey = buildTableCacheKey(
+        connectionId,
+        tableName,
+        database,
+        page,
+        sortColumn,
+        sortDir
+      );
+      const cachedPage = tablePageCache.get(tableCacheKey);
+      const tableScopeKey = buildTableScopeKey(connectionId, tableName, database);
+      const cachedCount = tableCountCache.get(tableScopeKey);
+      const hasFreshCount = Boolean(
+        cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS)
+      );
+
+      if (cachedPage && isFreshCacheEntry(cachedPage.cachedAt, TABLE_PAGE_CACHE_TTL_MS)) {
+        setData(cachedPage.result);
+        setTotalRows(cachedPage.totalRows);
+        setIsLoading(false);
+        return;
+      }
+
+      if (cachedPage) {
+        setData(cachedPage.result);
+        setTotalRows(cachedPage.totalRows);
+      } else if (cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS)) {
+        setTotalRows(cachedCount.totalRows);
+      }
+
       setIsLoading(true);
 
       try {
@@ -195,32 +381,82 @@ export function DataGrid({
 
         if (page === 0 && isActiveRef.current) {
           const needsExactCount = result.rows.length === PAGE_SIZE;
-          setTotalRows(needsExactCount ? PAGE_SIZE + 1 : result.rows.length);
+          const nextTotalRows = hasFreshCount
+            ? cachedCount!.totalRows
+            : needsExactCount
+              ? PAGE_SIZE + 1
+              : result.rows.length;
+          setTotalRows(nextTotalRows);
+          setBoundedMapEntry(tablePageCache, tableCacheKey, {
+            result,
+            totalRows: nextTotalRows,
+            cachedAt: Date.now(),
+          }, MAX_TABLE_PAGE_CACHE_ENTRIES);
 
-          if (needsExactCount) {
-            void countRows(connectionId, tableName, database)
-              .then((count) => {
-                if (
-                  !isMountedRef.current ||
-                  requestId !== requestIdRef.current ||
-                  !isActiveRef.current
-                ) {
-                  return;
-                }
-                setTotalRows(count);
-              })
-              .catch((error) => {
-                console.error("Failed to count table rows:", error);
-              });
+          if (needsExactCount && !hasFreshCount) {
+            if (countTimeoutRef.current !== null) {
+              window.clearTimeout(countTimeoutRef.current);
+            }
+
+            countTimeoutRef.current = window.setTimeout(() => {
+              void countRows(connectionId, tableName, database)
+                .then((count) => {
+                  if (
+                    !isMountedRef.current ||
+                    requestId !== requestIdRef.current ||
+                    !isActiveRef.current
+                  ) {
+                    return;
+                  }
+
+                  setBoundedMapEntry(tableCountCache, tableScopeKey, {
+                    totalRows: count,
+                    cachedAt: Date.now(),
+                  }, MAX_TABLE_COUNT_CACHE_ENTRIES);
+                  setBoundedMapEntry(tablePageCache, tableCacheKey, {
+                    result,
+                    totalRows: count,
+                    cachedAt: Date.now(),
+                  }, MAX_TABLE_PAGE_CACHE_ENTRIES);
+                  setTotalRows(count);
+                })
+                .catch((error) => {
+                  console.error("Failed to count table rows:", error);
+                });
+            }, COUNT_ROWS_DEBOUNCE_MS);
+          } else {
+            setBoundedMapEntry(tableCountCache, tableScopeKey, {
+              totalRows: nextTotalRows,
+              cachedAt: Date.now(),
+            }, MAX_TABLE_COUNT_CACHE_ENTRIES);
           }
+        } else {
+          const fallbackTotalRows = cachedCount?.totalRows || page * PAGE_SIZE + result.rows.length;
+          setBoundedMapEntry(tablePageCache, tableCacheKey, {
+            result,
+            totalRows: fallbackTotalRows,
+            cachedAt: Date.now(),
+          }, MAX_TABLE_PAGE_CACHE_ENTRIES);
         }
       } catch (e) {
         if (!isMountedRef.current || requestId !== requestIdRef.current) return;
         console.error("Failed to fetch table data:", e);
+        const message = e instanceof Error ? e.message : String(e);
+        setError(`Could not load table data for ${tableName}: ${message}`);
         setIsLoading(false);
       }
     },
-    [connectionId, tableName, database, sortColumn, sortDir, getTableData, countRows, isActive]
+    [
+      connectionId,
+      tableName,
+      database,
+      sortColumn,
+      sortDir,
+      getTableData,
+      countRows,
+      isActive,
+      setError,
+    ]
   );
 
   useEffect(() => {
@@ -254,6 +490,14 @@ export function DataGrid({
       return [] as ColumnDetail[];
     }
 
+    const structureCacheKey = `${connectionId}|${database || ""}|${tableName}`;
+    const cachedStructure = inlineStructureCache.get(structureCacheKey);
+    if (cachedStructure && cachedStructure.length > 0) {
+      setStructureColumns(cachedStructure);
+      setStructureStatus("ready");
+      return cachedStructure;
+    }
+
     if (structureStatus === "ready" && structureColumns.length > 0) {
       return structureColumns;
     }
@@ -271,6 +515,12 @@ export function DataGrid({
           return [] as ColumnDetail[];
         }
 
+        setBoundedMapEntry(
+          inlineStructureCache,
+          structureCacheKey,
+          structure.columns,
+          MAX_INLINE_STRUCTURE_CACHE_ENTRIES
+        );
         setStructureColumns(structure.columns);
         setStructureStatus("ready");
         return structure.columns;
@@ -304,6 +554,19 @@ export function DataGrid({
   ]);
 
   useEffect(() => {
+    if (!tableName || externalResult || !isActive || !data) return;
+    if (structureStatus !== "idle") return;
+
+    const warmupId = window.setTimeout(() => {
+      void ensureStructureLoaded().catch((error) => {
+        console.error("Inline edit metadata warmup failed:", error);
+      });
+    }, 180);
+
+    return () => window.clearTimeout(warmupId);
+  }, [data, ensureStructureLoaded, externalResult, isActive, structureStatus, tableName]);
+
+  useEffect(() => {
     isActiveRef.current = isActive;
   }, [isActive]);
 
@@ -314,14 +577,72 @@ export function DataGrid({
       requestIdRef.current += 1;
       structureRequestIdRef.current += 1;
       structurePromiseRef.current = null;
+      if (countTimeoutRef.current !== null) {
+        window.clearTimeout(countTimeoutRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    const handleStructureUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        connectionId: string;
+        tableName: string;
+        database?: string;
+      }>).detail;
+
+      if (!detail) return;
+      invalidateTableCaches(detail.connectionId, detail.tableName, detail.database, {
+        invalidateStructure: true,
+      });
+    };
+
+    window.addEventListener("table-structure-updated", handleStructureUpdated);
+    return () => {
+      window.removeEventListener("table-structure-updated", handleStructureUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleTableDataUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        connectionId: string;
+        database?: string;
+        tableName?: string;
+        invalidateStructure?: boolean;
+        sourceId?: string;
+      }>).detail;
+
+      if (!detail || detail.connectionId !== connectionId) return;
+      if (detail.database !== undefined && (detail.database || "") !== (database || "")) return;
+
+      invalidateTableScopeCaches(
+        detail.connectionId,
+        detail.database,
+        detail.tableName,
+        Boolean(detail.invalidateStructure)
+      );
+
+      if (!tableName || externalResult || !isActiveRef.current) return;
+      if (detail.tableName && detail.tableName !== tableName) return;
+      if (detail.sourceId === dataGridInstanceIdRef.current) return;
+
+      void fetchData(currentPage);
+    };
+
+    window.addEventListener("table-data-updated", handleTableDataUpdated);
+    return () => {
+      window.removeEventListener("table-data-updated", handleTableDataUpdated);
+    };
+  }, [connectionId, currentPage, database, externalResult, fetchData, tableName]);
 
   useEffect(() => {
     setEditingCell(null);
     setEditingSeedValue("");
     editingDraftRef.current = "";
     setSavingCell(null);
+    setSelectedRows(new Set());
+    rowSelectionAnchorRef.current = null;
   }, [tableName, currentPage, sortColumn, sortDir, externalResult]);
 
   useEffect(() => {
@@ -355,18 +676,30 @@ export function DataGrid({
     setTimeout(() => setCopiedCell(null), 1200);
   };
 
+  const dataColumns = data?.columns || [];
+  const dataColumnSignature = useMemo(() => buildColumnSignature(dataColumns), [dataColumns]);
+  const structureColumnSignature = useMemo(
+    () => buildColumnSignature(structureColumns),
+    [structureColumns]
+  );
+
   const resolvedColumns = useMemo<ResolvedColumn[]>(() => {
-    if (!data || data.columns.length === 0) return [];
-    return buildResolvedColumns(data.columns, structureColumns);
-  }, [data, structureColumns]);
+    if (dataColumns.length === 0) return [];
+    return buildResolvedColumns(dataColumns, structureColumns);
+  }, [dataColumnSignature, structureColumnSignature]);
 
   const primaryKeyColumns = useMemo(
     () => resolvedColumns.filter((column) => column.is_primary_key),
     [resolvedColumns]
   );
   const canAttemptInlineEdit = Boolean(tableName && !externalResult);
+  const canSelectRows = Boolean(tableName && !externalResult && primaryKeyColumns.length > 0);
   const isTableEditable = Boolean(
     tableName && !externalResult && structureStatus === "ready" && primaryKeyColumns.length > 0
+  );
+  const selectedRowCount = selectedRows.size;
+  const allVisibleRowsSelected = Boolean(
+    canSelectRows && data?.rows.length && selectedRows.size === data.rows.length
   );
 
   const startEditingCell = useCallback(
@@ -391,13 +724,24 @@ export function DataGrid({
       const column = nextResolvedColumns[colIndex];
       const rowValues = data.rows[rowIndex];
 
-      if (!column || !rowValues || column.is_primary_key || primaryKeys.length === 0) {
+      if (!column || !rowValues) {
+        return;
+      }
+
+      if (primaryKeys.length === 0) {
+        setError(`Inline edit unavailable for ${tableName}: no primary key was detected.`);
+        return;
+      }
+
+      if (column.is_primary_key) {
+        setError(`Primary key column "${column.name}" is read-only in inline edit mode.`);
         return;
       }
 
       const seedValue = editorValueFromCell(rowValues[colIndex] as GridCellValue);
       setEditingSeedValue(seedValue);
       editingDraftRef.current = seedValue;
+      editingOpenedAtRef.current = Date.now();
       setEditingCell({ row: rowIndex, col: colIndex });
     },
     [
@@ -415,6 +759,7 @@ export function DataGrid({
     setEditingCell(null);
     setEditingSeedValue("");
     editingDraftRef.current = "";
+    editingOpenedAtRef.current = 0;
   }, []);
 
   const commitEditingCell = useCallback(async () => {
@@ -436,14 +781,7 @@ export function DataGrid({
         return;
       }
 
-      const primaryKeys = primaryKeyColumns.map((pkColumn) => {
-        const pkIndex = resolvedColumns.findIndex((column) => column.name === pkColumn.name);
-        const pkValue = rowValues[pkIndex] as GridCellValue;
-        return {
-          column: pkColumn.name,
-          value: pkValue,
-        };
-      });
+      const primaryKeys = buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns);
 
       setSavingCell(editingCell);
       const affectedRows = await updateTableCell(connectionId, {
@@ -460,8 +798,25 @@ export function DataGrid({
         );
       }
 
+      setData((previous) => {
+        if (!previous) return previous;
+
+        const nextRows = previous.rows.map((row, index) => {
+          if (index !== editingCell.row) return row;
+          const nextRow = [...row];
+          nextRow[editingCell.col] = nextValue;
+          return nextRow;
+        });
+
+        return {
+          ...previous,
+          rows: nextRows,
+        };
+      });
+
+      invalidateTableCaches(connectionId, tableName, database);
       cancelEditingCell();
-      await fetchData(currentPage);
+      void fetchData(currentPage);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setError(`Inline update failed: ${message}`);
@@ -489,18 +844,194 @@ export function DataGrid({
     updateTableCell,
   ]);
 
+  const handleEditorBlur = useCallback(() => {
+    if (Date.now() - editingOpenedAtRef.current < 160) {
+      window.setTimeout(() => {
+        editorRef.current?.focus();
+        if (editorRef.current && "select" in editorRef.current) {
+          editorRef.current.select();
+        }
+      }, 0);
+      return;
+    }
+
+    void commitEditingCell();
+  }, [commitEditingCell]);
+
+  const handleRowSelection = useCallback(
+    (rowIndex: number, event?: Pick<MouseEvent, "shiftKey" | "metaKey" | "ctrlKey">) => {
+      if (!canSelectRows || !data?.rows[rowIndex]) return;
+
+      setSelectedRows((previous) => {
+        const next = new Set(previous);
+        const anchor = rowSelectionAnchorRef.current;
+
+        if (event?.shiftKey && anchor !== null) {
+          const start = Math.min(anchor, rowIndex);
+          const end = Math.max(anchor, rowIndex);
+          next.clear();
+          for (let index = start; index <= end; index += 1) {
+            next.add(index);
+          }
+        } else if (event?.metaKey || event?.ctrlKey) {
+          if (next.has(rowIndex)) {
+            next.delete(rowIndex);
+          } else {
+            next.add(rowIndex);
+          }
+          rowSelectionAnchorRef.current = rowIndex;
+        } else {
+          const shouldClear = next.size === 1 && next.has(rowIndex);
+          next.clear();
+          if (!shouldClear) {
+            next.add(rowIndex);
+          }
+          rowSelectionAnchorRef.current = shouldClear ? null : rowIndex;
+        }
+
+        return next;
+      });
+    },
+    [canSelectRows, data]
+  );
+
+  const handleToggleSelectAllRows = useCallback(() => {
+    if (!canSelectRows || !data?.rows.length) return;
+
+    setSelectedRows((previous) => {
+      if (previous.size === data.rows.length) {
+        rowSelectionAnchorRef.current = null;
+        return new Set();
+      }
+
+      const next = new Set<number>();
+      data.rows.forEach((_, index) => next.add(index));
+      rowSelectionAnchorRef.current = 0;
+      return next;
+    });
+  }, [canSelectRows, data]);
+
+  const handleDeleteSelectedRows = useCallback(async () => {
+    if (!tableName || !data || selectedRows.size === 0 || primaryKeyColumns.length === 0) {
+      return;
+    }
+
+    const shouldDelete = window.confirm(
+      `Delete ${selectedRows.size} selected row${selectedRows.size === 1 ? "" : "s"} from ${tableName}? This cannot be undone.`
+    );
+    if (!shouldDelete) return;
+
+    const sortedRows = Array.from(selectedRows).sort((left, right) => left - right);
+
+    setIsDeletingRows(true);
+    try {
+      const rows = sortedRows.map((rowIndex) => {
+        const rowValues = data.rows[rowIndex];
+        if (!rowValues) {
+          throw new Error("One of the selected rows no longer exists in the current page.");
+        }
+        return buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns);
+      });
+
+      const affectedRows = await deleteTableRows(connectionId, {
+        table: tableName,
+        database,
+        rows,
+      });
+
+      if (affectedRows === 0) {
+        throw new Error("Database did not delete any rows for the current selection.");
+      }
+
+      const deletedRowSet = new Set(sortedRows);
+      setData((previous) => {
+        if (!previous) return previous;
+        return {
+          ...previous,
+          rows: previous.rows.filter((_, index) => !deletedRowSet.has(index)),
+        };
+      });
+      setTotalRows((previous) => Math.max(0, previous - sortedRows.length));
+      setSelectedRows(new Set());
+      rowSelectionAnchorRef.current = null;
+      cancelEditingCell();
+      setSelectedCell(null);
+
+      invalidateTableCaches(connectionId, tableName, database);
+      window.dispatchEvent(
+        new CustomEvent("table-data-updated", {
+          detail: {
+            connectionId,
+            database,
+            tableName,
+            sourceId: dataGridInstanceIdRef.current,
+          },
+        })
+      );
+
+      if (currentPage > 0 && data.rows.length === sortedRows.length) {
+        setCurrentPage((page) => Math.max(0, page - 1));
+      } else {
+        void fetchData(currentPage);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setError(`Delete rows failed: ${message}`);
+    } finally {
+      setIsDeletingRows(false);
+    }
+  }, [
+    cancelEditingCell,
+    connectionId,
+    currentPage,
+    data,
+    database,
+    deleteTableRows,
+    fetchData,
+    primaryKeyColumns,
+    resolvedColumns,
+    selectedRows,
+    setError,
+    tableName,
+  ]);
+
   const columns = useMemo<ColumnDef<any, any>[]>(() => {
     if (!data || resolvedColumns.length === 0) return [];
 
     return [
       {
         id: "_row_num",
-        header: () => <span className="datagrid-index-label">#</span>,
-        cell: ({ row }) => (
-          <span className="datagrid-index-value">
-            {currentPage * PAGE_SIZE + row.index + 1}
-          </span>
-        ),
+        header: () =>
+          canSelectRows ? (
+            <button
+              type="button"
+              className={`datagrid-index-toggle ${allVisibleRowsSelected ? "active" : ""}`}
+              onClick={handleToggleSelectAllRows}
+              title={allVisibleRowsSelected ? "Clear selected rows" : "Select all visible rows"}
+            >
+              #
+            </button>
+          ) : (
+            <span className="datagrid-index-label">#</span>
+          ),
+        cell: ({ row }) =>
+          canSelectRows ? (
+            <button
+              type="button"
+              className={`datagrid-index-value datagrid-index-selectable ${selectedRows.has(row.index) ? "selected" : ""}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                handleRowSelection(row.index, event.nativeEvent);
+              }}
+              title={selectedRows.has(row.index) ? "Row selected" : "Select row"}
+            >
+              {currentPage * PAGE_SIZE + row.index + 1}
+            </button>
+          ) : (
+            <span className="datagrid-index-value">
+              {currentPage * PAGE_SIZE + row.index + 1}
+            </span>
+          ),
         size: 72,
       },
       ...resolvedColumns.map((col, idx) => ({
@@ -544,24 +1075,26 @@ export function DataGrid({
                 isEditing ? "editing" : "",
                 isSaving ? "saving" : "",
               ].join(" ")}
-              onClick={() => {
-                if (
-                  isEditableColumn &&
-                  !isEditing &&
-                  selectedCell?.row === rowIndex &&
-                  selectedCell?.col === idx
-                ) {
+              onMouseDown={(event) => {
+                if (!isEditableColumn || isEditing) return;
+
+                const isRepeatSelection =
+                  selectedCell?.row === rowIndex && selectedCell?.col === idx;
+                if (isRepeatSelection || event.detail >= 2) {
+                  event.preventDefault();
+                  event.stopPropagation();
                   void startEditingCell(rowIndex, idx);
-                  return;
                 }
-                setSelectedCell({ row: rowIndex, col: idx });
+              }}
+              onClick={() => {
+                if (!isEditing) {
+                  setSelectedCell({ row: rowIndex, col: idx });
+                }
               }}
               onDoubleClick={() => {
-                if (isEditableColumn) {
-                  void startEditingCell(rowIndex, idx);
-                  return;
+                if (!isEditableColumn) {
+                  handleCopyValue(value, cellKey);
                 }
-                handleCopyValue(value, cellKey);
               }}
             >
               {copiedCell === cellKey && (
@@ -579,7 +1112,7 @@ export function DataGrid({
                     onChange={(event) => {
                       editingDraftRef.current = event.target.value;
                     }}
-                    onBlur={() => void commitEditingCell()}
+                    onBlur={handleEditorBlur}
                     onClick={(event) => event.stopPropagation()}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
@@ -605,7 +1138,7 @@ export function DataGrid({
                     onChange={(event) => {
                       editingDraftRef.current = event.target.value;
                     }}
-                    onBlur={() => void commitEditingCell()}
+                    onBlur={handleEditorBlur}
                     onClick={(event) => event.stopPropagation()}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
@@ -633,16 +1166,22 @@ export function DataGrid({
     ];
   }, [
     cancelEditingCell,
+    canSelectRows,
     canAttemptInlineEdit,
     commitEditingCell,
+    handleRowSelection,
+    handleToggleSelectAllRows,
+    handleEditorBlur,
     copiedCell,
     currentPage,
     data,
     editingCell,
     editingSeedValue,
+    allVisibleRowsSelected,
     resolvedColumns,
     savingCell,
     selectedCell,
+    selectedRows,
     sortColumn,
     sortDir,
     startEditingCell,
@@ -672,7 +1211,7 @@ export function DataGrid({
         : "Retry edit load";
   const dataViewSubtitle = tableName
     ? isTableEditable
-      ? "Click once to select, click again or double-click to edit. Press Enter to save or type NULL to clear."
+      ? "Use # to select rows. Click a cell once to select, then click again or double-click to edit. Press Enter to save or type NULL to clear."
       : structureStatus === "loading"
         ? "Loading inline edit metadata for this table..."
       : structureStatus === "idle"
@@ -747,7 +1286,7 @@ export function DataGrid({
             {table.getRowModel().rows.map((row, rowIdx) => (
               <tr
                 key={row.id}
-                className={`datagrid-row ${rowIdx % 2 !== 0 ? "alt" : ""}`}
+                className={`datagrid-row ${rowIdx % 2 !== 0 ? "alt" : ""} ${selectedRows.has(row.index) ? "selected" : ""}`}
               >
                 {row.getVisibleCells().map((cell) => (
                   <td
@@ -786,6 +1325,26 @@ export function DataGrid({
                 <span className={`datagrid-footer-pill ${isTableEditable ? "info" : ""}`}>
                   {inlineEditStatusLabel}
                 </span>
+              )}
+              {selectedRowCount > 0 && (
+                <span className="datagrid-footer-pill warning">
+                  {selectedRowCount} selected
+                </span>
+              )}
+              {selectedRowCount > 0 && (
+                <button
+                  type="button"
+                  className="datagrid-footer-action danger"
+                  onClick={() => void handleDeleteSelectedRows()}
+                  disabled={isDeletingRows}
+                >
+                  {isDeletingRows ? (
+                    <Loader2 className="!w-3.5 !h-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="!w-3.5 !h-3.5" />
+                  )}
+                  <span>Delete selected</span>
+                </button>
               )}
             </>
           )}

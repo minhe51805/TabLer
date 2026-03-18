@@ -40,7 +40,6 @@ interface QueryChromeState {
   rowCount?: number;
   affectedRows?: number;
   queryCount?: number;
-  sandboxed?: boolean;
 }
 
 interface WorkspaceActivityState {
@@ -50,6 +49,7 @@ interface WorkspaceActivityState {
 }
 
 const TERMINAL_FEATURE_ENABLED = false;
+const GLOBAL_ERROR_AUTO_DISMISS_MS = 8000;
 const SQLEditor = lazy(() => import("./components/SQLEditor").then((module) => ({ default: module.SQLEditor })));
 const DataGrid = lazy(() => import("./components/DataGrid").then((module) => ({ default: module.DataGrid })));
 const TableStructure = lazy(() => import("./components/TableStructure").then((module) => ({ default: module.TableStructure })));
@@ -68,6 +68,13 @@ function LazyPanelFallback() {
   );
 }
 
+function getLastPathSegment(value?: string | null) {
+  if (!value) return "";
+  const normalized = value.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] || value;
+}
+
 function App() {
   const {
     activeConnectionId,
@@ -82,6 +89,7 @@ function App() {
     addTab,
     fetchDatabases,
     fetchTables,
+    fetchSchemaObjects,
   } = useAppStore(
     useShallow((state) => ({
       activeConnectionId: state.activeConnectionId,
@@ -96,12 +104,14 @@ function App() {
       addTab: state.addTab,
       fetchDatabases: state.fetchDatabases,
       fetchTables: state.fetchTables,
+      fetchSchemaObjects: state.fetchSchemaObjects,
     }))
   );
 
-  const [showConnectionForm, setShowConnectionForm] = useState(false);
+  const [connectionFormIntent, setConnectionFormIntent] = useState<"connect" | "bootstrap" | null>(null);
   const [showAISettings, setShowAISettings] = useState(false);
   const [showAISlidePanel, setShowAISlidePanel] = useState(false);
+  const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
   const [leftPanel, setLeftPanel] = useState<"connections" | "database">("connections");
   const [showEmbeddedTerminal, setShowEmbeddedTerminal] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -126,13 +136,31 @@ function App() {
   const isQueryWorkspace = activeTab?.type === "query";
   const activeQueryChrome =
     activeTab?.type === "query" ? queryChromeByTab[activeTab.id] ?? { isRunning: false } : null;
-  const activeQuerySession =
-    activeTab?.type === "query" ? querySessionByTab[activeTab.id] ?? null : null;
   const activeWorkspaceActivity =
     activeConnectionId ? workspaceActivityByConnection[activeConnectionId] ?? null : null;
   const queryTabCount = tabs.filter(
     (tab) => tab.type === "query" && tab.connectionId === activeConnectionId,
   ).length;
+  const activeDatabaseLabel =
+    activeConn?.db_type === "sqlite" ? getLastPathSegment(currentDatabase) : currentDatabase || "";
+  const titlebarContextTitle = `${activeConn?.name || activeConn?.host || ""}${
+    currentDatabase ? ` / ${currentDatabase}` : ""
+  }`;
+  const titlebarContextLabel = `${activeConn?.name || activeConn?.host || ""}${
+    activeDatabaseLabel ? ` / ${activeDatabaseLabel}` : ""
+  }`;
+
+  useEffect(() => {
+    if (!error) return;
+
+    const timeoutId = window.setTimeout(() => {
+      clearError();
+    }, GLOBAL_ERROR_AUTO_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [clearError, error]);
 
   const handleMouseDown = useCallback(
     (e: ReactMouseEvent) => {
@@ -166,9 +194,12 @@ function App() {
 
     await fetchDatabases(activeConnectionId);
     if (currentDatabase) {
-      await fetchTables(activeConnectionId, currentDatabase);
+      await Promise.all([
+        fetchTables(activeConnectionId, currentDatabase),
+        fetchSchemaObjects(activeConnectionId, currentDatabase),
+      ]);
     }
-  }, [activeConnectionId, currentDatabase, fetchDatabases, fetchTables]);
+  }, [activeConnectionId, currentDatabase, fetchDatabases, fetchSchemaObjects, fetchTables]);
 
   const handleFocusExplorerSearch = useCallback(() => {
     if (!isConnected) return;
@@ -221,8 +252,7 @@ function App() {
         current?.executionTimeMs === state.executionTimeMs &&
         current?.rowCount === state.rowCount &&
         current?.affectedRows === state.affectedRows &&
-        current?.queryCount === state.queryCount &&
-        current?.sandboxed === state.sandboxed
+        current?.queryCount === state.queryCount
       ) {
         return prev;
       }
@@ -242,8 +272,7 @@ function App() {
         current?.error === state.error &&
         current?.queryCount === state.queryCount &&
         current?.editorHeight === state.editorHeight &&
-        current?.showTerminal === state.showTerminal &&
-        current?.sandboxEnabled === state.sandboxEnabled
+        current?.showTerminal === state.showTerminal
       ) {
         return prev;
       }
@@ -254,27 +283,6 @@ function App() {
       };
     });
   }, []);
-
-  const handleToggleActiveQuerySandbox = useCallback(() => {
-    if (activeTab?.type !== "query") return;
-
-    setQuerySessionByTab((prev) => {
-      const current = prev[activeTab.id];
-      const nextSandboxEnabled = !(current?.sandboxEnabled ?? true);
-
-      return {
-        ...prev,
-        [activeTab.id]: {
-          result: current?.result ?? null,
-          error: current?.error ?? null,
-          queryCount: current?.queryCount ?? 0,
-          editorHeight: current?.editorHeight ?? 42,
-          showTerminal: current?.showTerminal ?? false,
-          sandboxEnabled: nextSandboxEnabled,
-        },
-      };
-    });
-  }, [activeTab]);
 
   useEffect(() => {
     setQueryChromeByTab((prev) => {
@@ -305,7 +313,13 @@ function App() {
     });
   }, [tabs]);
 
-  const handleOpenAISlidePanel = useCallback(() => {
+  const handleOpenAISlidePanel = useCallback((prompt?: string) => {
+    if (typeof prompt === "string" && prompt.trim()) {
+      setAiPanelDraft({
+        prompt,
+        nonce: Date.now(),
+      });
+    }
     setShowAISlidePanel(true);
   }, []);
 
@@ -431,7 +445,10 @@ function App() {
   }, [handleNewQuery, handleOpenAISlidePanel, handleToggleSidebar]);
 
   useEffect(() => {
-    const handleOpenAI = () => handleOpenAISlidePanel();
+    const handleOpenAI = (event: Event) => {
+      const detail = (event as CustomEvent<{ prompt?: string }>).detail;
+      handleOpenAISlidePanel(detail?.prompt);
+    };
     window.addEventListener("open-ai-slide-panel", handleOpenAI);
     return () => window.removeEventListener("open-ai-slide-panel", handleOpenAI);
   }, [handleOpenAISlidePanel]);
@@ -564,9 +581,13 @@ function App() {
             </div>
 
             <div className="workspace-empty-actions">
-              <button onClick={() => setShowConnectionForm(true)} className="btn btn-primary">
+              <button onClick={() => setConnectionFormIntent("connect")} className="btn btn-primary">
                 <Plus className="w-3.5 h-3.5" />
                 New Connection
+              </button>
+              <button onClick={() => setConnectionFormIntent("bootstrap")} className="btn btn-secondary">
+                <Database className="w-3.5 h-3.5" />
+                Create Local DB
               </button>
             </div>
 
@@ -673,7 +694,6 @@ function App() {
               initialContent={tab.content || ""}
               tabId={tab.id}
               initialState={querySessionByTab[tab.id]}
-              sandboxEnabled={querySessionByTab[tab.id]?.sandboxEnabled ?? true}
               runRequestNonce={queryRunRequestByTab[tab.id] ?? 0}
               onChromeChange={(state) => handleQueryChromeChange(tab.id, state)}
               onStateChange={(state) => handleQuerySessionChange(tab.id, state)}
@@ -745,7 +765,7 @@ function App() {
       <button
         type="button"
         className="sidebar-rail-btn"
-        onClick={() => setShowConnectionForm(true)}
+        onClick={() => setConnectionFormIntent("connect")}
         title="New Connection"
       >
         <Plus className="w-4 h-4" />
@@ -784,14 +804,13 @@ function App() {
           <div className="titlebar-context">
             <span className="titlebar-context-label">Workspace</span>
             {isConnected && activeConn ? (
-              <div className="titlebar-badge" title={`${activeConn.name || activeConn.host}${currentDatabase ? ` / ${currentDatabase}` : ""}`}>
+              <div className="titlebar-badge" title={titlebarContextTitle}>
                 <span
                   className="w-2 h-2 rounded-sm shrink-0"
                   style={{ backgroundColor: activeConn.color || "var(--success)" }}
                 />
                 <span className="truncate">
-                  {activeConn.name || activeConn.host}
-                  {currentDatabase ? ` / ${currentDatabase}` : ""}
+                  {titlebarContextLabel}
                 </span>
               </div>
             ) : (
@@ -878,7 +897,10 @@ function App() {
           {isSidebarCollapsed ? (
             renderSidebarRail()
           ) : leftPanel === "connections" ? (
-            <ConnectionList onNewConnection={() => setShowConnectionForm(true)} />
+            <ConnectionList
+              onNewConnection={() => setConnectionFormIntent("connect")}
+              onCreateLocalDatabase={() => setConnectionFormIntent("bootstrap")}
+            />
           ) : (
             <Sidebar />
           )}
@@ -892,32 +914,37 @@ function App() {
 
         <main className="main-content">
           <div className="workspace-toolbar">
-            <div className="workspace-toolbar-copy">
-              <span className="workspace-toolbar-kicker">
-                {activeTab
-                  ? activeTab.type === "query"
-                    ? "SQL Workspace"
-                    : activeTab.type === "table"
-                      ? "Table View"
-                      : "Structure View"
-                  : "Workspace"}
-              </span>
-              <div className="workspace-toolbar-title-row">
-                <span className="workspace-toolbar-title">
-                  {activeTab?.title || (isConnected ? "Ready for queries" : "No active connection")}
+            <div className="workspace-toolbar-main">
+              <div className="workspace-toolbar-topline">
+                <span className="workspace-toolbar-kicker">
+                  {activeTab
+                    ? activeTab.type === "query"
+                      ? "SQL Workspace"
+                      : activeTab.type === "table"
+                        ? "Table View"
+                        : "Structure View"
+                    : "Workspace"}
                 </span>
                 {isConnected && activeConn && (
                   <span className="workspace-toolbar-chip">
                     {activeConn.name || activeConn.host}
-                    {currentDatabase ? ` / ${currentDatabase}` : ""}
+                    {activeDatabaseLabel ? ` / ${activeDatabaseLabel}` : ""}
                   </span>
                 )}
+                {activeWorkspaceActivity && (
+                  <span className="workspace-toolbar-mini-note">
+                    {activeWorkspaceActivity.label} {activeWorkspaceActivity.durationMs}ms
+                  </span>
+                )}
+              </div>
+
+              <div className="workspace-toolbar-title-row">
+                <span className="workspace-toolbar-title">
+                  {activeTab?.title || (isConnected ? "Ready for queries" : "No active connection")}
+                </span>
                 {activeQueryChrome?.executionTimeMs !== undefined && (
                   <div className="workspace-toolbar-status">
                     <span className="workspace-toolbar-status-pill success">Success</span>
-                    {activeQueryChrome.sandboxed && (
-                      <span className="workspace-toolbar-status-pill warning">Sandbox</span>
-                    )}
                     <span className="workspace-toolbar-status-pill">
                       {activeQueryChrome.executionTimeMs}ms
                     </span>
@@ -933,7 +960,7 @@ function App() {
                     )}
                     {typeof activeQueryChrome.queryCount === "number" && activeQueryChrome.queryCount > 1 && (
                       <span className="workspace-toolbar-status-pill">
-                        #{activeQueryChrome.queryCount}
+                        batch {activeQueryChrome.queryCount}
                       </span>
                     )}
                   </div>
@@ -971,7 +998,7 @@ function App() {
                     </button>
 
                     <button
-                      onClick={handleOpenAISlidePanel}
+                      onClick={() => handleOpenAISlidePanel()}
                       className="toolbar-btn icon-only"
                       title="Ask AI (Ctrl+Shift+P or Ctrl+P)"
                     >
@@ -995,8 +1022,6 @@ function App() {
 
           <TabBar
             queryChrome={activeQueryChrome}
-            sandboxEnabled={activeQuerySession?.sandboxEnabled ?? true}
-            onToggleSandbox={handleToggleActiveQuerySandbox}
             onRunActiveQuery={handleRunActiveQuery}
           />
 
@@ -1064,9 +1089,12 @@ function App() {
         </div>
       </footer>
 
-      {showConnectionForm && (
+      {connectionFormIntent && (
         <Suspense fallback={null}>
-          <ConnectionForm onClose={() => setShowConnectionForm(false)} />
+          <ConnectionForm
+            initialIntent={connectionFormIntent}
+            onClose={() => setConnectionFormIntent(null)}
+          />
         </Suspense>
       )}
       {showAISettings && (
@@ -1076,7 +1104,12 @@ function App() {
       )}
       {showAISlidePanel && (
         <Suspense fallback={null}>
-          <AISlidePanel isOpen={showAISlidePanel} onClose={() => setShowAISlidePanel(false)} />
+          <AISlidePanel
+            isOpen={showAISlidePanel}
+            initialPrompt={aiPanelDraft?.prompt ?? ""}
+            initialPromptNonce={aiPanelDraft?.nonce ?? 0}
+            onClose={() => setShowAISlidePanel(false)}
+          />
         </Suspense>
       )}
     </div>

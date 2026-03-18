@@ -1,5 +1,23 @@
-// Database types matching Rust backend
-export type DatabaseType = "mysql" | "postgresql" | "sqlite";
+// Database types matching the frontend picker and Rust backend
+export type DatabaseType =
+  | "mysql"
+  | "mariadb"
+  | "sqlite"
+  | "duckdb"
+  | "cassandra"
+  | "cockroachdb"
+  | "snowflake"
+  | "postgresql"
+  | "greenplum"
+  | "redshift"
+  | "mssql"
+  | "redis"
+  | "mongodb"
+  | "vertica"
+  | "clickhouse"
+  | "bigquery"
+  | "libsql"
+  | "cloudflared1";
 
 export interface ConnectionConfig {
   id: string;
@@ -21,6 +39,7 @@ export interface QueryResult {
   affected_rows: number;
   execution_time_ms: number;
   query: string;
+  sandboxed: boolean;
 }
 
 export interface ColumnInfo {
@@ -32,12 +51,39 @@ export interface ColumnInfo {
   default_value?: string;
 }
 
+export interface RowKeyValue {
+  column: string;
+  value: string | number | boolean | null;
+}
+
+export interface TableCellUpdateRequest {
+  table: string;
+  database?: string;
+  target_column: string;
+  value: string | number | boolean | null;
+  primary_keys: RowKeyValue[];
+}
+
+export interface TableRowDeleteRequest {
+  table: string;
+  database?: string;
+  rows: RowKeyValue[][];
+}
+
 export interface TableInfo {
   name: string;
   schema?: string;
   table_type: string;
   row_count?: number;
   engine?: string;
+}
+
+export interface SchemaObjectInfo {
+  name: string;
+  schema?: string;
+  object_type: string;
+  related_table?: string;
+  definition?: string;
 }
 
 export interface DatabaseInfo {
@@ -49,6 +95,9 @@ export interface TableStructure {
   columns: ColumnDetail[];
   indexes: IndexInfo[];
   foreign_keys: ForeignKeyInfo[];
+  triggers: TriggerInfo[];
+  view_definition?: string;
+  object_type?: string;
 }
 
 export interface ColumnDetail {
@@ -76,6 +125,14 @@ export interface ForeignKeyInfo {
   referenced_column: string;
   on_update?: string;
   on_delete?: string;
+}
+
+export interface TriggerInfo {
+  name: string;
+  timing?: string;
+  event?: string;
+  related_table?: string;
+  definition?: string;
 }
 
 // UI State types

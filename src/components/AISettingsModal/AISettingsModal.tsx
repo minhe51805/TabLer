@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Cpu, Brain, Edit2, KeyRound, Sparkles, Link2 } from "lucide-react";
+import { Plus, Trash2, Cpu, Brain, Edit2, KeyRound, Sparkles, Link2, Loader2 } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import type { AIProviderConfig, AIProviderType } from "../../types";
 
@@ -26,25 +26,44 @@ const PROVIDER_HINTS: Record<AIProviderType, string> = {
 };
 
 export function AISettingsModal({ onClose }: Props) {
-    const { saveAIConfigs, loadAIConfigs } = useAppStore();
+    const saveAIConfigs = useAppStore((state) => state.saveAIConfigs);
+    const loadAIConfigs = useAppStore((state) => state.loadAIConfigs);
 
     const [configs, setConfigs] = useState<AIProviderConfig[]>([]);
-    const [keys, setKeys] = useState<Record<string, string>>({});
+    const [storedKeyStatus, setStoredKeyStatus] = useState<Record<string, boolean>>({});
+    const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
+    const [clearedKeyIds, setClearedKeyIds] = useState<string[]>([]);
     const [editingId, setEditingId] = useState<string | null>(null);
+    const [saveError, setSaveError] = useState<string | null>(null);
+    const [isSaving, setIsSaving] = useState(false);
 
     useEffect(() => {
         let isMounted = true;
 
-        loadAIConfigs().then(() => {
-            if (!isMounted) return;
+        loadAIConfigs()
+            .then(() => {
+                if (!isMounted) return;
 
-            const { aiConfigs, apiKeys } = useAppStore.getState();
-            setConfigs(aiConfigs);
-            setKeys(apiKeys);
-            setEditingId((currentId) => currentId && aiConfigs.some((config) => config.id === currentId)
-                ? currentId
-                : aiConfigs[0]?.id ?? null);
-        });
+                const { aiConfigs, aiKeyStatus } = useAppStore.getState();
+                setConfigs(
+                    aiConfigs.map((config) => ({
+                        ...config,
+                        allow_schema_context: config.allow_schema_context ?? false,
+                        allow_inline_completion: config.allow_inline_completion ?? false,
+                    }))
+                );
+                setStoredKeyStatus(aiKeyStatus);
+                setKeyDrafts({});
+                setClearedKeyIds([]);
+                setSaveError(null);
+                setEditingId((currentId) => currentId && aiConfigs.some((config) => config.id === currentId)
+                    ? currentId
+                    : aiConfigs[0]?.id ?? null);
+            })
+            .catch((error) => {
+                if (!isMounted) return;
+                setSaveError(error instanceof Error ? error.message : String(error));
+            });
 
         return () => {
             isMounted = false;
@@ -65,6 +84,7 @@ export function AISettingsModal({ onClose }: Props) {
     }, [configs, editingId]);
 
     const handleAdd = () => {
+        setSaveError(null);
         const newId = crypto.randomUUID();
         setConfigs([...configs, {
             id: newId,
@@ -73,32 +93,71 @@ export function AISettingsModal({ onClose }: Props) {
             endpoint: "",
             model: "gpt-4o-mini",
             is_enabled: true,
+            allow_schema_context: false,
+            allow_inline_completion: false,
         }]);
         setEditingId(newId);
     };
 
     const handleDelete = (id: string) => {
+        setSaveError(null);
         const remainingConfigs = configs.filter((c) => c.id !== id);
         setConfigs(remainingConfigs);
-        const newKeys = { ...keys };
-        delete newKeys[id];
-        setKeys(newKeys);
+        const nextDrafts = { ...keyDrafts };
+        delete nextDrafts[id];
+        setKeyDrafts(nextDrafts);
+        setStoredKeyStatus((prev) => {
+            const nextStatus = { ...prev };
+            delete nextStatus[id];
+            return nextStatus;
+        });
+        setClearedKeyIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
         if (editingId === id) {
             setEditingId(remainingConfigs[0]?.id ?? null);
         }
     };
 
     const handleSave = async () => {
-        await saveAIConfigs(configs, keys);
-        onClose();
+        const apiKeyUpdates = Object.fromEntries(
+            Object.entries(keyDrafts).filter(([, value]) => value.trim().length > 0)
+        );
+        setIsSaving(true);
+        setSaveError(null);
+        try {
+            await saveAIConfigs(configs, apiKeyUpdates, clearedKeyIds);
+            onClose();
+        } catch (error) {
+            setSaveError(error instanceof Error ? error.message : String(error));
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const updateConfig = (id: string, updates: Partial<AIProviderConfig>) => {
+        setSaveError(null);
         setConfigs(configs.map(c => c.id === id ? { ...c, ...updates } : c));
     };
 
     const activeConfig = configs.find(c => c.id === editingId);
     const enabledCount = configs.filter((config) => config.is_enabled).length;
+    const hasStoredKey = activeConfig ? storedKeyStatus[activeConfig.id] && !clearedKeyIds.includes(activeConfig.id) : false;
+
+    const handleKeyDraftChange = (providerId: string, value: string) => {
+        setSaveError(null);
+        setKeyDrafts((prev) => ({ ...prev, [providerId]: value }));
+        setClearedKeyIds((prev) => prev.filter((id) => id !== providerId));
+    };
+
+    const handleClearStoredKey = (providerId: string) => {
+        setSaveError(null);
+        setKeyDrafts((prev) => {
+            const nextDrafts = { ...prev };
+            delete nextDrafts[providerId];
+            return nextDrafts;
+        });
+        setStoredKeyStatus((prev) => ({ ...prev, [providerId]: false }));
+        setClearedKeyIds((prev) => (prev.includes(providerId) ? prev : [...prev, providerId]));
+    };
 
     return (
         <div className="ai-settings-overlay">
@@ -115,11 +174,24 @@ export function AISettingsModal({ onClose }: Props) {
                         <button onClick={onClose} className="btn btn-secondary">
                             Cancel
                         </button>
-                        <button onClick={handleSave} className="btn btn-primary">
-                            Save All
+                        <button onClick={handleSave} className="btn btn-primary" disabled={isSaving}>
+                            {isSaving ? (
+                                <>
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                    Saving...
+                                </>
+                            ) : (
+                                "Save All"
+                            )}
                         </button>
                     </div>
                 </header>
+
+                {saveError && (
+                    <div className="px-6 pt-4 text-sm text-[var(--error)]">
+                        {saveError}
+                    </div>
+                )}
 
                 <div className="ai-settings-shell-body">
                     <aside className="ai-settings-sidebar">
@@ -284,14 +356,40 @@ export function AISettingsModal({ onClose }: Props) {
                                         </div>
                                         <div className="ai-settings-fields">
                                             <div>
-                                                <label className="form-label">API Key</label>
+                                                <label className="form-label">
+                                                    {activeConfig.provider_type === "ollama" || activeConfig.provider_type === "custom"
+                                                        ? "API Key (optional)"
+                                                        : "API Key"}
+                                                </label>
                                                 <input
                                                     type="password"
-                                                    value={keys[activeConfig.id] || ""}
-                                                    onChange={(e) => setKeys({ ...keys, [activeConfig.id]: e.target.value })}
-                                                    placeholder="sk-..."
+                                                    value={keyDrafts[activeConfig.id] || ""}
+                                                    onChange={(e) => handleKeyDraftChange(activeConfig.id, e.target.value)}
+                                                    placeholder={
+                                                        hasStoredKey
+                                                            ? "Stored securely - enter a new key to replace it"
+                                                            : activeConfig.provider_type === "ollama"
+                                                                ? "Leave blank for local Ollama without auth"
+                                                                : activeConfig.provider_type === "custom"
+                                                                    ? "Optional for unsecured OpenAI-compatible endpoints"
+                                                                    : "sk-..."
+                                                    }
                                                     className="input ai-settings-mono"
                                                 />
+                                            </div>
+                                            <div className="ai-settings-credential-row">
+                                                <span className={`ai-provider-card-status ${hasStoredKey ? "enabled" : ""}`}>
+                                                    {hasStoredKey ? "Key stored securely" : "No key stored yet"}
+                                                </span>
+                                                {hasStoredKey && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleClearStoredKey(activeConfig.id)}
+                                                        className="btn btn-secondary"
+                                                    >
+                                                        Clear Stored Key
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
                                     </section>
@@ -342,6 +440,46 @@ export function AISettingsModal({ onClose }: Props) {
                                                     onChange={(e) => updateConfig(activeConfig.id, { is_enabled: e.target.checked })}
                                                 />
                                                 <span>{activeConfig.is_enabled ? "Enabled" : "Disabled"}</span>
+                                            </label>
+                                        </div>
+                                    </section>
+
+                                    <section className="ai-settings-panel ai-settings-panel-wide">
+                                        <div className="ai-settings-toggle">
+                                            <div className="ai-settings-toggle-copy">
+                                                <span className="form-label">Privacy</span>
+                                                <h4>Allow schema context sharing</h4>
+                                                <p>
+                                                    When enabled, AI requests may include database and table context to improve accuracy.
+                                                </p>
+                                            </div>
+                                            <label className="ai-settings-toggle-control">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={activeConfig.allow_schema_context}
+                                                    onChange={(e) => updateConfig(activeConfig.id, { allow_schema_context: e.target.checked })}
+                                                />
+                                                <span>{activeConfig.allow_schema_context ? "Allowed" : "Blocked"}</span>
+                                            </label>
+                                        </div>
+                                    </section>
+
+                                    <section className="ai-settings-panel ai-settings-panel-wide">
+                                        <div className="ai-settings-toggle">
+                                            <div className="ai-settings-toggle-copy">
+                                                <span className="form-label">Editor Assist</span>
+                                                <h4>Allow inline completion</h4>
+                                                <p>
+                                                    Inline completion sends your partial SQL while you type. Keep this off unless you trust the provider.
+                                                </p>
+                                            </div>
+                                            <label className="ai-settings-toggle-control">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={activeConfig.allow_inline_completion}
+                                                    onChange={(e) => updateConfig(activeConfig.id, { allow_inline_completion: e.target.checked })}
+                                                />
+                                                <span>{activeConfig.allow_inline_completion ? "Allowed" : "Blocked"}</span>
                                             </label>
                                         </div>
                                     </section>

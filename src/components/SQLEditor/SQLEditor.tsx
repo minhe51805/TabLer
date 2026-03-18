@@ -1,26 +1,35 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, lazy, Suspense } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import {
-  Play,
-  Loader2,
-  Clock,
-  AlertCircle,
-  Database,
-  CheckCircle2,
-  Terminal,
-  Sparkles,
-} from "lucide-react";
+import { AlertCircle, Terminal } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import type { QueryResult } from "../../types";
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import { DataGrid } from "../DataGrid";
-import { TerminalPanel } from "../TerminalPanel";
+
+interface QueryChromeState {
+  isRunning: boolean;
+  executionTimeMs?: number;
+  rowCount?: number;
+  affectedRows?: number;
+  queryCount?: number;
+}
+
+export interface QueryEditorSessionState {
+  result: QueryResult | null;
+  error: string | null;
+  queryCount: number;
+  editorHeight: number;
+  showTerminal: boolean;
+}
 
 interface Props {
   connectionId: string;
-  database?: string;
   initialContent?: string;
   tabId?: string;
+  initialState?: QueryEditorSessionState;
+  runRequestNonce?: number;
+  onChromeChange?: (state: QueryChromeState) => void;
+  onStateChange?: (state: QueryEditorSessionState) => void;
   onTerminalToggle?: (show: boolean) => void;
 }
 
@@ -29,17 +38,103 @@ function formatExecutionError(error: unknown) {
   return message.replace(/^Error:\s*/, "");
 }
 
-export function SQLEditor({ connectionId, database, initialContent = "", tabId, onTerminalToggle }: Props) {
-  const { executeQuery, isExecutingQuery, updateTab } = useAppStore();
+const INLINE_COMPLETION_CACHE_MS = 15_000;
+const INLINE_COMPLETION_MIN_INTERVAL_MS = 450;
+const INLINE_COMPLETION_TABLE_LIMIT = 40;
+const TERMINAL_FEATURE_ENABLED = false;
+const TerminalPanel = TERMINAL_FEATURE_ENABLED
+  ? lazy(() => import("../TerminalPanel").then((module) => ({ default: module.TerminalPanel })))
+  : null;
+
+function normalizeInlineSuggestion(rawSuggestion: string, textUntilPosition: string) {
+  let suggestion = rawSuggestion
+    .replace(/^```[a-z]*\s*\n?/i, "")
+    .replace(/\n?```$/i, "")
+    .trim();
+
+  if (suggestion.toLowerCase().startsWith(textUntilPosition.trim().toLowerCase())) {
+    suggestion = suggestion.slice(textUntilPosition.trim().length).trim();
+  }
+
+  return suggestion;
+}
+
+export function SQLEditor({
+  connectionId,
+  initialContent = "",
+  tabId,
+  initialState,
+  runRequestNonce = 0,
+  onChromeChange,
+  onStateChange,
+  onTerminalToggle,
+}: Props) {
+  const executeSandboxQuery = useAppStore((state) => state.executeSandboxQuery);
+  const updateTab = useAppStore((state) => state.updateTab);
   const editorRef = useRef<any>(null);
   const splitRef = useRef<HTMLDivElement>(null);
+  const inlineCompletionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const contentPersistTimerRef = useRef<number | null>(null);
+  const contentDraftRef = useRef(initialContent);
+  const onChromeChangeRef = useRef(onChromeChange);
+  const onStateChangeRef = useRef(onStateChange);
+  const inlineCompletionCacheRef = useRef<{ key: string; value: string; timestamp: number } | null>(null);
+  const inlineCompletionInFlightRef = useRef<{ key: string; promise: Promise<string> } | null>(null);
+  const lastInlineCompletionAtRef = useRef(0);
+  const lastRunRequestNonceRef = useRef(runRequestNonce);
 
-  const [result, setResult] = useState<QueryResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [queryCount, setQueryCount] = useState(0);
-  const [editorHeight, setEditorHeight] = useState(42);
-  const [showTerminal, setShowTerminal] = useState(false);
+  const [result, setResult] = useState<QueryResult | null>(() => initialState?.result ?? null);
+  const [error, setError] = useState<string | null>(() => initialState?.error ?? null);
+  const [queryCount, setQueryCount] = useState(() => initialState?.queryCount ?? 0);
+  const [editorHeight, setEditorHeight] = useState(() => initialState?.editorHeight ?? 42);
+  const [showTerminal, setShowTerminal] = useState(() => initialState?.showTerminal ?? false);
   const [isBatchExecuting, setIsBatchExecuting] = useState(false);
+  const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
+
+  const flushPersistedContent = useCallback(() => {
+    if (!tabId) return;
+    if (contentPersistTimerRef.current !== null) {
+      window.clearTimeout(contentPersistTimerRef.current);
+      contentPersistTimerRef.current = null;
+    }
+    updateTab(tabId, { content: contentDraftRef.current });
+  }, [tabId, updateTab]);
+
+  const schedulePersistedContent = useCallback(
+    (value: string) => {
+      if (!tabId) return;
+      contentDraftRef.current = value;
+      if (contentPersistTimerRef.current !== null) {
+        window.clearTimeout(contentPersistTimerRef.current);
+      }
+      contentPersistTimerRef.current = window.setTimeout(() => {
+        contentPersistTimerRef.current = null;
+        updateTab(tabId, { content: value });
+      }, 180);
+    },
+    [tabId, updateTab]
+  );
+
+  const toggleTerminalPanel = useCallback(() => {
+    if (!TERMINAL_FEATURE_ENABLED) return;
+
+    setShowTerminal((visible) => {
+      const nextVisible = !visible;
+      if (onTerminalToggle) {
+        onTerminalToggle(nextVisible);
+      }
+      return nextVisible;
+    });
+  }, [onTerminalToggle]);
+
+  useEffect(() => {
+    onChromeChangeRef.current = onChromeChange;
+  }, [onChromeChange]);
+
+  useEffect(() => {
+    onStateChangeRef.current = onStateChange;
+  }, [onStateChange]);
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -54,14 +149,18 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
     editor.addAction({
       id: "ask-ai",
       label: "Ask AI",
-      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
+      keybindings: [
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP,
+        monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP,
+      ],
       run: () => {
-        window.dispatchEvent(new CustomEvent('open-ai-slide-panel'));
+        window.dispatchEvent(new CustomEvent("open-ai-slide-panel"));
       },
     });
 
     // Add Inline AI Auto-completion provider
-    monaco.languages.registerInlineCompletionsProvider("sql", {
+    inlineCompletionDisposableRef.current?.dispose();
+    inlineCompletionDisposableRef.current = monaco.languages.registerInlineCompletionsProvider("sql", {
       provideInlineCompletions: async (model: any, position: any, _context: any, _token: any) => {
         // Only trigger if at the end of a line and we have an active provider
         const textUntilPosition = model.getValueInRange({
@@ -75,22 +174,80 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
 
         const activeProvider = useAppStore.getState().aiConfigs.find(c => c.is_enabled);
         if (!activeProvider) return { items: [] };
+        if (!activeProvider.allow_inline_completion) return { items: [] };
+
+        const dbName = useAppStore.getState().currentDatabase || "Default";
+        const completionKey = `${dbName}:${textUntilPosition.trim()}`;
+        const cachedSuggestion = inlineCompletionCacheRef.current;
+        if (
+          cachedSuggestion &&
+          cachedSuggestion.key === completionKey &&
+          Date.now() - cachedSuggestion.timestamp < INLINE_COMPLETION_CACHE_MS
+        ) {
+          return cachedSuggestion.value
+            ? {
+                items: [{
+                  insertText: cachedSuggestion.value,
+                  range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column)
+                }]
+              }
+            : { items: [] };
+        }
+
+        const inFlightSuggestion = inlineCompletionInFlightRef.current;
+        if (inFlightSuggestion?.key === completionKey) {
+          const suggestion = await inFlightSuggestion.promise;
+          return suggestion
+            ? {
+                items: [{
+                  insertText: suggestion,
+                  range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column)
+                }]
+              }
+            : { items: [] };
+        }
+
+        if (Date.now() - lastInlineCompletionAtRef.current < INLINE_COMPLETION_MIN_INTERVAL_MS) {
+          return { items: [] };
+        }
+        lastInlineCompletionAtRef.current = Date.now();
 
         try {
           // Fetch light schema (just names) for speed during typing
-          const tableNameList = useAppStore.getState().tables.map(t => t.name).join(", ");
-          const dbContext = `Database: ${useAppStore.getState().currentDatabase || "Default"}\nAvailable Tables: ${tableNameList}\nProvide ONLY the raw SQL code completion. Do not add quotes, markdown, or explanations.`;
+          const tableNameList = activeProvider.allow_schema_context
+            ? useAppStore
+                .getState()
+                .tables
+                .slice(0, INLINE_COMPLETION_TABLE_LIMIT)
+                .map(t => t.name)
+                .join(", ")
+            : "";
+          const dbContext = activeProvider.allow_schema_context
+            ? `Database: ${dbName}\nAvailable Tables: ${tableNameList}\nProvide ONLY the raw SQL code completion. Do not add quotes, markdown, or explanations.`
+            : "";
 
           const prompt = `Complete this SQL query (return only the remaining code):\n${textUntilPosition}`;
-          let suggestion = await useAppStore.getState().askAI(activeProvider.id, prompt, dbContext);
+          const requestPromise = useAppStore
+            .getState()
+            .askAI(activeProvider.id, prompt, dbContext, "inline")
+            .then((response) => normalizeInlineSuggestion(response, textUntilPosition))
+            .finally(() => {
+              if (inlineCompletionInFlightRef.current?.key === completionKey) {
+                inlineCompletionInFlightRef.current = null;
+              }
+            });
 
-          // Strip markdown and leading spaces
-          suggestion = suggestion.replace(/^```[a-z]*\s*\n?/i, '').replace(/\n?```$/i, '').trim();
+          inlineCompletionInFlightRef.current = {
+            key: completionKey,
+            promise: requestPromise,
+          };
 
-          // If the AI returns the full query instead of completion, strip the prefix
-          if (suggestion.toLowerCase().startsWith(textUntilPosition.trim().toLowerCase())) {
-            suggestion = suggestion.slice(textUntilPosition.trim().length).trim();
-          }
+          const suggestion = await requestPromise;
+          inlineCompletionCacheRef.current = {
+            key: completionKey,
+            value: suggestion,
+            timestamp: Date.now(),
+          };
 
           if (suggestion) {
             return {
@@ -109,7 +266,8 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
     });
 
     // Add standard Auto-completion modal (Ctrl+Space) for tables and keywords
-    monaco.languages.registerCompletionItemProvider("sql", {
+    completionDisposableRef.current?.dispose();
+    completionDisposableRef.current = monaco.languages.registerCompletionItemProvider("sql", {
       provideCompletionItems: (model: any, position: any) => {
         const word = model.getWordUntilPosition(position);
         const range = {
@@ -150,20 +308,20 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
       base: "vs-dark",
       inherit: true,
       rules: [
-        { token: "keyword", foreground: "9ebcff", fontStyle: "bold" },
-        { token: "string", foreground: "7ce4c1" },
-        { token: "number", foreground: "ffd37a" },
-        { token: "comment", foreground: "7b8db8", fontStyle: "italic" },
-        { token: "operator", foreground: "9ec0ff" },
+        { token: "keyword", foreground: "7AA2FF", fontStyle: "bold" },
+        { token: "string", foreground: "E8BF7A" },
+        { token: "number", foreground: "FFB285" },
+        { token: "comment", foreground: "65789A", fontStyle: "italic" },
+        { token: "operator", foreground: "9CB7FF" },
       ],
       colors: {
-        "editor.background": "#111a31",
-        "editor.foreground": "#eaf1ff",
-        "editor.selectionBackground": "#7aa2ff40",
-        "editor.lineHighlightBackground": "#2031584f",
-        "editorCursor.foreground": "#9ebcff",
-        "editorLineNumber.foreground": "#7285b3",
-        "editorLineNumber.activeForeground": "#d6e3ff",
+        "editor.background": "#101826",
+        "editor.foreground": "#e7ecf8",
+        "editor.selectionBackground": "#7aa2ff36",
+        "editor.lineHighlightBackground": "#22314f66",
+        "editorCursor.foreground": "#aec4ff",
+        "editorLineNumber.foreground": "#62779d",
+        "editorLineNumber.activeForeground": "#e7ecf8",
       },
     });
 
@@ -187,49 +345,11 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
     if (statements.length === 0) return;
 
     setError(null);
+    setIsExecutingCurrent(true);
     setIsBatchExecuting(true);
     try {
-      if (statements.length === 1) {
-        const queryResult = await executeQuery(connectionId, statements[0]);
-        setResult(queryResult);
-      } else {
-        let totalAffectedRows = 0;
-        let totalExecutionTimeMs = 0;
-        let lastSelectResult: QueryResult | null = null;
-
-        for (const [index, statement] of statements.entries()) {
-          try {
-            const queryResult = await executeQuery(connectionId, statement);
-            totalAffectedRows += queryResult.affected_rows;
-            totalExecutionTimeMs += queryResult.execution_time_ms;
-
-            if (queryResult.columns.length > 0) {
-              lastSelectResult = queryResult;
-            }
-          } catch (executionError) {
-            throw new Error(
-              `Statement ${index + 1}/${statements.length} failed.\n${formatExecutionError(executionError)}`
-            );
-          }
-        }
-
-        setResult(
-          lastSelectResult
-            ? {
-                ...lastSelectResult,
-                affected_rows: totalAffectedRows,
-                execution_time_ms: totalExecutionTimeMs,
-                query: statements.join(";\n"),
-              }
-            : {
-                columns: [],
-                rows: [],
-                affected_rows: totalAffectedRows,
-                execution_time_ms: totalExecutionTimeMs,
-                query: statements.join(";\n"),
-              }
-        );
-      }
+      const queryResult = await executeSandboxQuery(connectionId, statements);
+      setResult(queryResult);
 
       setQueryCount((c) => c + 1);
       setShowTerminal(false);
@@ -237,30 +357,56 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
       setError(formatExecutionError(e));
       setResult(null);
     } finally {
+      setIsExecutingCurrent(false);
       setIsBatchExecuting(false);
     }
-  }, [connectionId, executeQuery, isBatchExecuting]);
+  }, [connectionId, executeSandboxQuery, isBatchExecuting]);
 
   useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (!e.ctrlKey) return;
-      const key = e.key.toLowerCase();
-      if (key === "`" || key === "j") {
-        e.preventDefault();
-        setShowTerminal((v) => {
-          const newValue = !v;
-          if (onTerminalToggle) {
-            onTerminalToggle(newValue);
-          }
-          return newValue;
-        });
-      }
-    };
+    if (!onChromeChangeRef.current) return;
 
-    const onCloseTerminal = () => {
-      setShowTerminal(false);
-    };
+    onChromeChangeRef.current({
+      isRunning: isExecutingCurrent || isBatchExecuting,
+      executionTimeMs: result?.execution_time_ms,
+      rowCount: result?.rows.length,
+      affectedRows: result?.affected_rows,
+      queryCount: queryCount || undefined,
+    });
+  }, [isBatchExecuting, isExecutingCurrent, queryCount, result]);
 
+  useEffect(() => {
+    if (!result || result.execution_time_ms < 0) return;
+
+    const activityLabel = result.rows.length > 0
+      ? "Query"
+      : result.affected_rows > 0
+        ? "Preview"
+        : "Run";
+
+    window.dispatchEvent(
+      new CustomEvent("workspace-activity", {
+        detail: {
+          connectionId,
+          label: activityLabel,
+          durationMs: result.execution_time_ms,
+        },
+      })
+    );
+  }, [connectionId, result]);
+
+  useEffect(() => {
+    if (!onStateChangeRef.current) return;
+
+    onStateChangeRef.current({
+      result,
+      error,
+      queryCount,
+      editorHeight,
+      showTerminal,
+    });
+  }, [editorHeight, error, queryCount, result, showTerminal]);
+
+  useEffect(() => {
     const onInsertSQLFromAI = (e: Event) => {
       const customEvent = e as CustomEvent;
       if (customEvent.detail?.sql && editorRef.current) {
@@ -287,15 +433,56 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
       }
     };
 
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("close-sql-terminal", onCloseTerminal);
     window.addEventListener("insert-sql-from-ai", onInsertSQLFromAI);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("close-sql-terminal", onCloseTerminal);
       window.removeEventListener("insert-sql-from-ai", onInsertSQLFromAI);
     };
-  }, [onTerminalToggle]);
+  }, []);
+
+  useEffect(() => {
+    if (runRequestNonce <= lastRunRequestNonceRef.current) return;
+    lastRunRequestNonceRef.current = runRequestNonce;
+    void handleExecute();
+  }, [handleExecute, runRequestNonce]);
+
+  useEffect(() => {
+    if (!TERMINAL_FEATURE_ENABLED) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "`" || key === "j") {
+        e.preventDefault();
+        toggleTerminalPanel();
+      }
+    };
+
+    const onToggleTerminal = () => {
+      toggleTerminalPanel();
+    };
+
+    const onCloseTerminal = () => {
+      setShowTerminal(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("toggle-sql-terminal", onToggleTerminal);
+    window.addEventListener("close-sql-terminal", onCloseTerminal);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("toggle-sql-terminal", onToggleTerminal);
+      window.removeEventListener("close-sql-terminal", onCloseTerminal);
+    };
+  }, [handleExecute, tabId, toggleTerminalPanel]);
+
+  useEffect(() => {
+    return () => {
+      flushPersistedContent();
+      inlineCompletionDisposableRef.current?.dispose();
+      completionDisposableRef.current?.dispose();
+      editorRef.current = null;
+    };
+  }, [flushPersistedContent]);
 
   const handleSplitDrag = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -324,81 +511,6 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-3 py-2 bg-[rgba(255,255,255,0.02)] border-b border-[var(--border-color)] flex-shrink-0">
-        <button
-          onClick={handleExecute}
-          disabled={isExecutingQuery || isBatchExecuting}
-          className="btn btn-primary flex items-center gap-1.5"
-          title="Execute (Ctrl+Enter)"
-        >
-          {isExecutingQuery || isBatchExecuting ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <Play className="w-3.5 h-3.5" />
-          )}
-          Run
-        </button>
-
-        <button
-          onClick={() => {
-            setShowTerminal((v) => {
-              const newValue = !v;
-              if (onTerminalToggle) {
-                onTerminalToggle(newValue);
-              }
-              return newValue;
-            });
-          }}
-          className="btn btn-secondary flex items-center gap-1.5"
-          title="Toggle Terminal (Ctrl+J)"
-        >
-          <Terminal className="w-3.5 h-3.5" />
-          Terminal
-        </button>
-
-        <button
-          onClick={() => window.dispatchEvent(new CustomEvent('open-ai-slide-panel'))}
-          className="btn btn-secondary flex items-center gap-1.5 border-[var(--accent)]/30 text-[var(--accent)] hover:bg-[var(--accent)]/10"
-          title="Ask AI for SQL (Ctrl+Shift+K)"
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-          Ask AI
-        </button>
-
-        {database && (
-          <span className="flex items-center gap-1.5 text-[11px] text-[var(--text-muted)] ml-1 px-2 py-1 bg-[rgba(255,255,255,0.03)] border border-white/10 rounded-md">
-            <Database className="w-3 h-3 text-[var(--accent)]" />
-            {database}
-          </span>
-        )}
-
-        {result && (
-          <div className="flex items-center gap-3 ml-auto text-[11px]">
-            <span className="flex items-center gap-1 text-[var(--success)]">
-              <CheckCircle2 className="w-3 h-3" />
-              Success
-            </span>
-            <span className="flex items-center gap-1 text-[var(--text-muted)]">
-              <Clock className="w-3 h-3" />
-              {result.execution_time_ms}ms
-            </span>
-            {result.rows.length > 0 && (
-              <span className="text-[var(--text-secondary)] tabular-nums">
-                {result.rows.length} row{result.rows.length !== 1 ? "s" : ""}
-              </span>
-            )}
-            {result.affected_rows > 0 && (
-              <span className="text-[var(--warning)] tabular-nums">
-                {result.affected_rows} affected
-              </span>
-            )}
-            {queryCount > 1 && (
-              <span className="text-[var(--text-muted)] tabular-nums">#{queryCount}</span>
-            )}
-          </div>
-        )}
-      </div>
-
       <div className="flex-1 flex flex-col min-h-0">
         <div
           className="relative overflow-hidden"
@@ -410,7 +522,7 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
             theme="vs-dark"
             onChange={(value) => {
               if (tabId && value !== undefined) {
-                updateTab(tabId, { content: value });
+                schedulePersistedContent(value);
               }
             }}
             onMount={handleEditorMount}
@@ -447,8 +559,10 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
         </div>
 
         <div className="flex-1 min-h-0 overflow-hidden">
-          {showTerminal ? (
-            <TerminalPanel initialCwd="." />
+          {TERMINAL_FEATURE_ENABLED && TerminalPanel && showTerminal ? (
+            <Suspense fallback={null}>
+              <TerminalPanel initialCwd="." />
+            </Suspense>
           ) : error ? (
             <div className="flex items-start gap-3 p-4 m-3 bg-[var(--error)]/10 border border-[var(--error)]/30 rounded-md">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--error)]" />
@@ -467,9 +581,11 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
               <p className="text-[12px] opacity-95">
                 Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[11px] font-mono">Ctrl+Enter</kbd> to execute
               </p>
-              <p className="text-[11px] opacity-70">
-                Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[10px] font-mono">Ctrl+J</kbd> to open terminal
-              </p>
+              {TERMINAL_FEATURE_ENABLED && (
+                <p className="text-[11px] opacity-70">
+                  Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[10px] font-mono">Ctrl+J</kbd> to open terminal
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -477,3 +593,4 @@ export function SQLEditor({ connectionId, database, initialContent = "", tabId, 
     </div>
   );
 }
+

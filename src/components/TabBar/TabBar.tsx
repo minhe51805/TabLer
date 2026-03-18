@@ -1,28 +1,26 @@
-import { Plus, X, Table, Code, Columns } from "lucide-react";
+import { X, Table, Code, Columns, Play, Loader2 } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
 
-interface Props {
-  onNewQuery?: () => void;
+interface QueryChromeState {
+  isRunning: boolean;
 }
 
-export function TabBar({ onNewQuery }: Props) {
-  const { tabs, activeTabId, setActiveTab, removeTab, addTab, activeConnectionId } = useAppStore();
+interface Props {
+  queryChrome?: QueryChromeState | null;
+  onRunActiveQuery?: () => void;
+}
 
-  const handleNewQuery = () => {
-    if (onNewQuery) {
-      onNewQuery();
-      return;
-    }
-
-    if (!activeConnectionId) return;
-    const id = `query-${Date.now()}`;
-    addTab({
-      id,
-      type: "query",
-      title: "New Query",
-      connectionId: activeConnectionId,
-    });
-  };
+export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
+  const { tabs, activeTabId, setActiveTab, removeTab } = useAppStore(
+    useShallow((state) => ({
+      tabs: state.tabs,
+      activeTabId: state.activeTabId,
+      setActiveTab: state.setActiveTab,
+      removeTab: state.removeTab,
+    }))
+  );
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
 
   const getTabIcon = (type: string) => {
     switch (type) {
@@ -36,10 +34,10 @@ export function TabBar({ onNewQuery }: Props) {
     }
   };
 
-  if (tabs.length === 0 && !activeConnectionId) return null;
+  if (tabs.length === 0) return null;
 
   return (
-    <div className="tabbar-shell" style={{ scrollbarWidth: "thin" }}>
+    <div className="tabbar-shell">
       <div className="tabbar-summary">
         <span className="tabbar-summary-count">{tabs.length}</span>
         <span>{tabs.length === 1 ? "tab" : "tabs"}</span>
@@ -81,15 +79,23 @@ export function TabBar({ onNewQuery }: Props) {
         })}
       </div>
 
-      {activeConnectionId && (
-        <button
-          onClick={handleNewQuery}
-          className="tabbar-new-btn"
-          title="New Query (Ctrl+N)"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>Query</span>
-        </button>
+      {activeTab?.type === "query" && (
+        <div className="tabbar-trailing">
+          <button
+            type="button"
+            onClick={onRunActiveQuery}
+            className="tabbar-run-btn"
+            title="Run safely (Ctrl+Enter)"
+            disabled={queryChrome?.isRunning}
+          >
+            {queryChrome?.isRunning ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Play className="w-3.5 h-3.5" />
+            )}
+            <span>Run</span>
+          </button>
+        </div>
       )}
     </div>
   );

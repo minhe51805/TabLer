@@ -85,7 +85,7 @@ export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
             type="button"
             onClick={onRunActiveQuery}
             className="tabbar-run-btn"
-            title="Run safely (Ctrl+Enter)"
+            title="Protected Run (Ctrl+Enter)"
             disabled={queryChrome?.isRunning}
           >
             {queryChrome?.isRunning ? (
@@ -93,7 +93,7 @@ export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
             ) : (
               <Play className="w-3.5 h-3.5" />
             )}
-            <span>Run</span>
+            <span>Protected Run</span>
           </button>
         </div>
       )}

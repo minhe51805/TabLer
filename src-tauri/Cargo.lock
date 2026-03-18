@@ -4570,6 +4570,7 @@ dependencies = [
  "chrono",
  "dirs",
  "env_logger",
+ "futures-util",
  "keyring",
  "log",
  "reqwest 0.12.28",

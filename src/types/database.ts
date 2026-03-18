@@ -40,6 +40,7 @@ export interface QueryResult {
   execution_time_ms: number;
   query: string;
   sandboxed: boolean;
+  truncated: boolean;
 }
 
 export interface ColumnInfo {

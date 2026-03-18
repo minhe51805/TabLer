@@ -594,12 +594,6 @@ body {
   background: rgba(255, 255, 255, 0.07);
 }
 
-.embedded-terminal-panel {
-  flex: 1;
-  min-height: 0;
-  border-top: 1px solid var(--border-color);
-}
-
 .statusbar {
   height: 28px;
   padding: 0 10px;
@@ -618,30 +612,6 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
-}
-
-.terminal-launch-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: none;
-  background: transparent;
-  color: inherit;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease;
-}
-
-.terminal-launch-btn:hover {
-  color: var(--accent);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.terminal-launch-btn:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 1px;
 }
 
 .statusbar-indicator {
@@ -5241,6 +5211,21 @@ body {
   flex-shrink: 0;
 }
 
+.datagrid-topbar-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.datagrid-topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+}
+
 .datagrid-stat-pill {
   display: inline-flex;
   align-items: center;
@@ -5273,6 +5258,18 @@ body {
     linear-gradient(180deg, rgba(255, 255, 255, 0.012), rgba(255, 255, 255, 0)),
     rgba(10, 16, 20, 0.96);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.datagrid-query-result-notice {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 186, 77, 0.14);
+  background: rgba(43, 31, 11, 0.92);
+  color: #f3d39a;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .datagrid-loading-overlay {
@@ -7009,7 +7006,16 @@ body {
     flex-direction: column;
   }
 
+  .datagrid-topbar-side {
+    width: 100%;
+    align-items: flex-start;
+  }
+
   .datagrid-topbar-stats {
+    justify-content: flex-start;
+  }
+
+  .datagrid-topbar-actions {
     justify-content: flex-start;
   }
 

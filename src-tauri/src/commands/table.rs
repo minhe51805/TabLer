@@ -1,7 +1,7 @@
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{
-    QueryResult, SchemaObjectInfo, TableCellUpdateRequest, TableInfo, TableRowDeleteRequest,
-    TableStructure,
+    ColumnDetail, QueryResult, SchemaObjectInfo, TableCellUpdateRequest, TableInfo,
+    TableRowDeleteRequest, TableStructure,
 };
 use tauri::State;
 use tokio::time::{timeout, Duration};
@@ -41,7 +41,27 @@ pub async fn get_table_structure(
         driver.get_table_structure(&table, database.as_deref()),
     )
     .await
-    .map_err(|_| "Loading table structure timed out after 60 seconds.".to_string())?
+        .map_err(|_| "Loading table structure timed out after 60 seconds.".to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_table_columns_preview(
+    connection_id: String,
+    table: String,
+    database: Option<String>,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<Vec<ColumnDetail>, String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    timeout(
+        TABLE_METADATA_TIMEOUT,
+        driver.get_table_columns_preview(&table, database.as_deref()),
+    )
+    .await
+    .map_err(|_| "Loading table columns timed out after 60 seconds.".to_string())?
     .map_err(|e| e.to_string())
 }
 
@@ -115,6 +135,27 @@ pub async fn count_table_rows(
 }
 
 #[tauri::command]
+pub async fn count_table_null_values(
+    connection_id: String,
+    table: String,
+    column: String,
+    database: Option<String>,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<i64, String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    timeout(
+        TABLE_METADATA_TIMEOUT,
+        driver.count_null_values(&table, database.as_deref(), &column),
+    )
+    .await
+    .map_err(|_| "Counting NULL values timed out after 60 seconds.".to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn update_table_cell(
     connection_id: String,
     request: TableCellUpdateRequest,
@@ -143,5 +184,21 @@ pub async fn delete_table_rows(
     timeout(TABLE_QUERY_TIMEOUT, driver.delete_table_rows(&request))
         .await
         .map_err(|_| "Row deletion timed out after 120 seconds.".to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn execute_structure_statements(
+    connection_id: String,
+    statements: Vec<String>,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<u64, String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    timeout(TABLE_QUERY_TIMEOUT, driver.execute_structure_statements(&statements))
+        .await
+        .map_err(|_| "Applying structure changes timed out after 120 seconds.".to_string())?
         .map_err(|e| e.to_string())
 }

@@ -21,7 +21,6 @@ import {
   Settings2,
   Square,
   Sparkles,
-  Terminal,
   X,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -48,7 +47,6 @@ interface WorkspaceActivityState {
   at: number;
 }
 
-const TERMINAL_FEATURE_ENABLED = false;
 const GLOBAL_ERROR_AUTO_DISMISS_MS = 8000;
 const SQLEditor = lazy(() => import("./components/SQLEditor").then((module) => ({ default: module.SQLEditor })));
 const DataGrid = lazy(() => import("./components/DataGrid").then((module) => ({ default: module.DataGrid })));
@@ -56,9 +54,6 @@ const TableStructure = lazy(() => import("./components/TableStructure").then((mo
 const ConnectionForm = lazy(() => import("./components/ConnectionForm").then((module) => ({ default: module.ConnectionForm })));
 const AISettingsModal = lazy(() => import("./components/AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
 const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel").then((module) => ({ default: module.AISlidePanel })));
-const TerminalPanel = TERMINAL_FEATURE_ENABLED
-  ? lazy(() => import("./components/TerminalPanel").then((module) => ({ default: module.TerminalPanel })))
-  : null;
 
 function LazyPanelFallback() {
   return (
@@ -113,7 +108,6 @@ function App() {
   const [showAISlidePanel, setShowAISlidePanel] = useState(false);
   const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
   const [leftPanel, setLeftPanel] = useState<"connections" | "database">("connections");
-  const [showEmbeddedTerminal, setShowEmbeddedTerminal] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
@@ -133,7 +127,6 @@ function App() {
   const activeConn = connections.find((conn) => conn.id === activeConnectionId);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
   const isConnected = !!(activeConnectionId && connectedIds.has(activeConnectionId));
-  const isQueryWorkspace = activeTab?.type === "query";
   const activeQueryChrome =
     activeTab?.type === "query" ? queryChromeByTab[activeTab.id] ?? { isRunning: false } : null;
   const activeWorkspaceActivity =
@@ -211,30 +204,6 @@ function App() {
     }, 0);
   }, [isConnected]);
 
-  const handleToggleEmbeddedTerminal = useCallback(() => {
-    if (!TERMINAL_FEATURE_ENABLED) return;
-
-    setShowEmbeddedTerminal((visible) => {
-      const nextVisible = !visible;
-      if (nextVisible) {
-        window.dispatchEvent(new CustomEvent("close-sql-terminal"));
-      }
-      return nextVisible;
-    });
-  }, []);
-
-  const handleToggleWorkspaceTerminal = useCallback(() => {
-    if (!TERMINAL_FEATURE_ENABLED) return;
-
-    if (isQueryWorkspace) {
-      setShowEmbeddedTerminal(false);
-      window.dispatchEvent(new CustomEvent("toggle-sql-terminal"));
-      return;
-    }
-
-    handleToggleEmbeddedTerminal();
-  }, [handleToggleEmbeddedTerminal, isQueryWorkspace]);
-
   const handleRunActiveQuery = useCallback(() => {
     if (activeTab?.type !== "query") return;
 
@@ -271,8 +240,7 @@ function App() {
         current?.result === state.result &&
         current?.error === state.error &&
         current?.queryCount === state.queryCount &&
-        current?.editorHeight === state.editorHeight &&
-        current?.showTerminal === state.showTerminal
+        current?.editorHeight === state.editorHeight
       ) {
         return prev;
       }
@@ -536,30 +504,6 @@ function App() {
     setLeftPanel("connections");
   }, [activeConnectionId, connectedIds]);
 
-  useEffect(() => {
-    const liveQueryTabIds = new Set(
-      tabs.filter((tab) => tab.type === "query").map((tab) => tab.id)
-    );
-
-    setQueryChromeByTab((prev) => {
-      const prevKeys = Object.keys(prev);
-      if (prevKeys.length === liveQueryTabIds.size && prevKeys.every((tabId) => liveQueryTabIds.has(tabId))) {
-        return prev;
-      }
-      const nextEntries = Object.entries(prev).filter(([tabId]) => liveQueryTabIds.has(tabId));
-      return Object.fromEntries(nextEntries);
-    });
-
-    setQuerySessionByTab((prev) => {
-      const prevKeys = Object.keys(prev);
-      if (prevKeys.length === liveQueryTabIds.size && prevKeys.every((tabId) => liveQueryTabIds.has(tabId))) {
-        return prev;
-      }
-      const nextEntries = Object.entries(prev).filter(([tabId]) => liveQueryTabIds.has(tabId));
-      return Object.fromEntries(nextEntries);
-    });
-  }, [tabs]);
-
   const renderTabContent = () => {
     if (!isConnected) {
       return (
@@ -697,11 +641,6 @@ function App() {
               runRequestNonce={queryRunRequestByTab[tab.id] ?? 0}
               onChromeChange={(state) => handleQueryChromeChange(tab.id, state)}
               onStateChange={(state) => handleQuerySessionChange(tab.id, state)}
-              onTerminalToggle={(show) => {
-                if (show) {
-                  setShowEmbeddedTerminal(false);
-                }
-              }}
             />
           </Suspense>
         );
@@ -1004,16 +943,6 @@ function App() {
                     >
                       <Sparkles className="w-3.5 h-3.5" />
                     </button>
-
-                    {TERMINAL_FEATURE_ENABLED && isQueryWorkspace && (
-                      <button
-                        onClick={handleToggleWorkspaceTerminal}
-                        className="toolbar-btn icon-only"
-                        title="Toggle SQL terminal (Ctrl+J)"
-                      >
-                        <Terminal className="w-3.5 h-3.5" />
-                      </button>
-                    )}
                   </div>
                 </>
               )}
@@ -1025,7 +954,7 @@ function App() {
             onRunActiveQuery={handleRunActiveQuery}
           />
 
-          <div className="tab-content" style={{ display: showEmbeddedTerminal ? "none" : "block" }}>
+          <div className="tab-content">
             {tabs.length === 0 || !activeTab ? (
               renderTabContent()
             ) : (
@@ -1042,14 +971,6 @@ function App() {
               </div>
             )}
           </div>
-
-          {TERMINAL_FEATURE_ENABLED && TerminalPanel && showEmbeddedTerminal && (
-            <div className="embedded-terminal-panel">
-              <Suspense fallback={null}>
-                <TerminalPanel initialCwd="." />
-              </Suspense>
-            </div>
-          )}
         </main>
       </div>
 
@@ -1069,17 +990,6 @@ function App() {
         </div>
 
         <div className="statusbar-right">
-          {TERMINAL_FEATURE_ENABLED && (!isQueryWorkspace || showEmbeddedTerminal) && (
-            <button
-              type="button"
-              className="terminal-launch-btn"
-              onClick={handleToggleEmbeddedTerminal}
-              title="Toggle embedded terminal"
-              aria-label="Toggle embedded terminal"
-            >
-              <Terminal className="w-4 h-4" />
-            </button>
-          )}
           <span className="statusbar-shortcuts">
             <kbd className="kbd">Ctrl+N</kbd>
             <kbd className="kbd">Ctrl+B</kbd>

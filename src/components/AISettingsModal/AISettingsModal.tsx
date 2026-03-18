@@ -470,7 +470,7 @@ export function AISettingsModal({ onClose }: Props) {
                                                 <span className="form-label">Editor Assist</span>
                                                 <h4>Allow inline completion</h4>
                                                 <p>
-                                                    Inline completion sends your partial SQL while you type. Keep this off unless you trust the provider.
+                                                    Inline completion sends your partial SQL while you type. Keep this off unless you trust the provider. TableR only runs it automatically on local or file-based connections by default.
                                                 </p>
                                             </div>
                                             <label className="ai-settings-toggle-control">

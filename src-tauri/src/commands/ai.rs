@@ -3,10 +3,12 @@ use reqwest::Url;
 use serde_json::json;
 use std::net::IpAddr;
 use crate::database::ai_models::{AIProviderConfig, AIProviderType, AIRequest, AIRequestMode, AIResponse};
+use crate::utils::rate_limiter::AIRequestLimiter;
 
 use tauri::State;
 use std::collections::HashMap;
 use crate::storage::ai_storage::AIStorage;
+use tokio::task;
 
 fn provider_requires_api_key(provider_type: &AIProviderType) -> bool {
     !matches!(provider_type, AIProviderType::Ollama | AIProviderType::Custom)
@@ -61,9 +63,20 @@ fn validate_ai_endpoint(config: &AIProviderConfig, endpoint: &str) -> Result<(),
     Ok(())
 }
 
+async fn run_blocking_storage_task<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    task::spawn_blocking(operation)
+        .await
+        .map_err(|error| format!("Background AI storage task failed: {error}"))?
+}
+
 #[tauri::command]
 pub async fn get_ai_configs(storage: State<'_, AIStorage>) -> Result<(Vec<AIProviderConfig>, HashMap<String, bool>), String> {
-    storage.load_providers().map_err(|e| e.to_string())
+    let storage = storage.inner().clone();
+    run_blocking_storage_task(move || storage.load_providers().map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]
@@ -72,38 +85,51 @@ pub async fn save_ai_configs(
     api_key_updates: HashMap<String, String>,
     cleared_provider_ids: Vec<String>,
     storage: State<'_, AIStorage>
-) -> Result<(), String> {
-    storage
-        .save_providers(&providers, &api_key_updates, &cleared_provider_ids)
-        .map_err(|e| e.to_string())
+) -> Result<(Vec<AIProviderConfig>, HashMap<String, bool>), String> {
+    let storage = storage.inner().clone();
+    run_blocking_storage_task(move || {
+        storage
+            .save_providers(&providers, &api_key_updates, &cleared_provider_ids)
+            .map_err(|e| e.to_string())?;
+        storage.load_providers().map_err(|e| e.to_string())
+    })
+    .await
 }
 
 #[tauri::command]
-pub async fn ask_ai(request: AIRequest, storage: State<'_, AIStorage>) -> Result<AIResponse, String> {
+pub async fn ask_ai(
+    request: AIRequest,
+    storage: State<'_, AIStorage>,
+    ai_rate_limiter: State<'_, AIRequestLimiter>,
+) -> Result<AIResponse, String> {
     // Validate request before processing
     request.validate().map_err(|e| format!("Invalid request: {}", e))?;
+    ai_rate_limiter.check(&format!("{}:{:?}", request.provider_id, request.mode))?;
 
     let client = Client::new();
-    let config = storage
-        .get_provider_config(&request.provider_id)
-        .map_err(|e| e.to_string())?;
+    let storage = storage.inner().clone();
+    let provider_id = request.provider_id.clone();
+    let (config, api_key) = run_blocking_storage_task(move || {
+        let config = storage
+            .get_provider_config(&provider_id)
+            .map_err(|e| e.to_string())?;
+        let api_key = if provider_requires_api_key(&config.provider_type) {
+            Some(storage.get_api_key(&provider_id).map_err(|e| e.to_string())?)
+        } else {
+            storage
+                .get_api_key_optional(&provider_id)
+                .map_err(|e| e.to_string())?
+        };
+
+        Ok((config, api_key))
+    })
+    .await?;
     if !config.is_enabled {
         return Err("Selected AI provider is disabled.".to_string());
     }
     if request.mode == AIRequestMode::Inline && !config.allow_inline_completion {
         return Err("Inline AI completion is disabled for this provider.".to_string());
     }
-    let api_key = if provider_requires_api_key(&config.provider_type) {
-        Some(
-            storage
-                .get_api_key(&request.provider_id)
-                .map_err(|e| e.to_string())?,
-        )
-    } else {
-        storage
-            .get_api_key_optional(&request.provider_id)
-            .map_err(|e| e.to_string())?
-    };
     let effective_context = if config.allow_schema_context {
         request.context.trim()
     } else {

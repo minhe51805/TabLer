@@ -53,6 +53,7 @@ const COUNT_ROWS_DEBOUNCE_MS = 800;
 const MAX_TABLE_PAGE_CACHE_ENTRIES = 160;
 const MAX_TABLE_COUNT_CACHE_ENTRIES = 96;
 const MAX_INLINE_STRUCTURE_CACHE_ENTRIES = 96;
+const MAX_QUERY_RESULT_RENDER_ROWS = 500;
 const tablePageCache = new Map<string, CachedTablePage>();
 const tableCountCache = new Map<string, { totalRows: number; cachedAt: number }>();
 const inlineStructureCache = new Map<string, ColumnDetail[]>();
@@ -995,6 +996,16 @@ export function DataGrid({
     tableName,
   ]);
 
+  const displayedRows = useMemo(() => {
+    if (!data?.rows) return [];
+    if (!externalResult) return data.rows;
+    return data.rows.slice(0, MAX_QUERY_RESULT_RENDER_ROWS);
+  }, [data, externalResult]);
+
+  const isQueryResultTruncated = Boolean(
+    externalResult && ((data?.truncated ?? false) || (data?.rows.length ?? 0) > MAX_QUERY_RESULT_RENDER_ROWS)
+  );
+
   const columns = useMemo<ColumnDef<any, any>[]>(() => {
     if (!data || resolvedColumns.length === 0) return [];
 
@@ -1188,7 +1199,7 @@ export function DataGrid({
     structureStatus,
   ]);
 
-  const tableData = useMemo(() => data?.rows || [], [data]);
+  const tableData = useMemo(() => displayedRows, [displayedRows]);
 
   const table = useReactTable({
     data: tableData,
@@ -1197,7 +1208,7 @@ export function DataGrid({
   });
 
   const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
-  const visibleRowCount = data?.rows.length ?? 0;
+  const visibleRowCount = tableData.length;
   const columnCount = resolvedColumns.length;
   const compactQuery = externalResult?.query?.replace(/\s+/g, " ").trim() ?? "";
   const showTopbar = !externalResult;
@@ -1246,15 +1257,42 @@ export function DataGrid({
             </p>
           </div>
 
-          <div className="datagrid-topbar-stats">
-            <span className="datagrid-stat-pill">{columnCount} columns</span>
-            <span className="datagrid-stat-pill">{visibleRowCount} loaded</span>
-            <span className={`datagrid-stat-pill ${sortColumn ? "active" : ""}`}>{activeSortLabel}</span>
+          <div className="datagrid-topbar-side">
+            <div className="datagrid-topbar-stats">
+              <span className="datagrid-stat-pill">{columnCount} columns</span>
+              <span className="datagrid-stat-pill">{visibleRowCount} loaded</span>
+              <span className={`datagrid-stat-pill ${sortColumn ? "active" : ""}`}>{activeSortLabel}</span>
+            </div>
+
+            {selectedRowCount > 0 && (
+              <div className="datagrid-topbar-actions">
+                <button
+                  type="button"
+                  className="datagrid-footer-action danger"
+                  onClick={() => void handleDeleteSelectedRows()}
+                  disabled={isDeletingRows}
+                >
+                  {isDeletingRows ? (
+                    <Loader2 className="!w-3.5 !h-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="!w-3.5 !h-3.5" />
+                  )}
+                  <span>Delete selected</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       <div className="datagrid-table-wrap">
+        {isQueryResultTruncated && (
+          <div className="datagrid-query-result-notice">
+            Showing the first {MAX_QUERY_RESULT_RENDER_ROWS.toLocaleString()} rows from a larger
+            query result to keep the grid responsive.
+          </div>
+        )}
+
         {isLoading && (
           <div className="datagrid-loading-overlay">
             <div className="datagrid-loading-card">
@@ -1315,6 +1353,11 @@ export function DataGrid({
               <span className="datagrid-footer-pill strong">
                 {visibleRowCount} row{visibleRowCount !== 1 ? "s" : ""}
               </span>
+              {isQueryResultTruncated && (
+                <span className="datagrid-footer-pill warning">
+                  truncated at {visibleRowCount.toLocaleString()} rows
+                </span>
+              )}
               {totalRows > 0 && (
                 <span className="datagrid-footer-pill">of {totalRows.toLocaleString()} total</span>
               )}
@@ -1330,21 +1373,6 @@ export function DataGrid({
                 <span className="datagrid-footer-pill warning">
                   {selectedRowCount} selected
                 </span>
-              )}
-              {selectedRowCount > 0 && (
-                <button
-                  type="button"
-                  className="datagrid-footer-action danger"
-                  onClick={() => void handleDeleteSelectedRows()}
-                  disabled={isDeletingRows}
-                >
-                  {isDeletingRows ? (
-                    <Loader2 className="!w-3.5 !h-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="!w-3.5 !h-3.5" />
-                  )}
-                  <span>Delete selected</span>
-                </button>
               )}
             </>
           )}

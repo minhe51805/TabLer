@@ -1,17 +1,20 @@
 use crate::database::ai_models::AIProviderConfig;
 use anyhow::{Context, Result};
 use keyring::Error as KeyringError;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
-use std::collections::{HashMap, HashSet};
-use std::sync::RwLock;
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Cross-platform AI configuration storage using JSON files with in-memory caching.
 /// API Keys are stored securely in the OS keyring.
+#[derive(Clone)]
 pub struct AIStorage {
     storage_path: PathBuf,
-    cache: RwLock<Option<Vec<AIProviderConfig>>>,
-    keyring_cache: RwLock<HashMap<String, bool>>,
+    cache: Arc<RwLock<Option<Vec<AIProviderConfig>>>>,
+    keyring_cache: Arc<RwLock<HashMap<String, bool>>>,
+    write_guard: Arc<Mutex<()>>,
 }
 
 impl AIStorage {
@@ -35,8 +38,9 @@ impl AIStorage {
 
         Ok(Self {
             storage_path: data_dir.join("ai_providers.json"),
-            cache: RwLock::new(None),
-            keyring_cache: RwLock::new(HashMap::new()),
+            cache: Arc::new(RwLock::new(None)),
+            keyring_cache: Arc::new(RwLock::new(HashMap::new())),
+            write_guard: Arc::new(Mutex::new(())),
         })
     }
 
@@ -45,6 +49,37 @@ impl AIStorage {
         *cache = None;
         let mut keyring_cache = self.keyring_cache.write().unwrap();
         keyring_cache.clear();
+    }
+
+    fn read_provider_configs_file(&self) -> Result<Vec<AIProviderConfig>> {
+        if !self.storage_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let content = fs::read_to_string(&self.storage_path)?;
+        serde_json::from_str(&content).context("Failed to parse saved AI provider configs")
+    }
+
+    fn write_json_atomically(&self, json: &str) -> Result<()> {
+        let temp_name = format!(
+            "{}.{}.tmp",
+            self.storage_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("ai_providers.json"),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let temp_path = self.storage_path.with_file_name(temp_name);
+
+        fs::write(&temp_path, json)?;
+        if self.storage_path.exists() {
+            fs::remove_file(&self.storage_path)?;
+        }
+        fs::rename(&temp_path, &self.storage_path)?;
+        Ok(())
     }
 
     pub fn load_provider_configs(&self) -> Result<Vec<AIProviderConfig>> {
@@ -64,9 +99,7 @@ impl AIStorage {
             return Ok(empty);
         }
 
-        let content = fs::read_to_string(&self.storage_path)?;
-        let providers: Vec<AIProviderConfig> = serde_json::from_str(&content)
-            .context("Failed to parse saved AI provider configs")?;
+        let providers = self.read_provider_configs_file()?;
 
         // Cache the result
         let mut cache = self.cache.write().unwrap();
@@ -81,8 +114,9 @@ impl AIStorage {
         api_key_updates: &HashMap<String, String>,
         cleared_provider_ids: &[String],
     ) -> Result<()> {
+        let _guard = self.write_guard.lock().unwrap();
         let existing_provider_ids: HashSet<String> = self
-            .load_provider_configs()?
+            .read_provider_configs_file()?
             .into_iter()
             .map(|provider| provider.id)
             .collect();
@@ -110,7 +144,7 @@ impl AIStorage {
         }
 
         let json = serde_json::to_string_pretty(&providers)?;
-        fs::write(&self.storage_path, json)?;
+        self.write_json_atomically(&json)?;
 
         // Update cache
         self.invalidate_cache();

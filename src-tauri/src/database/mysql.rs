@@ -4,10 +4,12 @@ use super::safety::{
     normalize_order_dir, qualify_mysql_table_name, quote_mysql_identifier,
     quote_mysql_order_by, sanitize_mysql_filter_clause,
 };
+use crate::utils::sql::split_sql_statements;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures_util::TryStreamExt;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode};
-use sqlx::{Column, ConnectOptions, MySql, QueryBuilder, Row, TypeInfo};
+use sqlx::{Column, ConnectOptions, Executor, MySql, QueryBuilder, Row, TypeInfo};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::time::Instant;
@@ -16,6 +18,8 @@ pub struct MySqlDriver {
     pool: MySqlPool,
     current_db: Arc<RwLock<Option<String>>>,
 }
+
+const MAX_QUERY_RESULT_ROWS: usize = 500;
 
 impl MySqlDriver {
     pub async fn connect(config: &ConnectionConfig) -> Result<Self> {
@@ -80,6 +84,7 @@ impl MySqlDriver {
         query: String,
         affected_rows: u64,
         sandboxed: bool,
+        truncated: bool,
     ) -> QueryResult {
         let columns = if let Some(first) = rows.first() {
             first.columns()
@@ -127,7 +132,25 @@ impl MySqlDriver {
             execution_time_ms: elapsed,
             query,
             sandboxed,
+            truncated,
         }
+    }
+
+    async fn fetch_rows_limited<'a, E>(executor: E, sql: &'a str) -> Result<(Vec<MySqlRow>, bool)>
+    where
+        E: Executor<'a, Database = MySql>,
+    {
+        let mut stream = sqlx::query(sql).fetch(executor);
+        let mut rows = Vec::new();
+
+        while let Some(row) = stream.try_next().await? {
+            if rows.len() == MAX_QUERY_RESULT_ROWS {
+                return Ok((rows, true));
+            }
+            rows.push(row);
+        }
+
+        Ok((rows, false))
     }
 
     fn push_bound_value(
@@ -569,40 +592,63 @@ impl DatabaseDriver for MySqlDriver {
 
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
         let start = Instant::now();
-        if Self::query_returns_rows(sql) {
-            let rows: Vec<MySqlRow> = sqlx::query(sql).fetch_all(&self.pool).await?;
+        let statements = split_sql_statements(sql);
+
+        if statements.len() <= 1 && Self::query_returns_rows(sql) {
+            let (rows, truncated) = Self::fetch_rows_limited(&self.pool, sql).await?;
             let mut result = Self::build_result_from_rows(
                 &rows,
                 0,
                 sql.to_string(),
                 0,
                 false,
+                truncated,
             );
             result.execution_time_ms = start.elapsed().as_millis();
             Ok(result)
         } else {
-            // For non-SELECT queries, split by semicolon and execute each statement
-            let statements: Vec<&str> = sql
-                .split(';')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-
             let mut total_affected: u64 = 0;
-            let elapsed;
+            let mut last_result: Option<QueryResult> = None;
 
             if statements.len() > 1 {
-                // Execute each statement separately for multiple statements
                 for statement in &statements {
+                    if Self::query_returns_rows(statement) {
+                        let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
+                        last_result = Some(Self::build_result_from_rows(
+                            &rows,
+                            0,
+                            sql.to_string(),
+                            total_affected,
+                            false,
+                            truncated,
+                        ));
+                    } else {
+                        let result = sqlx::query(statement).execute(&self.pool).await?;
+                        total_affected += result.rows_affected();
+                    }
+                }
+            } else if let Some(statement) = statements.first() {
+                if Self::query_returns_rows(statement) {
+                    let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
+                    last_result = Some(Self::build_result_from_rows(
+                        &rows,
+                        0,
+                        sql.to_string(),
+                        total_affected,
+                        false,
+                        truncated,
+                    ));
+                } else {
                     let result = sqlx::query(statement).execute(&self.pool).await?;
                     total_affected += result.rows_affected();
                 }
-                elapsed = start.elapsed().as_millis();
-            } else {
-                // Single statement - execute directly
-                let result = sqlx::query(sql).execute(&self.pool).await?;
-                total_affected = result.rows_affected();
-                elapsed = start.elapsed().as_millis();
+            }
+
+            let elapsed = start.elapsed().as_millis();
+            if let Some(mut result) = last_result {
+                result.execution_time_ms = elapsed;
+                result.affected_rows = total_affected;
+                return Ok(result);
             }
 
             Ok(QueryResult {
@@ -612,6 +658,7 @@ impl DatabaseDriver for MySqlDriver {
                 execution_time_ms: elapsed,
                 query: sql.to_string(),
                 sandboxed: false,
+                truncated: false,
             })
         }
     }
@@ -627,13 +674,14 @@ impl DatabaseDriver for MySqlDriver {
             let mut last_result: Option<QueryResult> = None;
 
             for statement in statements {
-                let rows: Vec<MySqlRow> = sqlx::query(statement).fetch_all(&self.pool).await?;
+                let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
                 last_result = Some(Self::build_result_from_rows(
                     &rows,
                     0,
                     combined_query.clone(),
                     0,
                     true,
+                    truncated,
                 ));
             }
 
@@ -652,13 +700,14 @@ impl DatabaseDriver for MySqlDriver {
 
         for statement in statements {
             if Self::query_returns_rows(statement) {
-                let rows: Vec<MySqlRow> = sqlx::query(statement).fetch_all(&mut *tx).await?;
+                let (rows, truncated) = Self::fetch_rows_limited(&mut *tx, statement).await?;
                 last_result = Some(Self::build_result_from_rows(
                     &rows,
                     0,
                     combined_query.clone(),
                     total_affected,
                     true,
+                    truncated,
                 ));
             } else {
                 let result = sqlx::query(statement).execute(&mut *tx).await?;
@@ -684,6 +733,7 @@ impl DatabaseDriver for MySqlDriver {
             execution_time_ms: elapsed,
             query: combined_query,
             sandboxed: true,
+            truncated: false,
         })
     }
 
@@ -715,6 +765,21 @@ impl DatabaseDriver for MySqlDriver {
         let row: MySqlRow = sqlx::query(&sql).fetch_one(&self.pool).await?;
         let count: i64 = row.get(0);
         Ok(count)
+    }
+
+    async fn count_null_values(
+        &self,
+        table: &str,
+        database: Option<&str>,
+        column: &str,
+    ) -> Result<i64> {
+        let sql = format!(
+            "SELECT COUNT(*) FROM {} WHERE {} IS NULL",
+            qualify_mysql_table_name(table, database)?,
+            quote_mysql_order_by(column)?,
+        );
+        let row: MySqlRow = sqlx::query(&sql).fetch_one(&self.pool).await?;
+        Ok(row.get(0))
     }
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {

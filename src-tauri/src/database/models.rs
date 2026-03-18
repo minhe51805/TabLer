@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::{Component, Path};
 use uuid::Uuid;
 
@@ -356,6 +357,15 @@ fn validate_sqlite_file_path(path: &str) -> Result<(), String> {
         return Err("SQLite file path contains invalid control characters".to_string());
     }
 
+    if trimmed.starts_with("\\\\") {
+        return Err("SQLite file paths cannot use remote UNC locations".to_string());
+    }
+
+    let colon_positions = trimmed.match_indices(':').map(|(index, _)| index).collect::<Vec<_>>();
+    if colon_positions.len() > 1 || colon_positions.iter().any(|index| *index > 1) {
+        return Err("SQLite file paths cannot use URI-style or alternate data stream suffixes".to_string());
+    }
+
     let sqlite_path = Path::new(trimmed);
     if sqlite_path
         .components()
@@ -372,9 +382,26 @@ fn validate_sqlite_file_path(path: &str) -> Result<(), String> {
         .map(|ext| ext.to_ascii_lowercase());
 
     match extension.as_deref() {
-        Some("db") | Some("sqlite") | Some("sqlite3") => Ok(()),
-        _ => Err("SQLite file path must use a .db, .sqlite, or .sqlite3 extension".to_string()),
+        Some("db") | Some("sqlite") | Some("sqlite3") => {}
+        _ => {
+            return Err("SQLite file path must use a .db, .sqlite, or .sqlite3 extension".to_string())
+        }
     }
+
+    if sqlite_path.exists() {
+        let metadata = fs::symlink_metadata(sqlite_path)
+            .map_err(|_| "Could not inspect the selected SQLite file path".to_string())?;
+
+        if metadata.file_type().is_symlink() {
+            return Err("SQLite symlink targets are not allowed".to_string());
+        }
+
+        if metadata.is_dir() {
+            return Err("SQLite file path must point to a file, not a directory".to_string());
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -385,6 +412,7 @@ pub struct QueryResult {
     pub execution_time_ms: u128,
     pub query: String,
     pub sandboxed: bool,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

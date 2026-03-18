@@ -2,18 +2,120 @@ use crate::database::manager::DatabaseManager;
 use crate::database::models::{ConnectionConfig, DatabaseInfo, DatabaseType, ParsedConnectionUrl};
 use crate::database::safety::{quote_mysql_identifier, quote_postgres_identifier};
 use crate::storage::connection_storage::ConnectionStorage;
+use crate::utils::rate_limiter::ConnectionAttemptLimiter;
 use rfd::FileDialog;
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use sqlx::mysql::{MySqlConnectOptions, MySqlConnection, MySqlSslMode};
 use sqlx::{ConnectOptions, Connection, Executor};
 use std::path::PathBuf;
 use tauri::State;
+use tokio::task;
 use tokio::time::{timeout, Duration};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(45);
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const USE_DATABASE_TIMEOUT: Duration = Duration::from_secs(15);
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
+
+async fn run_blocking_storage_task<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    task::spawn_blocking(operation)
+        .await
+        .map_err(|error| format!("Background storage task failed: {error}"))?
+}
+
+fn connection_rate_limit_key(config: &ConnectionConfig) -> String {
+    let host = config.host.as_deref().unwrap_or("").trim().to_ascii_lowercase();
+    let user = config.username.as_deref().unwrap_or("").trim().to_ascii_lowercase();
+    let database = config.database.as_deref().unwrap_or("").trim().to_ascii_lowercase();
+    format!("{:?}|{}|{}|{}", config.db_type, host, user, database)
+}
+
+fn connection_engine_label(db_type: DatabaseType) -> &'static str {
+    match db_type {
+        DatabaseType::MySQL => "MySQL",
+        DatabaseType::MariaDB => "MariaDB",
+        DatabaseType::PostgreSQL => "PostgreSQL",
+        DatabaseType::CockroachDB => "CockroachDB",
+        DatabaseType::Greenplum => "Greenplum",
+        DatabaseType::Redshift => "Redshift",
+        DatabaseType::SQLite => "SQLite",
+        DatabaseType::DuckDB => "DuckDB",
+        DatabaseType::Cassandra => "Cassandra",
+        DatabaseType::Snowflake => "Snowflake",
+        DatabaseType::MSSQL => "SQL Server",
+        DatabaseType::Redis => "Redis",
+        DatabaseType::MongoDB => "MongoDB",
+        DatabaseType::Vertica => "Vertica",
+        DatabaseType::ClickHouse => "ClickHouse",
+        DatabaseType::BigQuery => "BigQuery",
+        DatabaseType::LibSQL => "LibSQL",
+        DatabaseType::CloudflareD1 => "Cloudflare D1",
+    }
+}
+
+fn format_connection_runtime_error(config: &ConnectionConfig, error: impl std::fmt::Display) -> String {
+    let engine = connection_engine_label(config.db_type);
+    let raw = error.to_string();
+    let normalized = raw.to_ascii_lowercase();
+
+    if normalized.contains("10061")
+        || normalized.contains("actively refused")
+        || normalized.contains("connection refused")
+    {
+        return format!(
+            "Cannot reach the {} server. Please make sure the service is running and the host/port are correct.",
+            engine
+        );
+    }
+
+    if normalized.contains("authentication")
+        || normalized.contains("password")
+        || normalized.contains("access denied")
+        || normalized.contains("auth failed")
+    {
+        return format!(
+            "{} authentication failed. Please verify the username and password.",
+            engine
+        );
+    }
+
+    if normalized.contains("does not exist")
+        || normalized.contains("unknown database")
+        || normalized.contains("database")
+            && (normalized.contains("not found") || normalized.contains("missing"))
+    {
+        return format!(
+            "The requested {} database could not be found. Please verify the database name.",
+            engine
+        );
+    }
+
+    if normalized.contains("certificate")
+        || normalized.contains("tls")
+        || normalized.contains("ssl")
+    {
+        return format!(
+            "{} TLS/SSL negotiation failed. Please verify the server certificate and SSL settings.",
+            engine
+        );
+    }
+
+    if normalized.contains("timed out") || normalized.contains("timeout") {
+        return format!(
+            "{} did not respond in time. Please verify the network path and try again.",
+            engine
+        );
+    }
+
+    format!(
+        "Failed to connect to {}. Please verify the host, port, credentials, and database settings.",
+        engine
+    )
+}
 
 fn format_local_admin_connection_error(
     engine_label: &str,
@@ -34,9 +136,26 @@ fn format_local_admin_connection_error(
         );
     }
 
+    if normalized.contains("authentication")
+        || normalized.contains("password")
+        || normalized.contains("access denied")
+    {
+        return format!(
+            "Authentication to the local {} admin database failed. Please verify the admin username and password.",
+            engine_label
+        );
+    }
+
     format!(
-        "Could not connect to local {} admin database at {}:{}: {}",
-        engine_label, host, port, raw_error
+        "Could not connect to the local {} admin database at {}:{}. Please verify the local server and credentials.",
+        engine_label, host, port
+    )
+}
+
+fn format_local_bootstrap_error(engine_label: &str, stage: &str) -> String {
+    format!(
+        "{} local bootstrap failed while {}. Please review the local server state, permissions, and SQL bootstrap inputs.",
+        engine_label, stage
     )
 }
 
@@ -111,13 +230,13 @@ async fn create_local_postgres_database(
         .acquire_timeout(CONNECTION_TIMEOUT)
         .connect_with(options)
         .await
-        .map_err(|e| format!("Could not connect to local PostgreSQL admin database: {e}"))?;
+        .map_err(|e| format_local_admin_connection_error("PostgreSQL", host, port, e))?;
 
     let exists = sqlx::query("SELECT 1 FROM pg_database WHERE datname = $1 LIMIT 1")
         .bind(database_name)
         .fetch_optional(&pool)
         .await
-        .map_err(|e| format!("Could not check existing PostgreSQL databases: {e}"))?
+        .map_err(|_| format_local_bootstrap_error("PostgreSQL", "checking whether the database already exists"))?
         .is_some();
 
     if !exists {
@@ -127,7 +246,7 @@ async fn create_local_postgres_database(
         );
         pool.execute(sql.as_str())
             .await
-            .map_err(|e| format!("Failed to create PostgreSQL database: {e}"))?;
+            .map_err(|_| format_local_bootstrap_error("PostgreSQL", "creating the new database"))?;
     }
     pool.close().await;
 
@@ -151,22 +270,22 @@ async fn create_local_postgres_database(
             .acquire_timeout(CONNECTION_TIMEOUT)
             .connect_with(bootstrap_options)
             .await
-            .map_err(|e| format!("Could not open the new PostgreSQL database for bootstrap: {e}"))?;
+            .map_err(|_| format_local_bootstrap_error("PostgreSQL", "opening the new database for bootstrap"))?;
 
         let mut tx = bootstrap_pool
             .begin()
             .await
-            .map_err(|e| format!("Could not start PostgreSQL bootstrap transaction: {e}"))?;
+            .map_err(|_| format_local_bootstrap_error("PostgreSQL", "starting the bootstrap transaction"))?;
 
         for statement in bootstrap_statements {
             tx.execute(statement.as_str())
                 .await
-                .map_err(|e| format!("Failed to apply PostgreSQL bootstrap SQL: {e}"))?;
+                .map_err(|_| format_local_bootstrap_error("PostgreSQL", "applying bootstrap SQL"))?;
         }
 
         tx.commit()
             .await
-            .map_err(|e| format!("Could not commit PostgreSQL bootstrap SQL: {e}"))?;
+            .map_err(|_| format_local_bootstrap_error("PostgreSQL", "committing bootstrap SQL"))?;
         bootstrap_pool.close().await;
     }
 
@@ -221,7 +340,7 @@ async fn create_local_mysql_database(
     .bind(database_name)
     .fetch_optional(&mut admin_connection)
     .await
-    .map_err(|e| format!("Could not check existing MySQL databases: {e}"))?
+    .map_err(|_| format_local_bootstrap_error("MySQL", "checking whether the database already exists"))?
     .is_some();
 
     if !exists {
@@ -232,12 +351,12 @@ async fn create_local_mysql_database(
         admin_connection
             .execute(sql.as_str())
             .await
-            .map_err(|e| format!("Failed to create MySQL database: {e}"))?;
+            .map_err(|_| format_local_bootstrap_error("MySQL", "creating the new database"))?;
     }
     admin_connection
         .close()
         .await
-        .map_err(|e| format!("Could not close local MySQL admin connection cleanly: {e}"))?;
+        .map_err(|_| "MySQL local bootstrap finished, but the admin connection did not close cleanly.".to_string())?;
 
     if !bootstrap_statements.is_empty() {
         let mut bootstrap_options = MySqlConnectOptions::new()
@@ -256,26 +375,26 @@ async fn create_local_mysql_database(
 
         let mut bootstrap_connection = MySqlConnection::connect_with(&bootstrap_options)
             .await
-            .map_err(|e| format!("Could not open the new MySQL database for bootstrap: {e}"))?;
+            .map_err(|_| format_local_bootstrap_error("MySQL", "opening the new database for bootstrap"))?;
 
         let mut tx = bootstrap_connection
             .begin()
             .await
-            .map_err(|e| format!("Could not start MySQL bootstrap transaction: {e}"))?;
+            .map_err(|_| format_local_bootstrap_error("MySQL", "starting the bootstrap transaction"))?;
 
         for statement in bootstrap_statements {
             tx.execute(statement.as_str())
                 .await
-                .map_err(|e| format!("Failed to apply MySQL bootstrap SQL: {e}"))?;
+                .map_err(|_| format_local_bootstrap_error("MySQL", "applying bootstrap SQL"))?;
         }
 
         tx.commit()
             .await
-            .map_err(|e| format!("Could not commit MySQL bootstrap SQL: {e}"))?;
+            .map_err(|_| format_local_bootstrap_error("MySQL", "committing bootstrap SQL"))?;
         bootstrap_connection
             .close()
             .await
-            .map_err(|e| format!("Could not close MySQL bootstrap connection cleanly: {e}"))?;
+            .map_err(|_| "MySQL local bootstrap finished, but the bootstrap connection did not close cleanly.".to_string())?;
     }
 
     Ok(if exists {
@@ -296,18 +415,28 @@ pub async fn connect_database(
     mut config: ConnectionConfig,
     db_manager: State<'_, DatabaseManager>,
     conn_storage: State<'_, ConnectionStorage>,
+    connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
 ) -> Result<String, String> {
     config.fill_generated_name();
     // Validate connection config before attempting to connect
     config.validate().map_err(|e| format!("Invalid connection config: {}", e))?;
+    connection_rate_limiter.check(&connection_rate_limit_key(&config))?;
 
     timeout(CONNECTION_TIMEOUT, db_manager.connect(&config))
         .await
         .map_err(|_| "Connection attempt timed out after 45 seconds.".to_string())?
-        .map_err(|e| format!("Connection failed: {}", e))?;
+        .map_err(|e| format_connection_runtime_error(&config, e))?;
 
-    // Save connection (without password) to storage
-    if let Err(error) = conn_storage.save_connection(&config) {
+    let storage = conn_storage.inner().clone();
+    let config_to_save = config.clone();
+
+    if let Err(error) = run_blocking_storage_task(move || {
+        storage
+            .save_connection(&config_to_save)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    {
         let disconnect_message = match timeout(DISCONNECT_TIMEOUT, db_manager.disconnect(&config.id)).await {
             Ok(Ok(())) => String::new(),
             Ok(Err(disconnect_error)) => format!(" Cleanup failed: {}", disconnect_error),
@@ -335,16 +464,20 @@ pub async fn disconnect_database(
 }
 
 #[tauri::command]
-pub async fn test_connection(mut config: ConnectionConfig) -> Result<String, String> {
+pub async fn test_connection(
+    mut config: ConnectionConfig,
+    connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
+) -> Result<String, String> {
     config.fill_generated_name();
     // Validate connection config before testing
     config.validate().map_err(|e| format!("Invalid connection config: {}", e))?;
+    connection_rate_limiter.check(&format!("test|{}", connection_rate_limit_key(&config)))?;
 
     let temp_manager = DatabaseManager::new();
     timeout(CONNECTION_TIMEOUT, temp_manager.connect(&config))
         .await
         .map_err(|_| "Connection test timed out after 45 seconds.".to_string())?
-        .map_err(|e| format!("Connection test failed: {}", e))?;
+        .map_err(|e| format_connection_runtime_error(&config, e))?;
     timeout(DISCONNECT_TIMEOUT, temp_manager.disconnect(&config.id))
         .await
         .map_err(|_| "Connection test cleanup timed out after 15 seconds.".to_string())?
@@ -385,11 +518,13 @@ pub async fn create_local_database(
     mut config: ConnectionConfig,
     database_name: String,
     bootstrap_statements: Option<Vec<String>>,
+    connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
 ) -> Result<String, String> {
     config.fill_generated_name();
     config
         .validate()
         .map_err(|e| format!("Invalid connection config: {e}"))?;
+    connection_rate_limiter.check(&format!("bootstrap|{}", connection_rate_limit_key(&config)))?;
 
     let requested_database = database_name.trim();
     if requested_database.is_empty() {
@@ -472,18 +607,22 @@ pub async fn pick_sqlite_database_path(database_name: String) -> Result<Option<S
 pub async fn get_saved_connections(
     conn_storage: State<'_, ConnectionStorage>,
 ) -> Result<Vec<ConnectionConfig>, String> {
-    conn_storage
-        .load_connections()
-        .map(|connections| {
-            connections
-                .into_iter()
-                .map(|mut connection| {
-                    connection.password = None;
-                    connection
-                })
-                .collect()
-        })
-        .map_err(|e| format!("Failed to load connections: {}", e))
+    let storage = conn_storage.inner().clone();
+    run_blocking_storage_task(move || {
+        storage
+            .load_connections()
+            .map(|connections| {
+                connections
+                    .into_iter()
+                    .map(|mut connection| {
+                        connection.password = None;
+                        connection
+                    })
+                    .collect()
+            })
+            .map_err(|e| format!("Failed to load connections: {}", e))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -491,15 +630,22 @@ pub async fn connect_saved_connection(
     connection_id: String,
     db_manager: State<'_, DatabaseManager>,
     conn_storage: State<'_, ConnectionStorage>,
+    connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
 ) -> Result<String, String> {
-    let config = conn_storage
-        .load_connection_by_id(&connection_id)
-        .map_err(|e| format!("Failed to load saved connection: {}", e))?;
+    let storage = conn_storage.inner().clone();
+    let requested_connection_id = connection_id.clone();
+    let config = run_blocking_storage_task(move || {
+        storage
+            .load_connection_by_id(&requested_connection_id)
+            .map_err(|e| format!("Failed to load saved connection: {}", e))
+    })
+    .await?;
+    connection_rate_limiter.check(&format!("saved|{}", connection_rate_limit_key(&config)))?;
 
     timeout(CONNECTION_TIMEOUT, db_manager.connect(&config))
         .await
         .map_err(|_| "Connection attempt timed out after 45 seconds.".to_string())?
-        .map_err(|e| format!("Connection failed: {}", e))?;
+        .map_err(|e| format_connection_runtime_error(&config, e))?;
 
     Ok(config.id)
 }
@@ -509,9 +655,13 @@ pub async fn delete_saved_connection(
     connection_id: String,
     conn_storage: State<'_, ConnectionStorage>,
 ) -> Result<(), String> {
-    conn_storage
-        .delete_connection(&connection_id)
-        .map_err(|e| format!("Failed to delete connection: {}", e))
+    let storage = conn_storage.inner().clone();
+    run_blocking_storage_task(move || {
+        storage
+            .delete_connection(&connection_id)
+            .map_err(|e| format!("Failed to delete connection: {}", e))
+    })
+    .await
 }
 
 #[tauri::command]

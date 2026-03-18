@@ -3,12 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ConnectionConfig,
   DatabaseInfo,
+  SchemaObjectInfo,
   TableInfo,
   Tab,
   QueryResult,
   TableCellUpdateRequest,
+  TableRowDeleteRequest,
   TableStructure,
   AIProviderConfig,
+  AIRequestMode,
 } from "../types";
 
 const connectionSignature = (c: ConnectionConfig) =>
@@ -26,6 +29,79 @@ const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig =>
   password: undefined,
 });
 
+const deriveConnectionName = (config: ConnectionConfig): string => {
+  const explicitName = config.name.trim();
+  if (explicitName) return explicitName;
+
+  if (config.db_type === "sqlite") {
+    const filePath = (config.file_path || "").trim();
+    if (filePath) {
+      const normalizedPath = filePath.replace(/\\/g, "/");
+      const fileName = normalizedPath.split("/").filter(Boolean).pop() || filePath;
+      return `SQLite ${fileName}`;
+    }
+
+    return "SQLite local";
+  }
+
+  const host = (config.host || "").trim();
+  const database = (config.database || "").trim();
+  const dbLabel = config.db_type.toUpperCase();
+
+  if (host && database) return `${dbLabel} ${host} / ${database}`;
+  if (database) return `${dbLabel} ${database}`;
+  if (host) return `${dbLabel} ${host}`;
+  return `${dbLabel} connection`;
+};
+
+const ensureConnectionName = (config: ConnectionConfig): ConnectionConfig => ({
+  ...config,
+  name: deriveConnectionName(config),
+});
+
+const FRONTEND_TIMEOUTS = {
+  connection: 30_000,
+  metadata: 15_000,
+  tableData: 30_000,
+  rowCount: 10_000,
+  query: 300_000,
+  ai: 60_000,
+} as const;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+function invokeWithTimeout<T>(
+  command: string,
+  args: Record<string, unknown>,
+  timeoutMs: number,
+  label: string
+) {
+  return withTimeout(invoke<T>(command, args), timeoutMs, label);
+}
+
+function invokeMutation<T>(command: string, args: Record<string, unknown>) {
+  // Mutating commands are not wrapped in a frontend timeout because the
+  // backend work would continue anyway and leave renderer state out of sync.
+  return invoke<T>(command, args);
+}
+
 interface AppState {
   connections: ConnectionConfig[];
   activeConnectionId: string | null;
@@ -37,6 +113,7 @@ interface AppState {
   databases: DatabaseInfo[];
   currentDatabase: string | null;
   tables: TableInfo[];
+  schemaObjects: SchemaObjectInfo[];
 
   tabs: Tab[];
   activeTabId: string | null;
@@ -57,6 +134,14 @@ interface AppState {
   fetchDatabases: (connectionId: string) => Promise<void>;
   switchDatabase: (connectionId: string, database: string) => Promise<void>;
   fetchTables: (connectionId: string, database?: string) => Promise<void>;
+  fetchSchemaObjects: (connectionId: string, database?: string) => Promise<void>;
+  createLocalDatabase: (
+    config: ConnectionConfig,
+    databaseName: string,
+    bootstrapStatements?: string[]
+  ) => Promise<string>;
+  suggestSqliteDatabasePath: (databaseName: string) => Promise<string>;
+  pickSqliteDatabasePath: (databaseName: string) => Promise<string | null>;
 
   executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
   executeSandboxQuery: (connectionId: string, statements: string[]) => Promise<QueryResult>;
@@ -79,6 +164,7 @@ interface AppState {
   ) => Promise<TableStructure>;
   countRows: (connectionId: string, table: string, database?: string) => Promise<number>;
   updateTableCell: (connectionId: string, request: TableCellUpdateRequest) => Promise<number>;
+  deleteTableRows: (connectionId: string, request: TableRowDeleteRequest) => Promise<number>;
 
   addTab: (tab: Tab) => void;
   removeTab: (tabId: string) => void;
@@ -91,7 +177,7 @@ interface AppState {
     apiKeyUpdates: Record<string, string>,
     clearedProviderIds: string[]
   ) => Promise<void>;
-  askAI: (providerId: string, prompt: string, context: string) => Promise<string>;
+  askAI: (providerId: string, prompt: string, context: string, mode?: AIRequestMode) => Promise<string>;
 
   setError: (error: string | null) => void;
   clearError: () => void;
@@ -104,6 +190,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   databases: [],
   currentDatabase: null,
   tables: [],
+  schemaObjects: [],
   tabs: [],
   activeTabId: null,
   isConnecting: false,
@@ -116,7 +203,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadSavedConnections: async () => {
     try {
-      const connections = await invoke<ConnectionConfig[]>("get_saved_connections");
+      const connections = await invokeWithTimeout<ConnectionConfig[]>(
+        "get_saved_connections",
+        {},
+        FRONTEND_TIMEOUTS.metadata,
+        "Loading saved connections"
+      );
       set({ connections: connections.map(sanitizeConnectionConfig) });
     } catch (e) {
       set({ error: `Failed to load connections: ${e}` });
@@ -125,7 +217,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   loadAIConfigs: async () => {
     try {
-      const [aiConfigs, aiKeyStatus] = await invoke<[AIProviderConfig[], Record<string, boolean>]>("get_ai_configs");
+      const [aiConfigs, aiKeyStatus] = await invokeWithTimeout<
+        [AIProviderConfig[], Record<string, boolean>]
+      >("get_ai_configs", {}, FRONTEND_TIMEOUTS.metadata, "Loading AI settings");
       set({ aiConfigs, aiKeyStatus });
     } catch (e) {
       set({ error: `Failed to load AI configs: ${e}` });
@@ -139,7 +233,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     clearedProviderIds: string[]
   ) => {
     try {
-      await invoke("save_ai_configs", { providers: configs, apiKeyUpdates, clearedProviderIds });
+      await invokeMutation(
+        "save_ai_configs",
+        { providers: configs, apiKeyUpdates, clearedProviderIds },
+      );
       await get().loadAIConfigs();
     } catch (e) {
       set({ error: `Failed to save AI configs: ${e}` });
@@ -147,14 +244,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  askAI: async (providerId: string, prompt: string, context: string) => {
+  askAI: async (providerId: string, prompt: string, context: string, mode = "panel") => {
     const config = get().aiConfigs.find(c => c.id === providerId);
     if (!config) throw new Error("AI Provider not found");
 
     try {
-      const resp = await invoke<{ text: string; error?: string }>("ask_ai", {
-        request: { prompt, context, provider_id: providerId }
-      });
+      const resp = await invokeWithTimeout<{ text: string; error?: string }>(
+        "ask_ai",
+        {
+          request: { prompt, context, provider_id: providerId, mode },
+        },
+        FRONTEND_TIMEOUTS.ai,
+        "AI request"
+      );
       if (resp.error) throw new Error(resp.error);
       return resp.text;
     } catch (e) {
@@ -167,24 +269,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     set({ isConnecting: true, error: null });
     try {
+      const normalizedConfig = ensureConnectionName(config);
       const connections = get().connections;
-      const sameId = connections.find((c) => c.id === config.id);
+      const sameId = connections.find((c) => c.id === normalizedConfig.id);
       const sameTarget = connections.find(
-        (c) => c.id !== config.id && connectionSignature(c) === connectionSignature(config)
+        (c) => c.id !== normalizedConfig.id && connectionSignature(c) === connectionSignature(normalizedConfig)
       );
 
-      const finalConnectionId = sameTarget?.id || config.id;
-      const connectionRequest = { ...config, id: finalConnectionId };
-      const finalConfig = sanitizeConnectionConfig({ ...config, id: finalConnectionId });
+      const finalConnectionId = sameTarget?.id || normalizedConfig.id;
+      const connectionRequest = { ...normalizedConfig, id: finalConnectionId };
+      const finalConfig = sanitizeConnectionConfig({ ...normalizedConfig, id: finalConnectionId });
 
-      await invoke("connect_database", { config: connectionRequest });
+      await invokeMutation(
+        "connect_database",
+        { config: connectionRequest },
+      );
 
       const connectedIds = new Set(get().connectedIds);
       connectedIds.add(finalConnectionId);
 
       let newConnections = connections;
       if (sameId) {
-        newConnections = connections.map((c) => (c.id === config.id ? finalConfig : c));
+        newConnections = connections.map((c) => (c.id === normalizedConfig.id ? finalConfig : c));
       } else if (sameTarget) {
         newConnections = connections.map((c) =>
           c.id === sameTarget.id ? finalConfig : c
@@ -201,9 +307,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
 
       await get().fetchDatabases(finalConnectionId);
-      if (config.database) {
-        set({ currentDatabase: config.database });
-        await get().fetchTables(finalConnectionId, config.database);
+      if (normalizedConfig.database) {
+        set({ currentDatabase: normalizedConfig.database });
+        await Promise.all([
+          get().fetchTables(finalConnectionId, normalizedConfig.database),
+          get().fetchSchemaObjects(finalConnectionId, normalizedConfig.database),
+        ]);
       }
     } catch (e) {
       set({ isConnecting: false, error: `Connection failed: ${e}` });
@@ -216,7 +325,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     set({ isConnecting: true, error: null });
     try {
-      await invoke("connect_saved_connection", { connectionId });
+      await invokeMutation(
+        "connect_saved_connection",
+        { connectionId },
+      );
 
       const connection = get().connections.find((item) => item.id === connectionId);
       const connectedIds = new Set(get().connectedIds);
@@ -231,7 +343,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       await get().fetchDatabases(connectionId);
       if (connection?.database) {
         set({ currentDatabase: connection.database });
-        await get().fetchTables(connectionId, connection.database);
+        await Promise.all([
+          get().fetchTables(connectionId, connection.database),
+          get().fetchSchemaObjects(connectionId, connection.database),
+        ]);
       }
     } catch (e) {
       set({ isConnecting: false, error: `Connection failed: ${e}` });
@@ -241,7 +356,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   disconnectFromDatabase: async (connectionId: string) => {
     try {
-      await invoke("disconnect_database", { connectionId });
+      await invokeMutation(
+        "disconnect_database",
+        { connectionId },
+      );
       const connectedIds = new Set(get().connectedIds);
       connectedIds.delete(connectionId);
 
@@ -250,6 +368,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         newState.activeConnectionId = null;
         newState.databases = [];
         newState.tables = [];
+        newState.schemaObjects = [];
         newState.currentDatabase = null;
       }
 
@@ -259,11 +378,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  testConnection: async (config: ConnectionConfig) => invoke<string>("test_connection", { config }),
+  testConnection: async (config: ConnectionConfig) =>
+    invokeWithTimeout<string>(
+      "test_connection",
+      { config: ensureConnectionName(config) },
+      FRONTEND_TIMEOUTS.connection,
+      "Testing database connection"
+    ),
 
   deleteSavedConnection: async (connectionId: string) => {
     try {
-      await invoke("delete_saved_connection", { connectionId });
+      await invokeMutation(
+        "delete_saved_connection",
+        { connectionId },
+      );
       set({ connections: get().connections.filter((c) => c.id !== connectionId) });
     } catch (e) {
       set({ error: `Delete failed: ${e}` });
@@ -272,7 +400,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   fetchDatabases: async (connectionId: string) => {
     try {
-      const databases = await invoke<DatabaseInfo[]>("list_databases", { connectionId });
+      const databases = await invokeWithTimeout<DatabaseInfo[]>(
+        "list_databases",
+        { connectionId },
+        FRONTEND_TIMEOUTS.metadata,
+        "Listing databases"
+      );
       set({ databases });
     } catch (e) {
       set({ error: `Failed to list databases: ${e}` });
@@ -281,9 +414,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   switchDatabase: async (connectionId: string, database: string) => {
     try {
-      await invoke("use_database", { connectionId, database });
+      await invokeMutation(
+        "use_database",
+        { connectionId, database },
+      );
       set({ currentDatabase: database });
-      await get().fetchTables(connectionId, database);
+      await Promise.all([
+        get().fetchTables(connectionId, database),
+        get().fetchSchemaObjects(connectionId, database),
+      ]);
     } catch (e) {
       set({ error: `Failed to switch database: ${e}` });
     }
@@ -292,20 +431,77 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchTables: async (connectionId: string, database?: string) => {
     set({ isLoadingTables: true });
     try {
-      const tables = await invoke<TableInfo[]>("list_tables", {
-        connectionId,
-        database: database || null,
-      });
+      const tables = await invokeWithTimeout<TableInfo[]>(
+        "list_tables",
+        {
+          connectionId,
+          database: database || null,
+        },
+        FRONTEND_TIMEOUTS.metadata,
+        "Listing tables"
+      );
       set({ tables, isLoadingTables: false });
     } catch (e) {
       set({ isLoadingTables: false, error: `Failed to list tables: ${e}` });
     }
   },
 
+  fetchSchemaObjects: async (connectionId: string, database?: string) => {
+    try {
+      const schemaObjects = await invokeWithTimeout<SchemaObjectInfo[]>(
+        "list_schema_objects",
+        {
+          connectionId,
+          database: database || null,
+        },
+        FRONTEND_TIMEOUTS.metadata,
+        "Listing schema objects"
+      );
+      set({ schemaObjects });
+    } catch (e) {
+      set({ error: `Failed to list schema objects: ${e}` });
+    }
+  },
+
+  createLocalDatabase: async (config: ConnectionConfig, databaseName: string, bootstrapStatements = []) => {
+    try {
+      return await invokeMutation<string>(
+        "create_local_database",
+        {
+          config: ensureConnectionName(config),
+          databaseName,
+          bootstrapStatements: bootstrapStatements.length > 0 ? bootstrapStatements : null,
+        },
+      );
+    } catch (e) {
+      set({ error: `Create database failed: ${e}` });
+      throw e;
+    }
+  },
+
+  suggestSqliteDatabasePath: async (databaseName: string) =>
+    invokeWithTimeout<string>(
+      "suggest_sqlite_database_path",
+      { databaseName },
+      FRONTEND_TIMEOUTS.metadata,
+      "Preparing SQLite database location"
+    ),
+
+  pickSqliteDatabasePath: async (databaseName: string) =>
+    invokeWithTimeout<string | null>(
+      "pick_sqlite_database_path",
+      { databaseName },
+      FRONTEND_TIMEOUTS.metadata,
+      "Opening SQLite save dialog"
+    ),
+
   executeQuery: async (connectionId: string, sql: string) => {
     set({ isExecutingQuery: true });
     try {
-      const result = await invoke<QueryResult>("execute_query", { connectionId, sql });
+      const result = await invokeMutation<QueryResult>(
+        "execute_query",
+        { connectionId, sql },
+      );
       set({ isExecutingQuery: false });
       return result;
     } catch (e) {
@@ -317,10 +513,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   executeSandboxQuery: async (connectionId: string, statements: string[]) => {
     set({ isExecutingQuery: true });
     try {
-      const result = await invoke<QueryResult>("execute_sandboxed_query", {
-        connectionId,
-        statements,
-      });
+      const result = await invokeMutation<QueryResult>(
+        "execute_sandboxed_query",
+        {
+          connectionId,
+          statements,
+        },
+      );
       set({ isExecutingQuery: false });
       return result;
     } catch (e) {
@@ -330,40 +529,70 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   getTableData: async (connectionId, table, opts = {}) => {
-    return invoke<QueryResult>("get_table_data", {
-      connectionId,
-      table,
-      database: opts.database || null,
-      offset: opts.offset || 0,
-      limit: opts.limit || 200,
-      orderBy: opts.orderBy || null,
-      orderDir: opts.orderDir || null,
-      filter: opts.filter || null,
-    });
+    return invokeWithTimeout<QueryResult>(
+      "get_table_data",
+      {
+        connectionId,
+        table,
+        database: opts.database || null,
+        offset: opts.offset || 0,
+        limit: opts.limit || 100,
+        orderBy: opts.orderBy || null,
+        orderDir: opts.orderDir || null,
+        filter: opts.filter || null,
+      },
+      FRONTEND_TIMEOUTS.tableData,
+      "Loading table data"
+    );
   },
 
   getTableStructure: async (connectionId, table, database) =>
-    invoke<TableStructure>("get_table_structure", {
-      connectionId,
-      table,
-      database: database || null,
-    }),
+    invokeWithTimeout<TableStructure>(
+      "get_table_structure",
+      {
+        connectionId,
+        table,
+        database: database || null,
+      },
+      FRONTEND_TIMEOUTS.metadata,
+      "Loading table structure"
+    ),
 
   countRows: async (connectionId, table, database) =>
-    invoke<number>("count_table_rows", {
-      connectionId,
-      table,
-      database: database || null,
-    }),
+    invokeWithTimeout<number>(
+      "count_table_rows",
+      {
+        connectionId,
+        table,
+        database: database || null,
+      },
+      FRONTEND_TIMEOUTS.rowCount,
+      "Counting table rows"
+    ),
 
   updateTableCell: async (connectionId, request) =>
-    invoke<number>("update_table_cell", {
-      connectionId,
-      request: {
-        ...request,
-        database: request.database || null,
+    invokeMutation<number>(
+      "update_table_cell",
+      {
+        connectionId,
+        request: {
+          ...request,
+          database: request.database || null,
+        },
       },
-    }),
+    ),
+
+  deleteTableRows: async (connectionId, request) =>
+    invokeMutation<number>(
+      "delete_table_rows",
+      {
+        connectionId,
+        request: {
+          ...request,
+          database: request.database || null,
+        },
+      },
+    ),
 
   addTab: (tab: Tab) => {
     const tabs = get().tabs;

@@ -1,6 +1,10 @@
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryResult;
 use tauri::State;
+use tokio::time::{timeout, Duration};
+
+const READ_ONLY_QUERY_TIMEOUT: Duration = Duration::from_secs(180);
+const MUTATING_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
 
 const SANDBOX_ALLOWED_PREFIXES: [&str; 8] = [
     "SELECT",
@@ -63,6 +67,36 @@ fn validate_sandbox_statement(statement: &str) -> Result<(), String> {
     )
 }
 
+fn is_likely_read_only_statement(statement: &str) -> bool {
+    let Ok(normalized) = strip_leading_sql_noise(statement).map(|value| value.to_ascii_uppercase()) else {
+        return false;
+    };
+
+    if normalized.is_empty() {
+        return false;
+    }
+
+    if normalized.starts_with("PRAGMA") {
+        return !normalized.contains('=');
+    }
+
+    normalized.starts_with("SELECT")
+        || normalized.starts_with("SHOW")
+        || normalized.starts_with("EXPLAIN")
+        || normalized.starts_with("DESCRIBE")
+}
+
+fn timeout_for_statements<'a>(statements: impl Iterator<Item = &'a str>) -> Duration {
+    if statements
+        .filter(|statement| !statement.trim().is_empty())
+        .all(is_likely_read_only_statement)
+    {
+        READ_ONLY_QUERY_TIMEOUT
+    } else {
+        MUTATING_QUERY_TIMEOUT
+    }
+}
+
 #[tauri::command]
 pub async fn execute_query(
     connection_id: String,
@@ -73,7 +107,11 @@ pub async fn execute_query(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    driver.execute_query(&sql).await.map_err(|e| e.to_string())
+    let timeout_window = timeout_for_statements(sql.split(';'));
+    timeout(timeout_window, driver.execute_query(&sql))
+        .await
+        .map_err(|_| format!("Query timed out after {} seconds.", timeout_window.as_secs()))?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -94,8 +132,9 @@ pub async fn execute_sandboxed_query(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    driver
-        .execute_sandboxed(&statements)
+    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
+    timeout(timeout_window, driver.execute_sandboxed(&statements))
         .await
+        .map_err(|_| format!("Sandbox query timed out after {} seconds.", timeout_window.as_secs()))?
         .map_err(|e| e.to_string())
 }

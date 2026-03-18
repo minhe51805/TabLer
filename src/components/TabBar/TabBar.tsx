@@ -1,4 +1,4 @@
-import { X, Table, Code, Columns, Play, Loader2, Shield } from "lucide-react";
+import { X, Table, Code, Columns, Play, Loader2 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
 
@@ -8,12 +8,10 @@ interface QueryChromeState {
 
 interface Props {
   queryChrome?: QueryChromeState | null;
-  sandboxEnabled?: boolean;
-  onToggleSandbox?: () => void;
   onRunActiveQuery?: () => void;
 }
 
-export function TabBar({ queryChrome, sandboxEnabled = true, onToggleSandbox, onRunActiveQuery }: Props) {
+export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
   const { tabs, activeTabId, setActiveTab, removeTab } = useAppStore(
     useShallow((state) => ({
       tabs: state.tabs,
@@ -85,18 +83,9 @@ export function TabBar({ queryChrome, sandboxEnabled = true, onToggleSandbox, on
         <div className="tabbar-trailing">
           <button
             type="button"
-            onClick={onToggleSandbox}
-            className={`tabbar-sandbox-btn ${sandboxEnabled ? "active" : ""}`}
-            title={sandboxEnabled ? "Sandbox mode is on. Changes are rolled back." : "Sandbox mode is off. Queries run against the real database."}
-          >
-            <Shield className="w-3.5 h-3.5" />
-            <span>{sandboxEnabled ? "Sandbox" : "Live"}</span>
-          </button>
-          <button
-            type="button"
             onClick={onRunActiveQuery}
             className="tabbar-run-btn"
-            title={sandboxEnabled ? "Execute in sandbox (Ctrl+Enter)" : "Execute query (Ctrl+Enter)"}
+            title="Run safely (Ctrl+Enter)"
             disabled={queryChrome?.isRunning}
           >
             {queryChrome?.isRunning ? (

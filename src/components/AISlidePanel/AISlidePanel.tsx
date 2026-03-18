@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+ import { useEffect, useRef, useState } from "react";
 import { Loader2, Sparkles, Bot, X, Send, Copy } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
+import { splitSqlStatements } from "../../utils/sqlStatements";
 
 interface Props {
   isOpen: boolean;
+  initialPrompt?: string;
+  initialPromptNonce?: number;
   onClose: () => void;
 }
 
@@ -26,6 +29,13 @@ const PROMPT_IDEAS = [
 const MAX_TABLE_NAMES_IN_CONTEXT = 40;
 const MAX_SCHEMA_SUMMARIES = 8;
 const MAX_COLUMNS_PER_SUMMARY = 12;
+
+type SqlRiskLevel = "safe" | "review" | "dangerous";
+
+interface SqlRiskAnalysis {
+  level: SqlRiskLevel;
+  reason: string | null;
+}
 
 function rankTableForPrompt(promptText: string, tableName: string) {
   const normalizedPrompt = promptText.toLowerCase();
@@ -80,7 +90,83 @@ function summarizeStructure(tableName: string, columns: Array<{ name: string; da
     : `Table ${tableName} (${preview})`;
 }
 
-export function AISlidePanel({ isOpen, onClose }: Props) {
+function normalizeStatement(statement: string) {
+  return statement
+    .replace(/^--.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .trim()
+    .toUpperCase();
+}
+
+function analyzeGeneratedSql(sql: string): SqlRiskAnalysis {
+  const statements = splitSqlStatements(sql);
+  if (statements.length === 0) {
+    return { level: "dangerous", reason: "The AI response did not contain a usable SQL statement." };
+  }
+
+  let hasReviewableChange = false;
+
+  for (const statement of statements) {
+    const normalized = normalizeStatement(statement);
+    if (!normalized) continue;
+
+    if (
+      normalized.startsWith("DROP ") ||
+      normalized.startsWith("TRUNCATE ") ||
+      normalized.startsWith("ALTER DATABASE") ||
+      normalized.startsWith("ALTER ROLE") ||
+      normalized.startsWith("CREATE USER") ||
+      normalized.startsWith("GRANT ") ||
+      normalized.startsWith("REVOKE ")
+    ) {
+      return {
+        level: "dangerous",
+        reason: "This SQL can change or remove critical database objects or permissions.",
+      };
+    }
+
+    if (normalized.startsWith("DELETE ") && !/\bWHERE\b/.test(normalized)) {
+      return {
+        level: "dangerous",
+        reason: "DELETE without WHERE would affect every row in the target table.",
+      };
+    }
+
+    if (normalized.startsWith("UPDATE ") && !/\bWHERE\b/.test(normalized)) {
+      return {
+        level: "dangerous",
+        reason: "UPDATE without WHERE would affect every row in the target table.",
+      };
+    }
+
+    if (
+      normalized.startsWith("ALTER ") ||
+      normalized.startsWith("CREATE ") ||
+      normalized.startsWith("INSERT ") ||
+      normalized.startsWith("UPDATE ") ||
+      normalized.startsWith("DELETE ") ||
+      normalized.startsWith("DROP INDEX")
+    ) {
+      hasReviewableChange = true;
+    }
+  }
+
+  if (hasReviewableChange) {
+    return {
+      level: "review",
+      reason: "This SQL changes data or schema. Review it carefully before inserting or running it.",
+    };
+  }
+
+  return { level: "safe", reason: null };
+}
+
+export function AISlidePanel({
+  isOpen,
+  initialPrompt = "",
+  initialPromptNonce = 0,
+  onClose,
+}: Props) {
   const {
     askAI,
     aiConfigs,
@@ -102,16 +188,34 @@ export function AISlidePanel({ isOpen, onClose }: Props) {
   );
   const [prompt, setPrompt] = useState("");
   const [response, setResponse] = useState<string | null>(null);
+  const [responseRisk, setResponseRisk] = useState<SqlRiskAnalysis>({ level: "safe", reason: null });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const schemaSummaryCacheRef = useRef(new Map<string, string>());
+  const requestIdRef = useRef(0);
   const activeProvider = aiConfigs.find((c) => c.is_enabled);
   const tableContextCount = tables?.length || 0;
 
   useEffect(() => {
     schemaSummaryCacheRef.current.clear();
   }, [connectionId, currentDatabase]);
+
+  useEffect(() => {
+    if (!initialPromptNonce || !initialPrompt.trim()) {
+      return;
+    }
+
+    setPrompt(initialPrompt);
+    setError(null);
+    setResponse(null);
+    setResponseRisk({ level: "safe", reason: null });
+
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(initialPrompt.length, initialPrompt.length);
+    });
+  }, [initialPrompt, initialPromptNonce]);
 
   const handleGenerate = async () => {
     if (!prompt.trim() || !connectionId) {
@@ -126,60 +230,77 @@ export function AISlidePanel({ isOpen, onClose }: Props) {
 
     setIsLoading(true);
     setError(null);
+    setResponse(null);
+    setResponseRisk({ level: "safe", reason: null });
+    const requestId = ++requestIdRef.current;
 
     try {
+      let latestTables = useAppStore.getState().tables;
+
       // Check if tables are loaded, if not, try to fetch them first
-      if (!tables || tables.length === 0) {
+      if (!latestTables || latestTables.length === 0) {
         if (connectionId && currentDatabase) {
           await fetchTables(connectionId, currentDatabase);
         }
         // If still no tables after fetch, show error
-        const currentTables = useAppStore.getState().tables;
-        if (!currentTables || currentTables.length === 0) {
+        if (requestId !== requestIdRef.current) {
+          return;
+        }
+        latestTables = useAppStore.getState().tables;
+        if (!latestTables || latestTables.length === 0) {
           setError("No tables found. Please make sure you are connected to a database with tables.");
           setIsLoading(false);
           return;
         }
       }
+      let context = "";
 
-      // Keep broad table awareness, but only fetch deep schema for a small relevant subset.
-      const latestTables = useAppStore.getState().tables;
-      const availableTableNames = latestTables
-        .map((table) => table.name)
-        .slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
-      const tablesToFetch = pickRelevantTables(prompt, latestTables);
-      const tableSchemas = await Promise.all(
-        tablesToFetch.map(async (t) => {
-          const cacheKey = `${connectionId}:${currentDatabase || "default"}:${t.name}`;
-          const cachedSummary = schemaSummaryCacheRef.current.get(cacheKey);
-          if (cachedSummary) {
-            return cachedSummary;
-          }
+      if (activeProvider.allow_schema_context) {
+        // Keep broad table awareness, but only fetch deep schema for a small relevant subset.
+        const availableTableNames = latestTables
+          .map((table) => table.name)
+          .slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
+        const tablesToFetch = pickRelevantTables(prompt, latestTables);
+        const tableSchemas = await Promise.all(
+          tablesToFetch.map(async (t) => {
+            const cacheKey = `${connectionId}:${currentDatabase || "default"}:${t.name}`;
+            const cachedSummary = schemaSummaryCacheRef.current.get(cacheKey);
+            if (cachedSummary) {
+              return cachedSummary;
+            }
 
-          try {
-            const structure = await getTableStructure(connectionId, t.name, currentDatabase || undefined);
-            const summary = summarizeStructure(t.name, structure.columns);
-            schemaSummaryCacheRef.current.set(cacheKey, summary);
-            return summary;
-          } catch {
-            const summary = "Table " + t.name;
-            schemaSummaryCacheRef.current.set(cacheKey, summary);
-            return summary;
-          }
-        })
-      );
+            try {
+              const structure = await getTableStructure(connectionId, t.name, currentDatabase || undefined);
+              const summary = summarizeStructure(t.name, structure.columns);
+              schemaSummaryCacheRef.current.set(cacheKey, summary);
+              return summary;
+            } catch {
+              const summary = "Table " + t.name;
+              schemaSummaryCacheRef.current.set(cacheKey, summary);
+              return summary;
+            }
+          })
+        );
+        if (requestId !== requestIdRef.current) {
+          return;
+        }
 
-      const context = [
-        `Database: ${currentDatabase || "Default"}`,
-        "",
-        `Available tables (${latestTables.length}): ${availableTableNames.join(", ")}${latestTables.length > MAX_TABLE_NAMES_IN_CONTEXT ? ", ..." : ""}`,
-        "",
-        "Detailed schemas for the most relevant tables:",
-        tableSchemas.join("\n"),
-        "",
-        "Only use tables from the available list above. If a needed table is missing, ask the user to create it first.",
-      ].join("\n");
-      let aiResponse = await askAI(activeProvider.id, prompt, context);
+        context = [
+          `Database: ${currentDatabase || "Default"}`,
+          "",
+          `Available tables (${latestTables.length}): ${availableTableNames.join(", ")}${latestTables.length > MAX_TABLE_NAMES_IN_CONTEXT ? ", ..." : ""}`,
+          "",
+          "Detailed schemas for the most relevant tables:",
+          tableSchemas.join("\n"),
+          "",
+          "Only use tables from the available list above. If a needed table is missing, ask the user to create it first.",
+        ].join("\n");
+      }
+
+      const aiResponse = await askAI(activeProvider.id, prompt, context, "panel");
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
 
       // Extract SQL - try multiple approaches
       let sqlResult = aiResponse;
@@ -233,12 +354,23 @@ export function AISlidePanel({ isOpen, onClose }: Props) {
       }
 
       setResponse(sqlResult);
+      setResponseRisk(analyzeGeneratedSql(sqlResult));
     } catch (e) {
-      setError("AI Error: " + String(e));
+      if (requestId === requestIdRef.current) {
+        setError("AI Error: " + String(e));
+      }
     } finally {
-      setIsLoading(false);
+      if (requestId === requestIdRef.current) {
+        setIsLoading(false);
+      }
     }
   };
+
+  useEffect(() => {
+    return () => {
+      requestIdRef.current += 1;
+    };
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -256,6 +388,10 @@ export function AISlidePanel({ isOpen, onClose }: Props) {
 
   const handleInsert = () => {
     if (response) {
+      if (responseRisk.level === "dangerous") {
+        setError(responseRisk.reason || "Potentially destructive SQL cannot be inserted directly.");
+        return;
+      }
       window.dispatchEvent(new CustomEvent("insert-sql-from-ai", { detail: { sql: response } }));
     }
   };
@@ -299,6 +435,9 @@ export function AISlidePanel({ isOpen, onClose }: Props) {
           <span className="ai-slide-context-pill">
             {tableContextCount} {tableContextCount === 1 ? "table" : "tables"}
           </span>
+          <span className={`ai-slide-context-pill ${activeProvider?.allow_schema_context ? "success" : "warning"}`}>
+            {activeProvider?.allow_schema_context ? "Schema shared" : "Schema private"}
+          </span>
           <span className={`ai-slide-context-pill ${activeProvider ? "success" : "warning"}`}>
             {activeProvider ? activeProvider.name : "No provider"}
           </span>
@@ -320,13 +459,17 @@ export function AISlidePanel({ isOpen, onClose }: Props) {
             autoFocus
           />
 
-          <div className="ai-slide-composer-footer">
-            <div className="ai-slide-helper-copy">
-              <span className="ai-slide-helper-title">Context-aware</span>
-              <span className="ai-slide-helper-text">
-                Uses your current schema so the output stays grounded in real tables.
+            <div className="ai-slide-composer-footer">
+              <div className="ai-slide-helper-copy">
+              <span className="ai-slide-helper-title">
+                {activeProvider?.allow_schema_context ? "Context-aware" : "Privacy mode"}
               </span>
-            </div>
+              <span className="ai-slide-helper-text">
+                {activeProvider?.allow_schema_context
+                  ? "Uses your current schema so the output stays grounded in real tables."
+                  : "Schema context sharing is off, so the AI only sees your prompt."}
+              </span>
+              </div>
 
             <button
               onClick={handleGenerate}
@@ -388,10 +531,20 @@ export function AISlidePanel({ isOpen, onClose }: Props) {
               <div className="ai-slide-response-copy">
                 <label className="ai-slide-section-label">Generated SQL</label>
                 <span className="ai-slide-response-note">Review it, then insert it into the editor.</span>
+                {responseRisk.reason && (
+                  <span className={`ai-slide-response-note ${responseRisk.level === "dangerous" ? "text-[var(--warning)]" : ""}`}>
+                    {responseRisk.reason}
+                  </span>
+                )}
               </div>
 
               <div className="ai-slide-response-actions">
-                <button onClick={handleInsert} className="ai-slide-inline-action primary">
+                <button
+                  onClick={handleInsert}
+                  className="ai-slide-inline-action primary"
+                  disabled={responseRisk.level === "dangerous"}
+                  title={responseRisk.level === "dangerous" ? "Blocked for potentially destructive SQL" : undefined}
+                >
                   <Send className="w-3.5 h-3.5" /> Insert
                 </button>
                 <button onClick={handleCopy} className="ai-slide-inline-action">

@@ -12,7 +12,6 @@ interface QueryChromeState {
   rowCount?: number;
   affectedRows?: number;
   queryCount?: number;
-  sandboxed?: boolean;
 }
 
 export interface QueryEditorSessionState {
@@ -21,25 +20,6 @@ export interface QueryEditorSessionState {
   queryCount: number;
   editorHeight: number;
   showTerminal: boolean;
-  sandboxEnabled: boolean;
-}
-
-interface QueryChromeState {
-  isRunning: boolean;
-  executionTimeMs?: number;
-  rowCount?: number;
-  affectedRows?: number;
-  queryCount?: number;
-  sandboxed?: boolean;
-}
-
-export interface QueryEditorSessionState {
-  result: QueryResult | null;
-  error: string | null;
-  queryCount: number;
-  editorHeight: number;
-  showTerminal: boolean;
-  sandboxEnabled: boolean;
 }
 
 interface Props {
@@ -47,7 +27,6 @@ interface Props {
   initialContent?: string;
   tabId?: string;
   initialState?: QueryEditorSessionState;
-  sandboxEnabled?: boolean;
   runRequestNonce?: number;
   onChromeChange?: (state: QueryChromeState) => void;
   onStateChange?: (state: QueryEditorSessionState) => void;
@@ -85,13 +64,11 @@ export function SQLEditor({
   initialContent = "",
   tabId,
   initialState,
-  sandboxEnabled,
   runRequestNonce = 0,
   onChromeChange,
   onStateChange,
   onTerminalToggle,
 }: Props) {
-  const executeQuery = useAppStore((state) => state.executeQuery);
   const executeSandboxQuery = useAppStore((state) => state.executeSandboxQuery);
   const updateTab = useAppStore((state) => state.updateTab);
   const editorRef = useRef<any>(null);
@@ -112,9 +89,6 @@ export function SQLEditor({
   const [queryCount, setQueryCount] = useState(() => initialState?.queryCount ?? 0);
   const [editorHeight, setEditorHeight] = useState(() => initialState?.editorHeight ?? 42);
   const [showTerminal, setShowTerminal] = useState(() => initialState?.showTerminal ?? false);
-  const [isSandboxEnabled, setIsSandboxEnabled] = useState(
-    () => initialState?.sandboxEnabled ?? sandboxEnabled ?? true
-  );
   const [isBatchExecuting, setIsBatchExecuting] = useState(false);
   const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
 
@@ -162,11 +136,6 @@ export function SQLEditor({
     onStateChangeRef.current = onStateChange;
   }, [onStateChange]);
 
-  useEffect(() => {
-    if (sandboxEnabled === undefined) return;
-    setIsSandboxEnabled(sandboxEnabled);
-  }, [sandboxEnabled]);
-
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
 
@@ -205,6 +174,7 @@ export function SQLEditor({
 
         const activeProvider = useAppStore.getState().aiConfigs.find(c => c.is_enabled);
         if (!activeProvider) return { items: [] };
+        if (!activeProvider.allow_inline_completion) return { items: [] };
 
         const dbName = useAppStore.getState().currentDatabase || "Default";
         const completionKey = `${dbName}:${textUntilPosition.trim()}`;
@@ -244,18 +214,22 @@ export function SQLEditor({
 
         try {
           // Fetch light schema (just names) for speed during typing
-          const tableNameList = useAppStore
-            .getState()
-            .tables
-            .slice(0, INLINE_COMPLETION_TABLE_LIMIT)
-            .map(t => t.name)
-            .join(", ");
-          const dbContext = `Database: ${dbName}\nAvailable Tables: ${tableNameList}\nProvide ONLY the raw SQL code completion. Do not add quotes, markdown, or explanations.`;
+          const tableNameList = activeProvider.allow_schema_context
+            ? useAppStore
+                .getState()
+                .tables
+                .slice(0, INLINE_COMPLETION_TABLE_LIMIT)
+                .map(t => t.name)
+                .join(", ")
+            : "";
+          const dbContext = activeProvider.allow_schema_context
+            ? `Database: ${dbName}\nAvailable Tables: ${tableNameList}\nProvide ONLY the raw SQL code completion. Do not add quotes, markdown, or explanations.`
+            : "";
 
           const prompt = `Complete this SQL query (return only the remaining code):\n${textUntilPosition}`;
           const requestPromise = useAppStore
             .getState()
-            .askAI(activeProvider.id, prompt, dbContext)
+            .askAI(activeProvider.id, prompt, dbContext, "inline")
             .then((response) => normalizeInlineSuggestion(response, textUntilPosition))
             .finally(() => {
               if (inlineCompletionInFlightRef.current?.key === completionKey) {
@@ -374,51 +348,8 @@ export function SQLEditor({
     setIsExecutingCurrent(true);
     setIsBatchExecuting(true);
     try {
-      if (isSandboxEnabled) {
-        const queryResult = await executeSandboxQuery(connectionId, statements);
-        setResult(queryResult);
-      } else if (statements.length === 1) {
-        const queryResult = await executeQuery(connectionId, statements[0]);
-        setResult(queryResult);
-      } else {
-        let totalAffectedRows = 0;
-        let totalExecutionTimeMs = 0;
-        let lastSelectResult: QueryResult | null = null;
-
-        for (const [index, statement] of statements.entries()) {
-          try {
-            const queryResult = await executeQuery(connectionId, statement);
-            totalAffectedRows += queryResult.affected_rows;
-            totalExecutionTimeMs += queryResult.execution_time_ms;
-
-            if (queryResult.columns.length > 0) {
-              lastSelectResult = queryResult;
-            }
-          } catch (executionError) {
-            throw new Error(
-              `Statement ${index + 1}/${statements.length} failed.\n${formatExecutionError(executionError)}`
-            );
-          }
-        }
-
-        setResult(
-          lastSelectResult
-            ? {
-                ...lastSelectResult,
-                affected_rows: totalAffectedRows,
-                execution_time_ms: totalExecutionTimeMs,
-                query: statements.join(";\n"),
-              }
-            : {
-                columns: [],
-                rows: [],
-                affected_rows: totalAffectedRows,
-                execution_time_ms: totalExecutionTimeMs,
-                query: statements.join(";\n"),
-                sandboxed: false,
-              }
-        );
-      }
+      const queryResult = await executeSandboxQuery(connectionId, statements);
+      setResult(queryResult);
 
       setQueryCount((c) => c + 1);
       setShowTerminal(false);
@@ -429,7 +360,7 @@ export function SQLEditor({
       setIsExecutingCurrent(false);
       setIsBatchExecuting(false);
     }
-  }, [connectionId, executeQuery, executeSandboxQuery, isBatchExecuting, isSandboxEnabled]);
+  }, [connectionId, executeSandboxQuery, isBatchExecuting]);
 
   useEffect(() => {
     if (!onChromeChangeRef.current) return;
@@ -440,20 +371,17 @@ export function SQLEditor({
       rowCount: result?.rows.length,
       affectedRows: result?.affected_rows,
       queryCount: queryCount || undefined,
-      sandboxed: result?.sandboxed,
     });
   }, [isBatchExecuting, isExecutingCurrent, queryCount, result]);
 
   useEffect(() => {
     if (!result || result.execution_time_ms < 0) return;
 
-    const activityLabel = result.sandboxed
-      ? "Sandbox"
-      : result.rows.length > 0
-        ? "Query"
-        : result.affected_rows > 0
-          ? "Write"
-          : "Run";
+    const activityLabel = result.rows.length > 0
+      ? "Query"
+      : result.affected_rows > 0
+        ? "Preview"
+        : "Run";
 
     window.dispatchEvent(
       new CustomEvent("workspace-activity", {
@@ -475,9 +403,8 @@ export function SQLEditor({
       queryCount,
       editorHeight,
       showTerminal,
-      sandboxEnabled: isSandboxEnabled,
     });
-  }, [editorHeight, error, isSandboxEnabled, queryCount, result, showTerminal]);
+  }, [editorHeight, error, queryCount, result, showTerminal]);
 
   useEffect(() => {
     const onInsertSQLFromAI = (e: Event) => {

@@ -64,12 +64,26 @@ export interface TableCellUpdateRequest {
   primary_keys: RowKeyValue[];
 }
 
+export interface TableRowDeleteRequest {
+  table: string;
+  database?: string;
+  rows: RowKeyValue[][];
+}
+
 export interface TableInfo {
   name: string;
   schema?: string;
   table_type: string;
   row_count?: number;
   engine?: string;
+}
+
+export interface SchemaObjectInfo {
+  name: string;
+  schema?: string;
+  object_type: string;
+  related_table?: string;
+  definition?: string;
 }
 
 export interface DatabaseInfo {
@@ -81,6 +95,9 @@ export interface TableStructure {
   columns: ColumnDetail[];
   indexes: IndexInfo[];
   foreign_keys: ForeignKeyInfo[];
+  triggers: TriggerInfo[];
+  view_definition?: string;
+  object_type?: string;
 }
 
 export interface ColumnDetail {
@@ -108,6 +125,14 @@ export interface ForeignKeyInfo {
   referenced_column: string;
   on_update?: string;
   on_delete?: string;
+}
+
+export interface TriggerInfo {
+  name: string;
+  timing?: string;
+  event?: string;
+  related_table?: string;
+  definition?: string;
 }
 
 // UI State types

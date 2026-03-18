@@ -4,11 +4,14 @@ use keyring::Error as KeyringError;
 use std::fs;
 use std::path::PathBuf;
 use std::collections::{HashMap, HashSet};
+use std::sync::RwLock;
 
-/// Cross-platform AI configuration storage using JSON files.
+/// Cross-platform AI configuration storage using JSON files with in-memory caching.
 /// API Keys are stored securely in the OS keyring.
 pub struct AIStorage {
     storage_path: PathBuf,
+    cache: RwLock<Option<Vec<AIProviderConfig>>>,
+    keyring_cache: RwLock<HashMap<String, bool>>,
 }
 
 impl AIStorage {
@@ -32,16 +35,44 @@ impl AIStorage {
 
         Ok(Self {
             storage_path: data_dir.join("ai_providers.json"),
+            cache: RwLock::new(None),
+            keyring_cache: RwLock::new(HashMap::new()),
         })
     }
 
+    fn invalidate_cache(&self) {
+        let mut cache = self.cache.write().unwrap();
+        *cache = None;
+        let mut keyring_cache = self.keyring_cache.write().unwrap();
+        keyring_cache.clear();
+    }
+
     pub fn load_provider_configs(&self) -> Result<Vec<AIProviderConfig>> {
+        // Check cache first
+        {
+            let cache = self.cache.read().unwrap();
+            if let Some(ref providers) = *cache {
+                return Ok(providers.clone());
+            }
+        }
+
+        // Load from file
         if !self.storage_path.exists() {
-            return Ok(Vec::new());
+            let empty: Vec<AIProviderConfig> = Vec::new();
+            let mut cache = self.cache.write().unwrap();
+            *cache = Some(empty.clone());
+            return Ok(empty);
         }
 
         let content = fs::read_to_string(&self.storage_path)?;
-        serde_json::from_str(&content).context("Failed to parse saved AI provider configs")
+        let providers: Vec<AIProviderConfig> = serde_json::from_str(&content)
+            .context("Failed to parse saved AI provider configs")?;
+
+        // Cache the result
+        let mut cache = self.cache.write().unwrap();
+        *cache = Some(providers.clone());
+
+        Ok(providers)
     }
 
     pub fn save_providers(
@@ -81,19 +112,31 @@ impl AIStorage {
         let json = serde_json::to_string_pretty(&providers)?;
         fs::write(&self.storage_path, json)?;
 
+        // Update cache
+        self.invalidate_cache();
+
         Ok(())
     }
 
     pub fn load_providers(&self) -> Result<(Vec<AIProviderConfig>, HashMap<String, bool>)> {
         let providers = self.load_provider_configs()?;
-        let mut key_status = HashMap::new();
+        let mut key_status = self.keyring_cache.read().unwrap().clone();
 
+        // Check keyring for providers not in cache
         for provider in &providers {
-            if let Ok(entry) = keyring::Entry::new("TableR_AI", &provider.id) {
-                key_status.insert(provider.id.clone(), entry.get_password().is_ok());
-            } else {
-                key_status.insert(provider.id.clone(), false);
+            if !key_status.contains_key(&provider.id) {
+                if let Ok(entry) = keyring::Entry::new("TableR_AI", &provider.id) {
+                    key_status.insert(provider.id.clone(), entry.get_password().is_ok());
+                } else {
+                    key_status.insert(provider.id.clone(), false);
+                }
             }
+        }
+
+        // Update cache
+        {
+            let mut cache = self.keyring_cache.write().unwrap();
+            *cache = key_status.clone();
         }
 
         Ok((providers, key_status))

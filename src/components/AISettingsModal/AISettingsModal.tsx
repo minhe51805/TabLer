@@ -45,7 +45,13 @@ export function AISettingsModal({ onClose }: Props) {
                 if (!isMounted) return;
 
                 const { aiConfigs, aiKeyStatus } = useAppStore.getState();
-                setConfigs(aiConfigs);
+                setConfigs(
+                    aiConfigs.map((config) => ({
+                        ...config,
+                        allow_schema_context: config.allow_schema_context ?? false,
+                        allow_inline_completion: config.allow_inline_completion ?? false,
+                    }))
+                );
                 setStoredKeyStatus(aiKeyStatus);
                 setKeyDrafts({});
                 setClearedKeyIds([]);
@@ -87,6 +93,8 @@ export function AISettingsModal({ onClose }: Props) {
             endpoint: "",
             model: "gpt-4o-mini",
             is_enabled: true,
+            allow_schema_context: false,
+            allow_inline_completion: false,
         }]);
         setEditingId(newId);
     };
@@ -432,6 +440,46 @@ export function AISettingsModal({ onClose }: Props) {
                                                     onChange={(e) => updateConfig(activeConfig.id, { is_enabled: e.target.checked })}
                                                 />
                                                 <span>{activeConfig.is_enabled ? "Enabled" : "Disabled"}</span>
+                                            </label>
+                                        </div>
+                                    </section>
+
+                                    <section className="ai-settings-panel ai-settings-panel-wide">
+                                        <div className="ai-settings-toggle">
+                                            <div className="ai-settings-toggle-copy">
+                                                <span className="form-label">Privacy</span>
+                                                <h4>Allow schema context sharing</h4>
+                                                <p>
+                                                    When enabled, AI requests may include database and table context to improve accuracy.
+                                                </p>
+                                            </div>
+                                            <label className="ai-settings-toggle-control">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={activeConfig.allow_schema_context}
+                                                    onChange={(e) => updateConfig(activeConfig.id, { allow_schema_context: e.target.checked })}
+                                                />
+                                                <span>{activeConfig.allow_schema_context ? "Allowed" : "Blocked"}</span>
+                                            </label>
+                                        </div>
+                                    </section>
+
+                                    <section className="ai-settings-panel ai-settings-panel-wide">
+                                        <div className="ai-settings-toggle">
+                                            <div className="ai-settings-toggle-copy">
+                                                <span className="form-label">Editor Assist</span>
+                                                <h4>Allow inline completion</h4>
+                                                <p>
+                                                    Inline completion sends your partial SQL while you type. Keep this off unless you trust the provider.
+                                                </p>
+                                            </div>
+                                            <label className="ai-settings-toggle-control">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={activeConfig.allow_inline_completion}
+                                                    onChange={(e) => updateConfig(activeConfig.id, { allow_inline_completion: e.target.checked })}
+                                                />
+                                                <span>{activeConfig.allow_inline_completion ? "Allowed" : "Blocked"}</span>
                                             </label>
                                         </div>
                                     </section>

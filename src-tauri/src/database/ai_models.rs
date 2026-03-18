@@ -11,6 +11,13 @@ pub enum AIProviderType {
     Custom,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AIRequestMode {
+    Panel,
+    Inline,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AIProviderConfig {
     pub id: String,
@@ -19,6 +26,10 @@ pub struct AIProviderConfig {
     pub endpoint: String,
     pub model: String,
     pub is_enabled: bool,
+    #[serde(default)]
+    pub allow_schema_context: bool,
+    #[serde(default)]
+    pub allow_inline_completion: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -26,6 +37,12 @@ pub struct AIRequest {
     pub prompt: String,
     pub context: String, // DB schema context
     pub provider_id: String,
+    #[serde(default = "default_ai_request_mode")]
+    pub mode: AIRequestMode,
+}
+
+fn default_ai_request_mode() -> AIRequestMode {
+    AIRequestMode::Panel
 }
 
 impl AIRequest {

@@ -6,9 +6,10 @@ use super::safety::{
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqliteRow};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqliteRow, SqliteSynchronous};
 use sqlx::{Column, ConnectOptions, QueryBuilder, Row, Sqlite, TypeInfo};
-use std::str::FromStr;
+use std::fs;
+use std::path::Path;
 use std::time::Instant;
 
 pub struct SqliteDriver {
@@ -18,9 +19,31 @@ pub struct SqliteDriver {
 
 impl SqliteDriver {
     pub async fn connect(file_path: &str) -> Result<Self> {
-        let mut options = SqliteConnectOptions::from_str(file_path)
-            .or_else(|_| SqliteConnectOptions::from_str(&format!("sqlite:{file_path}")))
-            .context("Failed to parse SQLite connection options")?;
+        if file_path != ":memory:" && !file_path.starts_with("sqlite:") {
+            let path = Path::new(file_path);
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    fs::create_dir_all(parent).context("Failed to create SQLite parent directory")?;
+                }
+            }
+        }
+
+        let mut options = if file_path == ":memory:" {
+            SqliteConnectOptions::new().in_memory(true)
+        } else if file_path.starts_with("sqlite:") {
+            file_path
+                .parse::<SqliteConnectOptions>()
+                .context("Failed to parse SQLite connection options")?
+                .create_if_missing(true)
+        } else {
+            SqliteConnectOptions::new()
+                .filename(file_path)
+                .create_if_missing(true)
+        };
+
+        options = options
+            .journal_mode(SqliteJournalMode::Wal)
+            .synchronous(SqliteSynchronous::Normal);
         options = options.disable_statement_logging();
 
         let pool = SqlitePool::connect_with(options)
@@ -191,6 +214,28 @@ impl DatabaseDriver for SqliteDriver {
         Ok(tables)
     }
 
+    async fn list_schema_objects(&self, _database: Option<&str>) -> Result<Vec<SchemaObjectInfo>> {
+        let rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT name, type, tbl_name, sql \
+             FROM sqlite_master \
+             WHERE type IN ('view', 'trigger') AND name NOT LIKE 'sqlite_%' \
+             ORDER BY type, name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|row| SchemaObjectInfo {
+                name: row.get(0),
+                schema: None,
+                object_type: row.get::<String, _>(1).to_ascii_uppercase(),
+                related_table: row.try_get::<String, _>(2).ok(),
+                definition: row.try_get(3).ok(),
+            })
+            .collect())
+    }
+
     async fn get_table_structure(
         &self,
         table: &str,
@@ -266,10 +311,51 @@ impl DatabaseDriver for SqliteDriver {
             })
             .collect();
 
+        let object_type = sqlx::query(
+            "SELECT type FROM sqlite_master WHERE name = ? AND type IN ('table', 'view') LIMIT 1",
+        )
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?
+        .and_then(|row| row.try_get::<String, _>(0).ok())
+        .map(|value| value.to_ascii_uppercase());
+
+        let view_definition = sqlx::query(
+            "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ? LIMIT 1",
+        )
+        .bind(table)
+        .fetch_optional(&self.pool)
+        .await?
+        .and_then(|row| row.try_get::<String, _>(0).ok());
+
+        let trigger_rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT name, tbl_name, sql \
+             FROM sqlite_master \
+             WHERE type = 'trigger' AND tbl_name = ? \
+             ORDER BY name",
+        )
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let triggers = trigger_rows
+            .iter()
+            .map(|row| TriggerInfo {
+                name: row.get(0),
+                timing: None,
+                event: None,
+                related_table: row.try_get::<String, _>(1).ok(),
+                definition: row.try_get(2).ok(),
+            })
+            .collect();
+
         Ok(TableStructure {
             columns,
             indexes,
             foreign_keys,
+            triggers,
+            view_definition,
+            object_type,
         })
     }
 
@@ -277,14 +363,15 @@ impl DatabaseDriver for SqliteDriver {
         let start = Instant::now();
         if Self::query_returns_rows(sql) {
             let rows: Vec<SqliteRow> = sqlx::query(sql).fetch_all(&self.pool).await?;
-            let elapsed = start.elapsed().as_millis();
-            Ok(Self::build_result_from_rows(
+            let mut result = Self::build_result_from_rows(
                 &rows,
-                elapsed,
+                0,
                 sql.to_string(),
                 0,
                 false,
-            ))
+            );
+            result.execution_time_ms = start.elapsed().as_millis();
+            Ok(result)
         } else {
             // For non-SELECT queries, split by semicolon and execute each statement
             let statements: Vec<&str> = sql
@@ -453,6 +540,49 @@ impl DatabaseDriver for SqliteDriver {
 
         let result = builder.build().execute(&self.pool).await?;
         Ok(result.rows_affected())
+    }
+
+    async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
+        if request.rows.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Deleting rows requires at least one selected row"
+            ));
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let mut total_affected = 0u64;
+
+        for row_keys in &request.rows {
+            if row_keys.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Each deleted row must include at least one primary key value"
+                ));
+            }
+
+            let mut builder = QueryBuilder::<Sqlite>::new("DELETE FROM ");
+            builder.push(quote_sqlite_identifier(&request.table)?);
+            builder.push(" WHERE ");
+
+            for (index, primary_key) in row_keys.iter().enumerate() {
+                if index > 0 {
+                    builder.push(" AND ");
+                }
+
+                builder.push(quote_sqlite_order_by(&primary_key.column)?);
+                if primary_key.value.is_null() {
+                    builder.push(" IS NULL");
+                } else {
+                    builder.push(" = ");
+                    Self::push_bound_value(&mut builder, &primary_key.value)?;
+                }
+            }
+
+            let result = builder.build().execute(&mut *tx).await?;
+            total_affected += result.rows_affected();
+        }
+
+        tx.commit().await?;
+        Ok(total_affected)
     }
 
     async fn use_database(&self, _database: &str) -> Result<()> {

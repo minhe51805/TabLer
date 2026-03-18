@@ -247,6 +247,48 @@ impl ConnectionConfig {
         }
     }
 
+    pub fn generated_name(&self) -> String {
+        let explicit_name = self.name.trim();
+        if !explicit_name.is_empty() {
+            return explicit_name.to_string();
+        }
+
+        if self.db_type == DatabaseType::SQLite {
+            if let Some(path) = self.file_path.as_deref() {
+                let trimmed = path.trim();
+                if !trimmed.is_empty() {
+                    let file_name = Path::new(trimmed)
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or(trimmed);
+                    return format!("SQLite {}", file_name);
+                }
+            }
+
+            return "SQLite local".to_string();
+        }
+
+        let host = self.host.as_deref().unwrap_or("").trim();
+        let database = self.database.as_deref().unwrap_or("").trim();
+        let db_label = format!("{:?}", self.db_type);
+
+        if !host.is_empty() && !database.is_empty() {
+            format!("{} {} / {}", db_label, host, database)
+        } else if !database.is_empty() {
+            format!("{} {}", db_label, database)
+        } else if !host.is_empty() {
+            format!("{} {}", db_label, host)
+        } else {
+            format!("{} connection", db_label)
+        }
+    }
+
+    pub fn fill_generated_name(&mut self) {
+        if self.name.trim().is_empty() {
+            self.name = self.generated_name();
+        }
+    }
+
     /// Validate connection config before attempting to connect
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
@@ -371,6 +413,13 @@ pub struct TableCellUpdateRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableRowDeleteRequest {
+    pub table: String,
+    pub database: Option<String>,
+    pub rows: Vec<Vec<RowKeyValue>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {
     pub name: String,
     pub schema: Option<String>,
@@ -390,6 +439,9 @@ pub struct TableStructure {
     pub columns: Vec<ColumnDetail>,
     pub indexes: Vec<IndexInfo>,
     pub foreign_keys: Vec<ForeignKeyInfo>,
+    pub triggers: Vec<TriggerInfo>,
+    pub view_definition: Option<String>,
+    pub object_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -420,4 +472,22 @@ pub struct ForeignKeyInfo {
     pub referenced_column: String,
     pub on_update: Option<String>,
     pub on_delete: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriggerInfo {
+    pub name: String,
+    pub timing: Option<String>,
+    pub event: Option<String>,
+    pub related_table: Option<String>,
+    pub definition: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaObjectInfo {
+    pub name: String,
+    pub schema: Option<String>,
+    pub object_type: String,
+    pub related_table: Option<String>,
+    pub definition: Option<String>,
 }

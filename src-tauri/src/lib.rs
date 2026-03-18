@@ -44,6 +44,9 @@ pub fn run() {
             test_connection,
             list_databases,
             use_database,
+            create_local_database,
+            suggest_sqlite_database_path,
+            pick_sqlite_database_path,
             get_saved_connections,
             connect_saved_connection,
             delete_saved_connection,
@@ -55,10 +58,12 @@ pub fn run() {
             execute_sandboxed_query,
             // Table commands
             list_tables,
+            list_schema_objects,
             get_table_structure,
             get_table_data,
             count_table_rows,
             update_table_cell,
+            delete_table_rows,
             // System commands
             start_terminal_session,
             send_terminal_input,

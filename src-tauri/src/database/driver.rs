@@ -19,6 +19,9 @@ pub trait DatabaseDriver: Send + Sync {
     /// List tables in the current/specified database
     async fn list_tables(&self, database: Option<&str>) -> Result<Vec<TableInfo>>;
 
+    /// List schema-level objects such as views, triggers, and routines.
+    async fn list_schema_objects(&self, database: Option<&str>) -> Result<Vec<SchemaObjectInfo>>;
+
     /// Get table structure (columns, indexes, foreign keys)
     async fn get_table_structure(
         &self,
@@ -49,6 +52,9 @@ pub trait DatabaseDriver: Send + Sync {
 
     /// Update a single cell in a table using a primary-key based row selector.
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64>;
+
+    /// Delete one or more rows in a table using primary-key based row selectors.
+    async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64>;
 
     /// Switch to a different database
     async fn use_database(&self, database: &str) -> Result<()>;

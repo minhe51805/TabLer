@@ -71,7 +71,6 @@ interface StructureToast {
 }
 
 const DEFAULT_SECTION_STATE = new Set<SectionKey>(["columns"]);
-const COLUMN_LOAD_TIMEOUT_MS = 3500;
 const METADATA_LOAD_TIMEOUT_MS = 8000;
 
 const columnCache = new Map<string, ColumnDetail[]>();
@@ -107,10 +106,6 @@ function splitQualifiedTableName(table: string) {
   };
 }
 
-function escapeSqlLiteral(value: string) {
-  return value.replace(/'/g, "''");
-}
-
 function escapeRegex(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -122,25 +117,6 @@ function referencesColumnInSql(sql: string | undefined, columnName: string) {
     "i"
   );
   return pattern.test(sql);
-}
-
-function asString(value: string | number | boolean | null | undefined) {
-  if (value === null || value === undefined) return "";
-  return String(value);
-}
-
-function asNullableString(value: string | number | boolean | null | undefined) {
-  if (value === null || value === undefined || value === "") return undefined;
-  return String(value);
-}
-
-function asBoolean(value: string | number | boolean | null | undefined) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value !== 0;
-  if (typeof value === "string") {
-    return value.toLowerCase() === "true" || value.toLowerCase() === "t" || value === "1";
-  }
-  return false;
 }
 
 function resolveSqlDialect(dbType: DatabaseType): SqlDialectFamily {
@@ -156,15 +132,6 @@ function resolveSqlDialect(dbType: DatabaseType): SqlDialectFamily {
     default:
       return "postgresql";
   }
-}
-
-function isPostgresCompatibleDatabase(dbType: DatabaseType) {
-  return (
-    dbType === "postgresql" ||
-    dbType === "cockroachdb" ||
-    dbType === "greenplum" ||
-    dbType === "redshift"
-  );
 }
 
 function quoteIdentifier(dbType: DatabaseType, value: string) {
@@ -468,7 +435,9 @@ function summarizeToastMessage(message: string, maxLength = 150) {
 
 export function TableStructure({ connectionId, tableName, database, isActive = true }: Props) {
   const getTableStructure = useAppStore((state) => state.getTableStructure);
-  const executeQuery = useAppStore((state) => state.executeQuery);
+  const getTableColumnsPreview = useAppStore((state) => state.getTableColumnsPreview);
+  const countTableNullValues = useAppStore((state) => state.countTableNullValues);
+  const executeStructureStatements = useAppStore((state) => state.executeStructureStatements);
   const addTab = useAppStore((state) => state.addTab);
   const connections = useAppStore((state) => state.connections);
 
@@ -477,7 +446,6 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
   const structureKey = `${connectionId}|${database || ""}|${tableName}`;
   const displayTableName = tableName.split(".").pop() || tableName;
   const { schema: tableSchema } = splitQualifiedTableName(tableName);
-  const canFastLoadColumns = isPostgresCompatibleDatabase(dbType);
 
   const [columns, setColumns] = useState<ColumnDetail[]>([]);
   const [indexes, setIndexes] = useState<IndexInfo[]>([]);
@@ -648,79 +616,7 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
       setLoadError(null);
 
       try {
-        if (canFastLoadColumns) {
-          const { schema, name } = splitQualifiedTableName(tableName);
-          const schemaLiteral = escapeSqlLiteral(schema);
-          const tableLiteral = escapeSqlLiteral(name);
-          const columnsQuery = `
-            WITH target AS (
-              SELECT c.oid AS relid
-              FROM pg_class c
-              JOIN pg_namespace n ON n.oid = c.relnamespace
-              WHERE n.nspname = '${schemaLiteral}'
-                AND c.relname = '${tableLiteral}'
-              LIMIT 1
-            )
-            SELECT
-              a.attname AS column_name,
-              format_type(a.atttypid, a.atttypmod) AS data_type,
-              NOT a.attnotnull AS is_nullable,
-              pg_get_expr(ad.adbin, ad.adrelid) AS column_default,
-              format_type(a.atttypid, a.atttypmod) AS column_type,
-              EXISTS (
-                SELECT 1
-                FROM pg_constraint con
-                WHERE con.conrelid = a.attrelid
-                  AND con.contype = 'p'
-                  AND a.attnum = ANY(con.conkey)
-              ) AS is_primary_key
-            FROM target t
-            JOIN pg_attribute a ON a.attrelid = t.relid
-            LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
-            WHERE a.attnum > 0
-              AND NOT a.attisdropped
-            ORDER BY a.attnum
-          `;
-
-          const result = await withTimeout(
-            executeQuery(connectionId, columnsQuery),
-            COLUMN_LOAD_TIMEOUT_MS,
-            `Timed out loading columns for ${displayTableName}.`
-          );
-
-          if (
-            !mountedRef.current ||
-            viewVersion !== structureVersionRef.current ||
-            requestId !== columnsRequestIdRef.current
-          ) {
-            return;
-          }
-
-          const nextColumns = result.rows.map((row) => ({
-            name: asString(row[0]),
-            data_type: asString(row[1]),
-            is_nullable: asBoolean(row[2]),
-            default_value: asNullableString(row[3]),
-            column_type: asNullableString(row[4]),
-            is_primary_key: asBoolean(row[5]),
-            extra: undefined,
-            comment: undefined,
-          }));
-
-          if (nextColumns.length === 0) {
-            throw new Error(`No columns found for ${displayTableName}.`);
-          }
-
-          columnCache.set(structureKey, nextColumns);
-          setFromColumns(nextColumns);
-          return;
-        }
-
-        const result = await withTimeout(
-          getTableStructure(connectionId, tableName, database),
-          METADATA_LOAD_TIMEOUT_MS,
-          `Timed out loading structure for ${displayTableName}.`
-        );
+        const nextColumns = await getTableColumnsPreview(connectionId, tableName, database);
 
         if (
           !mountedRef.current ||
@@ -730,9 +626,12 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
           return;
         }
 
-        columnCache.set(structureKey, result.columns);
-        fullStructureCache.set(structureKey, result);
-        setFromFullStructure(result);
+        if (nextColumns.length === 0) {
+          throw new Error(`No columns found for ${displayTableName}.`);
+        }
+
+        columnCache.set(structureKey, nextColumns);
+        setFromColumns(nextColumns);
       } catch (error) {
         if (
           !mountedRef.current ||
@@ -761,14 +660,11 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
       }
     },
     [
-      canFastLoadColumns,
       connectionId,
       database,
       displayTableName,
-      executeQuery,
-      getTableStructure,
+      getTableColumnsPreview,
       setFromColumns,
-      setFromFullStructure,
       structureKey,
       tableName,
     ]
@@ -776,7 +672,6 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
 
   const loadMetadata = useCallback(
     async (options: { force?: boolean } = {}) => {
-      if (!canFastLoadColumns) return;
       if (!columns.length && !options.force) return;
       if (hasLoadedMetadata && !options.force) return;
 
@@ -824,7 +719,6 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
       }
     },
     [
-      canFastLoadColumns,
       columns.length,
       connectionId,
       database,
@@ -853,16 +747,8 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
   }, [invalidateStructureCache, loadColumns]);
 
   const countNullValues = useCallback(
-    async (columnName: string) => {
-      const tableRef = qualifyTableName(dbType, tableName, database);
-      const columnRef = quoteIdentifier(dbType, columnName);
-      const sql = `SELECT COUNT(*) AS count FROM ${tableRef} WHERE ${columnRef} IS NULL`;
-      const result = await executeQuery(connectionId, sql);
-      const value = result.rows[0]?.[0];
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : 0;
-    },
-    [connectionId, database, dbType, executeQuery, tableName]
+    (columnName: string) => countTableNullValues(connectionId, tableName, columnName, database),
+    [connectionId, countTableNullValues, database, tableName]
   );
 
   const scrollToSection = (section: SectionKey) => {
@@ -1091,12 +977,12 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
             const tableRef = qualifyTableName(dbType, tableName, database);
             const columnRef = quoteIdentifier(dbType, change.original.name);
             const fixSql = `UPDATE ${tableRef} SET ${columnRef} = ${defaultValue} WHERE ${columnRef} IS NULL`;
-            await executeQuery(connectionId, fixSql);
+            await executeStructureStatements(connectionId, [fixSql]);
           }
         }
 
-        for (const statement of change.statements) {
-          await executeQuery(connectionId, statement);
+        if (change.statements.length > 0) {
+          await executeStructureStatements(connectionId, change.statements);
         }
       }
 
@@ -1205,23 +1091,18 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
   useEffect(() => {
     if (!isActive) return;
     if (hasLoadedMetadata || isLoadingMetadata) return;
-    if (activeSection === "columns" && !canFastLoadColumns) {
-      return;
-    }
     if (
       activeSection === "columns" &&
       !expandedSections.has("indexes") &&
       !expandedSections.has("foreign_keys") &&
       !expandedSections.has("triggers") &&
-      !expandedSections.has("view_definition") &&
-      !canFastLoadColumns
+      !expandedSections.has("view_definition")
     ) {
       return;
     }
     void loadMetadata();
   }, [
     activeSection,
-    canFastLoadColumns,
     expandedSections,
     hasLoadedMetadata,
     isActive,

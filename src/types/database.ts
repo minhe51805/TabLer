@@ -40,6 +40,7 @@ export interface QueryResult {
   execution_time_ms: number;
   query: string;
   sandboxed: boolean;
+  truncated: boolean;
 }
 
 export interface ColumnInfo {
@@ -135,13 +136,38 @@ export interface TriggerInfo {
   definition?: string;
 }
 
+export type MetricsWidgetType = "table" | "scoreboard" | "bar" | "line" | "pie";
+
+export interface MetricsWidgetDefinition {
+  id: string;
+  type: MetricsWidgetType;
+  title: string;
+  query: string;
+  refresh_seconds: number;
+  col_span: number;
+  row_span: number;
+  grid_x: number;
+  grid_y: number;
+}
+
+export interface MetricsBoardDefinition {
+  id: string;
+  name: string;
+  connection_id: string;
+  database?: string;
+  widgets: MetricsWidgetDefinition[];
+  created_at: number;
+  updated_at: number;
+}
+
 // UI State types
 export interface Tab {
   id: string;
-  type: "query" | "table" | "structure";
+  type: "query" | "table" | "structure" | "metrics";
   title: string;
   connectionId: string;
   tableName?: string;
   database?: string;
   content?: string;
+  metricsBoardId?: string;
 }

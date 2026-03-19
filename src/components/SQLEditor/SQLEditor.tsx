@@ -1,8 +1,8 @@
-import { useState, useRef, useCallback, useEffect, lazy, Suspense } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { AlertCircle, Terminal } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
-import type { QueryResult } from "../../types";
+import type { ConnectionConfig, QueryResult } from "../../types";
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import { DataGrid } from "../DataGrid";
 
@@ -19,7 +19,6 @@ export interface QueryEditorSessionState {
   error: string | null;
   queryCount: number;
   editorHeight: number;
-  showTerminal: boolean;
 }
 
 interface Props {
@@ -30,7 +29,6 @@ interface Props {
   runRequestNonce?: number;
   onChromeChange?: (state: QueryChromeState) => void;
   onStateChange?: (state: QueryEditorSessionState) => void;
-  onTerminalToggle?: (show: boolean) => void;
 }
 
 function formatExecutionError(error: unknown) {
@@ -38,13 +36,185 @@ function formatExecutionError(error: unknown) {
   return message.replace(/^Error:\s*/, "");
 }
 
-const INLINE_COMPLETION_CACHE_MS = 15_000;
-const INLINE_COMPLETION_MIN_INTERVAL_MS = 450;
+const INLINE_COMPLETION_CACHE_MS = 120_000;
+const INLINE_COMPLETION_MIN_INTERVAL_MS = 2_000;
 const INLINE_COMPLETION_TABLE_LIMIT = 40;
-const TERMINAL_FEATURE_ENABLED = false;
-const TerminalPanel = TERMINAL_FEATURE_ENABLED
-  ? lazy(() => import("../TerminalPanel").then((module) => ({ default: module.TerminalPanel })))
-  : null;
+const MAX_DAILY_INLINE_COMPLETIONS = 100;
+const PROTECTED_RUN_MUTATING_PREFIXES = [
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "REPLACE",
+  "MERGE",
+  "CREATE",
+  "ALTER",
+  "DROP",
+  "TRUNCATE",
+  "GRANT",
+  "REVOKE",
+  "COMMENT",
+  "RENAME",
+] as const;
+const PROTECTED_RUN_SESSION_PREFIXES = [
+  "USE",
+  "SET SEARCH_PATH",
+  "ATTACH",
+  "DETACH",
+  "SET ROLE",
+  "SET SESSION",
+  "SET NAMES",
+  "SET CHARACTER SET",
+] as const;
+
+function stripLeadingSqlNoise(statement: string) {
+  let remaining = statement;
+
+  while (true) {
+    remaining = remaining.trimStart();
+    if (remaining.startsWith("--")) {
+      const nextLineIndex = remaining.indexOf("\n");
+      if (nextLineIndex === -1) return "";
+      remaining = remaining.slice(nextLineIndex + 1);
+      continue;
+    }
+
+    if (remaining.startsWith("/*")) {
+      const commentEnd = remaining.indexOf("*/");
+      if (commentEnd === -1) return "";
+      remaining = remaining.slice(commentEnd + 2);
+      continue;
+    }
+
+    return remaining;
+  }
+}
+
+function normalizeStatementForGuard(statement: string) {
+  return stripLeadingSqlNoise(statement).replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+function stripIdentifierWrapper(identifier: string) {
+  const trimmed = identifier.trim();
+  if (
+    (trimmed.startsWith("`") && trimmed.endsWith("`")) ||
+    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function extractLeadingUseDirective(
+  sql: string
+): { database: string; remainingSql: string } | { error: string } | null {
+  const trimmed = stripLeadingSqlNoise(sql).trimStart();
+  if (!/^USE\s+/i.test(trimmed)) {
+    return null;
+  }
+
+  const newlineIndex = trimmed.indexOf("\n");
+  const semicolonIndex = trimmed.indexOf(";");
+  const endsAtSemicolon =
+    semicolonIndex !== -1 && (newlineIndex === -1 || semicolonIndex < newlineIndex);
+
+  const directive = endsAtSemicolon
+    ? trimmed.slice(0, semicolonIndex + 1)
+    : newlineIndex === -1
+      ? trimmed
+      : trimmed.slice(0, newlineIndex);
+  const remainingSql = endsAtSemicolon
+    ? trimmed.slice(semicolonIndex + 1)
+    : newlineIndex === -1
+      ? ""
+      : trimmed.slice(newlineIndex + 1);
+
+  const rawTarget = directive.replace(/^USE\s+/i, "").replace(/;$/, "").trim();
+  if (!rawTarget) {
+    return {
+      error:
+        "Sandbox gateway found an empty USE statement. Choose the active database from the UI or provide a database name.",
+    };
+  }
+
+  const normalizedTarget = stripIdentifierWrapper(rawTarget);
+  if (/\s/.test(normalizedTarget)) {
+    return {
+      error:
+        "Sandbox gateway could not understand the USE directive. Use `USE <database>` on its own line before the rest of the SQL.",
+    };
+  }
+  if (normalizedTarget.includes(".")) {
+    return {
+      error:
+        "Sandbox gateway only accepts USE <database>. `USE db.table` is not supported. Choose the database from the UI, or run the write against a fully qualified table like `INSERT INTO db.table ...`.",
+    };
+  }
+
+  return {
+    database: normalizedTarget,
+    remainingSql,
+  };
+}
+
+function isSessionSwitchStatement(statement: string) {
+  const normalized = normalizeStatementForGuard(statement);
+  return PROTECTED_RUN_SESSION_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+function isMutatingStatement(statement: string) {
+  const normalized = normalizeStatementForGuard(statement);
+  if (!normalized) return false;
+
+  if (normalized.startsWith("WITH")) {
+    return [" INSERT ", " UPDATE ", " DELETE ", " MERGE "].some((keyword) =>
+      normalized.includes(keyword)
+    );
+  }
+
+  return PROTECTED_RUN_MUTATING_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+function isHighRiskStatement(statement: string) {
+  const normalized = normalizeStatementForGuard(statement);
+  if (!normalized) return false;
+
+  if (
+    normalized.startsWith("DROP ") ||
+    normalized.startsWith("TRUNCATE ") ||
+    normalized.startsWith("GRANT ") ||
+    normalized.startsWith("REVOKE ") ||
+    normalized.startsWith("ALTER USER ") ||
+    normalized.startsWith("CREATE USER ") ||
+    normalized.startsWith("DROP USER ")
+  ) {
+    return true;
+  }
+
+  if (normalized.startsWith("DELETE ") && !normalized.includes(" WHERE ")) {
+    return true;
+  }
+
+  if (normalized.startsWith("UPDATE ") && !normalized.includes(" WHERE ")) {
+    return true;
+  }
+
+  return false;
+}
+
+function isTrustedInlineCompletionConnection(connection?: ConnectionConfig) {
+  if (!connection) return false;
+  if (connection.db_type === "sqlite") return true;
+
+  const normalizedHost = (connection.host || "").trim().toLowerCase();
+  return (
+    normalizedHost === "127.0.0.1" ||
+    normalizedHost === "localhost" ||
+    normalizedHost === "::1" ||
+    normalizedHost === "[::1]"
+  );
+}
 
 function normalizeInlineSuggestion(rawSuggestion: string, textUntilPosition: string) {
   let suggestion = rawSuggestion
@@ -67,9 +237,9 @@ export function SQLEditor({
   runRequestNonce = 0,
   onChromeChange,
   onStateChange,
-  onTerminalToggle,
 }: Props) {
   const executeSandboxQuery = useAppStore((state) => state.executeSandboxQuery);
+  const switchDatabase = useAppStore((state) => state.switchDatabase);
   const updateTab = useAppStore((state) => state.updateTab);
   const editorRef = useRef<any>(null);
   const splitRef = useRef<HTMLDivElement>(null);
@@ -82,13 +252,14 @@ export function SQLEditor({
   const inlineCompletionCacheRef = useRef<{ key: string; value: string; timestamp: number } | null>(null);
   const inlineCompletionInFlightRef = useRef<{ key: string; promise: Promise<string> } | null>(null);
   const lastInlineCompletionAtRef = useRef(0);
+  const dailyInlineCompletionRef = useRef({ count: 0, date: new Date().toDateString() });
   const lastRunRequestNonceRef = useRef(runRequestNonce);
 
   const [result, setResult] = useState<QueryResult | null>(() => initialState?.result ?? null);
   const [error, setError] = useState<string | null>(() => initialState?.error ?? null);
   const [queryCount, setQueryCount] = useState(() => initialState?.queryCount ?? 0);
   const [editorHeight, setEditorHeight] = useState(() => initialState?.editorHeight ?? 42);
-  const [showTerminal, setShowTerminal] = useState(() => initialState?.showTerminal ?? false);
+  const [showResultsPane, setShowResultsPane] = useState(true);
   const [isBatchExecuting, setIsBatchExecuting] = useState(false);
   const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
 
@@ -115,18 +286,6 @@ export function SQLEditor({
     },
     [tabId, updateTab]
   );
-
-  const toggleTerminalPanel = useCallback(() => {
-    if (!TERMINAL_FEATURE_ENABLED) return;
-
-    setShowTerminal((visible) => {
-      const nextVisible = !visible;
-      if (onTerminalToggle) {
-        onTerminalToggle(nextVisible);
-      }
-      return nextVisible;
-    });
-  }, [onTerminalToggle]);
 
   useEffect(() => {
     onChromeChangeRef.current = onChromeChange;
@@ -176,6 +335,14 @@ export function SQLEditor({
         if (!activeProvider) return { items: [] };
         if (!activeProvider.allow_inline_completion) return { items: [] };
 
+        const activeConnection = useAppStore
+          .getState()
+          .connections
+          .find((connection) => connection.id === connectionId);
+        if (!isTrustedInlineCompletionConnection(activeConnection)) {
+          return { items: [] };
+        }
+
         const dbName = useAppStore.getState().currentDatabase || "Default";
         const completionKey = `${dbName}:${textUntilPosition.trim()}`;
         const cachedSuggestion = inlineCompletionCacheRef.current;
@@ -210,7 +377,17 @@ export function SQLEditor({
         if (Date.now() - lastInlineCompletionAtRef.current < INLINE_COMPLETION_MIN_INTERVAL_MS) {
           return { items: [] };
         }
+
+        const today = new Date().toDateString();
+        if (dailyInlineCompletionRef.current.date !== today) {
+          dailyInlineCompletionRef.current = { count: 0, date: today };
+        }
+        if (dailyInlineCompletionRef.current.count >= MAX_DAILY_INLINE_COMPLETIONS) {
+          return { items: [] };
+        }
+
         lastInlineCompletionAtRef.current = Date.now();
+        dailyInlineCompletionRef.current.count += 1;
 
         try {
           // Fetch light schema (just names) for speed during typing
@@ -341,18 +518,105 @@ export function SQLEditor({
     }
     if (!sql.trim()) return;
 
-    const statements = splitSqlStatements(sql);
-    if (statements.length === 0) return;
+    let sqlToExecute = sql;
+    let targetDatabaseFromUse: string | null = null;
+    const leadingUseDirective = extractLeadingUseDirective(sql);
+
+    if (leadingUseDirective) {
+      if ("error" in leadingUseDirective) {
+        setError(leadingUseDirective.error);
+        setResult(null);
+        return;
+      }
+
+      targetDatabaseFromUse = leadingUseDirective.database;
+      sqlToExecute = leadingUseDirective.remainingSql;
+    }
+
+    const statements = splitSqlStatements(sqlToExecute);
+    if (statements.length === 0) {
+      if (targetDatabaseFromUse) {
+        try {
+          const activeDatabase = useAppStore.getState().currentDatabase;
+          if (activeDatabase !== targetDatabaseFromUse) {
+            await switchDatabase(connectionId, targetDatabaseFromUse);
+          }
+          setError(`Active database is now ${targetDatabaseFromUse}. Run your SQL statement next.`);
+          setResult(null);
+        } catch (error) {
+          setError(formatExecutionError(error));
+        }
+      }
+      return;
+    }
+
+    let statementsToExecute = statements;
+
+    if (statementsToExecute.some(isSessionSwitchStatement)) {
+      setError(
+        "Sandbox gateway does not allow session-switch statements like USE, ATTACH, or SET search_path. Choose the active database from the app UI first, then run the query."
+      );
+      setResult(null);
+      return;
+    }
+
+    const hasMutatingStatements = statementsToExecute.some(isMutatingStatement);
+    const hasHighRiskStatements = statementsToExecute.some(isHighRiskStatement);
 
     setError(null);
     setIsExecutingCurrent(true);
     setIsBatchExecuting(true);
     try {
-      const queryResult = await executeSandboxQuery(connectionId, statements);
+      const activeDatabase = useAppStore.getState().currentDatabase;
+      if (
+        targetDatabaseFromUse &&
+        activeDatabase !== targetDatabaseFromUse
+      ) {
+        await switchDatabase(connectionId, targetDatabaseFromUse);
+      }
+
+      if (hasHighRiskStatements) {
+        const confirmed = window.confirm(
+          "Sandbox gateway detected a high-risk SQL statement. TableR will send it through the protected execution boundary and it will apply real changes to the database. Continue?"
+        );
+        if (!confirmed) {
+          return;
+        }
+      } else if (hasMutatingStatements) {
+        const confirmed = window.confirm(
+          "Sandbox gateway will apply these SQL changes to the database for real after policy checks. Continue?"
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      const queryResult = await executeSandboxQuery(connectionId, statementsToExecute);
       setResult(queryResult);
 
       setQueryCount((c) => c + 1);
-      setShowTerminal(false);
+      if (hasMutatingStatements) {
+        const invalidateStructure = statementsToExecute.some((statement) => {
+          const normalized = normalizeStatementForGuard(statement);
+          return (
+            normalized.startsWith("CREATE ") ||
+            normalized.startsWith("ALTER ") ||
+            normalized.startsWith("DROP ") ||
+            normalized.startsWith("TRUNCATE ") ||
+            normalized.startsWith("RENAME ")
+          );
+        });
+
+        window.dispatchEvent(
+          new CustomEvent("table-data-updated", {
+            detail: {
+              connectionId,
+              database: useAppStore.getState().currentDatabase || undefined,
+              invalidateStructure,
+            },
+          })
+        );
+      }
     } catch (e) {
       setError(formatExecutionError(e));
       setResult(null);
@@ -360,7 +624,7 @@ export function SQLEditor({
       setIsExecutingCurrent(false);
       setIsBatchExecuting(false);
     }
-  }, [connectionId, executeSandboxQuery, isBatchExecuting]);
+  }, [connectionId, executeSandboxQuery, isBatchExecuting, switchDatabase]);
 
   useEffect(() => {
     if (!onChromeChangeRef.current) return;
@@ -380,7 +644,9 @@ export function SQLEditor({
     const activityLabel = result.rows.length > 0
       ? "Query"
       : result.affected_rows > 0
-        ? "Preview"
+        ? result.sandboxed
+          ? "Sandbox"
+          : "Write"
         : "Run";
 
     window.dispatchEvent(
@@ -402,9 +668,8 @@ export function SQLEditor({
       error,
       queryCount,
       editorHeight,
-      showTerminal,
     });
-  }, [editorHeight, error, queryCount, result, showTerminal]);
+  }, [editorHeight, error, queryCount, result]);
 
   useEffect(() => {
     const onInsertSQLFromAI = (e: Event) => {
@@ -446,36 +711,6 @@ export function SQLEditor({
   }, [handleExecute, runRequestNonce]);
 
   useEffect(() => {
-    if (!TERMINAL_FEATURE_ENABLED) return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (!e.ctrlKey) return;
-      const key = e.key.toLowerCase();
-      if (key === "`" || key === "j") {
-        e.preventDefault();
-        toggleTerminalPanel();
-      }
-    };
-
-    const onToggleTerminal = () => {
-      toggleTerminalPanel();
-    };
-
-    const onCloseTerminal = () => {
-      setShowTerminal(false);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("toggle-sql-terminal", onToggleTerminal);
-    window.addEventListener("close-sql-terminal", onCloseTerminal);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("toggle-sql-terminal", onToggleTerminal);
-      window.removeEventListener("close-sql-terminal", onCloseTerminal);
-    };
-  }, [handleExecute, tabId, toggleTerminalPanel]);
-
-  useEffect(() => {
     return () => {
       flushPersistedContent();
       inlineCompletionDisposableRef.current?.dispose();
@@ -483,6 +718,19 @@ export function SQLEditor({
       editorRef.current = null;
     };
   }, [flushPersistedContent]);
+
+  useEffect(() => {
+    const handleToggleResultsPane = (event: Event) => {
+      const detail = (event as CustomEvent<{ tabId?: string }>).detail;
+      if (detail?.tabId && tabId && detail.tabId !== tabId) return;
+      setShowResultsPane((current) => !current);
+    };
+
+    window.addEventListener("toggle-query-results-pane", handleToggleResultsPane);
+    return () => {
+      window.removeEventListener("toggle-query-results-pane", handleToggleResultsPane);
+    };
+  }, [tabId]);
 
   const handleSplitDrag = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -514,7 +762,7 @@ export function SQLEditor({
       <div className="flex-1 flex flex-col min-h-0">
         <div
           className="relative overflow-hidden"
-          style={{ height: `${editorHeight}%`, minHeight: 96 }}
+          style={{ height: showResultsPane ? `${editorHeight}%` : "100%", minHeight: 96 }}
         >
           <Editor
             defaultLanguage="sql"
@@ -550,45 +798,40 @@ export function SQLEditor({
           />
         </div>
 
-        <div
-          ref={splitRef}
-          className="h-[6px] flex-shrink-0 cursor-row-resize group flex items-center justify-center bg-[rgba(255,255,255,0.02)] border-y border-[var(--border-color)] hover:bg-[var(--accent-dim)] transition-colors"
-          onMouseDown={handleSplitDrag}
-        >
-          <div className="w-9 h-[2px] rounded-md bg-[var(--text-muted)]/30 group-hover:bg-[var(--accent)]/60 transition-colors" />
-        </div>
-
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {TERMINAL_FEATURE_ENABLED && TerminalPanel && showTerminal ? (
-            <Suspense fallback={null}>
-              <TerminalPanel initialCwd="." />
-            </Suspense>
-          ) : error ? (
-            <div className="flex items-start gap-3 p-4 m-3 bg-[var(--error)]/10 border border-[var(--error)]/30 rounded-md">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--error)]" />
-              <div>
-                <p className="font-semibold text-[13px] text-[var(--error)]">Query Error</p>
-                <pre className="text-[12px] mt-1.5 text-[var(--text-secondary)] whitespace-pre-wrap font-mono leading-relaxed">
-                  {error}
-                </pre>
-              </div>
+        {showResultsPane && (
+          <>
+            <div
+              ref={splitRef}
+              className="h-[6px] flex-shrink-0 cursor-row-resize group flex items-center justify-center bg-[rgba(255,255,255,0.02)] border-y border-[var(--border-color)] hover:bg-[var(--accent-dim)] transition-colors"
+              onMouseDown={handleSplitDrag}
+            >
+              <div className="w-9 h-[2px] rounded-md bg-[var(--text-muted)]/30 group-hover:bg-[var(--accent)]/60 transition-colors" />
             </div>
-          ) : result ? (
-            <DataGrid connectionId={connectionId} queryResult={result} />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-[var(--text-secondary)] select-none gap-2">
-              <Terminal className="w-8 h-8 opacity-40 text-[var(--accent)]" />
-              <p className="text-[12px] opacity-95">
-                Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[11px] font-mono">Ctrl+Enter</kbd> to execute
-              </p>
-              {TERMINAL_FEATURE_ENABLED && (
-                <p className="text-[11px] opacity-70">
-                  Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[10px] font-mono">Ctrl+J</kbd> to open terminal
-                </p>
+
+            <div className="flex-1 min-h-0 overflow-hidden">
+              {error ? (
+                <div className="flex items-start gap-3 p-4 m-3 bg-[var(--error)]/10 border border-[var(--error)]/30 rounded-md">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--error)]" />
+                  <div>
+                    <p className="font-semibold text-[13px] text-[var(--error)]">Query Error</p>
+                    <pre className="text-[12px] mt-1.5 text-[var(--text-secondary)] whitespace-pre-wrap font-mono leading-relaxed">
+                      {error}
+                    </pre>
+                  </div>
+                </div>
+              ) : result ? (
+                <DataGrid connectionId={connectionId} queryResult={result} />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-[var(--text-secondary)] select-none gap-2">
+                  <Terminal className="w-8 h-8 opacity-40 text-[var(--accent)]" />
+                  <p className="text-[12px] opacity-95">
+                    Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[11px] font-mono">Ctrl+Enter</kbd> to execute
+                  </p>
+                </div>
               )}
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

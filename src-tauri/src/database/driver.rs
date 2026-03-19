@@ -29,11 +29,17 @@ pub trait DatabaseDriver: Send + Sync {
         database: Option<&str>,
     ) -> Result<TableStructure>;
 
+    /// Get lightweight column metadata without loading the full structure payload.
+    async fn get_table_columns_preview(
+        &self,
+        table: &str,
+        database: Option<&str>,
+    ) -> Result<Vec<ColumnDetail>> {
+        Ok(self.get_table_structure(table, database).await?.columns)
+    }
+
     /// Execute a raw SQL query and return results
     async fn execute_query(&self, sql: &str) -> Result<QueryResult>;
-
-    /// Execute statements inside an isolated transaction and always roll them back.
-    async fn execute_sandboxed(&self, statements: &[String]) -> Result<QueryResult>;
 
     /// Get rows from a table with pagination
     async fn get_table_data(
@@ -50,11 +56,28 @@ pub trait DatabaseDriver: Send + Sync {
     /// Count rows in a table
     async fn count_rows(&self, table: &str, database: Option<&str>) -> Result<i64>;
 
+    /// Count how many NULL values a specific column currently contains.
+    async fn count_null_values(
+        &self,
+        table: &str,
+        database: Option<&str>,
+        column: &str,
+    ) -> Result<i64>;
+
     /// Update a single cell in a table using a primary-key based row selector.
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64>;
 
     /// Delete one or more rows in a table using primary-key based row selectors.
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64>;
+
+    /// Execute reviewed schema-change statements in the backend, sequentially.
+    async fn execute_structure_statements(&self, statements: &[String]) -> Result<u64> {
+        let mut total_affected = 0;
+        for statement in statements {
+            total_affected += self.execute_query(statement).await?.affected_rows;
+        }
+        Ok(total_affected)
+    }
 
     /// Switch to a different database
     async fn use_database(&self, database: &str) -> Result<()>;

@@ -4,11 +4,13 @@ use super::safety::{
     normalize_order_dir, qualify_postgres_table_name, quote_postgres_order_by,
     sanitize_postgres_filter_clause,
 };
+use crate::utils::sql::split_sql_statements;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures_util::TryStreamExt;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode};
 use sqlx::types::Json;
-use sqlx::{Column, ConnectOptions, Postgres, QueryBuilder, Row, TypeInfo, ValueRef};
+use sqlx::{Column, ConnectOptions, Executor, Postgres, QueryBuilder, Row, TypeInfo, ValueRef};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -18,6 +20,8 @@ pub struct PostgresDriver {
     pool: PgPool,
     current_db: Arc<RwLock<Option<String>>>,
 }
+
+const MAX_QUERY_RESULT_ROWS: usize = 500;
 
 impl PostgresDriver {
     pub async fn connect(config: &ConnectionConfig) -> Result<Self> {
@@ -90,20 +94,13 @@ impl PostgresDriver {
             || trimmed.contains(" RETURNING ")
     }
 
-    fn sandbox_can_bypass_transaction(sql: &str) -> bool {
-        let trimmed = sql.trim().to_uppercase();
-        (trimmed.starts_with("SELECT")
-            && !trimmed.contains(" FOR UPDATE")
-            && !trimmed.contains(" FOR SHARE"))
-            || trimmed.starts_with("SHOW")
-    }
-
     fn build_result_from_rows(
         rows: &[PgRow],
         elapsed: u128,
         query: String,
         affected_rows: u64,
         sandboxed: bool,
+        truncated: bool,
     ) -> QueryResult {
         let columns = if let Some(first) = rows.first() {
             first.columns()
@@ -150,7 +147,25 @@ impl PostgresDriver {
             execution_time_ms: elapsed,
             query,
             sandboxed,
+            truncated,
         }
+    }
+
+    async fn fetch_rows_limited<'a, E>(executor: E, sql: &'a str) -> Result<(Vec<PgRow>, bool)>
+    where
+        E: Executor<'a, Database = Postgres>,
+    {
+        let mut stream = sqlx::query(sql).fetch(executor);
+        let mut rows = Vec::new();
+
+        while let Some(row) = stream.try_next().await? {
+            if rows.len() == MAX_QUERY_RESULT_ROWS {
+                return Ok((rows, true));
+            }
+            rows.push(row);
+        }
+
+        Ok((rows, false))
     }
 
     fn pg_cell_to_json(row: &PgRow, index: usize, type_name: Option<&str>) -> serde_json::Value {
@@ -635,42 +650,115 @@ impl DatabaseDriver for PostgresDriver {
         })
     }
 
+    async fn get_table_columns_preview(
+        &self,
+        table: &str,
+        _database: Option<&str>,
+    ) -> Result<Vec<ColumnDetail>> {
+        let (schema, table_name) = Self::split_schema_table(table);
+        let rows: Vec<PgRow> = sqlx::query(
+            "WITH target AS ( \
+               SELECT c.oid AS relid \
+               FROM pg_class c \
+               JOIN pg_namespace n ON n.oid = c.relnamespace \
+               WHERE n.nspname = $2 AND c.relname = $1 \
+               LIMIT 1 \
+             ) \
+             SELECT a.attname, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull, \
+                    pg_get_expr(ad.adbin, ad.adrelid), \
+                    format_type(a.atttypid, a.atttypmod), \
+                    EXISTS ( \
+                      SELECT 1 \
+                      FROM pg_constraint con \
+                      WHERE con.conrelid = a.attrelid \
+                        AND con.contype = 'p' \
+                        AND a.attnum = ANY(con.conkey) \
+                    ) AS is_pk \
+             FROM target t \
+             JOIN pg_attribute a ON a.attrelid = t.relid \
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
+             WHERE a.attnum > 0 AND NOT a.attisdropped \
+             ORDER BY a.attnum",
+        )
+        .bind(&table_name)
+        .bind(&schema)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|row| ColumnDetail {
+                name: row.get(0),
+                data_type: row.get(1),
+                is_nullable: row.try_get::<bool, _>(2).unwrap_or(false),
+                default_value: row.try_get(3).ok(),
+                column_type: row.try_get(4).ok(),
+                is_primary_key: row.try_get::<bool, _>(5).unwrap_or(false),
+                extra: None,
+                comment: None,
+            })
+            .collect())
+    }
+
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
         let start = Instant::now();
-        if Self::query_returns_rows(sql) {
-            let rows: Vec<PgRow> = sqlx::query(sql).fetch_all(&self.pool).await?;
+        let statements = split_sql_statements(sql);
+
+        if statements.len() <= 1 && Self::query_returns_rows(sql) {
+            let (rows, truncated) = Self::fetch_rows_limited(&self.pool, sql).await?;
             let mut result = Self::build_result_from_rows(
                 &rows,
                 0,
                 sql.to_string(),
                 0,
                 false,
+                truncated,
             );
             result.execution_time_ms = start.elapsed().as_millis();
             Ok(result)
         } else {
-            // For non-SELECT queries, split by semicolon and execute each statement
-            let statements: Vec<&str> = sql
-                .split(';')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-
             let mut total_affected: u64 = 0;
-            let elapsed;
+            let mut last_result: Option<QueryResult> = None;
 
             if statements.len() > 1 {
-                // Execute each statement separately for multiple statements
                 for statement in &statements {
+                    if Self::query_returns_rows(statement) {
+                        let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
+                        last_result = Some(Self::build_result_from_rows(
+                            &rows,
+                            0,
+                            sql.to_string(),
+                            total_affected,
+                            false,
+                            truncated,
+                        ));
+                    } else {
+                        let result = sqlx::query(statement).execute(&self.pool).await?;
+                        total_affected += result.rows_affected();
+                    }
+                }
+            } else if let Some(statement) = statements.first() {
+                if Self::query_returns_rows(statement) {
+                    let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
+                    last_result = Some(Self::build_result_from_rows(
+                        &rows,
+                        0,
+                        sql.to_string(),
+                        total_affected,
+                        false,
+                        truncated,
+                    ));
+                } else {
                     let result = sqlx::query(statement).execute(&self.pool).await?;
                     total_affected += result.rows_affected();
                 }
-                elapsed = start.elapsed().as_millis();
-            } else {
-                // Single statement - execute directly
-                let result = sqlx::query(sql).execute(&self.pool).await?;
-                total_affected = result.rows_affected();
-                elapsed = start.elapsed().as_millis();
+            }
+
+            let elapsed = start.elapsed().as_millis();
+            if let Some(mut result) = last_result {
+                result.execution_time_ms = elapsed;
+                result.affected_rows = total_affected;
+                return Ok(result);
             }
 
             Ok(QueryResult {
@@ -680,79 +768,9 @@ impl DatabaseDriver for PostgresDriver {
                 execution_time_ms: elapsed,
                 query: sql.to_string(),
                 sandboxed: false,
+                truncated: false,
             })
         }
-    }
-
-    async fn execute_sandboxed(&self, statements: &[String]) -> Result<QueryResult> {
-        let start = Instant::now();
-        let combined_query = statements.join(";\n");
-
-        if statements
-            .iter()
-            .all(|statement| Self::sandbox_can_bypass_transaction(statement))
-        {
-            let mut last_result: Option<QueryResult> = None;
-
-            for statement in statements {
-                let rows: Vec<PgRow> = sqlx::query(statement).fetch_all(&self.pool).await?;
-                last_result = Some(Self::build_result_from_rows(
-                    &rows,
-                    0,
-                    combined_query.clone(),
-                    0,
-                    true,
-                ));
-            }
-
-            let elapsed = start.elapsed().as_millis();
-            if let Some(mut result) = last_result {
-                result.execution_time_ms = elapsed;
-                result.query = combined_query;
-                result.sandboxed = true;
-                return Ok(result);
-            }
-        }
-
-        let mut tx = self.pool.begin().await?;
-        let mut total_affected = 0;
-        let mut last_result: Option<QueryResult> = None;
-
-        for statement in statements {
-            if Self::query_returns_rows(statement) {
-                let rows: Vec<PgRow> = sqlx::query(statement).fetch_all(&mut *tx).await?;
-                last_result = Some(Self::build_result_from_rows(
-                    &rows,
-                    0,
-                    combined_query.clone(),
-                    total_affected,
-                    true,
-                ));
-            } else {
-                let result = sqlx::query(statement).execute(&mut *tx).await?;
-                total_affected += result.rows_affected();
-            }
-        }
-
-        tx.rollback().await?;
-        let elapsed = start.elapsed().as_millis();
-
-        if let Some(mut result) = last_result {
-            result.execution_time_ms = elapsed;
-            result.affected_rows = total_affected;
-            result.query = combined_query.clone();
-            result.sandboxed = true;
-            return Ok(result);
-        }
-
-        Ok(QueryResult {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            affected_rows: total_affected,
-            execution_time_ms: elapsed,
-            query: combined_query,
-            sandboxed: true,
-        })
     }
 
     async fn get_table_data(
@@ -786,6 +804,21 @@ impl DatabaseDriver for PostgresDriver {
         let sql = format!(
             "SELECT COUNT(*) FROM {}",
             qualify_postgres_table_name(table, "public")?
+        );
+        let row: PgRow = sqlx::query(&sql).fetch_one(&self.pool).await?;
+        Ok(row.get(0))
+    }
+
+    async fn count_null_values(
+        &self,
+        table: &str,
+        _database: Option<&str>,
+        column: &str,
+    ) -> Result<i64> {
+        let sql = format!(
+            "SELECT COUNT(*) FROM {} WHERE {} IS NULL",
+            qualify_postgres_table_name(table, "public")?,
+            quote_postgres_order_by(column)?,
         );
         let row: PgRow = sqlx::query(&sql).fetch_one(&self.pool).await?;
         Ok(row.get(0))

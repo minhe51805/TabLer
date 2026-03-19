@@ -1,6 +1,7 @@
-import { X, Table, Code, Columns, Play, Loader2 } from "lucide-react";
+import { X, Table, Code, Columns, Play, Loader2, BarChart3 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
+import { useI18n } from "../../i18n";
 
 interface QueryChromeState {
   isRunning: boolean;
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
+  const { t } = useI18n();
   const { tabs, activeTabId, setActiveTab, removeTab } = useAppStore(
     useShallow((state) => ({
       tabs: state.tabs,
@@ -21,6 +23,7 @@ export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
     }))
   );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
+  const visibleTabs = tabs.filter((tab) => tab.type !== "metrics");
 
   const getTabIcon = (type: string) => {
     switch (type) {
@@ -28,23 +31,26 @@ export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
         return <Table className="w-3.5 h-3.5" />;
       case "structure":
         return <Columns className="w-3.5 h-3.5" />;
+      case "metrics":
+        return <BarChart3 className="w-3.5 h-3.5" />;
       case "query":
       default:
         return <Code className="w-3.5 h-3.5" />;
     }
   };
 
-  if (tabs.length === 0) return null;
+  if (visibleTabs.length === 0) return null;
+  if (activeTab?.type === "metrics") return null;
 
   return (
     <div className="tabbar-shell">
       <div className="tabbar-summary">
-        <span className="tabbar-summary-count">{tabs.length}</span>
-        <span>{tabs.length === 1 ? "tab" : "tabs"}</span>
+        <span className="tabbar-summary-count">{visibleTabs.length}</span>
+        <span>{visibleTabs.length === 1 ? t("tabs.tab") : t("tabs.tabs")}</span>
       </div>
 
       <div className="tabbar-list">
-        {tabs.map((tab) => {
+        {visibleTabs.map((tab) => {
           const isActive = activeTabId === tab.id;
           return (
             <div
@@ -85,7 +91,7 @@ export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
             type="button"
             onClick={onRunActiveQuery}
             className="tabbar-run-btn"
-            title="Run safely (Ctrl+Enter)"
+            title={t("tabs.runTitle")}
             disabled={queryChrome?.isRunning}
           >
             {queryChrome?.isRunning ? (
@@ -93,7 +99,7 @@ export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
             ) : (
               <Play className="w-3.5 h-3.5" />
             )}
-            <span>Run</span>
+            <span>{t("tabs.run")}</span>
           </button>
         </div>
       )}

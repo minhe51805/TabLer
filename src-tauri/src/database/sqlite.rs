@@ -4,10 +4,12 @@ use super::safety::{
     normalize_order_dir, quote_sqlite_identifier, quote_sqlite_order_by,
     sanitize_sqlite_filter_clause,
 };
+use crate::utils::sql::split_sql_statements;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures_util::TryStreamExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqliteRow, SqliteSynchronous};
-use sqlx::{Column, ConnectOptions, QueryBuilder, Row, Sqlite, TypeInfo};
+use sqlx::{Column, ConnectOptions, Executor, QueryBuilder, Row, Sqlite, TypeInfo};
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -16,6 +18,8 @@ pub struct SqliteDriver {
     pool: SqlitePool,
     file_path: String,
 }
+
+const MAX_QUERY_RESULT_ROWS: usize = 500;
 
 impl SqliteDriver {
     pub async fn connect(file_path: &str) -> Result<Self> {
@@ -65,17 +69,13 @@ impl SqliteDriver {
             || trimmed.contains(" RETURNING ")
     }
 
-    fn sandbox_can_bypass_transaction(sql: &str) -> bool {
-        let trimmed = sql.trim().to_uppercase();
-        trimmed.starts_with("SELECT") || trimmed.starts_with("PRAGMA")
-    }
-
     fn build_result_from_rows(
         rows: &[SqliteRow],
         elapsed: u128,
         query: String,
         affected_rows: u64,
         sandboxed: bool,
+        truncated: bool,
     ) -> QueryResult {
         let columns = if let Some(first) = rows.first() {
             first.columns()
@@ -123,7 +123,25 @@ impl SqliteDriver {
             execution_time_ms: elapsed,
             query,
             sandboxed,
+            truncated,
         }
+    }
+
+    async fn fetch_rows_limited<'a, E>(executor: E, sql: &'a str) -> Result<(Vec<SqliteRow>, bool)>
+    where
+        E: Executor<'a, Database = Sqlite>,
+    {
+        let mut stream = sqlx::query(sql).fetch(executor);
+        let mut rows = Vec::new();
+
+        while let Some(row) = stream.try_next().await? {
+            if rows.len() == MAX_QUERY_RESULT_ROWS {
+                return Ok((rows, true));
+            }
+            rows.push(row);
+        }
+
+        Ok((rows, false))
     }
 
     fn push_bound_value(
@@ -361,40 +379,63 @@ impl DatabaseDriver for SqliteDriver {
 
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
         let start = Instant::now();
-        if Self::query_returns_rows(sql) {
-            let rows: Vec<SqliteRow> = sqlx::query(sql).fetch_all(&self.pool).await?;
+        let statements = split_sql_statements(sql);
+
+        if statements.len() <= 1 && Self::query_returns_rows(sql) {
+            let (rows, truncated) = Self::fetch_rows_limited(&self.pool, sql).await?;
             let mut result = Self::build_result_from_rows(
                 &rows,
                 0,
                 sql.to_string(),
                 0,
                 false,
+                truncated,
             );
             result.execution_time_ms = start.elapsed().as_millis();
             Ok(result)
         } else {
-            // For non-SELECT queries, split by semicolon and execute each statement
-            let statements: Vec<&str> = sql
-                .split(';')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-
             let mut total_affected: u64 = 0;
-            let elapsed;
+            let mut last_result: Option<QueryResult> = None;
 
             if statements.len() > 1 {
-                // Execute each statement separately for multiple statements
                 for statement in &statements {
+                    if Self::query_returns_rows(statement) {
+                        let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
+                        last_result = Some(Self::build_result_from_rows(
+                            &rows,
+                            0,
+                            sql.to_string(),
+                            total_affected,
+                            false,
+                            truncated,
+                        ));
+                    } else {
+                        let result = sqlx::query(statement).execute(&self.pool).await?;
+                        total_affected += result.rows_affected();
+                    }
+                }
+            } else if let Some(statement) = statements.first() {
+                if Self::query_returns_rows(statement) {
+                    let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
+                    last_result = Some(Self::build_result_from_rows(
+                        &rows,
+                        0,
+                        sql.to_string(),
+                        total_affected,
+                        false,
+                        truncated,
+                    ));
+                } else {
                     let result = sqlx::query(statement).execute(&self.pool).await?;
                     total_affected += result.rows_affected();
                 }
-                elapsed = start.elapsed().as_millis();
-            } else {
-                // Single statement - execute directly
-                let result = sqlx::query(sql).execute(&self.pool).await?;
-                total_affected = result.rows_affected();
-                elapsed = start.elapsed().as_millis();
+            }
+
+            let elapsed = start.elapsed().as_millis();
+            if let Some(mut result) = last_result {
+                result.execution_time_ms = elapsed;
+                result.affected_rows = total_affected;
+                return Ok(result);
             }
 
             Ok(QueryResult {
@@ -404,79 +445,9 @@ impl DatabaseDriver for SqliteDriver {
                 execution_time_ms: elapsed,
                 query: sql.to_string(),
                 sandboxed: false,
+                truncated: false,
             })
         }
-    }
-
-    async fn execute_sandboxed(&self, statements: &[String]) -> Result<QueryResult> {
-        let start = Instant::now();
-        let combined_query = statements.join(";\n");
-
-        if statements
-            .iter()
-            .all(|statement| Self::sandbox_can_bypass_transaction(statement))
-        {
-            let mut last_result: Option<QueryResult> = None;
-
-            for statement in statements {
-                let rows: Vec<SqliteRow> = sqlx::query(statement).fetch_all(&self.pool).await?;
-                last_result = Some(Self::build_result_from_rows(
-                    &rows,
-                    0,
-                    combined_query.clone(),
-                    0,
-                    true,
-                ));
-            }
-
-            let elapsed = start.elapsed().as_millis();
-            if let Some(mut result) = last_result {
-                result.execution_time_ms = elapsed;
-                result.query = combined_query;
-                result.sandboxed = true;
-                return Ok(result);
-            }
-        }
-
-        let mut tx = self.pool.begin().await?;
-        let mut total_affected = 0;
-        let mut last_result: Option<QueryResult> = None;
-
-        for statement in statements {
-            if Self::query_returns_rows(statement) {
-                let rows: Vec<SqliteRow> = sqlx::query(statement).fetch_all(&mut *tx).await?;
-                last_result = Some(Self::build_result_from_rows(
-                    &rows,
-                    0,
-                    combined_query.clone(),
-                    total_affected,
-                    true,
-                ));
-            } else {
-                let result = sqlx::query(statement).execute(&mut *tx).await?;
-                total_affected += result.rows_affected();
-            }
-        }
-
-        tx.rollback().await?;
-        let elapsed = start.elapsed().as_millis();
-
-        if let Some(mut result) = last_result {
-            result.execution_time_ms = elapsed;
-            result.affected_rows = total_affected;
-            result.query = combined_query.clone();
-            result.sandboxed = true;
-            return Ok(result);
-        }
-
-        Ok(QueryResult {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            affected_rows: total_affected,
-            execution_time_ms: elapsed,
-            query: combined_query,
-            sandboxed: true,
-        })
     }
 
     async fn get_table_data(
@@ -507,6 +478,21 @@ impl DatabaseDriver for SqliteDriver {
         let row: SqliteRow = sqlx::query(&sql).fetch_one(&self.pool).await?;
         let count: i64 = row.get(0);
         Ok(count)
+    }
+
+    async fn count_null_values(
+        &self,
+        table: &str,
+        _database: Option<&str>,
+        column: &str,
+    ) -> Result<i64> {
+        let sql = format!(
+            "SELECT COUNT(*) FROM {} WHERE {} IS NULL",
+            quote_sqlite_identifier(table)?,
+            quote_sqlite_order_by(column)?,
+        );
+        let row: SqliteRow = sqlx::query(&sql).fetch_one(&self.pool).await?;
+        Ok(row.get(0))
     }
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {

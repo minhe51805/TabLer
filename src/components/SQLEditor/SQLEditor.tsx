@@ -132,20 +132,23 @@ function extractLeadingUseDirective(
 
   const rawTarget = directive.replace(/^USE\s+/i, "").replace(/;$/, "").trim();
   if (!rawTarget) {
-    return { error: "Protected Run found an empty USE statement. Choose the active database from the UI or provide a database name." };
+    return {
+      error:
+        "Sandbox gateway found an empty USE statement. Choose the active database from the UI or provide a database name.",
+    };
   }
 
   const normalizedTarget = stripIdentifierWrapper(rawTarget);
   if (/\s/.test(normalizedTarget)) {
     return {
       error:
-        "Protected Run could not understand the USE directive. Use `USE <database>` on its own line before the rest of the SQL.",
+        "Sandbox gateway could not understand the USE directive. Use `USE <database>` on its own line before the rest of the SQL.",
     };
   }
   if (normalizedTarget.includes(".")) {
     return {
       error:
-        "Protected Run only accepts USE <database>. `USE db.table` is not supported. Choose the database from the UI, or run the write against a fully qualified table like `INSERT INTO db.table ...`.",
+        "Sandbox gateway only accepts USE <database>. `USE db.table` is not supported. Choose the database from the UI, or run the write against a fully qualified table like `INSERT INTO db.table ...`.",
     };
   }
 
@@ -235,7 +238,7 @@ export function SQLEditor({
   onChromeChange,
   onStateChange,
 }: Props) {
-  const executeQuery = useAppStore((state) => state.executeQuery);
+  const executeSandboxQuery = useAppStore((state) => state.executeSandboxQuery);
   const switchDatabase = useAppStore((state) => state.switchDatabase);
   const updateTab = useAppStore((state) => state.updateTab);
   const editorRef = useRef<any>(null);
@@ -256,6 +259,7 @@ export function SQLEditor({
   const [error, setError] = useState<string | null>(() => initialState?.error ?? null);
   const [queryCount, setQueryCount] = useState(() => initialState?.queryCount ?? 0);
   const [editorHeight, setEditorHeight] = useState(() => initialState?.editorHeight ?? 42);
+  const [showResultsPane, setShowResultsPane] = useState(true);
   const [isBatchExecuting, setIsBatchExecuting] = useState(false);
   const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
 
@@ -550,7 +554,7 @@ export function SQLEditor({
 
     if (statementsToExecute.some(isSessionSwitchStatement)) {
       setError(
-        "Protected Run does not allow session-switch statements like USE, ATTACH, or SET search_path. Choose the active database from the app UI first, then run the query."
+        "Sandbox gateway does not allow session-switch statements like USE, ATTACH, or SET search_path. Choose the active database from the app UI first, then run the query."
       );
       setResult(null);
       return;
@@ -558,7 +562,6 @@ export function SQLEditor({
 
     const hasMutatingStatements = statementsToExecute.some(isMutatingStatement);
     const hasHighRiskStatements = statementsToExecute.some(isHighRiskStatement);
-    const statementBatch = statementsToExecute.join(";\n");
 
     setError(null);
     setIsExecutingCurrent(true);
@@ -574,21 +577,21 @@ export function SQLEditor({
 
       if (hasHighRiskStatements) {
         const confirmed = window.confirm(
-          "Protected Run detected a high-risk SQL statement. This will apply real changes to the database and cannot be rolled back by TableR. Continue?"
+          "Sandbox gateway detected a high-risk SQL statement. TableR will send it through the protected execution boundary and it will apply real changes to the database. Continue?"
         );
         if (!confirmed) {
           return;
         }
       } else if (hasMutatingStatements) {
         const confirmed = window.confirm(
-          "Protected Run will apply these SQL changes to the database for real. Continue?"
+          "Sandbox gateway will apply these SQL changes to the database for real after policy checks. Continue?"
         );
         if (!confirmed) {
           return;
         }
       }
 
-      const queryResult = await executeQuery(connectionId, statementBatch);
+      const queryResult = await executeSandboxQuery(connectionId, statementsToExecute);
       setResult(queryResult);
 
       setQueryCount((c) => c + 1);
@@ -621,7 +624,7 @@ export function SQLEditor({
       setIsExecutingCurrent(false);
       setIsBatchExecuting(false);
     }
-  }, [connectionId, executeQuery, isBatchExecuting, switchDatabase]);
+  }, [connectionId, executeSandboxQuery, isBatchExecuting, switchDatabase]);
 
   useEffect(() => {
     if (!onChromeChangeRef.current) return;
@@ -642,7 +645,7 @@ export function SQLEditor({
       ? "Query"
       : result.affected_rows > 0
         ? result.sandboxed
-          ? "Preview"
+          ? "Sandbox"
           : "Write"
         : "Run";
 
@@ -716,6 +719,19 @@ export function SQLEditor({
     };
   }, [flushPersistedContent]);
 
+  useEffect(() => {
+    const handleToggleResultsPane = (event: Event) => {
+      const detail = (event as CustomEvent<{ tabId?: string }>).detail;
+      if (detail?.tabId && tabId && detail.tabId !== tabId) return;
+      setShowResultsPane((current) => !current);
+    };
+
+    window.addEventListener("toggle-query-results-pane", handleToggleResultsPane);
+    return () => {
+      window.removeEventListener("toggle-query-results-pane", handleToggleResultsPane);
+    };
+  }, [tabId]);
+
   const handleSplitDrag = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const container = splitRef.current?.parentElement;
@@ -746,7 +762,7 @@ export function SQLEditor({
       <div className="flex-1 flex flex-col min-h-0">
         <div
           className="relative overflow-hidden"
-          style={{ height: `${editorHeight}%`, minHeight: 96 }}
+          style={{ height: showResultsPane ? `${editorHeight}%` : "100%", minHeight: 96 }}
         >
           <Editor
             defaultLanguage="sql"
@@ -782,36 +798,40 @@ export function SQLEditor({
           />
         </div>
 
-        <div
-          ref={splitRef}
-          className="h-[6px] flex-shrink-0 cursor-row-resize group flex items-center justify-center bg-[rgba(255,255,255,0.02)] border-y border-[var(--border-color)] hover:bg-[var(--accent-dim)] transition-colors"
-          onMouseDown={handleSplitDrag}
-        >
-          <div className="w-9 h-[2px] rounded-md bg-[var(--text-muted)]/30 group-hover:bg-[var(--accent)]/60 transition-colors" />
-        </div>
+        {showResultsPane && (
+          <>
+            <div
+              ref={splitRef}
+              className="h-[6px] flex-shrink-0 cursor-row-resize group flex items-center justify-center bg-[rgba(255,255,255,0.02)] border-y border-[var(--border-color)] hover:bg-[var(--accent-dim)] transition-colors"
+              onMouseDown={handleSplitDrag}
+            >
+              <div className="w-9 h-[2px] rounded-md bg-[var(--text-muted)]/30 group-hover:bg-[var(--accent)]/60 transition-colors" />
+            </div>
 
-        <div className="flex-1 min-h-0 overflow-hidden">
-          {error ? (
-            <div className="flex items-start gap-3 p-4 m-3 bg-[var(--error)]/10 border border-[var(--error)]/30 rounded-md">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--error)]" />
-              <div>
-                <p className="font-semibold text-[13px] text-[var(--error)]">Query Error</p>
-                <pre className="text-[12px] mt-1.5 text-[var(--text-secondary)] whitespace-pre-wrap font-mono leading-relaxed">
-                  {error}
-                </pre>
-              </div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              {error ? (
+                <div className="flex items-start gap-3 p-4 m-3 bg-[var(--error)]/10 border border-[var(--error)]/30 rounded-md">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--error)]" />
+                  <div>
+                    <p className="font-semibold text-[13px] text-[var(--error)]">Query Error</p>
+                    <pre className="text-[12px] mt-1.5 text-[var(--text-secondary)] whitespace-pre-wrap font-mono leading-relaxed">
+                      {error}
+                    </pre>
+                  </div>
+                </div>
+              ) : result ? (
+                <DataGrid connectionId={connectionId} queryResult={result} />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-[var(--text-secondary)] select-none gap-2">
+                  <Terminal className="w-8 h-8 opacity-40 text-[var(--accent)]" />
+                  <p className="text-[12px] opacity-95">
+                    Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[11px] font-mono">Ctrl+Enter</kbd> to execute
+                  </p>
+                </div>
+              )}
             </div>
-          ) : result ? (
-            <DataGrid connectionId={connectionId} queryResult={result} />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-[var(--text-secondary)] select-none gap-2">
-              <Terminal className="w-8 h-8 opacity-40 text-[var(--accent)]" />
-              <p className="text-[12px] opacity-95">
-                Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[11px] font-mono">Ctrl+Enter</kbd> to execute
-              </p>
-            </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

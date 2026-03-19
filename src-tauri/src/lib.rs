@@ -47,6 +47,16 @@ pub fn run() {
         .manage(ai_storage)
         .manage(connection_rate_limiter)
         .manage(ai_rate_limiter)
+        .setup(|app| {
+            #[cfg(target_os = "windows")]
+            {
+                if let Err(error) = app.hide_menu() {
+                    eprintln!("Failed to hide native window menu: {error}");
+                }
+            }
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // Connection commands
             connect_database,

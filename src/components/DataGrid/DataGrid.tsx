@@ -615,11 +615,18 @@ export function DataGrid({
       }>).detail;
 
       if (!detail || detail.connectionId !== connectionId) return;
-      if (detail.database !== undefined && (detail.database || "") !== (database || "")) return;
+      if (
+        detail.database !== undefined &&
+        database !== undefined &&
+        (detail.database || "") !== (database || "")
+      ) {
+        return;
+      }
 
+      const invalidationDatabaseScope = database !== undefined ? detail.database : undefined;
       invalidateTableScopeCaches(
         detail.connectionId,
-        detail.database,
+        invalidationDatabaseScope,
         detail.tableName,
         Boolean(detail.invalidateStructure)
       );

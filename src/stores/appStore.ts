@@ -181,6 +181,7 @@ interface AppState {
 
   addTab: (tab: Tab) => void;
   removeTab: (tabId: string) => void;
+  clearTabs: () => void;
   setActiveTab: (tabId: string) => void;
   updateTab: (tabId: string, updates: Partial<Tab>) => void;
 
@@ -652,10 +653,21 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   removeTab: (tabId: string) => {
     const tabs = get().tabs.filter((t) => t.id !== tabId);
+    const visibleTabs = tabs.filter((tab) => tab.type !== "metrics");
     const activeTabId =
-      get().activeTabId === tabId ? (tabs.length > 0 ? tabs[tabs.length - 1].id : null) : get().activeTabId;
+      get().activeTabId === tabId
+        ? visibleTabs.length > 0
+          ? visibleTabs[visibleTabs.length - 1].id
+          : null
+        : get().activeTabId;
     set({ tabs, activeTabId });
   },
+
+  clearTabs: () =>
+    set((state) => ({
+      tabs: state.tabs.filter((tab) => tab.type === "metrics"),
+      activeTabId: null,
+    })),
 
   setActiveTab: (tabId: string) => set({ activeTabId: tabId }),
 

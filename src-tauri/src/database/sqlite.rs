@@ -69,11 +69,6 @@ impl SqliteDriver {
             || trimmed.contains(" RETURNING ")
     }
 
-    fn sandbox_can_bypass_transaction(sql: &str) -> bool {
-        let trimmed = sql.trim().to_uppercase();
-        trimmed.starts_with("SELECT") || trimmed.starts_with("PRAGMA")
-    }
-
     fn build_result_from_rows(
         rows: &[SqliteRow],
         elapsed: u128,
@@ -453,80 +448,6 @@ impl DatabaseDriver for SqliteDriver {
                 truncated: false,
             })
         }
-    }
-
-    async fn execute_sandboxed(&self, statements: &[String]) -> Result<QueryResult> {
-        let start = Instant::now();
-        let combined_query = statements.join(";\n");
-
-        if statements
-            .iter()
-            .all(|statement| Self::sandbox_can_bypass_transaction(statement))
-        {
-            let mut last_result: Option<QueryResult> = None;
-
-            for statement in statements {
-                let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
-                last_result = Some(Self::build_result_from_rows(
-                    &rows,
-                    0,
-                    combined_query.clone(),
-                    0,
-                    true,
-                    truncated,
-                ));
-            }
-
-            let elapsed = start.elapsed().as_millis();
-            if let Some(mut result) = last_result {
-                result.execution_time_ms = elapsed;
-                result.query = combined_query;
-                result.sandboxed = true;
-                return Ok(result);
-            }
-        }
-
-        let mut tx = self.pool.begin().await?;
-        let mut total_affected = 0;
-        let mut last_result: Option<QueryResult> = None;
-
-        for statement in statements {
-            if Self::query_returns_rows(statement) {
-                let (rows, truncated) = Self::fetch_rows_limited(&mut *tx, statement).await?;
-                last_result = Some(Self::build_result_from_rows(
-                    &rows,
-                    0,
-                    combined_query.clone(),
-                    total_affected,
-                    true,
-                    truncated,
-                ));
-            } else {
-                let result = sqlx::query(statement).execute(&mut *tx).await?;
-                total_affected += result.rows_affected();
-            }
-        }
-
-        tx.rollback().await?;
-        let elapsed = start.elapsed().as_millis();
-
-        if let Some(mut result) = last_result {
-            result.execution_time_ms = elapsed;
-            result.affected_rows = total_affected;
-            result.query = combined_query.clone();
-            result.sandboxed = true;
-            return Ok(result);
-        }
-
-        Ok(QueryResult {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            affected_rows: total_affected,
-            execution_time_ms: elapsed,
-            query: combined_query,
-            sandboxed: true,
-            truncated: false,
-        })
     }
 
     async fn get_table_data(

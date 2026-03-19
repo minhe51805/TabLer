@@ -7,15 +7,25 @@ use tokio::time::{timeout, Duration};
 const READ_ONLY_QUERY_TIMEOUT: Duration = Duration::from_secs(180);
 const MUTATING_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
 
-const SANDBOX_ALLOWED_PREFIXES: [&str; 8] = [
-    "SELECT",
-    "WITH",
-    "EXPLAIN",
-    "SHOW",
-    "DESCRIBE",
-    "PRAGMA",
-    "INSERT",
-    "UPDATE",
+const SANDBOX_BLOCKED_PREFIXES: [&str; 18] = [
+    "USE",
+    "ATTACH",
+    "DETACH",
+    "SET SEARCH_PATH",
+    "SET ROLE",
+    "SET SESSION",
+    "SET NAMES",
+    "SET CHARACTER SET",
+    "BEGIN",
+    "START TRANSACTION",
+    "COMMIT",
+    "ROLLBACK",
+    "SAVEPOINT",
+    "RELEASE SAVEPOINT",
+    "GRANT",
+    "REVOKE",
+    "CREATE USER",
+    "DROP USER",
 ];
 
 fn strip_leading_sql_noise(statement: &str) -> Result<&str, String> {
@@ -47,30 +57,29 @@ fn strip_leading_sql_noise(statement: &str) -> Result<&str, String> {
 fn validate_sandbox_statement(statement: &str) -> Result<(), String> {
     let fragments = split_sql_statements(statement);
     if fragments.len() != 1 {
-        return Err("Sandbox mode requires exactly one SQL statement per execution item.".to_string());
+        return Err("Sandbox gateway requires exactly one SQL statement per execution item.".to_string());
     }
 
     let normalized = strip_leading_sql_noise(&fragments[0])?.to_ascii_uppercase();
     if normalized.is_empty() {
-        return Err("Sandbox mode requires a non-empty SQL statement.".to_string());
+        return Err("Sandbox gateway requires a non-empty SQL statement.".to_string());
     }
 
     if normalized.starts_with("PRAGMA") && normalized.contains('=') {
-        return Err("Sandbox mode only allows read-only PRAGMA statements.".to_string());
+        return Err("Sandbox gateway only allows read-only PRAGMA statements.".to_string());
     }
 
-    if SANDBOX_ALLOWED_PREFIXES
+    if SANDBOX_BLOCKED_PREFIXES
         .iter()
         .any(|prefix| normalized.starts_with(prefix))
-        || normalized.starts_with("DELETE")
     {
-        return Ok(());
+        return Err(
+            "Sandbox gateway blocks session-control and access-control statements such as USE, ATTACH, SET search_path, transaction commands, and GRANT/REVOKE."
+                .to_string(),
+        );
     }
 
-    Err(
-        "Sandbox mode only allows SELECT, WITH, EXPLAIN, SHOW, DESCRIBE, read-only PRAGMA, INSERT, UPDATE, and DELETE statements."
-            .to_string(),
-    )
+    Ok(())
 }
 
 fn is_likely_read_only_statement(statement: &str) -> bool {
@@ -155,8 +164,11 @@ pub async fn execute_sandboxed_query(
         .await
         .map_err(|e| e.to_string())?;
     let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
-    timeout(timeout_window, driver.execute_sandboxed(&statements))
+    let combined_query = statements.join(";\n");
+    let mut result = timeout(timeout_window, driver.execute_query(&combined_query))
         .await
         .map_err(|_| format!("Sandbox query timed out after {} seconds.", timeout_window.as_secs()))?
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    result.sandboxed = true;
+    Ok(result)
 }

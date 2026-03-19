@@ -26,6 +26,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "./stores/appStore";
@@ -33,6 +34,7 @@ import { useI18n, type AppLanguagePreference } from "./i18n";
 import { ConnectionList } from "./components/ConnectionList";
 import { MetricsSidebar } from "./components/MetricsSidebar/MetricsSidebar";
 import { Sidebar } from "./components/Sidebar";
+import { StartupConnectionManager } from "./components/StartupConnectionManager";
 import { TabBar } from "./components/TabBar";
 import type { QueryEditorSessionState } from "./components/SQLEditor";
 import type { Tab } from "./types";
@@ -136,6 +138,7 @@ function App() {
   );
 
   const [connectionFormIntent, setConnectionFormIntent] = useState<"connect" | "bootstrap" | null>(null);
+  const [showStartupConnectionManager, setShowStartupConnectionManager] = useState(true);
   const [showAISettings, setShowAISettings] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showKeyboardShortcutsModal, setShowKeyboardShortcutsModal] = useState(false);
@@ -166,11 +169,13 @@ function App() {
   const startX = useRef(0);
   const startWidth = useRef(300);
   const windowMenuRef = useRef<HTMLDivElement | null>(null);
+  const windowSyncGenerationRef = useRef(0);
   const isDesktopWindow = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
   const activeConn = connections.find((conn) => conn.id === activeConnectionId);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
   const isConnected = !!(activeConnectionId && connectedIds.has(activeConnectionId));
+  const showStartupShell = !isConnected && (showStartupConnectionManager || !!connectionFormIntent);
   const isMetricsWorkspace = activeTab?.type === "metrics";
   const visibleTabs = tabs.filter((tab) => tab.type !== "metrics");
   const activeQueryChrome =
@@ -269,6 +274,21 @@ function App() {
     });
   }, [activeConnectionId, addTab, currentDatabase, queryTabCount]);
 
+  const handleOpenConnectionForm = useCallback(
+    (intent: "connect" | "bootstrap") => {
+      setShowStartupConnectionManager(false);
+      setConnectionFormIntent(intent);
+    },
+    [],
+  );
+
+  const handleCloseConnectionForm = useCallback(() => {
+    setConnectionFormIntent(null);
+    if (!activeConnectionId || !connectedIds.has(activeConnectionId)) {
+      setShowStartupConnectionManager(true);
+    }
+  }, [activeConnectionId, connectedIds]);
+
   const handleToggleWindowMenu = useCallback((event?: ReactMouseEvent<HTMLElement>) => {
     event?.stopPropagation();
     setIsWindowMenuOpen((current) => {
@@ -288,9 +308,9 @@ function App() {
   }, []);
 
   const handleNewConnectionFromMenu = useCallback(() => {
-    setConnectionFormIntent("connect");
+    handleOpenConnectionForm("connect");
     setIsWindowMenuOpen(false);
-  }, []);
+  }, [handleOpenConnectionForm]);
 
   const handleRefreshWorkspace = useCallback(async () => {
     if (!activeConnectionId) return;
@@ -774,6 +794,186 @@ function App() {
     },
   ];
 
+  const renderWindowMenuPopover = () => {
+    if (!isWindowMenuOpen) return null;
+
+    return (
+      <div className="titlebar-window-menu-popover">
+        <div className="titlebar-window-menu-sections">
+          {windowMenuSections.map((section) => (
+            <div
+              key={section.key}
+              className={`titlebar-window-menu-section-node ${
+                activeWindowMenuSection === section.key ? "active" : ""
+              }`}
+              onMouseEnter={() => {
+                setActiveWindowMenuSection(section.key);
+                setActiveWindowMenuItemPath(null);
+              }}
+              onFocus={() => {
+                setActiveWindowMenuSection(section.key);
+                setActiveWindowMenuItemPath(null);
+              }}
+            >
+              <button
+                type="button"
+                className={`titlebar-window-menu-section-item ${
+                  activeWindowMenuSection === section.key ? "active" : ""
+                }`}
+              >
+                <span>{section.label}</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+
+              {activeWindowMenuSection === section.key && (
+                <div className="titlebar-window-submenu">
+                  <div className="titlebar-window-submenu-head">
+                    <span className="titlebar-window-submenu-kicker">{t("titlebar.menu")}</span>
+                    <span className="titlebar-window-submenu-title">{section.label}</span>
+                  </div>
+
+                  {section.items.map((item, index) =>
+                    item.divider ? (
+                      <div
+                        key={`${section.key}-divider-${index}`}
+                        className="titlebar-window-menu-divider"
+                      />
+                    ) : (
+                      <div
+                        key={`${section.key}-${item.key || item.label}-${index}`}
+                        className="titlebar-window-menu-item-node"
+                        onMouseEnter={() =>
+                          setActiveWindowMenuItemPath(
+                            item.children ? `${section.key}:${item.key || index}` : null,
+                          )
+                        }
+                        onFocus={() =>
+                          setActiveWindowMenuItemPath(
+                            item.children ? `${section.key}:${item.key || index}` : null,
+                          )
+                        }
+                      >
+                        <button
+                          type="button"
+                          className={`titlebar-window-menu-item ${item.selected ? "selected" : ""} ${
+                            item.children ? "has-children" : ""
+                          }`}
+                          onClick={item.children ? undefined : item.action}
+                          disabled={item.disabled}
+                        >
+                          <span>{item.label}</span>
+                          <span className="titlebar-window-menu-item-meta">
+                            {item.shortcut ? (
+                              <span className="titlebar-window-menu-shortcut">{item.shortcut}</span>
+                            ) : null}
+                            {item.children ? <ChevronRight className="w-3.5 h-3.5" /> : null}
+                          </span>
+                        </button>
+
+                        {item.children &&
+                          activeWindowMenuItemPath === `${section.key}:${item.key || index}` && (
+                            <div className="titlebar-window-submenu titlebar-window-submenu-nested">
+                              {item.children.map((child, childIndex) =>
+                                child.divider ? (
+                                  <div
+                                    key={`${section.key}-${item.key}-divider-${childIndex}`}
+                                    className="titlebar-window-menu-divider"
+                                  />
+                                ) : (
+                                  <button
+                                    key={`${section.key}-${item.key}-${child.key || child.label}-${childIndex}`}
+                                    type="button"
+                                    className={`titlebar-window-menu-item ${
+                                      child.selected ? "selected" : ""
+                                    }`}
+                                    onClick={child.action}
+                                    disabled={child.disabled}
+                                  >
+                                    <span>{child.label}</span>
+                                    {child.shortcut ? (
+                                      <span className="titlebar-window-menu-shortcut">
+                                        {child.shortcut}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                ),
+                              )}
+                            </div>
+                          )}
+                      </div>
+                    ),
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderWindowControls = (
+    className?: string,
+    options?: { lockSize?: boolean },
+  ) => {
+    if (!isDesktopWindow) return null;
+
+    return (
+      <div
+        className={`titlebar-window-controls ${className ?? ""}`.trim()}
+        data-no-window-drag="true"
+      >
+        <div className="titlebar-window-menu" ref={windowMenuRef}>
+          <button
+            type="button"
+            onClick={handleToggleWindowMenu}
+            className={`titlebar-window-btn ${isWindowMenuOpen ? "active" : ""}`}
+            title={t("titlebar.menu")}
+            aria-label={t("titlebar.openAppMenu")}
+          >
+            <Menu className="w-4 h-4" />
+          </button>
+
+          {renderWindowMenuPopover()}
+        </div>
+
+        <button
+          type="button"
+          onClick={handleMinimizeWindow}
+          className="titlebar-window-btn"
+          title={t("titlebar.minimize")}
+          aria-label={t("titlebar.minimize")}
+        >
+          <Minus className="w-4 h-4" />
+        </button>
+        {!options?.lockSize ? (
+          <button
+            type="button"
+            onClick={handleToggleMaximizeWindow}
+            className="titlebar-window-btn"
+            title={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
+            aria-label={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
+          >
+            {isWindowMaximized ? (
+              <Copy className="w-3.5 h-3.5" />
+            ) : (
+              <Square className="w-3.5 h-3.5" />
+            )}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={handleCloseWindow}
+          className="titlebar-window-btn danger"
+          title={t("titlebar.close")}
+          aria-label={t("titlebar.close")}
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    );
+  };
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing.current) return;
@@ -983,6 +1183,66 @@ function App() {
 
     setLeftPanel("connections");
   }, [activeConnectionId, connectedIds]);
+
+  useEffect(() => {
+    if (activeConnectionId && connectedIds.has(activeConnectionId)) {
+      setShowStartupConnectionManager(false);
+      setConnectionFormIntent(null);
+    }
+  }, [activeConnectionId, connectedIds]);
+
+  useEffect(() => {
+    if (!isDesktopWindow) return;
+
+    const windowProfile: "launcher" | "form" | "workspace" = !isConnected
+      ? connectionFormIntent
+        ? "form"
+        : "launcher"
+      : "workspace";
+
+    let cancelled = false;
+    const syncGeneration = ++windowSyncGenerationRef.current;
+    const isStale = () => cancelled || windowSyncGenerationRef.current !== syncGeneration;
+
+    const applyWindowProfile = async () => {
+      try {
+        if (isStale()) return;
+
+        await invoke("apply_window_profile", { profile: windowProfile });
+      } catch (windowError) {
+        console.error("Failed to synchronize startup window state", windowError);
+      }
+    };
+
+    void applyWindowProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionFormIntent, isConnected, isDesktopWindow]);
+
+  useEffect(() => {
+    if (!isDesktopWindow || !isConnected) return;
+
+    let cancelled = false;
+
+    const reinforceWorkspaceWindow = async () => {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+      if (cancelled) return;
+
+      try {
+        await invoke("apply_window_profile", { profile: "workspace" });
+      } catch (windowError) {
+        console.error("Failed to reinforce workspace window state", windowError);
+      }
+    };
+
+    void reinforceWorkspaceWindow();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, isDesktopWindow]);
 
   useEffect(() => {
     if (!activeConnectionId || !connectedIds.has(activeConnectionId)) return;
@@ -1370,12 +1630,37 @@ function App() {
     </div>
   );
 
+  if (showStartupShell) {
+    return (
+      <div className="app-root startup-shell-active">
+        {connectionFormIntent && (
+          <Suspense fallback={null}>
+            <ConnectionForm
+              initialIntent={connectionFormIntent}
+              onClose={handleCloseConnectionForm}
+            />
+          </Suspense>
+        )}
+
+        {showStartupConnectionManager && !isConnected && !connectionFormIntent && (
+          <StartupConnectionManager
+            onNewConnection={() => handleOpenConnectionForm("connect")}
+            onCreateLocalDb={() => handleOpenConnectionForm("bootstrap")}
+            windowControls={renderWindowControls("startup-window-controls", { lockSize: true })}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={`app-root ${isWindowMaximized ? "window-maximized" : ""}`}>
-      <header
-        className={`titlebar ${isWindowFocused ? "" : "inactive"}`}
-        onMouseDown={handleStartWindowDrag}
-      >
+      {!showStartupShell && (
+        <>
+          <header
+            className={`titlebar ${isWindowFocused ? "" : "inactive"}`}
+            onMouseDown={handleStartWindowDrag}
+          >
         <div
           className="titlebar-drag-strip"
           onDoubleClick={handleToggleMaximizeWindow}
@@ -1428,407 +1713,255 @@ function App() {
           </button>
         </div>
 
-        {isDesktopWindow && (
-          <div className="titlebar-window-controls" data-no-window-drag="true">
-            <div className="titlebar-window-menu" ref={windowMenuRef}>
-              <button
-                type="button"
-                onClick={handleToggleWindowMenu}
-                className={`titlebar-window-btn ${isWindowMenuOpen ? "active" : ""}`}
-                title={t("titlebar.menu")}
-                aria-label={t("titlebar.openAppMenu")}
-              >
-                <Menu className="w-4 h-4" />
+        {renderWindowControls()}
+          </header>
+
+          {error && (
+            <div className="error-bar">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span className="flex-1">{error}</span>
+              <button onClick={clearError} className="error-bar-close">
+                <X className="w-3.5 h-3.5" />
               </button>
+            </div>
+          )}
+        </>
+      )}
 
-              {isWindowMenuOpen && (
-                <div className="titlebar-window-menu-popover">
-                  <div className="titlebar-window-menu-sections">
-                    {windowMenuSections.map((section) => (
-                      <div
-                        key={section.key}
-                        className={`titlebar-window-menu-section-node ${
-                          activeWindowMenuSection === section.key ? "active" : ""
-                        }`}
-                        onMouseEnter={() => {
-                          setActiveWindowMenuSection(section.key);
-                          setActiveWindowMenuItemPath(null);
-                        }}
-                        onFocus={() => {
-                          setActiveWindowMenuSection(section.key);
-                          setActiveWindowMenuItemPath(null);
-                        }}
-                      >
-                        <button
-                          type="button"
-                          className={`titlebar-window-menu-section-item ${
-                            activeWindowMenuSection === section.key ? "active" : ""
-                          }`}
-                        >
-                          <span>{section.label}</span>
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
+      {!showStartupShell && (
+        <>
+          <div className="main-container">
+            <aside
+              className={`sidebar ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}
+              style={{ width: isSidebarCollapsed ? 76 : sidebarWidth }}
+            >
+              {isSidebarCollapsed ? (
+                renderSidebarRail()
+              ) : leftPanel === "connections" ? (
+                <ConnectionList
+                  onNewConnection={() => handleOpenConnectionForm("connect")}
+                />
+              ) : (
+                <div className="workspace-sidebar-shell">
+                  <div className="workspace-sidebar-rail">
+                    <button
+                      type="button"
+                      className={`workspace-sidebar-rail-btn ${leftPanel === "database" ? "active" : ""}`}
+                      onClick={handleShowDatabaseWorkspace}
+                      title={t("sidebar.databaseExplorer")}
+                    >
+                      <FolderTree className="w-4 h-4" />
+                      <span>{t("sidebar.dbShort")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={`workspace-sidebar-rail-btn ${leftPanel === "metrics" ? "active" : ""}`}
+                      onClick={() => void handleOpenMetricsBoard()}
+                      title={t("sidebar.metricsBoards")}
+                    >
+                      <BarChart3 className="w-4 h-4" />
+                      <span>{t("sidebar.metricsShort")}</span>
+                    </button>
+                  </div>
 
-                        {activeWindowMenuSection === section.key && (
-                          <div className="titlebar-window-submenu">
-                            <div className="titlebar-window-submenu-head">
-                              <span className="titlebar-window-submenu-kicker">{t("titlebar.menu")}</span>
-                              <span className="titlebar-window-submenu-title">
-                                {section.label}
-                              </span>
-                            </div>
-
-                            {section.items.map((item, index) =>
-                              item.divider ? (
-                                <div
-                                  key={`${section.key}-divider-${index}`}
-                                  className="titlebar-window-menu-divider"
-                                />
-                              ) : (
-                                <div
-                                  key={`${section.key}-${item.key || item.label}-${index}`}
-                                  className="titlebar-window-menu-item-node"
-                                  onMouseEnter={() =>
-                                    setActiveWindowMenuItemPath(
-                                      item.children ? `${section.key}:${item.key || index}` : null,
-                                    )
-                                  }
-                                  onFocus={() =>
-                                    setActiveWindowMenuItemPath(
-                                      item.children ? `${section.key}:${item.key || index}` : null,
-                                    )
-                                  }
-                                >
-                                  <button
-                                    type="button"
-                                    className={`titlebar-window-menu-item ${item.selected ? "selected" : ""} ${
-                                      item.children ? "has-children" : ""
-                                    }`}
-                                    onClick={item.children ? undefined : item.action}
-                                    disabled={item.disabled}
-                                  >
-                                    <span>{item.label}</span>
-                                    <span className="titlebar-window-menu-item-meta">
-                                      {item.shortcut ? (
-                                        <span className="titlebar-window-menu-shortcut">{item.shortcut}</span>
-                                      ) : null}
-                                      {item.children ? <ChevronRight className="w-3.5 h-3.5" /> : null}
-                                    </span>
-                                  </button>
-
-                                  {item.children &&
-                                    activeWindowMenuItemPath === `${section.key}:${item.key || index}` && (
-                                      <div className="titlebar-window-submenu titlebar-window-submenu-nested">
-                                        {item.children.map((child, childIndex) =>
-                                          child.divider ? (
-                                            <div
-                                              key={`${section.key}-${item.key}-divider-${childIndex}`}
-                                              className="titlebar-window-menu-divider"
-                                            />
-                                          ) : (
-                                            <button
-                                              key={`${section.key}-${item.key}-${child.key || child.label}-${childIndex}`}
-                                              type="button"
-                                              className={`titlebar-window-menu-item ${child.selected ? "selected" : ""}`}
-                                              onClick={child.action}
-                                              disabled={child.disabled}
-                                            >
-                                              <span>{child.label}</span>
-                                              {child.shortcut ? (
-                                                <span className="titlebar-window-menu-shortcut">{child.shortcut}</span>
-                                              ) : null}
-                                            </button>
-                                          ),
-                                        )}
-                                      </div>
-                                    )}
-                                </div>
-                              ),
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                  <div className="workspace-sidebar-panel">
+                    {leftPanel === "metrics" ? (
+                      <MetricsSidebar
+                        connectionId={activeConnectionId || ""}
+                        database={currentDatabase || undefined}
+                      />
+                    ) : (
+                      <Sidebar />
+                    )}
                   </div>
                 </div>
               )}
-            </div>
+            </aside>
 
-            <button
-              type="button"
-              onClick={handleMinimizeWindow}
-              className="titlebar-window-btn"
-              title={t("titlebar.minimize")}
-              aria-label={t("titlebar.minimize")}
-            >
-              <Minus className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={handleToggleMaximizeWindow}
-              className="titlebar-window-btn"
-              title={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
-              aria-label={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
-            >
-              {isWindowMaximized ? (
-                <Copy className="w-3.5 h-3.5" />
-              ) : (
-                <Square className="w-3.5 h-3.5" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={handleCloseWindow}
-              className="titlebar-window-btn danger"
-              title={t("titlebar.close")}
-              aria-label={t("titlebar.close")}
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-      </header>
-
-      {error && (
-        <div className="error-bar">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span className="flex-1">{error}</span>
-          <button onClick={clearError} className="error-bar-close">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-
-      <div className="main-container">
-        <aside
-          className={`sidebar ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}
-          style={{ width: isSidebarCollapsed ? 76 : sidebarWidth }}
-        >
-          {isSidebarCollapsed ? (
-            renderSidebarRail()
-          ) : leftPanel === "connections" ? (
-            <ConnectionList
-              onNewConnection={() => setConnectionFormIntent("connect")}
-            />
-          ) : (
-            <div className="workspace-sidebar-shell">
-              <div className="workspace-sidebar-rail">
-                <button
-                  type="button"
-                  className={`workspace-sidebar-rail-btn ${leftPanel === "database" ? "active" : ""}`}
-                  onClick={handleShowDatabaseWorkspace}
-                  title={t("sidebar.databaseExplorer")}
-                >
-                  <FolderTree className="w-4 h-4" />
-                  <span>{t("sidebar.dbShort")}</span>
-                </button>
-                <button
-                  type="button"
-                  className={`workspace-sidebar-rail-btn ${leftPanel === "metrics" ? "active" : ""}`}
-                  onClick={() => void handleOpenMetricsBoard()}
-                  title={t("sidebar.metricsBoards")}
-                >
-                  <BarChart3 className="w-4 h-4" />
-                  <span>{t("sidebar.metricsShort")}</span>
-                </button>
-              </div>
-
-              <div className="workspace-sidebar-panel">
-                {leftPanel === "metrics" ? (
-                  <MetricsSidebar
-                    connectionId={activeConnectionId || ""}
-                    database={currentDatabase || undefined}
-                  />
-                ) : (
-                  <Sidebar />
-                )}
-              </div>
-            </div>
-          )}
-        </aside>
-
-        {!isSidebarCollapsed && (
-          <div className="resize-handle" onMouseDown={handleMouseDown}>
-            <div className="resize-handle-line" />
-          </div>
-        )}
-
-        <main className="main-content">
-          <div className="workspace-toolbar">
-            <div className="workspace-toolbar-main">
-              <div className="workspace-toolbar-topline">
-                <span className="workspace-toolbar-kicker">
-                  {activeTab
-                    ? activeTab.type === "query"
-                      ? t("workspace.kicker.sql")
-                      : activeTab.type === "table"
-                        ? t("workspace.kicker.table")
-                        : activeTab.type === "structure"
-                          ? t("workspace.kicker.structure")
-                          : t("workspace.kicker.metrics")
-                    : t("workspace.kicker.default")}
-                </span>
-                {isConnected && activeConn && (
-                  <span className="workspace-toolbar-chip">
-                    {activeConn.name || activeConn.host}
-                    {activeDatabaseLabel ? ` / ${activeDatabaseLabel}` : ""}
-                  </span>
-                )}
-                {activeWorkspaceActivity && (
-                  <span className="workspace-toolbar-mini-note">
-                    {activeWorkspaceActivity.label} {activeWorkspaceActivity.durationMs}ms
-                  </span>
-                )}
-              </div>
-
-              <div className="workspace-toolbar-title-row">
-                <span className="workspace-toolbar-title">
-                  {activeTab?.title || (isConnected ? t("workspace.readyForQueries") : t("titlebar.noActiveConnection"))}
-                </span>
-                {activeQueryChrome?.executionTimeMs !== undefined && (
-                  <div className="workspace-toolbar-status">
-                    <span className="workspace-toolbar-status-pill success">{t("workspace.status.success")}</span>
-                    <span className="workspace-toolbar-status-pill">
-                      {activeQueryChrome.executionTimeMs}ms
-                    </span>
-                    {typeof activeQueryChrome.rowCount === "number" && activeQueryChrome.rowCount > 0 && (
-                      <span className="workspace-toolbar-status-pill">
-                        {t("workspace.status.rows", { count: activeQueryChrome.rowCount })}
-                      </span>
-                    )}
-                    {typeof activeQueryChrome.affectedRows === "number" && activeQueryChrome.affectedRows > 0 && (
-                      <span className="workspace-toolbar-status-pill warning">
-                        {t("workspace.status.affected", { count: activeQueryChrome.affectedRows })}
-                      </span>
-                    )}
-                    {typeof activeQueryChrome.queryCount === "number" && activeQueryChrome.queryCount > 1 && (
-                      <span className="workspace-toolbar-status-pill">
-                        {t("workspace.status.batch", { count: activeQueryChrome.queryCount })}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="workspace-toolbar-actions">
-              {isConnected && (
-                <>
-                  {!isMetricsWorkspace && visibleTabs.length > 1 && (
-                    <button
-                      onClick={handleClearVisibleTabs}
-                      className="toolbar-btn clear-action"
-                      title={t("toolbar.closeAllTabs")}
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      <span>{t("toolbar.clear")}</span>
-                    </button>
-                  )}
-
-                  {!isMetricsWorkspace && (
-                    <button
-                      onClick={handleNewQuery}
-                      className="toolbar-btn primary"
-                      title={t("toolbar.newQueryShortcut")}
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>{t("toolbar.newQuery")}</span>
-                    </button>
-                  )}
-
-                  <div className="workspace-toolbar-utility">
-                    <button
-                      onClick={() => void handleRefreshWorkspace()}
-                      className="toolbar-btn icon-only"
-                      title={t("toolbar.refreshWorkspace")}
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      onClick={handleFocusExplorerSearch}
-                      className="toolbar-btn icon-only"
-                      title={t("toolbar.findTable")}
-                    >
-                      <Search className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      onClick={handleOpenMetricsBoard}
-                      className="toolbar-btn icon-only"
-                      title={t("toolbar.openMetricsBoard")}
-                    >
-                      <BarChart3 className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      onClick={() => handleOpenAISlidePanel()}
-                      className="toolbar-btn icon-only"
-                      title={t("toolbar.askAiShortcut")}
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          <TabBar
-            queryChrome={activeQueryChrome}
-            onRunActiveQuery={handleRunActiveQuery}
-          />
-
-          <div className="tab-content">
-            {tabs.length === 0 || !activeTab ? (
-              renderTabContent()
-            ) : (
-              <div
-                key={activeTab.id}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  height: "100%",
-                  width: "100%",
-                }}
-              >
-                {renderSingleTab(activeTab, true)}
+            {!isSidebarCollapsed && (
+              <div className="resize-handle" onMouseDown={handleMouseDown}>
+                <div className="resize-handle-line" />
               </div>
             )}
+
+            <main className="main-content">
+              <div className="workspace-toolbar">
+                <div className="workspace-toolbar-main">
+                  <div className="workspace-toolbar-topline">
+                    <span className="workspace-toolbar-kicker">
+                      {activeTab
+                        ? activeTab.type === "query"
+                          ? t("workspace.kicker.sql")
+                          : activeTab.type === "table"
+                            ? t("workspace.kicker.table")
+                            : activeTab.type === "structure"
+                              ? t("workspace.kicker.structure")
+                              : t("workspace.kicker.metrics")
+                        : t("workspace.kicker.default")}
+                    </span>
+                    {isConnected && activeConn && (
+                      <span className="workspace-toolbar-chip">
+                        {activeConn.name || activeConn.host}
+                        {activeDatabaseLabel ? ` / ${activeDatabaseLabel}` : ""}
+                      </span>
+                    )}
+                    {activeWorkspaceActivity && (
+                      <span className="workspace-toolbar-mini-note">
+                        {activeWorkspaceActivity.label} {activeWorkspaceActivity.durationMs}ms
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="workspace-toolbar-title-row">
+                    <span className="workspace-toolbar-title">
+                      {activeTab?.title || (isConnected ? t("workspace.readyForQueries") : t("titlebar.noActiveConnection"))}
+                    </span>
+                    {activeQueryChrome?.executionTimeMs !== undefined && (
+                      <div className="workspace-toolbar-status">
+                        <span className="workspace-toolbar-status-pill success">{t("workspace.status.success")}</span>
+                        <span className="workspace-toolbar-status-pill">
+                          {activeQueryChrome.executionTimeMs}ms
+                        </span>
+                        {typeof activeQueryChrome.rowCount === "number" && activeQueryChrome.rowCount > 0 && (
+                          <span className="workspace-toolbar-status-pill">
+                            {t("workspace.status.rows", { count: activeQueryChrome.rowCount })}
+                          </span>
+                        )}
+                        {typeof activeQueryChrome.affectedRows === "number" && activeQueryChrome.affectedRows > 0 && (
+                          <span className="workspace-toolbar-status-pill warning">
+                            {t("workspace.status.affected", { count: activeQueryChrome.affectedRows })}
+                          </span>
+                        )}
+                        {typeof activeQueryChrome.queryCount === "number" && activeQueryChrome.queryCount > 1 && (
+                          <span className="workspace-toolbar-status-pill">
+                            {t("workspace.status.batch", { count: activeQueryChrome.queryCount })}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="workspace-toolbar-actions">
+                  {isConnected && (
+                    <>
+                      {!isMetricsWorkspace && visibleTabs.length > 1 && (
+                        <button
+                          onClick={handleClearVisibleTabs}
+                          className="toolbar-btn clear-action"
+                          title={t("toolbar.closeAllTabs")}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>{t("toolbar.clear")}</span>
+                        </button>
+                      )}
+
+                      {!isMetricsWorkspace && (
+                        <button
+                          onClick={handleNewQuery}
+                          className="toolbar-btn primary"
+                          title={t("toolbar.newQueryShortcut")}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>{t("toolbar.newQuery")}</span>
+                        </button>
+                      )}
+
+                      <div className="workspace-toolbar-utility">
+                        <button
+                          onClick={() => void handleRefreshWorkspace()}
+                          className="toolbar-btn icon-only"
+                          title={t("toolbar.refreshWorkspace")}
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          onClick={handleFocusExplorerSearch}
+                          className="toolbar-btn icon-only"
+                          title={t("toolbar.findTable")}
+                        >
+                          <Search className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          onClick={handleOpenMetricsBoard}
+                          className="toolbar-btn icon-only"
+                          title={t("toolbar.openMetricsBoard")}
+                        >
+                          <BarChart3 className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
+                          onClick={() => handleOpenAISlidePanel()}
+                          className="toolbar-btn icon-only"
+                          title={t("toolbar.askAiShortcut")}
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <TabBar
+                queryChrome={activeQueryChrome}
+                onRunActiveQuery={handleRunActiveQuery}
+              />
+
+              <div className="tab-content">
+                {tabs.length === 0 || !activeTab ? (
+                  renderTabContent()
+                ) : (
+                  <div
+                    key={activeTab.id}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      height: "100%",
+                      width: "100%",
+                    }}
+                  >
+                    {renderSingleTab(activeTab, true)}
+                  </div>
+                )}
+              </div>
+            </main>
           </div>
-        </main>
-      </div>
 
-      <footer className="statusbar">
-        <div className="statusbar-left">
-          <span className={`statusbar-indicator ${isConnected ? "connected" : ""}`}>
-            <span className="statusbar-dot" />
-            {isConnected ? "Connected" : "Disconnected"}
-          </span>
-          {isConnected && activeConn && (
-            <span className="statusbar-info">
-              {activeConn.db_type.toUpperCase()}
-              {currentDatabase ? ` | ${currentDatabase}` : ""}
-              {activeWorkspaceActivity ? ` | ${activeWorkspaceActivity.label} ${activeWorkspaceActivity.durationMs}ms` : ""}
-            </span>
-          )}
-        </div>
+          <footer className="statusbar">
+            <div className="statusbar-left">
+              <span className={`statusbar-indicator ${isConnected ? "connected" : ""}`}>
+                <span className="statusbar-dot" />
+                {isConnected ? "Connected" : "Disconnected"}
+              </span>
+              {isConnected && activeConn && (
+                <span className="statusbar-info">
+                  {activeConn.db_type.toUpperCase()}
+                  {currentDatabase ? ` | ${currentDatabase}` : ""}
+                  {activeWorkspaceActivity ? ` | ${activeWorkspaceActivity.label} ${activeWorkspaceActivity.durationMs}ms` : ""}
+                </span>
+              )}
+            </div>
 
-        <div className="statusbar-right">
-          <span className="statusbar-shortcuts">
-            <kbd className="kbd">Ctrl+N</kbd>
-            <kbd className="kbd">Ctrl+B</kbd>
-            <kbd className="kbd">Ctrl+Shift+P</kbd>
-          </span>
-          <span>TableR v0.1.0</span>
-        </div>
-      </footer>
+            <div className="statusbar-right">
+              <span className="statusbar-shortcuts">
+                <kbd className="kbd">Ctrl+N</kbd>
+                <kbd className="kbd">Ctrl+B</kbd>
+                <kbd className="kbd">Ctrl+Shift+P</kbd>
+              </span>
+              <span>TableR v0.1.0</span>
+            </div>
+          </footer>
+        </>
+      )}
 
       {connectionFormIntent && (
         <Suspense fallback={null}>
           <ConnectionForm
             initialIntent={connectionFormIntent}
-            onClose={() => setConnectionFormIntent(null)}
+            onClose={handleCloseConnectionForm}
           />
         </Suspense>
       )}
@@ -1959,6 +2092,13 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+      {showStartupConnectionManager && !isConnected && !connectionFormIntent && (
+        <StartupConnectionManager
+          onNewConnection={() => handleOpenConnectionForm("connect")}
+          onCreateLocalDb={() => handleOpenConnectionForm("bootstrap")}
+          windowControls={renderWindowControls("startup-window-controls")}
+        />
       )}
       {showAISlidePanel && (
         <Suspense fallback={null}>

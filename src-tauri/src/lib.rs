@@ -7,6 +7,7 @@ use commands::connection::*;
 use commands::query::*;
 use commands::table::*;
 use commands::ai::{ask_ai, get_ai_configs, save_ai_configs};
+use commands::window::{apply_window_profile, apply_window_profile_to_main, WindowProfile};
 use database::manager::DatabaseManager;
 use storage::connection_storage::ConnectionStorage;
 use storage::ai_storage::AIStorage;
@@ -55,6 +56,10 @@ pub fn run() {
                 }
             }
 
+            if let Err(error) = apply_window_profile_to_main(app.handle(), WindowProfile::Launcher) {
+                eprintln!("Failed to apply launcher window profile: {error}");
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -91,6 +96,8 @@ pub fn run() {
             ask_ai,
             get_ai_configs,
             save_ai_configs,
+            // Window commands
+            apply_window_profile,
         ]);
 
     if let Err(error) = app.run(tauri::generate_context!()) {

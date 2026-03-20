@@ -10,6 +10,27 @@ use std::collections::HashMap;
 use crate::storage::ai_storage::AIStorage;
 use tokio::task;
 
+fn ai_storage_load_error() -> String {
+    "Could not load AI provider settings.".to_string()
+}
+
+fn ai_storage_save_error() -> String {
+    "Could not save AI provider settings.".to_string()
+}
+
+fn ai_provider_config_error() -> String {
+    "The active AI provider is not configured correctly.".to_string()
+}
+
+fn ai_provider_request_error() -> String {
+    "The AI request could not be completed. Please verify your provider settings and try again."
+        .to_string()
+}
+
+fn ai_provider_response_error() -> String {
+    "The AI provider returned an invalid or unsupported response.".to_string()
+}
+
 fn provider_requires_api_key(provider_type: &AIProviderType) -> bool {
     !matches!(provider_type, AIProviderType::Ollama | AIProviderType::Custom)
 }
@@ -70,13 +91,13 @@ where
 {
     task::spawn_blocking(operation)
         .await
-        .map_err(|error| format!("Background AI storage task failed: {error}"))?
+        .map_err(|_| "Background AI task failed unexpectedly.".to_string())?
 }
 
 #[tauri::command]
 pub async fn get_ai_configs(storage: State<'_, AIStorage>) -> Result<(Vec<AIProviderConfig>, HashMap<String, bool>), String> {
     let storage = storage.inner().clone();
-    run_blocking_storage_task(move || storage.load_providers().map_err(|e| e.to_string())).await
+    run_blocking_storage_task(move || storage.load_providers().map_err(|_| ai_storage_load_error())).await
 }
 
 #[tauri::command]
@@ -90,8 +111,8 @@ pub async fn save_ai_configs(
     run_blocking_storage_task(move || {
         storage
             .save_providers(&providers, &api_key_updates, &cleared_provider_ids)
-            .map_err(|e| e.to_string())?;
-        storage.load_providers().map_err(|e| e.to_string())
+            .map_err(|_| ai_storage_save_error())?;
+        storage.load_providers().map_err(|_| ai_storage_load_error())
     })
     .await
 }
@@ -104,26 +125,25 @@ pub async fn ask_ai(
 ) -> Result<AIResponse, String> {
     // Validate request before processing
     request.validate().map_err(|e| format!("Invalid request: {}", e))?;
-    ai_rate_limiter.check(&format!("{}:{:?}", request.provider_id, request.mode))?;
 
     let client = Client::new();
     let storage = storage.inner().clone();
-    let provider_id = request.provider_id.clone();
     let (config, api_key) = run_blocking_storage_task(move || {
         let config = storage
-            .get_provider_config(&provider_id)
-            .map_err(|e| e.to_string())?;
+            .get_active_provider_config()
+            .map_err(|_| ai_provider_config_error())?;
         let api_key = if provider_requires_api_key(&config.provider_type) {
-            Some(storage.get_api_key(&provider_id).map_err(|e| e.to_string())?)
+            Some(storage.get_api_key(&config.id).map_err(|_| ai_provider_config_error())?)
         } else {
             storage
-                .get_api_key_optional(&provider_id)
-                .map_err(|e| e.to_string())?
+                .get_api_key_optional(&config.id)
+                .map_err(|_| ai_provider_config_error())?
         };
 
         Ok((config, api_key))
     })
     .await?;
+    ai_rate_limiter.check(&format!("{}:{:?}", config.id, request.mode))?;
     if !config.is_enabled {
         return Err("Selected AI provider is disabled.".to_string());
     }
@@ -177,11 +197,15 @@ pub async fn ask_ai(
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|_| ai_provider_request_error())?;
 
-            let resp_json: serde_json::Value = req.json().await.map_err(|e| e.to_string())?;
+            let resp_json: serde_json::Value = req
+                .json()
+                .await
+                .map_err(|_| ai_provider_response_error())?;
             if let Some(err) = resp_json.get("error") {
-                return Err(err.to_string());
+                let _ = err;
+                return Err(ai_provider_request_error());
             }
 
             if let Some(choices) = resp_json.get("choices") {
@@ -196,7 +220,7 @@ pub async fn ask_ai(
                     }
                 }
             }
-            Err("Failed to parse OpenAI response".to_string())
+            Err(ai_provider_response_error())
         },
         AIProviderType::Anthropic => {
             let body = json!({
@@ -219,11 +243,15 @@ pub async fn ask_ai(
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|_| ai_provider_request_error())?;
 
-            let resp_json: serde_json::Value = req.json().await.map_err(|e| e.to_string())?;
+            let resp_json: serde_json::Value = req
+                .json()
+                .await
+                .map_err(|_| ai_provider_response_error())?;
             if let Some(err) = resp_json.get("error") {
-                return Err(err.to_string());
+                let _ = err;
+                return Err(ai_provider_request_error());
             }
 
             if let Some(content_array) = resp_json.get("content") {
@@ -236,7 +264,7 @@ pub async fn ask_ai(
                     }
                 }
             }
-            Err("Failed to parse Anthropic response".to_string())
+            Err(ai_provider_response_error())
         },
         AIProviderType::Gemini => {
             let body = json!({
@@ -259,11 +287,15 @@ pub async fn ask_ai(
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|_| ai_provider_request_error())?;
 
-            let resp_json: serde_json::Value = req.json().await.map_err(|e| e.to_string())?;
+            let resp_json: serde_json::Value = req
+                .json()
+                .await
+                .map_err(|_| ai_provider_response_error())?;
             if let Some(err) = resp_json.get("error") {
-                return Err(err.to_string());
+                let _ = err;
+                return Err(ai_provider_request_error());
             }
 
             if let Some(candidates) = resp_json.get("candidates") {
@@ -282,7 +314,7 @@ pub async fn ask_ai(
                     }
                 }
             }
-            Err("Failed to parse Gemini response".to_string())
+            Err(ai_provider_response_error())
         }
     }
 }

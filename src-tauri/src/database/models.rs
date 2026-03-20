@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -320,11 +320,19 @@ impl ConnectionConfig {
             _ => {
                 // For network databases, host is required
                 if let Some(ref host) = self.host {
-                    if host.trim().is_empty() {
-                        return Err("Host cannot be empty".to_string());
-                    }
+                    validate_network_host(host)?;
                 } else {
                     return Err("Host is required for this database type".to_string());
+                }
+
+                if self
+                    .username
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+                {
+                    return Err("Username is required for this database type".to_string());
                 }
 
                 // Validate port if provided
@@ -338,6 +346,31 @@ impl ConnectionConfig {
 
         Ok(())
     }
+}
+
+fn validate_network_host(host: &str) -> Result<(), String> {
+    let trimmed = host.trim();
+    if trimmed.is_empty() {
+        return Err("Host cannot be empty".to_string());
+    }
+
+    if trimmed
+        .chars()
+        .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return Err("Host contains invalid whitespace or control characters".to_string());
+    }
+
+    if trimmed.contains("://")
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains('?')
+        || trimmed.contains('#')
+    {
+        return Err("Host must not include a scheme, path, query, or fragment".to_string());
+    }
+
+    Ok(())
 }
 
 fn validate_sqlite_file_path(path: &str) -> Result<(), String> {
@@ -382,9 +415,34 @@ fn validate_sqlite_file_path(path: &str) -> Result<(), String> {
         .map(|ext| ext.to_ascii_lowercase());
 
     match extension.as_deref() {
-        Some("db") | Some("sqlite") | Some("sqlite3") => {}
+        Some("db") | Some("db3") | Some("sqlite") | Some("sqlite3") => {}
         _ => {
-            return Err("SQLite file path must use a .db, .sqlite, or .sqlite3 extension".to_string())
+            return Err(
+                "SQLite file path must use a .db, .db3, .sqlite, or .sqlite3 extension"
+                    .to_string(),
+            )
+        }
+    }
+
+    let resolved_path = if sqlite_path.is_absolute() {
+        sqlite_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(PathBuf::from)
+            .map_err(|_| "Could not resolve the current working directory".to_string())?
+            .join(sqlite_path)
+    };
+
+    for ancestor in resolved_path.ancestors() {
+        if !ancestor.exists() {
+            continue;
+        }
+
+        let metadata = fs::symlink_metadata(ancestor)
+            .map_err(|_| "Could not inspect the selected SQLite file path".to_string())?;
+
+        if metadata.file_type().is_symlink() {
+            return Err("SQLite symlink targets are not allowed".to_string());
         }
     }
 
@@ -398,6 +456,12 @@ fn validate_sqlite_file_path(path: &str) -> Result<(), String> {
 
         if metadata.is_dir() {
             return Err("SQLite file path must point to a file, not a directory".to_string());
+        }
+    }
+
+    if let Some(parent_dir) = resolved_path.parent() {
+        if parent_dir.exists() && !parent_dir.is_dir() {
+            return Err("SQLite file path must use a valid parent directory".to_string());
         }
     }
 

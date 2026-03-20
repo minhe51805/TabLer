@@ -1,11 +1,13 @@
 use crate::database::models::ConnectionConfig;
+use crate::storage::file_storage::{read_json_vec_with_backup, write_json_atomically};
 use anyhow::{Context, Result};
 use keyring::Error as KeyringError;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{
+    Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
+};
 
 /// Cross-platform connection storage using JSON files with in-memory caching.
 /// Replaces macOS Keychain — works on Windows, macOS, and Linux.
@@ -33,46 +35,50 @@ impl ConnectionStorage {
         })
     }
 
-    fn invalidate_cache(&self) {
-        let mut cache = self.cache.write().unwrap();
+    fn cache_read(&self) -> Result<RwLockReadGuard<'_, Option<Vec<ConnectionConfig>>>> {
+        self.cache
+            .read()
+            .map_err(|_| anyhow::anyhow!("Connection cache lock poisoned"))
+    }
+
+    fn cache_write(&self) -> Result<RwLockWriteGuard<'_, Option<Vec<ConnectionConfig>>>> {
+        self.cache
+            .write()
+            .map_err(|_| anyhow::anyhow!("Connection cache lock poisoned"))
+    }
+
+    fn password_cache_read(&self) -> Result<RwLockReadGuard<'_, HashMap<String, String>>> {
+        self.password_cache
+            .read()
+            .map_err(|_| anyhow::anyhow!("Connection password cache lock poisoned"))
+    }
+
+    fn password_cache_write(&self) -> Result<RwLockWriteGuard<'_, HashMap<String, String>>> {
+        self.password_cache
+            .write()
+            .map_err(|_| anyhow::anyhow!("Connection password cache lock poisoned"))
+    }
+
+    fn write_lock(&self) -> Result<MutexGuard<'_, ()>> {
+        self.write_guard
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Connection storage write lock poisoned"))
+    }
+
+    fn invalidate_cache(&self) -> Result<()> {
+        let mut cache = self.cache_write()?;
         *cache = None;
-        let mut pw_cache = self.password_cache.write().unwrap();
+        let mut pw_cache = self.password_cache_write()?;
         pw_cache.clear();
-    }
-
-    fn read_connections_file(&self) -> Result<Vec<ConnectionConfig>> {
-        if !self.storage_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let content = fs::read_to_string(&self.storage_path)?;
-        serde_json::from_str(&content).context("Failed to parse saved connections")
-    }
-
-    fn write_json_atomically(&self, json: &str) -> Result<()> {
-        let temp_name = format!(
-            "{}.{}.tmp",
-            self.storage_path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("connections.json"),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        );
-        let temp_path = self.storage_path.with_file_name(temp_name);
-
-        fs::write(&temp_path, json)?;
-        if self.storage_path.exists() {
-            fs::remove_file(&self.storage_path)?;
-        }
-        fs::rename(&temp_path, &self.storage_path)?;
         Ok(())
     }
 
+    fn read_connections_file(&self) -> Result<Vec<ConnectionConfig>> {
+        read_json_vec_with_backup(&self.storage_path, "Failed to parse saved connections")
+    }
+
     pub fn save_connection(&self, config: &ConnectionConfig) -> Result<()> {
-        let _guard = self.write_guard.lock().unwrap();
+        let _guard = self.write_lock()?;
         let mut connections = self.read_connections_file()?;
         let mut safe_config = config.clone();
         safe_config.password = None;
@@ -93,15 +99,15 @@ impl ConnectionStorage {
                 .context("Failed to store the connection password in secure storage")?;
             
             // Update password cache
-            let mut pw_cache = self.password_cache.write().unwrap();
+            let mut pw_cache = self.password_cache_write()?;
             pw_cache.insert(config.id.clone(), password.clone());
         }
 
         let json = serde_json::to_string_pretty(&connections)?;
-        self.write_json_atomically(&json)?;
+        write_json_atomically(&self.storage_path, &json)?;
 
         // Update cache
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache_write()?;
         *cache = Some(connections);
 
         Ok(())
@@ -110,7 +116,7 @@ impl ConnectionStorage {
     pub fn load_connections(&self) -> Result<Vec<ConnectionConfig>> {
         // Check cache first
         {
-            let cache = self.cache.read().unwrap();
+            let cache = self.cache_read()?;
             if let Some(ref connections) = *cache {
                 return Ok(connections.clone());
             }
@@ -119,7 +125,7 @@ impl ConnectionStorage {
         // Load from file
         if !self.storage_path.exists() {
             let empty: Vec<ConnectionConfig> = Vec::new();
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self.cache_write()?;
             *cache = Some(empty.clone());
             return Ok(empty);
         }
@@ -136,7 +142,7 @@ impl ConnectionStorage {
             })
             .collect();
 
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache_write()?;
         *cache = Some(safe_connections.clone());
 
         // Read keyring entries first, then update the in-memory cache in one shot
@@ -150,7 +156,7 @@ impl ConnectionStorage {
             }
         }
 
-        let mut pw_cache = self.password_cache.write().unwrap();
+        let mut pw_cache = self.password_cache_write()?;
         *pw_cache = loaded_passwords;
 
         Ok(connections)
@@ -159,7 +165,7 @@ impl ConnectionStorage {
     pub fn load_connection_by_id(&self, connection_id: &str) -> Result<ConnectionConfig> {
         // Try password cache first
         let cached_password = {
-            let pw_cache = self.password_cache.read().unwrap();
+            let pw_cache = self.password_cache_read()?;
             pw_cache.get(connection_id).cloned()
         };
 
@@ -179,7 +185,7 @@ impl ConnectionStorage {
             match entry.get_password() {
                 Ok(password) => {
                     connection.password = Some(password.clone());
-                    let mut pw_cache = self.password_cache.write().unwrap();
+                    let mut pw_cache = self.password_cache_write()?;
                     pw_cache.insert(connection_id.to_string(), password);
                 }
                 Err(KeyringError::NoEntry) => {
@@ -197,7 +203,7 @@ impl ConnectionStorage {
     }
 
     pub fn delete_connection(&self, connection_id: &str) -> Result<()> {
-        let _guard = self.write_guard.lock().unwrap();
+        let _guard = self.write_lock()?;
         let mut connections = self.read_connections_file()?;
         connections.retain(|c| c.id != connection_id);
 
@@ -223,10 +229,10 @@ impl ConnectionStorage {
             .collect();
 
         let json = serde_json::to_string_pretty(&safe_connections)?;
-        self.write_json_atomically(&json)?;
+        write_json_atomically(&self.storage_path, &json)?;
 
         // Invalidate cache
-        self.invalidate_cache();
+        self.invalidate_cache()?;
 
         Ok(())
     }

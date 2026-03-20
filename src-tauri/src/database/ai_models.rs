@@ -36,7 +36,6 @@ pub struct AIProviderConfig {
 pub struct AIRequest {
     pub prompt: String,
     pub context: String, // DB schema context
-    pub provider_id: String,
     #[serde(default = "default_ai_request_mode")]
     pub mode: AIRequestMode,
 }
@@ -48,10 +47,6 @@ fn default_ai_request_mode() -> AIRequestMode {
 impl AIRequest {
     /// Validate AI request before processing
     pub fn validate(&self) -> Result<(), String> {
-        if self.provider_id.trim().is_empty() {
-            return Err("AI provider ID cannot be empty".to_string());
-        }
-
         if self.prompt.trim().is_empty() {
             return Err("Prompt cannot be empty".to_string());
         }

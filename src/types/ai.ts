@@ -16,7 +16,6 @@ export type AIRequestMode = "panel" | "inline";
 export interface AIRequest {
     prompt: string;
     context: string;
-    provider_id: string;
     mode: AIRequestMode;
 }
 

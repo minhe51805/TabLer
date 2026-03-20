@@ -1,5 +1,6 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_common::{statement_returns_rows, MAX_QUERY_RESULT_ROWS};
 use super::safety::{
     normalize_order_dir, quote_sqlite_identifier, quote_sqlite_order_by,
     sanitize_sqlite_filter_clause,
@@ -18,8 +19,6 @@ pub struct SqliteDriver {
     pool: SqlitePool,
     file_path: String,
 }
-
-const MAX_QUERY_RESULT_ROWS: usize = 500;
 
 impl SqliteDriver {
     pub async fn connect(file_path: &str) -> Result<Self> {
@@ -61,12 +60,7 @@ impl SqliteDriver {
     }
 
     fn query_returns_rows(sql: &str) -> bool {
-        let trimmed = sql.trim().to_uppercase();
-        trimmed.starts_with("SELECT")
-            || trimmed.starts_with("PRAGMA")
-            || trimmed.starts_with("EXPLAIN")
-            || trimmed.starts_with("WITH")
-            || trimmed.contains(" RETURNING ")
+        statement_returns_rows(sql, &["SELECT", "PRAGMA", "EXPLAIN", "WITH"])
     }
 
     fn build_result_from_rows(

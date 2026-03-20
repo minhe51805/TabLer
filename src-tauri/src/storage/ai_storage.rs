@@ -1,11 +1,13 @@
 use crate::database::ai_models::AIProviderConfig;
+use crate::storage::file_storage::{read_json_vec_with_backup, write_json_atomically};
 use anyhow::{Context, Result};
 use keyring::Error as KeyringError;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{
+    Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
+};
 
 /// Cross-platform AI configuration storage using JSON files with in-memory caching.
 /// API Keys are stored securely in the OS keyring.
@@ -44,48 +46,55 @@ impl AIStorage {
         })
     }
 
-    fn invalidate_cache(&self) {
-        let mut cache = self.cache.write().unwrap();
+    fn cache_read(&self) -> Result<RwLockReadGuard<'_, Option<Vec<AIProviderConfig>>>> {
+        self.cache
+            .read()
+            .map_err(|_| anyhow::anyhow!("AI provider cache lock poisoned"))
+    }
+
+    fn cache_write(&self) -> Result<RwLockWriteGuard<'_, Option<Vec<AIProviderConfig>>>> {
+        self.cache
+            .write()
+            .map_err(|_| anyhow::anyhow!("AI provider cache lock poisoned"))
+    }
+
+    fn keyring_cache_read(&self) -> Result<RwLockReadGuard<'_, HashMap<String, bool>>> {
+        self.keyring_cache
+            .read()
+            .map_err(|_| anyhow::anyhow!("AI key status cache lock poisoned"))
+    }
+
+    fn keyring_cache_write(&self) -> Result<RwLockWriteGuard<'_, HashMap<String, bool>>> {
+        self.keyring_cache
+            .write()
+            .map_err(|_| anyhow::anyhow!("AI key status cache lock poisoned"))
+    }
+
+    fn write_lock(&self) -> Result<MutexGuard<'_, ()>> {
+        self.write_guard
+            .lock()
+            .map_err(|_| anyhow::anyhow!("AI storage write lock poisoned"))
+    }
+
+    fn invalidate_cache(&self) -> Result<()> {
+        let mut cache = self.cache_write()?;
         *cache = None;
-        let mut keyring_cache = self.keyring_cache.write().unwrap();
+        let mut keyring_cache = self.keyring_cache_write()?;
         keyring_cache.clear();
+        Ok(())
     }
 
     fn read_provider_configs_file(&self) -> Result<Vec<AIProviderConfig>> {
-        if !self.storage_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let content = fs::read_to_string(&self.storage_path)?;
-        serde_json::from_str(&content).context("Failed to parse saved AI provider configs")
-    }
-
-    fn write_json_atomically(&self, json: &str) -> Result<()> {
-        let temp_name = format!(
-            "{}.{}.tmp",
-            self.storage_path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("ai_providers.json"),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        );
-        let temp_path = self.storage_path.with_file_name(temp_name);
-
-        fs::write(&temp_path, json)?;
-        if self.storage_path.exists() {
-            fs::remove_file(&self.storage_path)?;
-        }
-        fs::rename(&temp_path, &self.storage_path)?;
-        Ok(())
+        read_json_vec_with_backup(
+            &self.storage_path,
+            "Failed to parse saved AI provider configs",
+        )
     }
 
     pub fn load_provider_configs(&self) -> Result<Vec<AIProviderConfig>> {
         // Check cache first
         {
-            let cache = self.cache.read().unwrap();
+            let cache = self.cache_read()?;
             if let Some(ref providers) = *cache {
                 return Ok(providers.clone());
             }
@@ -94,7 +103,7 @@ impl AIStorage {
         // Load from file
         if !self.storage_path.exists() {
             let empty: Vec<AIProviderConfig> = Vec::new();
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self.cache_write()?;
             *cache = Some(empty.clone());
             return Ok(empty);
         }
@@ -102,7 +111,7 @@ impl AIStorage {
         let providers = self.read_provider_configs_file()?;
 
         // Cache the result
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache_write()?;
         *cache = Some(providers.clone());
 
         Ok(providers)
@@ -114,7 +123,7 @@ impl AIStorage {
         api_key_updates: &HashMap<String, String>,
         cleared_provider_ids: &[String],
     ) -> Result<()> {
-        let _guard = self.write_guard.lock().unwrap();
+        let _guard = self.write_lock()?;
         let existing_provider_ids: HashSet<String> = self
             .read_provider_configs_file()?
             .into_iter()
@@ -144,17 +153,17 @@ impl AIStorage {
         }
 
         let json = serde_json::to_string_pretty(&providers)?;
-        self.write_json_atomically(&json)?;
+        write_json_atomically(&self.storage_path, &json)?;
 
         // Update cache
-        self.invalidate_cache();
+        self.invalidate_cache()?;
 
         Ok(())
     }
 
     pub fn load_providers(&self) -> Result<(Vec<AIProviderConfig>, HashMap<String, bool>)> {
         let providers = self.load_provider_configs()?;
-        let mut key_status = self.keyring_cache.read().unwrap().clone();
+        let mut key_status = self.keyring_cache_read()?.clone();
 
         // Check keyring for providers not in cache
         for provider in &providers {
@@ -169,18 +178,18 @@ impl AIStorage {
 
         // Update cache
         {
-            let mut cache = self.keyring_cache.write().unwrap();
+            let mut cache = self.keyring_cache_write()?;
             *cache = key_status.clone();
         }
 
         Ok((providers, key_status))
     }
 
-    pub fn get_provider_config(&self, provider_id: &str) -> Result<AIProviderConfig> {
+    pub fn get_active_provider_config(&self) -> Result<AIProviderConfig> {
         self.load_provider_configs()?
             .into_iter()
-            .find(|provider| provider.id == provider_id)
-            .ok_or_else(|| anyhow::anyhow!("AI provider '{}' not found", provider_id))
+            .find(|provider| provider.is_enabled)
+            .ok_or_else(|| anyhow::anyhow!("No enabled AI provider found"))
     }
 
     pub fn get_api_key(&self, provider_id: &str) -> Result<String> {

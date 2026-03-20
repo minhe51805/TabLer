@@ -164,3 +164,33 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
 
     statements
 }
+
+#[cfg(test)]
+mod tests {
+    use super::split_sql_statements;
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    struct SqlSplitterFixture {
+        name: String,
+        sql: String,
+        expected: Vec<String>,
+    }
+
+    #[test]
+    fn sql_splitter_contract() {
+        let fixtures: Vec<SqlSplitterFixture> = serde_json::from_str(include_str!(
+            "../../../fixtures/sql_statement_splitter_cases.json"
+        ))
+        .expect("shared SQL splitter fixtures should parse");
+
+        for fixture in fixtures {
+            let actual = split_sql_statements(&fixture.sql);
+            assert_eq!(
+                actual, fixture.expected,
+                "split_sql_statements mismatch for fixture {}",
+                fixture.name
+            );
+        }
+    }
+}

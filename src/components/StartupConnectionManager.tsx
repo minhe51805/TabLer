@@ -47,7 +47,7 @@ const DB_LABELS: Record<string, { abbr: string; color: string }> = {
 };
 
 const APP_VERSION = "0.1.0";
-const APP_DEVELOPER = "TableR Team";
+const APP_DEVELOPER = "TabLer Team";
 const STARTUP_CONNECTION_LAYOUT_STORAGE_KEY = "tabler.startup-connection-layout";
 
 type ConnectionLayoutMode = "stacked" | "grid";
@@ -218,7 +218,16 @@ export function StartupConnectionManager({
     if (isConnecting) return;
 
     if (connectedIds.has(connection.id)) {
-      useAppStore.setState({ activeConnectionId: connection.id });
+      useAppStore.setState({
+        activeConnectionId: connection.id,
+        currentDatabase: connection.database ?? null,
+        ...(connection.database
+          ? {}
+          : {
+              tables: [],
+              schemaObjects: [],
+            }),
+      });
       await fetchDatabases(connection.id);
       if (connection.database) {
         useAppStore.setState({ currentDatabase: connection.database });
@@ -334,7 +343,7 @@ export function StartupConnectionManager({
         <div className="startup-manager-topbar">
           <div className="startup-manager-topbar-brand">
             <Database className="w-4 h-4 text-[var(--accent)]" />
-            <span>TableR</span>
+            <span>TabLer</span>
           </div>
           {windowControls ? <div className="startup-manager-controls">{windowControls}</div> : null}
         </div>
@@ -347,7 +356,7 @@ export function StartupConnectionManager({
               </div>
 
               <div className="startup-manager-brand-copy">
-                <h2 className="startup-manager-app-name">TableR</h2>
+                <h2 className="startup-manager-app-name">TabLer</h2>
                 <p className="startup-manager-app-version">Version {APP_VERSION}</p>
                 <p className="startup-manager-app-developer">{APP_DEVELOPER}</p>
               </div>

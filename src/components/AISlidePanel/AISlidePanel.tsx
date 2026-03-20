@@ -297,7 +297,7 @@ export function AISlidePanel({
         ].join("\n");
       }
 
-      const aiResponse = await askAI(activeProvider.id, prompt, context, "panel");
+      const aiResponse = await askAI(prompt, context, "panel");
       if (requestId !== requestIdRef.current) {
         return;
       }

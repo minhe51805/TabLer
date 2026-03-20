@@ -3,6 +3,7 @@ import Editor, { type OnMount } from "@monaco-editor/react";
 import { AlertCircle, Terminal } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import type { ConnectionConfig, QueryResult } from "../../types";
+import { devLogError } from "../../utils/logger";
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import { DataGrid } from "../DataGrid";
 
@@ -406,7 +407,7 @@ export function SQLEditor({
           const prompt = `Complete this SQL query (return only the remaining code):\n${textUntilPosition}`;
           const requestPromise = useAppStore
             .getState()
-            .askAI(activeProvider.id, prompt, dbContext, "inline")
+            .askAI(prompt, dbContext, "inline")
             .then((response) => normalizeInlineSuggestion(response, textUntilPosition))
             .finally(() => {
               if (inlineCompletionInFlightRef.current?.key === completionKey) {
@@ -435,7 +436,7 @@ export function SQLEditor({
             };
           }
         } catch (e) {
-          console.error("AI Completion error", e);
+          devLogError("AI Completion error", e);
         }
         return { items: [] };
       },

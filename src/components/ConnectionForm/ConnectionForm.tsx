@@ -353,7 +353,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
       db_type: bootstrapMode ? "postgresql" : "mysql",
       host: "127.0.0.1",
       port: bootstrapMode ? 5432 : 3306,
-      username: bootstrapMode ? "postgres" : "root",
+      username: "",
       database: "",
       file_path: "",
       use_ssl: false,
@@ -383,6 +383,15 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
   const hasBootstrapDatabaseName = !!formData.database?.trim();
   const isBootstrappingWorkspace = isCreatingDatabase || isConnecting;
   const sqliteDatabaseName = (formData.database || "").trim() || (formData.name || "").trim() || "local-database";
+  const suggestedUsernamePlaceholder =
+    selectedDb?.key === "postgresql" ||
+    selectedDb?.key === "cockroachdb" ||
+    selectedDb?.key === "greenplum" ||
+    selectedDb?.key === "redshift"
+      ? "postgres"
+      : selectedDb?.key === "mysql" || selectedDb?.key === "mariadb"
+        ? "root"
+        : "db_user";
   const connectionTitle = editConnection
     ? language === "vi"
       ? "Sửa kết nối"
@@ -435,7 +444,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
           readyNow: "Sẵn sàng ngay",
           readyNowCaption: "Các engine bạn có thể cấu hình ngay trong bản build này.",
           roadmapCaption: "Các engine sắp tới đã hiển thị trong định hướng sản phẩm.",
-          localReadyCaption: "Khởi tạo và mở các engine này trực tiếp từ TableR.",
+          localReadyCaption: "Khởi tạo và mở các engine này trực tiếp từ TabLer.",
           connectOnly: "Chỉ kết nối",
           connectOnlyCaption: "Đã hỗ trợ kết nối thông thường, nhưng local bootstrap chưa được nối.",
           localRoadmap: "Lộ trình local",
@@ -576,11 +585,11 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
         storage: "Storage",
         databaseFile: "Database file",
         databaseFileBootstrapCopy:
-          "Give the database a name and TableR will place the SQLite file in its default local storage folder for you.",
+          "Give the database a name and TabLer will place the SQLite file in its default local storage folder for you.",
         databaseFileConnectCopy: "Point to an existing SQLite file or enter a path for a new one.",
         databaseName: "Database name",
         databaseNamePlaceholder: "my_local_db",
-        databaseNameHint: `TableR will create ${sqliteDatabaseName}.sqlite for you automatically.`,
+        databaseNameHint: `TabLer will create ${sqliteDatabaseName}.sqlite for you automatically.`,
         defaultLocation: "Default location",
         preparingSqliteLocation: "Preparing SQLite file location...",
         chooseLocation: "Choose location",
@@ -602,7 +611,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
           "Local host detected. Create this database and jump straight into the workspace.",
         localHostDetectedBlank:
           "Local host detected. Enter a database name to enable create-and-open bootstrap.",
-        engineNotLocalBootstrap: "This engine is not wired for local bootstrap yet in TableR.",
+        engineNotLocalBootstrap: "This engine is not wired for local bootstrap yet in TabLer.",
         useSsl: "Use SSL/TLS",
         useSslNote:
           "Recommended for cloud databases like Supabase, Neon, and managed PostgreSQL.",
@@ -667,12 +676,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
           bootstrapMode && db.key === "sqlite"
             ? prev.database || prev.name || "local-database"
             : prev.database,
-        username:
-          db.key === "postgresql" || db.key === "cockroachdb" || db.key === "greenplum" || db.key === "redshift"
-            ? "postgres"
-          : db.key === "mysql" || db.key === "mariadb"
-            ? "root"
-            : prev.username,
+        username: db.key === "sqlite" ? prev.username : "",
     }));
     setStep("form");
   };
@@ -720,12 +724,19 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
     };
   }, [bootstrapMode, isSqlite, sqliteDatabaseName, sqlitePathTouched, suggestSqliteDatabasePath]);
 
+  useEffect(() => {
+    return () => {
+      passwordDraftRef.current = "";
+    };
+  }, []);
+
   const handleConnect = async () => {
     try {
       await connectToDatabase({
         ...formData,
         password: isSqlite ? undefined : passwordDraftRef.current,
       });
+      passwordDraftRef.current = "";
       onClose();
     } catch (e) {
       setTestResult({ success: false, message: String(e) });
@@ -782,6 +793,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
               : `Creating SQLite database from ${resolvedFilePath}...`,
         });
         await connectToDatabase(sqliteConfig);
+        passwordDraftRef.current = "";
         onClose();
         return;
       }
@@ -822,6 +834,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
             : `${message} Connecting to ${requestedDatabase}...`,
       });
       await connectToDatabase(bootstrapConfig);
+      passwordDraftRef.current = "";
       onClose();
     } catch (e) {
       setTestResult({ success: false, message: String(e) });
@@ -1456,7 +1469,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
                     type="text"
                     value={formData.username || ""}
                     onChange={(e) => updateField("username", e.target.value)}
-                    placeholder="root"
+                    placeholder={suggestedUsernamePlaceholder}
                     className="input h-11"
                   />
                 </div>

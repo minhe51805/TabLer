@@ -84,6 +84,28 @@
   display: none;
 }
 
+.app-root.startup-shell-active .connection-picker-overlay,
+.app-root.startup-shell-active .connection-form-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.app-root.startup-shell-active .connection-picker-modal,
+.app-root.startup-shell-active .connection-form-modal {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .startup-manager-hero {
   display: flex;
   flex-direction: column;

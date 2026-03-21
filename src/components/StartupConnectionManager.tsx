@@ -1,6 +1,5 @@
 import {
   Database,
-  FolderPlus,
   LayoutGrid,
   LayoutList,
   Plus,
@@ -21,7 +20,6 @@ import type { ConnectionConfig } from "../types";
 
 interface Props {
   onNewConnection: () => void;
-  onCreateLocalDb: () => void;
   windowControls?: ReactNode;
 }
 
@@ -76,7 +74,6 @@ function getInitialLayoutMode(): ConnectionLayoutMode {
 
 export function StartupConnectionManager({
   onNewConnection,
-  onCreateLocalDb,
   windowControls,
 }: Props) {
   const { language, t } = useI18n();
@@ -105,9 +102,7 @@ export function StartupConnectionManager({
   const [search, setSearch] = useState("");
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [layoutMode, setLayoutMode] = useState<ConnectionLayoutMode>(getInitialLayoutMode);
-  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
-  const createMenuRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   const sortedConnections = useMemo(() => {
@@ -163,33 +158,6 @@ export function StartupConnectionManager({
   }, [filteredConnections, selectedConnectionId]);
 
   useEffect(() => {
-    if (!isCreateMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node | null;
-      if (target && createMenuRef.current?.contains(target)) {
-        return;
-      }
-
-      setIsCreateMenuOpen(false);
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setIsCreateMenuOpen(false);
-      }
-    };
-
-    window.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isCreateMenuOpen]);
-
-  useEffect(() => {
     window.localStorage.setItem(STARTUP_CONNECTION_LAYOUT_STORAGE_KEY, layoutMode);
   }, [layoutMode]);
 
@@ -240,16 +208,6 @@ export function StartupConnectionManager({
     }
 
     await connectSavedConnection(connection.id);
-  };
-
-  const handleCreateConnection = () => {
-    setIsCreateMenuOpen(false);
-    onNewConnection();
-  };
-
-  const handleCreateLocalDb = () => {
-    setIsCreateMenuOpen(false);
-    onCreateLocalDb();
   };
 
   const handleConnectionHover = (
@@ -411,30 +369,15 @@ export function StartupConnectionManager({
                 </button>
               </div>
 
-              <div className="startup-manager-search-menu" ref={createMenuRef}>
-                <button
-                  type="button"
-                  className={`startup-manager-search-add ${isCreateMenuOpen ? "active" : ""}`}
-                  onClick={() => setIsCreateMenuOpen((current) => !current)}
-                  aria-label={t("startup.manager.createConnection")}
-                  title={t("startup.manager.createConnection")}
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-
-                {isCreateMenuOpen ? (
-                  <div className="startup-manager-create-menu">
-                    <button type="button" onClick={handleCreateConnection}>
-                      <FolderPlus className="w-4 h-4" />
-                      <span>{t("startup.manager.createConnection")}</span>
-                    </button>
-                    <button type="button" onClick={handleCreateLocalDb}>
-                      <Database className="w-4 h-4" />
-                      <span>{t("startup.manager.createLocalDb")}</span>
-                    </button>
-                  </div>
-                ) : null}
-              </div>
+              <button
+                type="button"
+                className="startup-manager-search-add"
+                onClick={onNewConnection}
+                aria-label={t("startup.manager.createConnection")}
+                title={t("startup.manager.createConnection")}
+              >
+                <Plus className="w-4 h-4" />
+              </button>
             </div>
 
             <div className="startup-manager-content">

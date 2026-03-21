@@ -1,6 +1,7 @@
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{ConnectionConfig, DatabaseInfo, DatabaseType, ParsedConnectionUrl};
 use crate::database::safety::{quote_mysql_identifier, quote_postgres_identifier};
+use crate::commands::window::{apply_window_profile_to_main, WindowProfile};
 use crate::storage::connection_storage::ConnectionStorage;
 use crate::utils::rate_limiter::ConnectionAttemptLimiter;
 use rfd::FileDialog;
@@ -8,7 +9,7 @@ use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use sqlx::mysql::{MySqlConnectOptions, MySqlConnection, MySqlSslMode};
 use sqlx::{ConnectOptions, Connection, Executor};
 use std::path::PathBuf;
-use tauri::State;
+use tauri::{AppHandle, State};
 use tokio::task;
 use tokio::time::{timeout, Duration};
 
@@ -459,6 +460,7 @@ async fn create_local_mysql_database(
 #[tauri::command]
 pub async fn connect_database(
     mut config: ConnectionConfig,
+    app: AppHandle,
     db_manager: State<'_, DatabaseManager>,
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
@@ -493,6 +495,10 @@ pub async fn connect_database(
             "Failed to save the connection profile. The live connection was rolled back.{}",
             disconnect_message
         ));
+    }
+
+    if let Err(error) = apply_window_profile_to_main(&app, WindowProfile::Workspace) {
+        eprintln!("Failed to apply workspace window profile after connect: {error}");
     }
 
     Ok(config.id.clone())
@@ -677,6 +683,7 @@ pub async fn get_saved_connections(
 #[tauri::command]
 pub async fn connect_saved_connection(
     connection_id: String,
+    app: AppHandle,
     db_manager: State<'_, DatabaseManager>,
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
@@ -695,6 +702,10 @@ pub async fn connect_saved_connection(
         .await
         .map_err(|_| "Connection attempt timed out after 45 seconds.".to_string())?
         .map_err(|e| format_connection_runtime_error(&config, e))?;
+
+    if let Err(error) = apply_window_profile_to_main(&app, WindowProfile::Workspace) {
+        eprintln!("Failed to apply workspace window profile after saved connect: {error}");
+    }
 
     Ok(config.id)
 }

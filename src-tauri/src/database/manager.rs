@@ -1,4 +1,7 @@
 use super::driver::DatabaseDriver;
+use super::clickhouse::ClickHouseDriver;
+use super::libsql::LibSqlDriver;
+use super::mssql::MssqlDriver;
 use super::models::*;
 use super::mysql::MySqlDriver;
 use super::postgres::PostgresDriver;
@@ -31,12 +34,22 @@ impl DatabaseManager {
             DatabaseType::PostgreSQL
             | DatabaseType::CockroachDB
             | DatabaseType::Greenplum
-            | DatabaseType::Redshift => {
+            | DatabaseType::Redshift
+            | DatabaseType::Vertica => {
                 Box::new(PostgresDriver::connect(config).await?)
             }
             DatabaseType::SQLite => {
                 let path = config.file_path.as_deref().unwrap_or(":memory:");
                 Box::new(SqliteDriver::connect(path).await?)
+            }
+            DatabaseType::MSSQL => {
+                Box::new(MssqlDriver::connect(config).await?)
+            }
+            DatabaseType::LibSQL => {
+                Box::new(LibSqlDriver::connect(config).await?)
+            }
+            DatabaseType::ClickHouse => {
+                Box::new(ClickHouseDriver::connect(config).await?)
             }
             _ => {
                 return Err(anyhow!(

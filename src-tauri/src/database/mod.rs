@@ -6,4 +6,7 @@ pub mod query_common;
 pub mod mysql;
 pub mod postgres;
 pub mod sqlite;
+pub mod mssql;
+pub mod clickhouse;
+pub mod libsql;
 pub mod ai_models;

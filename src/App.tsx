@@ -1632,6 +1632,7 @@ function App() {
           <Suspense fallback={null}>
             <ConnectionForm
               initialIntent={connectionFormIntent}
+              embeddedInStartupShell
               onClose={handleCloseConnectionForm}
             />
           </Suspense>
@@ -1955,6 +1956,7 @@ function App() {
         <Suspense fallback={null}>
           <ConnectionForm
             initialIntent={connectionFormIntent}
+            embeddedInStartupShell={false}
             onClose={handleCloseConnectionForm}
           />
         </Suspense>

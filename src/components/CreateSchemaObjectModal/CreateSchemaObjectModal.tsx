@@ -588,7 +588,7 @@ export function CreateSchemaObjectModal({
           ].join("\n")
         : "";
 
-      const response = await askAI(activeProvider.id, aiPrompt, context, "panel");
+      const response = await askAI(aiPrompt, context, "panel");
       setAiResponse(response.trim());
     } catch (error) {
       setAiError(error instanceof Error ? error.message : String(error));

@@ -56,6 +56,15 @@ pub fn quote_mysql_identifier(value: &str) -> Result<String> {
     quote_identifier_with(value, '`', "Identifier")
 }
 
+pub fn quote_clickhouse_identifier(value: &str) -> Result<String> {
+    quote_identifier_with(value, '`', "Identifier")
+}
+
+pub fn quote_mssql_identifier(value: &str) -> Result<String> {
+    let identifier = validate_identifier_part(value, "Identifier")?;
+    Ok(format!("[{}]", identifier.replace(']', "]]")))
+}
+
 pub fn qualify_postgres_table_name(table: &str, default_schema: &str) -> Result<String> {
     let parts = split_qualified_name(table)?;
     let (schema, table_name) = if parts.len() == 2 {
@@ -92,6 +101,21 @@ pub fn qualify_mysql_table_name(table: &str, database: Option<&str>) -> Result<S
     quote_mysql_identifier(&parts[0])
 }
 
+pub fn qualify_mssql_table_name(table: &str, default_schema: &str) -> Result<String> {
+    let parts = split_qualified_name(table)?;
+    let (schema, table_name) = if parts.len() == 2 {
+        (parts[0].clone(), parts[1].clone())
+    } else {
+        (validate_identifier_part(default_schema, "Schema")?, parts[0].clone())
+    };
+
+    Ok(format!(
+        "{}.{}",
+        quote_mssql_identifier(&schema)?,
+        quote_mssql_identifier(&table_name)?
+    ))
+}
+
 pub fn normalize_order_dir(order_dir: Option<&str>) -> Result<&'static str> {
     match order_dir.unwrap_or("ASC").trim().to_ascii_uppercase().as_str() {
         "ASC" => Ok("ASC"),
@@ -114,6 +138,24 @@ pub fn quote_mysql_order_by(column: &str) -> Result<String> {
     Ok(parts
         .iter()
         .map(|part| quote_mysql_identifier(part))
+        .collect::<Result<Vec<_>>>()?
+        .join("."))
+}
+
+pub fn quote_clickhouse_order_by(column: &str) -> Result<String> {
+    let parts = split_qualified_name(column)?;
+    Ok(parts
+        .iter()
+        .map(|part| quote_clickhouse_identifier(part))
+        .collect::<Result<Vec<_>>>()?
+        .join("."))
+}
+
+pub fn quote_mssql_order_by(column: &str) -> Result<String> {
+    let parts = split_qualified_name(column)?;
+    Ok(parts
+        .iter()
+        .map(|part| quote_mssql_identifier(part))
         .collect::<Result<Vec<_>>>()?
         .join("."))
 }
@@ -466,6 +508,14 @@ pub fn sanitize_postgres_filter_clause(filter: Option<&str>) -> Result<Option<St
 
 pub fn sanitize_mysql_filter_clause(filter: Option<&str>) -> Result<Option<String>> {
     sanitize_filter_clause_with(filter, quote_mysql_order_by, false)
+}
+
+pub fn sanitize_clickhouse_filter_clause(filter: Option<&str>) -> Result<Option<String>> {
+    sanitize_filter_clause_with(filter, quote_clickhouse_order_by, false)
+}
+
+pub fn sanitize_mssql_filter_clause(filter: Option<&str>) -> Result<Option<String>> {
+    sanitize_filter_clause_with(filter, quote_mssql_order_by, false)
 }
 
 pub fn sanitize_sqlite_filter_clause(filter: Option<&str>) -> Result<Option<String>> {

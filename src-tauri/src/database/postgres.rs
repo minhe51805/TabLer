@@ -1,5 +1,6 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_common::{statement_returns_rows, MAX_QUERY_RESULT_ROWS};
 use super::safety::{
     normalize_order_dir, qualify_postgres_table_name, quote_postgres_order_by,
     sanitize_postgres_filter_clause,
@@ -21,13 +22,16 @@ pub struct PostgresDriver {
     current_db: Arc<RwLock<Option<String>>>,
 }
 
-const MAX_QUERY_RESULT_ROWS: usize = 500;
-
 impl PostgresDriver {
     pub async fn connect(config: &ConnectionConfig) -> Result<Self> {
         let host = config.host.as_deref().unwrap_or("127.0.0.1");
         let port = config.port.unwrap_or_else(|| config.default_port());
-        let user = config.username.as_deref().unwrap_or("postgres");
+        let user = config
+            .username
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .context("PostgreSQL username is required")?;
         let database = config.database.as_deref().unwrap_or("postgres");
 
         let mut options = PgConnectOptions::new()
@@ -86,12 +90,7 @@ impl PostgresDriver {
     }
 
     fn query_returns_rows(sql: &str) -> bool {
-        let trimmed = sql.trim().to_uppercase();
-        trimmed.starts_with("SELECT")
-            || trimmed.starts_with("SHOW")
-            || trimmed.starts_with("EXPLAIN")
-            || trimmed.starts_with("WITH")
-            || trimmed.contains(" RETURNING ")
+        statement_returns_rows(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH"])
     }
 
     fn build_result_from_rows(

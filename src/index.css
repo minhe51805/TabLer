@@ -84,6 +84,62 @@
   display: none;
 }
 
+.app-root.startup-shell-active .connection-picker-overlay,
+.app-root.startup-shell-active .connection-form-overlay,
+.connection-picker-overlay.startup-shell-mode,
+.connection-form-overlay.startup-shell-mode {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.app-root.startup-shell-active .connection-picker-modal,
+.app-root.startup-shell-active .connection-form-modal,
+.connection-picker-modal.startup-shell-mode,
+.connection-form-modal.startup-shell-mode {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.connection-picker-shell,
+.connection-form-shell {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.connection-picker-shell {
+  background:
+    radial-gradient(520px 320px at 100% 0%, rgba(122, 162, 255, 0.12), transparent 72%),
+    radial-gradient(360px 240px at 0% 0%, rgba(122, 162, 255, 0.08), transparent 70%),
+    linear-gradient(180deg, rgba(20, 27, 38, 0.98), rgba(12, 18, 28, 0.98));
+}
+
+.connection-form-shell {
+  background:
+    radial-gradient(420px 240px at 100% 0%, rgba(122, 162, 255, 0.08), transparent 68%),
+    radial-gradient(360px 240px at 0% 0%, rgba(122, 162, 255, 0.08), transparent 70%),
+    linear-gradient(180deg, rgba(20, 27, 38, 0.98), rgba(12, 18, 28, 0.98));
+}
+
 .startup-manager-hero {
   display: flex;
   flex-direction: column;

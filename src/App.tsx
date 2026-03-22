@@ -274,20 +274,30 @@ function App() {
     });
   }, [activeConnectionId, addTab, currentDatabase, queryTabCount]);
 
+  const applyDesktopWindowProfile = useCallback(
+    async (profile: "launcher" | "form" | "workspace") => {
+      if (!isDesktopWindow) return;
+      await invoke("apply_window_profile", { profile });
+    },
+    [isDesktopWindow],
+  );
+
   const handleOpenConnectionForm = useCallback(
     (intent: "connect" | "bootstrap") => {
       setShowStartupConnectionManager(false);
       setConnectionFormIntent(intent);
+      void applyDesktopWindowProfile("form");
     },
-    [],
+    [applyDesktopWindowProfile],
   );
 
   const handleCloseConnectionForm = useCallback(() => {
     setConnectionFormIntent(null);
     if (!activeConnectionId || !connectedIds.has(activeConnectionId)) {
       setShowStartupConnectionManager(true);
+      void applyDesktopWindowProfile("launcher");
     }
-  }, [activeConnectionId, connectedIds]);
+  }, [activeConnectionId, applyDesktopWindowProfile, connectedIds]);
 
   const handleToggleWindowMenu = useCallback((event?: ReactMouseEvent<HTMLElement>) => {
     event?.stopPropagation();
@@ -1192,13 +1202,21 @@ function App() {
   }, [activeConnectionId, connectedIds]);
 
   useEffect(() => {
-    if (!isDesktopWindow) return;
+    if (isConnected || connectionFormIntent) return;
 
-    const windowProfile: "launcher" | "form" | "workspace" = !isConnected
-      ? connectionFormIntent
-        ? "form"
-        : "launcher"
-      : "workspace";
+    setShowStartupConnectionManager(true);
+    setShowAISlidePanel(false);
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuSection(null);
+    setActiveWindowMenuItemPath(null);
+  }, [connectionFormIntent, isConnected]);
+
+  useEffect(() => {
+    if (!isDesktopWindow || isConnected) return;
+
+    const windowProfile: "launcher" | "form" = connectionFormIntent
+      ? "form"
+      : "launcher";
 
     let cancelled = false;
     const syncGeneration = ++windowSyncGenerationRef.current;
@@ -1208,7 +1226,7 @@ function App() {
       try {
         if (isStale()) return;
 
-        await invoke("apply_window_profile", { profile: windowProfile });
+        await applyDesktopWindowProfile(windowProfile);
       } catch (windowError) {
         console.error("Failed to synchronize startup window state", windowError);
       }
@@ -1219,30 +1237,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [connectionFormIntent, isConnected, isDesktopWindow]);
-
-  useEffect(() => {
-    if (!isDesktopWindow || !isConnected) return;
-
-    let cancelled = false;
-
-    const reinforceWorkspaceWindow = async () => {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
-      if (cancelled) return;
-
-      try {
-        await invoke("apply_window_profile", { profile: "workspace" });
-      } catch (windowError) {
-        console.error("Failed to reinforce workspace window state", windowError);
-      }
-    };
-
-    void reinforceWorkspaceWindow();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isConnected, isDesktopWindow]);
+  }, [applyDesktopWindowProfile, connectionFormIntent, isConnected, isDesktopWindow]);
 
   useEffect(() => {
     if (!activeConnectionId || !connectedIds.has(activeConnectionId)) return;
@@ -1637,6 +1632,7 @@ function App() {
           <Suspense fallback={null}>
             <ConnectionForm
               initialIntent={connectionFormIntent}
+              embeddedInStartupShell
               onClose={handleCloseConnectionForm}
             />
           </Suspense>
@@ -1645,7 +1641,6 @@ function App() {
         {showStartupConnectionManager && !isConnected && !connectionFormIntent && (
           <StartupConnectionManager
             onNewConnection={() => handleOpenConnectionForm("connect")}
-            onCreateLocalDb={() => handleOpenConnectionForm("bootstrap")}
             windowControls={renderWindowControls("startup-window-controls", { lockSize: true })}
           />
         )}
@@ -1961,6 +1956,7 @@ function App() {
         <Suspense fallback={null}>
           <ConnectionForm
             initialIntent={connectionFormIntent}
+            embeddedInStartupShell={false}
             onClose={handleCloseConnectionForm}
           />
         </Suspense>
@@ -2096,7 +2092,6 @@ function App() {
       {showStartupConnectionManager && !isConnected && !connectionFormIntent && (
         <StartupConnectionManager
           onNewConnection={() => handleOpenConnectionForm("connect")}
-          onCreateLocalDb={() => handleOpenConnectionForm("bootstrap")}
           windowControls={renderWindowControls("startup-window-controls")}
         />
       )}

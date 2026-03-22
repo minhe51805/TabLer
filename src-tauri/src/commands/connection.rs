@@ -1,6 +1,7 @@
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{ConnectionConfig, DatabaseInfo, DatabaseType, ParsedConnectionUrl};
 use crate::database::safety::{quote_mysql_identifier, quote_postgres_identifier};
+use crate::commands::window::{apply_window_profile_to_main, WindowProfile};
 use crate::storage::connection_storage::ConnectionStorage;
 use crate::utils::rate_limiter::ConnectionAttemptLimiter;
 use rfd::FileDialog;
@@ -8,7 +9,7 @@ use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use sqlx::mysql::{MySqlConnectOptions, MySqlConnection, MySqlSslMode};
 use sqlx::{ConnectOptions, Connection, Executor};
 use std::path::PathBuf;
-use tauri::State;
+use tauri::{AppHandle, State};
 use tokio::task;
 use tokio::time::{timeout, Duration};
 
@@ -24,7 +25,7 @@ where
 {
     task::spawn_blocking(operation)
         .await
-        .map_err(|error| format!("Background storage task failed: {error}"))?
+        .map_err(|_| "Background storage task failed unexpectedly.".to_string())?
 }
 
 fn connection_rate_limit_key(config: &ConnectionConfig) -> String {
@@ -159,6 +160,42 @@ fn format_local_bootstrap_error(engine_label: &str, stage: &str) -> String {
     )
 }
 
+fn format_connection_lookup_error(error: impl std::fmt::Display) -> String {
+    let normalized = error.to_string().to_ascii_lowercase();
+    if normalized.contains("not found") || normalized.contains("connect first") {
+        "The selected connection is not active. Please reconnect and try again.".to_string()
+    } else {
+        "The requested connection is not available right now. Please reconnect and try again.".to_string()
+    }
+}
+
+fn format_disconnect_runtime_error(error: impl std::fmt::Display) -> String {
+    let normalized = error.to_string().to_ascii_lowercase();
+    if normalized.contains("not found") || normalized.contains("connect first") {
+        "The selected connection is already disconnected.".to_string()
+    } else {
+        "Disconnect failed. Please try again.".to_string()
+    }
+}
+
+fn format_database_listing_error(error: impl std::fmt::Display) -> String {
+    let normalized = error.to_string().to_ascii_lowercase();
+    if normalized.contains("permission") || normalized.contains("access denied") {
+        "The current connection does not have permission to list databases.".to_string()
+    } else {
+        "Failed to load databases from the current connection.".to_string()
+    }
+}
+
+fn format_database_switch_error(error: impl std::fmt::Display) -> String {
+    let normalized = error.to_string().to_ascii_lowercase();
+    if normalized.contains("not found") || normalized.contains("unknown database") {
+        "The requested database could not be found. Please verify the database name.".to_string()
+    } else {
+        "Failed to switch databases. Please verify the target database and try again.".to_string()
+    }
+}
+
 fn is_local_host(host: &str) -> bool {
     matches!(
         host.trim().to_ascii_lowercase().as_str(),
@@ -209,7 +246,12 @@ async fn create_local_postgres_database(
         .as_deref()
         .ok_or_else(|| "Host is required for PostgreSQL".to_string())?;
     let port = config.port.unwrap_or_else(|| config.default_port());
-    let user = config.username.as_deref().unwrap_or("postgres");
+    let user = config
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Username is required for PostgreSQL local bootstrap.".to_string())?;
 
     let mut options = PgConnectOptions::new()
         .host(host)
@@ -314,7 +356,12 @@ async fn create_local_mysql_database(
         .as_deref()
         .ok_or_else(|| "Host is required for MySQL/MariaDB".to_string())?;
     let port = config.port.unwrap_or_else(|| config.default_port());
-    let user = config.username.as_deref().unwrap_or("root");
+    let user = config
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Username is required for MySQL local bootstrap.".to_string())?;
 
     let mut options = MySqlConnectOptions::new()
         .host(host)
@@ -413,6 +460,7 @@ async fn create_local_mysql_database(
 #[tauri::command]
 pub async fn connect_database(
     mut config: ConnectionConfig,
+    app: AppHandle,
     db_manager: State<'_, DatabaseManager>,
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
@@ -430,7 +478,7 @@ pub async fn connect_database(
     let storage = conn_storage.inner().clone();
     let config_to_save = config.clone();
 
-    if let Err(error) = run_blocking_storage_task(move || {
+    if let Err(_error) = run_blocking_storage_task(move || {
         storage
             .save_connection(&config_to_save)
             .map_err(|e| e.to_string())
@@ -439,14 +487,18 @@ pub async fn connect_database(
     {
         let disconnect_message = match timeout(DISCONNECT_TIMEOUT, db_manager.disconnect(&config.id)).await {
             Ok(Ok(())) => String::new(),
-            Ok(Err(disconnect_error)) => format!(" Cleanup failed: {}", disconnect_error),
+            Ok(Err(_)) => " Cleanup failed while rolling back the live connection.".to_string(),
             Err(_) => " Cleanup timed out.".to_string(),
         };
 
         return Err(format!(
-            "Failed to save connection: {}. The live connection was rolled back.{}",
-            error, disconnect_message
+            "Failed to save the connection profile. The live connection was rolled back.{}",
+            disconnect_message
         ));
+    }
+
+    if let Err(error) = apply_window_profile_to_main(&app, WindowProfile::Workspace) {
+        eprintln!("Failed to apply workspace window profile after connect: {error}");
     }
 
     Ok(config.id.clone())
@@ -460,7 +512,7 @@ pub async fn disconnect_database(
     timeout(DISCONNECT_TIMEOUT, db_manager.disconnect(&connection_id))
         .await
         .map_err(|_| "Disconnect timed out after 15 seconds.".to_string())?
-        .map_err(|e| format!("Disconnect failed: {}", e))
+        .map_err(format_disconnect_runtime_error)
 }
 
 #[tauri::command]
@@ -481,7 +533,7 @@ pub async fn test_connection(
     timeout(DISCONNECT_TIMEOUT, temp_manager.disconnect(&config.id))
         .await
         .map_err(|_| "Connection test cleanup timed out after 15 seconds.".to_string())?
-        .map_err(|e| format!("Cleanup failed: {}", e))?;
+        .map_err(|_| "Connection test cleanup failed. Please try again.".to_string())?;
     Ok("Connection successful".to_string())
 }
 
@@ -493,8 +545,11 @@ pub async fn list_databases(
     let driver = db_manager
         .get_driver(&connection_id)
         .await
-        .map_err(|e| e.to_string())?;
-    driver.list_databases().await.map_err(|e| e.to_string())
+        .map_err(format_connection_lookup_error)?;
+    driver
+        .list_databases()
+        .await
+        .map_err(format_database_listing_error)
 }
 
 #[tauri::command]
@@ -506,11 +561,11 @@ pub async fn use_database(
     let driver = db_manager
         .get_driver(&connection_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(format_connection_lookup_error)?;
     timeout(USE_DATABASE_TIMEOUT, driver.use_database(&database))
         .await
         .map_err(|_| "Switching database timed out after 15 seconds.".to_string())?
-        .map_err(|e| e.to_string())
+        .map_err(format_database_switch_error)
 }
 
 #[tauri::command]
@@ -597,7 +652,7 @@ pub async fn pick_sqlite_database_path(database_name: String) -> Result<Option<S
     let selected = FileDialog::new()
         .set_directory(directory)
         .set_file_name(file_name)
-        .add_filter("SQLite database", &["sqlite", "sqlite3", "db"])
+        .add_filter("SQLite database", &["sqlite", "sqlite3", "db", "db3"])
         .save_file();
 
     Ok(selected.map(|path| path.to_string_lossy().to_string()))
@@ -620,7 +675,7 @@ pub async fn get_saved_connections(
                     })
                     .collect()
             })
-            .map_err(|e| format!("Failed to load connections: {}", e))
+            .map_err(|_| "Failed to load saved connections.".to_string())
     })
     .await
 }
@@ -628,6 +683,7 @@ pub async fn get_saved_connections(
 #[tauri::command]
 pub async fn connect_saved_connection(
     connection_id: String,
+    app: AppHandle,
     db_manager: State<'_, DatabaseManager>,
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
@@ -637,7 +693,7 @@ pub async fn connect_saved_connection(
     let config = run_blocking_storage_task(move || {
         storage
             .load_connection_by_id(&requested_connection_id)
-            .map_err(|e| format!("Failed to load saved connection: {}", e))
+            .map_err(|_| "Failed to load the saved connection profile.".to_string())
     })
     .await?;
     connection_rate_limiter.check(&format!("saved|{}", connection_rate_limit_key(&config)))?;
@@ -646,6 +702,10 @@ pub async fn connect_saved_connection(
         .await
         .map_err(|_| "Connection attempt timed out after 45 seconds.".to_string())?
         .map_err(|e| format_connection_runtime_error(&config, e))?;
+
+    if let Err(error) = apply_window_profile_to_main(&app, WindowProfile::Workspace) {
+        eprintln!("Failed to apply workspace window profile after saved connect: {error}");
+    }
 
     Ok(config.id)
 }
@@ -659,7 +719,7 @@ pub async fn delete_saved_connection(
     run_blocking_storage_task(move || {
         storage
             .delete_connection(&connection_id)
-            .map_err(|e| format!("Failed to delete connection: {}", e))
+            .map_err(|_| "Failed to delete the saved connection.".to_string())
     })
     .await
 }

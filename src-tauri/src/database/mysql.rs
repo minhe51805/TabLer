@@ -1,5 +1,6 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_common::{statement_returns_rows, MAX_QUERY_RESULT_ROWS};
 use super::safety::{
     normalize_order_dir, qualify_mysql_table_name, quote_mysql_identifier,
     quote_mysql_order_by, sanitize_mysql_filter_clause,
@@ -19,13 +20,16 @@ pub struct MySqlDriver {
     current_db: Arc<RwLock<Option<String>>>,
 }
 
-const MAX_QUERY_RESULT_ROWS: usize = 500;
-
 impl MySqlDriver {
     pub async fn connect(config: &ConnectionConfig) -> Result<Self> {
         let host = config.host.as_deref().unwrap_or("127.0.0.1");
         let port = config.port.unwrap_or_else(|| config.default_port());
-        let user = config.username.as_deref().unwrap_or("root");
+        let user = config
+            .username
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .context("MySQL username is required")?;
         let database = config.database.as_deref();
 
         let mut options = MySqlConnectOptions::new()
@@ -60,13 +64,7 @@ impl MySqlDriver {
     }
 
     fn query_returns_rows(sql: &str) -> bool {
-        let trimmed = sql.trim().to_uppercase();
-        trimmed.starts_with("SELECT")
-            || trimmed.starts_with("SHOW")
-            || trimmed.starts_with("DESCRIBE")
-            || trimmed.starts_with("EXPLAIN")
-            || trimmed.starts_with("WITH")
-            || trimmed.contains(" RETURNING ")
+        statement_returns_rows(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH"])
     }
 
     fn build_result_from_rows(

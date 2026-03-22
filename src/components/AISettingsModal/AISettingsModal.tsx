@@ -41,10 +41,9 @@ export function AISettingsModal({ onClose }: Props) {
         let isMounted = true;
 
         loadAIConfigs()
-            .then(() => {
+            .then(({ aiConfigs, aiKeyStatus }) => {
                 if (!isMounted) return;
 
-                const { aiConfigs, aiKeyStatus } = useAppStore.getState();
                 setConfigs(
                     aiConfigs.map((config) => ({
                         ...config,
@@ -124,7 +123,15 @@ export function AISettingsModal({ onClose }: Props) {
         setIsSaving(true);
         setSaveError(null);
         try {
-            await saveAIConfigs(configs, apiKeyUpdates, clearedKeyIds);
+            const { aiConfigs, aiKeyStatus } = await saveAIConfigs(configs, apiKeyUpdates, clearedKeyIds);
+            setConfigs(
+                aiConfigs.map((config) => ({
+                    ...config,
+                    allow_schema_context: config.allow_schema_context ?? false,
+                    allow_inline_completion: config.allow_inline_completion ?? false,
+                }))
+            );
+            setStoredKeyStatus(aiKeyStatus);
             onClose();
         } catch (error) {
             setSaveError(error instanceof Error ? error.message : String(error));
@@ -470,7 +477,7 @@ export function AISettingsModal({ onClose }: Props) {
                                                 <span className="form-label">Editor Assist</span>
                                                 <h4>Allow inline completion</h4>
                                                 <p>
-                                                    Inline completion sends your partial SQL while you type. Keep this off unless you trust the provider. TableR only runs it automatically on local or file-based connections by default.
+                                                    Inline completion sends your partial SQL while you type. Keep this off unless you trust the provider. TabLer only runs it automatically on local or file-based connections by default.
                                                 </p>
                                             </div>
                                             <label className="ai-settings-toggle-control">

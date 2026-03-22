@@ -22,6 +22,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
 import type { ColumnDetail, ColumnInfo, QueryResult, RowKeyValue } from "../../types";
+import { devLogError } from "../../utils/logger";
 
 interface Props {
   connectionId: string;
@@ -422,7 +423,7 @@ export function DataGrid({
                   setTotalRows(count);
                 })
                 .catch((error) => {
-                  console.error("Failed to count table rows:", error);
+                  devLogError("Failed to count table rows:", error);
                 });
             }, COUNT_ROWS_DEBOUNCE_MS);
           } else {
@@ -441,7 +442,7 @@ export function DataGrid({
         }
       } catch (e) {
         if (!isMountedRef.current || requestId !== requestIdRef.current) return;
-        console.error("Failed to fetch table data:", e);
+        devLogError("Failed to fetch table data:", e);
         const message = e instanceof Error ? e.message : String(e);
         setError(`Could not load table data for ${tableName}: ${message}`);
         setIsLoading(false);
@@ -531,7 +532,7 @@ export function DataGrid({
           return [] as ColumnDetail[];
         }
 
-        console.error("Failed to load table structure for inline edit:", error);
+        devLogError("Failed to load table structure for inline edit:", error);
         setStructureColumns([]);
         setStructureStatus("failed");
         throw error;
@@ -560,7 +561,7 @@ export function DataGrid({
 
     const warmupId = window.setTimeout(() => {
       void ensureStructureLoaded().catch((error) => {
-        console.error("Inline edit metadata warmup failed:", error);
+        devLogError("Inline edit metadata warmup failed:", error);
       });
     }, 180);
 

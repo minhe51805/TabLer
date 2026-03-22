@@ -1,4 +1,4 @@
-# TableR
+# TabLer
 
 A fast, modern database client for developers. Built with Tauri + React + Rust.
 

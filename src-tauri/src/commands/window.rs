@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use tauri::{AppHandle, LogicalSize, LogicalUnit, Manager, PixelUnit, Size, WindowSizeConstraints};
+use tauri::{AppHandle, LogicalSize, Manager, Size};
 
 const LAUNCHER_WIDTH: f64 = 520.0;
 const LAUNCHER_HEIGHT: f64 = 420.0;
@@ -20,22 +20,8 @@ pub enum WindowProfile {
     Workspace,
 }
 
-fn logical_unit(value: f64) -> PixelUnit {
-    PixelUnit::Logical(LogicalUnit::new(value))
-}
-
-fn constraints(
-    min_width: f64,
-    min_height: f64,
-    max_width: Option<f64>,
-    max_height: Option<f64>,
-) -> WindowSizeConstraints {
-    WindowSizeConstraints {
-        min_width: Some(logical_unit(min_width)),
-        min_height: Some(logical_unit(min_height)),
-        max_width: max_width.map(logical_unit),
-        max_height: max_height.map(logical_unit),
-    }
+fn size(width: f64, height: f64) -> Size {
+    Size::Logical(LogicalSize::new(width, height))
 }
 
 pub fn apply_window_profile_to_main(app: &AppHandle, profile: WindowProfile) -> Result<(), String> {
@@ -58,15 +44,13 @@ pub fn apply_window_profile_to_main(app: &AppHandle, profile: WindowProfile) -> 
                 .set_maximizable(false)
                 .map_err(|error| format!("Failed to disable launcher maximize: {error}"))?;
             window
-                .set_size_constraints(constraints(
-                    LAUNCHER_WIDTH,
-                    LAUNCHER_HEIGHT,
-                    Some(LAUNCHER_WIDTH),
-                    Some(LAUNCHER_HEIGHT),
-                ))
-                .map_err(|error| format!("Failed to set launcher constraints: {error}"))?;
+                .set_min_size(Some(size(LAUNCHER_WIDTH, LAUNCHER_HEIGHT)))
+                .map_err(|error| format!("Failed to set launcher minimum size: {error}"))?;
             window
-                .set_size(Size::Logical(LogicalSize::new(LAUNCHER_WIDTH, LAUNCHER_HEIGHT)))
+                .set_max_size(Some(size(LAUNCHER_WIDTH, LAUNCHER_HEIGHT)))
+                .map_err(|error| format!("Failed to set launcher maximum size: {error}"))?;
+            window
+                .set_size(size(LAUNCHER_WIDTH, LAUNCHER_HEIGHT))
                 .map_err(|error| format!("Failed to set launcher size: {error}"))?;
             window
                 .center()
@@ -83,15 +67,13 @@ pub fn apply_window_profile_to_main(app: &AppHandle, profile: WindowProfile) -> 
                 .set_maximizable(true)
                 .map_err(|error| format!("Failed to enable form maximize: {error}"))?;
             window
-                .set_size_constraints(constraints(
-                    FORM_MIN_WIDTH,
-                    FORM_MIN_HEIGHT,
-                    None,
-                    None,
-                ))
-                .map_err(|error| format!("Failed to set form constraints: {error}"))?;
+                .set_max_size(Option::<Size>::None)
+                .map_err(|error| format!("Failed to clear form maximum size: {error}"))?;
             window
-                .set_size(Size::Logical(LogicalSize::new(FORM_WIDTH, FORM_HEIGHT)))
+                .set_min_size(Some(size(FORM_MIN_WIDTH, FORM_MIN_HEIGHT)))
+                .map_err(|error| format!("Failed to set form minimum size: {error}"))?;
+            window
+                .set_size(size(FORM_WIDTH, FORM_HEIGHT))
                 .map_err(|error| format!("Failed to set form size: {error}"))?;
             window
                 .center()
@@ -105,18 +87,13 @@ pub fn apply_window_profile_to_main(app: &AppHandle, profile: WindowProfile) -> 
                 .set_maximizable(true)
                 .map_err(|error| format!("Failed to enable workspace maximize: {error}"))?;
             window
-                .set_size_constraints(constraints(
-                    WORKSPACE_MIN_WIDTH,
-                    WORKSPACE_MIN_HEIGHT,
-                    None,
-                    None,
-                ))
-                .map_err(|error| format!("Failed to set workspace constraints: {error}"))?;
+                .set_max_size(Option::<Size>::None)
+                .map_err(|error| format!("Failed to clear workspace maximum size: {error}"))?;
             window
-                .set_size(Size::Logical(LogicalSize::new(
-                    WORKSPACE_WIDTH,
-                    WORKSPACE_HEIGHT,
-                )))
+                .set_min_size(Some(size(WORKSPACE_MIN_WIDTH, WORKSPACE_MIN_HEIGHT)))
+                .map_err(|error| format!("Failed to set workspace minimum size: {error}"))?;
+            window
+                .set_size(size(WORKSPACE_WIDTH, WORKSPACE_HEIGHT))
                 .map_err(|error| format!("Failed to set workspace size: {error}"))?;
             window
                 .center()

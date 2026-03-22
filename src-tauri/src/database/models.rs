@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -70,8 +70,11 @@ impl ParsedConnectionUrl {
             "cockroachdb" | "cockroach" => DatabaseType::CockroachDB,
             "greenplum" => DatabaseType::Greenplum,
             "redshift" => DatabaseType::Redshift,
+            "vertica" => DatabaseType::Vertica,
             "mysql" => DatabaseType::MySQL,
             "mariadb" => DatabaseType::MariaDB,
+            "clickhouse" => DatabaseType::ClickHouse,
+            "libsql" => DatabaseType::LibSQL,
             "sqlite" => DatabaseType::SQLite,
             _ => return Err(format!("Unsupported database scheme: {}", scheme)),
         };
@@ -86,6 +89,23 @@ impl ParsedConnectionUrl {
                 password: String::new(),
                 database: rest.to_string(),
                 use_ssl: false,
+            });
+        }
+
+        if db_type == DatabaseType::LibSQL {
+            let (host_port, path_query) = rest.split_once('/').unwrap_or((rest, ""));
+            let (host, port) = parse_host_and_port(host_port)?;
+            let (database, query) = path_query.split_once('?').unwrap_or((path_query, ""));
+            let auth_token = extract_query_param(query, &["authToken", "auth_token"]).unwrap_or_default();
+
+            return Ok(Self {
+                db_type,
+                host,
+                port: port.or(Some(8080)),
+                username: String::new(),
+                password: auth_token,
+                database: database.to_string(),
+                use_ssl: true,
             });
         }
 
@@ -108,22 +128,7 @@ impl ParsedConnectionUrl {
             .unwrap_or((rest, ""));
 
         // Parse host and port
-        let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
-            // Handle IPv6 addresses like [::1]:5432
-            if h.starts_with('[') {
-                let ipv6_host = h
-                    .strip_prefix('[')
-                    .and_then(|value| value.strip_suffix(']'))
-                    .ok_or_else(|| "Invalid URL: unclosed IPv6 address".to_string())?;
-                let port = p.parse().ok();
-                (ipv6_host.to_string(), port)
-            } else {
-                let port = p.parse().ok();
-                (h.to_string(), port)
-            }
-        } else {
-            (host_port.to_string(), None)
-        };
+        let (host, port) = parse_host_and_port(host_port)?;
 
         // Parse database and query params
         let (database, use_ssl) = if let Some((db, query)) = path_query.split_once('?') {
@@ -141,6 +146,7 @@ impl ParsedConnectionUrl {
             DatabaseType::CockroachDB => Some(26257),
             DatabaseType::Greenplum => Some(5432),
             DatabaseType::Redshift => Some(5439),
+            DatabaseType::Vertica => Some(5433),
             DatabaseType::SQLite => None,
             DatabaseType::DuckDB => None,
             DatabaseType::Cassandra => Some(9042),
@@ -148,7 +154,6 @@ impl ParsedConnectionUrl {
             DatabaseType::MSSQL => Some(1433),
             DatabaseType::Redis => Some(6379),
             DatabaseType::MongoDB => Some(27017),
-            DatabaseType::Vertica => Some(5433),
             DatabaseType::ClickHouse => Some(8123),
             DatabaseType::BigQuery => None,
             DatabaseType::LibSQL => Some(8080),
@@ -190,6 +195,47 @@ fn url_decode(s: &str) -> String {
         }
     }
     result
+}
+
+fn parse_host_and_port(host_port: &str) -> Result<(String, Option<u16>), String> {
+    if host_port.trim().is_empty() {
+        return Err("Invalid URL: missing host".to_string());
+    }
+
+    if let Some((h, p)) = host_port.rsplit_once(':') {
+        if h.starts_with('[') {
+            let ipv6_host = h
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .ok_or_else(|| "Invalid URL: unclosed IPv6 address".to_string())?;
+            let port = p
+                .parse::<u16>()
+                .map(Some)
+                .map_err(|_| "Invalid URL: port must be a valid number".to_string())?;
+            return Ok((ipv6_host.to_string(), port));
+        }
+
+        if !h.contains(':') {
+            let port = p
+                .parse::<u16>()
+                .map(Some)
+                .map_err(|_| "Invalid URL: port must be a valid number".to_string())?;
+            return Ok((h.to_string(), port));
+        }
+    }
+
+    Ok((host_port.to_string(), None))
+}
+
+fn extract_query_param(query: &str, keys: &[&str]) -> Option<String> {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find_map(|(key, value)| {
+            keys.iter()
+                .any(|candidate| key.eq_ignore_ascii_case(candidate))
+                .then(|| url_decode(value))
+        })
 }
 
 #[allow(dead_code)]
@@ -320,11 +366,20 @@ impl ConnectionConfig {
             _ => {
                 // For network databases, host is required
                 if let Some(ref host) = self.host {
-                    if host.trim().is_empty() {
-                        return Err("Host cannot be empty".to_string());
-                    }
+                    validate_network_host(host)?;
                 } else {
                     return Err("Host is required for this database type".to_string());
+                }
+
+                if self
+                    .username
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+                    && self.db_type != DatabaseType::LibSQL
+                {
+                    return Err("Username is required for this database type".to_string());
                 }
 
                 // Validate port if provided
@@ -338,6 +393,31 @@ impl ConnectionConfig {
 
         Ok(())
     }
+}
+
+fn validate_network_host(host: &str) -> Result<(), String> {
+    let trimmed = host.trim();
+    if trimmed.is_empty() {
+        return Err("Host cannot be empty".to_string());
+    }
+
+    if trimmed
+        .chars()
+        .any(|ch| ch.is_control() || ch.is_whitespace())
+    {
+        return Err("Host contains invalid whitespace or control characters".to_string());
+    }
+
+    if trimmed.contains("://")
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains('?')
+        || trimmed.contains('#')
+    {
+        return Err("Host must not include a scheme, path, query, or fragment".to_string());
+    }
+
+    Ok(())
 }
 
 fn validate_sqlite_file_path(path: &str) -> Result<(), String> {
@@ -382,9 +462,34 @@ fn validate_sqlite_file_path(path: &str) -> Result<(), String> {
         .map(|ext| ext.to_ascii_lowercase());
 
     match extension.as_deref() {
-        Some("db") | Some("sqlite") | Some("sqlite3") => {}
+        Some("db") | Some("db3") | Some("sqlite") | Some("sqlite3") => {}
         _ => {
-            return Err("SQLite file path must use a .db, .sqlite, or .sqlite3 extension".to_string())
+            return Err(
+                "SQLite file path must use a .db, .db3, .sqlite, or .sqlite3 extension"
+                    .to_string(),
+            )
+        }
+    }
+
+    let resolved_path = if sqlite_path.is_absolute() {
+        sqlite_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(PathBuf::from)
+            .map_err(|_| "Could not resolve the current working directory".to_string())?
+            .join(sqlite_path)
+    };
+
+    for ancestor in resolved_path.ancestors() {
+        if !ancestor.exists() {
+            continue;
+        }
+
+        let metadata = fs::symlink_metadata(ancestor)
+            .map_err(|_| "Could not inspect the selected SQLite file path".to_string())?;
+
+        if metadata.file_type().is_symlink() {
+            return Err("SQLite symlink targets are not allowed".to_string());
         }
     }
 
@@ -398,6 +503,12 @@ fn validate_sqlite_file_path(path: &str) -> Result<(), String> {
 
         if metadata.is_dir() {
             return Err("SQLite file path must point to a file, not a directory".to_string());
+        }
+    }
+
+    if let Some(parent_dir) = resolved_path.parent() {
+        if parent_dir.exists() && !parent_dir.is_dir() {
+            return Err("SQLite file path must use a valid parent directory".to_string());
         }
     }
 

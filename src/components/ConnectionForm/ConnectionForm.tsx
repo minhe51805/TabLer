@@ -39,14 +39,14 @@ const ALL_DATABASES: DbEntry[] = [
   { key: "postgresql", abbr: "Pg", label: "PostgreSQL", color: "#336791", supported: true, defaultPort: 5432 },
   { key: "greenplum", abbr: "Gp", label: "Greenplum", color: "#2ecc71", supported: true, defaultPort: 5432 },
   { key: "redshift", abbr: "Rs", label: "Amazon Redshift", color: "#16a085", supported: true, defaultPort: 5439 },
-  { key: "mssql", abbr: "Ss", label: "SQL Server", color: "#7f8c8d", supported: false, defaultPort: 1433 },
+  { key: "mssql", abbr: "Ss", label: "SQL Server", color: "#7f8c8d", supported: true, defaultPort: 1433 },
   { key: "redis", abbr: "Re", label: "Redis", color: "#e74c3c", supported: false, defaultPort: 6379 },
   { key: "mongodb", abbr: "Mg", label: "MongoDB", color: "#27ae60", supported: false, defaultPort: 27017 },
-  { key: "vertica", abbr: "Ve", label: "Vertica", color: "#95a5a6", supported: false, defaultPort: 5433 },
-  { key: "clickhouse", abbr: "Ch", label: "ClickHouse", color: "#5b9bd5", supported: false, defaultPort: 8123 },
+  { key: "vertica", abbr: "Ve", label: "Vertica", color: "#95a5a6", supported: true, defaultPort: 5433 },
+  { key: "clickhouse", abbr: "Ch", label: "ClickHouse", color: "#5b9bd5", supported: true, defaultPort: 8123 },
   { key: "bigquery", abbr: "Bq", label: "BigQuery", color: "#8e44ad", supported: false, defaultPort: 0 },
-  { key: "libsql", abbr: "Ls", label: "LibSQL", color: "#2ecc71", supported: false, defaultPort: 8080 },
-  { key: "cloudflared1", abbr: "D1", label: "Cloudflare D1", color: "#f39c12", supported: false, defaultPort: 0 },
+  { key: "libsql", abbr: "Ls", label: "LibSQL", color: "#2ecc71", supported: true, defaultPort: 8080 },
+  { key: "cloudflared1", abbr: "D1", label: "Cloudflare D1", color: "#f39c12", supported: true, defaultPort: 443 },
 ];
 
 const COLORS = [
@@ -110,6 +110,7 @@ interface Props {
   onClose: () => void;
   editConnection?: ConnectionConfig;
   initialIntent?: "connect" | "bootstrap";
+  embeddedInStartupShell?: boolean;
 }
 
 interface PickerSection {
@@ -175,10 +176,12 @@ function getPickerCapabilities(db: DbEntry, bootstrapMode: boolean, language: Ap
   if (bootstrapMode) {
     if (LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)) {
       capabilities.push(language === "vi" ? "Bootstrap local" : "Local bootstrap");
-    } else if (db.supported) {
-      capabilities.push(language === "vi" ? "Chỉ kết nối" : "Connect only");
     } else {
       capabilities.push(language === "vi" ? "Lộ trình" : "Roadmap");
+    }
+
+    if (db.supported && !LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)) {
+      capabilities.push(language === "vi" ? "Lộ trình local" : "Local roadmap");
     }
   } else {
     capabilities.push(
@@ -314,7 +317,7 @@ function getPickerStatus(db: DbEntry, bootstrapMode: boolean, language: AppLangu
     }
 
     if (db.supported) {
-      return { label: language === "vi" ? "Chỉ kết nối" : "Connect Only", tone: "bridge", canContinue: false };
+      return { label: language === "vi" ? "Sắp có" : "Soon", tone: "soon", canContinue: false };
     }
 
     return { label: language === "vi" ? "Sắp có" : "Soon", tone: "soon", canContinue: false };
@@ -325,7 +328,12 @@ function getPickerStatus(db: DbEntry, bootstrapMode: boolean, language: AppLangu
     : { label: language === "vi" ? "Sắp có" : "Soon", tone: "soon", canContinue: false };
 }
 
-export function ConnectionForm({ onClose, editConnection, initialIntent = "connect" }: Props) {
+export function ConnectionForm({
+  onClose,
+  editConnection,
+  initialIntent = "connect",
+  embeddedInStartupShell = false,
+}: Props) {
   const { language, t } = useI18n();
   const connectToDatabase = useAppStore((state) => state.connectToDatabase);
   const testConnection = useAppStore((state) => state.testConnection);
@@ -353,7 +361,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
       db_type: bootstrapMode ? "postgresql" : "mysql",
       host: "127.0.0.1",
       port: bootstrapMode ? 5432 : 3306,
-      username: bootstrapMode ? "postgres" : "root",
+      username: "",
       database: "",
       file_path: "",
       use_ssl: false,
@@ -373,6 +381,9 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
   const [sqlitePathTouched, setSqlitePathTouched] = useState(false);
   const supportedCount = ALL_DATABASES.filter((db) => db.supported).length;
   const roadmapCount = ALL_DATABASES.length - supportedCount;
+  const localRoadmapCount = ALL_DATABASES.filter(
+    (db) => !LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType),
+  ).length;
   const bootstrapFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const isSqlite = formData.db_type === "sqlite";
@@ -383,6 +394,15 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
   const hasBootstrapDatabaseName = !!formData.database?.trim();
   const isBootstrappingWorkspace = isCreatingDatabase || isConnecting;
   const sqliteDatabaseName = (formData.database || "").trim() || (formData.name || "").trim() || "local-database";
+  const suggestedUsernamePlaceholder =
+    selectedDb?.key === "postgresql" ||
+    selectedDb?.key === "cockroachdb" ||
+    selectedDb?.key === "greenplum" ||
+    selectedDb?.key === "redshift"
+      ? "postgres"
+      : selectedDb?.key === "mysql" || selectedDb?.key === "mariadb"
+        ? "root"
+        : "db_user";
   const connectionTitle = editConnection
     ? language === "vi"
       ? "Sửa kết nối"
@@ -435,7 +455,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
           readyNow: "Sẵn sàng ngay",
           readyNowCaption: "Các engine bạn có thể cấu hình ngay trong bản build này.",
           roadmapCaption: "Các engine sắp tới đã hiển thị trong định hướng sản phẩm.",
-          localReadyCaption: "Khởi tạo và mở các engine này trực tiếp từ TableR.",
+          localReadyCaption: "Khởi tạo và mở các engine này trực tiếp từ TabLer.",
           connectOnly: "Chỉ kết nối",
           connectOnlyCaption: "Đã hỗ trợ kết nối thông thường, nhưng local bootstrap chưa được nối.",
           localRoadmap: "Lộ trình local",
@@ -576,11 +596,11 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
         storage: "Storage",
         databaseFile: "Database file",
         databaseFileBootstrapCopy:
-          "Give the database a name and TableR will place the SQLite file in its default local storage folder for you.",
+          "Give the database a name and TabLer will place the SQLite file in its default local storage folder for you.",
         databaseFileConnectCopy: "Point to an existing SQLite file or enter a path for a new one.",
         databaseName: "Database name",
         databaseNamePlaceholder: "my_local_db",
-        databaseNameHint: `TableR will create ${sqliteDatabaseName}.sqlite for you automatically.`,
+        databaseNameHint: `TabLer will create ${sqliteDatabaseName}.sqlite for you automatically.`,
         defaultLocation: "Default location",
         preparingSqliteLocation: "Preparing SQLite file location...",
         chooseLocation: "Choose location",
@@ -602,7 +622,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
           "Local host detected. Create this database and jump straight into the workspace.",
         localHostDetectedBlank:
           "Local host detected. Enter a database name to enable create-and-open bootstrap.",
-        engineNotLocalBootstrap: "This engine is not wired for local bootstrap yet in TableR.",
+        engineNotLocalBootstrap: "This engine is not wired for local bootstrap yet in TabLer.",
         useSsl: "Use SSL/TLS",
         useSslNote:
           "Recommended for cloud databases like Supabase, Neon, and managed PostgreSQL.",
@@ -667,12 +687,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
           bootstrapMode && db.key === "sqlite"
             ? prev.database || prev.name || "local-database"
             : prev.database,
-        username:
-          db.key === "postgresql" || db.key === "cockroachdb" || db.key === "greenplum" || db.key === "redshift"
-            ? "postgres"
-          : db.key === "mysql" || db.key === "mariadb"
-            ? "root"
-            : prev.username,
+        username: db.key === "sqlite" ? prev.username : "",
     }));
     setStep("form");
   };
@@ -720,12 +735,19 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
     };
   }, [bootstrapMode, isSqlite, sqliteDatabaseName, sqlitePathTouched, suggestSqliteDatabasePath]);
 
+  useEffect(() => {
+    return () => {
+      passwordDraftRef.current = "";
+    };
+  }, []);
+
   const handleConnect = async () => {
     try {
       await connectToDatabase({
         ...formData,
         password: isSqlite ? undefined : passwordDraftRef.current,
       });
+      passwordDraftRef.current = "";
       onClose();
     } catch (e) {
       setTestResult({ success: false, message: String(e) });
@@ -782,6 +804,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
               : `Creating SQLite database from ${resolvedFilePath}...`,
         });
         await connectToDatabase(sqliteConfig);
+        passwordDraftRef.current = "";
         onClose();
         return;
       }
@@ -822,6 +845,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
             : `${message} Connecting to ${requestedDatabase}...`,
       });
       await connectToDatabase(bootstrapConfig);
+      passwordDraftRef.current = "";
       onClose();
     } catch (e) {
       setTestResult({ success: false, message: String(e) });
@@ -881,25 +905,10 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
         items: filteredDbs.filter((db) => LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)),
       },
       {
-        key: "connect-only",
-        title: copy.connectOnly,
-        caption: copy.connectOnlyCaption,
-        items: filteredDbs.filter(
-          (db) =>
-            db.supported &&
-            !LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType) &&
-            !LOCAL_BOOTSTRAP_SOON.has(db.key as DatabaseType),
-        ),
-      },
-      {
         key: "local-roadmap",
         title: copy.localRoadmap,
         caption: copy.localRoadmapCaption,
-        items: filteredDbs.filter(
-          (db) =>
-            LOCAL_BOOTSTRAP_SOON.has(db.key as DatabaseType) ||
-            (!db.supported && !LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)),
-        ),
+        items: filteredDbs.filter((db) => !LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)),
       },
     ].filter((section) => section.items.length > 0);
   }, [bootstrapMode, copy, filteredDbs]);
@@ -926,9 +935,8 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
   }, [pickerSections, selectedDb, step]);
 
   if (step === "pick") {
-    return (
-      <div className="connection-picker-overlay">
-        <div className="connection-picker-modal">
+      const pickerContent = (
+        <>
           <div className="connection-picker-head">
             <div className="connection-picker-copy">
               <span className="panel-kicker">{copy.pickerKicker}</span>
@@ -968,8 +976,8 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
                   <span>{bootstrapMode ? copy.localReady : copy.ready}</span>
                 </span>
                 <span className="connection-picker-stat">
-                  <strong>{bootstrapMode ? Array.from(LOCAL_BOOTSTRAP_SOON).length : roadmapCount}</strong>
-                  <span>{bootstrapMode ? copy.localSoon : copy.roadmap}</span>
+                  <strong>{bootstrapMode ? localRoadmapCount : roadmapCount}</strong>
+                  <span>{bootstrapMode ? copy.localRoadmap : copy.roadmap}</span>
                 </span>
                 <span className="connection-picker-stat">
                   <strong>{filteredDbs.length}</strong>
@@ -1213,14 +1221,24 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
               </aside>
             </div>
           </div>
+        </>
+      );
+
+      if (embeddedInStartupShell) {
+        return <div className="connection-picker-shell">{pickerContent}</div>;
+      }
+
+      return (
+        <div className="connection-picker-overlay">
+          <div className="connection-picker-modal">
+            {pickerContent}
+          </div>
         </div>
-      </div>
-    );
+      );
   }
 
-  return (
-    <div className="connection-form-overlay">
-      <div className="connection-form-modal">
+    const formContent = (
+      <>
         <div className="connection-form-header">
           <div className="connection-form-header-main">
             {!editConnection && (
@@ -1456,7 +1474,7 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
                     type="text"
                     value={formData.username || ""}
                     onChange={(e) => updateField("username", e.target.value)}
-                    placeholder="root"
+                    placeholder={suggestedUsernamePlaceholder}
                     className="input h-11"
                   />
                 </div>
@@ -1653,7 +1671,18 @@ export function ConnectionForm({ onClose, editConnection, initialIntent = "conne
             </button>
           </div>
         </div>
+      </>
+    );
+
+    if (embeddedInStartupShell) {
+      return <div className="connection-form-shell">{formContent}</div>;
+    }
+
+    return (
+      <div className="connection-form-overlay">
+        <div className="connection-form-modal">
+          {formContent}
+        </div>
       </div>
-    </div>
-  );
+    );
 }

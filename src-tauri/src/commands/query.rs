@@ -28,6 +28,41 @@ const SANDBOX_BLOCKED_PREFIXES: [&str; 18] = [
     "DROP USER",
 ];
 
+fn format_query_connection_error(error: impl std::fmt::Display) -> String {
+    let normalized = error.to_string().to_ascii_lowercase();
+    if normalized.contains("not found") || normalized.contains("connect first") {
+        "The selected connection is not active. Please reconnect and try again.".to_string()
+    } else {
+        "The database connection is not available right now. Please reconnect and try again.".to_string()
+    }
+}
+
+fn format_query_runtime_error(error: impl std::fmt::Display) -> String {
+    let normalized = error.to_string().to_ascii_lowercase();
+
+    if normalized.contains("permission") || normalized.contains("access denied") {
+        return "The current connection does not have permission to run this statement.".to_string();
+    }
+
+    if normalized.contains("authentication")
+        || normalized.contains("password")
+        || normalized.contains("auth failed")
+    {
+        return "Database authentication failed. Please verify the connection settings.".to_string();
+    }
+
+    if normalized.contains("refused")
+        || normalized.contains("broken pipe")
+        || normalized.contains("connection reset")
+        || normalized.contains("connection closed")
+        || normalized.contains("not connected")
+    {
+        return "The database connection is no longer available. Please reconnect and try again.".to_string();
+    }
+
+    "Query execution failed. Please review the SQL and connection state.".to_string()
+}
+
 fn strip_leading_sql_noise(statement: &str) -> Result<&str, String> {
     let mut remaining = statement;
 
@@ -136,13 +171,13 @@ pub async fn execute_query(
     let driver = db_manager
         .get_driver(&connection_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(format_query_connection_error)?;
     let statements = split_sql_statements(&sql);
     let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
     timeout(timeout_window, driver.execute_query(&sql))
         .await
         .map_err(|_| format!("Query timed out after {} seconds.", timeout_window.as_secs()))?
-        .map_err(|e| e.to_string())
+        .map_err(format_query_runtime_error)
 }
 
 #[tauri::command]
@@ -162,13 +197,13 @@ pub async fn execute_sandboxed_query(
     let driver = db_manager
         .get_driver(&connection_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(format_query_connection_error)?;
     let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
     let combined_query = statements.join(";\n");
     let mut result = timeout(timeout_window, driver.execute_query(&combined_query))
         .await
         .map_err(|_| format!("Sandbox query timed out after {} seconds.", timeout_window.as_secs()))?
-        .map_err(|e| e.to_string())?;
+        .map_err(format_query_runtime_error)?;
     result.sandboxed = true;
     Ok(result)
 }

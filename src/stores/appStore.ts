@@ -109,7 +109,6 @@ interface AppState {
   connectedIds: Set<string>;
 
   aiConfigs: AIProviderConfig[];
-  aiKeyStatus: Record<string, boolean>;
 
   databases: DatabaseInfo[];
   currentDatabase: string | null;
@@ -185,13 +184,19 @@ interface AppState {
   setActiveTab: (tabId: string) => void;
   updateTab: (tabId: string, updates: Partial<Tab>) => void;
 
-  loadAIConfigs: () => Promise<void>;
+  loadAIConfigs: () => Promise<{
+    aiConfigs: AIProviderConfig[];
+    aiKeyStatus: Record<string, boolean>;
+  }>;
   saveAIConfigs: (
     configs: AIProviderConfig[],
     apiKeyUpdates: Record<string, string>,
     clearedProviderIds: string[]
-  ) => Promise<void>;
-  askAI: (providerId: string, prompt: string, context: string, mode?: AIRequestMode) => Promise<string>;
+  ) => Promise<{
+    aiConfigs: AIProviderConfig[];
+    aiKeyStatus: Record<string, boolean>;
+  }>;
+  askAI: (prompt: string, context: string, mode?: AIRequestMode) => Promise<string>;
 
   setError: (error: string | null) => void;
   clearError: () => void;
@@ -213,7 +218,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   error: null,
 
   aiConfigs: [],
-  aiKeyStatus: {},
 
   loadSavedConnections: async () => {
     try {
@@ -234,7 +238,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       const [aiConfigs, aiKeyStatus] = await invokeWithTimeout<
         [AIProviderConfig[], Record<string, boolean>]
       >("get_ai_configs", {}, FRONTEND_TIMEOUTS.metadata, "Loading AI settings");
-      set({ aiConfigs, aiKeyStatus });
+      set({ aiConfigs });
+      return { aiConfigs, aiKeyStatus };
     } catch (e) {
       set({ error: `Failed to load AI configs: ${e}` });
       throw e;
@@ -253,22 +258,23 @@ export const useAppStore = create<AppState>((set, get) => ({
         "save_ai_configs",
         { providers: configs, apiKeyUpdates, clearedProviderIds },
       );
-      set({ aiConfigs, aiKeyStatus });
+      set({ aiConfigs });
+      return { aiConfigs, aiKeyStatus };
     } catch (e) {
       set({ error: `Failed to save AI configs: ${e}` });
       throw e;
     }
   },
 
-  askAI: async (providerId: string, prompt: string, context: string, mode = "panel") => {
-    const config = get().aiConfigs.find(c => c.id === providerId);
+  askAI: async (prompt: string, context: string, mode = "panel") => {
+    const config = get().aiConfigs.find((c) => c.is_enabled);
     if (!config) throw new Error("AI Provider not found");
 
     try {
       const resp = await invokeWithTimeout<{ text: string; error?: string }>(
         "ask_ai",
         {
-          request: { prompt, context, provider_id: providerId, mode },
+          request: { prompt, context, mode },
         },
         FRONTEND_TIMEOUTS.ai,
         "AI request"
@@ -319,6 +325,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         connectedIds,
         activeConnectionId: finalConnectionId,
         connections: newConnections,
+        currentDatabase: normalizedConfig.database ?? null,
+        ...(normalizedConfig.database
+          ? {}
+          : {
+              tables: [],
+              schemaObjects: [],
+            }),
         isConnecting: false,
       });
 
@@ -353,6 +366,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         connectedIds,
         activeConnectionId: connectionId,
+        currentDatabase: connection?.database ?? null,
+        ...(connection?.database
+          ? {}
+          : {
+              tables: [],
+              schemaObjects: [],
+            }),
         isConnecting: false,
       });
 

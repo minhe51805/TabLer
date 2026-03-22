@@ -70,8 +70,11 @@ impl ParsedConnectionUrl {
             "cockroachdb" | "cockroach" => DatabaseType::CockroachDB,
             "greenplum" => DatabaseType::Greenplum,
             "redshift" => DatabaseType::Redshift,
+            "vertica" => DatabaseType::Vertica,
             "mysql" => DatabaseType::MySQL,
             "mariadb" => DatabaseType::MariaDB,
+            "clickhouse" => DatabaseType::ClickHouse,
+            "libsql" => DatabaseType::LibSQL,
             "sqlite" => DatabaseType::SQLite,
             _ => return Err(format!("Unsupported database scheme: {}", scheme)),
         };
@@ -86,6 +89,23 @@ impl ParsedConnectionUrl {
                 password: String::new(),
                 database: rest.to_string(),
                 use_ssl: false,
+            });
+        }
+
+        if db_type == DatabaseType::LibSQL {
+            let (host_port, path_query) = rest.split_once('/').unwrap_or((rest, ""));
+            let (host, port) = parse_host_and_port(host_port)?;
+            let (database, query) = path_query.split_once('?').unwrap_or((path_query, ""));
+            let auth_token = extract_query_param(query, &["authToken", "auth_token"]).unwrap_or_default();
+
+            return Ok(Self {
+                db_type,
+                host,
+                port: port.or(Some(8080)),
+                username: String::new(),
+                password: auth_token,
+                database: database.to_string(),
+                use_ssl: true,
             });
         }
 
@@ -108,22 +128,7 @@ impl ParsedConnectionUrl {
             .unwrap_or((rest, ""));
 
         // Parse host and port
-        let (host, port) = if let Some((h, p)) = host_port.rsplit_once(':') {
-            // Handle IPv6 addresses like [::1]:5432
-            if h.starts_with('[') {
-                let ipv6_host = h
-                    .strip_prefix('[')
-                    .and_then(|value| value.strip_suffix(']'))
-                    .ok_or_else(|| "Invalid URL: unclosed IPv6 address".to_string())?;
-                let port = p.parse().ok();
-                (ipv6_host.to_string(), port)
-            } else {
-                let port = p.parse().ok();
-                (h.to_string(), port)
-            }
-        } else {
-            (host_port.to_string(), None)
-        };
+        let (host, port) = parse_host_and_port(host_port)?;
 
         // Parse database and query params
         let (database, use_ssl) = if let Some((db, query)) = path_query.split_once('?') {
@@ -141,6 +146,7 @@ impl ParsedConnectionUrl {
             DatabaseType::CockroachDB => Some(26257),
             DatabaseType::Greenplum => Some(5432),
             DatabaseType::Redshift => Some(5439),
+            DatabaseType::Vertica => Some(5433),
             DatabaseType::SQLite => None,
             DatabaseType::DuckDB => None,
             DatabaseType::Cassandra => Some(9042),
@@ -148,7 +154,6 @@ impl ParsedConnectionUrl {
             DatabaseType::MSSQL => Some(1433),
             DatabaseType::Redis => Some(6379),
             DatabaseType::MongoDB => Some(27017),
-            DatabaseType::Vertica => Some(5433),
             DatabaseType::ClickHouse => Some(8123),
             DatabaseType::BigQuery => None,
             DatabaseType::LibSQL => Some(8080),
@@ -190,6 +195,47 @@ fn url_decode(s: &str) -> String {
         }
     }
     result
+}
+
+fn parse_host_and_port(host_port: &str) -> Result<(String, Option<u16>), String> {
+    if host_port.trim().is_empty() {
+        return Err("Invalid URL: missing host".to_string());
+    }
+
+    if let Some((h, p)) = host_port.rsplit_once(':') {
+        if h.starts_with('[') {
+            let ipv6_host = h
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .ok_or_else(|| "Invalid URL: unclosed IPv6 address".to_string())?;
+            let port = p
+                .parse::<u16>()
+                .map(Some)
+                .map_err(|_| "Invalid URL: port must be a valid number".to_string())?;
+            return Ok((ipv6_host.to_string(), port));
+        }
+
+        if !h.contains(':') {
+            let port = p
+                .parse::<u16>()
+                .map(Some)
+                .map_err(|_| "Invalid URL: port must be a valid number".to_string())?;
+            return Ok((h.to_string(), port));
+        }
+    }
+
+    Ok((host_port.to_string(), None))
+}
+
+fn extract_query_param(query: &str, keys: &[&str]) -> Option<String> {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find_map(|(key, value)| {
+            keys.iter()
+                .any(|candidate| key.eq_ignore_ascii_case(candidate))
+                .then(|| url_decode(value))
+        })
 }
 
 #[allow(dead_code)]
@@ -331,6 +377,7 @@ impl ConnectionConfig {
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .is_none()
+                    && self.db_type != DatabaseType::LibSQL
                 {
                     return Err("Username is required for this database type".to_string());
                 }

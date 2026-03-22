@@ -24,3 +24,8 @@ dist-ssr
 *.sw?
 
 xemreponay
+.claude
+.fatory
+docs
+plans
+CLAUDE.md

@@ -49,18 +49,37 @@ impl MySqlDriver {
         });
         options = options.disable_statement_logging();
 
-        let pool = MySqlPoolOptions::new()
-            .min_connections(1)
-            .max_lifetime(std::time::Duration::from_secs(1800))
-            .acquire_timeout(std::time::Duration::from_secs(30))
-            .idle_timeout(std::time::Duration::from_secs(600))
-            .test_before_acquire(false)
-            .connect_with(options)
-            .await
-            .context("Failed to connect to MySQL")?;
+        // Try to connect with retry logic
+        let mut last_error = None;
+        for attempt in 1..=3 {
+            let pool_opts = MySqlPoolOptions::new()
+                .min_connections(1)
+                .max_lifetime(std::time::Duration::from_secs(1800))
+                .acquire_timeout(std::time::Duration::from_secs(30))
+                .idle_timeout(std::time::Duration::from_secs(600))
+                .test_before_acquire(true);
 
-        let current_db = Arc::new(RwLock::new(database.map(String::from)));
-        Ok(Self { pool, current_db })
+            match pool_opts.connect_with(options.clone()).await {
+                Ok(pool) => {
+                    let current_db = Arc::new(RwLock::new(database.map(String::from)));
+                    return Ok(Self { pool, current_db });
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < 3 {
+                        tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                    }
+                }
+            }
+        }
+
+        let error = last_error
+            .map(|err| err.to_string())
+            .unwrap_or_else(|| "unknown connection error".to_string());
+        Err(anyhow::anyhow!(
+            "Failed to connect to MySQL after 3 attempts: {}",
+            error
+        ))
     }
 
     fn query_returns_rows(sql: &str) -> bool {

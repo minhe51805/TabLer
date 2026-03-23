@@ -46,7 +46,7 @@ const ALL_DATABASES: DbEntry[] = [
   { key: "clickhouse", abbr: "Ch", label: "ClickHouse", color: "#5b9bd5", supported: true, defaultPort: 8123 },
   { key: "bigquery", abbr: "Bq", label: "BigQuery", color: "#8e44ad", supported: false, defaultPort: 0 },
   { key: "libsql", abbr: "Ls", label: "LibSQL", color: "#2ecc71", supported: true, defaultPort: 8080 },
-  { key: "cloudflared1", abbr: "D1", label: "Cloudflare D1", color: "#f39c12", supported: true, defaultPort: 443 },
+  { key: "cloudflare_d1", abbr: "D1", label: "Cloudflare D1", color: "#f39c12", supported: true, defaultPort: 443 },
 ];
 
 const COLORS = [

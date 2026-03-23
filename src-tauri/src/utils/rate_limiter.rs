@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use tokio::sync::Mutex as AsyncMutex;
 
 pub struct SlidingWindowRateLimiter {
-    attempts: Mutex<HashMap<String, Vec<Instant>>>,
+    attempts: AsyncMutex<HashMap<String, Vec<Instant>>>,
     window: Duration,
     max_attempts: usize,
     retry_after_message: &'static str,
@@ -16,19 +16,19 @@ impl SlidingWindowRateLimiter {
         retry_after_message: &'static str,
     ) -> Self {
         Self {
-            attempts: Mutex::new(HashMap::new()),
+            attempts: AsyncMutex::new(HashMap::new()),
             window,
             max_attempts,
             retry_after_message,
         }
     }
 
-    pub fn check(&self, key: &str) -> Result<(), String> {
+    pub async fn check(&self, key: &str) -> Result<(), String> {
         let now = Instant::now();
         let mut attempts = self
             .attempts
             .lock()
-            .map_err(|_| "Internal rate limiter lock failed.".to_string())?;
+            .await;
 
         let entry = attempts.entry(key.to_string()).or_default();
         entry.retain(|attempt| now.duration_since(*attempt) < self.window);
@@ -53,8 +53,8 @@ impl ConnectionAttemptLimiter {
         }
     }
 
-    pub fn check(&self, key: &str) -> Result<(), String> {
-        self.inner.check(key)
+    pub async fn check(&self, key: &str) -> Result<(), String> {
+        self.inner.check(key).await
     }
 }
 
@@ -69,7 +69,7 @@ impl AIRequestLimiter {
         }
     }
 
-    pub fn check(&self, key: &str) -> Result<(), String> {
-        self.inner.check(key)
+    pub async fn check(&self, key: &str) -> Result<(), String> {
+        self.inner.check(key).await
     }
 }

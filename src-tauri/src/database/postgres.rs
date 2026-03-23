@@ -56,7 +56,7 @@ impl PostgresDriver {
                 .max_lifetime(std::time::Duration::from_secs(1800))
                 .acquire_timeout(std::time::Duration::from_secs(30))
                 .idle_timeout(std::time::Duration::from_secs(600))
-                .test_before_acquire(false);
+                .test_before_acquire(true);
 
             match pool_opts.connect_with(options.clone()).await {
                 Ok(pool) => {

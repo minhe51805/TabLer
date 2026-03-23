@@ -20,6 +20,13 @@ import { useAppStore } from "../../stores/appStore";
 import { CreateSchemaObjectModal } from "../CreateSchemaObjectModal/CreateSchemaObjectModal";
 import type { DatabaseInfo, SchemaObjectInfo, TableInfo } from "../../types";
 import { formatCountLabel, useI18n } from "../../i18n";
+import {
+  getQualifiedTableName,
+  getQuotedQualifiedTableName,
+  quoteIdentifier,
+  normalizeObjectSql,
+  copyToClipboard,
+} from "./SidebarUtils";
 
 interface ExplorerSchemaSection {
   schemaName: string;
@@ -49,21 +56,6 @@ const EXPLORER_CONTEXT_MENU_WIDTH = 220;
 const EXPLORER_CONTEXT_SUBMENU_WIDTH = 228;
 const EXPLORER_CONTEXT_MENU_MAX_HEIGHT = 440;
 
-function getQualifiedTableName(table: Pick<TableInfo, "name" | "schema">) {
-  return table.schema ? `${table.schema}.${table.name}` : table.name;
-}
-
-function quoteIdentifier(identifier: string, dbType?: string) {
-  const quote = dbType === "mysql" || dbType === "mariadb" ? "`" : `"`;
-  const escaped = identifier.split(quote).join(`${quote}${quote}`);
-  return `${quote}${escaped}${quote}`;
-}
-
-function getQuotedQualifiedTableName(table: Pick<TableInfo, "name" | "schema">, dbType?: string) {
-  if (!table.schema) return quoteIdentifier(table.name, dbType);
-  return `${quoteIdentifier(table.schema, dbType)}.${quoteIdentifier(table.name, dbType)}`;
-}
-
 function loadPinnedTablesByWorkspace() {
   if (typeof window === "undefined") return {} as Record<string, string[]>;
 
@@ -77,43 +69,6 @@ function loadPinnedTablesByWorkspace() {
   } catch {
     return {};
   }
-}
-
-async function copyToClipboard(value: string) {
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = value;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  document.body.removeChild(textarea);
-}
-
-function normalizeObjectSql(object: SchemaObjectInfo) {
-  const qualifiedName = object.schema ? `${object.schema}.${object.name}` : object.name;
-  const rawDefinition = object.definition?.trim();
-
-  if (!rawDefinition) {
-    return `-- ${object.object_type} ${qualifiedName}`;
-  }
-
-  const normalizedHead = rawDefinition.slice(0, 24).toUpperCase();
-  if (normalizedHead.startsWith("CREATE ")) {
-    return rawDefinition.endsWith(";") ? rawDefinition : `${rawDefinition};`;
-  }
-
-  if (object.object_type === "VIEW") {
-    return `CREATE VIEW ${qualifiedName} AS\n${rawDefinition.replace(/;+\s*$/, "")};`;
-  }
-
-  return `-- ${object.object_type} ${qualifiedName}\n${rawDefinition}`;
 }
 
 function getLastPathSegment(value?: string | null) {

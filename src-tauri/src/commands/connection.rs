@@ -468,7 +468,7 @@ pub async fn connect_database(
     config.fill_generated_name();
     // Validate connection config before attempting to connect
     config.validate().map_err(|e| format!("Invalid connection config: {}", e))?;
-    connection_rate_limiter.check(&connection_rate_limit_key(&config))?;
+    connection_rate_limiter.check(&connection_rate_limit_key(&config)).await?;
 
     timeout(CONNECTION_TIMEOUT, db_manager.connect(&config))
         .await
@@ -523,7 +523,7 @@ pub async fn test_connection(
     config.fill_generated_name();
     // Validate connection config before testing
     config.validate().map_err(|e| format!("Invalid connection config: {}", e))?;
-    connection_rate_limiter.check(&format!("test|{}", connection_rate_limit_key(&config)))?;
+    connection_rate_limiter.check(&format!("test|{}", connection_rate_limit_key(&config))).await?;
 
     let temp_manager = DatabaseManager::new();
     timeout(CONNECTION_TIMEOUT, temp_manager.connect(&config))
@@ -579,7 +579,7 @@ pub async fn create_local_database(
     config
         .validate()
         .map_err(|e| format!("Invalid connection config: {e}"))?;
-    connection_rate_limiter.check(&format!("bootstrap|{}", connection_rate_limit_key(&config)))?;
+    connection_rate_limiter.check(&format!("bootstrap|{}", connection_rate_limit_key(&config))).await?;
 
     let requested_database = database_name.trim();
     if requested_database.is_empty() {
@@ -696,7 +696,7 @@ pub async fn connect_saved_connection(
             .map_err(|_| "Failed to load the saved connection profile.".to_string())
     })
     .await?;
-    connection_rate_limiter.check(&format!("saved|{}", connection_rate_limit_key(&config)))?;
+    connection_rate_limiter.check(&format!("saved|{}", connection_rate_limit_key(&config))).await?;
 
     timeout(CONNECTION_TIMEOUT, db_manager.connect(&config))
         .await

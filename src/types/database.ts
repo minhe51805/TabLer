@@ -17,7 +17,7 @@ export type DatabaseType =
   | "clickhouse"
   | "bigquery"
   | "libsql"
-  | "cloudflared1";
+  | "cloudflare_d1";
 
 export interface ConnectionConfig {
   id: string;

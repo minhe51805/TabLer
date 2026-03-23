@@ -1,22 +1,7 @@
 import Editor from "@monaco-editor/react";
 import { useSQLEditor } from "./hooks/use-sql-editor";
+import type { QueryEditorSessionState, QueryChromeState } from "./hooks/use-sql-editor";
 import { SQLEditorResultsPane } from "./SQLEditorResultsPane";
-import type { QueryResult } from "../../types";
-
-interface QueryChromeState {
-  isRunning: boolean;
-  executionTimeMs?: number;
-  rowCount?: number;
-  affectedRows?: number;
-  queryCount?: number;
-}
-
-export interface QueryEditorSessionState {
-  result: QueryResult | null;
-  error: string | null;
-  queryCount: number;
-  editorHeight: number;
-}
 
 interface Props {
   connectionId: string;

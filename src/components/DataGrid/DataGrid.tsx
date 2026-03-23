@@ -469,7 +469,7 @@ export function DataGrid({
     return () => window.cancelAnimationFrame(rafId);
   }, [editingCell]);
 
-  const handleSort = (colName: string) => {
+  const handleSort = useCallback((colName: string) => {
     if (sortColumn === colName) {
       setSortDir((prev) => (prev === "ASC" ? "DESC" : "ASC"));
     } else {
@@ -477,13 +477,13 @@ export function DataGrid({
       setSortDir("ASC");
     }
     setCurrentPage(0);
-  };
+  }, [sortColumn]);
 
-  const handleCopyValue = (value: GridCellValue, cellKey: string) => {
+  const handleCopyValue = useCallback((value: GridCellValue, cellKey: string) => {
     navigator.clipboard.writeText(value === null ? "NULL" : String(value));
     setCopiedCell(cellKey);
     setTimeout(() => setCopiedCell(null), 1200);
-  };
+  }, []);
 
   const dataColumns = data?.columns || [];
   const dataColumnSignature = useMemo(() => buildColumnSignature(dataColumns), [dataColumns]);
@@ -869,6 +869,7 @@ export function DataGrid({
     startEditingCell,
     structureStatus,
     handleCopyValue,
+    handleSort,
   ]);
 
   const tableData = useMemo(() => displayedRows, [displayedRows]);

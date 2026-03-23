@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { SchemaObjectInfo, TableInfo } from "../../../types";
 import { formatCountLabel, type AppLanguage } from "../../../i18n";
 import { getQualifiedTableName } from "../SidebarUtils";
@@ -50,22 +50,25 @@ export function usePinnedTables(tableWorkspaceKey: string) {
     [pinnedTablesByWorkspace, tableWorkspaceKey]
   );
 
-  const togglePinnedTable = (table: Pick<TableInfo, "name" | "schema">) => {
-    if (!tableWorkspaceKey) return;
-    const qualifiedName = getQualifiedTableName(table);
-    setPinnedTablesByWorkspace((previous) => {
-      const current = previous[tableWorkspaceKey] ?? [];
-      const next = current.includes(qualifiedName)
-        ? current.filter((entry) => entry !== qualifiedName)
-        : [qualifiedName, ...current];
-      return {
-        ...previous,
-        [tableWorkspaceKey]: next,
-      };
-    });
-  };
+  const togglePinnedTable = useCallback(
+    (table: Pick<TableInfo, "name" | "schema">) => {
+      if (!tableWorkspaceKey) return;
+      const qualifiedName = getQualifiedTableName(table);
+      setPinnedTablesByWorkspace((previous) => {
+        const current = previous[tableWorkspaceKey] ?? [];
+        const next = current.includes(qualifiedName)
+          ? current.filter((entry) => entry !== qualifiedName)
+          : [qualifiedName, ...current];
+        return {
+          ...previous,
+          [tableWorkspaceKey]: next,
+        };
+      });
+    },
+    [tableWorkspaceKey]
+  );
 
-  return { pinnedTableSet, pinnedTablesByWorkspace, setPinnedTablesByWorkspace, togglePinnedTable };
+  return { pinnedTableSet, pinnedTablesByWorkspace, togglePinnedTable };
 }
 
 // ---------------------------------------------------------------------------

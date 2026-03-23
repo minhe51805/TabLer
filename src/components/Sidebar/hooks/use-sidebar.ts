@@ -397,7 +397,7 @@ export function useSidebar() {
     [schemaSections, t],
   );
 
-  const { summaryLabel } = useExplorerSummary(filteredSchemaSections, language);
+  const { summaryLabel, visibleTableCount, visibleObjectCount } = useExplorerSummary(filteredSchemaSections, language);
   const hasSearch = search.trim().length > 0;
 
   // --- Context menu ---
@@ -646,10 +646,8 @@ export function useSidebar() {
     schemaFilterOptions,
     summaryLabel,
     hasSearch,
-    visibleTableCount: filteredSchemaSections.reduce((total, section) => total + section.tables.length, 0),
-    visibleObjectCount: filteredSchemaSections.reduce(
-      (total, section) => total + section.views.length + section.triggers.length + section.routines.length, 0
-    ),
+    visibleTableCount,
+    visibleObjectCount,
     language,
     t,
     pinnedTableSet,

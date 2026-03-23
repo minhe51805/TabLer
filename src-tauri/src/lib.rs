@@ -43,6 +43,7 @@ pub fn run() {
     );
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(db_manager)
         .manage(conn_storage)
         .manage(ai_storage)
@@ -78,6 +79,8 @@ pub fn run() {
             check_connection_status,
             parse_connection_url,
             parse_url_details,
+            get_support_url,
+            open_support_page,
             // Query commands
             execute_query,
             execute_sandboxed_query,

@@ -1,28 +1,6 @@
-# Contributors
+# Contributing to TabLer
 
-This file lists the contributors to this project.
-
-## Original Author
-
-- **minjev** (2026)
-
-## How to Add Your Name
-
-If you have contributed to this project and would like to be listed here, please submit a pull request adding your name in the format below:
-
-```
-- **Your Name** (year) - <your-email@example.com>
-```
-
-## All Contributors
-
-- **minjev** (2026)
-
----
-
-# Contributing to TableR
-
-First off, thank you for considering contributing to TableR! It's people like you that make TableR such a great tool for data table management and visualization.
+First off, thank you for considering contributing to TabLer! It's people like you that make TabLer such a great tool for data table management and visualization.
 
 ## Table of Contents
 
@@ -36,7 +14,7 @@ First off, thank you for considering contributing to TableR! It's people like yo
 
 ## Code of Conduct
 
-This project and everyone participating in it is governed by the [TableR Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
+This project and everyone participating in it is governed by the [TabLer Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
 
 ## Getting Started
 
@@ -50,8 +28,8 @@ This project and everyone participating in it is governed by the [TableR Code of
 1. **Fork and clone the repository**
 
    ```bash
-   git clone https://github.com/YOUR_USERNAME/TableR.git
-   cd TableR
+   git clone https://github.com/minhe51805/TabLer.git
+   cd TabLer
    ```
 
 2. **Install dependencies**
@@ -73,7 +51,7 @@ This project and everyone participating in it is governed by the [TableR Code of
 
 ### Reporting Bugs
 
-Before creating bug reports, please check [existing issues](https://github.com/minhe5180/TableR/issues) as you might find out that you don't need to create one.
+Before creating bug reports, please check [existing issues](https://github.com/minhe51805/TabLer/issues) as you might find out that you don't need to create one.
 
 **When you are creating a bug report, please include as many details as possible:**
 
@@ -86,7 +64,7 @@ Before creating bug reports, please check [existing issues](https://github.com/m
 
 ### Suggesting Enhancements
 
-Enhancement suggestions are tracked as [GitHub issues](https://github.com/minhe5180/TableR/issues).
+Enhancement suggestions are tracked as [GitHub issues](https://github.com/minhe51805/TabLer/issues).
 
 **When creating an enhancement suggestion, please include:**
 
@@ -288,7 +266,6 @@ Contributors will be recognized in:
 - README.md contributors section
 - Release notes for significant contributions
 - GitHub contributors page
-- This CONTRIBUTORS.md file
 
 ## Development Tips
 
@@ -317,8 +294,8 @@ npm run typecheck       # Type check
 
 ## License
 
-By contributing to TableR, you agree that your contributions will be licensed under the terms of the [GNU General Public License v3.0](LICENSE).
+By contributing to TabLer, you agree that your contributions will be licensed under the terms of the [GNU General Public License v3.0](LICENSE).
 
 ---
 
-Thank you for contributing to TableR! 🚀
+Thank you for contributing to TabLer! 🚀

@@ -9,7 +9,7 @@ import {
   createBoardDefinition,
   readStoredBoards,
   writeStoredBoards,
-} from "../MetricsBoard/MetricsBoard";
+} from "../MetricsBoard/utils/query-builder";
 
 interface Props {
   connectionId: string;

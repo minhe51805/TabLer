@@ -10,6 +10,7 @@ use sqlx::mysql::{MySqlConnectOptions, MySqlConnection, MySqlSslMode};
 use sqlx::{ConnectOptions, Connection, Executor};
 use std::path::PathBuf;
 use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 use tokio::task;
 use tokio::time::{timeout, Duration};
 
@@ -743,4 +744,19 @@ pub fn parse_connection_url(url: String) -> Result<ConnectionConfig, String> {
 #[tauri::command]
 pub fn parse_url_details(url: String) -> Result<ParsedConnectionUrl, String> {
     ParsedConnectionUrl::parse(&url)
+}
+
+/// Get the Buy Me a Coffee support URL
+#[tauri::command]
+pub fn get_support_url() -> String {
+    "https://buymeacoffee.com/minjev".to_string()
+}
+
+/// Open the Buy Me a Coffee page in the default browser
+#[tauri::command]
+pub fn open_support_page(app: AppHandle) -> Result<(), String> {
+    let url = get_support_url();
+    app.opener()
+        .open_url(&url, None::<String>)
+        .map_err(|e| format!("Failed to open support page: {}", e))
 }

@@ -143,7 +143,7 @@ pub async fn ask_ai(
         Ok((config, api_key))
     })
     .await?;
-    ai_rate_limiter.check(&format!("{}:{:?}", config.id, request.mode))?;
+    ai_rate_limiter.check(&format!("{}:{:?}", config.id, request.mode)).await?;
     if !config.is_enabled {
         return Err("Selected AI provider is disabled.".to_string());
     }
@@ -204,8 +204,14 @@ pub async fn ask_ai(
                 .await
                 .map_err(|_| ai_provider_response_error())?;
             if let Some(err) = resp_json.get("error") {
-                let _ = err;
-                return Err(ai_provider_request_error());
+                let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
+                    m.to_string()
+                } else if let Some(m) = err.as_str() {
+                    m.to_string()
+                } else {
+                    err.to_string()
+                };
+                return Err(format!("AI API error: {}", msg));
             }
 
             if let Some(choices) = resp_json.get("choices") {
@@ -250,8 +256,14 @@ pub async fn ask_ai(
                 .await
                 .map_err(|_| ai_provider_response_error())?;
             if let Some(err) = resp_json.get("error") {
-                let _ = err;
-                return Err(ai_provider_request_error());
+                let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
+                    m.to_string()
+                } else if let Some(m) = err.as_str() {
+                    m.to_string()
+                } else {
+                    err.to_string()
+                };
+                return Err(format!("AI API error: {}", msg));
             }
 
             if let Some(content_array) = resp_json.get("content") {
@@ -294,8 +306,14 @@ pub async fn ask_ai(
                 .await
                 .map_err(|_| ai_provider_response_error())?;
             if let Some(err) = resp_json.get("error") {
-                let _ = err;
-                return Err(ai_provider_request_error());
+                let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
+                    m.to_string()
+                } else if let Some(m) = err.as_str() {
+                    m.to_string()
+                } else {
+                    err.to_string()
+                };
+                return Err(format!("AI API error: {}", msg));
             }
 
             if let Some(candidates) = resp_json.get("candidates") {

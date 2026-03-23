@@ -173,21 +173,31 @@ impl ParsedConnectionUrl {
 }
 
 fn url_decode(s: &str) -> String {
-    // Simple URL decode - handle common cases
-    let mut result = String::new();
+    let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
 
     while let Some(c) = chars.next() {
         if c == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2 {
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    result.push(byte as char);
-                    continue;
+            let d1 = chars.next();
+            let d2 = chars.next();
+            match (d1, d2) {
+                (Some(h1), Some(h2))
+                if h1.is_ascii_hexdigit() && h2.is_ascii_hexdigit() => {
+                    let hex_str = format!("{}{}", h1, h2);
+                    if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
+                        result.push(byte as char);
+                    } else {
+                        result.push('%');
+                        result.push(h1);
+                        result.push(h2);
+                    }
+                }
+                _ => {
+                    result.push('%');
+                    if let Some(d) = d1 { result.push(d); }
+                    if let Some(d) = d2 { result.push(d); }
                 }
             }
-            result.push('%');
-            result.push_str(&hex);
         } else if c == '+' {
             result.push(' ');
         } else {

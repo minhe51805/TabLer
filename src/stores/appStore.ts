@@ -1,11 +1,16 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+
+export { useConnectionStore } from "./connectionStore";
+export { useQueryStore } from "./queryStore";
+export { useAIStore } from "./aiStore";
+export { useUIStore } from "./uiStore";
+
 import type {
-  ColumnDetail,
   ConnectionConfig,
   DatabaseInfo,
-  SchemaObjectInfo,
   TableInfo,
+  SchemaObjectInfo,
   Tab,
   QueryResult,
   TableCellUpdateRequest,
@@ -13,6 +18,7 @@ import type {
   TableStructure,
   AIProviderConfig,
   AIRequestMode,
+  ColumnDetail,
 } from "../types";
 
 const connectionSignature = (c: ConnectionConfig) =>
@@ -30,7 +36,7 @@ const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig =>
   password: undefined,
 });
 
-const deriveConnectionName = (config: ConnectionConfig): string => {
+export function deriveConnectionName(config: ConnectionConfig): string {
   const explicitName = config.name.trim();
   if (explicitName) return explicitName;
 
@@ -41,7 +47,6 @@ const deriveConnectionName = (config: ConnectionConfig): string => {
       const fileName = normalizedPath.split("/").filter(Boolean).pop() || filePath;
       return `SQLite ${fileName}`;
     }
-
     return "SQLite local";
   }
 
@@ -53,7 +58,7 @@ const deriveConnectionName = (config: ConnectionConfig): string => {
   if (database) return `${dbLabel} ${database}`;
   if (host) return `${dbLabel} ${host}`;
   return `${dbLabel} connection`;
-};
+}
 
 const ensureConnectionName = (config: ConnectionConfig): ConnectionConfig => ({
   ...config,
@@ -98,8 +103,6 @@ function invokeWithTimeout<T>(
 }
 
 function invokeMutation<T>(command: string, args: Record<string, unknown>) {
-  // Mutating commands are not wrapped in a frontend timeout because the
-  // backend work would continue anyway and leave renderer state out of sync.
   return invoke<T>(command, args);
 }
 
@@ -119,6 +122,8 @@ interface AppState {
   activeTabId: string | null;
 
   isConnecting: boolean;
+  isLoadingDatabases: boolean;
+  isSwitchingDatabase: boolean;
   isLoadingTables: boolean;
   isExecutingQuery: boolean;
 
@@ -213,6 +218,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   tabs: [],
   activeTabId: null,
   isConnecting: false,
+  isLoadingDatabases: false,
+  isSwitchingDatabase: false,
   isLoadingTables: false,
   isExecutingQuery: false,
   error: null,
@@ -435,6 +442,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   fetchDatabases: async (connectionId: string) => {
+    set({ isLoadingDatabases: true });
     try {
       const databases = await invokeWithTimeout<DatabaseInfo[]>(
         "list_databases",
@@ -442,25 +450,26 @@ export const useAppStore = create<AppState>((set, get) => ({
         FRONTEND_TIMEOUTS.metadata,
         "Listing databases"
       );
-      set({ databases });
+      set({ databases, isLoadingDatabases: false });
     } catch (e) {
-      set({ error: `Failed to list databases: ${e}` });
+      set({ isLoadingDatabases: false, error: `Failed to list databases: ${e}` });
     }
   },
 
   switchDatabase: async (connectionId: string, database: string) => {
+    set({ isSwitchingDatabase: true });
     try {
       await invokeMutation(
         "use_database",
         { connectionId, database },
       );
-      set({ currentDatabase: database });
+      set({ currentDatabase: database, isSwitchingDatabase: false });
       await Promise.all([
         get().fetchTables(connectionId, database),
         get().fetchSchemaObjects(connectionId, database),
       ]);
     } catch (e) {
-      set({ error: `Failed to switch database: ${e}` });
+      set({ isSwitchingDatabase: false, error: `Failed to switch database: ${e}` });
     }
   },
 

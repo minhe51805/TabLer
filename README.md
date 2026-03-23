@@ -1,4 +1,4 @@
-# TabLer
+# TableR
 
 A fast, modern database client for developers. Built with Tauri + React + Rust.
 
@@ -9,6 +9,10 @@ Works on **Windows**, **macOS**, and **Linux**.
 - **PostgreSQL** - Full support including schemas, indexes, foreign keys
 - **MySQL** - Full support with InnoDB engine
 - **SQLite** - Local file databases
+- **MSSQL** - Microsoft SQL Server support
+- **ClickHouse** - ClickHouse columnar database
+- **LibSQL** - LibSQL (Turso-compatible) databases
+- **MariaDB** - MariaDB database server
 
 ## Features
 
@@ -66,32 +70,41 @@ Works on **Windows**, **macOS**, and **Linux**.
 
 ## Architecture
 
-`
+```
 TableR/
-├── src/                    # React frontend
+├── src/                         # React frontend
 │   ├── components/
-│   │   ├── ConnectionForm/ # New connection dialog
-│   │   ├── ConnectionList/ # Saved connections sidebar
-│   │   ├── DataGrid/      # Table data viewer with pagination
-│   │   ├── Sidebar/       # Database/table tree browser
-│   │   ├── SQLEditor/     # Monaco SQL editor + results
-│   │   ├── TabBar/        # Editor tabs
-│   │   └── TableStructure/# Column/index/FK viewer & editor
-│   ├── stores/             # Zustand state management
-│   ├── types/              # TypeScript interfaces
-│   └── App.tsx             # Main layout
-├── src-tauri/              # Rust backend
+│   │   ├── AI/                  # AI-related components
+│   │   ├── AISlidePanel/        # AI chat slide panel
+│   │   ├── AISettingsModal/    # AI provider configuration
+│   │   ├── ConnectionForm/     # New connection dialog (multi-step)
+│   │   ├── ConnectionList/     # Saved connections sidebar
+│   │   ├── CreateSchemaObjectModal/  # Table/view/proc creation wizard
+│   │   ├── DataGrid/            # Table data viewer with pagination
+│   │   ├── MetricsBoard/       # Metrics dashboard
+│   │   ├── MetricsSidebar/     # Metrics sidebar
+│   │   ├── Sidebar/             # Database/table tree browser
+│   │   ├── SQLEditor/           # Monaco SQL editor + results
+│   │   ├── StartupConnectionManager/  # Startup connection screen
+│   │   ├── TabBar/              # Editor tabs
+│   │   └── TableStructure/      # Column/index/FK viewer & editor
+│   ├── stores/                  # Zustand state management
+│   ├── types/                   # TypeScript interfaces
+│   ├── utils/                   # Utility functions
+│   ├── i18n.ts                  # Internationalization
+│   └── App.tsx                  # Main layout
+├── src-tauri/                   # Rust backend
 │   └── src/
 │       ├── database/
-│       │   ├── driver.rs   # DatabaseDriver trait
-│       │   ├── mysql.rs    # MySQL via SQLx
-│       │   ├── postgres.rs # PostgreSQL via SQLx
-│       │   ├── sqlite.rs   # SQLite via SQLx
-│       │   ├── manager.rs  # Connection pool manager
-│       │   └── models.rs   # Shared data models
-│       ├── commands/       # Tauri IPC commands
-│       └── storage/        # Connection persistence
-`
+│       │   ├── driver.rs         # DatabaseDriver trait
+│       │   ├── mysql.rs          # MySQL via SQLx
+│       │   ├── postgres.rs       # PostgreSQL via SQLx
+│       │   ├── sqlite.rs         # SQLite via SQLx
+│       │   ├── manager.rs        # Connection pool manager
+│       │   └── models.rs         # Shared data models
+│       ├── commands/             # Tauri IPC commands
+│       └── storage/              # Connection persistence
+```
 
 ## Development
 
@@ -123,8 +136,14 @@ npm run tauri build
 |----------|--------|
 | Ctrl+Enter | Execute SQL query |
 | Ctrl+K | AI SQL assistant |
-| Ctrl+J | Toggle terminal |
-| Ctrl+ | Toggle terminal |
+| Ctrl+B | Toggle sidebar |
+| Ctrl+Space | Toggle AI panel |
+| Ctrl+N | New query tab |
+| Ctrl+Shift+P | Open AI assistant |
+| Ctrl+0 | Reset sidebar |
+| Ctrl+` | Toggle results pane |
+| Ctrl+= | Increase font size |
+| Ctrl+- | Decrease font size |
 
 ## License
 

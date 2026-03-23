@@ -34,6 +34,7 @@ import { useI18n, type AppLanguagePreference } from "./i18n";
 import { ConnectionList } from "./components/ConnectionList";
 import { MetricsSidebar } from "./components/MetricsSidebar/MetricsSidebar";
 import { Sidebar } from "./components/Sidebar";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { StartupConnectionManager } from "./components/StartupConnectionManager";
 import { TabBar } from "./components/TabBar";
 import type { QueryEditorSessionState } from "./components/SQLEditor";
@@ -1508,55 +1509,63 @@ function App() {
     switch (tab.type) {
       case "query":
         return (
-          <Suspense fallback={<LazyPanelFallback />}>
-            <SQLEditor
-              key={tab.id}
-              connectionId={tab.connectionId}
-              initialContent={tab.content || ""}
-              tabId={tab.id}
-              initialState={querySessionByTab[tab.id]}
-              runRequestNonce={queryRunRequestByTab[tab.id] ?? 0}
-              onChromeChange={(state) => handleQueryChromeChange(tab.id, state)}
-              onStateChange={(state) => handleQuerySessionChange(tab.id, state)}
-            />
-          </Suspense>
+          <ErrorBoundary>
+            <Suspense fallback={<LazyPanelFallback />}>
+              <SQLEditor
+                key={tab.id}
+                connectionId={tab.connectionId}
+                initialContent={tab.content || ""}
+                tabId={tab.id}
+                initialState={querySessionByTab[tab.id]}
+                runRequestNonce={queryRunRequestByTab[tab.id] ?? 0}
+                onChromeChange={(state) => handleQueryChromeChange(tab.id, state)}
+                onStateChange={(state) => handleQuerySessionChange(tab.id, state)}
+              />
+            </Suspense>
+          </ErrorBoundary>
         );
       case "table":
         return (
-          <Suspense fallback={<LazyPanelFallback />}>
-            <DataGrid
-              key={tab.id}
-              connectionId={tab.connectionId}
-              tableName={tab.tableName}
-              database={tab.database}
-              isActive={isActive}
-            />
-          </Suspense>
+          <ErrorBoundary>
+            <Suspense fallback={<LazyPanelFallback />}>
+              <DataGrid
+                key={tab.id}
+                connectionId={tab.connectionId}
+                tableName={tab.tableName}
+                database={tab.database}
+                isActive={isActive}
+              />
+            </Suspense>
+          </ErrorBoundary>
         );
       case "structure":
         return (
-          <Suspense fallback={<LazyPanelFallback />}>
-            <TableStructure
-              key={tab.id}
-              connectionId={tab.connectionId}
-              tableName={tab.tableName || ""}
-              database={tab.database}
-              isActive={isActive}
-            />
-          </Suspense>
+          <ErrorBoundary>
+            <Suspense fallback={<LazyPanelFallback />}>
+              <TableStructure
+                key={tab.id}
+                connectionId={tab.connectionId}
+                tableName={tab.tableName || ""}
+                database={tab.database}
+                isActive={isActive}
+              />
+            </Suspense>
+          </ErrorBoundary>
         );
       case "metrics":
         return (
-          <Suspense fallback={<LazyPanelFallback />}>
-            <MetricsBoard
-              key={tab.id}
-              connectionId={tab.connectionId}
-              database={tab.database}
-              tabId={tab.id}
-              boardId={tab.metricsBoardId}
-              integratedSidebar={false}
-            />
-          </Suspense>
+          <ErrorBoundary>
+            <Suspense fallback={<LazyPanelFallback />}>
+              <MetricsBoard
+                key={tab.id}
+                connectionId={tab.connectionId}
+                database={tab.database}
+                tabId={tab.id}
+                boardId={tab.metricsBoardId}
+                integratedSidebar={false}
+              />
+            </Suspense>
+          </ErrorBoundary>
         );
       default:
         return null;
@@ -1760,14 +1769,16 @@ function App() {
                   </div>
 
                   <div className="workspace-sidebar-panel">
-                    {leftPanel === "metrics" ? (
-                      <MetricsSidebar
-                        connectionId={activeConnectionId || ""}
-                        database={currentDatabase || undefined}
-                      />
-                    ) : (
-                      <Sidebar />
-                    )}
+                    <ErrorBoundary>
+                      {leftPanel === "metrics" ? (
+                        <MetricsSidebar
+                          connectionId={activeConnectionId || ""}
+                          database={currentDatabase || undefined}
+                        />
+                      ) : (
+                        <Sidebar />
+                      )}
+                    </ErrorBoundary>
                   </div>
                 </div>
               )}

@@ -127,7 +127,7 @@ function resolveSqlDialect(dbType: DatabaseType): SqlDialectFamily {
     case "sqlite":
     case "duckdb":
     case "libsql":
-    case "cloudflared1":
+    case "cloudflare_d1":
       return "sqlite";
     default:
       return "postgresql";

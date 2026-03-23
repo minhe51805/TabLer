@@ -2,62 +2,45 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Check,
-  ChevronDown,
-  ChevronRight,
   Columns3,
-  FileCode,
-  GitBranch,
-  Key,
-  Link,
   Link2,
   ListTree,
   Loader2,
-  Pencil,
-  Trash2,
   X,
 } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import type {
   ColumnDetail,
-  DatabaseType,
   ForeignKeyInfo,
   IndexInfo,
   TableStructure as TableStructureType,
   TriggerInfo,
 } from "../../types";
+import type { SectionKey } from "./utils/dialect-sql-generator";
+import {
+  applyDraftToColumn,
+  buildColumnAlterStatements,
+  buildDropColumnStatements,
+  createEditorState,
+  formatDbError,
+  getDefaultValueForType,
+  quoteIdentifier,
+  qualifyTableName,
+  splitQualifiedTableName,
+  summarizeToastMessage,
+  ColumnEditorState,
+  StagedColumnChange,
+} from "./utils/dialect-sql-generator";
+import { AlterColumnModal } from "./components/AlterColumnModal";
+import { ColumnList } from "./components/ColumnList";
+import { FKList, IndexList, TriggerList, ViewDefinitionSection } from "./components/StructureList";
+import { ReviewPanel } from "./components/ReviewPanel";
 
 interface Props {
   connectionId: string;
   tableName: string;
   database?: string;
   isActive?: boolean;
-}
-
-type SectionKey = "columns" | "indexes" | "foreign_keys" | "triggers" | "view_definition";
-type DefaultMode = "keep" | "set" | "drop";
-type SqlDialectFamily = "mysql" | "postgresql" | "sqlite";
-
-interface ColumnEditorState {
-  originalName: string;
-  name: string;
-  dataType: string;
-  nullable: boolean;
-  defaultMode: DefaultMode;
-  defaultValue: string;
-  isPrimaryKey: boolean;
-  extra: string;
-}
-
-interface BuildColumnSqlResult {
-  statements: string[];
-  error?: string;
-}
-
-interface StagedColumnChange {
-  original: ColumnDetail;
-  draft?: ColumnEditorState;
-  statements: string[];
-  action: "edit" | "drop";
 }
 
 type StructureToastTone = "success" | "info" | "error";
@@ -93,344 +76,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
       }
     );
   });
-}
-
-function splitQualifiedTableName(table: string) {
-  const [schema, ...rest] = table.split(".");
-  if (rest.length === 0) {
-    return { schema: "public", name: schema };
-  }
-  return {
-    schema,
-    name: rest.join("."),
-  };
-}
-
-function escapeRegex(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function referencesColumnInSql(sql: string | undefined, columnName: string) {
-  if (!sql) return false;
-  const pattern = new RegExp(
-    `(^|[^a-zA-Z0-9_])(?:${escapeRegex(columnName)}|"${escapeRegex(columnName)}"|\`${escapeRegex(columnName)}\`)(?=$|[^a-zA-Z0-9_])`,
-    "i"
-  );
-  return pattern.test(sql);
-}
-
-function resolveSqlDialect(dbType: DatabaseType): SqlDialectFamily {
-  switch (dbType) {
-    case "mysql":
-    case "mariadb":
-      return "mysql";
-    case "sqlite":
-    case "duckdb":
-    case "libsql":
-    case "cloudflare_d1":
-      return "sqlite";
-    default:
-      return "postgresql";
-  }
-}
-
-function quoteIdentifier(dbType: DatabaseType, value: string) {
-  const normalized = value.trim();
-  if (resolveSqlDialect(dbType) === "mysql") {
-    return `\`${normalized.replace(/`/g, "``")}\``;
-  }
-  return `"${normalized.replace(/"/g, "\"\"")}"`;
-}
-
-function qualifyTableName(dbType: DatabaseType, tableName: string, database?: string) {
-  const dialect = resolveSqlDialect(dbType);
-  const parts = tableName
-    .split(".")
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  if (dialect === "mysql" && parts.length === 1 && database) {
-    parts.unshift(database);
-  }
-
-  return parts.map((part) => quoteIdentifier(dbType, part)).join(".");
-}
-
-function buildColumnAlterStatements(
-  dbType: DatabaseType,
-  tableName: string,
-  database: string | undefined,
-  original: ColumnDetail,
-  editor: ColumnEditorState
-): BuildColumnSqlResult {
-  const dialect = resolveSqlDialect(dbType);
-
-  if (dialect === "sqlite") {
-    return {
-      statements: [],
-      error: "SQLite column changes are not wired into direct actions yet.",
-    };
-  }
-
-  const nextName = editor.name.trim();
-  const nextType = editor.dataType.trim();
-  const originalType = (original.column_type || original.data_type || "").trim();
-  const originalDefault = (original.default_value || "").trim();
-  const nextDefault = editor.defaultValue.trim();
-  const tableRef = qualifyTableName(dbType, tableName, database);
-  const statements: string[] = [];
-
-  if (!nextName) {
-    return { statements: [], error: "Column name is required." };
-  }
-
-  if (!nextType) {
-    return { statements: [], error: "Column type is required." };
-  }
-
-  let currentName = original.name;
-
-  if (nextName !== original.name) {
-    statements.push(
-      `ALTER TABLE ${tableRef} RENAME COLUMN ${quoteIdentifier(dbType, original.name)} TO ${quoteIdentifier(dbType, nextName)}`
-    );
-    currentName = nextName;
-  }
-
-  if (dialect === "postgresql") {
-    if (nextType !== originalType) {
-      statements.push(
-        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} TYPE ${nextType}`
-      );
-    }
-
-    if (!original.is_primary_key && editor.nullable !== original.is_nullable) {
-      statements.push(
-        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} ${editor.nullable ? "DROP" : "SET"} NOT NULL`
-      );
-    }
-
-    if (editor.defaultMode === "set") {
-      if (!nextDefault) {
-        return { statements: [], error: "Default expression is empty." };
-      }
-      if (nextDefault !== originalDefault) {
-        statements.push(
-          `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} SET DEFAULT ${nextDefault}`
-        );
-      }
-    }
-
-    if (editor.defaultMode === "drop" && originalDefault) {
-      statements.push(
-        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} DROP DEFAULT`
-      );
-    }
-
-    return { statements };
-  }
-
-  const definitionChanged = nextType !== originalType || editor.nullable !== original.is_nullable;
-  const extraClause = editor.extra.trim();
-
-  if (definitionChanged) {
-    const parts = [
-      `ALTER TABLE ${tableRef} MODIFY COLUMN ${quoteIdentifier(dbType, currentName)} ${nextType}`,
-      editor.nullable && !editor.isPrimaryKey ? "NULL" : "NOT NULL",
-    ];
-
-    if (editor.defaultMode === "set") {
-      if (!nextDefault) {
-        return { statements: [], error: "Default expression is empty." };
-      }
-      parts.push(`DEFAULT ${nextDefault}`);
-    } else if (editor.defaultMode === "keep" && originalDefault) {
-      parts.push(`DEFAULT ${originalDefault}`);
-    }
-
-    if (extraClause && extraClause !== "-") {
-      parts.push(extraClause);
-    }
-
-    statements.push(parts.join(" "));
-    return { statements };
-  }
-
-  if (editor.defaultMode === "set") {
-    if (!nextDefault) {
-      return { statements: [], error: "Default expression is empty." };
-    }
-    if (nextDefault !== originalDefault) {
-      statements.push(
-        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} SET DEFAULT ${nextDefault}`
-      );
-    }
-  }
-
-  if (editor.defaultMode === "drop" && originalDefault) {
-    statements.push(
-      `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} DROP DEFAULT`
-    );
-  }
-
-  return { statements };
-}
-
-function buildDropColumnStatements(
-  dbType: DatabaseType,
-  tableName: string,
-  database: string | undefined,
-  original: ColumnDetail,
-  indexes: IndexInfo[],
-  foreignKeys: ForeignKeyInfo[],
-  triggers: TriggerInfo[]
-): BuildColumnSqlResult {
-  if (original.is_primary_key) {
-    return {
-      statements: [],
-      error: "Primary key columns cannot be deleted from this panel.",
-    };
-  }
-
-  const indexedBy = indexes.filter((index) => index.columns.includes(original.name));
-  if (indexedBy.length > 0) {
-    return {
-      statements: [],
-      error: `Column "${original.name}" is used by index ${indexedBy.map((index) => index.name).join(", ")}.`,
-    };
-  }
-
-  const referencedByForeignKey = foreignKeys.find((foreignKey) => foreignKey.column === original.name);
-  if (referencedByForeignKey) {
-    return {
-      statements: [],
-      error: `Column "${original.name}" is used by foreign key ${referencedByForeignKey.name}.`,
-    };
-  }
-
-  const dependentTriggers = triggers.filter((trigger) =>
-    referencesColumnInSql(trigger.definition, original.name)
-  );
-  if (dependentTriggers.length > 0) {
-    return {
-      statements: [],
-      error: `Column "${original.name}" appears in trigger ${dependentTriggers
-        .map((trigger) => trigger.name)
-        .join(", ")}. Update or remove those triggers first.`,
-    };
-  }
-
-  const tableRef = qualifyTableName(dbType, tableName, database);
-  return {
-    statements: [
-      `ALTER TABLE ${tableRef} DROP COLUMN ${quoteIdentifier(dbType, original.name)}`,
-    ],
-  };
-}
-
-function createEditorState(column: ColumnDetail, draft?: ColumnEditorState): ColumnEditorState {
-  if (draft) {
-    return { ...draft };
-  }
-
-  return {
-    originalName: column.name,
-    name: column.name,
-    dataType: column.column_type || column.data_type,
-    nullable: column.is_nullable,
-    defaultMode: column.default_value ? "keep" : "drop",
-    defaultValue: column.default_value || "",
-    isPrimaryKey: column.is_primary_key,
-    extra: column.extra || "",
-  };
-}
-
-function applyDraftToColumn(column: ColumnDetail, draft?: ColumnEditorState): ColumnDetail {
-  if (!draft) return column;
-
-  return {
-    ...column,
-    name: draft.name.trim() || column.name,
-    data_type: draft.dataType.trim() || column.data_type,
-    column_type: draft.dataType.trim() || column.column_type || column.data_type,
-    is_nullable: draft.nullable,
-    default_value:
-      draft.defaultMode === "set"
-        ? draft.defaultValue.trim() || undefined
-        : draft.defaultMode === "drop"
-          ? undefined
-          : column.default_value,
-    extra: draft.extra.trim() || column.extra,
-  };
-}
-
-function getDefaultValueForType(dataType: string) {
-  const type = dataType.toLowerCase();
-  if (
-    type.includes("int") ||
-    type.includes("float") ||
-    type.includes("double") ||
-    type.includes("decimal") ||
-    type.includes("numeric") ||
-    type.includes("real")
-  ) {
-    return "0";
-  }
-  if (type.includes("bool")) {
-    return "false";
-  }
-  if (type.includes("uuid")) {
-    return "gen_random_uuid()";
-  }
-  if (type.includes("date") || type.includes("time")) {
-    return "CURRENT_TIMESTAMP";
-  }
-  if (type.includes("json")) {
-    return "'{}'::jsonb";
-  }
-  return "''";
-}
-
-function formatDbError(error: unknown, tableName: string) {
-  const message = error instanceof Error ? error.message : String(error);
-  const displayTable = tableName.split(".").pop() || tableName;
-
-  if (message.includes("must be owner of table")) {
-    return `Permission denied: You are not the owner of "${displayTable}".\n\nPossible solutions:\n1. Connect as the table owner (usually the user who created it)\n2. Ask the owner to run: ALTER TABLE "${displayTable}" OWNER TO your_username\n3. Use "Open SQL" to draft the query and send it to the DBA`;
-  }
-
-  if (message.includes("permission denied")) {
-    return `Permission denied: ${message}\n\nThis is a database-level restriction, not an app issue.`;
-  }
-
-  if (message.includes("cannot insert multiple commands into a prepared statement")) {
-    return `The database rejected multiple SQL statements in one request.\n\nRun them one by one, or use the SQL editor batch runner so each statement is sent separately.`;
-  }
-
-  if (message.includes("502") || message.includes("Bad Gateway") || message.includes("timeout")) {
-    return `Connection timeout (HTTP 502): The database server took too long to respond.\n\nThis is often caused by:\n1. Supabase pooler being slow - try using port 5432 instead of 6543\n2. Query taking too long\n3. Network issues\n\nTry again or use a different connection port.`;
-  }
-
-  if (message.includes("connection refused") || message.includes("ECONNREFUSED")) {
-    return `Connection refused: Cannot connect to the database server.\n\nPlease check:\n1. Is the server running?\n2. Is the host/port correct?\n3. Is your IP allowed in the database firewall?`;
-  }
-
-  if (message.includes("contains null values")) {
-    return "Column still contains NULL values. Fill them before setting NOT NULL.";
-  }
-
-  return message;
-}
-
-function summarizeToastMessage(message: string, maxLength = 150) {
-  const firstParagraph = message.split(/\n\s*\n/)[0]?.trim() || message.trim();
-  const compact = firstParagraph.replace(/\s+/g, " ").trim();
-
-  if (compact.length <= maxLength) {
-    return compact;
-  }
-
-  return `${compact.slice(0, maxLength - 1).trimEnd()}...`;
 }
 
 export function TableStructure({ connectionId, tableName, database, isActive = true }: Props) {
@@ -478,8 +123,8 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
       : "Indexes, triggers, and view details stay deferred until you open them.";
 
   const shellRef = useRef<HTMLDivElement | null>(null);
-  const sectionRefs = useRef<Record<SectionKey, HTMLElement | null>>({
-    columns: null,
+  const columnsSectionRef = useRef<HTMLElement | null>(null);
+  const sectionRefs = useRef<Record<Exclude<SectionKey, "columns">, HTMLElement | null>>({
     indexes: null,
     foreign_keys: null,
     triggers: null,
@@ -549,7 +194,6 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
       window.clearTimeout(toastHideTimeoutRef.current);
       toastHideTimeoutRef.current = null;
     }
-
     if (toastClearTimeoutRef.current !== null) {
       window.clearTimeout(toastClearTimeoutRef.current);
       toastClearTimeoutRef.current = null;
@@ -754,10 +398,11 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
   const scrollToSection = (section: SectionKey) => {
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
-        sectionRefs.current[section]?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
+        if (section === "columns") {
+          columnsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        } else {
+          sectionRefs.current[section]?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
       });
     });
   };
@@ -808,6 +453,11 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
     setEditorError(null);
     setColumnEditor(createEditorState(column, stagedColumnChanges[column.name]?.draft));
     focusSection("columns");
+  };
+
+  const updateColumnEditor = (updates: Partial<ColumnEditorState>) => {
+    setEditorError(null);
+    setColumnEditor((prev) => (prev ? { ...prev, ...updates } : prev));
   };
 
   const stageColumnChange = () => {
@@ -1018,6 +668,10 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Effects
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -1145,6 +799,10 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [closeColumnEditor, columnEditor]);
 
+  // ---------------------------------------------------------------------------
+  // Loading / Error States
+  // ---------------------------------------------------------------------------
+
   if (isLoadingColumns && columns.length === 0) {
     return (
       <div className="structure-state">
@@ -1169,9 +827,14 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
   return (
     <>
       <div ref={shellRef} className="structure-shell">
+        {/* Condensed topbar */}
         <div className={`structure-topbar-mini ${isTopbarCondensed ? "active" : ""}`}>
           <div className="structure-topbar-mini-main">
             <div className="structure-topbar-mini-title-row">
@@ -1226,6 +889,7 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
           </div>
         </div>
 
+        {/* Full topbar */}
         <div className="structure-topbar">
           <div className="structure-topbar-copy">
             <span className="structure-topbar-kicker">Table Structure</span>
@@ -1366,749 +1030,102 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
           </div>
         </div>
 
+        {/* Structure sections */}
         <div className="structure-sections">
-          <section
-            ref={(node) => {
-              sectionRefs.current.columns = node;
-            }}
-            className={`structure-section ${activeSection === "columns" ? "active" : ""}`}
-          >
-            <button
-              type="button"
-              onClick={() => toggleSection("columns")}
-              className="structure-section-toggle"
-              aria-expanded={expandedSections.has("columns")}
-            >
-              <div className="structure-section-head">
-                {expandedSections.has("columns") ? (
-                  <ChevronDown className="w-4 h-4" />
-                ) : (
-                  <ChevronRight className="w-4 h-4" />
-                )}
-                <div className="structure-section-icon">
-                  <Columns3 className="w-4 h-4" />
-                </div>
-                <div className="structure-section-copy">
-                  <span className="structure-section-title">Columns</span>
-                  <span className="structure-section-subtitle">
-                    Edit in memory first, then review SQL before applying.
-                  </span>
-                </div>
-              </div>
-              <span className="structure-section-count">{columns.length}</span>
-            </button>
+          <ColumnList
+            columns={columns}
+            stagedColumns={stagedColumns}
+            stagedColumnChanges={stagedColumnChanges}
+            onOpenEditor={openColumnEditor}
+            sectionRef={columnsSectionRef}
+            isActive={activeSection === "columns"}
+            isExpanded={expandedSections.has("columns")}
+            onToggle={() => toggleSection("columns")}
+          />
 
-            {expandedSections.has("columns") && (
-              <div className="structure-section-body">
-                <table className="structure-table">
-                  <thead>
-                    <tr>
-                      <th className="structure-th">Column</th>
-                      <th className="structure-th">Type</th>
-                      <th className="structure-th">Nullable</th>
-                      <th className="structure-th">Default</th>
-                      <th className="structure-th">Extra</th>
-                      <th className="structure-th structure-th-actions">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {columns.map((column, index) => {
-                      const draft = stagedColumnChanges[column.name]?.draft;
-                      const displayColumn = stagedColumns[index];
-                      return (
-                        <tr
-                          key={column.name}
-                          className={`structure-row ${index % 2 !== 0 ? "alt" : ""} ${draft ? "staged" : ""}`}
-                        >
-                          <td className="structure-td">
-                            <div className="structure-name-cell">
-                              {displayColumn.is_primary_key && (
-                                <Key className="w-3.5 h-3.5 text-[var(--warning)]" />
-                              )}
-                              <span className="structure-name-text">{displayColumn.name}</span>
-                              {displayColumn.is_primary_key && (
-                                <span className="structure-inline-pill primary">PK</span>
-                              )}
-                              {draft && <span className="structure-inline-pill staged">Edited</span>}
-                            </div>
-                          </td>
-                          <td className="structure-td">
-                            <span className="structure-inline-pill type">
-                              {displayColumn.column_type || displayColumn.data_type}
-                            </span>
-                          </td>
-                          <td className="structure-td">
-                            <span
-                              className={`structure-inline-pill ${displayColumn.is_nullable ? "" : "strong"}`}
-                            >
-                              {displayColumn.is_nullable ? "YES" : "NO"}
-                            </span>
-                          </td>
-                          <td className="structure-td">
-                            <span
-                              className="structure-code-chip"
-                              title={displayColumn.default_value || "-"}
-                            >
-                              {displayColumn.default_value || "-"}
-                            </span>
-                          </td>
-                          <td className="structure-td">
-                            <span className="structure-code-chip" title={displayColumn.extra || "-"}>
-                              {displayColumn.extra || "-"}
-                            </span>
-                          </td>
-                          <td className="structure-td structure-td-actions">
-                            <div className="structure-action-group">
-                              <button
-                                type="button"
-                                className="structure-action-btn"
-                                onClick={() => openColumnEditor(column)}
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                                <span>Edit</span>
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+          <IndexList
+            indexes={indexes}
+            sectionRefs={sectionRefs}
+            isActive={activeSection === "indexes"}
+            isExpanded={expandedSections.has("indexes")}
+            hasLoadedMetadata={hasLoadedMetadata}
+            isLoadingMetadata={isLoadingMetadata}
+            metadataError={metadataError}
+            onToggle={() => toggleSection("indexes")}
+            onLoadMetadata={loadMetadata}
+          />
 
-          <section
-            ref={(node) => {
-              sectionRefs.current.indexes = node;
-            }}
-            className={`structure-section ${activeSection === "indexes" ? "active" : ""}`}
-          >
-            <button
-              type="button"
-              onClick={() => toggleSection("indexes")}
-              className="structure-section-toggle"
-              aria-expanded={expandedSections.has("indexes")}
-            >
-              <div className="structure-section-head">
-                {expandedSections.has("indexes") ? (
-                  <ChevronDown className="w-4 h-4" />
-                ) : (
-                  <ChevronRight className="w-4 h-4" />
-                )}
-                <div className="structure-section-icon">
-                  <ListTree className="w-4 h-4" />
-                </div>
-                <div className="structure-section-copy">
-                  <span className="structure-section-title">Indexes</span>
-                  <span className="structure-section-subtitle">
-                    Loaded only when needed to keep structure view fast.
-                  </span>
-                </div>
-              </div>
-              <span className="structure-section-count">{hasLoadedMetadata ? indexes.length : "..."}</span>
-            </button>
-
-            {expandedSections.has("indexes") && (
-              <div className="structure-section-body">
-                {!hasLoadedMetadata ? (
-                  <div className="structure-section-status">
-                    {isLoadingMetadata ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin text-[var(--accent)]" />
-                        <span>Loading indexes...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{metadataError || "Indexes are loaded on demand."}</span>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={() => void loadMetadata({ force: true })}
-                        >
-                          Load now
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <table className="structure-table">
-                    <thead>
-                      <tr>
-                        <th className="structure-th">Name</th>
-                        <th className="structure-th">Columns</th>
-                        <th className="structure-th">Unique</th>
-                        <th className="structure-th">Type</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {indexes.length > 0 ? (
-                        indexes.map((idx, index) => (
-                          <tr key={idx.name} className={`structure-row ${index % 2 !== 0 ? "alt" : ""}`}>
-                            <td className="structure-td">
-                              <span className="structure-name-text">{idx.name}</span>
-                            </td>
-                            <td className="structure-td">
-                              <span className="structure-code-chip" title={idx.columns.join(", ")}>
-                                {idx.columns.join(", ")}
-                              </span>
-                            </td>
-                            <td className="structure-td">
-                              <span className={`structure-inline-pill ${idx.is_unique ? "primary" : ""}`}>
-                                {idx.is_unique ? "YES" : "NO"}
-                              </span>
-                            </td>
-                            <td className="structure-td">
-                              <span className="structure-inline-pill">{idx.index_type || "-"}</span>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={4} className="structure-empty-row">
-                            No indexes
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            )}
-          </section>
-
-          <section
-            ref={(node) => {
-              sectionRefs.current.foreign_keys = node;
-            }}
-            className={`structure-section ${activeSection === "foreign_keys" ? "active" : ""}`}
-          >
-            <button
-              type="button"
-              onClick={() => toggleSection("foreign_keys")}
-              className="structure-section-toggle"
-              aria-expanded={expandedSections.has("foreign_keys")}
-            >
-              <div className="structure-section-head">
-                {expandedSections.has("foreign_keys") ? (
-                  <ChevronDown className="w-4 h-4" />
-                ) : (
-                  <ChevronRight className="w-4 h-4" />
-                )}
-                <div className="structure-section-icon">
-                  <Link2 className="w-4 h-4" />
-                </div>
-                <div className="structure-section-copy">
-                  <span className="structure-section-title">Foreign Keys</span>
-                  <span className="structure-section-subtitle">
-                    Referential metadata is deferred until you ask for it.
-                  </span>
-                </div>
-              </div>
-              <span className="structure-section-count">
-                {hasLoadedMetadata ? foreignKeys.length : "..."}
-              </span>
-            </button>
-
-            {expandedSections.has("foreign_keys") && (
-              <div className="structure-section-body">
-                {!hasLoadedMetadata ? (
-                  <div className="structure-section-status">
-                    {isLoadingMetadata ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin text-[var(--accent)]" />
-                        <span>Loading foreign keys...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{metadataError || "Foreign keys are loaded on demand."}</span>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={() => void loadMetadata({ force: true })}
-                        >
-                          Load now
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <table className="structure-table">
-                    <thead>
-                      <tr>
-                        <th className="structure-th">Name</th>
-                        <th className="structure-th">Column</th>
-                        <th className="structure-th">Reference</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {foreignKeys.length > 0 ? (
-                        foreignKeys.map((fk, index) => (
-                          <tr key={fk.name} className={`structure-row ${index % 2 !== 0 ? "alt" : ""}`}>
-                            <td className="structure-td">
-                              <span className="structure-name-text">{fk.name}</span>
-                            </td>
-                            <td className="structure-td">
-                              <span className="structure-inline-pill type">{fk.column}</span>
-                            </td>
-                            <td className="structure-td">
-                              <div className="structure-reference-cell">
-                                <Link className="w-3.5 h-3.5" />
-                                <span
-                                  className="structure-code-chip"
-                                  title={`${fk.referenced_table}.${fk.referenced_column}`}
-                                >
-                                  {fk.referenced_table}.{fk.referenced_column}
-                                </span>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={3} className="structure-empty-row">
-                            No foreign keys
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            )}
-          </section>
+          <FKList
+            foreignKeys={foreignKeys}
+            sectionRefs={sectionRefs}
+            isActive={activeSection === "foreign_keys"}
+            isExpanded={expandedSections.has("foreign_keys")}
+            hasLoadedMetadata={hasLoadedMetadata}
+            isLoadingMetadata={isLoadingMetadata}
+            metadataError={metadataError}
+            onToggle={() => toggleSection("foreign_keys")}
+            onLoadMetadata={loadMetadata}
+          />
 
           {(objectType === "VIEW" || !!viewDefinition || (isLoadingMetadata && !hasLoadedMetadata)) && (
-            <section
-              ref={(node) => {
-                sectionRefs.current.view_definition = node;
-              }}
-              className={`structure-section ${activeSection === "view_definition" ? "active" : ""}`}
-            >
-              <button
-                type="button"
-                onClick={() => toggleSection("view_definition")}
-                className="structure-section-toggle"
-                aria-expanded={expandedSections.has("view_definition")}
-              >
-                <div className="structure-section-head">
-                  {expandedSections.has("view_definition") ? (
-                    <ChevronDown className="w-4 h-4" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4" />
-                  )}
-                  <div className="structure-section-icon">
-                    <FileCode className="w-4 h-4" />
-                  </div>
-                  <div className="structure-section-copy">
-                    <span className="structure-section-title">View Definition</span>
-                    <span className="structure-section-subtitle">
-                      Inspect the SQL body behind this view.
-                    </span>
-                  </div>
-                </div>
-                <span className="structure-section-count">{viewDefinition ? "SQL" : "..."}</span>
-              </button>
-
-              {expandedSections.has("view_definition") && (
-                <div className="structure-section-body">
-                  {!hasLoadedMetadata ? (
-                    <div className="structure-section-status">
-                      {isLoadingMetadata ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin text-[var(--accent)]" />
-                          <span>Loading view definition...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>{metadataError || "View definition is loaded on demand."}</span>
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => void loadMetadata({ force: true })}
-                          >
-                            Load now
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  ) : (
-                    <pre className="structure-editor-preview">
-                      {viewDefinition || "No view definition is available for this object."}
-                    </pre>
-                  )}
-                </div>
-              )}
-            </section>
+            <ViewDefinitionSection
+              viewDefinition={viewDefinition}
+              sectionRefs={sectionRefs}
+              isActive={activeSection === "view_definition"}
+              isExpanded={expandedSections.has("view_definition")}
+              hasLoadedMetadata={hasLoadedMetadata}
+              isLoadingMetadata={isLoadingMetadata}
+              metadataError={metadataError}
+              onToggle={() => toggleSection("view_definition")}
+              onLoadMetadata={loadMetadata}
+            />
           )}
 
-          <section
-            ref={(node) => {
-              sectionRefs.current.triggers = node;
-            }}
-            className={`structure-section ${activeSection === "triggers" ? "active" : ""}`}
-          >
-            <button
-              type="button"
-              onClick={() => toggleSection("triggers")}
-              className="structure-section-toggle"
-              aria-expanded={expandedSections.has("triggers")}
-            >
-              <div className="structure-section-head">
-                {expandedSections.has("triggers") ? (
-                  <ChevronDown className="w-4 h-4" />
-                ) : (
-                  <ChevronRight className="w-4 h-4" />
-                )}
-                <div className="structure-section-icon">
-                  <GitBranch className="w-4 h-4" />
-                </div>
-                <div className="structure-section-copy">
-                  <span className="structure-section-title">Triggers</span>
-                  <span className="structure-section-subtitle">
-                    Trigger metadata stays deferred until you open this section.
-                  </span>
-                </div>
-              </div>
-              <span className="structure-section-count">{hasLoadedMetadata ? triggers.length : "..."}</span>
-            </button>
-
-            {expandedSections.has("triggers") && (
-              <div className="structure-section-body">
-                {!hasLoadedMetadata ? (
-                  <div className="structure-section-status">
-                    {isLoadingMetadata ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin text-[var(--accent)]" />
-                        <span>Loading triggers...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{metadataError || "Triggers are loaded on demand."}</span>
-                        <button
-                          type="button"
-                          className="btn btn-secondary"
-                          onClick={() => void loadMetadata({ force: true })}
-                        >
-                          Load now
-                        </button>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <table className="structure-table">
-                    <thead>
-                      <tr>
-                        <th className="structure-th">Name</th>
-                        <th className="structure-th">Timing</th>
-                        <th className="structure-th">Event</th>
-                        <th className="structure-th">Definition</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {triggers.length > 0 ? (
-                        triggers.map((trigger, index) => (
-                          <tr key={trigger.name} className={`structure-row ${index % 2 !== 0 ? "alt" : ""}`}>
-                            <td className="structure-td">
-                              <span className="structure-name-text">{trigger.name}</span>
-                            </td>
-                            <td className="structure-td">
-                              <span className="structure-inline-pill">{trigger.timing || "-"}</span>
-                            </td>
-                            <td className="structure-td">
-                              <span className="structure-inline-pill type">{trigger.event || "-"}</span>
-                            </td>
-                            <td className="structure-td">
-                              <span className="structure-code-chip" title={trigger.definition || "-"}>
-                                {trigger.definition || "-"}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={4} className="structure-empty-row">
-                            No triggers
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            )}
-          </section>
+          <TriggerList
+            triggers={triggers}
+            sectionRefs={sectionRefs}
+            isActive={activeSection === "triggers"}
+            isExpanded={expandedSections.has("triggers")}
+            hasLoadedMetadata={hasLoadedMetadata}
+            isLoadingMetadata={isLoadingMetadata}
+            metadataError={metadataError}
+            onToggle={() => toggleSection("triggers")}
+            onLoadMetadata={loadMetadata}
+          />
         </div>
       </div>
 
+      {/* Modals */}
       {columnEditor && (
-        <div className="structure-editor-overlay" onClick={closeColumnEditor}>
-          <div className="structure-editor-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="structure-editor-header">
-              <div className="structure-editor-copy">
-                <span className="structure-topbar-kicker">Column Action</span>
-                <h3 className="structure-editor-title">Edit {columnEditor.originalName}</h3>
-                <p className="structure-editor-subtitle">
-                  Stage column edits or deletion first, then review the generated SQL before applying.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                className="structure-editor-close"
-                onClick={closeColumnEditor}
-                aria-label="Close column editor"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="structure-editor-grid">
-              <label className="structure-editor-field">
-                <span className="form-label">Column Name</span>
-                <input
-                  className="input"
-                  value={columnEditor.name}
-                  onChange={(event) => {
-                    setEditorError(null);
-                    setColumnEditor((prev) => (prev ? { ...prev, name: event.target.value } : prev));
-                  }}
-                />
-              </label>
-
-              <label className="structure-editor-field">
-                <span className="form-label">Type</span>
-                <input
-                  className="input"
-                  value={columnEditor.dataType}
-                  onChange={(event) => {
-                    setEditorError(null);
-                    setColumnEditor((prev) =>
-                      prev ? { ...prev, dataType: event.target.value } : prev
-                    );
-                  }}
-                />
-              </label>
-
-              <label className="structure-editor-field">
-                <span className="form-label">Nullable</span>
-                <button
-                  type="button"
-                  className={`structure-toggle ${columnEditor.nullable ? "on" : ""}`}
-                  disabled={columnEditor.isPrimaryKey}
-                  onClick={() => {
-                    setEditorError(null);
-                    setColumnEditor((prev) => (prev ? { ...prev, nullable: !prev.nullable } : prev));
-                  }}
-                >
-                  <span className="structure-toggle-track">
-                    <span className="structure-toggle-thumb" />
-                  </span>
-                  <span className="structure-toggle-copy">
-                    {columnEditor.isPrimaryKey
-                      ? "Primary keys stay NOT NULL"
-                      : columnEditor.nullable
-                        ? "Allows NULL"
-                        : "Requires a value"}
-                  </span>
-                </button>
-              </label>
-
-              <div className="structure-editor-field structure-editor-field-wide">
-                <span className="form-label">Default Behavior</span>
-                <div className="structure-mode-group">
-                  {(["keep", "set", "drop"] as DefaultMode[]).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      className={`structure-mode-btn ${columnEditor.defaultMode === mode ? "active" : ""}`}
-                      onClick={() => {
-                        setEditorError(null);
-                        setColumnEditor((prev) => (prev ? { ...prev, defaultMode: mode } : prev));
-                      }}
-                    >
-                      {mode === "keep"
-                        ? "Keep current"
-                        : mode === "set"
-                          ? "Set new default"
-                          : "Drop default"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <label className="structure-editor-field structure-editor-field-wide">
-                <span className="form-label">Default SQL Expression</span>
-                <input
-                  className="input"
-                  value={columnEditor.defaultValue}
-                  disabled={columnEditor.defaultMode !== "set"}
-                  placeholder="'value', CURRENT_TIMESTAMP, gen_random_uuid()"
-                  onChange={(event) => {
-                    setEditorError(null);
-                    setColumnEditor((prev) =>
-                      prev ? { ...prev, defaultValue: event.target.value } : prev
-                    );
-                  }}
-                />
-                <span className="structure-editor-hint">
-                  Enter raw SQL. For strings, wrap the value in single quotes.
-                </span>
-              </label>
-            </div>
-
-            <div className="structure-editor-preview-shell">
-              <div className="structure-editor-preview-head">
-                <span className="form-label">SQL Preview</span>
-                <span className={`structure-editor-db-pill ${dbType === "sqlite" ? "muted" : ""}`}>
-                  {dbType.toUpperCase()}
-                </span>
-              </div>
-              <pre className="structure-editor-preview">
-                {sqlPreview.error
-                  ? sqlPreview.error
-                  : sqlPreview.statements.length > 0
-                    ? `${sqlPreview.statements.join(";\n")};`
-                    : "Change a field above to generate ALTER TABLE SQL."}
-              </pre>
-            </div>
-
-            {editorError && (
-              <div className="structure-editor-alert">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{editorError}</span>
-              </div>
-            )}
-
-            <div className="structure-editor-footer">
-              <button type="button" className="btn btn-secondary" onClick={closeColumnEditor}>
-                Cancel
-              </button>
-
-              <div className="structure-editor-footer-actions">
-                <button
-                  type="button"
-                  className="btn btn-secondary danger"
-                  onClick={stageColumnDelete}
-                >
-                  <Trash2 className="w-4 h-4" />
-                  <span>Stage Delete</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={openColumnSqlDraft}
-                  disabled={!!sqlPreview.error || sqlPreview.statements.length === 0}
-                >
-                  <FileCode className="w-4 h-4" />
-                  <span>Open SQL</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={stageColumnChange}
-                  disabled={!!sqlPreview.error || sqlPreview.statements.length === 0}
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Stage Change</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <AlterColumnModal
+          columnEditor={columnEditor}
+          sqlPreview={sqlPreview}
+          editorError={editorError}
+          dbType={dbType}
+          onClose={closeColumnEditor}
+          onUpdate={updateColumnEditor}
+          onStageChange={stageColumnChange}
+          onStageDelete={stageColumnDelete}
+          onOpenSql={openColumnSqlDraft}
+        />
       )}
 
       {isReviewOpen && (
-        <div className="structure-editor-overlay" onClick={() => setIsReviewOpen(false)}>
-          <div className="structure-editor-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="structure-editor-header">
-              <div className="structure-editor-copy">
-                <span className="structure-topbar-kicker">Schema Review</span>
-                <h3 className="structure-editor-title">Review staged SQL</h3>
-                <p className="structure-editor-subtitle">
-                  Preview every statement before it changes the table.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                className="structure-editor-close"
-                onClick={() => setIsReviewOpen(false)}
-                aria-label="Close SQL review"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="structure-review-list">
-              {destructiveChanges.length > 0 && (
-                <div className="structure-editor-alert">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>
-                    This review includes {destructiveChanges.length} destructive change
-                    {destructiveChanges.length === 1 ? "" : "s"}. Dropped columns cannot be restored automatically.
-                  </span>
-                </div>
-              )}
-
-              {Object.values(stagedColumnChanges).map((change) => (
-                <div key={change.original.name} className="structure-review-card">
-                  <div className="structure-review-head">
-                    <span className="structure-review-title">
-                      {change.action === "drop"
-                        ? `Drop ${change.original.name}`
-                        : `${change.original.name} -&gt; ${change.draft?.name || change.original.name}`}
-                    </span>
-                    <span className="structure-inline-pill staged">
-                      {change.action === "drop" ? "Delete column" : "Column change"}
-                    </span>
-                  </div>
-                  <pre className="structure-editor-preview">{`${change.statements.join(";\n")};`}</pre>
-                </div>
-              ))}
-            </div>
-
-            {reviewError && (
-              <div className="structure-editor-alert">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{reviewError}</span>
-              </div>
-            )}
-
-            <div className="structure-editor-footer">
-              <button type="button" className="btn btn-secondary" onClick={() => setIsReviewOpen(false)}>
-                Close
-              </button>
-
-              <div className="structure-editor-footer-actions">
-                <button type="button" className="btn btn-secondary" onClick={discardStagedChanges}>
-                  Discard
-                </button>
-                <button type="button" className="btn btn-secondary" onClick={openReviewSqlDraft}>
-                  <FileCode className="w-4 h-4" />
-                  <span>Open SQL</span>
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => void applyStagedChanges()}
-                  disabled={isApplyingChanges || pendingChangeCount === 0}
-                >
-                  {isApplyingChanges ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Check className="w-4 h-4" />
-                  )}
-                  <span>Apply</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ReviewPanel
+          stagedColumnChanges={stagedColumnChanges}
+          destructiveChanges={destructiveChanges}
+          reviewError={reviewError}
+          isApplyingChanges={isApplyingChanges}
+          pendingChangeCount={pendingChangeCount}
+          tableName={displayTableName}
+          onDiscard={discardStagedChanges}
+          onApply={applyStagedChanges}
+          onOpenSql={openReviewSqlDraft}
+          onClose={() => setIsReviewOpen(false)}
+        />
       )}
 
+      {/* Toast */}
       {toast && (
         <div
           className={`structure-toast ${toast.tone} ${toast.isClosing ? "closing" : ""}`}

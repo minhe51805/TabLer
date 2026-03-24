@@ -2,6 +2,7 @@ import {
   FolderTree,
   BarChart3,
   Plus,
+  GitBranch,
   X,
   RotateCcw,
   Search,
@@ -22,11 +23,13 @@ import type { ConnectionConfig } from "../types/database";
 import type { QueryEditorSessionState } from "./SQLEditor";
 import { useI18n } from "../i18n";
 import { useEvent } from "../stores/event-center";
+import { useAppStore } from "../stores/appStore";
 
 const SQLEditor = lazy(() => import("./SQLEditor").then((module) => ({ default: module.SQLEditor })));
 const DataGrid = lazy(() => import("./DataGrid").then((module) => ({ default: module.DataGrid })));
 const TableStructure = lazy(() => import("./TableStructure").then((module) => ({ default: module.TableStructure })));
 const MetricsBoard = lazy(() => import("./MetricsBoard").then((module) => ({ default: module.MetricsBoard })));
+const ERDiagram = lazy(() => import("./ERDiagram").then((module) => ({ default: module.ERDiagram })));
 
 interface QueryChromeState {
   isRunning: boolean;
@@ -314,6 +317,39 @@ export function AppWorkspacePanel({
                 <span className="workspace-ready-action-link">{t("workspace.ready.aiLink")}</span>
               </div>
             </button>
+
+            <button
+              type="button"
+              className="workspace-ready-action-card"
+              onClick={() => {
+                if (!activeConn?.id) return;
+                const id = `er-${Date.now()}`;
+                const appStore = useAppStore.getState();
+                appStore.addTab({
+                  id,
+                  type: "er-diagram",
+                  title: "ER Diagram",
+                  connectionId: activeConn.id,
+                  database: currentDatabase || undefined,
+                });
+                appStore.setActiveTab(id);
+              }}
+            >
+              <div className="workspace-ready-action-top">
+                <div className="workspace-ready-action-icon">
+                  <GitBranch className="w-4 h-4" />
+                </div>
+                <span className="workspace-ready-action-kicker">database</span>
+              </div>
+              <strong className="workspace-ready-action-title">ER Diagram</strong>
+              <p className="workspace-ready-action-description">
+                Visualize database schema and relationships
+              </p>
+              <div className="workspace-ready-action-foot">
+                <kbd className="kbd">Ctrl+E</kbd>
+                <span className="workspace-ready-action-link">open diagram</span>
+              </div>
+            </button>
           </div>
 
           <div className="workspace-ready-support">
@@ -446,6 +482,18 @@ export function AppWorkspacePanel({
                 tabId={tab.id}
                 boardId={tab.metricsBoardId}
                 integratedSidebar={false}
+              />
+            </Suspense>
+          </ErrorBoundary>
+        );
+      case "er-diagram":
+        return (
+          <ErrorBoundary>
+            <Suspense fallback={<LazyPanelFallback />}>
+              <ERDiagram
+                key={tab.id}
+                connectionId={tab.connectionId}
+                database={tab.database}
               />
             </Suspense>
           </ErrorBoundary>

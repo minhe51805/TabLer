@@ -18,6 +18,7 @@
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-table": "^8.21.3",
     "@tauri-apps/api": "^2",
+    "@xyflow/react": "^12.10.1",
     "lucide-react": "^0.577.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

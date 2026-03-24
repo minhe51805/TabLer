@@ -164,10 +164,33 @@ export interface MetricsBoardDefinition {
   updated_at: number;
 }
 
+// ER Diagram types
+export interface ERDiagramSchema {
+  tables: TableSchema[];
+  relationships: ERRelationship[];
+}
+
+export interface TableSchema {
+  name: string;
+  schema?: string;
+  columns: ColumnDetail[];
+  rowCount?: number;
+}
+
+export interface ERRelationship {
+  id: string;
+  fromTable: string;
+  fromColumn: string;
+  toTable: string;
+  toColumn: string;
+  label?: string;
+  isCustom?: boolean;
+}
+
 // UI State types
 export interface Tab {
   id: string;
-  type: "query" | "table" | "structure" | "metrics";
+  type: "query" | "table" | "structure" | "metrics" | "er-diagram";
   title: string;
   connectionId: string;
   tableName?: string;

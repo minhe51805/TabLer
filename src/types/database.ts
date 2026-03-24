@@ -31,6 +31,10 @@ export interface ConnectionConfig {
   file_path?: string;
   use_ssl: boolean;
   color?: string;
+  /** Assigned connection group ID */
+  groupId?: string;
+  /** Assigned connection tag ID */
+  tagId?: string;
 }
 
 export interface QueryResult {

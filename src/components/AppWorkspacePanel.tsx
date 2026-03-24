@@ -21,6 +21,7 @@ import type { Tab } from "../types";
 import type { ConnectionConfig } from "../types/database";
 import type { QueryEditorSessionState } from "./SQLEditor";
 import { useI18n } from "../i18n";
+import { useEvent } from "../stores/event-center";
 
 const SQLEditor = lazy(() => import("./SQLEditor").then((module) => ({ default: module.SQLEditor })));
 const DataGrid = lazy(() => import("./DataGrid").then((module) => ({ default: module.DataGrid })));
@@ -128,6 +129,16 @@ export function AppWorkspacePanel({
   onHandleMouseDown,
 }: AppWorkspacePanelProps) {
   const { t } = useI18n();
+
+  // EventCenter: respond to global sidebar toggle
+  useEvent("workspace-toggle-sidebar", () => {
+    onToggleSidebar();
+  });
+
+  // EventCenter: respond to workspace refresh from any component
+  useEvent("workspace-refresh", () => {
+    onRefreshWorkspace();
+  });
 
   const renderTabContent = () => {
     if (!isConnected) {

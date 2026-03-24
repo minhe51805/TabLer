@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentAppLanguage } from "../i18n";
 
 export { useConnectionStore } from "./connectionStore";
 export { useQueryStore } from "./queryStore";
@@ -17,6 +18,8 @@ import type {
   TableRowDeleteRequest,
   TableStructure,
   AIProviderConfig,
+  AIConversationMessage,
+  AIRequestIntent,
   AIRequestMode,
   ColumnDetail,
 } from "../types";
@@ -201,7 +204,13 @@ interface AppState {
     aiConfigs: AIProviderConfig[];
     aiKeyStatus: Record<string, boolean>;
   }>;
-  askAI: (prompt: string, context: string, mode?: AIRequestMode) => Promise<string>;
+  askAI: (
+    prompt: string,
+    context: string,
+    mode?: AIRequestMode,
+    intent?: AIRequestIntent,
+    history?: AIConversationMessage[]
+  ) => Promise<string>;
 
   setError: (error: string | null) => void;
   clearError: () => void;
@@ -273,7 +282,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  askAI: async (prompt: string, context: string, mode = "panel") => {
+  askAI: async (prompt: string, context: string, mode = "panel", intent = "sql", history = []) => {
     const config = get().aiConfigs.find((c) => c.is_enabled);
     if (!config) throw new Error("AI Provider not found");
 
@@ -281,7 +290,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const resp = await invokeWithTimeout<{ text: string; error?: string }>(
         "ask_ai",
         {
-          request: { prompt, context, mode },
+          request: { prompt, context, mode, intent, language: getCurrentAppLanguage(), history },
         },
         FRONTEND_TIMEOUTS.ai,
         "AI request"

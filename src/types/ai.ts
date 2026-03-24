@@ -1,4 +1,6 @@
 export type AIProviderType = "openai" | "anthropic" | "gemini" | "openrouter" | "ollama" | "custom";
+export type AIResponseLanguage = "en" | "vi" | "zh";
+export type AIConversationRole = "user" | "assistant";
 
 export interface AIProviderConfig {
     id: string;
@@ -12,11 +14,20 @@ export interface AIProviderConfig {
 }
 
 export type AIRequestMode = "panel" | "inline";
+export type AIRequestIntent = "sql" | "explain" | "overview";
+
+export interface AIConversationMessage {
+    role: AIConversationRole;
+    content: string;
+}
 
 export interface AIRequest {
     prompt: string;
     context: string;
     mode: AIRequestMode;
+    intent?: AIRequestIntent;
+    language?: AIResponseLanguage;
+    history?: AIConversationMessage[];
 }
 
 export interface AIResponse {

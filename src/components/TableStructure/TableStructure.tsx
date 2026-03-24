@@ -13,6 +13,7 @@ import type {
   ColumnDetail,
   ForeignKeyInfo,
   IndexInfo,
+  StructureFocusSection,
   TableStructure as TableStructureType,
   TriggerInfo,
 } from "../../types";
@@ -41,6 +42,9 @@ interface Props {
   tableName: string;
   database?: string;
   isActive?: boolean;
+  structureFocusSection?: StructureFocusSection;
+  structureFocusColumn?: string;
+  structureFocusToken?: string;
 }
 
 type StructureToastTone = "success" | "info" | "error";
@@ -78,7 +82,15 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
   });
 }
 
-export function TableStructure({ connectionId, tableName, database, isActive = true }: Props) {
+export function TableStructure({
+  connectionId,
+  tableName,
+  database,
+  isActive = true,
+  structureFocusSection,
+  structureFocusColumn,
+  structureFocusToken,
+}: Props) {
   const getTableStructure = useAppStore((state) => state.getTableStructure);
   const getTableColumnsPreview = useAppStore((state) => state.getTableColumnsPreview);
   const countTableNullValues = useAppStore((state) => state.countTableNullValues);
@@ -137,6 +149,11 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
   const toastIdRef = useRef(0);
   const toastHideTimeoutRef = useRef<number | null>(null);
   const toastClearTimeoutRef = useRef<number | null>(null);
+  const pendingExternalFocusRef = useRef<{
+    token: string;
+    section: StructureFocusSection;
+    columnName?: string;
+  } | null>(null);
 
   const stagedColumns = useMemo(
     () =>
@@ -449,11 +466,11 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
     }
   };
 
-  const openColumnEditor = (column: ColumnDetail) => {
+  const openColumnEditor = useCallback((column: ColumnDetail) => {
     setEditorError(null);
     setColumnEditor(createEditorState(column, stagedColumnChanges[column.name]?.draft));
     focusSection("columns");
-  };
+  }, [focusSection, stagedColumnChanges]);
 
   const updateColumnEditor = (updates: Partial<ColumnEditorState>) => {
     setEditorError(null);
@@ -716,7 +733,49 @@ export function TableStructure({ connectionId, tableName, database, isActive = t
     setIsReviewOpen(false);
     setReviewError(null);
     setIsTopbarCondensed(false);
+    pendingExternalFocusRef.current = null;
   }, [setFromColumns, setFromFullStructure, structureKey]);
+
+  useEffect(() => {
+    if (!isActive || !structureFocusToken) return;
+
+    const section = structureFocusSection || "columns";
+    pendingExternalFocusRef.current = {
+      token: structureFocusToken,
+      section,
+      columnName: structureFocusColumn,
+    };
+
+    focusSection(section);
+
+    if (!structureFocusColumn) {
+      pendingExternalFocusRef.current = null;
+    }
+  }, [focusSection, isActive, structureFocusColumn, structureFocusSection, structureFocusToken]);
+
+  useEffect(() => {
+    const pendingRequest = pendingExternalFocusRef.current;
+    if (!isActive || !pendingRequest?.columnName) return;
+    if (pendingRequest.section !== "columns") return;
+    if (isLoadingColumns) return;
+    if (columns.length === 0) {
+      if (!loadError) {
+        void loadColumns();
+      }
+      return;
+    }
+
+    const matchingColumn = columns.find(
+      (column) => column.name.toLowerCase() === pendingRequest.columnName?.toLowerCase()
+    );
+    if (!matchingColumn) {
+      pendingExternalFocusRef.current = null;
+      return;
+    }
+
+    openColumnEditor(matchingColumn);
+    pendingExternalFocusRef.current = null;
+  }, [columns, isActive, isLoadingColumns, loadColumns, loadError, openColumnEditor]);
 
   useEffect(() => {
     const shell = shellRef.current;

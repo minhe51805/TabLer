@@ -10,6 +10,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { RefObject } from "react";
 import type { ConnectionConfig } from "../types/database";
 
 type WindowMenuSectionKey =
@@ -44,6 +45,7 @@ interface AppTitleBarProps {
   isWindowMenuOpen: boolean;
   activeWindowMenuSection: WindowMenuSectionKey | null;
   activeWindowMenuItemPath: string | null;
+  windowMenuRef: RefObject<HTMLDivElement | null>;
   windowMenuSections: { key: WindowMenuSectionKey; label: string; items: WindowMenuItem[] }[];
   onToggleSidebar: () => void;
   onOpenAISettings: () => void;
@@ -193,6 +195,7 @@ export function AppTitleBar({
   isWindowMenuOpen,
   activeWindowMenuSection,
   activeWindowMenuItemPath,
+  windowMenuRef,
   windowMenuSections,
   onToggleSidebar,
   onOpenAISettings,
@@ -216,7 +219,7 @@ export function AppTitleBar({
         className={`titlebar-window-controls ${className ?? ""}`.trim()}
         data-no-window-drag="true"
       >
-        <div className="titlebar-window-menu">
+        <div ref={windowMenuRef} className="titlebar-window-menu">
           <button
             type="button"
             onClick={onToggleWindowMenu}

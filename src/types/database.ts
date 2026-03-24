@@ -79,7 +79,7 @@ export interface TableInfo {
   name: string;
   schema?: string;
   table_type: string;
-  row_count?: number;
+  row_count?: number | null;
   engine?: string;
 }
 
@@ -174,7 +174,8 @@ export interface TableSchema {
   name: string;
   schema?: string;
   columns: ColumnDetail[];
-  rowCount?: number;
+  indexes: IndexInfo[];
+  rowCount?: number | null;
 }
 
 export interface ERRelationship {
@@ -187,6 +188,13 @@ export interface ERRelationship {
   isCustom?: boolean;
 }
 
+export type StructureFocusSection =
+  | "columns"
+  | "indexes"
+  | "foreign_keys"
+  | "triggers"
+  | "view_definition";
+
 // UI State types
 export interface Tab {
   id: string;
@@ -197,4 +205,7 @@ export interface Tab {
   database?: string;
   content?: string;
   metricsBoardId?: string;
+  structureFocusSection?: StructureFocusSection;
+  structureFocusColumn?: string;
+  structureFocusToken?: string;
 }

@@ -3,6 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useAppStore } from "../../../stores/appStore";
 import { useI18n } from "../../../i18n";
+import { useEvent, EventCenter } from "../../../stores/event-center";
 import {
   getQualifiedTableName,
   getQuotedQualifiedTableName,
@@ -303,6 +304,7 @@ export function useSidebar() {
         fetchSchemaObjects(activeConnectionId, currentDatabase),
       ]);
     }
+    EventCenter.emit("workspace-refresh", { connectionId: activeConnectionId, database: currentDatabase || undefined });
   }, [activeConnectionId, currentDatabase, fetchDatabases, fetchTables, fetchSchemaObjects]);
 
   const handleDisconnect = useCallback(async () => {
@@ -571,6 +573,12 @@ export function useSidebar() {
     window.addEventListener("focus-explorer-search", handleFocusSearch);
     return () => window.removeEventListener("focus-explorer-search", handleFocusSearch);
   }, []);
+
+  // EventCenter: respond to explorer-search-focus event
+  useEvent("explorer-search-focus", () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  });
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {

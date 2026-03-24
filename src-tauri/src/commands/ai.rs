@@ -2,7 +2,7 @@ use reqwest::Client;
 use reqwest::Url;
 use serde_json::json;
 use std::net::IpAddr;
-use crate::database::ai_models::{AIProviderConfig, AIProviderType, AIRequest, AIRequestMode, AIResponse};
+use crate::database::ai_models::{AIConversationMessage, AIConversationRole, AIProviderConfig, AIProviderType, AIRequest, AIRequestIntent, AIRequestMode, AIResponse, AIResponseLanguage};
 use crate::utils::rate_limiter::AIRequestLimiter;
 
 use tauri::State;
@@ -29,6 +29,101 @@ fn ai_provider_request_error() -> String {
 
 fn ai_provider_response_error() -> String {
     "The AI provider returned an invalid or unsupported response.".to_string()
+}
+
+fn response_language_name(language: &AIResponseLanguage) -> &'static str {
+    match language {
+        AIResponseLanguage::En => "English (United States)",
+        AIResponseLanguage::Vi => "Vietnamese",
+        AIResponseLanguage::Zh => "Chinese (Simplified)",
+    }
+}
+
+fn response_language_rule(language: &AIResponseLanguage) -> &'static str {
+    match language {
+        AIResponseLanguage::En => "Write naturally in English (United States).",
+        AIResponseLanguage::Vi => "Answer entirely in Vietnamese. Keep SQL keywords, table names, column names, enum values, and technical identifiers in their original form.",
+        AIResponseLanguage::Zh => "Answer entirely in Simplified Chinese. Keep SQL keywords, table names, column names, enum values, and technical identifiers in their original form.",
+    }
+}
+
+fn build_ai_prompt(
+    mode: &AIRequestMode,
+    intent: &AIRequestIntent,
+    language: &AIResponseLanguage,
+    effective_context: &str,
+    history: &[AIConversationMessage],
+    user_prompt: &str,
+) -> (String, String) {
+    let effective_intent = if matches!(mode, AIRequestMode::Inline) {
+        AIRequestIntent::Sql
+    } else {
+        intent.clone()
+    };
+
+    let response_language = response_language_name(language);
+    let language_rule = response_language_rule(language);
+    let history_note = if history.is_empty() {
+        ""
+    } else {
+        " Use the recent conversation history to resolve references like 'that', 'it', or follow-up questions."
+    };
+
+    let (system_prompt, response_instruction) = match effective_intent {
+        AIRequestIntent::Explain => (
+            format!(
+                "You are a concise database assistant. Explain schemas, columns, rows, and SQL behavior in plain language. Ground the answer in the provided database context whenever it exists. Avoid generic textbook definitions when the schema context already shows the concrete tables or columns being discussed. Do not output SQL unless the user explicitly asks for a query, statement, or migration. Always answer in {response_language}. {language_rule}{history_note}"
+            ),
+            format!(
+                "Respond in plain language using {response_language}. Read the provided database context first and answer from that context. Do not output SQL, code fences, or query snippets unless the user explicitly asks for SQL."
+            ),
+        ),
+        AIRequestIntent::Overview => (
+            format!(
+                "You are a concise database analyst. Read the provided database context first and produce a grounded overview of the current database. Summarize actual tables, their likely roles, and important relationships from the provided context. Do not explain generic database theory unless the user explicitly asks for theory. If the context is incomplete or missing, say what is unknown instead of guessing. Do not output SQL unless the user explicitly asks for it. Always answer in {response_language}. {language_rule}{history_note}"
+            ),
+            format!(
+                "Read the provided database context and write a practical overview in {response_language}. Cover: probable domain or purpose, main tables and what they store, key relationships or join paths, and notable gaps or assumptions. Do not output SQL unless the user explicitly asks for SQL."
+            ),
+        ),
+        AIRequestIntent::Sql => (
+            format!(
+                "You are a concise SQL assistant. Use the provided database context when available and do not invent tables or columns that are not present in that context. Reply only with the requested SQL. If the user also asks for commentary, write that commentary in {response_language}. {language_rule}{history_note}"
+            ),
+            "Provide ONLY the raw SQL query. Do not include markdown blocks or explanations.".to_string(),
+        ),
+    };
+
+    let conversation_history = if history.is_empty() {
+        String::new()
+    } else {
+        let formatted = history
+            .iter()
+            .map(|message| {
+                let role = match message.role {
+                    AIConversationRole::User => "User",
+                    AIConversationRole::Assistant => "Assistant",
+                };
+                format!("{role}: {}", message.content.trim())
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        format!("Recent conversation:\n{}\n\n", formatted)
+    };
+
+    let prompt = if effective_context.is_empty() {
+        format!(
+            "{}Current user request:\n{}\n\n{}",
+            conversation_history, user_prompt, response_instruction
+        )
+    } else {
+        format!(
+            "Database context:\n{}\n\n{}Current user request:\n{}\n\n{}",
+            effective_context, conversation_history, user_prompt, response_instruction
+        )
+    };
+
+    (system_prompt, prompt)
 }
 
 fn provider_requires_api_key(provider_type: &AIProviderType) -> bool {
@@ -155,24 +250,15 @@ pub async fn ask_ai(
     } else {
         ""
     };
-    let prompt = if effective_context.is_empty() {
-        format!(
-            "You are an expert SQL assistant. Task: {}\n\nProvide ONLY the raw SQL query. Do not include markdown blocks or explanations.",
-            request.prompt
-        )
-    } else {
-        format!(
-            "You are an expert SQL assistant. Given the following database context:\n{}\n\nTask: {}\n\nProvide ONLY the raw SQL query. Do not include markdown blocks or explanations.",
-            effective_context, request.prompt
-        )
-    };
+    let (system_prompt, prompt) =
+        build_ai_prompt(&request.mode, &request.intent, &request.language, effective_context, &request.history, &request.prompt);
 
     match config.provider_type {
         AIProviderType::OpenAI | AIProviderType::OpenRouter | AIProviderType::Ollama | AIProviderType::Custom => {
             let body = json!({
                 "model": config.model,
                 "messages": [
-                    { "role": "system", "content": "You are a concise SQL assistant. Reply only with the requested SQL." },
+                    { "role": "system", "content": system_prompt },
                     { "role": "user", "content": prompt }
                 ]
             });
@@ -230,6 +316,7 @@ pub async fn ask_ai(
         },
         AIProviderType::Anthropic => {
             let body = json!({
+                "system": system_prompt,
                 "model": config.model,
                 "max_tokens": 1024,
                 "messages": [
@@ -280,6 +367,9 @@ pub async fn ask_ai(
         },
         AIProviderType::Gemini => {
             let body = json!({
+                "systemInstruction": {
+                    "parts": [{ "text": system_prompt }]
+                },
                 "contents": [
                     { "role": "user", "parts": [{ "text": prompt }] }
                 ]

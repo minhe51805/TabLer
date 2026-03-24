@@ -56,6 +56,7 @@ export function useSQLEditor({
   const splitRef = useRef<HTMLDivElement>(null);
   const inlineCompletionDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const selectionContextDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const contentPersistTimerRef = useRef<number | null>(null);
   const contentDraftRef = useRef(initialContent);
   const onChromeChangeRef = useRef(onChromeChange);
@@ -253,6 +254,23 @@ export function useSQLEditor({
       () => {}
     );
 
+    selectionContextDisposableRef.current?.dispose();
+    selectionContextDisposableRef.current = editor.onDidChangeCursorSelection(() => {
+      const currentSelection = editor.getSelection();
+      const text = currentSelection && !currentSelection.isEmpty()
+        ? editor.getModel()?.getValueInRange(currentSelection) || ""
+        : "";
+      window.dispatchEvent(
+        new CustomEvent("ai-selection-context", {
+          detail: {
+            text,
+            source: "SQL editor selection",
+            tabId,
+          },
+        })
+      );
+    });
+
     defineTableRTheme(monaco);
     editor.updateOptions({ theme: "tabler-dark" });
   };
@@ -328,6 +346,7 @@ export function useSQLEditor({
       flushPersistedContent();
       inlineCompletionDisposableRef.current?.dispose();
       completionDisposableRef.current?.dispose();
+      selectionContextDisposableRef.current?.dispose();
       editorRef.current = null;
     };
   }, [flushPersistedContent]);

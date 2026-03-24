@@ -25,6 +25,14 @@ const PROVIDER_HINTS: Record<AIProviderType, string> = {
     custom: "Connect your own OpenAI-compatible endpoint.",
 };
 
+const DEFAULT_PROVIDER_ENDPOINTS: Partial<Record<AIProviderType, string>> = {
+    openai: "https://api.openai.com/v1/chat/completions",
+    anthropic: "https://api.anthropic.com/v1/messages",
+    gemini: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+    openrouter: "https://openrouter.ai/api/v1/chat/completions",
+    ollama: "http://localhost:11434/v1/chat/completions",
+};
+
 export function AISettingsModal({ onClose }: Props) {
     const saveAIConfigs = useAppStore((state) => state.saveAIConfigs);
     const loadAIConfigs = useAppStore((state) => state.loadAIConfigs);
@@ -148,6 +156,9 @@ export function AISettingsModal({ onClose }: Props) {
     const activeConfig = configs.find(c => c.id === editingId);
     const enabledCount = configs.filter((config) => config.is_enabled).length;
     const hasStoredKey = activeConfig ? storedKeyStatus[activeConfig.id] && !clearedKeyIds.includes(activeConfig.id) : false;
+    const canEditEndpoint = activeConfig?.provider_type === "custom" || activeConfig?.provider_type === "ollama";
+    const defaultEndpoint = activeConfig ? DEFAULT_PROVIDER_ENDPOINTS[activeConfig.provider_type] ?? "" : "";
+    const effectiveEndpoint = activeConfig ? (activeConfig.endpoint.trim() || defaultEndpoint) : "";
 
     const handleKeyDraftChange = (providerId: string, value: string) => {
         setSaveError(null);
@@ -409,26 +420,44 @@ export function AISettingsModal({ onClose }: Props) {
                                                 <p>
                                                     {activeConfig.provider_type === "custom"
                                                         ? "Point this provider at your own OpenAI-compatible endpoint."
-                                                        : "Hosted providers use their default endpoint automatically."}
+                                                        : activeConfig.provider_type === "ollama"
+                                                            ? "Choose where TableR should reach your Ollama server."
+                                                            : "Hosted providers use their default endpoint automatically."}
                                                 </p>
                                             </div>
                                         </div>
-                                        {activeConfig.provider_type === "custom" ? (
+                                        {canEditEndpoint ? (
                                             <div className="ai-settings-fields">
                                                 <div>
-                                                    <label className="form-label">Custom Endpoint URL</label>
+                                                    <label className="form-label">
+                                                        {activeConfig.provider_type === "ollama" ? "Ollama Endpoint URL" : "Custom Endpoint URL"}
+                                                    </label>
                                                     <input
                                                         type="text"
                                                         value={activeConfig.endpoint}
                                                         onChange={(e) => updateConfig(activeConfig.id, { endpoint: e.target.value })}
-                                                        placeholder="https://api.yourdomain.com/v1/chat/completions"
+                                                        placeholder={
+                                                            activeConfig.provider_type === "ollama"
+                                                                ? "http://localhost:11434/v1/chat/completions"
+                                                                : "https://api.yourdomain.com/v1/chat/completions"
+                                                        }
                                                         className="input ai-settings-mono"
                                                     />
+                                                </div>
+                                                <p className="ai-settings-helper">
+                                                    {activeConfig.provider_type === "ollama"
+                                                        ? `Leave it blank to use the default local Ollama endpoint: ${defaultEndpoint}`
+                                                        : "Use a full OpenAI-compatible chat completions URL."}
+                                                </p>
+                                                <div className="ai-settings-note">
+                                                    Effective endpoint: {effectiveEndpoint || "Not set"}
                                                 </div>
                                             </div>
                                         ) : (
                                             <div className="ai-settings-note">
-                                                No custom endpoint is needed for {PROVIDER_NAMES[activeConfig.provider_type]}.
+                                                {defaultEndpoint
+                                                    ? `TableR will use the default ${PROVIDER_NAMES[activeConfig.provider_type]} endpoint: ${defaultEndpoint}`
+                                                    : `No custom endpoint is needed for ${PROVIDER_NAMES[activeConfig.provider_type]}.`}
                                             </div>
                                         )}
                                     </section>

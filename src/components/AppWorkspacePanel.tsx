@@ -467,6 +467,9 @@ export function AppWorkspacePanel({
                 tableName={tab.tableName || ""}
                 database={tab.database}
                 isActive={isActive}
+                structureFocusSection={tab.structureFocusSection}
+                structureFocusColumn={tab.structureFocusColumn}
+                structureFocusToken={tab.structureFocusToken}
               />
             </Suspense>
           </ErrorBoundary>

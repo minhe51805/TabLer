@@ -1055,6 +1055,10 @@ function resolveLanguage(preference: AppLanguagePreference): AppLanguage {
   return preference === "auto" ? detectSystemLanguage() : preference;
 }
 
+export function getCurrentAppLanguage(): AppLanguage {
+  return resolveLanguage(useLanguageStore.getState().languagePreference);
+}
+
 function getInitialLanguagePreference(): AppLanguagePreference {
   if (typeof window === "undefined") return "auto";
 
@@ -1099,7 +1103,7 @@ export function translateCurrent(
   key: TranslationKey,
   params?: Record<string, string | number>,
 ) {
-  return translateLanguage(resolveLanguage(useLanguageStore.getState().languagePreference), key, params);
+  return translateLanguage(getCurrentAppLanguage(), key, params);
 }
 
 export function formatCountLabel(

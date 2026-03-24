@@ -23,6 +23,7 @@ import { AppWorkspacePanel } from "./components/AppWorkspacePanel";
 import { AppKeyboardHandler } from "./components/AppKeyboardHandler";
 import { AppAboutModal } from "./components/AppAboutModal";
 import { AppShortcutsModal } from "./components/AppShortcutsModal";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./index.css";
 
 interface QueryChromeState {
@@ -1018,6 +1019,7 @@ function App() {
         isWindowMenuOpen={isWindowMenuOpen}
         activeWindowMenuSection={activeWindowMenuSection}
         activeWindowMenuItemPath={activeWindowMenuItemPath}
+        windowMenuRef={windowMenuRef}
         windowMenuSections={windowMenuSections}
         onToggleSidebar={handleToggleSidebar}
         onOpenAISettings={() => setShowAISettings(true)}
@@ -1134,12 +1136,14 @@ function App() {
       )}
       {showAISlidePanel && (
         <Suspense fallback={null}>
-          <AISlidePanel
-            isOpen={showAISlidePanel}
-            initialPrompt={aiPanelDraft?.prompt ?? ""}
-            initialPromptNonce={aiPanelDraft?.nonce ?? 0}
-            onClose={() => setShowAISlidePanel(false)}
-          />
+          <ErrorBoundary onReset={() => setShowAISlidePanel(false)} fallback={null}>
+            <AISlidePanel
+              isOpen={showAISlidePanel}
+              initialPrompt={aiPanelDraft?.prompt ?? ""}
+              initialPromptNonce={aiPanelDraft?.nonce ?? 0}
+              onClose={() => setShowAISlidePanel(false)}
+            />
+          </ErrorBoundary>
         </Suspense>
       )}
     </div>

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
-import type { AIProviderConfig, AIRequestMode } from "../types";
+import { getCurrentAppLanguage } from "../i18n";
+import type { AIConversationMessage, AIProviderConfig, AIRequestIntent, AIRequestMode } from "../types";
 
 interface AIState {
   aiConfigs: AIProviderConfig[];
@@ -17,7 +18,13 @@ interface AIState {
     aiConfigs: AIProviderConfig[];
     aiKeyStatus: Record<string, boolean>;
   }>;
-  askAI: (prompt: string, context: string, mode?: AIRequestMode) => Promise<string>;
+  askAI: (
+    prompt: string,
+    context: string,
+    mode?: AIRequestMode,
+    intent?: AIRequestIntent,
+    history?: AIConversationMessage[]
+  ) => Promise<string>;
 }
 
 export const useAIStore = create<AIState>((set, get) => ({
@@ -49,13 +56,13 @@ export const useAIStore = create<AIState>((set, get) => ({
     }
   },
 
-  askAI: async (prompt: string, context: string, mode = "panel") => {
+  askAI: async (prompt: string, context: string, mode = "panel", intent = "sql", history = []) => {
     const config = get().aiConfigs.find((c) => c.is_enabled);
     if (!config) throw new Error("AI Provider not found");
     try {
       const resp = await invokeWithTimeout<{ text: string; error?: string }>(
         "ask_ai",
-        { request: { prompt, context, mode } },
+        { request: { prompt, context, mode, intent, language: getCurrentAppLanguage(), history } },
         60_000,
         "AI request"
       );

@@ -55,6 +55,15 @@ export interface AIWorkspaceCopy {
     tableOther: string;
     schemaShared: string;
     promptOnly: string;
+    modePrompt: string;
+    modeEdit: string;
+    modeAgent: string;
+    modePromptHint: string;
+    modeEditHint: string;
+    modeAgentHint: string;
+    modeNeedsSchemaHint: string;
+    openSettings: string;
+    switchToPrompt: string;
     placeholder: string;
     note: string;
     generating: string;
@@ -137,6 +146,15 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       tableOther: "tables",
       schemaShared: "Schema shared",
       promptOnly: "Prompt only",
+      modePrompt: "Prompt",
+      modeEdit: "Edit",
+      modeAgent: "Agent",
+      modePromptHint: "Use only your prompt text. No AI schema context will be sent.",
+      modeEditHint: "Read the current DB schema and draft changes or SQL for you to review first.",
+      modeAgentHint: "Read the current DB schema and prepare executable SQL that you can explicitly approve.",
+      modeNeedsSchemaHint: "This mode needs schema sharing enabled in AI Provider Settings.",
+      openSettings: "Open settings",
+      switchToPrompt: "Use prompt mode",
       placeholder: "Describe the SQL you need, ask for a safer rewrite, or tell the AI what part of the schema is confusing.",
       note: "Enter to send. Double click the orb for inspect.",
       generating: "Generating...",
@@ -230,6 +248,15 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       tableOther: "bảng",
       schemaShared: "Có chia sẻ schema",
       promptOnly: "Chỉ prompt",
+      modePrompt: "Chỉ prompt",
+      modeEdit: "Chỉnh sửa",
+      modeAgent: "Agent",
+      modePromptHint: "Chỉ dùng prompt bạn nhập. Schema dành cho AI sẽ không được gửi.",
+      modeEditHint: "Đọc schema DB hiện tại để gợi ý SQL hoặc chỉnh sửa, nhưng vẫn để bạn review rồi mới dùng.",
+      modeAgentHint: "Đọc schema DB hiện tại và chuẩn bị SQL có thể thực thi, nhưng vẫn phải được bạn duyệt.",
+      modeNeedsSchemaHint: "Chế độ này cần bật chia sẻ schema trong AI Provider Settings.",
+      openSettings: "Mở settings",
+      switchToPrompt: "Dùng chỉ prompt",
       placeholder: "Mô tả SQL bạn cần, yêu cầu viết lại an toàn hơn, hoặc hỏi phần schema nào đang khó hiểu.",
       note: "Enter để gửi. Double click orb để inspect.",
       generating: "Đang tạo...",
@@ -323,6 +350,15 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       tableOther: "张表",
       schemaShared: "共享 schema",
       promptOnly: "仅提示词",
+      modePrompt: "仅提示词",
+      modeEdit: "编辑",
+      modeAgent: "Agent",
+      modePromptHint: "只使用你输入的 prompt，不会发送 AI schema 上下文。",
+      modeEditHint: "读取当前 DB schema 来给出 SQL 或修改建议，但仍由你先审核。",
+      modeAgentHint: "读取当前 DB schema，准备可执行 SQL，但仍需要你明确批准。",
+      modeNeedsSchemaHint: "这个模式需要在 AI Provider Settings 中开启 schema sharing。",
+      openSettings: "打开设置",
+      switchToPrompt: "改用提示词模式",
       placeholder: "描述你需要的 SQL，请求更安全的重写，或告诉 AI 哪部分 schema 让你困惑。",
       note: "Enter 发送，双击 orb 进入 inspect。",
       generating: "生成中...",

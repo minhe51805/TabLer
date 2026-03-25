@@ -1,4 +1,5 @@
 import { useAppStore } from "../../stores/appStore";
+import { getActiveAIProvider } from "../../types";
 import { devLogError } from "../../utils/logger";
 import {
   isTrustedInlineCompletionConnection,
@@ -28,7 +29,7 @@ export function registerInlineAICompletionProvider(
 
       if (textUntilPosition.trim().length < 5) return { items: [] };
 
-      const activeProvider = useAppStore.getState().aiConfigs.find((c) => c.is_enabled);
+      const activeProvider = getActiveAIProvider(useAppStore.getState().aiConfigs);
       if (!activeProvider) return { items: [] };
       if (!activeProvider.allow_inline_completion) return { items: [] };
 

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
 import { getCurrentAppLanguage } from "../i18n";
-import type { AIConversationMessage, AIProviderConfig, AIRequestIntent, AIRequestMode } from "../types";
+import { getActiveAIProvider, type AIConversationMessage, type AIProviderConfig, type AIRequestIntent, type AIRequestMode } from "../types";
 
 interface AIState {
   aiConfigs: AIProviderConfig[];
@@ -57,7 +57,7 @@ export const useAIStore = create<AIState>((set, get) => ({
   },
 
   askAI: async (prompt: string, context: string, mode = "panel", intent = "sql", history = []) => {
-    const config = get().aiConfigs.find((c) => c.is_enabled);
+    const config = getActiveAIProvider(get().aiConfigs);
     if (!config) throw new Error("AI Provider not found");
     try {
       const resp = await invokeWithTimeout<{ text: string; error?: string }>(

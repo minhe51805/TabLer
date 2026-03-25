@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Bot, Code2, Copy, Loader2, Send, Sparkles, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
+import { getActiveAIProvider } from "../../types";
 import type { DatabaseType, TableInfo } from "../../types";
 import {
   resolveWizardDialect,
@@ -145,7 +146,7 @@ export function CreateSchemaObjectModal({
   const [aiError, setAiError] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
 
-  const activeProvider = aiConfigs.find((config) => config.is_enabled);
+  const activeProvider = getActiveAIProvider(aiConfigs);
   const filteredNameSuggestions = useMemo(
     () => filterAutocompleteSuggestions(name, objectNameSuggestions),
     [name, objectNameSuggestions],

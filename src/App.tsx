@@ -784,6 +784,14 @@ function App() {
   }, [handleOpenAISlidePanel]);
 
   useEffect(() => {
+    const handleOpenAISettings = () => {
+      setShowAISettings(true);
+    };
+    window.addEventListener("open-ai-settings", handleOpenAISettings);
+    return () => window.removeEventListener("open-ai-settings", handleOpenAISettings);
+  }, []);
+
+  useEffect(() => {
     const handleOpenLeftSidebarPanel = (
       event: Event,
     ) => {

@@ -66,31 +66,31 @@ fn build_ai_prompt(
     let history_note = if history.is_empty() {
         ""
     } else {
-        " Use the recent conversation history to resolve references like 'that', 'it', or follow-up questions."
+        " Use the recent conversation history to resolve references like 'that', 'it', or follow-up questions. If the history conflicts with the current database context, trust the current database context and say the earlier assumption was incorrect."
     };
 
     let (system_prompt, response_instruction) = match effective_intent {
         AIRequestIntent::Explain => (
             format!(
-                "You are a concise database assistant. Explain schemas, columns, rows, and SQL behavior in plain language. Ground the answer in the provided database context whenever it exists. Avoid generic textbook definitions when the schema context already shows the concrete tables or columns being discussed. Do not output SQL unless the user explicitly asks for a query, statement, or migration. Always answer in {response_language}. {language_rule}{history_note}"
+                "You are a concise database assistant. Explain schemas, columns, rows, and SQL behavior in plain language. Ground the answer in the provided database context whenever it exists. Avoid generic textbook definitions when the schema context already shows the concrete tables or columns being discussed. If database context is present, never claim that the schema was missing. Do not output SQL unless the user explicitly asks for a query, statement, or migration. Always answer in {response_language}. {language_rule}{history_note}"
             ),
             format!(
-                "Respond in plain language using {response_language}. Read the provided database context first and answer from that context. Do not output SQL, code fences, or query snippets unless the user explicitly asks for SQL."
+                "Respond in plain language using {response_language}. Read the provided database context first and answer from that context. Never mention tables or columns that are not present in the provided database context. If the context is not enough, say so clearly. Use short markdown sections or flat bullets when that improves clarity. Do not output SQL, code fences, or query snippets unless the user explicitly asks for SQL."
             ),
         ),
         AIRequestIntent::Overview => (
             format!(
-                "You are a concise database analyst. Read the provided database context first and produce a grounded overview of the current database. Summarize actual tables, their likely roles, and important relationships from the provided context. Do not explain generic database theory unless the user explicitly asks for theory. If the context is incomplete or missing, say what is unknown instead of guessing. Do not output SQL unless the user explicitly asks for it. Always answer in {response_language}. {language_rule}{history_note}"
+                "You are a concise database analyst. Treat every overview request as a fresh schema-reading task for the CURRENT database context. Read the provided database context first and produce a grounded overview of the current database. Summarize actual tables, their likely roles, and important relationships from the provided context. Do not explain generic database theory unless the user explicitly asks for theory. If the context is incomplete, say what is unknown instead of guessing, but never claim the database context was missing when it was provided. Even if the domain is uncertain, still summarize the visible tables and likely relationship paths. Do not output SQL unless the user explicitly asks for it. Always answer in {response_language}. {language_rule}{history_note}"
             ),
             format!(
-                "Read the provided database context and write a practical overview in {response_language}. Cover: probable domain or purpose, main tables and what they store, key relationships or join paths, and notable gaps or assumptions. Do not output SQL unless the user explicitly asks for SQL."
+                "Read the provided database context and write a practical overview in {response_language}. Treat the current database context as the source of truth, even if earlier chat history mentioned a different schema. Format the answer with short markdown sections and flat bullets. Cover in this order: overview, main tables, relationships or join paths, and notable gaps or assumptions. Mention only tables that actually appear in the provided database context, and if there are few tables available, cover each one briefly. If a readable schema digest is present, rely on it first and use the compact codec only as supporting structure. Never ask the user to provide tables or columns again when the database context is already present. Do not output SQL unless the user explicitly asks for SQL."
             ),
         ),
         AIRequestIntent::Sql => (
             format!(
-                "You are a concise SQL assistant. Use the provided database context when available and do not invent tables or columns that are not present in that context. Reply only with the requested SQL. If the user also asks for commentary, write that commentary in {response_language}. {language_rule}{history_note}"
+                "You are a grounded SQL assistant. Use the provided database context when available and never invent tables, columns, keys, or relationships that are not present in that context. When the user asks about related tables, shared keys, or join paths, infer them only from the visible foreign keys, indexes, and matching identifier columns in the provided schema context. Prefer safe read-only SQL by default, and only emit mutating SQL when the user explicitly asks for data or schema changes. {language_rule}{history_note}"
             ),
-            "Provide ONLY the raw SQL query. Do not include markdown blocks or explanations.".to_string(),
+            "Return ONLY runnable SQL for the current database. Prefer one or more safe read-only statements unless the user explicitly asked to change data or schema. If the user asks to inspect related tables or shared keys, return SQL that helps inspect those relationships from the provided schema context, such as metadata queries, candidate join queries, or sample SELECT statements. Do not include explanations outside SQL.".to_string(),
         ),
     };
 

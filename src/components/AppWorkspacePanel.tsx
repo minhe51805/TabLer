@@ -3,6 +3,7 @@ import {
   BarChart3,
   Plus,
   GitBranch,
+  ArrowUpRight,
   X,
   RotateCcw,
   Search,
@@ -132,6 +133,13 @@ export function AppWorkspacePanel({
   onHandleMouseDown,
 }: AppWorkspacePanelProps) {
   const { t } = useI18n();
+  const activeDatabaseTarget =
+    currentDatabase ||
+    activeConn?.database ||
+    getLastPathSegment(activeConn?.file_path) ||
+    t("workspace.ready.currentDatabaseSelected");
+  const activeEngineLabel = (activeConn?.db_type || "").toUpperCase() || "DB";
+  const isWorkspaceOverview = tabs.length === 0 || !activeTab;
 
   // EventCenter: respond to global sidebar toggle
   useEvent("workspace-toggle-sidebar", () => {
@@ -227,29 +235,34 @@ export function AppWorkspacePanel({
                 <strong className="workspace-ready-context-title">
                   {activeConn?.name || t("workspace.ready.connectedWorkspace")}
                 </strong>
-                <p className="workspace-ready-context-meta">
-                  {currentDatabase ||
-                    activeConn?.database ||
-                    getLastPathSegment(activeConn?.file_path) ||
-                    t("workspace.ready.currentDatabaseSelected")}
-                  {" · "}
-                  {(activeConn?.db_type || "").toUpperCase()}
-                </p>
               </div>
 
-              <div className="workspace-ready-shortcut-row">
-                <span className="workspace-ready-shortcut-pill">
-                  <kbd className="kbd">Ctrl+N</kbd>
-                  <span>{t("common.query").toLowerCase()}</span>
-                </span>
-                <span className="workspace-ready-shortcut-pill">
-                  <kbd className="kbd">Ctrl+B</kbd>
-                  <span>{t("common.explorer").toLowerCase()}</span>
-                </span>
-                <span className="workspace-ready-shortcut-pill">
-                  <kbd className="kbd">Ctrl+Shift+P</kbd>
-                  <span>AI</span>
-                </span>
+              <div className="workspace-ready-context-grid">
+                <div className="workspace-ready-context-stat">
+                  <span className="workspace-ready-context-stat-label">{t("workspace.ready.database")}</span>
+                  <strong className="workspace-ready-context-stat-value">{activeDatabaseTarget}</strong>
+                </div>
+                <div className="workspace-ready-context-stat">
+                  <span className="workspace-ready-context-stat-label">{t("workspace.ready.engine")}</span>
+                  <strong className="workspace-ready-context-stat-value">{activeEngineLabel}</strong>
+                </div>
+              </div>
+
+              <div className="workspace-ready-shortcut-group">
+                <div className="workspace-ready-shortcut-row">
+                  <span className="workspace-ready-shortcut-pill">
+                    <kbd className="kbd">Ctrl+N</kbd>
+                    <span>{t("common.query").toLowerCase()}</span>
+                  </span>
+                  <span className="workspace-ready-shortcut-pill">
+                    <kbd className="kbd">Ctrl+B</kbd>
+                    <span>{t("common.explorer").toLowerCase()}</span>
+                  </span>
+                  <span className="workspace-ready-shortcut-pill">
+                    <kbd className="kbd">Ctrl+Shift+P</kbd>
+                    <span>AI</span>
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -258,6 +271,7 @@ export function AppWorkspacePanel({
             <button
               type="button"
               className="workspace-ready-action-card"
+              data-tone="query"
               onClick={onNewQuery}
             >
               <div className="workspace-ready-action-top">
@@ -266,19 +280,25 @@ export function AppWorkspacePanel({
                 </div>
                 <span className="workspace-ready-action-kicker">{t("workspace.ready.sqlEditor")}</span>
               </div>
-              <strong className="workspace-ready-action-title">{t("workspace.ready.queryTitle")}</strong>
-              <p className="workspace-ready-action-description">
-                {t("workspace.ready.queryDescription")}
-              </p>
+              <div className="workspace-ready-action-body">
+                <strong className="workspace-ready-action-title">{t("workspace.ready.queryTitle")}</strong>
+                <p className="workspace-ready-action-description">
+                  {t("workspace.ready.queryDescription")}
+                </p>
+              </div>
               <div className="workspace-ready-action-foot">
                 <kbd className="kbd">Ctrl+N</kbd>
-                <span className="workspace-ready-action-link">{t("workspace.ready.queryLink")}</span>
+                <span className="workspace-ready-action-link">
+                  {t("workspace.ready.queryLink")}
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </span>
               </div>
             </button>
 
             <button
               type="button"
               className="workspace-ready-action-card"
+              data-tone="explorer"
               onClick={onFocusExplorerSearch}
             >
               <div className="workspace-ready-action-top">
@@ -287,19 +307,25 @@ export function AppWorkspacePanel({
                 </div>
                 <span className="workspace-ready-action-kicker">{t("workspace.ready.explorerKicker")}</span>
               </div>
-              <strong className="workspace-ready-action-title">{t("workspace.ready.explorerTitle")}</strong>
-              <p className="workspace-ready-action-description">
-                {t("workspace.ready.explorerDescription")}
-              </p>
+              <div className="workspace-ready-action-body">
+                <strong className="workspace-ready-action-title">{t("workspace.ready.explorerTitle")}</strong>
+                <p className="workspace-ready-action-description">
+                  {t("workspace.ready.explorerDescription")}
+                </p>
+              </div>
               <div className="workspace-ready-action-foot">
                 <kbd className="kbd">Ctrl+B</kbd>
-                <span className="workspace-ready-action-link">{t("workspace.ready.explorerLink")}</span>
+                <span className="workspace-ready-action-link">
+                  {t("workspace.ready.explorerLink")}
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </span>
               </div>
             </button>
 
             <button
               type="button"
               className="workspace-ready-action-card"
+              data-tone="ai"
               onClick={() => onOpenAISlidePanel()}
             >
               <div className="workspace-ready-action-top">
@@ -308,19 +334,25 @@ export function AppWorkspacePanel({
                 </div>
                 <span className="workspace-ready-action-kicker">{t("workspace.ready.aiKicker")}</span>
               </div>
-              <strong className="workspace-ready-action-title">{t("workspace.ready.aiTitle")}</strong>
-              <p className="workspace-ready-action-description">
-                {t("workspace.ready.aiDescription")}
-              </p>
+              <div className="workspace-ready-action-body">
+                <strong className="workspace-ready-action-title">{t("workspace.ready.aiTitle")}</strong>
+                <p className="workspace-ready-action-description">
+                  {t("workspace.ready.aiDescription")}
+                </p>
+              </div>
               <div className="workspace-ready-action-foot">
                 <kbd className="kbd">Ctrl+Shift+P</kbd>
-                <span className="workspace-ready-action-link">{t("workspace.ready.aiLink")}</span>
+                <span className="workspace-ready-action-link">
+                  {t("workspace.ready.aiLink")}
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </span>
               </div>
             </button>
 
             <button
               type="button"
               className="workspace-ready-action-card"
+              data-tone="diagram"
               onClick={() => {
                 if (!activeConn?.id) return;
                 const id = `er-${Date.now()}`;
@@ -341,81 +373,65 @@ export function AppWorkspacePanel({
                 </div>
                 <span className="workspace-ready-action-kicker">database</span>
               </div>
-              <strong className="workspace-ready-action-title">ER Diagram</strong>
-              <p className="workspace-ready-action-description">
-                Visualize database schema and relationships
-              </p>
+              <div className="workspace-ready-action-body">
+                <strong className="workspace-ready-action-title">ER Diagram</strong>
+                <p className="workspace-ready-action-description">
+                  Visualize database schema and relationships
+                </p>
+              </div>
               <div className="workspace-ready-action-foot">
                 <kbd className="kbd">Ctrl+E</kbd>
-                <span className="workspace-ready-action-link">open diagram</span>
+                <span className="workspace-ready-action-link">
+                  open diagram
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </span>
               </div>
             </button>
           </div>
 
           <div className="workspace-ready-support">
-            <div className="workspace-ready-support-card">
+            <div className="workspace-ready-support-card is-compact">
               <span className="workspace-ready-support-kicker">{t("workspace.ready.flowKicker")}</span>
               <strong className="workspace-ready-support-title">{t("workspace.ready.flowTitle")}</strong>
-              <div className="workspace-ready-support-list">
-                <div className="workspace-ready-support-item">
-                  <span className="workspace-ready-support-dot" />
-                  {t("workspace.ready.flowQuery")}
-                </div>
-                <div className="workspace-ready-support-item">
-                  <span className="workspace-ready-support-dot" />
-                  {t("workspace.ready.flowExplorer")}
-                </div>
-                <div className="workspace-ready-support-item">
-                  <span className="workspace-ready-support-dot" />
-                  {t("workspace.ready.flowAi")}
-                </div>
+              <div className="workspace-ready-chip-list">
+                <span className="workspace-ready-chip">{t("common.query")}</span>
+                <span className="workspace-ready-chip">{t("common.explorer")}</span>
+                <span className="workspace-ready-chip">AI</span>
               </div>
             </div>
 
-            <div className="workspace-ready-support-card">
+            <div className="workspace-ready-support-card is-compact">
               <span className="workspace-ready-support-kicker">{t("workspace.ready.targetKicker")}</span>
               <strong className="workspace-ready-support-title">{t("workspace.ready.targetTitle")}</strong>
-              <div className="workspace-ready-metrics">
-                <div className="workspace-ready-metric">
-                  <span className="workspace-ready-metric-label">{t("workspace.ready.connection")}</span>
-                  <strong className="workspace-ready-metric-value">
+              <div className="workspace-ready-chip-list workspace-ready-chip-list-metrics">
+                <span className="workspace-ready-chip workspace-ready-chip-metric">
+                  <span className="workspace-ready-chip-metric-label">{t("workspace.ready.connection")}</span>
+                  <strong className="workspace-ready-chip-metric-value">
                     {activeConn?.name || t("workspace.ready.connectedWorkspace")}
                   </strong>
-                </div>
-                <div className="workspace-ready-metric">
-                  <span className="workspace-ready-metric-label">{t("workspace.ready.database")}</span>
-                  <strong className="workspace-ready-metric-value">
-                    {currentDatabase ||
-                      activeConn?.database ||
-                      getLastPathSegment(activeConn?.file_path) ||
-                      t("workspace.ready.selectedTarget")}
+                </span>
+                <span className="workspace-ready-chip workspace-ready-chip-metric">
+                  <span className="workspace-ready-chip-metric-label">{t("workspace.ready.database")}</span>
+                  <strong className="workspace-ready-chip-metric-value">
+                    {activeDatabaseTarget || t("workspace.ready.selectedTarget")}
                   </strong>
-                </div>
-                <div className="workspace-ready-metric">
-                  <span className="workspace-ready-metric-label">{t("workspace.ready.engine")}</span>
-                  <strong className="workspace-ready-metric-value">
-                    {(activeConn?.db_type || "").toUpperCase()}
+                </span>
+                <span className="workspace-ready-chip workspace-ready-chip-metric">
+                  <span className="workspace-ready-chip-metric-label">{t("workspace.ready.engine")}</span>
+                  <strong className="workspace-ready-chip-metric-value">
+                    {activeEngineLabel}
                   </strong>
-                </div>
+                </span>
               </div>
             </div>
 
-            <div className="workspace-ready-support-card">
+            <div className="workspace-ready-support-card is-compact">
               <span className="workspace-ready-support-kicker">{t("workspace.ready.safetyKicker")}</span>
               <strong className="workspace-ready-support-title">{t("workspace.ready.safetyTitle")}</strong>
-              <div className="workspace-ready-support-list">
-                <div className="workspace-ready-support-item">
-                  <span className="workspace-ready-support-dot" />
-                  {t("workspace.ready.safetyQuery")}
-                </div>
-                <div className="workspace-ready-support-item">
-                  <span className="workspace-ready-support-dot" />
-                  {t("workspace.ready.safetyRefresh")}
-                </div>
-                <div className="workspace-ready-support-item">
-                  <span className="workspace-ready-support-dot" />
-                  {t("workspace.ready.safetyAi")}
-                </div>
+              <div className="workspace-ready-chip-list">
+                <span className="workspace-ready-chip">{t("workspace.ready.safetyTitle")}</span>
+                <span className="workspace-ready-chip">{t("toolbar.refreshWorkspace")}</span>
+                <span className="workspace-ready-chip">AI</span>
               </div>
             </div>
           </div>
@@ -762,8 +778,8 @@ export function AppWorkspacePanel({
             onRunActiveQuery={onRunActiveQuery}
           />
 
-          <div className="tab-content">
-            {tabs.length === 0 || !activeTab ? (
+          <div className={`tab-content ${isWorkspaceOverview ? "is-workspace-overview" : ""}`}>
+            {isWorkspaceOverview ? (
               renderTabContent()
             ) : (
               <div

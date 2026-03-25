@@ -20,6 +20,31 @@ pub struct AIStorage {
 }
 
 impl AIStorage {
+    fn normalize_provider_configs(mut providers: Vec<AIProviderConfig>) -> Vec<AIProviderConfig> {
+        if providers.is_empty() {
+            return providers;
+        }
+
+        let mut primary_enabled_index = None;
+
+        for (index, provider) in providers.iter().enumerate() {
+            if provider.is_enabled && provider.is_primary {
+                primary_enabled_index = Some(index);
+                break;
+            }
+        }
+
+        if primary_enabled_index.is_none() {
+            primary_enabled_index = providers.iter().position(|provider| provider.is_enabled);
+        }
+
+        for (index, provider) in providers.iter_mut().enumerate() {
+            provider.is_primary = Some(index) == primary_enabled_index;
+        }
+
+        providers
+    }
+
     fn delete_provider_secret(provider_id: &str) -> Result<()> {
         let entry = keyring::Entry::new("TableR_AI", provider_id)
             .context("Failed to open secure storage for the AI provider secret")?;
@@ -108,7 +133,7 @@ impl AIStorage {
             return Ok(empty);
         }
 
-        let providers = self.read_provider_configs_file()?;
+        let providers = Self::normalize_provider_configs(self.read_provider_configs_file()?);
 
         // Cache the result
         let mut cache = self.cache_write()?;
@@ -129,8 +154,9 @@ impl AIStorage {
             .into_iter()
             .map(|provider| provider.id)
             .collect();
+        let normalized_providers = Self::normalize_provider_configs(providers.to_vec());
         let next_provider_ids: HashSet<String> =
-            providers.iter().map(|provider| provider.id.clone()).collect();
+            normalized_providers.iter().map(|provider| provider.id.clone()).collect();
 
         for removed_provider_id in existing_provider_ids.difference(&next_provider_ids) {
             Self::delete_provider_secret(removed_provider_id)?;
@@ -140,7 +166,7 @@ impl AIStorage {
             Self::delete_provider_secret(provider_id)?;
         }
 
-        for provider in providers {
+        for provider in &normalized_providers {
             if let Some(api_key) = api_key_updates.get(&provider.id) {
                 if !api_key.trim().is_empty() {
                     let entry = keyring::Entry::new("TableR_AI", &provider.id)
@@ -152,7 +178,7 @@ impl AIStorage {
             }
         }
 
-        let json = serde_json::to_string_pretty(&providers)?;
+        let json = serde_json::to_string_pretty(&normalized_providers)?;
         write_json_atomically(&self.storage_path, &json)?;
 
         // Update cache
@@ -188,7 +214,8 @@ impl AIStorage {
     pub fn get_active_provider_config(&self) -> Result<AIProviderConfig> {
         self.load_provider_configs()?
             .into_iter()
-            .find(|provider| provider.is_enabled)
+            .find(|provider| provider.is_enabled && provider.is_primary)
+            .or_else(|| self.load_provider_configs().ok()?.into_iter().find(|provider| provider.is_enabled))
             .ok_or_else(|| anyhow::anyhow!("No enabled AI provider found"))
     }
 

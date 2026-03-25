@@ -1,8 +1,9 @@
 import { AlertTriangle, Copy, GripHorizontal, Play, Send, Sparkles, Target, Wand2, X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, Ref } from "react";
 import { useI18n } from "../../i18n";
-import type { AIWorkspaceBubbleData } from "./ai-workspace-types";
+import { aiModeAllowsInsert, aiModeAllowsRun, type AIWorkspaceBubbleData } from "./ai-workspace-types";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
+import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 
 interface AIWorkspaceBubbleProps {
   bubble: AIWorkspaceBubbleData;
@@ -68,8 +69,8 @@ export function AIWorkspaceBubble({
   const tone = getBubbleTone(bubble);
   const codePreview = getBubbleCodePreview(bubble.sql);
   const showMutationActions = bubble.kind === "assistant" && bubble.status === "ready";
-  const showInsert = showMutationActions && Boolean(bubble.sql);
-  const showRun = showMutationActions && Boolean(bubble.sql);
+  const showInsert = showMutationActions && Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
+  const showRun = showMutationActions && Boolean(bubble.sql) && aiModeAllowsRun(bubble.interactionMode);
 
   return (
     <div
@@ -126,7 +127,7 @@ export function AIWorkspaceBubble({
 
       {!compact && (
         <div className="ai-workspace-bubble-body">
-          <p className="ai-workspace-bubble-preview">{bubble.preview}</p>
+          <AIWorkspaceMarkdown className="ai-workspace-bubble-preview" compact text={bubble.preview} />
           {codePreview && <pre className="ai-workspace-bubble-code">{codePreview}</pre>}
           {bubble.risk?.reason && bubble.status !== "loading" && (
             <div className={`ai-workspace-bubble-risk ai-workspace-bubble-risk--${bubble.risk.level}`}>

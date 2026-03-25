@@ -3,9 +3,16 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { useI18n } from "../../i18n";
 import type { AIConversationMessage } from "../../types";
 import { AIWorkspaceBubble } from "./AIWorkspaceBubble";
+import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 import { AIBubbleDetailModal } from "./AIBubbleDetailModal";
 import { useAISlidePanel } from "./hooks/use-ai-slide-panel";
-import type { AIWorkspaceBubbleData } from "./ai-workspace-types";
+import {
+  aiModeAllowsInsert,
+  aiModeAllowsRun,
+  getDefaultAIWorkspaceInteractionMode,
+  type AIWorkspaceBubbleData,
+  type AIWorkspaceInteractionMode,
+} from "./ai-workspace-types";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
 
 interface Props {
@@ -25,6 +32,7 @@ const MAX_HISTORY_MESSAGE_CHARS = 1000;
 
 interface AIChatThread {
   id: string;
+  workspaceKey: string;
   label: string;
   createdAt: number;
   isAutoLabel: boolean;
@@ -74,13 +82,27 @@ function buildThreadLabel(prompt: string, index: number) {
   return summary.length > 24 ? `${summary.slice(0, 21).trimEnd()}...` : summary;
 }
 
-function createChatThread(index: number): AIChatThread {
+function buildAIWorkspaceKey(connectionId: string | null, database: string | null) {
+  return `${connectionId || "no-connection"}::${database || "no-database"}`;
+}
+
+function createChatThread(index: number, workspaceKey: string): AIChatThread {
   return {
     id: createId(),
+    workspaceKey,
     label: `#${index}`,
     createdAt: Date.now(),
     isAutoLabel: true,
   };
+}
+
+function getInteractionModeLabel(
+  interactionMode: AIWorkspaceInteractionMode,
+  copy: ReturnType<typeof getAIWorkspaceCopy>
+) {
+  if (interactionMode === "agent") return copy.composer.modeAgent;
+  if (interactionMode === "edit") return copy.composer.modeEdit;
+  return copy.composer.modePrompt;
 }
 
 function trimHistoryText(text: string, maxChars = MAX_HISTORY_MESSAGE_CHARS) {
@@ -320,6 +342,7 @@ export function AISlidePanel({
   const {
     activeProvider,
     tableContextCount,
+    connectionId,
     currentDatabase,
     error,
     setError,
@@ -342,15 +365,21 @@ export function AISlidePanel({
   const bubbleObserversRef = useRef(new Map<string, ResizeObserver>());
   const bubbleRefCallbacksRef = useRef(new Map<string, (node: HTMLDivElement | null) => void>());
   const bubbleDismissTimersRef = useRef(new Map<string, number>());
+  const currentWorkspaceKey = useMemo(
+    () => buildAIWorkspaceKey(connectionId, currentDatabase),
+    [connectionId, currentDatabase]
+  );
+  const lastWorkspaceKeyRef = useRef(currentWorkspaceKey);
   const initialThreadRef = useRef<AIChatThread | null>(null);
   if (!initialThreadRef.current) {
-    initialThreadRef.current = createChatThread(1);
+    initialThreadRef.current = createChatThread(1, currentWorkspaceKey);
   }
 
   const [promptDraft, setPromptDraft] = useState(initialPrompt);
   const [composerPosition, setComposerPosition] = useState(getComposerDefaultPosition);
   const [bubbles, setBubbles] = useState<AIWorkspaceBubbleData[]>([]);
   const [chatThreads, setChatThreads] = useState<AIChatThread[]>(() => [initialThreadRef.current!]);
+  const [workspaceInteractionModes, setWorkspaceInteractionModes] = useState<Record<string, AIWorkspaceInteractionMode>>({});
   const [activeThreadId, setActiveThreadId] = useState<string>(() => initialThreadRef.current!.id);
   const [bubbleSizes, setBubbleSizes] = useState<Record<string, { width: number; height: number }>>({});
   const [detailBubbleId, setDetailBubbleId] = useState<string | null>(null);
@@ -367,17 +396,33 @@ export function AISlidePanel({
     () => getComposerPanelPosition(composerPosition, workspaceRef.current),
     [composerPosition]
   );
+  const workspaceThreads = useMemo(
+    () => chatThreads.filter((thread) => thread.workspaceKey === currentWorkspaceKey),
+    [chatThreads, currentWorkspaceKey]
+  );
   const currentThread = useMemo(
-    () => chatThreads.find((thread) => thread.id === activeThreadId) ?? chatThreads[0] ?? null,
-    [activeThreadId, chatThreads]
+    () => workspaceThreads.find((thread) => thread.id === activeThreadId) ?? workspaceThreads[0] ?? null,
+    [activeThreadId, workspaceThreads]
+  );
+  const activeInteractionMode = useMemo(
+    () => workspaceInteractionModes[currentWorkspaceKey] ?? getDefaultAIWorkspaceInteractionMode(activeProvider?.allow_schema_context),
+    [activeProvider?.allow_schema_context, currentWorkspaceKey, workspaceInteractionModes]
   );
   const stageBubbles = useMemo(
-    () => (isComposerExpanded || !currentThread ? [] : bubbles.filter((bubble) => bubble.threadId === currentThread.id)),
-    [bubbles, currentThread, isComposerExpanded]
+    () => (
+      isComposerExpanded || !currentThread
+        ? []
+        : bubbles.filter((bubble) => bubble.threadId === currentThread.id && bubble.workspaceKey === currentWorkspaceKey)
+    ),
+    [bubbles, currentThread, currentWorkspaceKey, isComposerExpanded]
   );
   const activeThreadBubbles = useMemo(
-    () => (!currentThread ? [] : bubbles.filter((bubble) => bubble.threadId === currentThread.id)),
-    [bubbles, currentThread]
+    () => (
+      !currentThread
+        ? []
+        : bubbles.filter((bubble) => bubble.threadId === currentThread.id && bubble.workspaceKey === currentWorkspaceKey)
+    ),
+    [bubbles, currentThread, currentWorkspaceKey]
   );
   const historyMessages = useMemo(
     () => buildConversationHistoryMessages(activeThreadBubbles),
@@ -387,6 +432,20 @@ export function AISlidePanel({
     () => [...activeThreadBubbles].sort((left, right) => left.createdAt - right.createdAt).slice(-4),
     [activeThreadBubbles]
   );
+  const isSchemaModeBlocked = activeInteractionMode !== "prompt" && !activeProvider?.allow_schema_context;
+  const composerModeHint = useMemo(() => {
+    if (isSchemaModeBlocked) {
+      return aiCopy.composer.modeNeedsSchemaHint;
+    }
+    if (activeInteractionMode === "agent") {
+      return aiCopy.composer.modeAgentHint;
+    }
+    if (activeInteractionMode === "edit") {
+      return aiCopy.composer.modeEditHint;
+    }
+    return aiCopy.composer.modePromptHint;
+  }, [activeInteractionMode, aiCopy, isSchemaModeBlocked]);
+  const showPromptIdeas = conversationBubbles.length === 0 && !attachedSelection && promptDraft.trim().length === 0;
 
   useEffect(() => {
     if (!isOpen || !isComposerExpanded) return;
@@ -405,10 +464,34 @@ export function AISlidePanel({
   }, [conversationBubbles, isComposerExpanded]);
 
   useEffect(() => {
-    if (!chatThreads.some((thread) => thread.id === activeThreadId)) {
-      setActiveThreadId(chatThreads[0]?.id ?? "");
+    if (workspaceThreads.length === 0) {
+      const nextThread = createChatThread(1, currentWorkspaceKey);
+      setChatThreads((current) => (
+        current.some((thread) => thread.workspaceKey === currentWorkspaceKey)
+          ? current
+          : [...current, nextThread]
+      ));
+      setActiveThreadId(nextThread.id);
+      return;
     }
-  }, [activeThreadId, chatThreads]);
+
+    if (!workspaceThreads.some((thread) => thread.id === activeThreadId)) {
+      setActiveThreadId(workspaceThreads[0]?.id ?? "");
+    }
+  }, [activeThreadId, currentWorkspaceKey, workspaceThreads]);
+
+  useEffect(() => {
+    if (lastWorkspaceKeyRef.current === currentWorkspaceKey) {
+      return;
+    }
+    lastWorkspaceKeyRef.current = currentWorkspaceKey;
+    setAttachedSelection(null);
+    setSelectionContext(null);
+    setDetailBubbleId(null);
+    setIsInspectMode(false);
+    setPromptDraft("");
+    setError(null);
+  }, [currentWorkspaceKey, setError]);
 
   useEffect(() => {
     if (!initialPromptNonce) return;
@@ -752,15 +835,20 @@ export function AISlidePanel({
       mode?: "compose" | "inspect";
       promptSummary?: string;
       threadId?: string;
+      workspaceKey?: string;
+      interactionMode?: AIWorkspaceInteractionMode;
     }
   ): AIWorkspaceBubbleData => {
     const id = createId();
-    const threadId = options?.threadId || currentThread?.id || chatThreads[0]?.id || createId();
-    const threadBubbleCount = bubbles.filter((bubble) => bubble.threadId === threadId).length;
+    const workspaceKey = options?.workspaceKey || currentWorkspaceKey;
+    const threadId = options?.threadId || currentThread?.id || workspaceThreads[0]?.id || createId();
+    const threadBubbleCount = bubbles.filter((bubble) => bubble.threadId === threadId && bubble.workspaceKey === workspaceKey).length;
     const position = getNextBubblePosition(workspaceRef.current, threadBubbleCount, composerPosition);
     return {
       id,
       threadId,
+      workspaceKey,
+      interactionMode: options?.interactionMode || activeInteractionMode,
       kind: "assistant",
       status: "loading",
       title: options?.mode === "inspect" ? aiCopy.bubbleStates.loadingInspectTitle : aiCopy.bubbleStates.loadingComposeTitle,
@@ -780,7 +868,7 @@ export function AISlidePanel({
       },
       createdAt: Date.now(),
     };
-  }, [activeProvider?.name, aiCopy, bubbles, chatThreads, composerPosition, currentThread]);
+  }, [activeInteractionMode, activeProvider?.name, aiCopy, bubbles, composerPosition, currentThread, currentWorkspaceKey, workspaceThreads]);
 
   const createAssistantBubble = useCallback(async (
     prompt: string,
@@ -789,17 +877,23 @@ export function AISlidePanel({
       mode?: "compose" | "inspect";
       history?: AIConversationMessage[];
       threadId?: string;
+      workspaceKey?: string;
+      interactionMode?: AIWorkspaceInteractionMode;
     }
   ) => {
     const normalizedPrompt = prompt.trim();
     if (!normalizedPrompt) return;
 
     setError(null);
-    const targetThreadId = options?.threadId || currentThread?.id || chatThreads[0]?.id || createId();
+    const targetWorkspaceKey = options?.workspaceKey || currentWorkspaceKey;
+    const targetThreadId = options?.threadId || currentThread?.id || workspaceThreads[0]?.id || createId();
+    const interactionMode = options?.interactionMode || activeInteractionMode;
     const loadingBubble = buildLoadingBubble(normalizedPrompt, {
       mode: options?.mode,
       promptSummary: options?.displayPrompt?.trim() || summarizePromptForDisplay(normalizedPrompt),
       threadId: targetThreadId,
+      workspaceKey: targetWorkspaceKey,
+      interactionMode,
     });
     setBubbles((current) => [...current, loadingBubble]);
     setChatThreads((current) =>
@@ -815,7 +909,7 @@ export function AISlidePanel({
     );
 
     try {
-      const result = await generateAssist(normalizedPrompt, options?.history);
+      const result = await generateAssist(normalizedPrompt, options?.history, { interactionMode });
       setBubbles((current) =>
         current.map((bubble) =>
           bubble.id === loadingBubble.id
@@ -871,7 +965,7 @@ export function AISlidePanel({
       );
       return { bubbleId: loadingBubble.id, success: false };
     }
-  }, [aiCopy, buildLoadingBubble, chatThreads, currentThread, generateAssist, setError]);
+  }, [activeInteractionMode, aiCopy, buildLoadingBubble, currentThread, currentWorkspaceKey, generateAssist, setError, workspaceThreads]);
 
   const handleGenerate = useCallback(async () => {
     const normalizedPrompt = promptDraft.trim();
@@ -889,13 +983,14 @@ export function AISlidePanel({
       displayPrompt,
       history: historyMessages,
       threadId: currentThread?.id,
+      interactionMode: activeInteractionMode,
     });
 
     if (result?.success) {
       setPromptDraft("");
       setAttachedSelection(null);
     }
-  }, [aiCopy.composer.selectionReady, attachedSelection, createAssistantBubble, currentThread?.id, historyMessages, promptDraft]);
+  }, [activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, createAssistantBubble, currentThread?.id, historyMessages, promptDraft]);
 
   const handleAskFromSelection = useCallback(async () => {
     if (!selectionContext?.text.trim()) {
@@ -978,12 +1073,12 @@ export function AISlidePanel({
   }, []);
 
   const handleInsertBubble = useCallback((bubble: AIWorkspaceBubbleData) => {
-    if (!bubble.sql) return;
+    if (!bubble.sql || !aiModeAllowsInsert(bubble.interactionMode)) return;
     insertSql(bubble.sql, bubble.risk);
   }, [insertSql]);
 
   const handleRunBubble = useCallback(async (bubble: AIWorkspaceBubbleData) => {
-    if (!bubble.sql) return;
+    if (!bubble.sql || !aiModeAllowsRun(bubble.interactionMode)) return;
     try {
       const result = await runSql(bubble.sql);
       setBubbles((current) =>
@@ -1033,6 +1128,8 @@ export function AISlidePanel({
     const result = await createAssistantBubble(rewritePrompt, {
       history: rewriteHistory,
       threadId: bubble.threadId,
+      workspaceKey: bubble.workspaceKey,
+      interactionMode: bubble.interactionMode,
     });
     if (result?.success) {
       setActiveThreadId(bubble.threadId);
@@ -1041,7 +1138,7 @@ export function AISlidePanel({
   }, [bubbles, createAssistantBubble]);
 
   const handleCreateChatThread = useCallback(() => {
-    const nextThread = createChatThread(chatThreads.length + 1);
+    const nextThread = createChatThread(workspaceThreads.length + 1, currentWorkspaceKey);
     setChatThreads((current) => [...current, nextThread]);
     setActiveThreadId(nextThread.id);
     setPromptDraft(initialPrompt);
@@ -1056,7 +1153,7 @@ export function AISlidePanel({
         composerTextareaRef.current?.setSelectionRange(initialPrompt.length, initialPrompt.length);
       }
     });
-  }, [chatThreads.length, initialPrompt, setError]);
+  }, [currentWorkspaceKey, initialPrompt, setError, workspaceThreads.length]);
 
   const handleResetStage = useCallback(() => {
     handleCreateChatThread();
@@ -1079,6 +1176,8 @@ export function AISlidePanel({
       {
         id: "inspect-orb",
         threadId: currentThread?.id || "inspect-orb",
+        workspaceKey: currentWorkspaceKey,
+        interactionMode: activeInteractionMode,
         kind: "assistant",
         status: "ready",
         title: "",
@@ -1097,7 +1196,7 @@ export function AISlidePanel({
       },
       { width: ORB_SIZE, height: ORB_SIZE }
     );
-  }, [composerPosition.x, composerPosition.y, isInspectMode, selectionContext]);
+  }, [activeInteractionMode, composerPosition.x, composerPosition.y, currentThread?.id, currentWorkspaceKey, isInspectMode, selectionContext]);
 
   if (!isOpen) return null;
 
@@ -1236,10 +1335,10 @@ export function AISlidePanel({
               </div>
             </div>
 
-            <div className="ai-workspace-composer-context">
+            <div className="ai-workspace-composer-topbar">
               <div className="ai-workspace-chat-tabs" role="tablist" aria-label="AI chat threads">
                 <div className="ai-workspace-chat-tabs-list">
-                  {chatThreads.map((thread) => (
+                  {workspaceThreads.map((thread) => (
                     <button
                       key={thread.id}
                       type="button"
@@ -1260,20 +1359,72 @@ export function AISlidePanel({
                   +
                 </button>
               </div>
-              <span className="ai-workspace-composer-context-pill">
-                <Database className="w-3.5 h-3.5" />
-                {currentDatabase || aiCopy.composer.noDatabaseSelected}
-              </span>
-              <span className="ai-workspace-composer-context-pill">
-                <Wand2 className="w-3.5 h-3.5" />
-                {activeProvider?.name || aiCopy.composer.noProvider}
-              </span>
-              <span className="ai-workspace-composer-context-pill">
-                {tableContextCount} {tableContextCount === 1 ? aiCopy.composer.tableOne : aiCopy.composer.tableOther}
-              </span>
-              <span className="ai-workspace-composer-context-pill">
-                {activeProvider?.allow_schema_context ? aiCopy.composer.schemaShared : aiCopy.composer.promptOnly}
-              </span>
+
+              <div className="ai-workspace-composer-context">
+                <span className="ai-workspace-composer-context-pill">
+                  <Database className="w-3.5 h-3.5" />
+                  {currentDatabase || aiCopy.composer.noDatabaseSelected}
+                </span>
+                <span className="ai-workspace-composer-context-pill">
+                  <Wand2 className="w-3.5 h-3.5" />
+                  {activeProvider?.name || aiCopy.composer.noProvider}
+                </span>
+                <span className="ai-workspace-composer-context-pill">
+                  {tableContextCount} {tableContextCount === 1 ? aiCopy.composer.tableOne : aiCopy.composer.tableOther}
+                </span>
+              </div>
+            </div>
+
+            <div className="ai-workspace-composer-controls">
+              <div className="ai-workspace-mode-picker" role="tablist" aria-label={aiCopy.composer.title}>
+                {(["prompt", "edit", "agent"] as AIWorkspaceInteractionMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="tab"
+                    aria-selected={mode === activeInteractionMode}
+                    className={`ai-workspace-mode-option ${mode === activeInteractionMode ? "is-active" : ""}`}
+                    onClick={() =>
+                      setWorkspaceInteractionModes((current) => ({
+                        ...current,
+                        [currentWorkspaceKey]: mode,
+                      }))
+                    }
+                    title={getInteractionModeLabel(mode, aiCopy)}
+                  >
+                    {getInteractionModeLabel(mode, aiCopy)}
+                  </button>
+                ))}
+              </div>
+
+              {isSchemaModeBlocked && (
+                <div className="ai-workspace-mode-hint is-warning">
+                  {composerModeHint}
+                </div>
+              )}
+              {isSchemaModeBlocked && (
+                <div className="ai-workspace-mode-actions">
+                  <button
+                    type="button"
+                    className="ai-workspace-mode-action-btn primary"
+                    onClick={() => window.dispatchEvent(new CustomEvent("open-ai-settings"))}
+                  >
+                    {aiCopy.composer.openSettings}
+                  </button>
+                  <button
+                    type="button"
+                    className="ai-workspace-mode-action-btn"
+                    onClick={() =>
+                      setWorkspaceInteractionModes((current) => ({
+                        ...current,
+                        [currentWorkspaceKey]: "prompt",
+                      }))
+                    }
+                  >
+                    {aiCopy.composer.switchToPrompt}
+                  </button>
+                </div>
+              )}
             </div>
 
             {conversationBubbles.length > 0 && (
@@ -1284,19 +1435,25 @@ export function AISlidePanel({
                     return (
                       <div key={`chat-${bubble.id}`} className="ai-workspace-chat-pair">
                         <div className="ai-workspace-chat-message ai-workspace-chat-message--user">
-                          <span className="ai-workspace-chat-label">{aiCopy.modal.originalRequest}</span>
                           <p className="ai-workspace-chat-text">
                             {bubble.promptSummary || summarizePromptForDisplay(bubble.prompt)}
                           </p>
                         </div>
                         <div className="ai-workspace-chat-message ai-workspace-chat-message--assistant">
                           <div className="ai-workspace-chat-meta">
-                            <span className="ai-workspace-chat-label">
-                              {bubble.status === "loading" ? aiCopy.bubbleMeta.thinking : aiCopy.modal.assistantExplanation}
+                            <strong className="ai-workspace-chat-title">{aiCopy.modal.assistantExplanation}</strong>
+                            <span className="ai-workspace-chat-state">
+                              {bubble.status === "loading"
+                                ? aiCopy.bubbleMeta.thinking
+                                : bubble.sql
+                                  ? aiCopy.modal.sql
+                                  : aiCopy.bubbleMeta.ready}
                             </span>
-                            <span className="ai-workspace-chat-state">{bubble.title}</span>
                           </div>
-                          {conversationText && <p className="ai-workspace-chat-text">{conversationText}</p>}
+                          {bubble.subtitle && bubble.subtitle !== bubble.title && (
+                            <p className="ai-workspace-chat-subtitle">{bubble.subtitle}</p>
+                          )}
+                          {conversationText && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={conversationText} />}
                           {bubble.sql && bubble.status !== "error" && (
                             <pre className="ai-workspace-chat-code">{bubble.sql}</pre>
                           )}
@@ -1308,53 +1465,57 @@ export function AISlidePanel({
               </div>
             )}
 
-            {attachedSelection && (
-              <div className="ai-workspace-selection-chip">
-                <div className="ai-workspace-selection-chip-copy">
-                  <span className="ai-workspace-selection-chip-kicker">{aiCopy.composer.selectionReady}</span>
-                  <strong className="ai-workspace-selection-chip-title">{attachedSelection.source}</strong>
+            <div className="ai-workspace-compose-box">
+              {attachedSelection && (
+                <div className="ai-workspace-selection-chip">
+                  <div className="ai-workspace-selection-chip-copy">
+                    <span className="ai-workspace-selection-chip-kicker">{aiCopy.composer.selectionReady}</span>
+                    <strong className="ai-workspace-selection-chip-title">{attachedSelection.source}</strong>
+                  </div>
+                  <button type="button" className="ai-workspace-selection-chip-dismiss" onClick={() => setAttachedSelection(null)}>
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <button type="button" className="ai-workspace-selection-chip-dismiss" onClick={() => setAttachedSelection(null)}>
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
+              )}
 
-            <textarea
-              ref={composerTextareaRef}
-              value={promptDraft}
-              onChange={(event) => setPromptDraft(event.target.value)}
-              onKeyDown={handleComposerKeyDown}
-              className="ai-workspace-composer-textarea"
-              placeholder={aiCopy.composer.placeholder}
-            />
+              <textarea
+                ref={composerTextareaRef}
+                value={promptDraft}
+                onChange={(event) => setPromptDraft(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
+                className="ai-workspace-composer-textarea"
+                placeholder={aiCopy.composer.placeholder}
+              />
 
-            <div className="ai-workspace-composer-suggestions">
-              {aiCopy.composer.promptIdeas.map((idea) => (
+              {showPromptIdeas && (
+                <div className="ai-workspace-composer-suggestions">
+                  {aiCopy.composer.promptIdeas.map((idea) => (
+                    <button
+                      key={idea.title}
+                      type="button"
+                      className="ai-workspace-suggestion-chip"
+                      onClick={() => handleUseSuggestion(idea.prompt)}
+                    >
+                      {idea.title}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div className="ai-workspace-composer-footer">
+                <div className="ai-workspace-composer-note">
+                  {aiCopy.composer.note}
+                </div>
                 <button
-                  key={idea.title}
                   type="button"
-                  className="ai-workspace-suggestion-chip"
-                  onClick={() => handleUseSuggestion(idea.prompt)}
+                  className="ai-workspace-generate-btn"
+                  onClick={() => void handleGenerate()}
+                  disabled={isGenerating || (!promptDraft.trim() && !attachedSelection?.text.trim())}
                 >
-                  {idea.title}
+                  {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  {isGenerating ? aiCopy.composer.generating : aiCopy.composer.generateBubble}
                 </button>
-              ))}
-            </div>
-
-            <div className="ai-workspace-composer-footer">
-              <div className="ai-workspace-composer-note">
-                {aiCopy.composer.note}
               </div>
-              <button
-                type="button"
-                className="ai-workspace-generate-btn"
-                onClick={() => void handleGenerate()}
-                disabled={isGenerating || (!promptDraft.trim() && !attachedSelection?.text.trim())}
-              >
-                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                {isGenerating ? aiCopy.composer.generating : aiCopy.composer.generateBubble}
-              </button>
             </div>
           </div>
         )}

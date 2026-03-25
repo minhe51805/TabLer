@@ -56,6 +56,8 @@ pub struct AIProviderConfig {
     pub model: String,
     pub is_enabled: bool,
     #[serde(default)]
+    pub is_primary: bool,
+    #[serde(default)]
     pub allow_schema_context: bool,
     #[serde(default)]
     pub allow_inline_completion: bool,

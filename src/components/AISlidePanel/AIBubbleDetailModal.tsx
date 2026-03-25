@@ -1,8 +1,9 @@
 import { Copy, Play, Send, Sparkles, Wand2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
-import type { AIWorkspaceBubbleData } from "./ai-workspace-types";
+import { aiModeAllowsInsert, aiModeAllowsRun, type AIWorkspaceBubbleData } from "./ai-workspace-types";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
+import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 
 interface AIBubbleDetailModalProps {
   bubble: AIWorkspaceBubbleData;
@@ -47,7 +48,8 @@ export function AIBubbleDetailModal({
   }, [onClose]);
 
   const canRewrite = bubble.kind !== "result" && bubble.status !== "loading";
-  const canApproveRun = Boolean(bubble.sql);
+  const canInsert = Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
+  const canApproveRun = Boolean(bubble.sql) && aiModeAllowsRun(bubble.interactionMode);
 
   return (
     <div className="ai-workspace-modal-layer">
@@ -70,18 +72,17 @@ export function AIBubbleDetailModal({
         <div className="ai-workspace-modal-body">
           <section className="ai-workspace-modal-section">
             <span className="ai-workspace-modal-label">{copy.modal.originalRequest}</span>
-            <div className="ai-workspace-modal-textblock">{bubble.prompt || copy.modal.noRequest}</div>
+            <div className="ai-workspace-modal-textblock ai-workspace-modal-textblock--plain">{bubble.prompt || copy.modal.noRequest}</div>
           </section>
 
           <section className="ai-workspace-modal-section">
             <span className="ai-workspace-modal-label">
               {bubble.kind === "result" ? copy.modal.executionSummary : copy.modal.assistantExplanation}
             </span>
-            <div className="ai-workspace-modal-textblock">
-              {bubble.status === "loading"
-                ? copy.modal.loadingExplanation
-                : bubble.detail || bubble.preview}
-            </div>
+            <AIWorkspaceMarkdown
+              className="ai-workspace-modal-textblock"
+              text={bubble.status === "loading" ? copy.modal.loadingExplanation : bubble.detail || bubble.preview}
+            />
           </section>
 
           {bubble.sql && (
@@ -124,7 +125,7 @@ export function AIBubbleDetailModal({
             <Copy className="w-4 h-4" />
             {copy.bubbleActions.copy}
           </button>
-          {bubble.sql && (
+          {canInsert && (
             <button
               type="button"
               className="ai-workspace-modal-btn"

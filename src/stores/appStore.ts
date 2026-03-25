@@ -23,6 +23,7 @@ import type {
   AIRequestMode,
   ColumnDetail,
 } from "../types";
+import { getActiveAIProvider } from "../types";
 
 const connectionSignature = (c: ConnectionConfig) =>
   [
@@ -283,7 +284,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   askAI: async (prompt: string, context: string, mode = "panel", intent = "sql", history = []) => {
-    const config = get().aiConfigs.find((c) => c.is_enabled);
+    const config = getActiveAIProvider(get().aiConfigs);
     if (!config) throw new Error("AI Provider not found");
 
     try {

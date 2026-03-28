@@ -110,6 +110,7 @@ export function useSidebar() {
     tables,
     schemaObjects,
     isLoadingTables,
+    isLoadingSchemaObjects,
     disconnectFromDatabase,
     fetchDatabases,
     fetchTables,
@@ -126,6 +127,7 @@ export function useSidebar() {
       tables: state.tables,
       schemaObjects: state.schemaObjects,
       isLoadingTables: state.isLoadingTables,
+      isLoadingSchemaObjects: state.isLoadingSchemaObjects,
       disconnectFromDatabase: state.disconnectFromDatabase,
       fetchDatabases: state.fetchDatabases,
       fetchTables: state.fetchTables,
@@ -177,6 +179,27 @@ export function useSidebar() {
     usePinnedTables(tableWorkspaceKey);
 
   const dbType = activeConnection?.db_type;
+
+  useEffect(() => {
+    if (!activeConnectionId || !currentDatabase) return;
+    if (schemaObjects.length > 0 || isLoadingSchemaObjects) return;
+
+    const delayMs = search.trim() ? 0 : 900;
+    const timer = window.setTimeout(() => {
+      void fetchSchemaObjects(activeConnectionId, currentDatabase);
+    }, delayMs);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    activeConnectionId,
+    currentDatabase,
+    fetchSchemaObjects,
+    isLoadingSchemaObjects,
+    schemaObjects.length,
+    search,
+  ]);
 
   // --- Actions ---
   const toggleDb = useCallback(

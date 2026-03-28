@@ -12,6 +12,7 @@ import {
   PanelRightClose,
   Database,
   AlertCircle,
+  LoaderCircle,
 } from "lucide-react";
 import { lazy, Suspense } from "react";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -49,8 +50,8 @@ interface WorkspaceActivityState {
 interface AppWorkspacePanelProps {
   tabs: Tab[];
   activeTab: Tab | null;
-  visibleTabs: Tab[];
   isConnected: boolean;
+  isConnecting: boolean;
   isSidebarCollapsed: boolean;
   sidebarWidth: number;
   leftPanel: "connections" | "database" | "metrics";
@@ -100,8 +101,8 @@ function getLastPathSegment(value?: string | null) {
 export function AppWorkspacePanel({
   tabs,
   activeTab,
-  visibleTabs,
   isConnected,
+  isConnecting,
   isSidebarCollapsed,
   sidebarWidth,
   leftPanel,
@@ -152,6 +153,30 @@ export function AppWorkspacePanel({
   });
 
   const renderTabContent = () => {
+    if (!isConnected && isConnecting && activeConn) {
+      return (
+        <div className="workspace-empty">
+          <div className="workspace-empty-panel workspace-connecting-panel">
+            <div className="workspace-empty-hero">
+              <div className="workspace-empty-icon workspace-ready-icon">
+                <LoaderCircle className="w-10 h-10 text-[var(--accent)] animate-spin" />
+              </div>
+
+              <div className="workspace-empty-copy">
+                <span className="workspace-empty-kicker">{t("common.loading")}</span>
+                <h2 className="workspace-empty-title">
+                  {activeConn.name || t("workspace.ready.connectedWorkspace")}
+                </h2>
+                <p className="workspace-empty-description">
+                  {currentDatabase || activeConn.database || activeConn.host || activeConn.file_path || ""}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (!isConnected) {
       return (
         <div className="workspace-empty">
@@ -713,17 +738,6 @@ export function AppWorkspacePanel({
             <div className="workspace-toolbar-actions">
               {isConnected && (
                 <>
-                  {!isMetricsWorkspace && visibleTabs.length > 1 && (
-                    <button
-                      onClick={onClearVisibleTabs}
-                      className="toolbar-btn clear-action"
-                      title={t("toolbar.closeAllTabs")}
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      <span>{t("toolbar.clear")}</span>
-                    </button>
-                  )}
-
                   {!isMetricsWorkspace && (
                     <button
                       onClick={onNewQuery}
@@ -776,6 +790,7 @@ export function AppWorkspacePanel({
           <TabBar
             queryChrome={activeQueryChrome}
             onRunActiveQuery={onRunActiveQuery}
+            onClearVisibleTabs={onClearVisibleTabs}
           />
 
           <div className={`tab-content ${isWorkspaceOverview ? "is-workspace-overview" : ""}`}>

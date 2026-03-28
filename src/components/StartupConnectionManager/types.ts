@@ -101,6 +101,7 @@ export interface ConnectionRowData {
   isSelected: boolean;
   isConnected: boolean;
   isActive: boolean;
+  isBusy?: boolean;
   isGridLayout: boolean;
   statusLabel: string;
   dbInfo: DbLabel;
@@ -143,7 +144,6 @@ export interface ConnectionListViewProps {
 export interface ConnectionRowProps {
   data: ConnectionRowData;
   onClick: () => void;
-  onDoubleClick: () => void;
   onMouseEnter: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onMouseLeave: () => void;
 }

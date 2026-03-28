@@ -77,6 +77,7 @@ function App() {
     tabs,
     activeTabId,
     currentDatabase,
+    isConnecting,
     error,
     clearError,
     loadSavedConnections,
@@ -93,6 +94,7 @@ function App() {
       tabs: state.tabs,
       activeTabId: state.activeTabId,
       currentDatabase: state.currentDatabase,
+      isConnecting: state.isConnecting,
       error: state.error,
       clearError: state.clearError,
       loadSavedConnections: state.loadSavedConnections,
@@ -142,9 +144,8 @@ function App() {
   const activeConn = connections.find((conn) => conn.id === activeConnectionId);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
   const isConnected = !!(activeConnectionId && connectedIds.has(activeConnectionId));
-  const showStartupShell = !isConnected && (showStartupConnectionManager || !!connectionFormIntent);
+  const showStartupShell = !isConnected && !isConnecting && (showStartupConnectionManager || !!connectionFormIntent);
   const isMetricsWorkspace = activeTab?.type === "metrics";
-  const visibleTabs = tabs.filter((tab) => tab.type !== "metrics");
   const activeQueryChrome =
     activeTab?.type === "query" ? queryChromeByTab[activeTab.id] ?? { isRunning: false } : null;
   const activeWorkspaceActivity =
@@ -892,33 +893,33 @@ function App() {
   }, [isDesktopWindow]);
 
   useEffect(() => {
-    if (activeConnectionId && connectedIds.has(activeConnectionId)) {
+    if (activeConnectionId && (connectedIds.has(activeConnectionId) || isConnecting)) {
       setLeftPanel("database");
       return;
     }
 
     setLeftPanel("connections");
-  }, [activeConnectionId, connectedIds]);
+  }, [activeConnectionId, connectedIds, isConnecting]);
 
   useEffect(() => {
-    if (activeConnectionId && connectedIds.has(activeConnectionId)) {
+    if (activeConnectionId && (connectedIds.has(activeConnectionId) || isConnecting)) {
       setShowStartupConnectionManager(false);
       setConnectionFormIntent(null);
     }
-  }, [activeConnectionId, connectedIds]);
+  }, [activeConnectionId, connectedIds, isConnecting]);
 
   useEffect(() => {
-    if (isConnected || connectionFormIntent) return;
+    if (isConnected || isConnecting || connectionFormIntent) return;
 
     setShowStartupConnectionManager(true);
     setShowAISlidePanel(false);
     setIsWindowMenuOpen(false);
     setActiveWindowMenuSection(null);
     setActiveWindowMenuItemPath(null);
-  }, [connectionFormIntent, isConnected]);
+  }, [connectionFormIntent, isConnected, isConnecting]);
 
   useEffect(() => {
-    if (!isDesktopWindow || isConnected) return;
+    if (!isDesktopWindow || isConnected || isConnecting) return;
 
     const windowProfile: "launcher" | "form" = connectionFormIntent
       ? "form"
@@ -943,7 +944,30 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyDesktopWindowProfile, connectionFormIntent, isConnected, isDesktopWindow]);
+  }, [applyDesktopWindowProfile, connectionFormIntent, isConnected, isConnecting, isDesktopWindow]);
+
+  useEffect(() => {
+    if (!isDesktopWindow || !isConnected) return;
+
+    let cancelled = false;
+    const syncGeneration = ++windowSyncGenerationRef.current;
+    const isStale = () => cancelled || windowSyncGenerationRef.current !== syncGeneration;
+
+    const applyWindowProfile = async () => {
+      try {
+        if (isStale()) return;
+        await applyDesktopWindowProfile("workspace");
+      } catch (windowError) {
+        console.error("Failed to synchronize workspace window state", windowError);
+      }
+    };
+
+    void applyWindowProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyDesktopWindowProfile, isConnected, isDesktopWindow]);
 
   useEffect(() => {
     if (!activeConnectionId || !connectedIds.has(activeConnectionId)) return;
@@ -975,7 +999,7 @@ function App() {
           </Suspense>
         )}
 
-        {showStartupConnectionManager && !isConnected && !connectionFormIntent && (
+        {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
           <StartupConnectionManager
             onNewConnection={() => handleOpenConnectionForm("connect")}
             windowControls={
@@ -1044,8 +1068,8 @@ function App() {
       <AppWorkspacePanel
         tabs={tabs}
         activeTab={activeTab}
-        visibleTabs={visibleTabs}
         isConnected={isConnected}
+        isConnecting={isConnecting}
         isSidebarCollapsed={isSidebarCollapsed}
         sidebarWidth={sidebarWidth}
         leftPanel={leftPanel}
@@ -1106,7 +1130,7 @@ function App() {
       {showKeyboardShortcutsModal && (
         <AppShortcutsModal onClose={() => setShowKeyboardShortcutsModal(false)} />
       )}
-      {showStartupConnectionManager && !isConnected && !connectionFormIntent && (
+      {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
         <StartupConnectionManager
           onNewConnection={() => handleOpenConnectionForm("connect")}
           windowControls={

@@ -59,9 +59,6 @@ impl DatabaseManager {
             }
         };
 
-        // Verify connection
-        driver.ping().await?;
-
         let mut conns = self.connections.write().await;
         let previous_driver = conns.insert(config.id.clone(), driver);
         drop(conns);

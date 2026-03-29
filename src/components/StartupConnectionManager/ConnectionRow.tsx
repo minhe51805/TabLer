@@ -9,22 +9,21 @@ interface Props extends ConnectionRowProps {
 export function ConnectionRow({
   data,
   onClick,
-  onDoubleClick,
   onMouseEnter,
   onMouseLeave,
   tagName,
   tagColor,
   envBadge,
 }: Props) {
-  const { connection, isSelected, isConnected, isActive, isGridLayout, statusLabel, dbInfo, endpointLabel, databaseLabel, engineLabel, secondaryBadgeLabel } = data;
+  const { connection, isSelected, isConnected, isActive, isBusy, isGridLayout, statusLabel, dbInfo, endpointLabel, databaseLabel, engineLabel, secondaryBadgeLabel } = data;
 
   return (
     <button
       type="button"
       className={`startup-connection-row ${isSelected ? "active" : ""}`}
       data-conn-id={connection.id}
+      disabled={Boolean(isBusy)}
       onClick={onClick}
-      onDoubleClick={onDoubleClick}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >

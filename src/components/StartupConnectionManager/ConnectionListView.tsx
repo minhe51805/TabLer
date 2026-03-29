@@ -18,6 +18,7 @@ interface Props {
   onSearchChange: (v: string) => void;
   layoutMode: ConnectionLayoutMode;
   onLayoutModeChange: (v: ConnectionLayoutMode) => void;
+  isConnecting: boolean;
   filteredConnections: ConnectionConfig[];
   selectedConnectionId: string | null;
   activeConnectionId: string | null;
@@ -42,6 +43,7 @@ export function ConnectionListView({
   onSearchChange,
   layoutMode,
   onLayoutModeChange,
+  isConnecting,
   filteredConnections,
   selectedConnectionId,
   activeConnectionId,
@@ -171,6 +173,7 @@ export function ConnectionListView({
               const conn = item.connection!;
               const isConnected = connectedIds.has(conn.id);
               const isActive = activeConnectionId === conn.id;
+              const isBusy = isConnecting && selectedConnectionId === conn.id;
               const tag = tags.find((t2) => t2.id === conn.tagId);
               const env = detectEnvironment(conn.host, conn.name);
               const envBadge = getEnvironmentBadge(env, {
@@ -188,16 +191,25 @@ export function ConnectionListView({
                     isSelected: selectedConnectionId === conn.id,
                     isConnected,
                     isActive,
+                    isBusy,
                     isGridLayout: layoutMode === "grid",
-                    statusLabel: isActive ? t("common.active") : isConnected ? t("common.connected") : t("common.saved"),
+                    statusLabel: isBusy
+                      ? t("common.loading")
+                      : isActive
+                        ? t("common.active")
+                        : isConnected
+                          ? t("common.connected")
+                          : t("common.saved"),
                     dbInfo: getDbInfo(conn.db_type),
                     endpointLabel: buildEndpointLabel(conn.db_type, conn.host, conn.port, conn.file_path),
                     databaseLabel: buildDatabaseLabel(conn.db_type, conn.database, conn.username),
                     engineLabel: conn.db_type.toUpperCase(),
                     secondaryBadgeLabel: buildSecondaryBadgeLabel(conn.db_type, !!conn.use_ssl),
                   }}
-                  onClick={() => onSelectConnection(conn.id)}
-                  onDoubleClick={() => onConnect(conn)}
+                  onClick={() => {
+                    onSelectConnection(conn.id);
+                    void onConnect(conn);
+                  }}
                   onMouseEnter={(e) => onHover(e, conn.id)}
                   onMouseLeave={onLeaveHover}
                   tagName={tag?.name}

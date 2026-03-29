@@ -56,7 +56,10 @@ impl PostgresDriver {
                 .max_lifetime(std::time::Duration::from_secs(1800))
                 .acquire_timeout(std::time::Duration::from_secs(30))
                 .idle_timeout(std::time::Duration::from_secs(600))
-                .test_before_acquire(true);
+                // Avoid an extra validation round-trip on every acquire. The initial
+                // connect path already proves the pool is live, and query failures
+                // surface naturally if the server drops later.
+                .test_before_acquire(false);
 
             match pool_opts.connect_with(options.clone()).await {
                 Ok(pool) => {

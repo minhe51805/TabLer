@@ -1,12 +1,11 @@
 import {
   Database,
-  PlugZap,
   Plus,
+  PlugZap,
   RefreshCw,
   Search,
 } from "lucide-react";
 import { useI18n } from "../../i18n";
-import { formatCountLabel } from "../../i18n";
 import { useSidebar } from "./hooks/use-sidebar";
 import { DatabaseTree } from "./components/DatabaseTree";
 import { ContextMenu } from "./components/ContextMenu";
@@ -42,7 +41,6 @@ export function Sidebar() {
     filteredSchemaSections,
     availableSchemaNames,
     schemaFilterOptions,
-    summaryLabel,
     hasSearch,
     visibleTableCount,
     visibleObjectCount,
@@ -83,7 +81,6 @@ export function Sidebar() {
                 <span className="explorer-workspace-dot" />
                 <span className="explorer-workspace-label">{compactDatabaseName || t("explorer.workspace")}</span>
               </div>
-              <span className="explorer-header-summary-text">{summaryLabel}</span>
             </div>
           </div>
 
@@ -134,21 +131,7 @@ export function Sidebar() {
             className="sidebar-search-input"
           />
         </div>
-        <div className="explorer-search-hint">
-          <span>
-            {hasSearch
-              ? `${formatCountLabel(language, filteredSchemaSections.reduce((total, section) => total + section.tables.length + section.views.length + section.triggers.length + section.routines.length, 0), {
-                  one: "match",
-                  other: "matches",
-                  vi: "kết quả",
-                })} | ${formatCountLabel(language, filteredSchemaSections.length, {
-                  one: "schema",
-                  other: "schemas",
-                  vi: "schema",
-                })}`
-              : t("explorer.browseHint")}
-          </span>
-        </div>
+        {!hasSearch && <div className="explorer-search-hint">{t("explorer.browseHint")}</div>}
       </div>
 
       <DatabaseTree

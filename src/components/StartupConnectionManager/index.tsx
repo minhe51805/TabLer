@@ -56,7 +56,6 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
     connectSavedConnection,
     fetchDatabases,
     fetchTables,
-    fetchSchemaObjects,
   } = useAppStore(
     useShallow((state) => ({
       connections: state.connections,
@@ -66,7 +65,6 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
       connectSavedConnection: state.connectSavedConnection,
       fetchDatabases: state.fetchDatabases,
       fetchTables: state.fetchTables,
-      fetchSchemaObjects: state.fetchSchemaObjects,
     })),
   );
 
@@ -170,19 +168,25 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
 
   const handleOpenConnection = async (connection: ConnectionConfig) => {
     if (isConnecting) return;
+    setSelectedConnectionId(connection.id);
+    setHoverPreview(null);
     if (connectedIds.has(connection.id)) {
+      const currentDatabase = useAppStore.getState().currentDatabase ?? null;
+      const targetDatabase = connection.database ?? null;
       useAppStore.setState({
         activeConnectionId: connection.id,
-        currentDatabase: connection.database ?? null,
-        ...(connection.database ? {} : { tables: [], schemaObjects: [] }),
+        currentDatabase: targetDatabase,
+        schemaObjects: [],
+        ...(targetDatabase ? {} : { tables: [] }),
       });
-      await fetchDatabases(connection.id);
-      if (connection.database) {
-        useAppStore.setState({ currentDatabase: connection.database });
-        await Promise.all([
-          fetchTables(connection.id, connection.database),
-          fetchSchemaObjects(connection.id, connection.database),
-        ]);
+
+      if (activeConnectionId === connection.id && currentDatabase === targetDatabase) {
+        return;
+      }
+
+      void fetchDatabases(connection.id);
+      if (targetDatabase) {
+        void fetchTables(connection.id, targetDatabase);
       }
       return;
     }
@@ -255,6 +259,7 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
             onSearchChange={setSearch}
             layoutMode={layoutMode}
             onLayoutModeChange={setLayoutMode}
+            isConnecting={isConnecting}
             filteredConnections={filteredConnections}
             selectedConnectionId={selectedConnectionId}
             activeConnectionId={activeConnectionId}

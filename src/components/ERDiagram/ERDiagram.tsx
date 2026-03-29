@@ -441,7 +441,7 @@ function buildDrawioDiagramXml(snapshot: ExportDiagramSnapshot) {
         "verticalAlign=top",
         "spacing=10",
         "arcSize=10",
-        "fillColor=#11161f",
+        "fillColor=#0d1018",
         `strokeColor=${node.data.color}`,
         "fontColor=#eef3fb",
         "fontSize=10",
@@ -469,7 +469,7 @@ function buildDrawioDiagramXml(snapshot: ExportDiagramSnapshot) {
         "orthogonalLoop=1",
         "jettySize=auto",
         "html=0",
-        "strokeColor=#7BB1FF",
+        "strokeColor=#fbbf24",
         "fontColor=#d8e2f1",
         "fontSize=10",
         "endArrow=block",
@@ -484,7 +484,7 @@ function buildDrawioDiagramXml(snapshot: ExportDiagramSnapshot) {
     })
     .join("");
 
-  return `<?xml version="1.0" encoding="UTF-8"?><mxfile host="app.diagrams.net" agent="TableR" version="24.7.17"><diagram id="table-r-erd" name="ERD"><mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="${Math.max(1169, Math.round(snapshot.width + 160))}" pageHeight="${Math.max(827, Math.round(snapshot.height + 160))}" background="#090c12" math="0" shadow="0"><root><mxCell id="0" /><mxCell id="1" parent="0" />${vertexCells}${edgeCells}</root></mxGraphModel></diagram></mxfile>`;
+  return `<?xml version="1.0" encoding="UTF-8"?><mxfile host="app.diagrams.net" agent="TableR" version="24.7.17"><diagram id="table-r-erd" name="ERD"><mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="${Math.max(1169, Math.round(snapshot.width + 160))}" pageHeight="${Math.max(827, Math.round(snapshot.height + 160))}" background="#060810" math="0" shadow="0"><root><mxCell id="0" /><mxCell id="1" parent="0" />${vertexCells}${edgeCells}</root></mxGraphModel></diagram></mxfile>`;
 }
 
 function drawCardinalityMarkerOnCanvas(
@@ -511,7 +511,7 @@ function drawCardinalityMarkerOnCanvas(
 
   marker.circles.forEach((circle) => {
     context.beginPath();
-    context.fillStyle = "#090c12";
+    context.fillStyle = "#060810";
     context.arc(circle.center.x, circle.center.y, circle.radius, 0, Math.PI * 2);
     context.fill();
     context.stroke();
@@ -534,14 +534,14 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
   context.scale(DIAGRAM_EXPORT_SCALE, DIAGRAM_EXPORT_SCALE);
 
   const backgroundGradient = context.createLinearGradient(0, 0, 0, snapshot.height);
-  backgroundGradient.addColorStop(0, "#0d1017");
-  backgroundGradient.addColorStop(1, "#090c12");
+  backgroundGradient.addColorStop(0, "#080b10");
+  backgroundGradient.addColorStop(1, "#060810");
   context.fillStyle = backgroundGradient;
   context.fillRect(0, 0, snapshot.width, snapshot.height);
 
   const topGlow = context.createRadialGradient(snapshot.width * 0.2, snapshot.height * 0.12, 0, snapshot.width * 0.2, snapshot.height * 0.12, snapshot.width * 0.34);
-  topGlow.addColorStop(0, "rgba(99, 102, 241, 0.16)");
-  topGlow.addColorStop(1, "rgba(99, 102, 241, 0)");
+  topGlow.addColorStop(0, "rgba(245, 158, 11, 0.12)");
+  topGlow.addColorStop(1, "rgba(245, 158, 11, 0)");
   context.fillStyle = topGlow;
   context.fillRect(0, 0, snapshot.width, snapshot.height);
 
@@ -559,7 +559,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
   }
 
   snapshot.edges.forEach((edge) => {
-    const strokeColor = "#7BB1FF";
+    const strokeColor = "#f59e0b";
 
     context.save();
     context.beginPath();
@@ -571,7 +571,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
     });
     context.strokeStyle = strokeColor;
     context.lineWidth = 1.7;
-    context.shadowColor = "rgba(123, 177, 255, 0.2)";
+    context.shadowColor = "rgba(245, 158, 11, 0.2)";
     context.shadowBlur = 8;
     context.stroke();
     context.restore();
@@ -612,7 +612,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
     const labelHeight = 18;
     const labelX = edge.bendPoint.x + snapshot.offsetX - labelWidth / 2;
     const labelY = edge.bendPoint.y + snapshot.offsetY - labelHeight / 2;
-    drawRoundedRect(context, labelX, labelY, labelWidth, labelHeight, 9, "rgba(12, 16, 24, 0.94)", "rgba(123, 177, 255, 0.18)");
+    drawRoundedRect(context, labelX, labelY, labelWidth, labelHeight, 9, "rgba(8, 11, 16, 0.94)", "rgba(245, 158, 11, 0.18)");
     context.fillStyle = "#d8e2f1";
     context.textAlign = "center";
     context.textBaseline = "middle";
@@ -699,8 +699,8 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
         width - 14,
         22,
         8,
-        isPrimary ? "rgba(70, 102, 173, 0.13)" : "rgba(255, 255, 255, 0.03)",
-        isPrimary ? "rgba(123, 177, 255, 0.16)" : undefined
+        isPrimary ? "rgba(245, 158, 11, 0.08)" : "rgba(255, 255, 255, 0.03)",
+        isPrimary ? "rgba(245, 158, 11, 0.16)" : undefined
       );
 
       drawRoundedRect(
@@ -710,10 +710,10 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
         isPrimary ? 26 : 28,
         12,
         999,
-        isPrimary ? "rgba(123, 177, 255, 0.12)" : "rgba(255, 255, 255, 0.04)",
-        isPrimary ? "rgba(123, 177, 255, 0.22)" : "rgba(122, 147, 198, 0.14)"
+        isPrimary ? "rgba(245, 158, 11, 0.1)" : "rgba(255, 255, 255, 0.04)",
+        isPrimary ? "rgba(245, 158, 11, 0.22)" : "rgba(122, 147, 198, 0.14)"
       );
-      context.fillStyle = isPrimary ? "#9fd0ff" : "#8f99ab";
+      context.fillStyle = isPrimary ? "#fbbf24" : "#8f99ab";
       context.font = '800 6px "Segoe UI", sans-serif';
       context.textBaseline = "middle";
       context.fillText(isPrimary ? "PK" : "COL", x + 18, rowY + 9.5);
@@ -738,7 +738,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
       context.stroke();
 
       if (isExpanded) {
-        drawRoundedRect(context, x + width / 2 - 34, rowY + 6, 28, 14, 999, "rgba(123, 177, 255, 0.08)", "rgba(123, 177, 255, 0.16)");
+        drawRoundedRect(context, x + width / 2 - 34, rowY + 6, 28, 14, 999, "rgba(245, 158, 11, 0.08)", "rgba(245, 158, 11, 0.16)");
         context.fillStyle = "#c3cede";
         context.font = '700 7px "Segoe UI", sans-serif';
         context.textAlign = "center";

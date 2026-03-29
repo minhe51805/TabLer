@@ -118,10 +118,10 @@ export function ConnectionList({ onNewConnection }: Props) {
   const handleConnect = async (conn: ConnectionConfig) => {
     if (connectedIds.has(conn.id)) {
       useAppStore.setState({ activeConnectionId: conn.id });
-      await useAppStore.getState().fetchDatabases(conn.id);
+      void useAppStore.getState().fetchDatabases(conn.id);
       if (conn.database) {
         useAppStore.setState({ currentDatabase: conn.database });
-        await useAppStore.getState().fetchTables(conn.id, conn.database);
+        void useAppStore.getState().fetchTables(conn.id, conn.database);
       }
     } else {
       await connectSavedConnection(conn.id);

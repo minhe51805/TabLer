@@ -10,9 +10,10 @@ interface QueryChromeState {
 interface Props {
   queryChrome?: QueryChromeState | null;
   onRunActiveQuery?: () => void;
+  onClearVisibleTabs?: () => void;
 }
 
-export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
+export function TabBar({ queryChrome, onRunActiveQuery, onClearVisibleTabs }: Props) {
   const { t } = useI18n();
   const { tabs, activeTabId, setActiveTab, removeTab } = useAppStore(
     useShallow((state) => ({
@@ -42,8 +43,12 @@ export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
   if (visibleTabs.length === 0) return null;
   if (activeTab?.type === "metrics") return null;
 
+  const showClearButton = visibleTabs.length > 1;
+  const showRunButton = activeTab?.type === "query";
+  const hasTrailingActions = showClearButton || showRunButton;
+
   return (
-    <div className="tabbar-shell">
+    <div className={`tabbar-shell ${hasTrailingActions ? "has-trailing" : ""}`}>
       <div className="tabbar-summary">
         <span className="tabbar-summary-count">{visibleTabs.length}</span>
         <span>{visibleTabs.length === 1 ? t("tabs.tab") : t("tabs.tabs")}</span>
@@ -85,22 +90,36 @@ export function TabBar({ queryChrome, onRunActiveQuery }: Props) {
         })}
       </div>
 
-      {activeTab?.type === "query" && (
+      {hasTrailingActions && (
         <div className="tabbar-trailing">
-          <button
-            type="button"
-            onClick={onRunActiveQuery}
-            className="tabbar-run-btn"
-            title={t("tabs.runTitle")}
-            disabled={queryChrome?.isRunning}
-          >
-            {queryChrome?.isRunning ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Play className="w-3.5 h-3.5" />
-            )}
-            <span>{t("tabs.run")}</span>
-          </button>
+          {showClearButton && (
+            <button
+              type="button"
+              onClick={onClearVisibleTabs}
+              className="tabbar-clear-btn"
+              title={t("toolbar.closeAllTabs")}
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>{t("toolbar.clear")}</span>
+            </button>
+          )}
+
+          {showRunButton && (
+            <button
+              type="button"
+              onClick={onRunActiveQuery}
+              className="tabbar-run-btn"
+              title={t("tabs.runTitle")}
+              disabled={queryChrome?.isRunning}
+            >
+              {queryChrome?.isRunning ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Play className="w-3.5 h-3.5" />
+              )}
+              <span>{t("tabs.run")}</span>
+            </button>
+          )}
         </div>
       )}
     </div>

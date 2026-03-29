@@ -97,7 +97,7 @@ export function MetricsEditor({
       base: "vs-dark",
       inherit: true,
       rules: [
-        { token: "keyword", foreground: "7AA2FF", fontStyle: "bold" },
+        { token: "keyword", foreground: "FBBF24", fontStyle: "bold" },
         { token: "string", foreground: "E8BF7A" },
         { token: "number", foreground: "FFB285" },
         { token: "comment", foreground: "65789A", fontStyle: "italic" },
@@ -105,9 +105,9 @@ export function MetricsEditor({
       colors: {
         "editor.background": "#161d27",
         "editor.foreground": "#e7ecf8",
-        "editor.selectionBackground": "#7aa2ff36",
-        "editor.lineHighlightBackground": "#22314f66",
-        "editorCursor.foreground": "#aec4ff",
+        "editor.selectionBackground": "#f59e0b36",
+        "editor.lineHighlightBackground": "#2d1f0666",
+        "editorCursor.foreground": "#fbbf24",
         "editorLineNumber.foreground": "#62779d",
         "editorLineNumber.activeForeground": "#e7ecf8",
       },

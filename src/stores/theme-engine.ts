@@ -173,16 +173,16 @@ const DEFAULT_LIGHT_THEME: ThemeDefinition = {
       primaryText: "#1a2332",
       secondaryText: "#4a5568",
       tertiaryText: "#718096",
-      accent: "#4c6ef5",
-      accentHover: "#364fc7",
-      accentDim: "rgba(76,110,245,0.12)",
-      selectionBackground: "#4c6ef5",
+      accent: "#f59e0b",
+      accentHover: "#fbbf24",
+      accentDim: "rgba(245,158,11,0.12)",
+      selectionBackground: "#f59e0b",
       hoverBackground: "#edf2f7",
       status: {
         success: "#37b24d",
         warning: "#f59f00",
         error: "#e03131",
-        info: "#4c6ef5",
+        info: "#f59e0b",
       },
       badges: {
         background: "#edf2f7",
@@ -193,17 +193,17 @@ const DEFAULT_LIGHT_THEME: ThemeDefinition = {
     editor: {
       background: "#f8f9fc",
       text: "#1a2332",
-      cursor: "#4c6ef5",
+      cursor: "#f59e0b",
       currentLineHighlight: "#e8ecf420",
-      selection: "#4c6ef520",
+      selection: "#f59e0b20",
       lineNumber: "#a0aec0",
       invisibles: "#a0aec0",
       syntax: {
-        keyword: "#4c6ef5",
+        keyword: "#f59e0b",
         string: "#c92a2a",
         number: "#087f5b",
         comment: "#868e96",
-        operator: "#364fc7",
+        operator: "#fbbf24",
         function: "#2b8a3e",
         type: "#7c3aed",
       },
@@ -220,12 +220,12 @@ const DEFAULT_LIGHT_THEME: ThemeDefinition = {
       inserted: "#37b24d",
       deleted: "#e03131",
       deletedText: "#a0aec0",
-      focusBorder: "#4c6ef5",
+      focusBorder: "#f59e0b",
     },
     sidebar: {
       background: "#f5f7fa",
       text: "#4a5568",
-      selectedItem: "#4c6ef5",
+      selectedItem: "#f59e0b",
       hover: "#edf2f7",
       sectionHeader: "#a0aec0",
     },
@@ -280,16 +280,16 @@ const DEFAULT_DARK_THEME: ThemeDefinition = {
       primaryText: "#edf3fa",
       secondaryText: "#d5dee8",
       tertiaryText: "#98a8ba",
-      accent: "#8fb1ff",
-      accentHover: "#d4e0ff",
-      accentDim: "rgba(143,177,255,0.14)",
-      selectionBackground: "#8fb1ff",
+      accent: "#fbbf24",
+      accentHover: "#fcd34d",
+      accentDim: "rgba(245,158,11,0.14)",
+      selectionBackground: "#fbbf24",
       hoverBackground: "#1b2531",
       status: {
         success: "#84cfb3",
         warning: "#e6b975",
         error: "#eb8c87",
-        info: "#8fb1ff",
+        info: "#fbbf24",
       },
       badges: {
         background: "#1b2531",
@@ -300,17 +300,17 @@ const DEFAULT_DARK_THEME: ThemeDefinition = {
     editor: {
       background: "#101826",
       text: "#e7ecf8",
-      cursor: "#aec4ff",
-      currentLineHighlight: "#22314f66",
-      selection: "#7aa2ff36",
+      cursor: "#fbbf24",
+      currentLineHighlight: "#2d1f0666",
+      selection: "#f59e0b36",
       lineNumber: "#62779d",
       invisibles: "#62779d",
       syntax: {
-        keyword: "#7AA2FF",
+        keyword: "#fbbf24",
         string: "#E8BF7A",
         number: "#FFB285",
         comment: "#65789A",
-        operator: "#9CB7FF",
+        operator: "#fbbf24",
         function: "#B4F0A0",
         type: "#C7A0E0",
       },
@@ -327,12 +327,12 @@ const DEFAULT_DARK_THEME: ThemeDefinition = {
       inserted: "#84cfb3",
       deleted: "#eb8c87",
       deletedText: "#62779d",
-      focusBorder: "#8fb1ff",
+      focusBorder: "#fbbf24",
     },
     sidebar: {
       background: "#0b1014",
       text: "#98a8ba",
-      selectedItem: "#8fb1ff",
+      selectedItem: "#fbbf24",
       hover: "#1b2531",
       sectionHeader: "#62779d",
     },
@@ -369,19 +369,312 @@ const DEFAULT_DARK_THEME: ThemeDefinition = {
   },
 };
 
+const MIDNIGHT_BLUE_THEME: ThemeDefinition = {
+  id: "tabler.midnight",
+  name: "Midnight Blue",
+  appearance: "dark",
+  colors: {
+    ui: {
+      windowBackground: "#091019",
+      controlBackground: "#0d1521",
+      cardBackground: "#111b29",
+      border: "#223246",
+      borderLight: "#2d4059",
+      primaryText: "#edf5ff",
+      secondaryText: "#cad7e7",
+      tertiaryText: "#8ea2bb",
+      accent: "#6ea8ff",
+      accentHover: "#97c1ff",
+      accentDim: "rgba(110,168,255,0.16)",
+      selectionBackground: "#6ea8ff",
+      hoverBackground: "#162233",
+      status: {
+        success: "#73d2ad",
+        warning: "#f0bf72",
+        error: "#ef8f8d",
+        info: "#6ea8ff",
+      },
+      badges: {
+        background: "#162233",
+        primaryKey: "#8eb9ff",
+        autoIncrement: "#9f8dff",
+      },
+    },
+    editor: {
+      background: "#0f1726",
+      text: "#eaf2ff",
+      cursor: "#6ea8ff",
+      currentLineHighlight: "#1d2d475c",
+      selection: "#6ea8ff2c",
+      lineNumber: "#617998",
+      invisibles: "#617998",
+      syntax: {
+        keyword: "#88b4ff",
+        string: "#8fe0c0",
+        number: "#f4c47d",
+        comment: "#69809d",
+        operator: "#9dc0ff",
+        function: "#c3d7ff",
+        type: "#b39dff",
+      },
+    },
+    dataGrid: {
+      background: "#0f1726",
+      text: "#edf5ff",
+      alternateRow: "#121d2d",
+      nullValue: "#667c98",
+      boolTrue: "#73d2ad",
+      boolFalse: "#ef8f8d",
+      rowNumber: "#667c98",
+      modified: "#7fb0ff",
+      inserted: "#73d2ad",
+      deleted: "#ef8f8d",
+      deletedText: "#667c98",
+      focusBorder: "#6ea8ff",
+    },
+    sidebar: {
+      background: "#091019",
+      text: "#96a8bf",
+      selectedItem: "#6ea8ff",
+      hover: "#162233",
+      sectionHeader: "#657c96",
+    },
+  },
+  spacing: DEFAULT_DARK_THEME.spacing,
+  typography: DEFAULT_DARK_THEME.typography,
+  fonts: DEFAULT_DARK_THEME.fonts,
+  animations: DEFAULT_DARK_THEME.animations,
+};
+
+const GRAPHITE_THEME: ThemeDefinition = {
+  id: "tabler.graphite",
+  name: "Graphite Glow",
+  appearance: "dark",
+  colors: {
+    ui: {
+      windowBackground: "#101113",
+      controlBackground: "#17191d",
+      cardBackground: "#1b1f25",
+      border: "#313842",
+      borderLight: "#414a56",
+      primaryText: "#f1f4f8",
+      secondaryText: "#d0d6df",
+      tertiaryText: "#98a1ad",
+      accent: "#8fd3ff",
+      accentHover: "#b7e5ff",
+      accentDim: "rgba(143,211,255,0.16)",
+      selectionBackground: "#8fd3ff",
+      hoverBackground: "#232831",
+      status: {
+        success: "#95d9b0",
+        warning: "#edc27e",
+        error: "#ef9a96",
+        info: "#8fd3ff",
+      },
+      badges: {
+        background: "#232831",
+        primaryKey: "#8fd3ff",
+        autoIncrement: "#d1a3ff",
+      },
+    },
+    editor: {
+      background: "#171a1f",
+      text: "#f0f4fa",
+      cursor: "#8fd3ff",
+      currentLineHighlight: "#26303f66",
+      selection: "#8fd3ff24",
+      lineNumber: "#778291",
+      invisibles: "#778291",
+      syntax: {
+        keyword: "#9cd5ff",
+        string: "#f0cf8d",
+        number: "#9be2bf",
+        comment: "#7b8694",
+        operator: "#cfe9ff",
+        function: "#cce6ff",
+        type: "#caa8ff",
+      },
+    },
+    dataGrid: {
+      background: "#171a1f",
+      text: "#f1f4f8",
+      alternateRow: "#1c2027",
+      nullValue: "#7c8796",
+      boolTrue: "#95d9b0",
+      boolFalse: "#ef9a96",
+      rowNumber: "#7c8796",
+      modified: "#8fd3ff",
+      inserted: "#95d9b0",
+      deleted: "#ef9a96",
+      deletedText: "#7c8796",
+      focusBorder: "#8fd3ff",
+    },
+    sidebar: {
+      background: "#101113",
+      text: "#9fa9b6",
+      selectedItem: "#8fd3ff",
+      hover: "#232831",
+      sectionHeader: "#7c8796",
+    },
+  },
+  spacing: DEFAULT_DARK_THEME.spacing,
+  typography: DEFAULT_DARK_THEME.typography,
+  fonts: DEFAULT_DARK_THEME.fonts,
+  animations: DEFAULT_DARK_THEME.animations,
+};
+
+const FOREST_THEME: ThemeDefinition = {
+  id: "tabler.forest",
+  name: "Forest Signal",
+  appearance: "dark",
+  colors: {
+    ui: {
+      windowBackground: "#0a120f",
+      controlBackground: "#101a16",
+      cardBackground: "#14211c",
+      border: "#23362f",
+      borderLight: "#305146",
+      primaryText: "#eef7f2",
+      secondaryText: "#cfddd7",
+      tertiaryText: "#8fa59d",
+      accent: "#58d39b",
+      accentHover: "#7be5b3",
+      accentDim: "rgba(88,211,155,0.16)",
+      selectionBackground: "#58d39b",
+      hoverBackground: "#1a2a24",
+      status: {
+        success: "#7fe7ae",
+        warning: "#e1c17a",
+        error: "#ee9c9c",
+        info: "#58d39b",
+      },
+      badges: {
+        background: "#1a2a24",
+        primaryKey: "#7de4b1",
+        autoIncrement: "#89b7ff",
+      },
+    },
+    editor: {
+      background: "#101916",
+      text: "#eff7f2",
+      cursor: "#58d39b",
+      currentLineHighlight: "#16312666",
+      selection: "#58d39b24",
+      lineNumber: "#6f897f",
+      invisibles: "#6f897f",
+      syntax: {
+        keyword: "#7fe7ae",
+        string: "#c4ef9f",
+        number: "#f1c47a",
+        comment: "#6f897f",
+        operator: "#9cf0c0",
+        function: "#bfeccf",
+        type: "#9ec8ff",
+      },
+    },
+    dataGrid: {
+      background: "#101916",
+      text: "#eef7f2",
+      alternateRow: "#13201b",
+      nullValue: "#6f897f",
+      boolTrue: "#7fe7ae",
+      boolFalse: "#ee9c9c",
+      rowNumber: "#6f897f",
+      modified: "#58d39b",
+      inserted: "#7fe7ae",
+      deleted: "#ee9c9c",
+      deletedText: "#6f897f",
+      focusBorder: "#58d39b",
+    },
+    sidebar: {
+      background: "#0a120f",
+      text: "#94aaa2",
+      selectedItem: "#58d39b",
+      hover: "#1a2a24",
+      sectionHeader: "#6f897f",
+    },
+  },
+  spacing: DEFAULT_DARK_THEME.spacing,
+  typography: DEFAULT_DARK_THEME.typography,
+  fonts: DEFAULT_DARK_THEME.fonts,
+  animations: DEFAULT_DARK_THEME.animations,
+};
+
+const BUILT_IN_THEMES: ThemeDefinition[] = [
+  DEFAULT_DARK_THEME,
+  MIDNIGHT_BLUE_THEME,
+  GRAPHITE_THEME,
+  FOREST_THEME,
+  DEFAULT_LIGHT_THEME,
+];
+
 // ---------------------------------------------------------------------------
 // Theme Engine (singleton logic — not React yet, pure functions)
 // ---------------------------------------------------------------------------
 
 const THEME_STORAGE_KEY = "tabler.activeTheme";
 const THEMES_STORAGE_KEY = "tabler.themes";
+const BUILT_IN_THEME_IDS = new Set(BUILT_IN_THEMES.map((theme) => theme.id));
+
+function isThemeDefinitionCandidate(value: unknown): value is ThemeDefinition {
+  if (!value || typeof value !== "object") return false;
+  const theme = value as Partial<ThemeDefinition>;
+  return typeof theme.id === "string" && typeof theme.name === "string" && !!theme.colors;
+}
+
+function loadStoredUserThemes(): ThemeDefinition[] {
+  try {
+    const stored = localStorage.getItem(THEMES_STORAGE_KEY);
+    if (!stored) return [];
+
+    const parsed = JSON.parse(stored) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter(isThemeDefinitionCandidate).filter((theme) => !BUILT_IN_THEME_IDS.has(theme.id));
+  } catch {
+    return [];
+  }
+}
+
+function getAllThemes(): ThemeDefinition[] {
+  return [...BUILT_IN_THEMES, ...loadStoredUserThemes()];
+}
+
+function getThemeShapeTokens(themeId: string) {
+  switch (themeId) {
+    case "tabler.midnight":
+      return {
+        buttonRadius: "10px",
+        cardRadius: "18px",
+        panelRadius: "20px",
+      };
+    case "tabler.graphite":
+      return {
+        buttonRadius: "7px",
+        cardRadius: "13px",
+        panelRadius: "15px",
+      };
+    case "tabler.forest":
+      return {
+        buttonRadius: "12px",
+        cardRadius: "20px",
+        panelRadius: "22px",
+      };
+    default:
+      return {
+        buttonRadius: "8px",
+        cardRadius: "16px",
+        panelRadius: "18px",
+      };
+  }
+}
 
 export const ThemeEngine = {
   default: DEFAULT_DARK_THEME,
   light: DEFAULT_LIGHT_THEME,
 
   getAvailableThemes(): ThemeDefinition[] {
-    return [DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME];
+    return getAllThemes();
   },
 
   getAppearance(): ThemeAppearance {
@@ -409,6 +702,12 @@ export const ThemeEngine = {
       const stored = localStorage.getItem(THEME_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as Partial<ThemeDefinition>;
+        if (parsed.id) {
+          const matchedTheme = getAllThemes().find((theme) => theme.id === parsed.id);
+          if (matchedTheme) {
+            return matchedTheme;
+          }
+        }
         if (parsed.id && parsed.colors) {
           return { ...DEFAULT_DARK_THEME, ...parsed };
         }
@@ -428,15 +727,7 @@ export const ThemeEngine = {
   },
 
   loadUserThemes(): ThemeDefinition[] {
-    try {
-      const stored = localStorage.getItem(THEMES_STORAGE_KEY);
-      if (stored) {
-        return JSON.parse(stored) as ThemeDefinition[];
-      }
-    } catch {
-      // ignore
-    }
-    return [];
+    return loadStoredUserThemes();
   },
 
   saveUserThemes(themes: ThemeDefinition[]): void {
@@ -459,6 +750,9 @@ function injectThemeAsCSSVars(theme: ThemeDefinition): void {
   const s = theme.spacing;
   const t = theme.typography;
   const a = theme.animations;
+  const shape = getThemeShapeTokens(theme.id);
+
+  root.setAttribute("data-theme-preset", theme.id);
 
   // UI colors
   root.style.setProperty("--bg-primary", c.ui.windowBackground);
@@ -520,6 +814,10 @@ function injectThemeAsCSSVars(theme: ThemeDefinition): void {
   root.style.setProperty("--anim-normal", `${a.normal}s`);
   root.style.setProperty("--anim-smooth", `${a.smooth}s`);
   root.style.setProperty("--anim-slow", `${a.slow}s`);
+
+  root.style.setProperty("--theme-button-radius", shape.buttonRadius);
+  root.style.setProperty("--theme-card-radius", shape.cardRadius);
+  root.style.setProperty("--theme-panel-radius", shape.panelRadius);
 }
 
 // ---------------------------------------------------------------------------
@@ -540,6 +838,21 @@ export function useTheme() {
   useEffect(() => {
     injectThemeAsCSSVars(activeTheme);
   }, [activeTheme]);
+
+  useEffect(() => {
+    const handleThemeChanged = (event: Event) => {
+      const customEvent = event as CustomEvent<ThemeDefinition | undefined>;
+      const nextTheme = customEvent.detail;
+      if (!nextTheme) return;
+      setActiveTheme(nextTheme);
+    };
+
+    window.addEventListener("theme-changed", handleThemeChanged as EventListener);
+
+    return () => {
+      window.removeEventListener("theme-changed", handleThemeChanged as EventListener);
+    };
+  }, []);
 
   return {
     theme: activeTheme,

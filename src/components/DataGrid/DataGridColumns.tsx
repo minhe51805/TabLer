@@ -1,5 +1,5 @@
 import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown, Key } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Key, ExternalLink } from "lucide-react";
 import type {
   EditingCell,
   GridCellValue,
@@ -139,6 +139,10 @@ export function buildDataGridColumns({
         const isEditableColumn =
           canAttemptInlineEdit && (structureStatus !== "ready" || !col.is_primary_key);
         const cellKey = `${rowIndex}-${idx}`;
+        const stringValue = value === null ? null : String(value);
+        const isUrlCell = stringValue !== null && URL_RE.test(stringValue);
+        const isImageCell = isUrlCell && isImageUrl(stringValue);
+        const faviconUrl = isUrlCell && stringValue ? getFaviconUrl(stringValue) : null;
 
         return (
           <div
@@ -232,7 +236,55 @@ export function buildDataGridColumns({
                 {isSaving && (
                   <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-[var(--accent)] border-t-transparent rounded-full" />
                 )}
-                <span className="datagrid-cell-value">{value === null ? "NULL" : String(value)}</span>
+                {isImageCell && stringValue !== null ? (
+                  <div className="datagrid-url-cell">
+                    <img
+                      src={stringValue}
+                      alt=""
+                      className="datagrid-cell-thumb"
+                      loading="lazy"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                    <a
+                      href={stringValue}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="datagrid-cell-value datagrid-url-link"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLink className="w-2.5! h-2.5!" />
+                      <span>{getUrlDomain(stringValue)}</span>
+                    </a>
+                  </div>
+                ) : isUrlCell && stringValue !== null ? (
+                  <div className="datagrid-url-cell">
+                    {faviconUrl ? (
+                      <img
+                        src={faviconUrl}
+                        alt=""
+                        className="datagrid-cell-thumb datagrid-cell-favicon"
+                        loading="lazy"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none";
+                        }}
+                      />
+                    ) : null}
+                    <a
+                      href={stringValue}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="datagrid-cell-value datagrid-url-link"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLink className="w-2.5! h-2.5!" />
+                      <span>{getUrlDomain(stringValue)}</span>
+                    </a>
+                  </div>
+                ) : (
+                  <span className="datagrid-cell-value">{value === null ? "NULL" : String(value)}</span>
+                )}
               </>
             )}
           </div>
@@ -245,5 +297,38 @@ export function buildDataGridColumns({
 
 // Shared ref for the cell editor draft value
 export const editingDraftRef: { current: string } = { current: "" };
+
+// ---------------------------------------------------------------------------
+// URL / Image cell detection
+// ---------------------------------------------------------------------------
+
+const URL_RE = /^https?:\/\//i;
+const IMAGE_EXT_RE = /\.(png|jpg|jpeg|gif|webp|svg|ico|bmp)(\?.*)?$/i;
+const IMAGE_KEYWORD_RE = /\/(logo|img|image|avatar|icon|photo|picture|thumbnail|asset|media|cdn)\//i;
+
+function isImageUrl(value: string): boolean {
+  return IMAGE_EXT_RE.test(value) || IMAGE_KEYWORD_RE.test(value);
+}
+
+function getUrlDomain(value: string): string {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.replace(/^www\./, "");
+    const path = url.pathname.replace(/\/+/g, "/").replace(/\/$/, "");
+    const shortPath = path.length > 24 ? path.slice(0, 22) + "…" : path;
+    return `${host}${shortPath}`;
+  } catch {
+    return value.length > 32 ? value.slice(0, 30) + "…" : value;
+  }
+}
+
+function getFaviconUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return `https://www.google.com/s2/favicons?domain=${url.hostname}&sz=64`;
+  } catch {
+    return null;
+  }
+}
 
 

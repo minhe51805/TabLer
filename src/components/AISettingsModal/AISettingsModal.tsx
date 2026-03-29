@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
-import { Plus, Trash2, Cpu, Brain, Edit2, KeyRound, Sparkles, Link2, Loader2 } from "lucide-react";
+import { useState, useEffect, type CSSProperties } from "react";
+import { Plus, Trash2, Cpu, Brain, Edit2, KeyRound, Sparkles, Link2, Loader2, Palette } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import type { AIProviderConfig, AIProviderType } from "../../types";
+import { ThemeEngine, useTheme } from "../../stores/useTheme";
 
 const PROVIDER_NAMES: Record<string, string> = {
     openai: "OpenAI",
@@ -42,6 +43,14 @@ const PROVIDER_OPTIONS: Array<{ value: AIProviderType; label: string; meta: stri
     { value: "custom", label: "Custom", meta: "Any OpenAI-compatible endpoint you control." },
 ];
 
+const THEME_HINTS: Record<string, string> = {
+    "tabler.dark": "Primary default theme tuned for TableR.",
+    "tabler.midnight": "Cool blue contrast for long editing sessions.",
+    "tabler.graphite": "Neutral graphite surfaces with icy highlights.",
+    "tabler.forest": "Low-glare green accents for calmer focus.",
+    "tabler.light": "Bright workspace for daylight environments.",
+};
+
 function normalizeProviderDrafts(drafts: AIProviderConfig[]) {
     const normalized = drafts.map((config) => ({
         ...config,
@@ -63,6 +72,7 @@ function normalizeProviderDrafts(drafts: AIProviderConfig[]) {
 export function AISettingsModal({ onClose }: Props) {
     const saveAIConfigs = useAppStore((state) => state.saveAIConfigs);
     const loadAIConfigs = useAppStore((state) => state.loadAIConfigs);
+    const { theme, activateTheme, defaultTheme } = useTheme();
 
     const [configs, setConfigs] = useState<AIProviderConfig[]>([]);
     const [storedKeyStatus, setStoredKeyStatus] = useState<Record<string, boolean>>({});
@@ -198,6 +208,9 @@ export function AISettingsModal({ onClose }: Props) {
         ? PROVIDER_OPTIONS.find((option) => option.value === activeConfig.provider_type)
         : null;
     const isActiveProviderInUse = !!activeConfig?.is_enabled && !!activeConfig?.is_primary;
+    const themeOptions = ThemeEngine.getAvailableThemes().filter((option) =>
+        ["tabler.dark", "tabler.midnight", "tabler.graphite", "tabler.forest"].includes(option.id)
+    );
 
     const handleKeyDraftChange = (providerId: string, value: string) => {
         setSaveError(null);
@@ -318,6 +331,59 @@ export function AISettingsModal({ onClose }: Props) {
                     </aside>
 
                     <section className="ai-settings-detail">
+                        <section className="ai-settings-panel ai-settings-panel-wide ai-settings-theme-panel">
+                            <div className="ai-settings-panel-head">
+                                <Palette className="w-4 h-4" />
+                                <div>
+                                    <h4>App Theme</h4>
+                                    <p>Choose how the whole workspace looks. One main default theme stays available at all times.</p>
+                                </div>
+                            </div>
+                            <div className="ai-settings-theme-grid">
+                                {themeOptions.map((themeOption) => {
+                                    const isActiveTheme = theme.id === themeOption.id;
+                                    const isPrimaryTheme = themeOption.id === defaultTheme.id;
+                                    const previewStyle = {
+                                        ["--theme-preview-window" as string]: themeOption.colors.ui.windowBackground,
+                                        ["--theme-preview-card" as string]: themeOption.colors.ui.cardBackground,
+                                        ["--theme-preview-border" as string]: themeOption.colors.ui.border,
+                                        ["--theme-preview-accent" as string]: themeOption.colors.ui.accent,
+                                        ["--theme-preview-muted" as string]: themeOption.colors.ui.tertiaryText,
+                                    } as CSSProperties;
+
+                                    return (
+                                        <button
+                                            key={themeOption.id}
+                                            type="button"
+                                            className={`ai-settings-theme-card ${isActiveTheme ? "is-active" : ""}`}
+                                            onClick={() => activateTheme(themeOption)}
+                                        >
+                                            <div className="ai-settings-theme-preview" style={previewStyle}>
+                                                <div className="ai-settings-theme-preview-top" />
+                                                <div className="ai-settings-theme-preview-body">
+                                                    <span className="ai-settings-theme-preview-line is-accent" />
+                                                    <span className="ai-settings-theme-preview-line" />
+                                                    <span className="ai-settings-theme-preview-line is-short" />
+                                                </div>
+                                            </div>
+                                            <div className="ai-settings-theme-copy">
+                                                <div className="ai-settings-theme-copy-top">
+                                                    <strong>{themeOption.name}</strong>
+                                                    {isPrimaryTheme ? (
+                                                        <span className="ai-settings-theme-badge is-primary">Primary</span>
+                                                    ) : null}
+                                                    {isActiveTheme ? (
+                                                        <span className="ai-settings-theme-badge is-active">Active</span>
+                                                    ) : null}
+                                                </div>
+                                                <p>{THEME_HINTS[themeOption.id] || "Workspace color preset."}</p>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </section>
+
                         {activeConfig ? (
                             <>
                                 <div className="ai-settings-toolbar">

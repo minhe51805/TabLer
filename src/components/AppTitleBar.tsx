@@ -159,7 +159,14 @@ function renderWindowMenuPopover(
                                   className={`titlebar-window-menu-item ${
                                     child.selected ? "selected" : ""
                                   }`}
-                                  onClick={child.action}
+                                  data-no-window-drag="true"
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    if (!child.disabled) {
+                                      child.action?.();
+                                    }
+                                  }}
                                   disabled={child.disabled}
                                 >
                                   <span>{child.label}</span>
@@ -316,7 +323,7 @@ export function AppTitleBar({
           {isConnected && activeConn ? (
             <div className="titlebar-badge" title={titlebarContextTitle}>
               <span
-                className="w-2 h-2 rounded-sm shrink-0"
+                className="titlebar-badge-dot"
                 style={{ backgroundColor: activeConn.color || "var(--success)" }}
               />
               <span className="truncate">
@@ -325,7 +332,7 @@ export function AppTitleBar({
             </div>
           ) : (
             <div className="titlebar-badge muted">
-              <span className="w-2 h-2 rounded-sm shrink-0 bg-white/25" />
+              <span className="titlebar-badge-dot" />
               <span className="truncate">{t("titlebar.noActiveConnection")}</span>
             </div>
           )}
@@ -335,21 +342,25 @@ export function AppTitleBar({
       </div>
 
       <div className="titlebar-actions" data-no-window-drag="true">
-        <button
-          onClick={onOpenAISettings}
-          className="titlebar-icon-btn"
-          title={t("titlebar.aiSettings")}
-        >
-          <Settings2 className="w-4 h-4" />
-        </button>
+        <span className="popover-container" data-popover="AI Settings">
+          <button
+            onClick={onOpenAISettings}
+            className="titlebar-icon-btn"
+            title={t("titlebar.aiSettings")}
+          >
+            <Settings2 className="w-4 h-4" />
+          </button>
+        </span>
 
-        <button
-          onClick={onToggleSidebar}
-          className="titlebar-icon-btn"
-          title={t("titlebar.expandSidebar")}
-        >
-          <PanelRightClose className={`w-4 h-4`} />
-        </button>
+        <span className="popover-container" data-popover="Toggle Sidebar">
+          <button
+            onClick={onToggleSidebar}
+            className="titlebar-icon-btn"
+            title={t("titlebar.expandSidebar")}
+          >
+            <PanelRightClose className="w-4 h-4" />
+          </button>
+        </span>
       </div>
 
       {renderWindowControls()}

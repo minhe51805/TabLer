@@ -15,6 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "./stores/appStore";
+import { ThemeEngine, useTheme } from "./stores/useTheme";
 import { useI18n, type AppLanguagePreference } from "./i18n";
 import { StartupConnectionManager } from "./components/StartupConnectionManager";
 import type { QueryEditorSessionState } from "./components/SQLEditor";
@@ -70,6 +71,7 @@ const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel")
 
 function App() {
   const { language, languagePreference, setLanguage, t } = useI18n();
+  const { theme: activeTheme, activateTheme } = useTheme();
   const {
     activeConnectionId,
     connectedIds,
@@ -162,6 +164,11 @@ function App() {
     activeDatabaseLabel ? ` / ${activeDatabaseLabel}` : ""
   }`;
   const sidebarMinWidth = leftPanel === "connections" ? 300 : 348;
+  const themeMenuLabel =
+    language === "vi" ? "Giao dien" : language === "zh" ? "Zhu ti" : "Theme";
+  const themeMenuOptions = ThemeEngine.getAvailableThemes().filter((option) =>
+    ["tabler.dark", "tabler.midnight", "tabler.graphite", "tabler.forest"].includes(option.id),
+  );
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -607,6 +614,17 @@ function App() {
     setIsWindowMenuOpen(false);
   }, [handleToggleSidebar]);
 
+  const handleActivateThemeFromMenu = useCallback(
+    (themeId: string) => {
+      const selectedTheme = themeMenuOptions.find((option) => option.id === themeId);
+      if (!selectedTheme) return;
+      activateTheme(selectedTheme);
+      setIsWindowMenuOpen(false);
+      setActiveWindowMenuItemPath(null);
+    },
+    [activateTheme, themeMenuOptions],
+  );
+
   const windowMenuSections: { key: WindowMenuSectionKey; label: string; items: WindowMenuItem[] }[] = [
     {
       key: "file",
@@ -674,6 +692,17 @@ function App() {
               shortcut: "Ctrl `",
             },
           ],
+        },
+        { divider: true },
+        {
+          key: "theme",
+          label: themeMenuLabel,
+          children: themeMenuOptions.map((option) => ({
+            key: option.id,
+            label: option.name,
+            action: () => handleActivateThemeFromMenu(option.id),
+            selected: activeTheme.id === option.id,
+          })),
         },
       ],
     },

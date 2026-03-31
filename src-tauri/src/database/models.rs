@@ -569,6 +569,14 @@ pub struct TableRowDeleteRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableRowInsertRequest {
+    pub table: String,
+    pub database: Option<String>,
+    /// Column names and values for the new row.
+    pub values: Vec<(String, serde_json::Value)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {
     pub name: String,
     pub schema: Option<String>,
@@ -639,4 +647,11 @@ pub struct SchemaObjectInfo {
     pub object_type: String,
     pub related_table: Option<String>,
     pub definition: Option<String>,
+}
+
+/// A single value for FK lookup dropdowns: { value, label }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LookupValue {
+    pub value: serde_json::Value,
+    pub label: String,
 }

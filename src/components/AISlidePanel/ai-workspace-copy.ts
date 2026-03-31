@@ -83,6 +83,10 @@ export interface AIWorkspaceCopy {
     readyInspectNoteSubtitle: string;
     readySqlSafeSubtitle: string;
     readySqlReviewSubtitle: string;
+    readyOptimizeTitle: string;
+    readyOptimizeSubtitle: string;
+    readyFixErrorTitle: string;
+    readyFixErrorSubtitle: string;
     readyNoteSubtitle: string;
     errorTitle: string;
     errorSubtitle: string;
@@ -172,6 +176,14 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
           title: "Write query",
           prompt: "Write a query that shows the top 10 users by order count in the last 30 days.",
         },
+        {
+          title: "Optimize query",
+          prompt: "Optimize this SQL: SELECT * FROM orders WHERE DATE(created_at) = CURDATE()",
+        },
+        {
+          title: "Fix error",
+          prompt: "Fix this SQL error: SELECT * FRMO users",
+        },
       ],
     },
     bubbleStates: {
@@ -187,6 +199,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       readyInspectNoteSubtitle: "Explained the selection and suggested next steps",
       readySqlSafeSubtitle: "Looks safe to insert",
       readySqlReviewSubtitle: "Review before running",
+      readyOptimizeTitle: "Optimized SQL ready",
+      readyOptimizeSubtitle: "SQL has been rewritten for better performance",
+      readyFixErrorTitle: "SQL fix ready",
+      readyFixErrorSubtitle: "The SQL error has been corrected",
       readyNoteSubtitle: "Explanation only, no runnable SQL yet",
       errorTitle: "Bubble could not be generated",
       errorSubtitle: "AI request failed",
@@ -274,6 +290,14 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
           title: "Viết query",
           prompt: "Viết query hiển thị top 10 users theo số lượng đơn hàng trong 30 ngày gần đây.",
         },
+        {
+          title: "Tối ưu query",
+          prompt: "Tối ưu câu SQL này: SELECT * FROM orders WHERE DATE(created_at) = CURDATE()",
+        },
+        {
+          title: "Sửa lỗi",
+          prompt: "Sửa lỗi SQL này: SELECT * FRMO users",
+        },
       ],
     },
     bubbleStates: {
@@ -289,6 +313,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       readyInspectNoteSubtitle: "Đã giải thích phần được chọn và gợi ý bước tiếp theo",
       readySqlSafeSubtitle: "Có vẻ an toàn để chèn",
       readySqlReviewSubtitle: "Xem lại trước khi chạy",
+      readyOptimizeTitle: "SQL đã tối ưu",
+      readyOptimizeSubtitle: "SQL đã được viết lại để chạy nhanh hơn",
+      readyFixErrorTitle: "SQL đã sửa",
+      readyFixErrorSubtitle: "Lỗi SQL đã được khắc phục",
       readyNoteSubtitle: "Chỉ có giải thích, chưa có SQL chạy được",
       errorTitle: "Không thể tạo bong bóng",
       errorSubtitle: "Yêu cầu AI thất bại",
@@ -376,6 +404,14 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
           title: "编写查询",
           prompt: "编写一个查询，显示过去 30 天内按订单数排名前 10 的 users。",
         },
+        {
+          title: "优化查询",
+          prompt: "优化这条 SQL：SELECT * FROM orders WHERE DATE(created_at) = CURDATE()",
+        },
+        {
+          title: "修复错误",
+          prompt: "修复这条 SQL 错误：SELECT * FRMO users",
+        },
       ],
     },
     bubbleStates: {
@@ -391,6 +427,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       readyInspectNoteSubtitle: "已解释选中内容并建议下一步",
       readySqlSafeSubtitle: "看起来可以安全插入",
       readySqlReviewSubtitle: "运行前请检查",
+      readyOptimizeTitle: "SQL 已优化",
+      readyOptimizeSubtitle: "SQL 已重写以提升性能",
+      readyFixErrorTitle: "SQL 已修复",
+      readyFixErrorSubtitle: "SQL 错误已被纠正",
       readyNoteSubtitle: "只有解释，没有可运行的 SQL",
       errorTitle: "无法生成气泡",
       errorSubtitle: "AI 请求失败",

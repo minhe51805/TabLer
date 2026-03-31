@@ -572,7 +572,92 @@ impl DatabaseDriver for MssqlDriver {
         self.current_db.blocking_read().clone()
     }
 
+    async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Insert requires at least one column value"));
+        }
+
+        let mut cols = Vec::new();
+        let mut vals = Vec::new();
+        for (col, value) in &request.values {
+            cols.push(quote_mssql_identifier(col)?.to_string());
+            vals.push(Self::quote_literal(value)?.to_string());
+        }
+
+        let sql = format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            Self::qualify_table_name(&request.table, request.database.as_deref())?,
+            cols.join(", "),
+            vals.join(", "),
+        );
+
+        self.execute_statement(&sql).await
+    }
+
     fn driver_name(&self) -> &str {
         "SQL Server"
+    }
+
+    async fn get_foreign_key_lookup_values(
+        &self,
+        referenced_table: &str,
+        referenced_column: &str,
+        display_columns: &[&str],
+        search: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<LookupValue>> {
+        let table_quoted = qualify_mssql_table_name(referenced_table, "dbo")?;
+        let col_quoted = quote_mssql_identifier(referenced_column)?;
+
+        let label_expr = if !display_columns.is_empty() {
+            let cols = display_columns
+                .iter()
+                .map(|c| quote_mssql_identifier(c).unwrap_or_else(|_| c.to_string()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("COALESCE({})", cols)
+        } else {
+            col_quoted.clone()
+        };
+
+        let sql = if let Some(search_term) = search {
+            format!(
+                "SELECT TOP {} {} AS value, {} AS label \
+                 FROM {} \
+                 WHERE CAST({} AS NVARCHAR) LIKE '%{}%' \
+                 ORDER BY {}",
+                limit,
+                col_quoted,
+                label_expr,
+                table_quoted,
+                col_quoted,
+                search_term.replace('\'', "''"),
+                col_quoted
+            )
+        } else {
+            format!(
+                "SELECT TOP {} {} AS value, {} AS label \
+                 FROM {} \
+                 ORDER BY {}",
+                limit,
+                col_quoted,
+                label_expr,
+                table_quoted,
+                col_quoted
+            )
+        };
+
+        let (rows, _truncated) = self.query_rows(&sql).await?;
+        let mut values = Vec::with_capacity(rows.len());
+        for row in rows {
+            let cells: Vec<ColumnData<'static>> = row.into_iter().collect();
+            if cells.len() >= 2 {
+                let json_value = Self::ms_cell_to_json(&cells[0]);
+                let json_label = Self::ms_cell_to_json(&cells[1]);
+                let label_str = json_label.as_str().map(String::from).unwrap_or_else(|| json_label.to_string());
+                values.push(LookupValue { value: json_value, label: label_str });
+            }
+        }
+        Ok(values)
     }
 }

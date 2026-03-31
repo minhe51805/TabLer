@@ -25,6 +25,7 @@ import type { QueryEditorSessionState } from "./SQLEditor";
 import { useI18n } from "../i18n";
 import { useEvent } from "../stores/event-center";
 import { useAppStore } from "../stores/appStore";
+import { getLastPathSegment } from "../utils/path-utils";
 
 const SQLEditor = lazy(() => import("./SQLEditor").then((module) => ({ default: module.SQLEditor })));
 const DataGrid = lazy(() => import("./DataGrid").then((module) => ({ default: module.DataGrid })));
@@ -88,13 +89,6 @@ function LazyPanelFallback() {
       Loading workspace...
     </div>
   );
-}
-
-function getLastPathSegment(value?: string | null) {
-  if (!value) return "";
-  const normalized = value.replace(/\\/g, "/");
-  const parts = normalized.split("/").filter(Boolean);
-  return parts[parts.length - 1] || value;
 }
 
 export function AppWorkspacePanel({

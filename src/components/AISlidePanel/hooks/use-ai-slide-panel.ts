@@ -30,6 +30,7 @@ export interface AIGeneratedAssistResult {
   rawResponse: string;
   sql: string | null;
   risk?: SqlRiskAnalysis;
+  intent: AssistIntent;
 }
 
 export interface AIExecutedSqlResult {
@@ -37,7 +38,7 @@ export interface AIExecutedSqlResult {
   summary: string;
 }
 
-type AssistIntent = "sql" | "explain" | "overview";
+type AssistIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error";
 
 const SQL_START_KEYWORDS = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "WITH"];
 const AI_SCHEMA_CODEC_LEGEND =
@@ -246,6 +247,45 @@ function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceInteracti
   ];
 
   const hasOverviewSignal = overviewSignals.some((signal) => normalizedPrompt.includes(signal));
+  const optimizeSignals = [
+    "optimize",
+    "toi uu",
+    "tối ưu",
+    "cải thiện",
+    "improve",
+    "faster",
+    "performance",
+    "lam nhanh hon",
+    "nhanh hon",
+    "优化",
+    "提升性能",
+    "make it faster",
+    "speed up",
+  ];
+  const fixErrorSignals = [
+    "fix",
+    "error",
+    "bug",
+    "sua loi",
+    "sửa lỗi",
+    "khắc phuc",
+    "khắc phục",
+    "loi",
+    "lỗi",
+    "exception",
+    "failed",
+    "failed to",
+    "does not work",
+    "not working",
+    "修复",
+    "错误",
+    "修复错误",
+    "报错了",
+    "出错",
+  ];
+
+  const hasOptimizeSignal = optimizeSignals.some((signal) => normalizedPrompt.includes(signal));
+  const hasFixErrorSignal = fixErrorSignals.some((signal) => normalizedPrompt.includes(signal));
   let sqlScore = sqlSignals.reduce((score, signal) => score + (normalizedPrompt.includes(signal) ? 1 : 0), 0);
   const explainScore = explainSignals.reduce((score, signal) => score + (normalizedPrompt.includes(signal) ? 1 : 0), 0);
 
@@ -280,6 +320,14 @@ function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceInteracti
 
   if (hasOverviewSignal && sqlScore === 0) {
     return "overview";
+  }
+
+  if (hasFixErrorSignal && (normalizedPrompt.includes("fix") || normalizedPrompt.includes("error") || normalizedPrompt.includes("sua") || normalizedPrompt.includes("loi") || normalizedPrompt.includes("lỗi") || normalizedPrompt.includes("修复") || normalizedPrompt.includes("错误"))) {
+    return "fix-error";
+  }
+
+  if (hasOptimizeSignal) {
+    return "optimize";
   }
 
   if (sqlScore === 0 && (explainScore > 0 || normalizedPrompt.includes("?"))) {
@@ -319,6 +367,36 @@ function buildAssistPrompt(prompt: string, intent: AssistIntent, interactionMode
       "Avoid generic textbook definitions if the schema context already shows the concrete tables or columns being discussed.",
       "Do not generate SQL unless the user explicitly asks for a query, statement, or schema change.",
       "Prefer explanation, examples, tradeoffs, and suggestions over code.",
+      "",
+      prompt,
+    ].join("\n");
+  }
+
+  if (intent === "optimize") {
+    return [
+      interactionInstruction,
+      "User intent: optimize the given SQL query for better performance.",
+      "Analyze the query for potential performance issues: missing indexes, inefficient joins, full table scans, unnecessary subqueries, etc.",
+      "Ground the answer in the provided database context (schema, indexes, foreign keys) when available.",
+      "Return the optimized SQL inside a single ```sql fenced block.",
+      "Outside the code block, briefly explain: what changed, why it is faster, and any tradeoffs or risks.",
+      "Do not change the query semantics — the result must be functionally identical.",
+      "If the query is already optimal, say so and explain why.",
+      "",
+      prompt,
+    ].join("\n");
+  }
+
+  if (intent === "fix-error") {
+    return [
+      interactionInstruction,
+      "User intent: fix the SQL error or bug in the provided query.",
+      "If the user provides an error message, diagnose it and rewrite the corrected SQL.",
+      "If no explicit error is given, look for common SQL mistakes: syntax errors, type mismatches, invalid column references, NULL handling issues, etc.",
+      "Ground the fix in the provided database schema context when available.",
+      "Return the corrected SQL inside a single ```sql fenced block.",
+      "Outside the code block, briefly explain: what was wrong and what was changed.",
+      "Do not change the query semantics unless the original was incorrect.",
       "",
       prompt,
     ].join("\n");
@@ -838,6 +916,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             activeProvider.allow_schema_context
           ),
           sql: null,
+          intent: assistIntent,
         };
       }
 
@@ -852,6 +931,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             activeProvider.allow_schema_context
           ),
           sql: null,
+          intent: assistIntent,
         };
       }
 
@@ -974,7 +1054,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         throw new Error("This AI request was replaced by a newer one.");
       }
 
-      if (schemaContextEnabled && assistIntent === "sql") {
+      if (schemaContextEnabled && (assistIntent === "sql" || assistIntent === "optimize" || assistIntent === "fix-error")) {
         let extractedSql = extractSqlFromResponse(rawResponse);
         let hasSqlConflict = extractedSql ? sqlResponseConflictsWithSchema(extractedSql, availableSchemaTables) : false;
 
@@ -1046,7 +1126,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
       if (
         schemaContextEnabled &&
-        assistIntent !== "sql" &&
+        assistIntent !== "sql" && assistIntent !== "optimize" && assistIntent !== "fix-error" &&
         (
           responseConflictsWithSchema(rawResponse, availableSchemaTables) ||
           (assistIntent === "overview" && isOverviewContextMissingResponse(rawResponse))
@@ -1105,7 +1185,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       }
 
       let hasSchemaConflict = responseConflictsWithSchema(rawResponse, availableSchemaTables);
-      if (schemaContextEnabled && assistIntent !== "sql" && hasSchemaConflict) {
+      if (schemaContextEnabled && assistIntent !== "sql" && assistIntent !== "optimize" && assistIntent !== "fix-error" && hasSchemaConflict) {
         rawResponse = await askAI(
           buildSchemaRegroundingPrompt(
             appLanguage,
@@ -1158,7 +1238,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             : "The current model kept returning SQL instead of an explanation. Try again with more context or switch to a stronger model for schema explanations."
           : rawResponse;
 
-      const extractedSql = assistIntent === "sql" ? extractSqlFromResponse(finalResponse) : "";
+      const shouldExtractSql = assistIntent === "sql" || assistIntent === "optimize" || assistIntent === "fix-error";
+      const extractedSql = shouldExtractSql ? extractSqlFromResponse(finalResponse) : "";
       const normalizedSql = extractedSql.toUpperCase().trim();
       const hasValidSql = normalizedSql.length > 0 && SQL_START_KEYWORDS.some((statement) => normalizedSql.startsWith(statement));
 
@@ -1167,6 +1248,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         rawResponse: finalResponse,
         sql: hasValidSql ? extractedSql : null,
         risk: hasValidSql ? analyzeGeneratedSql(extractedSql) : undefined,
+        intent: assistIntent,
       };
     } catch (errorValue) {
       const message = errorValue instanceof Error ? errorValue.message : String(errorValue);

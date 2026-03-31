@@ -20,7 +20,7 @@ export function getActiveAIProvider(configs: AIProviderConfig[]) {
 }
 
 export type AIRequestMode = "panel" | "inline";
-export type AIRequestIntent = "sql" | "explain" | "overview";
+export type AIRequestIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error";
 
 export interface AIConversationMessage {
     role: AIConversationRole;

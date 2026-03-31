@@ -1,16 +1,22 @@
 mod commands;
 mod database;
+mod query_history;
 mod storage;
 mod utils;
 
 use commands::connection::*;
+use commands::file::*;
 use commands::query::*;
 use commands::table::*;
 use commands::ai::{ask_ai, get_ai_configs, save_ai_configs};
 use commands::window::{apply_window_profile, apply_window_profile_to_main, WindowProfile};
 use database::manager::DatabaseManager;
+use query_history::{get_query_history, save_query_history};
 use storage::connection_storage::ConnectionStorage;
 use storage::ai_storage::AIStorage;
+use storage::sql_favorites::{
+    delete_sql_favorite, get_sql_favorites, save_sql_favorite,
+};
 use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter};
 use std::time::Duration;
 
@@ -94,11 +100,23 @@ pub fn run() {
             count_table_null_values,
             update_table_cell,
             delete_table_rows,
+            insert_table_row,
             execute_structure_statements,
+            get_foreign_key_lookup_values,
             // AI commands
             ask_ai,
             get_ai_configs,
             save_ai_configs,
+            // Query history commands
+            save_query_history,
+            get_query_history,
+            // File commands
+            read_sql_file,
+            read_sql_file_from_path,
+            // SQL Favorites commands
+            get_sql_favorites,
+            save_sql_favorite,
+            delete_sql_favorite,
             // Window commands
             apply_window_profile,
         ]);

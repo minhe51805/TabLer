@@ -1,3 +1,4 @@
+import React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ArrowUpDown, Key, ExternalLink } from "lucide-react";
 import type {
@@ -5,6 +6,23 @@ import type {
   GridCellValue,
   ResolvedColumn,
 } from "./hooks/useDataGrid";
+import type { ForeignKeyInfo } from "../../types";
+import {
+  getCellEditorType,
+  getForeignKeyForColumn,
+  getEnumValues,
+} from "./editors";
+import type { ICellEditorProps } from "./editors/types";
+import {
+  BooleanCellEditor,
+  TextCellEditor,
+  NumericCellEditor,
+  DateTimeCellEditor,
+  EnumCellEditor,
+  JSONCellEditor,
+  HexCellEditor,
+  FKLookupCellEditor,
+} from "./editors";
 
 interface EditingDraft {
   current: string;
@@ -12,6 +30,11 @@ interface EditingDraft {
 
 interface SetSelectedCellFn {
   (cell: { row: number; col: number } | null): void;
+}
+
+interface LookupValue {
+  value: string | number;
+  label: string;
 }
 
 interface DataGridColumnsProps {
@@ -37,11 +60,18 @@ interface DataGridColumnsProps {
   commitEditingCell: () => Promise<void>;
   cancelEditingCell: () => void;
   structureStatus: "idle" | "loading" | "ready" | "failed";
-  assignInputRef: (element: HTMLInputElement | null) => void;
-  assignSelectRef: (element: HTMLSelectElement | null) => void;
+  assignInputRef: (element: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null) => void;
   allVisibleRowsSelected: boolean;
   isBooleanColumn: (column: ResolvedColumn) => boolean;
   setSelectedCell: SetSelectedCellFn;
+  /** All foreign keys for the current table */
+  foreignKeys?: ForeignKeyInfo[];
+  /** Lookup values cache: key = `${table}|${column}`, value = LookupValue[] */
+  lookupValuesCache?: Map<string, LookupValue[]>;
+  /** Callback to load FK lookup values from backend */
+  onLoadLookupValues?: (table: string, column: string) => Promise<LookupValue[]>;
+  /** Connection ID for FK lookups */
+  connectionId?: string;
 }
 
 export function buildDataGridColumns({
@@ -61,17 +91,20 @@ export function buildDataGridColumns({
   handleSort,
   handleRowSelection,
   handleToggleSelectAllRows,
-  handleEditorBlur,
+  handleEditorBlur: _handleEditorBlur,
   startEditingCell,
   commitEditingCell,
   cancelEditingCell,
   structureStatus,
-  assignInputRef,
-  assignSelectRef,
+  assignInputRef: _assignInputRef,
   allVisibleRowsSelected,
-  isBooleanColumn,
+  isBooleanColumn: _isBooleanColumn,
   handleCopyValue,
   setSelectedCell,
+  foreignKeys = [],
+  lookupValuesCache,
+  onLoadLookupValues,
+  connectionId,
 }: DataGridColumnsProps): ColumnDef<unknown[], unknown>[] {
   return [
     {
@@ -182,56 +215,74 @@ export function buildDataGridColumns({
               </span>
             )}
 
-            {isEditing ? (
-              isBooleanColumn(col) ? (
-                <select
-                  ref={(el) => assignSelectRef(el as HTMLSelectElement | null)}
-                  className="datagrid-cell-editor datagrid-cell-select"
-                  defaultValue={editingSeedValue}
-                  onChange={(event) => {
-                    editingDraftRef.current = event.target.value;
-                  }}
-                  onBlur={handleEditorBlur}
-                  onClick={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void commitEditingCell();
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      cancelEditingCell();
-                    }
-                  }}
-                >
-                  <option value="true">true</option>
-                  <option value="false">false</option>
-                  <option value="NULL">NULL</option>
-                </select>
-              ) : (
-                <input
-                  ref={(el) => assignInputRef(el as HTMLInputElement | null)}
-                  defaultValue={editingSeedValue}
-                  className="datagrid-cell-editor"
-                  placeholder={col.is_nullable ? "Type NULL to clear" : ""}
-                  onChange={(event) => {
-                    editingDraftRef.current = event.target.value;
-                  }}
-                  onBlur={handleEditorBlur}
-                  onClick={(event) => event.stopPropagation()}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void commitEditingCell();
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      cancelEditingCell();
-                    }
-                  }}
-                />
-              )
-            ) : (
+            {isEditing ? (() => {
+              // Resolve editor type and props
+              const fkInfo = getForeignKeyForColumn(col.name, foreignKeys);
+              const enumValues = getEnumValues(col);
+              const editorType = getCellEditorType(col, fkInfo, enumValues);
+              const lookupCacheKey = fkInfo ? `${fkInfo.referenced_table}|${fkInfo.referenced_column}` : "";
+              const cachedLookupValues = lookupCacheKey ? (lookupValuesCache?.get(lookupCacheKey) ?? []) : [];
+
+              const handleCommit = (resolvedValue: GridCellValue) => {
+                editingDraftRef.current = String(resolvedValue ?? "NULL");
+                void commitEditingCell();
+              };
+
+              const editorProps: ICellEditorProps = {
+                column: col,
+                value,
+                seedValue: editingSeedValue,
+                onCommit: handleCommit,
+                onCancel: cancelEditingCell,
+                onChange: (draft) => {
+                  editingDraftRef.current = draft;
+                },
+                inputRef: { current: null } as React.MutableRefObject<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>,
+                isNullable: col.is_nullable ?? false,
+                referencedTable: fkInfo?.referenced_table,
+                referencedColumn: fkInfo?.referenced_column,
+                lookupValues: cachedLookupValues,
+                enumValues,
+              };
+
+              if (editorType === "date" || editorType === "datetime" || editorType === "time") {
+                const dtType = editorType;
+                return (
+                  <DateTimeCellEditor
+                    {...editorProps}
+                    editorType={dtType}
+                  />
+                );
+              }
+
+              if (editorType === "foreign_key") {
+                return (
+                  <FKLookupCellEditor
+                    {...editorProps}
+                    connectionId={connectionId || ""}
+                    onLoadLookupValues={async (table, column) => {
+                      const cacheKey = `${table}|${column}`;
+                      if (lookupValuesCache?.has(cacheKey)) {
+                        return lookupValuesCache.get(cacheKey)!;
+                      }
+                      if (onLoadLookupValues) {
+                        const values = await onLoadLookupValues(table, column);
+                        lookupValuesCache?.set(cacheKey, values);
+                        return values;
+                      }
+                      return [];
+                    }}
+                  />
+                );
+              }
+
+              if (editorType === "boolean") return <BooleanCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLSelectElement | null>} />;
+              if (editorType === "numeric") return <NumericCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>} />;
+              if (editorType === "enum") return <EnumCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLSelectElement | null>} />;
+              if (editorType === "json") return <JSONCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;
+              if (editorType === "hex") return <HexCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;
+              return <TextCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>} />;
+            })() : (
               <>
                 {isSaving && (
                   <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-[var(--accent)] border-t-transparent rounded-full" />

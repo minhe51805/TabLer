@@ -15,6 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "./stores/appStore";
+import { getLastPathSegment } from "./utils/path-utils";
 import { ThemeEngine, useTheme } from "./stores/useTheme";
 import { useI18n, type AppLanguagePreference } from "./i18n";
 import { StartupConnectionManager } from "./components/StartupConnectionManager";
@@ -25,6 +26,9 @@ import { AppKeyboardHandler } from "./components/AppKeyboardHandler";
 import { AppAboutModal } from "./components/AppAboutModal";
 import { AppShortcutsModal } from "./components/AppShortcutsModal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { QueryHistoryPanel } from "./components/QueryHistory/QueryHistoryPanel";
+import { SQLFavoritesPanel } from "./components/SQLFavorites/SQLFavoritesPanel";
+import { invokeMutation } from "./utils/tauri-utils";
 import "./index.css";
 
 interface QueryChromeState {
@@ -114,6 +118,8 @@ function App() {
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showKeyboardShortcutsModal, setShowKeyboardShortcutsModal] = useState(false);
   const [showAISlidePanel, setShowAISlidePanel] = useState(false);
+  const [showQueryHistory, setShowQueryHistory] = useState(false);
+  const [showSQLFavorites, setShowSQLFavorites] = useState(false);
   const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
   const [leftPanel, setLeftPanel] = useState<"connections" | "database" | "metrics">("connections");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -345,6 +351,23 @@ function App() {
     });
   }, [activeConnectionId, addTab, currentDatabase, setActiveTab, tabs]);
 
+  const handleImportSqlFile = useCallback(async () => {
+    try {
+      const result = await invokeMutation<{ file_name: string; content: string }>("read_sql_file", {});
+      if (result?.content) {
+        window.dispatchEvent(
+          new CustomEvent("insert-sql-from-ai", {
+            detail: { sql: result.content, label: result.file_name },
+          })
+        );
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message !== "No file selected.") {
+        console.error("Failed to import SQL file:", e);
+      }
+    }
+  }, []);
+
   const handleOpenMetricsBoardFromMenu = useCallback(() => {
     setIsWindowMenuOpen(false);
     void handleOpenMetricsBoard();
@@ -547,6 +570,24 @@ function App() {
     });
   }, [tabs]);
 
+  const handleToggleQueryHistory = useCallback(() => {
+    setShowQueryHistory((current) => !current);
+  }, []);
+
+  const handleToggleSQLFavorites = useCallback(() => {
+    setShowSQLFavorites((current) => !current);
+  }, []);
+
+  const handleRunQueryFromHistory = useCallback((sql: string) => {
+    window.dispatchEvent(new CustomEvent("insert-sql-from-ai", { detail: { sql } }));
+    setShowQueryHistory(false);
+  }, []);
+
+  const handleRunQueryFromFavorites = useCallback((sql: string) => {
+    window.dispatchEvent(new CustomEvent("insert-sql-from-ai", { detail: { sql } }));
+    setShowSQLFavorites(false);
+  }, []);
+
   const handleOpenAISlidePanel = useCallback((prompt?: string) => {
     if (typeof prompt === "string" && prompt.trim()) {
       setAiPanelDraft({
@@ -632,6 +673,10 @@ function App() {
       items: [
         { label: t("menu.item.newConnection"), action: handleNewConnectionFromMenu },
         { label: t("menu.item.newQuery"), action: handleNewQueryFromMenu, disabled: !isConnected },
+        { label: t("menu.item.importSqlFile"), action: handleImportSqlFile, shortcut: "Ctrl+O" },
+        { divider: true },
+        { label: t("menu.item.openSqlFavorites"), action: handleToggleSQLFavorites, shortcut: "Ctrl+Shift+S" },
+        { divider: true },
         { label: t("menu.item.openMetrics"), action: handleOpenMetricsBoardFromMenu, disabled: !isConnected },
         { divider: true },
         { label: t("menu.item.exit"), action: handleCloseWindowFromMenu },
@@ -743,6 +788,7 @@ function App() {
         { label: t("menu.item.connections"), action: handleOpenConnectionsPanel },
         { label: t("menu.item.explorer"), action: handleShowDatabaseWorkspaceFromMenu, disabled: !isConnected },
         { label: t("menu.item.metrics"), action: handleOpenMetricsBoardFromMenu, disabled: !isConnected },
+        { label: t("menu.item.queryHistory"), action: handleToggleQueryHistory, shortcut: "Ctrl+H" },
       ],
     },
     {
@@ -798,7 +844,7 @@ function App() {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [sidebarMinWidth]);
+  }, []);
 
   useEffect(() => {
     void loadSavedConnections();
@@ -845,7 +891,7 @@ function App() {
     window.addEventListener("open-left-sidebar-panel", handleOpenLeftSidebarPanel);
     return () =>
       window.removeEventListener("open-left-sidebar-panel", handleOpenLeftSidebarPanel);
-  }, [sidebarMinWidth]);
+  }, []);
 
   useEffect(() => {
     const handleWorkspaceActivity = (
@@ -1135,6 +1181,8 @@ function App() {
         onNewQuery={handleNewQuery}
         onOpenAISlidePanel={handleOpenAISlidePanel}
         onToggleSidebar={handleToggleSidebar}
+        onToggleQueryHistory={handleToggleQueryHistory}
+        onToggleSQLFavorites={handleToggleSQLFavorites}
         setUiFontScale={setUiFontScale}
         setShowAISlidePanel={setShowAISlidePanel}
       />
@@ -1207,15 +1255,20 @@ function App() {
           </ErrorBoundary>
         </Suspense>
       )}
+      <QueryHistoryPanel
+        isOpen={showQueryHistory}
+        activeConnectionId={activeConnectionId}
+        onClose={() => setShowQueryHistory(false)}
+        onRunQuery={handleRunQueryFromHistory}
+      />
+      <SQLFavoritesPanel
+        isOpen={showSQLFavorites}
+        onClose={() => setShowSQLFavorites(false)}
+        onRunQuery={handleRunQueryFromFavorites}
+        currentEditorSql={activeTab?.type === "query" ? activeTab.content : ""}
+      />
     </div>
   );
-}
-
-function getLastPathSegment(value?: string | null) {
-  if (!value) return "";
-  const normalized = value.replace(/\\/g, "/");
-  const parts = normalized.split("/").filter(Boolean);
-  return parts[parts.length - 1] || value;
 }
 
 export default App;

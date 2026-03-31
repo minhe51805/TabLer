@@ -815,7 +815,109 @@ impl DatabaseDriver for MySqlDriver {
         self.current_db.try_read().ok().and_then(|guard| guard.clone())
     }
 
+    async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
+        if request.values.is_empty() {
+            return Err(anyhow::anyhow!("Insert requires at least one column value"));
+        }
+
+        let mut builder = QueryBuilder::<MySql>::new("INSERT INTO ");
+        builder.push(qualify_mysql_table_name(&request.table, request.database.as_deref())?);
+        builder.push(" (");
+
+        let mut first = true;
+        for (col, _) in &request.values {
+            if !first {
+                builder.push(", ");
+            }
+            first = false;
+            builder.push(quote_mysql_identifier(col)?);
+        }
+
+        builder.push(") VALUES (");
+
+        first = true;
+        for (_, value) in &request.values {
+            if !first {
+                builder.push(", ");
+            }
+            first = false;
+            Self::push_bound_value(&mut builder, value)?;
+        }
+
+        builder.push(")");
+
+        let result = builder.build().execute(&self.pool).await?;
+        Ok(result.rows_affected())
+    }
+
     fn driver_name(&self) -> &str {
         "MySQL"
+    }
+
+    async fn get_foreign_key_lookup_values(
+        &self,
+        referenced_table: &str,
+        referenced_column: &str,
+        display_columns: &[&str],
+        search: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<LookupValue>> {
+        // Build label expression: COALESCE(display_col1, display_col2, ..., referenced_column)
+        let label_expr = if !display_columns.is_empty() {
+            let cols = display_columns
+                .iter()
+                .map(|c| format!("`{}`", c))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("COALESCE({})", cols)
+        } else {
+            format!("`{}`", referenced_column)
+        };
+
+        let pool = &self.pool;
+
+        if let Some(search_term) = search {
+            let like_pattern = format!("%{}%", search_term);
+            let sql = format!(
+                "SELECT `{}` AS value, {} AS label \
+                 FROM `{}` \
+                 WHERE CAST(`{}` AS CHAR) LIKE ? \
+                 ORDER BY `{}` \
+                 LIMIT {}",
+                referenced_column,
+                label_expr,
+                referenced_table,
+                referenced_column,
+                referenced_column,
+                limit
+            );
+            let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql)
+                .bind(&like_pattern)
+                .fetch_all(pool)
+                .await?;
+            return Ok(rows
+                .into_iter()
+                .map(|(value, label)| LookupValue { value, label })
+                .collect());
+        }
+
+        let sql = format!(
+            "SELECT `{}` AS value, {} AS label \
+             FROM `{}` \
+             ORDER BY `{}` \
+             LIMIT {}",
+            referenced_column,
+            label_expr,
+            referenced_table,
+            referenced_column,
+            limit
+        );
+        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql)
+            .fetch_all(pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(value, label)| LookupValue { value, label })
+            .collect())
     }
 }

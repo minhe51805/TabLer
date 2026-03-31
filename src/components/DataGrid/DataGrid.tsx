@@ -8,7 +8,7 @@ import {
 import { Copy, Loader2 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
-import type { ColumnDetail, QueryResult } from "../../types";
+import type { ColumnDetail, ConnectionConfig, QueryResult } from "../../types";
 import { devLogError } from "../../utils/logger";
 import {
   PAGE_SIZE,
@@ -38,6 +38,11 @@ const TABLE_COUNT_CACHE_TTL_MS = 600_000;
 import { DataGridToolbar } from "./DataGridToolbar";
 import { DataGridPagination } from "./DataGridPagination";
 import { buildDataGridColumns, editingDraftRef } from "./DataGridColumns";
+import {
+  generateInsertSql,
+  generateUpdateSql,
+  copyToClipboard,
+} from "../../utils/sql-generator";
 
 const MAX_QUERY_RESULT_RENDER_ROWS = 500;
 
@@ -66,7 +71,10 @@ export function DataGrid({
     getTableStructure,
     updateTableCell,
     deleteTableRows,
+    insertTableRow,
     setError,
+    getForeignKeyLookupValues,
+    connections,
   } = useAppStore(
     useShallow((state) => ({
       getTableData: state.getTableData,
@@ -74,12 +82,17 @@ export function DataGrid({
       getTableStructure: state.getTableStructure,
       updateTableCell: state.updateTableCell,
       deleteTableRows: state.deleteTableRows,
+      insertTableRow: state.insertTableRow,
       setError: state.setError,
+      getForeignKeyLookupValues: state.getForeignKeyLookupValues,
+      connections: state.connections as ConnectionConfig[],
     })),
   );
 
   const [data, setData] = useState<QueryResult | null>(externalResult || null);
   const [structureColumns, setStructureColumns] = useState<ColumnDetail[]>([]);
+  const [foreignKeys, setForeignKeys] = useState<import("../../types").ForeignKeyInfo[]>([]);
+  const [lookupValuesCache, setLookupValuesCache] = useState<Map<string, Array<{ value: string | number; label: string }>>>(new Map());
   const [totalRows, setTotalRows] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
@@ -95,20 +108,18 @@ export function DataGrid({
   const [savingCell, setSavingCell] = useState<EditingCell | null>(null);
   const [isDeletingRows, setIsDeletingRows] = useState(false);
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
+  const [undoableChanges, setUndoableChanges] = useState(0);
   const requestIdRef = useRef(0);
   const structureRequestIdRef = useRef(0);
   const structurePromiseRef = useRef<Promise<ColumnDetail[]> | null>(null);
   const countTimeoutRef = useRef<number | null>(null);
   const isMountedRef = useRef(true);
   const isActiveRef = useRef(isActive);
-  const editorRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
+  const editorRef = useRef<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>(null);
   const editingOpenedAtRef = useRef(0);
   const rowSelectionAnchorRef = useRef<number | null>(null);
   const dataGridInstanceIdRef = useRef(`datagrid-${Math.random().toString(36).slice(2)}`);
-  const assignInputRef = useCallback((element: HTMLInputElement | null) => {
-    editorRef.current = element;
-  }, []);
-  const assignSelectRef = useCallback((element: HTMLSelectElement | null) => {
+  const assignInputRef = useCallback((element: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null) => {
     editorRef.current = element;
   }, []);
 
@@ -324,6 +335,7 @@ export function DataGrid({
           MAX_INLINE_STRUCTURE_CACHE_ENTRIES,
         );
         setStructureColumns(structure.columns);
+        setForeignKeys(structure.foreign_keys);
         setStructureStatus("ready");
         return structure.columns;
       })
@@ -454,6 +466,11 @@ export function DataGrid({
     rowSelectionAnchorRef.current = null;
   }, [tableName, currentPage, sortColumn, sortDir, externalResult]);
 
+  // Reset undo count when switching tables or clearing data
+  useEffect(() => {
+    setUndoableChanges(0);
+  }, [tableName, connectionId, database]);
+
   useEffect(() => {
     if (!editingCell) return;
 
@@ -468,6 +485,31 @@ export function DataGrid({
 
     return () => window.cancelAnimationFrame(rafId);
   }, [editingCell]);
+
+  // Listen for global undo/redo commands from AppKeyboardHandler
+  useEffect(() => {
+    if (!isActive) return;
+
+    const handleUndo = () => {
+      if (undoableChanges > 0) {
+        void fetchData(currentPage);
+        setUndoableChanges((prev) => Math.max(0, prev - 1));
+      }
+    };
+
+    const handleRedo = () => {
+      if (undoableChanges > 0) {
+        void fetchData(currentPage);
+      }
+    };
+
+    window.addEventListener("datagrid-undo", handleUndo);
+    window.addEventListener("datagrid-redo", handleRedo);
+    return () => {
+      window.removeEventListener("datagrid-undo", handleUndo);
+      window.removeEventListener("datagrid-redo", handleRedo);
+    };
+  }, [currentPage, fetchData, isActive, undoableChanges]);
 
   const handleSort = useCallback((colName: string) => {
     if (sortColumn === colName) {
@@ -625,6 +667,7 @@ export function DataGrid({
 
       invalidateTableCaches(connectionId, tableName, database);
       cancelEditingCell();
+      setUndoableChanges((prev) => prev + 1);
       void fetchData(currentPage);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -804,6 +847,113 @@ export function DataGrid({
     tableName,
   ]);
 
+  const handleInsertRow = useCallback(async () => {
+    if (!tableName || structureColumns.length === 0) {
+      return;
+    }
+
+    const values: [string, unknown][] = structureColumns.map((col) => {
+      const defaultVal = col.default_value ?? null;
+      let parsed: unknown = null;
+      if (defaultVal !== null) {
+        const lower = defaultVal.toLowerCase();
+        if (lower === "null") {
+          parsed = null;
+        } else if (lower === "true" || lower === "false") {
+          parsed = lower === "true";
+        } else if (/^-?\d+(\.\d+)?$/.test(lower)) {
+          parsed = Number(defaultVal);
+        } else {
+          parsed = defaultVal;
+        }
+      }
+      return [col.name, parsed];
+    });
+
+    try {
+      await insertTableRow(connectionId, {
+        table: tableName,
+        database,
+        values,
+      });
+
+      invalidateTableCaches(connectionId, tableName, database);
+      window.dispatchEvent(
+        new CustomEvent("table-data-updated", {
+          detail: {
+            connectionId,
+            database,
+            tableName,
+            sourceId: dataGridInstanceIdRef.current,
+          },
+        }),
+      );
+      void fetchData(currentPage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setError(`Insert row failed: ${message}`);
+    }
+  }, [
+    connectionId,
+    tableName,
+    database,
+    structureColumns,
+    insertTableRow,
+    currentPage,
+    fetchData,
+    setError,
+  ]);
+
+  const handleCopyAsInsert = useCallback(async () => {
+    if (selectedRows.size === 0 || !data || !tableName || resolvedColumns.length === 0) return;
+    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
+    const dbType = connection?.db_type;
+    const cols: string[] = resolvedColumns.map((c) => c.name);
+    const rows = Array.from(selectedRows)
+      .sort((a, b) => a - b)
+      .map((i) => data.rows[i] as (string | number | boolean | null)[]);
+    const sql = generateInsertSql(tableName, cols, rows, dbType);
+    const ok = await copyToClipboard(sql);
+    if (!ok) setError("Failed to copy SQL to clipboard.");
+  }, [
+    selectedRows,
+    data,
+    tableName,
+    resolvedColumns,
+    connections,
+    connectionId,
+    setError,
+  ]);
+
+  const handleCopyAsUpdate = useCallback(async () => {
+    if (
+      selectedRows.size === 0 ||
+      !data ||
+      !tableName ||
+      resolvedColumns.length === 0 ||
+      primaryKeyColumns.length === 0
+    )
+      return;
+    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
+    const dbType = connection?.db_type;
+    const cols: string[] = resolvedColumns.map((c) => c.name);
+    const rows = Array.from(selectedRows)
+      .sort((a, b) => a - b)
+      .map((i) => data.rows[i] as (string | number | boolean | null)[]);
+    const sql = generateUpdateSql(tableName, cols, rows, primaryKeyColumns.map((c) => c.name), dbType);
+    const ok = await copyToClipboard(sql);
+    if (!ok) setError("Failed to copy SQL to clipboard.");
+  }, [
+    selectedRows,
+    data,
+    tableName,
+    resolvedColumns,
+    primaryKeyColumns,
+    connections,
+    connectionId,
+    setError,
+  ]);
+
   const displayedRows = useMemo(() => {
     if (!data?.rows) return [];
     if (!externalResult) return data.rows;
@@ -816,6 +966,19 @@ export function DataGrid({
 
   const columns = useMemo<ColumnDef<unknown[], unknown>[]>(() => {
     if (!data || resolvedColumns.length === 0) return [];
+
+    const handleLoadLookupValues = async (table: string, column: string) => {
+      const cacheKey = `${table}|${column}`;
+      const cached = lookupValuesCache.get(cacheKey);
+      if (cached) return cached;
+      try {
+        const values = await getForeignKeyLookupValues(connectionId, table, column);
+        setLookupValuesCache((prev) => new Map(prev).set(cacheKey, values));
+        return values;
+      } catch {
+        return [];
+      }
+    };
 
     return buildDataGridColumns({
       resolvedColumns,
@@ -840,11 +1003,14 @@ export function DataGrid({
       cancelEditingCell,
       structureStatus,
       assignInputRef,
-      assignSelectRef,
       allVisibleRowsSelected,
       isBooleanColumn,
       handleCopyValue,
       setSelectedCell,
+      foreignKeys,
+      lookupValuesCache,
+      onLoadLookupValues: handleLoadLookupValues,
+      connectionId,
     });
   }, [
     cancelEditingCell,
@@ -870,6 +1036,10 @@ export function DataGrid({
     structureStatus,
     handleCopyValue,
     handleSort,
+    foreignKeys,
+    lookupValuesCache,
+    getForeignKeyLookupValues,
+    connectionId,
   ]);
 
   const tableData = useMemo(() => displayedRows, [displayedRows]);
@@ -895,7 +1065,7 @@ export function DataGrid({
 
   return (
     <div className={`datagrid-shell ${externalResult ? "" : "compact"}`}>
-      {!externalResult && tableName && (
+      {tableName && (
         <DataGridToolbar
           tableName={tableName}
           externalResult={externalResult}
@@ -906,8 +1076,14 @@ export function DataGrid({
           selectedRowCount={selectedRowCount}
           isDeletingRows={isDeletingRows}
           handleDeleteSelectedRows={handleDeleteSelectedRows}
+          handleInsertRow={handleInsertRow}
+          handleCopyAsInsert={handleCopyAsInsert}
+          handleCopyAsUpdate={handleCopyAsUpdate}
           isTableEditable={isTableEditable}
           structureStatus={structureStatus}
+          resolvedColumns={resolvedColumns}
+          dataRows={tableData}
+          undoableChanges={undoableChanges}
         />
       )}
 

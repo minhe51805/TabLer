@@ -1,6 +1,7 @@
 import { useRef, useCallback, useEffect, useState } from "react";
 import type { OnMount } from "@monaco-editor/react";
 import { useAppStore } from "../../../stores/appStore";
+import { useQueryHistoryStore } from "../../../stores/queryHistoryStore";
 import type { QueryResult } from "../../../types";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
 import {
@@ -13,6 +14,7 @@ import {
 } from "../SQLEditorUtils";
 import { registerInlineAICompletionProvider } from "../SQLEditorAICompletion";
 import { registerStandardCompletionProvider, defineTableRTheme } from "../SQLEditorMonacoSetup";
+import { formatSql } from "../../../utils/sql-formatter";
 
 export interface QueryChromeState {
   isRunning: boolean;
@@ -51,6 +53,7 @@ export function useSQLEditor({
   const executeSandboxQuery = useAppStore((state) => state.executeSandboxQuery);
   const switchDatabase = useAppStore((state) => state.switchDatabase);
   const updateTab = useAppStore((state) => state.updateTab);
+  const saveQueryEntry = useQueryHistoryStore((state) => state.saveEntry);
 
   const editorRef = useRef<any>(null);
   const splitRef = useRef<HTMLDivElement>(null);
@@ -189,6 +192,16 @@ export function useSQLEditor({
       setResult(queryResult);
       setQueryCount((c) => c + 1);
 
+      // Auto-save to query history
+      void saveQueryEntry(
+        sqlToExecute,
+        connectionId,
+        Number(queryResult.execution_time_ms),
+        queryResult.rows.length || undefined,
+        undefined,
+        activeDatabase || undefined
+      );
+
       if (hasMutatingStatements) {
         const invalidateStructure = statementsToExecute.some((stmt) => {
           const normalized = normalizeStatementForGuard(stmt);
@@ -207,13 +220,49 @@ export function useSQLEditor({
         );
       }
     } catch (e) {
-      setError(formatExecutionError(e));
+      const errorMessage = formatExecutionError(e);
+      setError(errorMessage);
       setResult(null);
+
+      // Auto-save failed query to history
+      void saveQueryEntry(
+        sqlToExecute,
+        connectionId,
+        0,
+        undefined,
+        errorMessage,
+        useAppStore.getState().currentDatabase || undefined
+      );
     } finally {
       setIsExecutingCurrent(false);
       setIsBatchExecuting(false);
     }
-  }, [connectionId, executeSandboxQuery, isBatchExecuting, switchDatabase]);
+  }, [connectionId, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase]);
+
+  /** Formats the selected text (or entire editor content) using the connection's SQL dialect. */
+  const handleFormatSql = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const selection = editor.getSelection();
+    let sql = "";
+    if (selection && !selection.isEmpty()) {
+      sql = editor.getModel()?.getValueInRange(selection) || "";
+    } else {
+      sql = editor.getValue();
+    }
+    if (!sql.trim()) return;
+
+    const dbType = useAppStore.getState().connections.find((c) => c.id === connectionId)?.db_type;
+    const formatted = formatSql(sql, dbType);
+
+    if (selection && !selection.isEmpty()) {
+      editor.executeEdits("format-sql", [{ range: selection, text: formatted, forceMoveMarkers: true }]);
+    } else {
+      editor.setValue(formatted);
+      schedulePersistedContent(formatted);
+    }
+  }, [connectionId, schedulePersistedContent]);
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -235,6 +284,13 @@ export function useSQLEditor({
       run: () => {
         window.dispatchEvent(new CustomEvent("open-ai-slide-panel"));
       },
+    });
+
+    editor.addAction({
+      id: "format-sql",
+      label: "Format SQL",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
+      run: () => handleFormatSql(),
     });
 
     inlineCompletionDisposableRef.current?.dispose();
@@ -397,6 +453,7 @@ export function useSQLEditor({
     splitRef,
     handleEditorMount,
     handleExecute,
+    handleFormatSql,
     handleSplitDrag,
     schedulePersistedContent,
   };

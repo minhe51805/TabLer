@@ -2,6 +2,7 @@ import Editor from "@monaco-editor/react";
 import { useSQLEditor } from "./hooks/use-sql-editor";
 import type { QueryEditorSessionState, QueryChromeState } from "./hooks/use-sql-editor";
 import { SQLEditorResultsPane } from "./SQLEditorResultsPane";
+import { AlignLeft } from "lucide-react";
 
 interface Props {
   connectionId: string;
@@ -30,6 +31,7 @@ export function SQLEditor({
     splitRef,
     handleEditorMount,
     handleSplitDrag,
+    handleFormatSql,
     schedulePersistedContent,
   } = useSQLEditor({
     connectionId,
@@ -77,6 +79,15 @@ export function SQLEditor({
               scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
             }}
           />
+          {/* Format toolbar button */}
+          <button
+            type="button"
+            onClick={handleFormatSql}
+            title="Format SQL (Ctrl+Shift+F)"
+            className="absolute top-2 right-2 z-10 p-1.5 rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface)] transition-colors"
+          >
+            <AlignLeft className="w-3.5 h-3.5" />
+          </button>
         </div>
 
         <SQLEditorResultsPane

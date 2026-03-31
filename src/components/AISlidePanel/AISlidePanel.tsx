@@ -606,14 +606,26 @@ export function AISlidePanel({
             ? {
                 ...bubble,
                 status: "ready",
-                title: options?.mode === "inspect" ? aiCopy.bubbleStates.readyInspectTitle : result.sql ? aiCopy.bubbleStates.readySqlTitle : aiCopy.bubbleStates.readyNoteTitle,
+                title: options?.mode === "inspect"
+                  ? aiCopy.bubbleStates.readyInspectTitle
+                  : result.intent === "optimize"
+                    ? aiCopy.bubbleStates.readyOptimizeTitle
+                    : result.intent === "fix-error"
+                      ? aiCopy.bubbleStates.readyFixErrorTitle
+                      : result.sql
+                        ? aiCopy.bubbleStates.readySqlTitle
+                        : aiCopy.bubbleStates.readyNoteTitle,
                 subtitle: options?.mode === "inspect"
                   ? result.sql
                     ? aiCopy.bubbleStates.readyInspectSqlSubtitle
                     : aiCopy.bubbleStates.readyInspectNoteSubtitle
-                  : result.sql
-                    ? result.risk?.level === "safe" ? aiCopy.bubbleStates.readySqlSafeSubtitle : aiCopy.bubbleStates.readySqlReviewSubtitle
-                    : aiCopy.bubbleStates.readyNoteSubtitle,
+                  : result.intent === "optimize"
+                    ? aiCopy.bubbleStates.readyOptimizeSubtitle
+                    : result.intent === "fix-error"
+                      ? aiCopy.bubbleStates.readyFixErrorSubtitle
+                      : result.sql
+                        ? result.risk?.level === "safe" ? aiCopy.bubbleStates.readySqlSafeSubtitle : aiCopy.bubbleStates.readySqlReviewSubtitle
+                        : aiCopy.bubbleStates.readyNoteSubtitle,
                 promptSummary: loadingBubble.promptSummary,
                 preview: summarizeResponse(result.rawResponse, result.sql),
                 detail: result.rawResponse,

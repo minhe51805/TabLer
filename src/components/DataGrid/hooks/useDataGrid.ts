@@ -188,6 +188,31 @@ export function isNumericColumn(column: ResolvedColumn) {
   );
 }
 
+export function isDateColumn(column: ResolvedColumn) {
+  const type = (column.column_type || column.data_type || "").toLowerCase();
+  return type === "date";
+}
+
+export function isDateTimeColumn(column: ResolvedColumn) {
+  const type = (column.column_type || column.data_type || "").toLowerCase();
+  return /^(datetime|timestamp|timewithtimezone|timetz)$/i.test(type);
+}
+
+export function isTimeColumn(column: ResolvedColumn) {
+  const type = (column.column_type || column.data_type || "").toLowerCase();
+  return /^(time|time without time zone|timewithtimezone)$/i.test(type) && !isDateTimeColumn(column);
+}
+
+export function isJSONColumn(column: ResolvedColumn) {
+  const type = (column.column_type || column.data_type || "").toLowerCase();
+  return /^(json|jsonb)/.test(type);
+}
+
+export function isBlobColumn(column: ResolvedColumn) {
+  const type = (column.column_type || column.data_type || "").toLowerCase();
+  return /^(bytea|blob|binary|varbinary|longblob|mediumblob|tinyblob|geometry|text)/i.test(type);
+}
+
 export function editorValueFromCell(value: GridCellValue) {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "boolean") return value ? "true" : "false";
@@ -212,6 +237,30 @@ export function parseEditorValue(rawValue: string, column: ResolvedColumn): Grid
       throw new Error("Numeric columns only accept valid numbers.");
     }
     return Number(trimmed);
+  }
+
+  // Date / Datetime / Time -- accept raw string, let DB validate
+  if (isDateColumn(column) || isDateTimeColumn(column) || isTimeColumn(column)) {
+    return trimmed;
+  }
+
+  // JSON / JSONB -- validate JSON structure
+  if (isJSONColumn(column)) {
+    try {
+      JSON.parse(trimmed);
+    } catch {
+      throw new Error("Invalid JSON format.");
+    }
+    return trimmed;
+  }
+
+  // BLOB / Binary -- validate hex format
+  if (isBlobColumn(column)) {
+    const normalized = trimmed.replace(/\s+/g, "").toLowerCase();
+    if (!/^[0-9a-f]*$/i.test(normalized) || normalized.length % 2 !== 0) {
+      throw new Error("Invalid hex format. Use space-separated bytes (e.g. '48 65 6c 6c 6f').");
+    }
+    return trimmed;
   }
 
   return rawValue;

@@ -70,6 +70,9 @@ pub trait DatabaseDriver: Send + Sync {
     /// Delete one or more rows in a table using primary-key based row selectors.
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64>;
 
+    /// Insert a single new row into a table.
+    async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64>;
+
     /// Execute reviewed schema-change statements in the backend, sequentially.
     async fn execute_structure_statements(&self, statements: &[String]) -> Result<u64> {
         let mut total_affected = 0;
@@ -81,6 +84,16 @@ pub trait DatabaseDriver: Send + Sync {
 
     /// Switch to a different database
     async fn use_database(&self, database: &str) -> Result<()>;
+
+    /// Get lookup values for a FK reference: SELECT pk, display FROM table LIMIT n
+    async fn get_foreign_key_lookup_values(
+        &self,
+        referenced_table: &str,
+        referenced_column: &str,
+        display_columns: &[&str],
+        search: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<LookupValue>>;
 
     /// Get the current database name
     fn current_database(&self) -> Option<String>;

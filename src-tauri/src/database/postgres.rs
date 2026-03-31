@@ -2,8 +2,8 @@ use super::driver::DatabaseDriver;
 use super::models::*;
 use super::query_common::{statement_returns_rows, MAX_QUERY_RESULT_ROWS};
 use super::safety::{
-    normalize_order_dir, qualify_postgres_table_name, quote_postgres_order_by,
-    sanitize_postgres_filter_clause,
+    normalize_order_dir, qualify_postgres_table_name, quote_postgres_identifier,
+    quote_postgres_order_by, sanitize_postgres_filter_clause,
 };
 use crate::utils::sql::split_sql_statements;
 use anyhow::{Context, Result};
@@ -912,7 +912,114 @@ impl DatabaseDriver for PostgresDriver {
         self.current_db.try_read().ok().and_then(|guard| guard.clone())
     }
 
+    async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
+        if request.values.is_empty() {
+            return Err(anyhow::anyhow!("Insert requires at least one column value"));
+        }
+
+        let mut builder = QueryBuilder::<Postgres>::new("INSERT INTO ");
+        builder.push(qualify_postgres_table_name(&request.table, "public")?);
+        builder.push(" (");
+
+        let mut first = true;
+        for (col, _) in &request.values {
+            if !first {
+                builder.push(", ");
+            }
+            first = false;
+            builder.push(quote_postgres_identifier(col)?);
+        }
+
+        builder.push(") VALUES (");
+
+        first = true;
+        for (_, value) in &request.values {
+            if !first {
+                builder.push(", ");
+            }
+            first = false;
+            Self::push_bound_value(&mut builder, value)?;
+        }
+
+        builder.push(")");
+
+        let result = builder.build().execute(&self.pool).await?;
+        Ok(result.rows_affected())
+    }
+
     fn driver_name(&self) -> &str {
         "PostgreSQL"
+    }
+
+    async fn get_foreign_key_lookup_values(
+        &self,
+        referenced_table: &str,
+        referenced_column: &str,
+        display_columns: &[&str],
+        search: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<LookupValue>> {
+        let (schema, table_name) = Self::split_schema_table(referenced_table);
+
+        // Build label expression: COALESCE(display_col1, display_col2, ..., referenced_column)
+        let label_expr = if !display_columns.is_empty() {
+            let cols = display_columns
+                .iter()
+                .map(|c| format!("\"{}\"", c))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("COALESCE({})", cols)
+        } else {
+            format!("\"{}\"", referenced_column)
+        };
+
+        // Build the query - we always need the WHERE for search, so build the right query
+        let pool = &self.pool;
+
+        if let Some(search_term) = search {
+            let like_pattern = format!("%{}%", search_term);
+            let sql = format!(
+                "SELECT \"{}\" AS value, {} AS label \
+                 FROM {}.\"{}\" \
+                 WHERE CAST(\"{}\" AS TEXT) ILIKE $1 \
+                 ORDER BY \"{}\" \
+                 LIMIT {}",
+                referenced_column,
+                label_expr,
+                schema,
+                table_name,
+                referenced_column,
+                referenced_column,
+                limit
+            );
+            let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql)
+                .bind(&like_pattern)
+                .fetch_all(pool)
+                .await?;
+            return Ok(rows
+                .into_iter()
+                .map(|(value, label)| LookupValue { value, label })
+                .collect());
+        }
+
+        let sql = format!(
+            "SELECT \"{}\" AS value, {} AS label \
+             FROM {}.\"{}\" \
+             ORDER BY \"{}\" \
+             LIMIT {}",
+            referenced_column,
+            label_expr,
+            schema,
+            table_name,
+            referenced_column,
+            limit
+        );
+        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql)
+            .fetch_all(pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(value, label)| LookupValue { value, label })
+            .collect())
     }
 }

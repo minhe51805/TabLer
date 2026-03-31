@@ -103,6 +103,7 @@ describe('appStore initial state', () => {
       isLoadingDatabases: false,
       isSwitchingDatabase: false,
       isLoadingTables: false,
+      isLoadingSchemaObjects: false,
       isExecutingQuery: false,
       error: null,
       aiConfigs: [],
@@ -116,30 +117,61 @@ describe('appStore initial state', () => {
     expect(state.connectedIds).toBeInstanceOf(Set)
     expect(state.connectedIds.size).toBe(0)
     expect(state.databases).toEqual([])
+    expect(state.currentDatabase).toBeNull()
     expect(state.tables).toEqual([])
+    expect(state.schemaObjects).toEqual([])
     expect(state.tabs).toEqual([])
     expect(state.activeTabId).toBeNull()
     expect(state.isConnecting).toBe(false)
     expect(state.isLoadingDatabases).toBe(false)
     expect(state.isSwitchingDatabase).toBe(false)
     expect(state.isLoadingTables).toBe(false)
+    expect(state.isLoadingSchemaObjects).toBe(false)
     expect(state.isExecutingQuery).toBe(false)
     expect(state.error).toBeNull()
+    expect(state.aiConfigs).toEqual([])
   })
 
   it('should have all required methods', () => {
     const state = useAppStore.getState()
+    // Connection methods
     expect(typeof state.loadSavedConnections).toBe('function')
     expect(typeof state.connectToDatabase).toBe('function')
+    expect(typeof state.connectSavedConnection).toBe('function')
     expect(typeof state.disconnectFromDatabase).toBe('function')
     expect(typeof state.testConnection).toBe('function')
+    expect(typeof state.deleteSavedConnection).toBe('function')
+    // Database/table methods
     expect(typeof state.fetchDatabases).toBe('function')
     expect(typeof state.switchDatabase).toBe('function')
     expect(typeof state.fetchTables).toBe('function')
+    expect(typeof state.fetchSchemaObjects).toBe('function')
+    expect(typeof state.createLocalDatabase).toBe('function')
+    expect(typeof state.suggestSqliteDatabasePath).toBe('function')
+    expect(typeof state.pickSqliteDatabasePath).toBe('function')
+    // Query methods
     expect(typeof state.executeQuery).toBe('function')
+    expect(typeof state.executeSandboxQuery).toBe('function')
+    expect(typeof state.getTableData).toBe('function')
+    expect(typeof state.getTableStructure).toBe('function')
+    expect(typeof state.getTableColumnsPreview).toBe('function')
+    expect(typeof state.countRows).toBe('function')
+    expect(typeof state.countTableNullValues).toBe('function')
+    expect(typeof state.updateTableCell).toBe('function')
+    expect(typeof state.deleteTableRows).toBe('function')
+    expect(typeof state.executeStructureStatements).toBe('function')
+    expect(typeof state.getForeignKeyLookupValues).toBe('function')
+    // Tab methods
     expect(typeof state.addTab).toBe('function')
     expect(typeof state.removeTab).toBe('function')
+    expect(typeof state.clearTabs).toBe('function')
     expect(typeof state.setActiveTab).toBe('function')
+    expect(typeof state.updateTab).toBe('function')
+    // AI methods
+    expect(typeof state.loadAIConfigs).toBe('function')
+    expect(typeof state.saveAIConfigs).toBe('function')
+    expect(typeof state.askAI).toBe('function')
+    // Error methods
     expect(typeof state.setError).toBe('function')
     expect(typeof state.clearError).toBe('function')
   })

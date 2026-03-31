@@ -674,7 +674,103 @@ impl DatabaseDriver for ClickHouseDriver {
         self.current_db.read().ok().and_then(|guard| guard.clone())
     }
 
+    async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Insert requires at least one column value"));
+        }
+
+        let db = self.current_database_name(request.database.as_deref());
+        let mut cols = Vec::new();
+        let mut vals = Vec::new();
+        for (col, value) in &request.values {
+            cols.push(quote_clickhouse_identifier(col)?.to_string());
+            vals.push(Self::quote_clickhouse_literal(value)?.to_string());
+        }
+
+        let sql = format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            Self::qualify_table_name(&request.table, Some(&db))?,
+            cols.join(", "),
+            vals.join(", "),
+        );
+
+        self.execute_query(&sql).await?;
+        Ok(1)
+    }
+
     fn driver_name(&self) -> &str {
         "ClickHouse"
+    }
+
+    async fn get_foreign_key_lookup_values(
+        &self,
+        referenced_table: &str,
+        referenced_column: &str,
+        display_columns: &[&str],
+        search: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<LookupValue>> {
+        let db = self.current_database();
+        let table_qualified = Self::qualify_table_name(referenced_table, db.as_deref())?;
+
+        // Build label expression
+        let label_expr = if !display_columns.is_empty() {
+            let cols: Result<Vec<_>> = display_columns
+                .iter()
+                .map(|c| quote_clickhouse_identifier(c))
+                .collect();
+            let cols = cols?.join(", ");
+            format!("coalesce({})", cols)
+        } else {
+            quote_clickhouse_identifier(referenced_column)?
+        };
+
+        let col_quoted = quote_clickhouse_identifier(referenced_column)?;
+
+        let sql = if search.is_some() {
+            let like_pattern = format!("%{}%", search.unwrap());
+            format!(
+                "SELECT {} AS value, {} AS label \
+                 FROM {} \
+                 WHERE CAST({} AS String) LIKE '{}' \
+                 ORDER BY {} \
+                 LIMIT {}",
+                col_quoted,
+                label_expr,
+                table_qualified,
+                col_quoted,
+                like_pattern,
+                col_quoted,
+                limit
+            )
+        } else {
+            format!(
+                "SELECT {} AS value, {} AS label \
+                 FROM {} \
+                 ORDER BY {} \
+                 LIMIT {}",
+                col_quoted,
+                label_expr,
+                table_qualified,
+                col_quoted,
+                limit
+            )
+        };
+
+        let result = self.query_json(&sql, db.as_deref()).await?;
+        let mut values = Vec::with_capacity(result.data.len());
+        for row in result.data {
+            let v = row.get("value").unwrap_or(&serde_json::Value::Null);
+            let lbl = row.get("label").unwrap_or(&serde_json::Value::Null);
+            values.push(LookupValue {
+                value: v.clone(),
+                label: if lbl.is_string() {
+                    lbl.as_str().unwrap().to_string()
+                } else {
+                    serde_json::to_string(lbl).unwrap_or_default()
+                },
+            });
+        }
+        Ok(values)
     }
 }

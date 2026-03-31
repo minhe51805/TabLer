@@ -186,7 +186,14 @@ interface AppState {
   ) => Promise<number>;
   updateTableCell: (connectionId: string, request: TableCellUpdateRequest) => Promise<number>;
   deleteTableRows: (connectionId: string, request: TableRowDeleteRequest) => Promise<number>;
+  insertTableRow: (connectionId: string, request: { table: string; database?: string; values: [string, unknown][] }) => Promise<number>;
   executeStructureStatements: (connectionId: string, statements: string[]) => Promise<number>;
+  getForeignKeyLookupValues: (
+    connectionId: string,
+    table: string,
+    column: string,
+    search?: string,
+  ) => Promise<Array<{ value: string | number; label: string }>>;
 
   addTab: (tab: Tab) => void;
   removeTab: (tabId: string) => void;
@@ -729,6 +736,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
     ),
 
+  insertTableRow: async (connectionId, request) =>
+    invokeMutation<number>(
+      "insert_table_row",
+      {
+        connectionId,
+        request: {
+          table: request.table,
+          database: request.database || null,
+          values: request.values,
+        },
+      },
+    ),
+
   executeStructureStatements: async (connectionId, statements) =>
     invokeMutation<number>(
       "execute_structure_statements",
@@ -737,6 +757,26 @@ export const useAppStore = create<AppState>((set, get) => ({
         statements,
       },
     ),
+
+  getForeignKeyLookupValues: async (
+    connectionId: string,
+    table: string,
+    column: string,
+    search?: string,
+  ) => {
+    return invokeWithTimeout<Array<{ value: string | number; label: string }>>(
+      "get_foreign_key_lookup_values",
+      {
+        connection_id: connectionId,
+        referenced_table: table,
+        referenced_column: column,
+        search: search || null,
+        limit: 1000,
+      },
+      FRONTEND_TIMEOUTS.tableData,
+      "Loading FK lookup values",
+    );
+  },
 
   addTab: (tab: Tab) => {
     const tabs = get().tabs;

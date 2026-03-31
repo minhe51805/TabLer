@@ -63,25 +63,6 @@ const METADATA_LOAD_TIMEOUT_MS = 8000;
 const columnCache = new Map<string, ColumnDetail[]>();
 const fullStructureCache = new Map<string, TableStructureType>();
 
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
-  return new Promise<T>((resolve, reject) => {
-    const timeoutId = window.setTimeout(() => {
-      reject(new Error(message));
-    }, ms);
-
-    promise.then(
-      (value) => {
-        window.clearTimeout(timeoutId);
-        resolve(value);
-      },
-      (error) => {
-        window.clearTimeout(timeoutId);
-        reject(error);
-      }
-    );
-  });
-}
-
 export function TableStructure({
   connectionId,
   tableName,
@@ -331,6 +312,21 @@ export function TableStructure({
     ]
   );
 
+  // Inline timeout wrapper (localStorage-based structure loading doesn't need appStore timeout)
+  const withTimeout = useAppStore((_state) => {
+    // Access it from the store's closure - we use the function defined there
+    return (promise: Promise<TableStructureType>, ms: number, label: string) =>
+      new Promise<TableStructureType>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
+        }, ms);
+        promise.then(
+          (value) => { window.clearTimeout(timer); resolve(value); },
+          (error) => { window.clearTimeout(timer); reject(error); }
+        );
+      });
+  });
+
   const loadMetadata = useCallback(
     async (options: { force?: boolean } = {}) => {
       if (!columns.length && !options.force) return;
@@ -389,6 +385,7 @@ export function TableStructure({
       setFromFullStructure,
       structureKey,
       tableName,
+      withTimeout,
     ]
   );
 

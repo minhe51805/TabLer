@@ -690,7 +690,102 @@ impl DatabaseDriver for LibSqlDriver {
         self.current_db.read().ok().and_then(|guard| guard.clone())
     }
 
+    async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Insert requires at least one column value"));
+        }
+
+        let mut sql = format!("INSERT INTO {} (", quote_sqlite_identifier(&request.table)?);
+        let mut params: Vec<LibSqlValue> = Vec::new();
+
+        let mut first = true;
+        for (col, _) in &request.values {
+            if !first {
+                sql.push_str(", ");
+            }
+            first = false;
+            sql.push_str(&quote_sqlite_identifier(col)?);
+        }
+
+        sql.push_str(") VALUES (");
+
+        first = true;
+        for (_, value) in &request.values {
+            if !first {
+                sql.push_str(", ");
+            }
+            first = false;
+            sql.push_str("?");
+            params.push(Self::serde_to_libsql_value(value)?);
+        }
+
+        sql.push(')');
+
+        let rows_affected = self.connection.execute(&sql, params).await
+            .with_context(|| format!("Failed to insert row into LibSQL table {}", request.table))?;
+        Ok(rows_affected as u64)
+    }
+
     fn driver_name(&self) -> &str {
         "LibSQL"
+    }
+
+    async fn get_foreign_key_lookup_values(
+        &self,
+        referenced_table: &str,
+        referenced_column: &str,
+        display_columns: &[&str],
+        search: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<LookupValue>> {
+        let label_expr = if !display_columns.is_empty() {
+            let cols = display_columns
+                .iter()
+                .map(|c| format!("\"{}\"", c))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("COALESCE({})", cols)
+        } else {
+            format!("\"{}\"", referenced_column)
+        };
+
+        let where_clause = if let Some(search_term) = search {
+            format!(" WHERE CAST(\"{}\" AS TEXT) LIKE '%{}%'", referenced_column, search_term)
+        } else {
+            String::new()
+        };
+
+        let sql = format!(
+            "SELECT \"{}\" AS value, {} AS label \
+             FROM \"{}\" \
+             {} \
+             ORDER BY \"{}\" \
+             LIMIT {}",
+            referenced_column,
+            label_expr,
+            referenced_table,
+            where_clause,
+            referenced_column,
+            limit
+        );
+
+        let result = self.execute_query(&sql).await?;
+        let values = result
+            .rows
+            .into_iter()
+            .map(|row| {
+                let value = row.first().cloned().unwrap_or(serde_json::Value::Null);
+                let label = row.get(1).cloned().unwrap_or(value.clone());
+                LookupValue {
+                    value,
+                    label: if label.is_string() {
+                        label.as_str().unwrap().to_string()
+                    } else {
+                        serde_json::to_string(&label).unwrap_or_default()
+                    },
+                }
+            })
+            .collect();
+        Ok(values)
     }
 }

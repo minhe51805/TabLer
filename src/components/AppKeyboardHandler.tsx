@@ -6,6 +6,8 @@ interface KeyboardHandlerProps {
   onNewQuery: () => void;
   onOpenAISlidePanel: (prompt?: string) => void;
   onToggleSidebar: () => void;
+  onToggleQueryHistory: () => void;
+  onToggleSQLFavorites: () => void;
   setUiFontScale: (fn: (current: number) => number) => void;
   setShowAISlidePanel: (value: boolean | ((current: boolean) => boolean)) => void;
 }
@@ -15,6 +17,8 @@ export function AppKeyboardHandler({
   onNewQuery,
   onOpenAISlidePanel,
   onToggleSidebar,
+  onToggleQueryHistory,
+  onToggleSQLFavorites,
   setUiFontScale,
   setShowAISlidePanel,
 }: KeyboardHandlerProps) {
@@ -66,6 +70,18 @@ export function AppKeyboardHandler({
         return;
       }
 
+      if (metaPressed && key === "h") {
+        e.preventDefault();
+        onToggleQueryHistory();
+        return;
+      }
+
+      if (metaPressed && e.shiftKey && key === "s") {
+        e.preventDefault();
+        onToggleSQLFavorites();
+        return;
+      }
+
       if (metaPressed && e.code === "Backquote") {
         if (activeTab?.type !== "query") {
           return;
@@ -77,11 +93,23 @@ export function AppKeyboardHandler({
           }),
         );
       }
+
+      if (metaPressed && !e.shiftKey && key === "z") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("datagrid-undo"));
+        return;
+      }
+
+      if (metaPressed && (e.shiftKey && key === "z") || (metaPressed && key === "y")) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("datagrid-redo"));
+        return;
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [activeTab, onNewQuery, onOpenAISlidePanel, onToggleSidebar, setUiFontScale, setShowAISlidePanel]);
+  }, [activeTab, onNewQuery, onOpenAISlidePanel, onToggleSidebar, onToggleQueryHistory, onToggleSQLFavorites, setUiFontScale, setShowAISlidePanel]);
 
   return null;
 }

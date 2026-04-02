@@ -6,16 +6,18 @@ interface AppShortcutsModalProps {
 }
 
 export function AppShortcutsModal({ onClose }: AppShortcutsModalProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const toggleTerminalLabel = language === "vi" ? "Bat/tat terminal" : "Toggle terminal";
 
   const shortcuts = [
     { label: t("help.shortcuts.newQuery"), shortcut: "Ctrl+N" },
     { label: t("help.shortcuts.toggleSidebar"), shortcut: "Ctrl+B" },
-    { label: t("help.shortcuts.openAi"), shortcut: "Ctrl+Shift+P" },
+    { label: t("help.shortcuts.openAi"), shortcut: "Ctrl+Shift+P / Ctrl+P" },
+    { label: toggleTerminalLabel, shortcut: "Ctrl+`" },
     { label: t("help.shortcuts.runQuery"), shortcut: "Ctrl+Enter" },
     { label: t("help.shortcuts.increaseFont"), shortcut: "Ctrl++" },
     { label: t("help.shortcuts.decreaseFont"), shortcut: "Ctrl+-" },
-    { label: t("help.shortcuts.toggleResults"), shortcut: "Ctrl+`" },
+    { label: t("help.shortcuts.toggleResults"), shortcut: "Ctrl+Shift+`" },
     { label: t("help.shortcuts.toggleRightSidebar"), shortcut: "Ctrl+Space" },
   ];
 

@@ -20,21 +20,21 @@ import { splitSqlStatements } from "../../../utils/sqlStatements";
 // ---------------------------------------------------------------------------
 
 export const METRICS_QUERY_TIMEOUT_MS = 30_000;
-export const METRICS_GRID_COLUMNS = 12;
-export const METRICS_GRID_GAP = 12;
-export const METRICS_GRID_ROW_HEIGHT = 82;
-export const METRICS_GRID_MIN_ROWS = 8;
-export const METRICS_GRID_MIN_WIDTH = 1080;
+export const METRICS_GRID_COLUMNS = 14;
+export const METRICS_GRID_GAP = 8;
+export const METRICS_GRID_ROW_HEIGHT = 56;
+export const METRICS_GRID_MIN_ROWS = 5;
+export const METRICS_GRID_MIN_WIDTH = 900;
 export const METRICS_DEFAULT_COL_SPAN = 4;
 export const METRICS_DEFAULT_ROW_SPAN = 4;
 export const METRICS_MIN_COL_SPAN = 3;
 export const METRICS_MAX_COL_SPAN = 6;
 export const METRICS_MIN_ROW_SPAN = 2;
 export const METRICS_MAX_ROW_SPAN = 6;
-export const METRICS_EDITOR_MAX_WIDTH = 320;
-export const METRICS_EDITOR_MIN_WIDTH = 272;
-export const METRICS_EDITOR_ESTIMATED_HEIGHT = 372;
-export const METRICS_EDITOR_GAP = 18;
+export const METRICS_EDITOR_MAX_WIDTH = 280;
+export const METRICS_EDITOR_MIN_WIDTH = 228;
+export const METRICS_EDITOR_ESTIMATED_HEIGHT = 300;
+export const METRICS_EDITOR_GAP = 12;
 export const METRICS_DRAG_HOLD_MS = 180;
 const REFRESH_OPTIONS = [0, 5, 15, 30, 60, 300] as const;
 

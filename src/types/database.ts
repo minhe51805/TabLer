@@ -31,6 +31,7 @@ export interface ConnectionConfig {
   file_path?: string;
   use_ssl: boolean;
   color?: string;
+  additional_fields?: Record<string, string>;
   /** Assigned connection group ID */
   groupId?: string;
   /** Assigned connection tag ID */

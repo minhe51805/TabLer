@@ -2,8 +2,8 @@ import { type ChangeEvent, type RefObject } from "react";
 import { Eye, EyeOff, ArrowLeft, X, FileUp } from "lucide-react";
 import { DatabaseBrandIcon } from "../DatabaseBrandIcon";
 import type { ConnectionConfig } from "../../../types";
-import type { DbEntry } from "./ConnectionPickerStep";
 import type { AppLanguage } from "../../../i18n";
+import type { DbEntry, EngineExtraField } from "../engine-registry";
 
 export interface ConnectionDetailsStepProps {
   language: AppLanguage;
@@ -11,28 +11,39 @@ export interface ConnectionDetailsStepProps {
   bootstrapMode: boolean;
   formData: ConnectionConfig;
   selectedDb: DbEntry | null;
-  isSqlite: boolean;
-  isLocalBootstrapReady: boolean;
+  isFileEngine: boolean;
   supportsLocalBootstrap: boolean;
+  showBootstrapWorkflow: boolean;
   hasBootstrapDatabaseName: boolean;
   showPassword: boolean;
+  showUsernameField: boolean;
+  showPasswordField: boolean;
+  showDatabaseField: boolean;
+  showSslToggle: boolean;
   showSqliteAdvancedPath: boolean;
   sqlitePathTouched: boolean;
   bootstrapPreset: string;
   bootstrapPresetLabels: Record<string, string>;
   bootstrapSql: string;
   bootstrapFileName: string;
+  engineExtraFields: EngineExtraField[];
   suggestedUsernamePlaceholder: string;
+  hostPlaceholder: string;
+  portPlaceholder: string;
+  databasePlaceholder: string;
+  passwordLabel: string;
+  passwordPlaceholder: string;
+  additionalFields: Record<string, string>;
   connectionTitle: string;
   testResult: { success: boolean; message: string } | null;
   isTesting: boolean;
   isConnecting: boolean;
-  isCreatingDatabase: boolean;
   isBootstrappingWorkspace: boolean;
   strings: DetailsStrings;
   passwordDraftRef: RefObject<string>;
   bootstrapFileInputRef: RefObject<HTMLInputElement | null>;
   onFieldChange: <K extends keyof ConnectionConfig>(key: K, value: ConnectionConfig[K]) => void;
+  onAdditionalFieldChange: (key: string, value: string) => void;
   onTogglePasswordVisibility: () => void;
   onPasswordChange: (value: string) => void;
   onBack: () => void;
@@ -91,6 +102,8 @@ export interface DetailsStrings {
   engineNotLocalBootstrap: string;
   useSsl: string;
   useSslNote: string;
+  engineFields: string;
+  engineFieldsCopy: string;
   bootstrap: string;
   starterSchemaSeedSql: string;
   starterSchemaSeedSqlCopy: string;
@@ -143,22 +156,34 @@ function ColorPalette({ selectedColor, onSelectColor, label, hint }: ColorPalett
 }
 
 export function ConnectionDetailsStep({
+  language,
   editConnection,
   bootstrapMode,
   formData,
   selectedDb,
-  isSqlite,
-  isLocalBootstrapReady,
+  isFileEngine,
   supportsLocalBootstrap,
+  showBootstrapWorkflow,
   hasBootstrapDatabaseName,
   showPassword,
+  showUsernameField,
+  showPasswordField,
+  showDatabaseField,
+  showSslToggle,
   showSqliteAdvancedPath,
   sqlitePathTouched,
   bootstrapPreset,
   bootstrapPresetLabels,
   bootstrapSql,
   bootstrapFileName,
+  engineExtraFields,
   suggestedUsernamePlaceholder,
+  hostPlaceholder,
+  portPlaceholder,
+  databasePlaceholder,
+  passwordLabel,
+  passwordPlaceholder,
+  additionalFields,
   connectionTitle,
   testResult,
   isTesting,
@@ -168,6 +193,7 @@ export function ConnectionDetailsStep({
   passwordDraftRef,
   bootstrapFileInputRef,
   onFieldChange,
+  onAdditionalFieldChange,
   onTogglePasswordVisibility,
   onPasswordChange,
   onBack,
@@ -182,6 +208,15 @@ export function ConnectionDetailsStep({
   onBootstrapPresetChange,
   onBootstrapSqlChange,
 }: ConnectionDetailsStepProps) {
+  const getExtraFieldLabel = (field: EngineExtraField) =>
+    language === "vi" ? field.labelVi || field.label : field.label;
+
+  const getExtraFieldPlaceholder = (field: EngineExtraField) =>
+    language === "vi" ? field.placeholderVi || field.placeholder || "" : field.placeholder || "";
+
+  const getExtraFieldHint = (field: EngineExtraField) =>
+    language === "vi" ? field.hintVi || field.hint || "" : field.hint || "";
+
   return (
     <>
       <div className="connection-form-header">
@@ -266,8 +301,8 @@ export function ConnectionDetailsStep({
           </div>
         </section>
 
-        {/* SQLite section */}
-        {isSqlite ? (
+        {/* File DB section */}
+        {isFileEngine ? (
           <section className="connection-form-section">
             <div className="connection-form-section-head">
               <div>
@@ -348,7 +383,7 @@ export function ConnectionDetailsStep({
                   type="text"
                   value={formData.file_path || ""}
                   onChange={(e) => onFieldChange("file_path", e.target.value)}
-                  placeholder="/path/to/database.db"
+                  placeholder="C:\\path\\to\\database.db"
                   className="input h-11"
                 />
               </div>
@@ -372,7 +407,7 @@ export function ConnectionDetailsStep({
                   type="text"
                   value={formData.host || ""}
                   onChange={(e) => onFieldChange("host", e.target.value)}
-                  placeholder="127.0.0.1"
+                  placeholder={hostPlaceholder}
                   className="input h-11"
                 />
               </div>
@@ -383,86 +418,126 @@ export function ConnectionDetailsStep({
                   type="number"
                   value={formData.port || ""}
                   onChange={(e) => onFieldChange("port", parseInt(e.target.value) || undefined)}
-                  placeholder={String(selectedDb?.defaultPort || 3306)}
+                  placeholder={portPlaceholder}
                   className="input h-11"
                 />
               </div>
             </div>
 
-            <div className="connection-form-grid">
+            {(showUsernameField || showPasswordField) && (
+              <div className="connection-form-grid">
+                {showUsernameField && (
+                  <div className="connection-form-field">
+                    <label className="form-label uppercase tracking-wide">{strings.username}</label>
+                    <input
+                      type="text"
+                      value={formData.username || ""}
+                      onChange={(e) => onFieldChange("username", e.target.value)}
+                      placeholder={suggestedUsernamePlaceholder}
+                      className="input h-11"
+                    />
+                  </div>
+                )}
+
+                {showPasswordField && (
+                  <div className="connection-form-field">
+                    <label className="form-label uppercase tracking-wide">{passwordLabel}</label>
+                    <div className="connection-form-password">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        defaultValue={passwordDraftRef.current}
+                        onChange={(e) => onPasswordChange(e.target.value)}
+                        placeholder={passwordPlaceholder}
+                        className="input h-11 pr-11"
+                      />
+                      <button
+                        type="button"
+                        onClick={onTogglePasswordVisibility}
+                        className="connection-form-password-toggle"
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {showDatabaseField && (
               <div className="connection-form-field">
-                <label className="form-label uppercase tracking-wide">{strings.username}</label>
+                <label className="form-label uppercase tracking-wide">
+                  {strings.databaseOptional} <span className="opacity-60">({strings.optional})</span>
+                </label>
                 <input
                   type="text"
-                  value={formData.username || ""}
-                  onChange={(e) => onFieldChange("username", e.target.value)}
-                  placeholder={suggestedUsernamePlaceholder}
+                  value={formData.database || ""}
+                  onChange={(e) => onFieldChange("database", e.target.value)}
+                  placeholder={databasePlaceholder}
                   className="input h-11"
                 />
+                {supportsLocalBootstrap && (
+                  <span className="connection-form-field-hint">
+                    {hasBootstrapDatabaseName ? strings.localHostDetectedNamed : strings.localHostDetectedBlank}
+                  </span>
+                )}
               </div>
+            )}
 
-              <div className="connection-form-field">
-                <label className="form-label uppercase tracking-wide">{strings.password}</label>
-                <div className="connection-form-password">
+            {showSslToggle && (
+              <div className="connection-form-toggle-row">
+                <label className="connection-form-toggle-card">
                   <input
-                    type={showPassword ? "text" : "password"}
-                    defaultValue={passwordDraftRef.current}
-                    onChange={(e) => onPasswordChange(e.target.value)}
-                    placeholder={strings.enterPassword}
-                    className="input h-11 pr-11"
+                    type="checkbox"
+                    checked={formData.use_ssl}
+                    onChange={(e) => onFieldChange("use_ssl", e.target.checked)}
+                    className="sr-only"
                   />
-                  <button
-                    type="button"
-                    onClick={onTogglePasswordVisibility}
-                    className="connection-form-password-toggle"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
+                  <div className="connection-form-toggle-copy">
+                    <span className="connection-form-toggle-title">{strings.useSsl}</span>
+                    <span className="connection-form-toggle-note">{strings.useSslNote}</span>
+                  </div>
+                  <div className="connection-form-toggle-track" aria-hidden="true">
+                    <div className="connection-form-toggle-thumb" />
+                  </div>
+                </label>
               </div>
-            </div>
+            )}
 
-            <div className="connection-form-field">
-              <label className="form-label uppercase tracking-wide">
-                {strings.databaseOptional} <span className="opacity-60">({strings.optional})</span>
-              </label>
-              <input
-                type="text"
-                value={formData.database || ""}
-                onChange={(e) => onFieldChange("database", e.target.value)}
-                placeholder="my_database"
-                className="input h-11"
-              />
-              {supportsLocalBootstrap && (
-                <span className="connection-form-field-hint">
-                  {hasBootstrapDatabaseName ? strings.localHostDetectedNamed : strings.localHostDetectedBlank}
-                </span>
-              )}
-              {bootstrapMode && !isLocalBootstrapReady && (
-                <span className="connection-form-field-hint">{strings.engineNotLocalBootstrap}</span>
-              )}
-            </div>
+            {engineExtraFields.length > 0 && (
+              <section className="connection-form-section">
+                <div className="connection-form-section-head">
+                  <div>
+                    <span className="connection-form-section-kicker">{selectedDb?.label || "Engine"}</span>
+                    <h3 className="connection-form-section-title">{strings.engineFields}</h3>
+                  </div>
+                  <p className="connection-form-section-copy">{strings.engineFieldsCopy}</p>
+                </div>
 
-            <div className="connection-form-toggle-row">
-              <label className="connection-form-toggle-card">
-                <input
-                  type="checkbox"
-                  checked={formData.use_ssl}
-                  onChange={(e) => onFieldChange("use_ssl", e.target.checked)}
-                  className="sr-only"
-                />
-                <div className="connection-form-toggle-copy">
-                  <span className="connection-form-toggle-title">{strings.useSsl}</span>
-                  <span className="connection-form-toggle-note">{strings.useSslNote}</span>
+                <div className="connection-form-grid">
+                  {engineExtraFields.map((field) => (
+                    <div key={field.key} className="connection-form-field">
+                      <label className="form-label uppercase tracking-wide">
+                        {getExtraFieldLabel(field)}
+                        {!field.required && <span className="opacity-60"> ({strings.optional})</span>}
+                      </label>
+                      <input
+                        type={field.type === "number" ? "number" : field.type === "password" ? "password" : "text"}
+                        value={additionalFields[field.key] || ""}
+                        onChange={(e) => onAdditionalFieldChange(field.key, e.target.value)}
+                        placeholder={getExtraFieldPlaceholder(field)}
+                        className="input h-11"
+                      />
+                      {getExtraFieldHint(field) && (
+                        <span className="connection-form-field-hint">{getExtraFieldHint(field)}</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
-                <div className="connection-form-toggle-track" aria-hidden="true">
-                  <div className="connection-form-toggle-thumb" />
-                </div>
-              </label>
-            </div>
+              </section>
+            )}
 
             {/* Bootstrap section */}
-            {(supportsLocalBootstrap || isSqlite) && (
+            {!isFileEngine && showBootstrapWorkflow && (
               <section className="connection-form-section">
                 <div className="connection-form-section-head">
                   <div>
@@ -541,11 +616,11 @@ export function ConnectionDetailsStep({
           <button onClick={onTest} disabled={isTesting} className="btn btn-secondary">
             {strings.testConnection}
           </button>
-          {(supportsLocalBootstrap || isSqlite) && (
+          {showBootstrapWorkflow && (
             <button
               type="button"
               onClick={onCreateDatabase}
-              disabled={isBootstrappingWorkspace || (!isSqlite && !hasBootstrapDatabaseName)}
+              disabled={isBootstrappingWorkspace || (!isFileEngine && !hasBootstrapDatabaseName)}
               className="btn btn-secondary"
             >
               {strings.createAndOpen}

@@ -51,7 +51,7 @@ export function ChartLine({ series }: { series: { label: string; value: number }
 
 export function ChartPie({ series }: { series: { label: string; value: number }[] }) {
   const total = Math.max(series.reduce((sum, item) => sum + item.value, 0), 1);
-  const colors = ["#fbbf24", "#7fe0c2", "#ffc56b", "#f08aa2", "#b9a3ff", "#7dc9d8"];
+  const colors = ["#22d3ee", "#00d4aa", "#6366f1", "#a78bfa", "#f08aa2", "#a3e635"];
   let angle = 0;
   const gradient = series
     .map((item, index) => {

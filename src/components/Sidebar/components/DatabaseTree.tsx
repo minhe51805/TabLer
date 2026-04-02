@@ -104,7 +104,7 @@ export function DatabaseTree({
                 <ChevronRight className="w-4 h-4 shrink-0 explorer-db-chevron" />
               )}
               <div className="explorer-db-icon">
-                <Database className="w-4 h-4 shrink-0" />
+                <Database className="explorer-db-glyph w-4 h-4 shrink-0" />
               </div>
               <div className="explorer-db-copy">
                 <div className="explorer-db-title-row">

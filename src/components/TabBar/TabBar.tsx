@@ -1,7 +1,8 @@
-import { X, Table, Code, Columns, Play, Loader2, BarChart3 } from "lucide-react";
+import { X, Table, Code, Columns, Play, Loader2, BarChart3, Terminal } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "../../stores/appStore";
 import { useI18n } from "../../i18n";
+import { getQueryProfile } from "../../utils/query-profile";
 
 interface QueryChromeState {
   isRunning: boolean;
@@ -15,18 +16,19 @@ interface Props {
 
 export function TabBar({ queryChrome, onRunActiveQuery, onClearVisibleTabs }: Props) {
   const { t } = useI18n();
-  const { tabs, activeTabId, setActiveTab, removeTab } = useAppStore(
+  const { tabs, activeTabId, setActiveTab, removeTab, connections } = useAppStore(
     useShallow((state) => ({
       tabs: state.tabs,
       activeTabId: state.activeTabId,
       setActiveTab: state.setActiveTab,
       removeTab: state.removeTab,
+      connections: state.connections,
     }))
   );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
   const visibleTabs = tabs.filter((tab) => tab.type !== "metrics");
 
-  const getTabIcon = (type: string) => {
+  const getTabIcon = (type: string, connectionId?: string) => {
     switch (type) {
       case "table":
         return <Table className="w-3.5 h-3.5" />;
@@ -34,7 +36,12 @@ export function TabBar({ queryChrome, onRunActiveQuery, onClearVisibleTabs }: Pr
         return <Columns className="w-3.5 h-3.5" />;
       case "metrics":
         return <BarChart3 className="w-3.5 h-3.5" />;
-      case "query":
+      case "query": {
+        const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
+        return getQueryProfile(dbType).surface === "command"
+          ? <Terminal className="w-3.5 h-3.5" />
+          : <Code className="w-3.5 h-3.5" />;
+      }
       default:
         return <Code className="w-3.5 h-3.5" />;
     }
@@ -69,7 +76,7 @@ export function TabBar({ queryChrome, onRunActiveQuery, onClearVisibleTabs }: Pr
               onClick={() => setActiveTab(tab.id)}
             >
               <span className={`tabbar-tab-icon ${isActive ? "active" : ""}`}>
-                {getTabIcon(tab.type)}
+                {getTabIcon(tab.type, tab.connectionId)}
               </span>
               <span className="tabbar-tab-title">{tab.title}</span>
 

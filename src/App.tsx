@@ -8,8 +8,10 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import {
-  ChevronRight,
-  Plus,
+  Copy,
+  Minus,
+  Square,
+  X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -29,6 +31,8 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { QueryHistoryPanel } from "./components/QueryHistory/QueryHistoryPanel";
 import { SQLFavoritesPanel } from "./components/SQLFavorites/SQLFavoritesPanel";
 import { invokeMutation } from "./utils/tauri-utils";
+import { getNewQueryTabTitle, getQueryProfile } from "./utils/query-profile";
+import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "./utils/ui-scale";
 import "./index.css";
 
 interface QueryChromeState {
@@ -65,10 +69,19 @@ interface WindowMenuItem {
   selected?: boolean;
   shortcut?: string;
   children?: WindowMenuItem[];
+  controlType?: "font-scale-slider";
+  value?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  onValueChange?: (next: number) => void;
+  onDecrease?: () => void;
+  onIncrease?: () => void;
 }
 
 const GLOBAL_ERROR_AUTO_DISMISS_MS = 8000;
 const UI_FONT_SCALE_STORAGE_KEY = "tabler.uiFontScale";
+const DEFAULT_WINDOW_MENU_SECTION: WindowMenuSectionKey = "file";
 const ConnectionForm = lazy(() => import("./components/ConnectionForm").then((module) => ({ default: module.ConnectionForm })));
 const AISettingsModal = lazy(() => import("./components/AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
 const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel").then((module) => ({ default: module.AISlidePanel })));
@@ -118,12 +131,14 @@ function App() {
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showKeyboardShortcutsModal, setShowKeyboardShortcutsModal] = useState(false);
   const [showAISlidePanel, setShowAISlidePanel] = useState(false);
+  const [hasMountedAISlidePanel, setHasMountedAISlidePanel] = useState(false);
+  const [showTerminalPanel, setShowTerminalPanel] = useState(false);
   const [showQueryHistory, setShowQueryHistory] = useState(false);
   const [showSQLFavorites, setShowSQLFavorites] = useState(false);
   const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
-  const [leftPanel, setLeftPanel] = useState<"connections" | "database" | "metrics">("connections");
+  const [leftPanel, setLeftPanel] = useState<"database" | "metrics">("database");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(340);
+  const [sidebarWidth, setSidebarWidth] = useState(320);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [isWindowFocused, setIsWindowFocused] = useState(true);
   const [queryChromeByTab, setQueryChromeByTab] = useState<Record<string, QueryChromeState>>({});
@@ -139,7 +154,7 @@ function App() {
   const [uiFontScale, setUiFontScale] = useState(() => {
     if (typeof window === "undefined") return 100;
     const stored = Number(window.localStorage.getItem(UI_FONT_SCALE_STORAGE_KEY));
-    return Number.isFinite(stored) && stored >= 85 && stored <= 135 ? stored : 100;
+    return Number.isFinite(stored) && stored >= UI_FONT_SCALE_MIN && stored <= UI_FONT_SCALE_MAX ? stored : 100;
   });
 
   const isResizing = useRef(false);
@@ -169,9 +184,11 @@ function App() {
   const titlebarContextLabel = `${activeConn?.name || activeConn?.host || ""}${
     activeDatabaseLabel ? ` / ${activeDatabaseLabel}` : ""
   }`;
-  const sidebarMinWidth = leftPanel === "connections" ? 300 : 348;
+  const sidebarMinWidth = 300;
   const themeMenuLabel =
     language === "vi" ? "Giao dien" : language === "zh" ? "Zhu ti" : "Theme";
+  const toggleTerminalLabel =
+    language === "vi" ? "Bat/tat terminal" : language === "zh" ? "Toggle terminal" : "Toggle Terminal";
   const themeMenuOptions = ThemeEngine.getAvailableThemes().filter((option) =>
     ["tabler.dark", "tabler.midnight", "tabler.graphite", "tabler.forest"].includes(option.id),
   );
@@ -245,15 +262,16 @@ function App() {
     if (!activeConnectionId) return;
 
     const nextIndex = queryTabCount + 1;
+    const queryProfile = getQueryProfile(activeConn?.db_type);
     addTab({
       id: `query-${crypto.randomUUID()}`,
       type: "query",
-      title: nextIndex === 1 ? "Query" : `Query ${nextIndex}`,
+      title: getNewQueryTabTitle(activeConn?.db_type, nextIndex),
       connectionId: activeConnectionId,
       database: currentDatabase || undefined,
-      content: "",
+      content: queryProfile.defaultContent,
     });
-  }, [activeConnectionId, addTab, currentDatabase, queryTabCount]);
+  }, [activeConn?.db_type, activeConnectionId, addTab, currentDatabase, queryTabCount]);
 
   const applyDesktopWindowProfile = useCallback(
     async (profile: "launcher" | "form" | "workspace") => {
@@ -285,17 +303,11 @@ function App() {
     setIsWindowMenuOpen((current) => {
       const next = !current;
       if (next) {
-        setActiveWindowMenuSection(null);
+        setActiveWindowMenuSection(DEFAULT_WINDOW_MENU_SECTION);
         setActiveWindowMenuItemPath(null);
       }
       return next;
     });
-  }, []);
-
-  const handleOpenConnectionsPanel = useCallback(() => {
-    setIsSidebarCollapsed(false);
-    setLeftPanel("connections");
-    setIsWindowMenuOpen(false);
   }, []);
 
   const handleNewConnectionFromMenu = useCallback(() => {
@@ -382,20 +394,37 @@ function App() {
     [setLanguage],
   );
 
-  const handleIncreaseFontSize = useCallback(() => {
-    setUiFontScale((current) => Math.min(135, current + 5));
-    setIsWindowMenuOpen(false);
+  const handleSetFontSizeFromMenu = useCallback((next: number) => {
+    const normalized = Math.min(
+      UI_FONT_SCALE_MAX,
+      Math.max(UI_FONT_SCALE_MIN, Math.round(next / UI_FONT_SCALE_STEP) * UI_FONT_SCALE_STEP),
+    );
+    setUiFontScale(normalized);
     setActiveWindowMenuItemPath(null);
   }, []);
 
-  const handleDecreaseFontSize = useCallback(() => {
-    setUiFontScale((current) => Math.max(85, current - 5));
-    setIsWindowMenuOpen(false);
+  const handleIncreaseFontSizeInline = useCallback(() => {
+    setUiFontScale((current) => Math.min(UI_FONT_SCALE_MAX, current + UI_FONT_SCALE_STEP));
+    setActiveWindowMenuItemPath(null);
+  }, []);
+
+  const handleDecreaseFontSizeInline = useCallback(() => {
+    setUiFontScale((current) => Math.max(UI_FONT_SCALE_MIN, current - UI_FONT_SCALE_STEP));
     setActiveWindowMenuItemPath(null);
   }, []);
 
   const handleToggleRightSidebarFromMenu = useCallback(() => {
     setShowAISlidePanel((current) => !current);
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuItemPath(null);
+  }, []);
+
+  const handleToggleTerminalPanel = useCallback(() => {
+    setShowTerminalPanel((current) => !current);
+  }, []);
+
+  const handleToggleTerminalPanelFromMenu = useCallback(() => {
+    setShowTerminalPanel((current) => !current);
     setIsWindowMenuOpen(false);
     setActiveWindowMenuItemPath(null);
   }, []);
@@ -420,20 +449,23 @@ function App() {
     setIsSidebarCollapsed(false);
     setLeftPanel("database");
 
+    const isDatabaseWorkspaceTab = (tab: { type: string }) =>
+      tab.type !== "metrics" && tab.type !== "er-diagram";
+
     const currentDatabaseKey = currentDatabase || "";
     const candidateTab =
       [...tabs]
         .reverse()
         .find(
           (tab) =>
-            tab.type !== "metrics" &&
+            isDatabaseWorkspaceTab(tab) &&
             tab.connectionId === activeConnectionId &&
             (tab.database || "") === currentDatabaseKey,
         ) ||
       [...tabs]
         .reverse()
-        .find((tab) => tab.type !== "metrics" && tab.connectionId === activeConnectionId) ||
-      [...tabs].reverse().find((tab) => tab.type !== "metrics");
+        .find((tab) => isDatabaseWorkspaceTab(tab) && tab.connectionId === activeConnectionId) ||
+      [...tabs].reverse().find((tab) => isDatabaseWorkspaceTab(tab));
 
     if (candidateTab) {
       setActiveTab(candidateTab.id);
@@ -528,8 +560,10 @@ function App() {
       if (
         current?.result === state.result &&
         current?.error === state.error &&
+        current?.notice === state.notice &&
         current?.queryCount === state.queryCount &&
-        current?.editorHeight === state.editorHeight
+        current?.editorHeight === state.editorHeight &&
+        current?.showResultsPane === state.showResultsPane
       ) {
         return prev;
       }
@@ -540,6 +574,12 @@ function App() {
       };
     });
   }, []);
+
+  useEffect(() => {
+    if (showAISlidePanel) {
+      setHasMountedAISlidePanel(true);
+    }
+  }, [showAISlidePanel]);
 
   useEffect(() => {
     setQueryChromeByTab((prev) => {
@@ -695,16 +735,16 @@ function App() {
       label: t("menu.section.view"),
       items: [
         {
-          key: "increase-font-size",
-          label: t("menu.item.increaseFontSize"),
-          action: handleIncreaseFontSize,
-          shortcut: "Ctrl +",
-        },
-        {
-          key: "decrease-font-size",
-          label: t("menu.item.decreaseFontSize"),
-          action: handleDecreaseFontSize,
-          shortcut: "Ctrl -",
+          key: "font-size-slider",
+          label: t("menu.item.fontSize"),
+          controlType: "font-scale-slider",
+          value: uiFontScale,
+          min: UI_FONT_SCALE_MIN,
+          max: UI_FONT_SCALE_MAX,
+          step: UI_FONT_SCALE_STEP,
+          onValueChange: handleSetFontSizeFromMenu,
+          onDecrease: handleDecreaseFontSizeInline,
+          onIncrease: handleIncreaseFontSizeInline,
         },
         { divider: true },
         {
@@ -730,11 +770,17 @@ function App() {
               shortcut: "Ctrl Shift C",
             },
             {
+              key: "toggle-terminal-panel",
+              label: toggleTerminalLabel,
+              action: handleToggleTerminalPanelFromMenu,
+              shortcut: "Ctrl `",
+            },
+            {
               key: "toggle-query-results-pane",
               label: t("menu.item.toggleQueryResultsPane"),
               action: handleToggleQueryResultsPaneFromMenu,
               disabled: activeTab?.type !== "query",
-              shortcut: "Ctrl `",
+              shortcut: "Ctrl Shift `",
             },
           ],
         },
@@ -768,7 +814,6 @@ function App() {
       key: "connection",
       label: t("menu.section.connection"),
       items: [
-        { label: t("menu.item.savedConnections"), action: handleOpenConnectionsPanel },
         { label: t("menu.item.openExplorer"), action: handleShowDatabaseWorkspaceFromMenu, disabled: !isConnected },
         { label: t("menu.item.openMetrics"), action: handleOpenMetricsBoardFromMenu, disabled: !isConnected },
       ],
@@ -785,7 +830,6 @@ function App() {
       key: "navigate",
       label: t("menu.section.navigate"),
       items: [
-        { label: t("menu.item.connections"), action: handleOpenConnectionsPanel },
         { label: t("menu.item.explorer"), action: handleShowDatabaseWorkspaceFromMenu, disabled: !isConnected },
         { label: t("menu.item.metrics"), action: handleOpenMetricsBoardFromMenu, disabled: !isConnected },
         { label: t("menu.item.queryHistory"), action: handleToggleQueryHistory, shortcut: "Ctrl+H" },
@@ -872,7 +916,7 @@ function App() {
       event: Event,
     ) => {
       const detail = (event as CustomEvent<{
-        panel?: "connections" | "database" | "metrics";
+        panel?: "database" | "metrics";
         focusSearch?: boolean;
       }>).detail;
 
@@ -968,12 +1012,7 @@ function App() {
   }, [isDesktopWindow]);
 
   useEffect(() => {
-    if (activeConnectionId && (connectedIds.has(activeConnectionId) || isConnecting)) {
-      setLeftPanel("database");
-      return;
-    }
-
-    setLeftPanel("connections");
+    setLeftPanel("database");
   }, [activeConnectionId, connectedIds, isConnecting]);
 
   useEffect(() => {
@@ -1086,7 +1125,7 @@ function App() {
                   title={t("titlebar.minimize")}
                   aria-label={t("titlebar.minimize")}
                 >
-                  <ChevronRight className="w-4 h-4" />
+                  <Minus className="w-4 h-4" />
                 </button>
                 <button
                   type="button"
@@ -1095,7 +1134,11 @@ function App() {
                   title={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
                   aria-label={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  {isWindowMaximized ? (
+                    <Copy className="w-3.5 h-3.5" />
+                  ) : (
+                    <Square className="w-3.5 h-3.5" />
+                  )}
                 </button>
                 <button
                   type="button"
@@ -1104,7 +1147,7 @@ function App() {
                   title={t("titlebar.close")}
                   aria-label={t("titlebar.close")}
                 >
-                  <ChevronRight className="w-4 h-4" />
+                  <X className="w-4 h-4" />
                 </button>
               </div>
             }
@@ -1162,16 +1205,15 @@ function App() {
         onClearVisibleTabs={handleClearVisibleTabs}
         onRefreshWorkspace={handleRefreshWorkspace}
         onOpenMetricsBoard={handleOpenMetricsBoard}
-        onOpenConnectionForm={handleOpenConnectionForm}
         onFocusExplorerSearch={handleFocusExplorerSearch}
         onOpenAISlidePanel={handleOpenAISlidePanel}
         onHandleShowDatabaseWorkspace={handleShowDatabaseWorkspace}
         onHandleQueryChromeChange={handleQueryChromeChange}
         onHandleQuerySessionChange={handleQuerySessionChange}
         onRunActiveQuery={handleRunActiveQuery}
+        showTerminalPanel={showTerminalPanel}
+        onToggleTerminalPanel={handleToggleTerminalPanel}
         onToggleSidebar={handleToggleSidebar}
-        onSetIsSidebarCollapsed={setIsSidebarCollapsed}
-        onSetLeftPanel={setLeftPanel}
         onSetConnectionFormIntent={setConnectionFormIntent}
         onHandleMouseDown={handleMouseDown}
       />
@@ -1179,7 +1221,8 @@ function App() {
       <AppKeyboardHandler
         activeTab={activeTab}
         onNewQuery={handleNewQuery}
-        onOpenAISlidePanel={handleOpenAISlidePanel}
+        onRunActiveQuery={handleRunActiveQuery}
+        onToggleTerminalPanel={handleToggleTerminalPanel}
         onToggleSidebar={handleToggleSidebar}
         onToggleQueryHistory={handleToggleQueryHistory}
         onToggleSQLFavorites={handleToggleSQLFavorites}
@@ -1219,7 +1262,7 @@ function App() {
                 title={t("titlebar.minimize")}
                 aria-label={t("titlebar.minimize")}
               >
-                <ChevronRight className="w-4 h-4" />
+                <Minus className="w-4 h-4" />
               </button>
               <button
                 type="button"
@@ -1228,7 +1271,11 @@ function App() {
                 title={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
                 aria-label={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
               >
-                <Plus className="w-3.5 h-3.5" />
+                {isWindowMaximized ? (
+                  <Copy className="w-3.5 h-3.5" />
+                ) : (
+                  <Square className="w-3.5 h-3.5" />
+                )}
               </button>
               <button
                 type="button"
@@ -1237,13 +1284,13 @@ function App() {
                 title={t("titlebar.close")}
                 aria-label={t("titlebar.close")}
               >
-                <ChevronRight className="w-4 h-4" />
+                <X className="w-4 h-4" />
               </button>
             </div>
           }
         />
       )}
-      {showAISlidePanel && (
+      {(showAISlidePanel || hasMountedAISlidePanel) && (
         <Suspense fallback={null}>
           <ErrorBoundary onReset={() => setShowAISlidePanel(false)} fallback={null}>
             <AISlidePanel
@@ -1255,12 +1302,14 @@ function App() {
           </ErrorBoundary>
         </Suspense>
       )}
-      <QueryHistoryPanel
-        isOpen={showQueryHistory}
-        activeConnectionId={activeConnectionId}
-        onClose={() => setShowQueryHistory(false)}
-        onRunQuery={handleRunQueryFromHistory}
-      />
+      <ErrorBoundary onReset={() => setShowQueryHistory(false)} fallback={null}>
+        <QueryHistoryPanel
+          isOpen={showQueryHistory}
+          activeConnectionId={activeConnectionId}
+          onClose={() => setShowQueryHistory(false)}
+          onRunQuery={handleRunQueryFromHistory}
+        />
+      </ErrorBoundary>
       <SQLFavoritesPanel
         isOpen={showSQLFavorites}
         onClose={() => setShowSQLFavorites(false)}

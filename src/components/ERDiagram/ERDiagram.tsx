@@ -469,7 +469,7 @@ function buildDrawioDiagramXml(snapshot: ExportDiagramSnapshot) {
         "orthogonalLoop=1",
         "jettySize=auto",
         "html=0",
-        "strokeColor=#fbbf24",
+        "strokeColor=#22d3ee",
         "fontColor=#d8e2f1",
         "fontSize=10",
         "endArrow=block",
@@ -540,8 +540,8 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
   context.fillRect(0, 0, snapshot.width, snapshot.height);
 
   const topGlow = context.createRadialGradient(snapshot.width * 0.2, snapshot.height * 0.12, 0, snapshot.width * 0.2, snapshot.height * 0.12, snapshot.width * 0.34);
-  topGlow.addColorStop(0, "rgba(245, 158, 11, 0.12)");
-  topGlow.addColorStop(1, "rgba(245, 158, 11, 0)");
+  topGlow.addColorStop(0, "rgba(34, 211, 238, 0.12)");
+  topGlow.addColorStop(1, "rgba(34, 211, 238, 0)");
   context.fillStyle = topGlow;
   context.fillRect(0, 0, snapshot.width, snapshot.height);
 
@@ -559,7 +559,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
   }
 
   snapshot.edges.forEach((edge) => {
-    const strokeColor = "#f59e0b";
+    const strokeColor = "#22d3ee";
 
     context.save();
     context.beginPath();
@@ -571,7 +571,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
     });
     context.strokeStyle = strokeColor;
     context.lineWidth = 1.7;
-    context.shadowColor = "rgba(245, 158, 11, 0.2)";
+    context.shadowColor = "rgba(34, 211, 238, 0.18)";
     context.shadowBlur = 8;
     context.stroke();
     context.restore();
@@ -612,7 +612,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
     const labelHeight = 18;
     const labelX = edge.bendPoint.x + snapshot.offsetX - labelWidth / 2;
     const labelY = edge.bendPoint.y + snapshot.offsetY - labelHeight / 2;
-    drawRoundedRect(context, labelX, labelY, labelWidth, labelHeight, 9, "rgba(8, 11, 16, 0.94)", "rgba(245, 158, 11, 0.18)");
+    drawRoundedRect(context, labelX, labelY, labelWidth, labelHeight, 9, "rgba(8, 11, 16, 0.94)", "rgba(34, 211, 238, 0.18)");
     context.fillStyle = "#d8e2f1";
     context.textAlign = "center";
     context.textBaseline = "middle";
@@ -699,8 +699,8 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
         width - 14,
         22,
         8,
-        isPrimary ? "rgba(245, 158, 11, 0.08)" : "rgba(255, 255, 255, 0.03)",
-        isPrimary ? "rgba(245, 158, 11, 0.16)" : undefined
+        isPrimary ? "rgba(34, 211, 238, 0.08)" : "rgba(255, 255, 255, 0.03)",
+        isPrimary ? "rgba(34, 211, 238, 0.16)" : undefined
       );
 
       drawRoundedRect(
@@ -710,10 +710,10 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
         isPrimary ? 26 : 28,
         12,
         999,
-        isPrimary ? "rgba(245, 158, 11, 0.1)" : "rgba(255, 255, 255, 0.04)",
-        isPrimary ? "rgba(245, 158, 11, 0.22)" : "rgba(122, 147, 198, 0.14)"
+        isPrimary ? "rgba(34, 211, 238, 0.1)" : "rgba(255, 255, 255, 0.04)",
+        isPrimary ? "rgba(34, 211, 238, 0.22)" : "rgba(122, 147, 198, 0.14)"
       );
-      context.fillStyle = isPrimary ? "#fbbf24" : "#8f99ab";
+      context.fillStyle = isPrimary ? "#22d3ee" : "#8f99ab";
       context.font = '800 6px "Segoe UI", sans-serif';
       context.textBaseline = "middle";
       context.fillText(isPrimary ? "PK" : "COL", x + 18, rowY + 9.5);
@@ -738,7 +738,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
       context.stroke();
 
       if (isExpanded) {
-        drawRoundedRect(context, x + width / 2 - 34, rowY + 6, 28, 14, 999, "rgba(245, 158, 11, 0.08)", "rgba(245, 158, 11, 0.16)");
+        drawRoundedRect(context, x + width / 2 - 34, rowY + 6, 28, 14, 999, "rgba(34, 211, 238, 0.08)", "rgba(34, 211, 238, 0.16)");
         context.fillStyle = "#c3cede";
         context.font = '700 7px "Segoe UI", sans-serif';
         context.textAlign = "center";

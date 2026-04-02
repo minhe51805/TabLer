@@ -8,10 +8,14 @@ use commands::connection::*;
 use commands::file::*;
 use commands::query::*;
 use commands::table::*;
+use commands::terminal::{close_terminal, open_terminal, resize_terminal, write_terminal, TerminalManager};
 use commands::ai::{ask_ai, get_ai_configs, save_ai_configs};
 use commands::window::{apply_window_profile, apply_window_profile_to_main, WindowProfile};
 use database::manager::DatabaseManager;
-use query_history::{get_query_history, save_query_history};
+use query_history::{
+    clear_query_history, delete_query_history_entries, delete_query_history_entry,
+    get_query_history, save_query_history,
+};
 use storage::connection_storage::ConnectionStorage;
 use storage::ai_storage::AIStorage;
 use storage::sql_favorites::{
@@ -47,12 +51,14 @@ pub fn run() {
         24,
         "Too many AI requests in a short time. Please wait a moment and try again.",
     );
+    let terminal_manager = TerminalManager::default();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(db_manager)
         .manage(conn_storage)
         .manage(ai_storage)
+        .manage(terminal_manager)
         .manage(connection_rate_limiter)
         .manage(ai_rate_limiter)
         .setup(|app| {
@@ -110,9 +116,17 @@ pub fn run() {
             // Query history commands
             save_query_history,
             get_query_history,
+            delete_query_history_entry,
+            delete_query_history_entries,
+            clear_query_history,
             // File commands
             read_sql_file,
             read_sql_file_from_path,
+            // Terminal commands
+            open_terminal,
+            write_terminal,
+            resize_terminal,
+            close_terminal,
             // SQL Favorites commands
             get_sql_favorites,
             save_sql_favorite,

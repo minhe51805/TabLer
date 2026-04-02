@@ -3,7 +3,9 @@ import type { OnMount } from "@monaco-editor/react";
 import { useAppStore } from "../../../stores/appStore";
 import { useQueryHistoryStore } from "../../../stores/queryHistoryStore";
 import type { QueryResult } from "../../../types";
+import { translateCurrent } from "../../../i18n";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
+import { getQueryProfile } from "../../../utils/query-profile";
 import {
   formatExecutionError,
   normalizeStatementForGuard,
@@ -27,8 +29,10 @@ export interface QueryChromeState {
 export interface QueryEditorSessionState {
   result: QueryResult | null;
   error: string | null;
+  notice: string | null;
   queryCount: number;
   editorHeight: number;
+  showResultsPane: boolean;
 }
 
 export interface UseSQLEditorOptions {
@@ -50,10 +54,15 @@ export function useSQLEditor({
   onChromeChange,
   onStateChange,
 }: UseSQLEditorOptions) {
+  const connections = useAppStore((state) => state.connections);
+  const executeQuery = useAppStore((state) => state.executeQuery);
   const executeSandboxQuery = useAppStore((state) => state.executeSandboxQuery);
   const switchDatabase = useAppStore((state) => state.switchDatabase);
   const updateTab = useAppStore((state) => state.updateTab);
   const saveQueryEntry = useQueryHistoryStore((state) => state.saveEntry);
+  const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
+  const queryProfile = getQueryProfile(dbType);
+  const usesDirectExecution = queryProfile.executionPath === "direct";
 
   const editorRef = useRef<any>(null);
   const splitRef = useRef<HTMLDivElement>(null);
@@ -72,9 +81,10 @@ export function useSQLEditor({
 
   const [result, setResult] = useState<QueryResult | null>(() => initialState?.result ?? null);
   const [error, setError] = useState<string | null>(() => initialState?.error ?? null);
+  const [notice, setNotice] = useState<string | null>(() => initialState?.notice ?? null);
   const [queryCount, setQueryCount] = useState(() => initialState?.queryCount ?? 0);
   const [editorHeight, setEditorHeight] = useState(() => initialState?.editorHeight ?? 42);
-  const [showResultsPane, setShowResultsPane] = useState(true);
+  const [showResultsPane, setShowResultsPane] = useState(() => initialState?.showResultsPane ?? true);
   const [isBatchExecuting, setIsBatchExecuting] = useState(false);
   const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
 
@@ -121,7 +131,56 @@ export function useSQLEditor({
     } else {
       sql = editor.getValue();
     }
-    if (!sql.trim()) return;
+    if (!sql.trim()) {
+      setError(null);
+      setResult(null);
+      setNotice(translateCurrent("tabs.noSqlToExecute"));
+      setShowResultsPane(true);
+      editor.focus();
+      return;
+    }
+
+    if (usesDirectExecution) {
+      const commandText = sql.trim();
+      setNotice(null);
+      setError(null);
+      setIsExecutingCurrent(true);
+      setIsBatchExecuting(true);
+
+      try {
+        const queryResult = await executeQuery(connectionId, commandText);
+        setResult(queryResult);
+        setQueryCount((c) => c + 1);
+
+        void saveQueryEntry(
+          commandText,
+          connectionId,
+          Number(queryResult.execution_time_ms),
+          queryResult.rows.length || undefined,
+          undefined,
+          useAppStore.getState().currentDatabase || undefined
+        );
+      } catch (e) {
+        const errorMessage = formatExecutionError(e);
+        setError(errorMessage);
+        setResult(null);
+        setNotice(null);
+
+        void saveQueryEntry(
+          commandText,
+          connectionId,
+          0,
+          undefined,
+          errorMessage,
+          useAppStore.getState().currentDatabase || undefined
+        );
+      } finally {
+        setIsExecutingCurrent(false);
+        setIsBatchExecuting(false);
+      }
+
+      return;
+    }
 
     let sqlToExecute = sql;
     let targetDatabaseFromUse: string | null = null;
@@ -129,6 +188,7 @@ export function useSQLEditor({
 
     if (leadingUseDirective) {
       if ("error" in leadingUseDirective) {
+        setNotice(null);
         setError(leadingUseDirective.error);
         setResult(null);
         return;
@@ -167,6 +227,7 @@ export function useSQLEditor({
     const hasMutatingStatements = statementsToExecute.some(isMutatingStatement);
     const hasHighRiskStatements = statementsToExecute.some(isHighRiskStatement);
 
+    setNotice(null);
     setError(null);
     setIsExecutingCurrent(true);
     setIsBatchExecuting(true);
@@ -223,6 +284,7 @@ export function useSQLEditor({
       const errorMessage = formatExecutionError(e);
       setError(errorMessage);
       setResult(null);
+      setNotice(null);
 
       // Auto-save failed query to history
       void saveQueryEntry(
@@ -237,10 +299,12 @@ export function useSQLEditor({
       setIsExecutingCurrent(false);
       setIsBatchExecuting(false);
     }
-  }, [connectionId, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase]);
+  }, [connectionId, executeQuery, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase, usesDirectExecution]);
 
   /** Formats the selected text (or entire editor content) using the connection's SQL dialect. */
   const handleFormatSql = useCallback(() => {
+    if (!queryProfile.supportsFormatting) return;
+
     const editor = editorRef.current;
     if (!editor) return;
 
@@ -262,7 +326,7 @@ export function useSQLEditor({
       editor.setValue(formatted);
       schedulePersistedContent(formatted);
     }
-  }, [connectionId, schedulePersistedContent]);
+  }, [connectionId, queryProfile.supportsFormatting, schedulePersistedContent]);
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -304,11 +368,13 @@ export function useSQLEditor({
     );
 
     completionDisposableRef.current?.dispose();
-    completionDisposableRef.current = registerStandardCompletionProvider(
-      monaco,
-      () => useAppStore.getState().tables,
-      () => {}
-    );
+    completionDisposableRef.current = queryProfile.surface === "sql"
+      ? registerStandardCompletionProvider(
+          monaco,
+          () => useAppStore.getState().tables,
+          () => {}
+        )
+      : null;
 
     selectionContextDisposableRef.current?.dispose();
     selectionContextDisposableRef.current = editor.onDidChangeCursorSelection(() => {
@@ -345,21 +411,21 @@ export function useSQLEditor({
   useEffect(() => {
     if (!result || result.execution_time_ms < 0) return;
     const activityLabel = result.rows.length > 0
-      ? "Query"
+      ? usesDirectExecution ? "Command" : "Query"
       : result.affected_rows > 0
         ? result.sandboxed ? "Sandbox" : "Write"
-        : "Run";
+        : usesDirectExecution ? "Command" : "Run";
     window.dispatchEvent(
       new CustomEvent("workspace-activity", {
         detail: { connectionId, label: activityLabel, durationMs: result.execution_time_ms },
       })
     );
-  }, [connectionId, result]);
+  }, [connectionId, result, usesDirectExecution]);
 
   useEffect(() => {
     if (!onStateChangeRef.current) return;
-    onStateChangeRef.current({ result, error, queryCount, editorHeight });
-  }, [editorHeight, error, queryCount, result]);
+    onStateChangeRef.current({ result, error, notice, queryCount, editorHeight, showResultsPane });
+  }, [editorHeight, error, notice, queryCount, result, showResultsPane]);
 
   useEffect(() => {
     const onInsertSQLFromAI = (e: Event) => {
@@ -444,6 +510,7 @@ export function useSQLEditor({
   return {
     result,
     error,
+    notice,
     queryCount,
     editorHeight,
     setEditorHeight,

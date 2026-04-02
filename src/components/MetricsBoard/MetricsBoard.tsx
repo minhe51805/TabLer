@@ -23,7 +23,16 @@ import {
   getLastPathSegment,
   getWidgetLibrary as _getWidgetLibrary,
   getWidgetLibraryItem as _getWidgetLibraryItem,
+  METRICS_EDITOR_ESTIMATED_HEIGHT,
+  METRICS_EDITOR_GAP,
+  METRICS_EDITOR_MAX_WIDTH,
+  METRICS_EDITOR_MIN_WIDTH,
+  METRICS_GRID_COLUMNS,
   heightPxToRowSpan,
+  METRICS_GRID_GAP,
+  METRICS_GRID_MIN_ROWS,
+  METRICS_GRID_MIN_WIDTH,
+  METRICS_GRID_ROW_HEIGHT,
   normalizeWidgetLayout,
   readStoredBoards,
   rowSpanToHeightPx,
@@ -226,7 +235,7 @@ export function MetricsBoard({
     if (!element || typeof ResizeObserver === "undefined") return;
 
     const updateCanvasWidth = () => {
-      setCanvasWidth(Math.max(element.clientWidth - 36, 1080));
+      setCanvasWidth(Math.max(element.clientWidth - 32, METRICS_GRID_MIN_WIDTH));
     };
 
     updateCanvasWidth();
@@ -267,15 +276,15 @@ export function MetricsBoard({
   }, [activeBoardId]);
 
   const surfaceWidth = useMemo(
-    () => Math.max(canvasWidth, 1080),
+    () => Math.max(canvasWidth, METRICS_GRID_MIN_WIDTH),
     [canvasWidth],
   );
   const columnWidth = useMemo(
-    () => (surfaceWidth - 12 * 11) / 12,
+    () => (surfaceWidth - METRICS_GRID_GAP * (METRICS_GRID_COLUMNS - 1)) / METRICS_GRID_COLUMNS,
     [surfaceWidth],
   );
-  const rowUnit = 82 + 12;
-  const colUnit = columnWidth + 12;
+  const rowUnit = METRICS_GRID_ROW_HEIGHT + METRICS_GRID_GAP;
+  const colUnit = columnWidth + METRICS_GRID_GAP;
   const surfaceHeight = useMemo(() => {
     const occupiedRows = activeBoard
       ? activeBoard.widgets.reduce((max, widget) => {
@@ -283,13 +292,13 @@ export function MetricsBoard({
             dragState && dragState.widgetId === widget.id ? dragState.previewGridY : widget.grid_y;
           if (resizeState && resizeState.widgetId === widget.id) {
             const bottomPx = previewGridY * rowUnit + resizeState.previewHeightPx;
-            const rowCount = Math.ceil((bottomPx + 12) / rowUnit);
+            const rowCount = Math.ceil((bottomPx + METRICS_GRID_GAP) / rowUnit);
             return Math.max(max, rowCount);
           }
           return Math.max(max, previewGridY + widget.row_span);
-        }, 8)
-      : 8;
-    return occupiedRows * 82 + Math.max(occupiedRows - 1, 0) * 12;
+        }, METRICS_GRID_MIN_ROWS)
+      : METRICS_GRID_MIN_ROWS;
+    return occupiedRows * METRICS_GRID_ROW_HEIGHT + Math.max(occupiedRows - 1, 0) * METRICS_GRID_GAP;
   }, [activeBoard, dragState, resizeState]);
 
   const updateActiveBoard = useCallback(
@@ -483,25 +492,25 @@ export function MetricsBoard({
 
     const rect = getWidgetLayoutMetrics(editingWidget);
     const editorWidth = Math.min(
-      320,
-      Math.max(272, surfaceWidth - 28),
+      METRICS_EDITOR_MAX_WIDTH,
+      Math.max(METRICS_EDITOR_MIN_WIDTH, surfaceWidth - 28),
     );
-    const rightCandidate = rect.left + rect.width + 18;
+    const rightCandidate = rect.left + rect.width + METRICS_EDITOR_GAP;
     const canPlaceRight = rightCandidate + editorWidth <= surfaceWidth;
-    const leftCandidate = rect.left - editorWidth - 18;
+    const leftCandidate = rect.left - editorWidth - METRICS_EDITOR_GAP;
     const left = canPlaceRight
       ? rightCandidate
-      : Math.max(12, Math.min(leftCandidate, surfaceWidth - editorWidth - 12));
+      : Math.max(METRICS_GRID_GAP, Math.min(leftCandidate, surfaceWidth - editorWidth - METRICS_GRID_GAP));
     const top = Math.max(
-      12,
-      Math.min(rect.top, surfaceHeight - 372 - 12),
+      METRICS_GRID_GAP,
+      Math.min(rect.top, surfaceHeight - METRICS_EDITOR_ESTIMATED_HEIGHT - METRICS_GRID_GAP),
     );
 
     return {
       left,
       top,
       width: editorWidth,
-      height: 372,
+      height: METRICS_EDITOR_ESTIMATED_HEIGHT,
       side: canPlaceRight ? "right" : "left",
     } as const;
   }, [editingWidget, getWidgetLayoutMetrics, surfaceHeight, surfaceWidth]);

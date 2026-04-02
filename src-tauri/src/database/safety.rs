@@ -25,7 +25,7 @@ fn quote_identifier_with(value: &str, quote_char: char, label: &str) -> Result<S
     Ok(format!("{quote_char}{escaped}{quote_char}"))
 }
 
-fn split_qualified_name(value: &str) -> Result<Vec<String>> {
+fn split_identifier_path(value: &str, max_parts: usize) -> Result<Vec<String>> {
     let parts = value
         .split('.')
         .map(str::trim)
@@ -37,11 +37,15 @@ fn split_qualified_name(value: &str) -> Result<Vec<String>> {
         return Err(anyhow!("Identifier cannot be empty"));
     }
 
-    if parts.len() > 2 {
-        return Err(anyhow!("Only schema.table style names are supported"));
+    if parts.len() > max_parts {
+        return Err(anyhow!("Identifier contains too many path segments"));
     }
 
     Ok(parts)
+}
+
+fn split_qualified_name(value: &str) -> Result<Vec<String>> {
+    split_identifier_path(value, 2)
 }
 
 pub fn quote_postgres_identifier(value: &str) -> Result<String> {
@@ -58,6 +62,18 @@ pub fn quote_mysql_identifier(value: &str) -> Result<String> {
 
 pub fn quote_clickhouse_identifier(value: &str) -> Result<String> {
     quote_identifier_with(value, '`', "Identifier")
+}
+
+pub fn quote_bigquery_identifier(value: &str) -> Result<String> {
+    quote_identifier_with(value, '`', "Identifier")
+}
+
+pub fn quote_snowflake_identifier(value: &str) -> Result<String> {
+    quote_identifier_with(value, '"', "Identifier")
+}
+
+pub fn quote_cassandra_identifier(value: &str) -> Result<String> {
+    quote_identifier_with(value, '"', "Identifier")
 }
 
 pub fn quote_mssql_identifier(value: &str) -> Result<String> {
@@ -116,6 +132,24 @@ pub fn qualify_mssql_table_name(table: &str, default_schema: &str) -> Result<Str
     ))
 }
 
+pub fn qualify_cassandra_table_name(table: &str, default_keyspace: &str) -> Result<String> {
+    let parts = split_qualified_name(table)?;
+    let (keyspace, table_name) = if parts.len() == 2 {
+        (parts[0].clone(), parts[1].clone())
+    } else {
+        (
+            validate_identifier_part(default_keyspace, "Keyspace")?,
+            parts[0].clone(),
+        )
+    };
+
+    Ok(format!(
+        "{}.{}",
+        quote_cassandra_identifier(&keyspace)?,
+        quote_cassandra_identifier(&table_name)?,
+    ))
+}
+
 pub fn normalize_order_dir(order_dir: Option<&str>) -> Result<&'static str> {
     match order_dir.unwrap_or("ASC").trim().to_ascii_uppercase().as_str() {
         "ASC" => Ok("ASC"),
@@ -147,6 +181,33 @@ pub fn quote_clickhouse_order_by(column: &str) -> Result<String> {
     Ok(parts
         .iter()
         .map(|part| quote_clickhouse_identifier(part))
+        .collect::<Result<Vec<_>>>()?
+        .join("."))
+}
+
+pub fn quote_bigquery_order_by(column: &str) -> Result<String> {
+    let parts = split_identifier_path(column, 16)?;
+    Ok(parts
+        .iter()
+        .map(|part| quote_bigquery_identifier(part))
+        .collect::<Result<Vec<_>>>()?
+        .join("."))
+}
+
+pub fn quote_snowflake_order_by(column: &str) -> Result<String> {
+    let parts = split_qualified_name(column)?;
+    Ok(parts
+        .iter()
+        .map(|part| quote_snowflake_identifier(part))
+        .collect::<Result<Vec<_>>>()?
+        .join("."))
+}
+
+pub fn quote_cassandra_order_by(column: &str) -> Result<String> {
+    let parts = split_qualified_name(column)?;
+    Ok(parts
+        .iter()
+        .map(|part| quote_cassandra_identifier(part))
         .collect::<Result<Vec<_>>>()?
         .join("."))
 }
@@ -512,6 +573,18 @@ pub fn sanitize_mysql_filter_clause(filter: Option<&str>) -> Result<Option<Strin
 
 pub fn sanitize_clickhouse_filter_clause(filter: Option<&str>) -> Result<Option<String>> {
     sanitize_filter_clause_with(filter, quote_clickhouse_order_by, false)
+}
+
+pub fn sanitize_bigquery_filter_clause(filter: Option<&str>) -> Result<Option<String>> {
+    sanitize_filter_clause_with(filter, quote_bigquery_order_by, false)
+}
+
+pub fn sanitize_snowflake_filter_clause(filter: Option<&str>) -> Result<Option<String>> {
+    sanitize_filter_clause_with(filter, quote_snowflake_order_by, false)
+}
+
+pub fn sanitize_cassandra_filter_clause(filter: Option<&str>) -> Result<Option<String>> {
+    sanitize_filter_clause_with(filter, quote_cassandra_order_by, false)
 }
 
 pub fn sanitize_mssql_filter_clause(filter: Option<&str>) -> Result<Option<String>> {

@@ -3,11 +3,11 @@ import {
   BarChart3,
   Plus,
   GitBranch,
+  Terminal,
   X,
   RotateCcw,
   Search,
   Sparkles,
-  Cable,
   PanelRightClose,
   Database,
   AlertCircle,
@@ -15,10 +15,11 @@ import {
 } from "lucide-react";
 import { lazy, Suspense } from "react";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { ConnectionList } from "./ConnectionList";
 import { MetricsSidebar } from "./MetricsSidebar/MetricsSidebar";
 import { Sidebar } from "./Sidebar";
 import { TabBar } from "./TabBar";
+import ERDiagram from "./ERDiagram/ERDiagram";
+import { TerminalDock } from "./TerminalDock/TerminalDock";
 import type { Tab } from "../types";
 import type { ConnectionConfig } from "../types/database";
 import type { QueryEditorSessionState } from "./SQLEditor";
@@ -26,12 +27,12 @@ import { useI18n } from "../i18n";
 import { useEvent } from "../stores/event-center";
 import { useAppStore } from "../stores/appStore";
 import { getLastPathSegment } from "../utils/path-utils";
+import { getQueryProfile } from "../utils/query-profile";
 
 const SQLEditor = lazy(() => import("./SQLEditor").then((module) => ({ default: module.SQLEditor })));
 const DataGrid = lazy(() => import("./DataGrid").then((module) => ({ default: module.DataGrid })));
 const TableStructure = lazy(() => import("./TableStructure").then((module) => ({ default: module.TableStructure })));
 const MetricsBoard = lazy(() => import("./MetricsBoard").then((module) => ({ default: module.MetricsBoard })));
-const ERDiagram = lazy(() => import("./ERDiagram").then((module) => ({ default: module.ERDiagram })));
 
 interface QueryChromeState {
   isRunning: boolean;
@@ -54,7 +55,7 @@ interface AppWorkspacePanelProps {
   isConnecting: boolean;
   isSidebarCollapsed: boolean;
   sidebarWidth: number;
-  leftPanel: "connections" | "database" | "metrics";
+  leftPanel: "database" | "metrics";
   isMetricsWorkspace: boolean;
   activeConn: ConnectionConfig | undefined;
   currentDatabase: string | null;
@@ -69,16 +70,15 @@ interface AppWorkspacePanelProps {
   onClearVisibleTabs: () => void;
   onRefreshWorkspace: () => Promise<void>;
   onOpenMetricsBoard: () => void;
-  onOpenConnectionForm: (intent: "connect" | "bootstrap") => void;
   onFocusExplorerSearch: () => void;
   onOpenAISlidePanel: (prompt?: string) => void;
   onHandleShowDatabaseWorkspace: () => void;
   onHandleQueryChromeChange: (tabId: string, state: QueryChromeState) => void;
   onHandleQuerySessionChange: (tabId: string, state: QueryEditorSessionState) => void;
   onRunActiveQuery: () => void;
+  showTerminalPanel: boolean;
+  onToggleTerminalPanel: () => void;
   onToggleSidebar: () => void;
-  onSetIsSidebarCollapsed: (value: boolean) => void;
-  onSetLeftPanel: (panel: "connections" | "database" | "metrics") => void;
   onSetConnectionFormIntent: (intent: "connect" | "bootstrap") => void;
   onHandleMouseDown: (e: React.MouseEvent) => void;
 }
@@ -113,20 +113,27 @@ export function AppWorkspacePanel({
   onClearVisibleTabs,
   onRefreshWorkspace,
   onOpenMetricsBoard,
-  onOpenConnectionForm,
   onFocusExplorerSearch,
   onOpenAISlidePanel,
   onHandleShowDatabaseWorkspace,
   onHandleQueryChromeChange,
   onHandleQuerySessionChange,
   onRunActiveQuery,
+  showTerminalPanel,
+  onToggleTerminalPanel,
   onToggleSidebar,
-  onSetIsSidebarCollapsed,
-  onSetLeftPanel,
   onSetConnectionFormIntent,
   onHandleMouseDown,
 }: AppWorkspacePanelProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const terminalToggleTitle =
+    language === "vi" ? "Bat/tat terminal (Ctrl+`)" : "Toggle terminal (Ctrl+`)";
+  const connections = useAppStore((state) => state.connections);
+  const activeTabConnection = activeTab
+    ? connections.find((connection) => connection.id === activeTab.connectionId)
+    : activeConn;
+  const activeQueryProfile = getQueryProfile(activeTabConnection?.db_type);
+  const workspaceQueryProfile = getQueryProfile(activeConn?.db_type);
   const activeDatabaseTarget =
     currentDatabase ||
     activeConn?.database ||
@@ -134,6 +141,10 @@ export function AppWorkspacePanel({
     t("workspace.ready.currentDatabaseSelected");
   const activeEngineLabel = (activeConn?.db_type || "").toUpperCase() || "DB";
   const isWorkspaceOverview = tabs.length === 0 || !activeTab;
+  const isERDiagramWorkspace = activeTab?.type === "er-diagram";
+  const isDatabasePanelActive = !isERDiagramWorkspace && leftPanel === "database";
+  const isMetricsPanelActive = !isERDiagramWorkspace && leftPanel === "metrics";
+  const isERDiagramPanelActive = activeTab?.type === "er-diagram";
 
   // EventCenter: respond to global sidebar toggle
   useEvent("workspace-toggle-sidebar", () => {
@@ -145,6 +156,20 @@ export function AppWorkspacePanel({
     onRefreshWorkspace();
   });
 
+  const handleOpenERDiagram = () => {
+    if (!activeConn?.id) return;
+    const id = `er-${Date.now()}`;
+    const appStore = useAppStore.getState();
+    appStore.addTab({
+      id,
+      type: "er-diagram",
+      title: "ER Diagram",
+      connectionId: activeConn.id,
+      database: currentDatabase || undefined,
+    });
+    appStore.setActiveTab(id);
+  };
+
   const renderTabContent = () => {
     if (!isConnected && isConnecting && activeConn) {
       return (
@@ -152,7 +177,7 @@ export function AppWorkspacePanel({
           <div className="workspace-empty-panel workspace-connecting-panel">
             <div className="workspace-empty-hero">
               <div className="workspace-empty-icon workspace-ready-icon">
-                <LoaderCircle className="w-10 h-10 text-[var(--accent)] animate-spin" />
+                <LoaderCircle className="workspace-empty-glyph w-10 h-10 animate-spin" />
               </div>
 
               <div className="workspace-empty-copy">
@@ -176,7 +201,7 @@ export function AppWorkspacePanel({
           <div className="workspace-empty-panel">
             <div className="workspace-empty-hero">
               <div className="workspace-empty-icon">
-                <Database className="w-10 h-10 text-[var(--accent)]" />
+                <Database className="workspace-empty-glyph w-10 h-10" />
               </div>
 
               <div className="workspace-empty-copy">
@@ -235,7 +260,7 @@ export function AppWorkspacePanel({
           <div className="workspace-ready-header">
             <div className="workspace-ready-header-left">
               <div className="workspace-ready-icon">
-                <Sparkles className="w-7 h-7 text-[var(--accent)]" />
+                <Sparkles className="workspace-ready-glyph w-5 h-5" />
               </div>
               <div className="workspace-ready-header-copy">
                 <span className="workspace-ready-kicker">{t("workspace.ready.kicker")}</span>
@@ -262,28 +287,52 @@ export function AppWorkspacePanel({
           <div className="workspace-ready-actions">
             <button type="button" className="workspace-ready-action-card" data-tone="query" onClick={onNewQuery}>
               <div className="workspace-ready-action-top">
-                <div className="workspace-ready-action-icon"><Plus className="w-5 h-5" /></div>
-                <span className="workspace-ready-action-kicker">{t("workspace.ready.sqlEditor")}</span>
+                <div className="workspace-ready-action-icon">
+                  {workspaceQueryProfile.surface === "command" ? (
+                    <Terminal className="w-4 h-4" />
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
+                </div>
+                <div className="workspace-ready-action-body">
+                  <span className="workspace-ready-action-kicker">
+                    {workspaceQueryProfile.surface === "command"
+                      ? t("workspace.ready.commandTerminal")
+                      : t("workspace.ready.sqlEditor")}
+                  </span>
+                  <span className="workspace-ready-action-title">
+                    {workspaceQueryProfile.surface === "command"
+                      ? t("workspace.ready.commandTitle")
+                      : t("workspace.ready.queryTitle")}
+                  </span>
+                </div>
               </div>
-              <div className="workspace-ready-action-body">
-                <span className="workspace-ready-action-title">{t("workspace.ready.queryTitle")}</span>
-                <span className="workspace-ready-action-description">{t("workspace.ready.queryDescription")}</span>
-              </div>
+              <span className="workspace-ready-action-description">
+                {workspaceQueryProfile.surface === "command"
+                  ? t("workspace.ready.commandDescription", {
+                      surface: workspaceQueryProfile.surfaceLabel,
+                    })
+                  : t("workspace.ready.queryDescription")}
+              </span>
               <div className="workspace-ready-action-foot">
                 <kbd className="kbd">Ctrl+N</kbd>
-                <span className="workspace-ready-action-link">{t("workspace.ready.queryLink")}</span>
+                <span className="workspace-ready-action-link">
+                  {workspaceQueryProfile.surface === "command"
+                    ? t("workspace.ready.commandLink")
+                    : t("workspace.ready.queryLink")}
+                </span>
               </div>
             </button>
 
             <button type="button" className="workspace-ready-action-card" data-tone="explorer" onClick={onFocusExplorerSearch}>
               <div className="workspace-ready-action-top">
-                <div className="workspace-ready-action-icon"><Search className="w-5 h-5" /></div>
-                <span className="workspace-ready-action-kicker">{t("workspace.ready.explorerKicker")}</span>
+                <div className="workspace-ready-action-icon"><Search className="w-4 h-4" /></div>
+                <div className="workspace-ready-action-body">
+                  <span className="workspace-ready-action-kicker">{t("workspace.ready.explorerKicker")}</span>
+                  <span className="workspace-ready-action-title">{t("workspace.ready.explorerTitle")}</span>
+                </div>
               </div>
-              <div className="workspace-ready-action-body">
-                <span className="workspace-ready-action-title">{t("workspace.ready.explorerTitle")}</span>
-                <span className="workspace-ready-action-description">{t("workspace.ready.explorerDescription")}</span>
-              </div>
+              <span className="workspace-ready-action-description">{t("workspace.ready.explorerDescription")}</span>
               <div className="workspace-ready-action-foot">
                 <kbd className="kbd">Ctrl+B</kbd>
                 <span className="workspace-ready-action-link">{t("workspace.ready.explorerLink")}</span>
@@ -292,13 +341,13 @@ export function AppWorkspacePanel({
 
             <button type="button" className="workspace-ready-action-card" data-tone="ai" onClick={() => onOpenAISlidePanel()}>
               <div className="workspace-ready-action-top">
-                <div className="workspace-ready-action-icon"><Sparkles className="w-5 h-5" /></div>
-                <span className="workspace-ready-action-kicker">{t("workspace.ready.aiKicker")}</span>
+                <div className="workspace-ready-action-icon"><Sparkles className="w-4 h-4" /></div>
+                <div className="workspace-ready-action-body">
+                  <span className="workspace-ready-action-kicker">{t("workspace.ready.aiKicker")}</span>
+                  <span className="workspace-ready-action-title">{t("workspace.ready.aiTitle")}</span>
+                </div>
               </div>
-              <div className="workspace-ready-action-body">
-                <span className="workspace-ready-action-title">{t("workspace.ready.aiTitle")}</span>
-                <span className="workspace-ready-action-description">{t("workspace.ready.aiDescription")}</span>
-              </div>
+              <span className="workspace-ready-action-description">{t("workspace.ready.aiDescription")}</span>
               <div className="workspace-ready-action-foot">
                 <kbd className="kbd">Ctrl+Shift+P</kbd>
                 <span className="workspace-ready-action-link">{t("workspace.ready.aiLink")}</span>
@@ -309,24 +358,18 @@ export function AppWorkspacePanel({
               type="button"
               className="workspace-ready-action-card"
               data-tone="diagram"
-              onClick={() => {
-                if (!activeConn?.id) return;
-                const id = `er-${Date.now()}`;
-                const appStore = useAppStore.getState();
-                appStore.addTab({ id, type: "er-diagram", title: "ER Diagram", connectionId: activeConn.id, database: currentDatabase || undefined });
-                appStore.setActiveTab(id);
-              }}
+              onClick={handleOpenERDiagram}
             >
               <div className="workspace-ready-action-top">
-                <div className="workspace-ready-action-icon"><GitBranch className="w-5 h-5" /></div>
-                <span className="workspace-ready-action-kicker">{t("workspace.ready.database")}</span>
+                <div className="workspace-ready-action-icon"><GitBranch className="w-4 h-4" /></div>
+                <div className="workspace-ready-action-body">
+                  <span className="workspace-ready-action-kicker">{t("workspace.ready.database")}</span>
+                  <span className="workspace-ready-action-title">ER Diagram</span>
+                </div>
               </div>
-              <div className="workspace-ready-action-body">
-                <span className="workspace-ready-action-title">ER Diagram</span>
-                <span className="workspace-ready-action-description">
-                  Visualize tables and relationships without leaving the current workspace.
-                </span>
-              </div>
+              <span className="workspace-ready-action-description">
+                Visualize tables and relationships without leaving the current workspace.
+              </span>
               <div className="workspace-ready-action-foot">
                 <kbd className="kbd">Ctrl+E</kbd>
                 <span className="workspace-ready-action-link">Open diagram</span>
@@ -406,13 +449,11 @@ export function AppWorkspacePanel({
       case "er-diagram":
         return (
           <ErrorBoundary>
-            <Suspense fallback={<LazyPanelFallback />}>
-              <ERDiagram
-                key={tab.id}
-                connectionId={tab.connectionId}
-                database={tab.database}
-              />
-            </Suspense>
+            <ERDiagram
+              key={tab.id}
+              connectionId={tab.connectionId}
+              database={tab.database}
+            />
           </ErrorBoundary>
         );
       default:
@@ -424,19 +465,7 @@ export function AppWorkspacePanel({
     <div className="sidebar-rail">
       <button
         type="button"
-        className={`sidebar-rail-btn ${leftPanel === "connections" ? "active" : ""}`}
-        onClick={() => {
-          onSetIsSidebarCollapsed(false);
-          onSetLeftPanel("connections");
-        }}
-        title={t("sidebar.connections")}
-      >
-        <Cable className="w-4 h-4" />
-      </button>
-
-      <button
-        type="button"
-        className={`sidebar-rail-btn ${leftPanel === "database" ? "active" : ""}`}
+        className={`sidebar-rail-btn ${isDatabasePanelActive ? "active" : ""}`}
         onClick={() => {
           if (!isConnected) return;
           onHandleShowDatabaseWorkspace();
@@ -444,12 +473,12 @@ export function AppWorkspacePanel({
         title={t("sidebar.explorer")}
         disabled={!isConnected}
       >
-        <FolderTree className="w-4 h-4" />
+        <FolderTree className="w-3.5 h-3.5" />
       </button>
 
       <button
         type="button"
-        className={`sidebar-rail-btn ${leftPanel === "metrics" ? "active" : ""}`}
+        className={`sidebar-rail-btn ${isMetricsPanelActive ? "active" : ""}`}
         onClick={() => {
           if (!isConnected) return;
           onOpenMetricsBoard();
@@ -457,7 +486,17 @@ export function AppWorkspacePanel({
         title={t("sidebar.metrics")}
         disabled={!isConnected}
       >
-        <BarChart3 className="w-4 h-4" />
+        <BarChart3 className="w-3.5 h-3.5" />
+      </button>
+
+      <button
+        type="button"
+        className={`sidebar-rail-btn ${isERDiagramPanelActive ? "active" : ""}`}
+        onClick={handleOpenERDiagram}
+        title={t("sidebar.erd")}
+        disabled={!isConnected || !activeConn?.id}
+      >
+        <GitBranch className="w-3.5 h-3.5" />
       </button>
 
       <button
@@ -466,7 +505,7 @@ export function AppWorkspacePanel({
         onClick={() => onSetConnectionFormIntent("connect")}
         title={t("sidebar.newConnection")}
       >
-        <Plus className="w-4 h-4" />
+        <Plus className="w-3.5 h-3.5" />
       </button>
 
       <div className="sidebar-rail-spacer" />
@@ -477,7 +516,7 @@ export function AppWorkspacePanel({
         onClick={onToggleSidebar}
         title={t("sidebar.expandSidebar")}
       >
-        <PanelRightClose className="w-4 h-4 rotate-180" />
+        <PanelRightClose className="w-3.5 h-3.5 rotate-180" />
       </button>
     </div>
   );
@@ -496,55 +535,62 @@ export function AppWorkspacePanel({
 
       <div className="main-container">
         <aside
-          className={`sidebar ${isSidebarCollapsed ? "sidebar-collapsed" : ""}`}
-          style={{ width: isSidebarCollapsed ? 76 : sidebarWidth }}
+          className={`sidebar ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isERDiagramWorkspace ? "sidebar-er-focus" : ""}`}
+          style={{ width: isSidebarCollapsed ? 64 : isERDiagramWorkspace ? 72 : sidebarWidth }}
         >
           {isSidebarCollapsed ? (
             renderSidebarRail()
-          ) : leftPanel === "connections" ? (
-            <ConnectionList
-              onNewConnection={() => onOpenConnectionForm("connect")}
-            />
           ) : (
-            <div className="workspace-sidebar-shell">
+            <div className={`workspace-sidebar-shell ${isERDiagramWorkspace ? "workspace-sidebar-shell--rail-only" : ""}`}>
               <div className="workspace-sidebar-rail">
                 <button
                   type="button"
-                  className={`workspace-sidebar-rail-btn ${leftPanel === "database" ? "active" : ""}`}
+                  className={`workspace-sidebar-rail-btn ${isDatabasePanelActive ? "active" : ""}`}
                   onClick={onHandleShowDatabaseWorkspace}
                   title={t("sidebar.databaseExplorer")}
                 >
-                  <FolderTree className="w-4 h-4" />
+                  <FolderTree className="w-3.5 h-3.5" />
                   <span>{t("sidebar.dbShort")}</span>
                 </button>
                 <button
                   type="button"
-                  className={`workspace-sidebar-rail-btn ${leftPanel === "metrics" ? "active" : ""}`}
+                  className={`workspace-sidebar-rail-btn ${isERDiagramPanelActive ? "active" : ""}`}
+                  onClick={handleOpenERDiagram}
+                  title={t("sidebar.erdDiagram")}
+                >
+                  <GitBranch className="w-3.5 h-3.5" />
+                  <span>{t("sidebar.erdShort")}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`workspace-sidebar-rail-btn ${isMetricsPanelActive ? "active" : ""}`}
                   onClick={onOpenMetricsBoard}
                   title={t("sidebar.metricsBoards")}
                 >
-                  <BarChart3 className="w-4 h-4" />
+                  <BarChart3 className="w-3.5 h-3.5" />
                   <span>{t("sidebar.metricsShort")}</span>
                 </button>
               </div>
 
-              <div className="workspace-sidebar-panel">
-                <ErrorBoundary>
-                  {leftPanel === "metrics" ? (
-                    <MetricsSidebar
-                      connectionId={activeConn?.id || ""}
-                      database={currentDatabase || undefined}
-                    />
-                  ) : (
-                    <Sidebar />
-                  )}
-                </ErrorBoundary>
-              </div>
+              {!isERDiagramWorkspace && (
+                <div className="workspace-sidebar-panel">
+                  <ErrorBoundary>
+                    {leftPanel === "metrics" ? (
+                      <MetricsSidebar
+                        connectionId={activeConn?.id || ""}
+                        database={currentDatabase || undefined}
+                      />
+                    ) : (
+                      <Sidebar />
+                    )}
+                  </ErrorBoundary>
+                </div>
+              )}
             </div>
           )}
         </aside>
 
-        {!isSidebarCollapsed && (
+        {!isERDiagramWorkspace && !isSidebarCollapsed && (
           <div className="resize-handle" onMouseDown={onHandleMouseDown}>
             <div className="resize-handle-line" />
           </div>
@@ -557,7 +603,9 @@ export function AppWorkspacePanel({
                 <span className="workspace-toolbar-kicker">
                   {activeTab
                     ? activeTab.type === "query"
-                      ? t("workspace.kicker.sql")
+                      ? activeQueryProfile.surface === "command"
+                        ? t("workspace.kicker.command")
+                        : t("workspace.kicker.sql")
                       : activeTab.type === "table"
                         ? t("workspace.kicker.table")
                         : activeTab.type === "structure"
@@ -612,8 +660,16 @@ export function AppWorkspacePanel({
                       className="toolbar-btn primary"
                       title={t("toolbar.newQueryShortcut")}
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>{t("toolbar.newQuery")}</span>
+                      {workspaceQueryProfile.surface === "command" ? (
+                        <Terminal className="w-3.5 h-3.5" />
+                      ) : (
+                        <Plus className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {workspaceQueryProfile.surface === "command"
+                          ? t("workspace.ready.commandLink")
+                          : t("toolbar.newQuery")}
+                      </span>
                     </button>
                   )}
 
@@ -624,6 +680,14 @@ export function AppWorkspacePanel({
                       title={t("toolbar.refreshWorkspace")}
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      onClick={onToggleTerminalPanel}
+                      className={`toolbar-btn icon-only ${showTerminalPanel ? "is-active" : ""}`}
+                      title={terminalToggleTitle}
+                    >
+                      <Terminal className="w-3.5 h-3.5" />
                     </button>
 
                     <button
@@ -662,6 +726,11 @@ export function AppWorkspacePanel({
               </div>
             )}
           </div>
+
+          <TerminalDock
+            isOpen={showTerminalPanel}
+            onClose={onToggleTerminalPanel}
+          />
         </main>
       </div>
 
@@ -684,6 +753,7 @@ export function AppWorkspacePanel({
           <span className="statusbar-shortcuts">
             <kbd className="kbd">Ctrl+N</kbd>
             <kbd className="kbd">Ctrl+B</kbd>
+            <kbd className="kbd">Ctrl+`</kbd>
             <kbd className="kbd">Ctrl+Shift+P</kbd>
           </span>
           <span>TableR v0.1.0</span>

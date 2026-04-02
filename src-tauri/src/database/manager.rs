@@ -1,10 +1,17 @@
 use super::driver::DatabaseDriver;
+use super::cassandra::CassandraDriver;
+use super::bigquery::BigQueryDriver;
 use super::clickhouse::ClickHouseDriver;
+use super::cloudflare_d1::CloudflareD1Driver;
+use super::duckdb::DuckDbDriver;
 use super::libsql::LibSqlDriver;
+use super::mongodb::MongoDbDriver;
 use super::mssql::MssqlDriver;
 use super::models::*;
 use super::mysql::MySqlDriver;
 use super::postgres::PostgresDriver;
+use super::redis::RedisDriver;
+use super::snowflake::SnowflakeDriver;
 use super::sqlite::SqliteDriver;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -42,6 +49,15 @@ impl DatabaseManager {
                 let path = config.file_path.as_deref().unwrap_or(":memory:");
                 Box::new(SqliteDriver::connect(path).await?)
             }
+            DatabaseType::DuckDB => {
+                Box::new(DuckDbDriver::connect(config).await?)
+            }
+            DatabaseType::Cassandra => {
+                Box::new(CassandraDriver::connect(config).await?)
+            }
+            DatabaseType::Snowflake => {
+                Box::new(SnowflakeDriver::connect(config).await?)
+            }
             DatabaseType::MSSQL => {
                 Box::new(MssqlDriver::connect(config).await?)
             }
@@ -51,11 +67,17 @@ impl DatabaseManager {
             DatabaseType::ClickHouse => {
                 Box::new(ClickHouseDriver::connect(config).await?)
             }
-            _ => {
-                return Err(anyhow!(
-                    "{:?} connections are not implemented in this build yet.",
-                    config.db_type
-                ));
+            DatabaseType::BigQuery => {
+                Box::new(BigQueryDriver::connect(config).await?)
+            }
+            DatabaseType::CloudflareD1 => {
+                Box::new(CloudflareD1Driver::connect(config).await?)
+            }
+            DatabaseType::Redis => {
+                Box::new(RedisDriver::connect(config).await?)
+            }
+            DatabaseType::MongoDB => {
+                Box::new(MongoDbDriver::connect(config).await?)
             }
         };
 

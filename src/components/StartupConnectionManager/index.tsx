@@ -245,7 +245,7 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
       <div className="startup-manager-modal">
         <div className="startup-manager-topbar">
           <div className="startup-manager-topbar-brand">
-            <Database className="w-4 h-4 text-[var(--accent)]" />
+            <Database className="startup-manager-topbar-icon w-4 h-4" />
             <span>TabLer</span>
           </div>
           {windowControls ? <div className="startup-manager-controls">{windowControls}</div> : null}

@@ -1056,36 +1056,34 @@ export function DataGrid({
 
   if (!data && !isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-[var(--text-muted)] select-none">
+      <div className="datagrid-blank-state">
         <Copy className="w-10 h-10 mb-3 opacity-20" />
-        <p className="text-sm opacity-70">Select a table or run a query</p>
+        <p className="datagrid-blank-state-copy">Select a table or run a query</p>
       </div>
     );
   }
 
   return (
     <div className={`datagrid-shell ${externalResult ? "" : "compact"}`}>
-      {tableName && (
-        <DataGridToolbar
-          tableName={tableName}
-          externalResult={externalResult}
-          columnCount={columnCount}
-          visibleRowCount={visibleRowCount}
-          sortColumn={sortColumn}
-          sortDir={sortDir}
-          selectedRowCount={selectedRowCount}
-          isDeletingRows={isDeletingRows}
-          handleDeleteSelectedRows={handleDeleteSelectedRows}
-          handleInsertRow={handleInsertRow}
-          handleCopyAsInsert={handleCopyAsInsert}
-          handleCopyAsUpdate={handleCopyAsUpdate}
-          isTableEditable={isTableEditable}
-          structureStatus={structureStatus}
-          resolvedColumns={resolvedColumns}
-          dataRows={tableData}
-          undoableChanges={undoableChanges}
-        />
-      )}
+      <DataGridToolbar
+        tableName={tableName}
+        externalResult={externalResult}
+        columnCount={columnCount}
+        visibleRowCount={visibleRowCount}
+        sortColumn={sortColumn}
+        sortDir={sortDir}
+        selectedRowCount={selectedRowCount}
+        isDeletingRows={isDeletingRows}
+        handleDeleteSelectedRows={handleDeleteSelectedRows}
+        handleInsertRow={handleInsertRow}
+        handleCopyAsInsert={handleCopyAsInsert}
+        handleCopyAsUpdate={handleCopyAsUpdate}
+        isTableEditable={isTableEditable}
+        structureStatus={structureStatus}
+        resolvedColumns={resolvedColumns}
+        dataRows={tableData}
+        undoableChanges={undoableChanges}
+      />
 
       <div className="datagrid-table-wrap">
         {isQueryResultTruncated && (

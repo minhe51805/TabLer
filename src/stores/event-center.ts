@@ -51,6 +51,9 @@ export type EventMap = {
   "metrics-widget-update": { boardId: string; widgetId: string; query?: string };
   "metrics-board-save": { boardId: string };
 
+  // Query history events
+  "query-history-updated": { connectionId?: string };
+
   // App lifecycle
   "app-ready": void;
   "app-panic": { error: string; stack?: string };

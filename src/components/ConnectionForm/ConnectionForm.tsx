@@ -3,8 +3,17 @@ import { useAppStore } from "../../stores/appStore";
 import { useI18n } from "../../i18n";
 import type { ConnectionConfig, DatabaseType } from "../../types";
 import { splitSqlStatements } from "../../utils/sqlStatements";
-import { ConnectionPickerStep, ALL_DATABASES, type DbEntry, LOCAL_BOOTSTRAP_READY } from "./steps/ConnectionPickerStep";
+import { ConnectionPickerStep } from "./steps/ConnectionPickerStep";
 import { ConnectionDetailsStep, type DetailsStrings } from "./steps/ConnectionDetailsStep";
+import {
+  ALL_DATABASES,
+  DEFAULT_BOOTSTRAP_ENGINE,
+  DEFAULT_CONNECT_ENGINE,
+  LOCAL_BOOTSTRAP_READY,
+  getDatabaseEngine,
+  getSuggestedUsernamePlaceholder,
+  type DbEntry,
+} from "./engine-registry";
 
 interface PickerSection {
   key: string;
@@ -82,6 +91,24 @@ function isLocalHost(host?: string) {
   return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1" || normalized === "[::1]";
 }
 
+function createConnectionDraft(dbType: DatabaseType): ConnectionConfig {
+  const engine = getDatabaseEngine(dbType);
+
+  return {
+    id: crypto.randomUUID(),
+    name: "",
+    db_type: dbType,
+    host: engine?.connectionMode === "network" ? (engine.defaultHost ?? "") : "",
+    port: engine?.defaultPort,
+    username: "",
+    database: "",
+    file_path: "",
+    use_ssl: false,
+    color: COLORS[0],
+    additional_fields: {},
+  };
+}
+
 export function ConnectionForm({
   onClose,
   editConnection,
@@ -104,22 +131,13 @@ export function ConnectionForm({
   const [pickerSearch, setPickerSearch] = useState("");
   const [selectedDb, setSelectedDb] = useState<DbEntry | null>(
     editConnection
-      ? ALL_DATABASES.find((d) => d.key === editConnection.db_type) || null
+      ? getDatabaseEngine(editConnection.db_type)
       : null,
   );
   const [formData, setFormData] = useState<ConnectionConfig>(
-    editConnection ? { ...editConnection, password: undefined } : {
-      id: crypto.randomUUID(),
-      name: "",
-      db_type: initialIntent === "bootstrap" ? "postgresql" : "mysql",
-      host: "127.0.0.1",
-      port: initialIntent === "bootstrap" ? 5432 : 3306,
-      username: "",
-      database: "",
-      file_path: "",
-      use_ssl: false,
-      color: COLORS[0],
-    },
+    editConnection
+      ? { ...editConnection, password: undefined }
+      : createConnectionDraft(initialIntent === "bootstrap" ? DEFAULT_BOOTSTRAP_ENGINE : DEFAULT_CONNECT_ENGINE),
   );
   const passwordDraftRef = useRef(editConnection?.password || "");
   const [showPassword, setShowPassword] = useState(false);
@@ -135,29 +153,33 @@ export function ConnectionForm({
 
   // --- Derived ---
   const bootstrapMode = !editConnection && intentMode === "bootstrap";
+  const currentEngine = getDatabaseEngine(formData.db_type) ?? selectedDb;
   const isSqlite = formData.db_type === "sqlite";
-  const isLocalBootstrapReady = LOCAL_BOOTSTRAP_READY.has(formData.db_type);
+  const isFileEngine = currentEngine?.connectionMode === "file";
   const supportsLocalBootstrap =
-    (formData.db_type === "postgresql" || formData.db_type === "mysql" || formData.db_type === "mariadb") &&
-    isLocalHost(formData.host);
+    !!currentEngine &&
+    currentEngine.localBootstrap === "ready" &&
+    (currentEngine.connectionMode === "file" || isLocalHost(formData.host));
+  const showBootstrapWorkflow = supportsLocalBootstrap || isSqlite;
+  const showUsernameField = (currentEngine?.usernameMode ?? "required") !== "hidden";
+  const showPasswordField = (currentEngine?.passwordMode ?? "optional") !== "hidden";
+  const showDatabaseField = (currentEngine?.databaseMode ?? "optional") !== "hidden";
+  const showSslToggle = !!currentEngine?.supportsSsl;
+  const engineExtraFields = currentEngine?.extraFields ?? [];
+  const additionalFields = formData.additional_fields ?? {};
   const hasBootstrapDatabaseName = !!formData.database?.trim();
   const isBootstrappingWorkspace = isCreatingDatabase || isConnecting;
   const sqliteDatabaseName = (formData.database || "").trim() || (formData.name || "").trim() || "local-database";
   const supportedCount = ALL_DATABASES.filter((db) => db.supported).length;
   const roadmapCount = ALL_DATABASES.length - supportedCount;
   const localRoadmapCount = ALL_DATABASES.filter(
-    (db) => !LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType),
+    (db) => !LOCAL_BOOTSTRAP_READY.has(db.key),
   ).length;
 
-  const suggestedUsernamePlaceholder =
-    selectedDb?.key === "postgresql" ||
-    selectedDb?.key === "cockroachdb" ||
-    selectedDb?.key === "greenplum" ||
-    selectedDb?.key === "redshift"
-      ? "postgres"
-      : selectedDb?.key === "mysql" || selectedDb?.key === "mariadb"
-        ? "root"
-        : "db_user";
+  const suggestedUsernamePlaceholder = getSuggestedUsernamePlaceholder(selectedDb?.key || formData.db_type);
+  const hostPlaceholder = currentEngine?.hostPlaceholder || "127.0.0.1";
+  const portPlaceholder = currentEngine?.defaultPort ? String(currentEngine.defaultPort) : "";
+  const databasePlaceholder = currentEngine?.databasePlaceholder || "my_database";
 
   const connectionTitle = editConnection
     ? language === "vi" ? "Sửa kết nối" : "Edit connection"
@@ -255,12 +277,16 @@ export function ConnectionForm({
         username: "Tên người dùng",
         password: "Mật khẩu",
         enterPassword: "Nhập mật khẩu",
+        authToken: "Auth token",
+        enterAuthToken: "Nhập auth token",
         optional: "tùy chọn",
         localHostDetectedNamed: "Đã phát hiện host local. Tạo cơ sở dữ liệu này và vào workspace ngay.",
         localHostDetectedBlank: "Đã phát hiện host local. Hãy nhập tên cơ sở dữ liệu để bật create-and-open bootstrap.",
         engineNotLocalBootstrap: "Engine này chưa được nối cho local bootstrap trong TableR.",
         useSsl: "Dùng SSL/TLS",
         useSslNote: "Khuyên dùng cho các cơ sở dữ liệu cloud như Supabase, Neon, và PostgreSQL managed.",
+        engineFields: "Field riêng theo engine",
+        engineFieldsCopy: "Các field này phản ánh cách engine đó thường được cấu hình trong workflow kết nối thực tế.",
         bootstrap: "Bootstrap",
         starterSchemaSeedSql: "Schema khởi đầu và seed SQL",
         starterSchemaSeedSqlCopy: "Tùy chọn. Nạp trước schema khởi đầu, import tệp .sql local, hoặc dán thêm seed SQL trước khi workspace mở.",
@@ -352,6 +378,8 @@ export function ConnectionForm({
       username: "Username",
       password: "Password",
       enterPassword: "Enter password",
+      authToken: "Auth token",
+      enterAuthToken: "Enter auth token",
       optional: "optional",
       databaseOptional: "Database",
       localHostDetectedNamed: "Local host detected. Create this database and jump straight into the workspace.",
@@ -359,6 +387,8 @@ export function ConnectionForm({
       engineNotLocalBootstrap: "This engine is not wired for local bootstrap yet in TableR.",
       useSsl: "Use SSL/TLS",
       useSslNote: "Recommended for cloud databases like Supabase, Neon, and managed PostgreSQL.",
+      engineFields: "Engine-specific fields",
+      engineFieldsCopy: "These fields mirror the extra connection metadata commonly required by this engine.",
       bootstrap: "Bootstrap",
       starterSchemaSeedSql: "Starter schema and seed SQL",
       starterSchemaSeedSqlCopy: "Optional. Preload a starter schema, import a local .sql file, or paste seed SQL.",
@@ -377,6 +407,9 @@ export function ConnectionForm({
     };
   }, [language, sqliteDatabaseName, t]);
 
+  const passwordLabel = currentEngine?.passwordKind === "token" ? copy.authToken : copy.password;
+  const passwordPlaceholder = currentEngine?.passwordKind === "token" ? copy.enterAuthToken : copy.enterPassword;
+
   const bootstrapPresetLabels = useMemo(
     () => ({
       none: copy.emptyDatabase,
@@ -392,6 +425,17 @@ export function ConnectionForm({
     setTestResult(null);
   };
 
+  const updateAdditionalField = (key: string, value: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      additional_fields: {
+        ...(prev.additional_fields ?? {}),
+        [key]: value,
+      },
+    }));
+    setTestResult(null);
+  };
+
   const handleSelectDb = (db: DbEntry) => setSelectedDb(db);
 
   const handleSwitchIntent = (nextIntent: "connect" | "bootstrap") => {
@@ -402,17 +446,33 @@ export function ConnectionForm({
   };
 
   const handleContinueFromPicker = (db: DbEntry) => {
-    if (bootstrapMode && !LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)) return;
+    if (bootstrapMode && !LOCAL_BOOTSTRAP_READY.has(db.key)) return;
 
-    setFormData((prev) => ({
-      ...prev,
-      db_type: db.key as DatabaseType,
-      port: db.defaultPort || prev.port,
-      database: bootstrapMode && db.key === "sqlite"
-        ? prev.database || prev.name || "local-database"
-        : prev.database,
-      username: db.key === "sqlite" ? prev.username : "",
-    }));
+    passwordDraftRef.current = "";
+    setFormData((prev) => {
+      const switchedEngine = prev.db_type !== db.key;
+      return {
+        ...prev,
+        db_type: db.key,
+        host: db.connectionMode === "network"
+          ? (switchedEngine ? (db.defaultHost ?? "") : (prev.host ?? db.defaultHost ?? ""))
+          : "",
+        port: db.defaultPort,
+        database: db.databaseMode === "hidden"
+          ? ""
+          : bootstrapMode && db.connectionMode === "file"
+            ? prev.database || prev.name || "local-database"
+            : prev.database,
+        username: db.usernameMode === "hidden"
+          ? ""
+          : switchedEngine
+            ? ""
+            : prev.username,
+        file_path: db.connectionMode === "file" ? prev.file_path : "",
+        use_ssl: db.supportsSsl ? prev.use_ssl : false,
+        additional_fields: switchedEngine ? {} : (prev.additional_fields ?? {}),
+      };
+    });
     setStep("form");
   };
 
@@ -427,8 +487,8 @@ export function ConnectionForm({
       const msg = await testConnection({
         ...formData,
         database: isSqlite && bootstrapMode ? sqliteDatabaseName : formData.database,
-        file_path: isSqlite ? resolvedSqlitePath : formData.file_path,
-        password: isSqlite ? undefined : passwordDraftRef.current,
+        file_path: isFileEngine ? resolvedSqlitePath : formData.file_path,
+        password: showPasswordField ? passwordDraftRef.current : undefined,
       });
       setTestResult({ success: true, message: msg });
     } catch (e) {
@@ -441,7 +501,7 @@ export function ConnectionForm({
     try {
       await connectToDatabase({
         ...formData,
-        password: isSqlite ? undefined : passwordDraftRef.current,
+        password: showPasswordField ? passwordDraftRef.current : undefined,
       });
       passwordDraftRef.current = "";
       onClose();
@@ -499,7 +559,7 @@ export function ConnectionForm({
         ...formData,
         name: formData.name.trim() || `${selectedDb?.label || formData.db_type} ${requestedDatabase}`,
         database: requestedDatabase,
-        password: isSqlite ? undefined : passwordDraftRef.current,
+        password: showPasswordField ? passwordDraftRef.current : undefined,
       };
       const message = await createLocalDatabase(bootstrapConfig, requestedDatabase, bootstrapStatements);
       setTestResult({ success: true, message: language === "vi" ? `${message} Đang kết nối tới ${requestedDatabase}...` : `${message} Connecting to ${requestedDatabase}...` });
@@ -530,7 +590,10 @@ export function ConnectionForm({
 
   // --- Picker computed values ---
   const filteredDbs = pickerSearch
-    ? ALL_DATABASES.filter((d) => d.label.toLowerCase().includes(pickerSearch.toLowerCase()))
+    ? ALL_DATABASES.filter((d) =>
+      d.label.toLowerCase().includes(pickerSearch.toLowerCase()) ||
+      d.key.toLowerCase().includes(pickerSearch.toLowerCase()),
+    )
     : ALL_DATABASES;
 
   const pickerSections = useMemo<PickerSection[]>(() => {
@@ -541,8 +604,8 @@ export function ConnectionForm({
       ].filter((s) => s.items.length > 0);
     }
     return [
-      { key: "local-ready", title: copy.localReady, caption: copy.localReadyCaption, items: filteredDbs.filter((db) => LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)) },
-      { key: "local-roadmap", title: copy.localRoadmap, caption: copy.localRoadmapCaption, items: filteredDbs.filter((db) => !LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)) },
+      { key: "local-ready", title: copy.localReady, caption: copy.localReadyCaption, items: filteredDbs.filter((db) => LOCAL_BOOTSTRAP_READY.has(db.key)) },
+      { key: "local-roadmap", title: copy.localRoadmap, caption: copy.localRoadmapCaption, items: filteredDbs.filter((db) => !LOCAL_BOOTSTRAP_READY.has(db.key)) },
     ].filter((s) => s.items.length > 0);
   }, [bootstrapMode, copy, filteredDbs]);
 
@@ -665,6 +728,8 @@ export function ConnectionForm({
     engineNotLocalBootstrap: copy.engineNotLocalBootstrap,
     useSsl: copy.useSsl,
     useSslNote: copy.useSslNote,
+    engineFields: copy.engineFields,
+    engineFieldsCopy: copy.engineFieldsCopy,
     bootstrap: copy.bootstrap,
     starterSchemaSeedSql: copy.starterSchemaSeedSql,
     starterSchemaSeedSqlCopy: copy.starterSchemaSeedSqlCopy,
@@ -721,28 +786,39 @@ export function ConnectionForm({
       bootstrapMode={bootstrapMode}
       formData={formData}
       selectedDb={selectedDb}
-      isSqlite={isSqlite}
-      isLocalBootstrapReady={isLocalBootstrapReady}
+      isFileEngine={!!isFileEngine}
       supportsLocalBootstrap={supportsLocalBootstrap}
+      showBootstrapWorkflow={showBootstrapWorkflow}
       hasBootstrapDatabaseName={hasBootstrapDatabaseName}
       showPassword={showPassword}
+      showUsernameField={showUsernameField}
+      showPasswordField={showPasswordField}
+      showDatabaseField={showDatabaseField}
+      showSslToggle={showSslToggle}
       showSqliteAdvancedPath={showSqliteAdvancedPath}
       sqlitePathTouched={sqlitePathTouched}
       bootstrapPreset={bootstrapPreset}
       bootstrapPresetLabels={bootstrapPresetLabels}
       bootstrapSql={bootstrapSql}
       bootstrapFileName={bootstrapFileName}
+      engineExtraFields={engineExtraFields}
       suggestedUsernamePlaceholder={suggestedUsernamePlaceholder}
+      hostPlaceholder={hostPlaceholder}
+      portPlaceholder={portPlaceholder}
+      databasePlaceholder={databasePlaceholder}
+      passwordLabel={passwordLabel}
+      passwordPlaceholder={passwordPlaceholder}
+      additionalFields={additionalFields}
       connectionTitle={connectionTitle}
       testResult={testResult}
       isTesting={isTesting}
       isConnecting={isConnecting}
-      isCreatingDatabase={isCreatingDatabase}
       isBootstrappingWorkspace={isBootstrappingWorkspace}
       strings={detailsStrings}
       passwordDraftRef={passwordDraftRef}
       bootstrapFileInputRef={bootstrapFileInputRef}
       onFieldChange={updateField}
+      onAdditionalFieldChange={updateAdditionalField}
       onTogglePasswordVisibility={() => setShowPassword((v) => !v)}
       onPasswordChange={(v) => { passwordDraftRef.current = v; }}
       onBack={() => setStep("pick")}

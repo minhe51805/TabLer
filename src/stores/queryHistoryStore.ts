@@ -1,12 +1,16 @@
 import { create } from "zustand";
 import { invokeMutation } from "../utils/tauri-utils";
 import type { QueryHistoryEntry } from "../types";
+import { EventCenter } from "./event-center";
 
 interface QueryHistoryState {
   entries: QueryHistoryEntry[];
   isLoading: boolean;
 
   loadHistory: (connectionId?: string, search?: string, limit?: number) => Promise<void>;
+  deleteEntry: (entryId: number, connectionId?: string) => Promise<void>;
+  deleteEntries: (entryIds: number[], connectionId?: string) => Promise<number>;
+  clearHistory: (connectionId?: string) => Promise<number>;
   saveEntry: (
     query: string,
     connectionId: string,
@@ -19,7 +23,7 @@ interface QueryHistoryState {
 
 const DEFAULT_LIMIT = 500;
 
-export const useQueryHistoryStore = create<QueryHistoryState>((set) => ({
+export const useQueryHistoryStore = create<QueryHistoryState>((set, get) => ({
   entries: [],
   isLoading: false,
 
@@ -38,6 +42,44 @@ export const useQueryHistoryStore = create<QueryHistoryState>((set) => ({
     }
   },
 
+  deleteEntry: async (entryId, connectionId) => {
+    await get().deleteEntries([entryId], connectionId);
+  },
+
+  deleteEntries: async (entryIds, connectionId) => {
+    if (!entryIds.length) return 0;
+    try {
+      const removed = await invokeMutation<number>("delete_query_history_entries", { entryIds });
+      if (removed <= 0) return 0;
+      EventCenter.emit("query-history-updated", { connectionId });
+      set((state) => ({
+        entries: state.entries.filter((entry) => !(typeof entry.id === "number" && entryIds.includes(entry.id))),
+      }));
+      return removed;
+    } catch (e) {
+      console.error("Failed to delete query history entries:", e);
+      return 0;
+    }
+  },
+
+  clearHistory: async (connectionId) => {
+    try {
+      const removed = await invokeMutation<number>("clear_query_history", {
+        connectionId: connectionId ?? null,
+      });
+      EventCenter.emit("query-history-updated", { connectionId });
+      set((state) => ({
+        entries: connectionId
+          ? state.entries.filter((entry) => entry.connection_id !== connectionId)
+          : [],
+      }));
+      return removed;
+    } catch (e) {
+      console.error("Failed to clear query history:", e);
+      return 0;
+    }
+  },
+
   saveEntry: async (query, connectionId, duration, rowCount, error, database) => {
     try {
       const entry: QueryHistoryEntry = {
@@ -49,7 +91,14 @@ export const useQueryHistoryStore = create<QueryHistoryState>((set) => ({
         error: error ?? undefined,
         database: database ?? undefined,
       };
-      await invokeMutation<number>("save_query_history", { entry });
+      const id = await invokeMutation<number>("save_query_history", { entry });
+      EventCenter.emit("query-history-updated", { connectionId });
+      set((state) => ({
+        entries: [
+          { ...entry, id },
+          ...state.entries.filter((existing) => existing.id !== id),
+        ],
+      }));
     } catch (e) {
       console.error("Failed to save query history entry:", e);
     }

@@ -10,6 +10,9 @@ const connectionSignature = (c: ConnectionConfig) =>
     (c.username || "").trim(),
     (c.database || "").trim().toLowerCase(),
     (c.file_path || "").trim().toLowerCase(),
+    JSON.stringify(
+      Object.entries(c.additional_fields ?? {}).sort(([left], [right]) => left.localeCompare(right))
+    ),
   ].join("|");
 
 const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig => ({
@@ -21,14 +24,14 @@ export function deriveConnectionName(config: ConnectionConfig): string {
   const explicitName = config.name.trim();
   if (explicitName) return explicitName;
 
-  if (config.db_type === "sqlite") {
+  if (config.db_type === "sqlite" || config.db_type === "duckdb") {
     const filePath = (config.file_path || "").trim();
     if (filePath) {
       const normalizedPath = filePath.replace(/\\/g, "/");
       const fileName = normalizedPath.split("/").filter(Boolean).pop() || filePath;
-      return `SQLite ${fileName}`;
+      return `${config.db_type === "duckdb" ? "DuckDB" : "SQLite"} ${fileName}`;
     }
-    return "SQLite local";
+    return config.db_type === "duckdb" ? "DuckDB local" : "SQLite local";
   }
 
   const host = (config.host || "").trim();

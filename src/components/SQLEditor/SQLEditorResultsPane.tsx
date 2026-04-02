@@ -1,57 +1,102 @@
-import { AlertCircle, Terminal } from "lucide-react";
+import { AlertCircle, Terminal, X } from "lucide-react";
 import { DataGrid } from "../DataGrid";
 import type { QueryResult } from "../../types";
+import { useI18n } from "../../i18n";
 
 interface SQLEditorResultsPaneProps {
   error: string | null;
+  notice: string | null;
   result: QueryResult | null;
   connectionId: string;
   showResultsPane: boolean;
   splitRef: React.RefObject<HTMLDivElement | null>;
   onSplitDrag: (e: React.MouseEvent) => void;
+  onToggleResultsPane: () => void;
 }
 
 export function SQLEditorResultsPane({
   error,
+  notice,
   result,
   connectionId,
   showResultsPane,
   splitRef,
   onSplitDrag,
+  onToggleResultsPane,
 }: SQLEditorResultsPaneProps) {
+  const { t } = useI18n();
+
   if (!showResultsPane) return null;
 
   return (
     <>
       <div
         ref={splitRef}
-        className="h-[6px] flex-shrink-0 cursor-row-resize group flex items-center justify-center bg-[rgba(255,255,255,0.02)] border-y border-[var(--border-color)] hover:bg-[var(--accent-dim)] transition-colors"
+        className="sql-results-resize"
         onMouseDown={onSplitDrag}
       >
-        <div className="w-9 h-[2px] rounded-md bg-[var(--text-muted)]/30 group-hover:bg-[var(--accent)]/60 transition-colors" />
+        <div className="sql-results-resize-grip" />
       </div>
 
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {error ? (
-          <div className="flex items-start gap-3 p-4 m-3 bg-[var(--error)]/10 border border-[var(--error)]/30 rounded-md">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-[var(--error)]" />
-            <div>
-              <p className="font-semibold text-[13px] text-[var(--error)]">Query Error</p>
-              <pre className="text-[12px] mt-1.5 text-[var(--text-secondary)] whitespace-pre-wrap font-mono leading-relaxed">
-                {error}
-              </pre>
+      <div className="sql-results-shell">
+        <div className="sql-results-header">
+          <div className="sql-results-header-meta">
+            <Terminal className="w-3.5 h-3.5 text-[var(--fintech-green)]" />
+            <span>{t("tabs.results")}</span>
+            <kbd className="kbd">Ctrl+Shift+`</kbd>
+          </div>
+
+          <button
+            type="button"
+            onClick={onToggleResultsPane}
+            title={t("tabs.hideResults")}
+            aria-label={t("tabs.hideResults")}
+            className="sql-results-close"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        <div className="sql-results-body">
+          {error ? (
+            <div className="sql-results-message is-error">
+              <AlertCircle className="sql-results-message-icon h-4 w-4 shrink-0" />
+              <div>
+                <p className="sql-results-message-title">Execution Error</p>
+                <pre className="sql-results-message-body sql-results-message-code">
+                  {error}
+                </pre>
+              </div>
             </div>
-          </div>
-        ) : result ? (
-          <DataGrid connectionId={connectionId} queryResult={result} />
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-[var(--text-secondary)] select-none gap-2">
-            <Terminal className="w-8 h-8 opacity-40 text-[var(--accent)]" />
-            <p className="text-[12px] opacity-95">
-              Press <kbd className="px-1.5 py-0.5 mx-0.5 rounded-md bg-[var(--bg-surface)] border border-[var(--border-color)] text-[11px] font-mono">Ctrl+Enter</kbd> to execute
-            </p>
-          </div>
-        )}
+          ) : notice ? (
+            <div className="sql-results-message">
+              <Terminal className="sql-results-message-icon h-4 w-4 shrink-0" />
+              <div>
+                <p className="sql-results-message-title">{t("tabs.results")}</p>
+                <p className="sql-results-message-body">
+                  {notice}
+                </p>
+              </div>
+            </div>
+          ) : result ? (
+            <DataGrid connectionId={connectionId} queryResult={result} />
+          ) : (
+            <div className="sql-results-empty">
+              <Terminal className="h-8 w-8 text-[var(--fintech-green)] opacity-50" />
+              <p className="sql-results-empty-copy">
+                {t("tabs.readyToExecute")}
+              </p>
+              <button
+                type="button"
+                onClick={onToggleResultsPane}
+                className="sql-results-empty-action"
+              >
+                <X className="w-3 h-3" />
+                <span>{t("tabs.hideResults")}</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </>
   );

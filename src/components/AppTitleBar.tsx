@@ -2,6 +2,7 @@ import {
   Database,
   Menu,
   Minus,
+  Plus,
   Copy,
   Square,
   X,
@@ -12,6 +13,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { RefObject } from "react";
 import type { ConnectionConfig } from "../types/database";
+import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 
 type WindowMenuSectionKey =
   | "file"
@@ -33,6 +35,14 @@ interface WindowMenuItem {
   selected?: boolean;
   shortcut?: string;
   children?: WindowMenuItem[];
+  controlType?: "font-scale-slider";
+  value?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  onValueChange?: (next: number) => void;
+  onDecrease?: () => void;
+  onIncrease?: () => void;
 }
 
 interface AppTitleBarProps {
@@ -93,6 +103,10 @@ function renderWindowMenuPopover(
               className={`titlebar-window-menu-section-item ${
                 activeWindowMenuSection === section.key ? "active" : ""
               }`}
+              onClick={() => {
+                onSetActiveWindowMenuSection(section.key);
+                onSetActiveWindowMenuItemPath(null);
+              }}
             >
               <span>{section.label}</span>
               <ChevronRight className="w-3.5 h-3.5" />
@@ -111,6 +125,76 @@ function renderWindowMenuPopover(
                       key={`${section.key}-divider-${index}`}
                       className="titlebar-window-menu-divider"
                     />
+                  ) : item.controlType === "font-scale-slider" ? (
+                    <div
+                      key={`${section.key}-${item.key || item.label}-${index}`}
+                      className="titlebar-window-menu-slider"
+                      data-no-window-drag="true"
+                      onMouseEnter={() => onSetActiveWindowMenuItemPath(null)}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                      }}
+                    >
+                      <div className="titlebar-window-menu-slider-head">
+                        <span className="titlebar-window-menu-slider-label">{item.label}</span>
+                        <span className="titlebar-window-menu-slider-value">
+                          {item.value ?? 100}%
+                        </span>
+                      </div>
+                      <div className="titlebar-window-menu-slider-controls">
+                        <button
+                          type="button"
+                          className="titlebar-window-menu-slider-btn"
+                          title={t("menu.item.decreaseFontSize")}
+                          aria-label={t("menu.item.decreaseFontSize")}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={() => item.onDecrease?.()}
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <input
+                          type="range"
+                          className="titlebar-window-menu-slider-input"
+                          min={item.min ?? UI_FONT_SCALE_MIN}
+                          max={item.max ?? UI_FONT_SCALE_MAX}
+                          step={item.step ?? UI_FONT_SCALE_STEP}
+                          value={item.value ?? 100}
+                          aria-label={item.label}
+                          style={{
+                            background: `linear-gradient(90deg, var(--accent) 0%, var(--accent) ${
+                              (((item.value ?? 100) - (item.min ?? UI_FONT_SCALE_MIN)) /
+                                Math.max(1, (item.max ?? UI_FONT_SCALE_MAX) - (item.min ?? UI_FONT_SCALE_MIN))) *
+                              100
+                            }%, rgba(255, 255, 255, 0.1) ${
+                              (((item.value ?? 100) - (item.min ?? UI_FONT_SCALE_MIN)) /
+                                Math.max(1, (item.max ?? UI_FONT_SCALE_MAX) - (item.min ?? UI_FONT_SCALE_MIN))) *
+                              100
+                            }%, rgba(255, 255, 255, 0.1) 100%)`,
+                          }}
+                          onMouseDown={(event) => {
+                            event.stopPropagation();
+                          }}
+                          onChange={(event) => item.onValueChange?.(Number(event.target.value))}
+                        />
+                        <button
+                          type="button"
+                          className="titlebar-window-menu-slider-btn"
+                          title={t("menu.item.increaseFontSize")}
+                          aria-label={t("menu.item.increaseFontSize")}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={() => item.onIncrease?.()}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
                   ) : (
                     <div
                       key={`${section.key}-${item.key || item.label}-${index}`}
@@ -131,7 +215,17 @@ function renderWindowMenuPopover(
                         className={`titlebar-window-menu-item ${item.selected ? "selected" : ""} ${
                           item.children ? "has-children" : ""
                         }`}
-                        onClick={item.children ? undefined : item.action}
+                        onClick={() => {
+                          if (item.children) {
+                            const path = `${section.key}:${item.key || index}`;
+                            onSetActiveWindowMenuItemPath(
+                              activeWindowMenuItemPath === path ? null : path,
+                            );
+                            return;
+                          }
+
+                          item.action?.();
+                        }}
                         disabled={item.disabled}
                       >
                         <span>{item.label}</span>
@@ -312,7 +406,7 @@ export function AppTitleBar({
         onDoubleClick={onToggleMaximizeWindow}
       >
         <div className="titlebar-brand">
-          <Database className="w-4 h-4 text-[var(--accent)]" />
+          <Database className="titlebar-brand-icon w-4 h-4" />
           <span className="titlebar-name">TableR</span>
         </div>
 

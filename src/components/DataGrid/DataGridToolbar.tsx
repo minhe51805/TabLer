@@ -1,4 +1,4 @@
-import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen } from "lucide-react";
+import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal } from "lucide-react";
 import { exportToCSV, exportToJSON } from "../../utils/export-utils";
 import type { ResolvedColumn } from "./hooks/useDataGrid";
 
@@ -87,9 +87,13 @@ export function DataGridToolbar({
   return (
     <div className="datagrid-topbar">
       <div className="datagrid-topbar-copy">
-        <span className="datagrid-topbar-kicker">{tableName ? "Table Data" : "Query Result"}</span>
+        <span className="datagrid-topbar-kicker">{tableName ? "Workspace Data" : "Execution Result"}</span>
         <div className="datagrid-topbar-title-row">
-          <Database className="w-4 h-4 text-[var(--accent-hover)]" />
+          {tableName ? (
+            <Database className="w-4 h-4 text-[var(--fintech-green)]" />
+          ) : (
+            <Terminal className="w-4 h-4 text-[var(--fintech-cyan)]" />
+          )}
           <h3 className="datagrid-topbar-title">{dataViewTitle}</h3>
         </div>
         <p className="datagrid-topbar-subtitle" title={dataViewSubtitle}>
@@ -124,7 +128,7 @@ export function DataGridToolbar({
             </span>
           )}
 
-          {selectedRowCount > 0 && (
+          {selectedRowCount > 0 && tableName && (
             <>
               <span
                 className="popover-container"
@@ -158,7 +162,7 @@ export function DataGridToolbar({
             </>
           )}
 
-          {undoableChanges > 0 && (
+          {undoableChanges > 0 && tableName && (
             <>
               <button
                 type="button"
@@ -213,7 +217,7 @@ export function DataGridToolbar({
             </button>
           </span>
 
-          {selectedRowCount > 0 && (
+          {selectedRowCount > 0 && tableName && (
             <span
               className="popover-container"
               data-popover={`Delete ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""}`}

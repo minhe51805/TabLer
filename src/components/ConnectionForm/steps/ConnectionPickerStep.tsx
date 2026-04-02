@@ -2,41 +2,11 @@ import { Search, X, Plug, Database } from "lucide-react";
 import type { CSSProperties } from "react";
 import { DatabaseBrandIcon } from "../DatabaseBrandIcon";
 import type { AppLanguage } from "../../../i18n";
-import type { DatabaseType } from "../../../types";
-
-export interface DbEntry {
-  key: string;
-  abbr: string;
-  label: string;
-  color: string;
-  supported: boolean;
-  defaultPort: number;
-  isFile?: boolean;
-}
-
-export const ALL_DATABASES: DbEntry[] = [
-  { key: "mysql", abbr: "Ms", label: "MySQL", color: "#c0392b", supported: true, defaultPort: 3306 },
-  { key: "mariadb", abbr: "Mr", label: "MariaDB", color: "#6c7a89", supported: true, defaultPort: 3306 },
-  { key: "sqlite", abbr: "Sl", label: "SQLite", color: "#3498db", supported: true, defaultPort: 0, isFile: true },
-  { key: "duckdb", abbr: "Du", label: "DuckDB", color: "#2c3e50", supported: false, defaultPort: 0, isFile: true },
-  { key: "cassandra", abbr: "Cs", label: "Cassandra", color: "#27ae60", supported: false, defaultPort: 9042 },
-  { key: "cockroachdb", abbr: "Cr", label: "CockroachDB", color: "#3ddc84", supported: true, defaultPort: 26257 },
-  { key: "snowflake", abbr: "Nf", label: "Snowflake", color: "#29b5e8", supported: false, defaultPort: 443 },
-  { key: "postgresql", abbr: "Pg", label: "PostgreSQL", color: "#336791", supported: true, defaultPort: 5432 },
-  { key: "greenplum", abbr: "Gp", label: "Greenplum", color: "#2ecc71", supported: true, defaultPort: 5432 },
-  { key: "redshift", abbr: "Rs", label: "Amazon Redshift", color: "#16a085", supported: true, defaultPort: 5439 },
-  { key: "mssql", abbr: "Ss", label: "SQL Server", color: "#7f8c8d", supported: true, defaultPort: 1433 },
-  { key: "redis", abbr: "Re", label: "Redis", color: "#e74c3c", supported: false, defaultPort: 6379 },
-  { key: "mongodb", abbr: "Mg", label: "MongoDB", color: "#27ae60", supported: false, defaultPort: 27017 },
-  { key: "vertica", abbr: "Ve", label: "Vertica", color: "#95a5a6", supported: true, defaultPort: 5433 },
-  { key: "clickhouse", abbr: "Ch", label: "ClickHouse", color: "#5b9bd5", supported: true, defaultPort: 8123 },
-  { key: "bigquery", abbr: "Bq", label: "BigQuery", color: "#8e44ad", supported: false, defaultPort: 0 },
-  { key: "libsql", abbr: "Ls", label: "LibSQL", color: "#2ecc71", supported: true, defaultPort: 8080 },
-  { key: "cloudflare_d1", abbr: "D1", label: "Cloudflare D1", color: "#f39c12", supported: true, defaultPort: 443 },
-];
-
-const LOCAL_BOOTSTRAP_READY = new Set<DatabaseType>(["postgresql", "mysql", "mariadb", "sqlite"]);
-const LOCAL_BOOTSTRAP_SOON = new Set<DatabaseType>(["mongodb", "mssql"]);
+import {
+  LOCAL_BOOTSTRAP_PLANNED,
+  LOCAL_BOOTSTRAP_READY,
+  type DbEntry,
+} from "../engine-registry";
 
 interface PickerSection {
   key: string;
@@ -118,7 +88,7 @@ function getPickerMetaLabel(db: DbEntry, language: AppLanguage) {
 
 function getPickerDescription(db: DbEntry, bootstrapMode: boolean, language: AppLanguage) {
   if (bootstrapMode) {
-    if (LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)) {
+    if (LOCAL_BOOTSTRAP_READY.has(db.key)) {
       return db.key === "sqlite"
         ? language === "vi"
           ? "Tạo một cơ sở dữ liệu tệp cục bộ mới và mở ngay."
@@ -128,7 +98,7 @@ function getPickerDescription(db: DbEntry, bootstrapMode: boolean, language: App
           : "Bootstrap a local workspace, then connect right into it.";
     }
 
-    if (LOCAL_BOOTSTRAP_SOON.has(db.key as DatabaseType)) {
+    if (LOCAL_BOOTSTRAP_PLANNED.has(db.key)) {
       return language === "vi"
         ? "Đã hiển thị trong lộ trình, nhưng luồng bootstrap local chưa được nối xong."
         : "Visible in the roadmap, but the local bootstrap flow is not wired yet.";
@@ -156,13 +126,13 @@ function getPickerCapabilities(db: DbEntry, bootstrapMode: boolean, language: Ap
   const capabilities: string[] = [];
 
   if (bootstrapMode) {
-    if (LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)) {
+    if (LOCAL_BOOTSTRAP_READY.has(db.key)) {
       capabilities.push(language === "vi" ? "Bootstrap local" : "Local bootstrap");
     } else {
       capabilities.push(language === "vi" ? "Lộ trình" : "Roadmap");
     }
 
-    if (db.supported && !LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)) {
+    if (db.supported && !LOCAL_BOOTSTRAP_READY.has(db.key)) {
       capabilities.push(language === "vi" ? "Lộ trình local" : "Local roadmap");
     }
   } else {
@@ -206,7 +176,7 @@ function getPickerHighlights(db: DbEntry, bootstrapMode: boolean, language: AppL
           ];
     }
 
-    if (LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)) {
+    if (LOCAL_BOOTSTRAP_READY.has(db.key)) {
       return language === "vi"
         ? [
             "Khởi tạo một cơ sở dữ liệu local rồi tự động kết nối vào workspace.",
@@ -290,11 +260,11 @@ function getPickerHighlights(db: DbEntry, bootstrapMode: boolean, language: AppL
 
 function getPickerStatus(db: DbEntry, bootstrapMode: boolean, language: AppLanguage) {
   if (bootstrapMode) {
-    if (LOCAL_BOOTSTRAP_READY.has(db.key as DatabaseType)) {
+    if (LOCAL_BOOTSTRAP_READY.has(db.key)) {
       return { label: language === "vi" ? "Local sẵn sàng" : "Local Ready", tone: "supported", canContinue: true };
     }
 
-    if (LOCAL_BOOTSTRAP_SOON.has(db.key as DatabaseType)) {
+    if (LOCAL_BOOTSTRAP_PLANNED.has(db.key)) {
       return { label: language === "vi" ? "Local sắp có" : "Local Soon", tone: "soon", canContinue: false };
     }
 
@@ -329,6 +299,8 @@ export function ConnectionPickerStep({
   onClose,
   onContinue,
 }: ConnectionPickerStepProps) {
+  const readyCount = bootstrapMode ? Array.from(LOCAL_BOOTSTRAP_READY).length : supportedCount;
+  const roadmapTotal = bootstrapMode ? localRoadmapCount : roadmapCount;
   const selectedStatus = selectedDb ? getPickerStatus(selectedDb, bootstrapMode, language) : null;
   const selectedMeta = selectedDb ? getPickerMetaLabel(selectedDb, language) : "";
   const selectedDescription = selectedDb ? getPickerDescription(selectedDb, bootstrapMode, language) : "";
@@ -370,11 +342,11 @@ export function ConnectionPickerStep({
           )}
           <div className="connection-picker-stats">
             <span className="connection-picker-stat accent">
-              <strong>{bootstrapMode ? Array.from(LOCAL_BOOTSTRAP_READY).length : supportedCount}</strong>
+              <strong>{readyCount}</strong>
               <span>{bootstrapMode ? strings.localReady : strings.ready}</span>
             </span>
             <span className="connection-picker-stat">
-              <strong>{bootstrapMode ? localRoadmapCount : roadmapCount}</strong>
+              <strong>{roadmapTotal}</strong>
               <span>{bootstrapMode ? strings.localRoadmap : strings.roadmap}</span>
             </span>
             <span className="connection-picker-stat">
@@ -384,14 +356,65 @@ export function ConnectionPickerStep({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={onClose}
-          className="connection-picker-close"
-          title={strings.close}
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <div className="connection-picker-head-side">
+          <div className={`connection-picker-head-glance ${selectedDb ? "has-selection" : ""}`}>
+            <span className="connection-picker-footer-label">{strings.selection}</span>
+
+            {selectedDb && selectedStatus ? (
+              <div className="connection-picker-head-glance-main has-selection">
+                <div
+                  className="connection-db-tile-icon connection-picker-head-glance-icon"
+                  style={{ "--db-brand": selectedDb.color } as CSSProperties}
+                >
+                  <DatabaseBrandIcon
+                    dbKey={selectedDb.key}
+                    label={selectedDb.label}
+                    className="connection-db-brand-lg"
+                    fallbackClassName="!w-6 !h-6 text-white"
+                  />
+                </div>
+
+                <div className="connection-picker-head-glance-copy">
+                  <div className="connection-picker-head-glance-row">
+                    <strong>{selectedDb.label}</strong>
+                    <span className={`connection-picker-footer-pill ${selectedStatus.tone}`}>
+                      {selectedStatus.label}
+                    </span>
+                  </div>
+                  <span>{selectedMeta}</span>
+                  <p>{selectedDescription}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="connection-picker-head-glance-main">
+                <div className="connection-picker-head-glance-copy">
+                  <strong>{bootstrapMode ? strings.pickLocalEngine : strings.pickDatabaseType}</strong>
+                  <p>{strings.selectionHint}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="connection-picker-head-glance-meta">
+              <span className="connection-picker-head-glance-chip accent">
+                <strong>{readyCount}</strong>
+                <span>{bootstrapMode ? strings.localReady : strings.ready}</span>
+              </span>
+              <span className="connection-picker-head-glance-chip">
+                <strong>{roadmapTotal}</strong>
+                <span>{bootstrapMode ? strings.localRoadmap : strings.roadmap}</span>
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="connection-picker-close"
+            title={strings.close}
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       <div className="connection-picker-body">
@@ -429,7 +452,11 @@ export function ConnectionPickerStep({
                   </div>
                 ) : (
                   pickerSections.map((section) => (
-                    <section key={section.key} className="connection-picker-section">
+                    <section
+                      key={section.key}
+                      className="connection-picker-section"
+                      data-tone={section.key.includes("roadmap") ? "roadmap" : "ready"}
+                    >
                       <div className="connection-picker-section-head">
                         <div className="connection-picker-section-copy">
                           <h3 className="connection-picker-section-title">{section.title}</h3>
@@ -459,6 +486,7 @@ export function ConnectionPickerStep({
                                 status.tone,
                                 isSelected ? "selected" : "",
                               ].join(" ")}
+                              data-tone={status.tone}
                             >
                               <div className="connection-picker-card-top">
                                 <div className="connection-db-tile-icon" style={brandStyle}>
@@ -571,7 +599,7 @@ export function ConnectionPickerStep({
                     ))}
                   </div>
 
-                  {!bootstrapMode && LOCAL_BOOTSTRAP_READY.has(selectedDb.key as DatabaseType) && (
+                  {!bootstrapMode && LOCAL_BOOTSTRAP_READY.has(selectedDb.key) && (
                     <button
                       type="button"
                       className="connection-picker-selection-switch"
@@ -615,5 +643,5 @@ export function ConnectionPickerStep({
   );
 }
 
-export { LOCAL_BOOTSTRAP_READY, LOCAL_BOOTSTRAP_SOON };
+export { LOCAL_BOOTSTRAP_PLANNED, LOCAL_BOOTSTRAP_READY };
 export { getPickerStatus, getPickerMetaLabel, getPickerDescription, getPickerCapabilities, getPickerHighlights };

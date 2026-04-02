@@ -1,10 +1,12 @@
 import { useEffect } from "react";
 import type { Tab } from "../types";
+import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 
 interface KeyboardHandlerProps {
   activeTab: Tab | null;
   onNewQuery: () => void;
-  onOpenAISlidePanel: (prompt?: string) => void;
+  onRunActiveQuery: () => void;
+  onToggleTerminalPanel: () => void;
   onToggleSidebar: () => void;
   onToggleQueryHistory: () => void;
   onToggleSQLFavorites: () => void;
@@ -15,7 +17,8 @@ interface KeyboardHandlerProps {
 export function AppKeyboardHandler({
   activeTab,
   onNewQuery,
-  onOpenAISlidePanel,
+  onRunActiveQuery,
+  onToggleTerminalPanel,
   onToggleSidebar,
   onToggleQueryHistory,
   onToggleSQLFavorites,
@@ -26,11 +29,23 @@ export function AppKeyboardHandler({
     const handleKeyDown = (e: KeyboardEvent) => {
       const metaPressed = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
+      const target = e.target as HTMLElement | null;
+      const isMonacoTarget = !!target?.closest(".monaco-editor");
+      const isEditableTarget = !!target?.closest(
+        'input, textarea, select, [contenteditable="true"], [contenteditable=""], [role="textbox"]',
+      );
+
+      if (metaPressed && key === "enter" && activeTab?.type === "query" && (isMonacoTarget || !isEditableTarget)) {
+        e.preventDefault();
+        e.stopPropagation();
+        onRunActiveQuery();
+        return;
+      }
 
       if (metaPressed && !e.altKey && key === "p") {
         e.preventDefault();
         e.stopPropagation();
-        onOpenAISlidePanel();
+        setShowAISlidePanel((current) => !current);
         return;
       }
 
@@ -48,13 +63,13 @@ export function AppKeyboardHandler({
 
       if (metaPressed && !e.shiftKey && (e.key === "=" || e.key === "+")) {
         e.preventDefault();
-        setUiFontScale((current) => Math.min(135, current + 5));
+        setUiFontScale((current) => Math.min(UI_FONT_SCALE_MAX, current + UI_FONT_SCALE_STEP));
         return;
       }
 
       if (metaPressed && !e.shiftKey && e.key === "-") {
         e.preventDefault();
-        setUiFontScale((current) => Math.max(85, current - 5));
+        setUiFontScale((current) => Math.max(UI_FONT_SCALE_MIN, current - UI_FONT_SCALE_STEP));
         return;
       }
 
@@ -82,7 +97,14 @@ export function AppKeyboardHandler({
         return;
       }
 
-      if (metaPressed && e.code === "Backquote") {
+      if (metaPressed && e.code === "Backquote" && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        onToggleTerminalPanel();
+        return;
+      }
+
+      if (metaPressed && e.code === "Backquote" && e.shiftKey) {
         if (activeTab?.type !== "query") {
           return;
         }
@@ -109,7 +131,7 @@ export function AppKeyboardHandler({
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [activeTab, onNewQuery, onOpenAISlidePanel, onToggleSidebar, onToggleQueryHistory, onToggleSQLFavorites, setUiFontScale, setShowAISlidePanel]);
+  }, [activeTab, onNewQuery, onRunActiveQuery, onToggleSidebar, onToggleQueryHistory, onToggleSQLFavorites, onToggleTerminalPanel, setUiFontScale, setShowAISlidePanel]);
 
   return null;
 }

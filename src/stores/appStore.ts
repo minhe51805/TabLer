@@ -25,19 +25,6 @@ import type {
 } from "../types";
 import { getActiveAIProvider } from "../types";
 
-const connectionSignature = (c: ConnectionConfig) =>
-  [
-    c.db_type,
-    (c.host || "").trim().toLowerCase(),
-    c.port || "",
-    (c.username || "").trim(),
-    (c.database || "").trim().toLowerCase(),
-    (c.file_path || "").trim().toLowerCase(),
-    JSON.stringify(
-      Object.entries(c.additional_fields ?? {}).sort(([left], [right]) => left.localeCompare(right))
-    ),
-  ].join("|");
-
 const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig => ({
   ...config,
   password: undefined,
@@ -111,6 +98,36 @@ function invokeWithTimeout<T>(
 
 function invokeMutation<T>(command: string, args: Record<string, unknown>) {
   return invoke<T>(command, args);
+}
+
+const MISSING_CONNECTION_ERROR_PATTERNS = [
+  /please connect first/i,
+];
+
+function isMissingConnectionError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return MISSING_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+function buildDisconnectedConnectionPatch(
+  current: Pick<AppState, "activeConnectionId" | "connectedIds">,
+  connectionId: string,
+): Partial<AppState> {
+  const connectedIds = new Set(current.connectedIds);
+  connectedIds.delete(connectionId);
+
+  if (current.activeConnectionId === connectionId) {
+    return {
+      connectedIds,
+      activeConnectionId: null,
+      currentDatabase: null,
+      databases: [],
+      tables: [],
+      schemaObjects: [],
+    };
+  }
+
+  return { connectedIds };
 }
 
 interface AppState {
@@ -329,18 +346,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       const normalizedConfig = ensureConnectionName(config);
       const connections = get().connections;
       const sameId = connections.find((c) => c.id === normalizedConfig.id);
-      const sameTarget = connections.find(
-        (c) => c.id !== normalizedConfig.id && connectionSignature(c) === connectionSignature(normalizedConfig)
-      );
-
-      const finalConnectionId = sameTarget?.id || normalizedConfig.id;
-      const connectionRequest = { ...normalizedConfig, id: finalConnectionId };
-      const finalConfig = sanitizeConnectionConfig({ ...normalizedConfig, id: finalConnectionId });
+      const connectionRequest = normalizedConfig;
+      const finalConfig = sanitizeConnectionConfig(normalizedConfig);
 
       set({
         isConnecting: true,
         error: null,
-        activeConnectionId: finalConnectionId,
+        activeConnectionId: normalizedConfig.id,
         currentDatabase: normalizedConfig.database ?? null,
         schemaObjects: [],
         ...(normalizedConfig.database ? {} : { tables: [] }),
@@ -352,22 +364,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
 
       const connectedIds = new Set(get().connectedIds);
-      connectedIds.add(finalConnectionId);
+      connectedIds.add(normalizedConfig.id);
 
       let newConnections = connections;
       if (sameId) {
         newConnections = connections.map((c) => (c.id === normalizedConfig.id ? finalConfig : c));
-      } else if (sameTarget) {
-        newConnections = connections.map((c) =>
-          c.id === sameTarget.id ? finalConfig : c
-        );
       } else {
         newConnections = [...connections, finalConfig];
       }
 
       set({
         connectedIds,
-        activeConnectionId: finalConnectionId,
+        activeConnectionId: normalizedConfig.id,
         connections: newConnections,
         currentDatabase: normalizedConfig.database ?? null,
         schemaObjects: [],
@@ -375,10 +383,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         isConnecting: false,
       });
 
-      void get().fetchDatabases(finalConnectionId);
+      void get().fetchDatabases(normalizedConfig.id);
       if (normalizedConfig.database) {
         set({ currentDatabase: normalizedConfig.database });
-        void get().fetchTables(finalConnectionId, normalizedConfig.database);
+        void get().fetchTables(normalizedConfig.id, normalizedConfig.database);
       }
     } catch (e) {
       set({
@@ -529,7 +537,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
       set({ databases, isLoadingDatabases: false });
     } catch (e) {
-      set({ isLoadingDatabases: false, error: `Failed to list databases: ${e}` });
+      const errorMessage = `Failed to list databases: ${e}`;
+      if (isMissingConnectionError(e)) {
+        set({
+          isLoadingDatabases: false,
+          error: errorMessage,
+          ...buildDisconnectedConnectionPatch(get(), connectionId),
+        });
+        return;
+      }
+      set({ isLoadingDatabases: false, error: errorMessage });
     }
   },
 
@@ -543,7 +560,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ currentDatabase: database, schemaObjects: [], isSwitchingDatabase: false });
       await get().fetchTables(connectionId, database);
     } catch (e) {
-      set({ isSwitchingDatabase: false, error: `Failed to switch database: ${e}` });
+      const errorMessage = `Failed to switch database: ${e}`;
+      if (isMissingConnectionError(e)) {
+        set({
+          isSwitchingDatabase: false,
+          error: errorMessage,
+          ...buildDisconnectedConnectionPatch(get(), connectionId),
+        });
+        return;
+      }
+      set({ isSwitchingDatabase: false, error: errorMessage });
     }
   },
 
@@ -561,7 +587,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
       set({ tables, isLoadingTables: false });
     } catch (e) {
-      set({ isLoadingTables: false, error: `Failed to list tables: ${e}` });
+      const errorMessage = `Failed to list tables: ${e}`;
+      if (isMissingConnectionError(e)) {
+        set({
+          isLoadingTables: false,
+          error: errorMessage,
+          ...buildDisconnectedConnectionPatch(get(), connectionId),
+        });
+        return;
+      }
+      set({ isLoadingTables: false, error: errorMessage });
     }
   },
 
@@ -579,7 +614,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
       set({ schemaObjects, isLoadingSchemaObjects: false });
     } catch (e) {
-      set({ isLoadingSchemaObjects: false, error: `Failed to list schema objects: ${e}` });
+      const errorMessage = `Failed to list schema objects: ${e}`;
+      if (isMissingConnectionError(e)) {
+        set({
+          isLoadingSchemaObjects: false,
+          error: errorMessage,
+          ...buildDisconnectedConnectionPatch(get(), connectionId),
+        });
+        return;
+      }
+      set({ isLoadingSchemaObjects: false, error: errorMessage });
     }
   },
 

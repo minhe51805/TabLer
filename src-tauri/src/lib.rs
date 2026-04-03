@@ -5,6 +5,7 @@ mod storage;
 mod utils;
 
 use commands::connection::*;
+use commands::export::*;
 use commands::file::*;
 use commands::query::*;
 use commands::table::*;
@@ -122,6 +123,8 @@ pub fn run() {
             // File commands
             read_sql_file,
             read_sql_file_from_path,
+            pick_database_file,
+            export_database,
             // Terminal commands
             open_terminal,
             write_terminal,

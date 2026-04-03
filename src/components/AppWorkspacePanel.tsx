@@ -4,6 +4,7 @@ import {
   Plus,
   GitBranch,
   Terminal,
+  Download,
   X,
   RotateCcw,
   Search,
@@ -69,6 +70,7 @@ interface AppWorkspacePanelProps {
   onNewQuery: () => void;
   onClearVisibleTabs: () => void;
   onRefreshWorkspace: () => Promise<void>;
+  onExportDatabase: () => void;
   onOpenMetricsBoard: () => void;
   onFocusExplorerSearch: () => void;
   onOpenAISlidePanel: (prompt?: string) => void;
@@ -77,6 +79,7 @@ interface AppWorkspacePanelProps {
   onHandleQuerySessionChange: (tabId: string, state: QueryEditorSessionState) => void;
   onRunActiveQuery: () => void;
   showTerminalPanel: boolean;
+  isExportingDatabase: boolean;
   onToggleTerminalPanel: () => void;
   onToggleSidebar: () => void;
   onSetConnectionFormIntent: (intent: "connect" | "bootstrap") => void;
@@ -112,6 +115,7 @@ export function AppWorkspacePanel({
   onNewQuery,
   onClearVisibleTabs,
   onRefreshWorkspace,
+  onExportDatabase,
   onOpenMetricsBoard,
   onFocusExplorerSearch,
   onOpenAISlidePanel,
@@ -120,6 +124,7 @@ export function AppWorkspacePanel({
   onHandleQuerySessionChange,
   onRunActiveQuery,
   showTerminalPanel,
+  isExportingDatabase,
   onToggleTerminalPanel,
   onToggleSidebar,
   onSetConnectionFormIntent,
@@ -680,6 +685,19 @@ export function AppWorkspacePanel({
                       title={t("toolbar.refreshWorkspace")}
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      onClick={onExportDatabase}
+                      className="toolbar-btn icon-only"
+                      title={t("toolbar.exportDatabase")}
+                      disabled={!isConnected || isExportingDatabase}
+                    >
+                      {isExportingDatabase ? (
+                        <LoaderCircle className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Download className="w-3.5 h-3.5" />
+                      )}
                     </button>
 
                     <button

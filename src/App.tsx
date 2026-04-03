@@ -8,9 +8,12 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import {
+  CheckCircle2,
   Copy,
+  Info,
   Minus,
   Square,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -26,12 +29,17 @@ import { AppTitleBar } from "./components/AppTitleBar";
 import { AppWorkspacePanel } from "./components/AppWorkspacePanel";
 import { AppKeyboardHandler } from "./components/AppKeyboardHandler";
 import { AppAboutModal } from "./components/AppAboutModal";
+import { AppPluginManagerModal } from "./components/AppPluginManagerModal";
 import { AppShortcutsModal } from "./components/AppShortcutsModal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { QueryHistoryPanel } from "./components/QueryHistory/QueryHistoryPanel";
 import { SQLFavoritesPanel } from "./components/SQLFavorites/SQLFavoritesPanel";
+import { getAdminQueryPreset, type AdminQueryKind } from "./utils/admin-query-presets";
+import { APP_TOAST_EVENT, type AppToastPayload, emitAppToast } from "./utils/app-toast";
 import { invokeMutation } from "./utils/tauri-utils";
 import { getNewQueryTabTitle, getQueryProfile } from "./utils/query-profile";
+import { buildDatabaseFileConnection, type DatabaseFileSelection } from "./utils/database-file";
+import { splitSqlStatements } from "./utils/sqlStatements";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "./utils/ui-scale";
 import "./index.css";
 
@@ -47,6 +55,14 @@ interface WorkspaceActivityState {
   label: string;
   durationMs: number;
   at: number;
+}
+
+interface GlobalToastState {
+  id: number;
+  tone: "success" | "info" | "error";
+  title: string;
+  description?: string;
+  isClosing: boolean;
 }
 
 type WindowMenuSectionKey =
@@ -80,11 +96,20 @@ interface WindowMenuItem {
 }
 
 const GLOBAL_ERROR_AUTO_DISMISS_MS = 8000;
+const GLOBAL_TOAST_AUTO_DISMISS_MS = 4200;
+const GLOBAL_TOAST_EXIT_MS = 220;
+const RECOVERABLE_CONNECTION_ERROR_DELAY_MS = 3000;
 const UI_FONT_SCALE_STORAGE_KEY = "tabler.uiFontScale";
 const DEFAULT_WINDOW_MENU_SECTION: WindowMenuSectionKey = "file";
+const RECOVERABLE_CONNECTION_ERROR_PATTERNS = [/please connect first/i];
 const ConnectionForm = lazy(() => import("./components/ConnectionForm").then((module) => ({ default: module.ConnectionForm })));
 const AISettingsModal = lazy(() => import("./components/AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
 const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel").then((module) => ({ default: module.AISlidePanel })));
+
+function isRecoverableConnectionError(error: string | null) {
+  if (!error) return false;
+  return RECOVERABLE_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(error));
+}
 
 function App() {
   const { language, languagePreference, setLanguage, t } = useI18n();
@@ -99,6 +124,7 @@ function App() {
     isConnecting,
     error,
     clearError,
+    setError,
     loadSavedConnections,
     addTab,
     setActiveTab,
@@ -116,6 +142,7 @@ function App() {
       isConnecting: state.isConnecting,
       error: state.error,
       clearError: state.clearError,
+      setError: state.setError,
       loadSavedConnections: state.loadSavedConnections,
       addTab: state.addTab,
       setActiveTab: state.setActiveTab,
@@ -129,12 +156,14 @@ function App() {
   const [showStartupConnectionManager, setShowStartupConnectionManager] = useState(true);
   const [showAISettings, setShowAISettings] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
+  const [showPluginManager, setShowPluginManager] = useState(false);
   const [showKeyboardShortcutsModal, setShowKeyboardShortcutsModal] = useState(false);
   const [showAISlidePanel, setShowAISlidePanel] = useState(false);
   const [hasMountedAISlidePanel, setHasMountedAISlidePanel] = useState(false);
   const [showTerminalPanel, setShowTerminalPanel] = useState(false);
   const [showQueryHistory, setShowQueryHistory] = useState(false);
   const [showSQLFavorites, setShowSQLFavorites] = useState(false);
+  const [isExportingDatabase, setIsExportingDatabase] = useState(false);
   const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
   const [leftPanel, setLeftPanel] = useState<"database" | "metrics">("database");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -147,6 +176,9 @@ function App() {
   const [workspaceActivityByConnection, setWorkspaceActivityByConnection] = useState<
     Record<string, WorkspaceActivityState>
   >({});
+  const [globalToast, setGlobalToast] = useState<GlobalToastState | null>(null);
+  const [isRecoverableErrorDelayActive, setIsRecoverableErrorDelayActive] = useState(false);
+  const [forceLauncherVisible, setForceLauncherVisible] = useState(false);
   const [isWindowMenuOpen, setIsWindowMenuOpen] = useState(false);
   const [activeWindowMenuSection, setActiveWindowMenuSection] =
     useState<WindowMenuSectionKey | null>(null);
@@ -162,17 +194,34 @@ function App() {
   const startWidth = useRef(300);
   const windowMenuRef = useRef<HTMLDivElement | null>(null);
   const windowSyncGenerationRef = useRef(0);
+  const globalToastIdRef = useRef(0);
+  const globalToastHideTimeoutRef = useRef<number | null>(null);
+  const globalToastClearTimeoutRef = useRef<number | null>(null);
+  const recoverableConnectionErrorTimeoutRef = useRef<number | null>(null);
+  const recoveredConnectionErrorRef = useRef<string | null>(null);
   const isDesktopWindow = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
   const activeConn = connections.find((conn) => conn.id === activeConnectionId);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
-  const isConnected = !!(activeConnectionId && connectedIds.has(activeConnectionId));
-  const showStartupShell = !isConnected && !isConnecting && (showStartupConnectionManager || !!connectionFormIntent);
+  const hasRenderableWorkspace = !!(activeConnectionId && activeConn && connectedIds.has(activeConnectionId));
+  const isConnected = hasRenderableWorkspace;
+  const shouldForceStartupLauncher =
+    !isRecoverableErrorDelayActive &&
+    !isConnecting &&
+    !connectionFormIntent &&
+    (!activeConnectionId || !activeConn || !connectedIds.has(activeConnectionId));
+  const showStartupShell =
+    forceLauncherVisible ||
+    (!isRecoverableErrorDelayActive &&
+      (shouldForceStartupLauncher ||
+        (!isConnected && !isConnecting && (showStartupConnectionManager || !!connectionFormIntent))));
   const isMetricsWorkspace = activeTab?.type === "metrics";
   const activeQueryChrome =
     activeTab?.type === "query" ? queryChromeByTab[activeTab.id] ?? { isRunning: false } : null;
   const activeWorkspaceActivity =
     activeConnectionId ? workspaceActivityByConnection[activeConnectionId] ?? null : null;
+  const activeQueryProfile = getQueryProfile(activeConn?.db_type);
+  const supportsSqlFileActions = !!(activeConnectionId && activeConn && activeQueryProfile.surface === "sql");
   const queryTabCount = tabs.filter(
     (tab) => tab.type === "query" && tab.connectionId === activeConnectionId,
   ).length;
@@ -215,6 +264,65 @@ function App() {
       window.clearTimeout(timeoutId);
     };
   }, [clearError, error]);
+
+  const clearGlobalToastTimers = useCallback(() => {
+    if (globalToastHideTimeoutRef.current !== null) {
+      window.clearTimeout(globalToastHideTimeoutRef.current);
+      globalToastHideTimeoutRef.current = null;
+    }
+    if (globalToastClearTimeoutRef.current !== null) {
+      window.clearTimeout(globalToastClearTimeoutRef.current);
+      globalToastClearTimeoutRef.current = null;
+    }
+  }, []);
+
+  const dismissGlobalToast = useCallback(() => {
+    clearGlobalToastTimers();
+    setGlobalToast((current) => (current ? { ...current, isClosing: true } : current));
+    globalToastClearTimeoutRef.current = window.setTimeout(() => {
+      setGlobalToast(null);
+      globalToastClearTimeoutRef.current = null;
+    }, GLOBAL_TOAST_EXIT_MS);
+  }, [clearGlobalToastTimers]);
+
+  useEffect(() => {
+    const handleGlobalToast = (event: Event) => {
+      const detail = (event as CustomEvent<AppToastPayload>).detail;
+      if (!detail?.title) return;
+
+      clearGlobalToastTimers();
+
+      const toastId = ++globalToastIdRef.current;
+      const durationMs = Math.max(detail.durationMs ?? GLOBAL_TOAST_AUTO_DISMISS_MS, GLOBAL_TOAST_EXIT_MS + 120);
+
+      setGlobalToast({
+        id: toastId,
+        tone: detail.tone ?? "info",
+        title: detail.title,
+        description: detail.description,
+        isClosing: false,
+      });
+
+      globalToastHideTimeoutRef.current = window.setTimeout(() => {
+        setGlobalToast((current) =>
+          current?.id === toastId ? { ...current, isClosing: true } : current,
+        );
+        globalToastHideTimeoutRef.current = null;
+      }, Math.max(0, durationMs - GLOBAL_TOAST_EXIT_MS));
+
+      globalToastClearTimeoutRef.current = window.setTimeout(() => {
+        setGlobalToast((current) => (current?.id === toastId ? null : current));
+        globalToastClearTimeoutRef.current = null;
+      }, durationMs);
+    };
+
+    window.addEventListener(APP_TOAST_EVENT, handleGlobalToast);
+
+    return () => {
+      clearGlobalToastTimers();
+      window.removeEventListener(APP_TOAST_EVENT, handleGlobalToast);
+    };
+  }, [clearGlobalToastTimers]);
 
   useEffect(() => {
     if (!isWindowMenuOpen) return;
@@ -281,6 +389,64 @@ function App() {
     [isDesktopWindow],
   );
 
+  useEffect(() => {
+    if (!error) {
+      if (isRecoverableErrorDelayActive) return;
+      recoveredConnectionErrorRef.current = null;
+      return;
+    }
+
+    if (!isRecoverableConnectionError(error) || isConnecting) return;
+    if (isRecoverableErrorDelayActive || recoverableConnectionErrorTimeoutRef.current !== null) return;
+    if (recoveredConnectionErrorRef.current === error) return;
+
+    recoveredConnectionErrorRef.current = error;
+    setForceLauncherVisible(false);
+    setIsRecoverableErrorDelayActive(true);
+
+    if (recoverableConnectionErrorTimeoutRef.current !== null) {
+      window.clearTimeout(recoverableConnectionErrorTimeoutRef.current);
+    }
+
+    recoverableConnectionErrorTimeoutRef.current = window.setTimeout(() => {
+      const currentState = useAppStore.getState();
+      const staleConnectionId = currentState.activeConnectionId;
+      if (staleConnectionId) {
+        const nextConnectedIds = new Set(currentState.connectedIds);
+        nextConnectedIds.delete(staleConnectionId);
+        useAppStore.setState({
+          activeConnectionId: null,
+          connectedIds: nextConnectedIds,
+          currentDatabase: null,
+          databases: [],
+          tables: [],
+          schemaObjects: [],
+        });
+      }
+      setShowStartupConnectionManager(true);
+      setConnectionFormIntent(null);
+      setShowAISlidePanel(false);
+      setIsWindowMenuOpen(false);
+      setActiveWindowMenuSection(null);
+      setActiveWindowMenuItemPath(null);
+      setForceLauncherVisible(true);
+      setIsRecoverableErrorDelayActive(false);
+      recoveredConnectionErrorRef.current = null;
+      recoverableConnectionErrorTimeoutRef.current = null;
+      clearError();
+      void applyDesktopWindowProfile("launcher");
+    }, RECOVERABLE_CONNECTION_ERROR_DELAY_MS);
+  }, [applyDesktopWindowProfile, clearError, error, isConnecting, isRecoverableErrorDelayActive]);
+
+  useEffect(() => {
+    return () => {
+      if (recoverableConnectionErrorTimeoutRef.current !== null) {
+        window.clearTimeout(recoverableConnectionErrorTimeoutRef.current);
+        recoverableConnectionErrorTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   const handleOpenConnectionForm = useCallback(
     (intent: "connect" | "bootstrap") => {
       setShowStartupConnectionManager(false);
@@ -291,12 +457,15 @@ function App() {
   );
 
   const handleCloseConnectionForm = useCallback(() => {
+    const { activeConnectionId: latestActiveConnectionId, connectedIds: latestConnectedIds } =
+      useAppStore.getState();
+
     setConnectionFormIntent(null);
-    if (!activeConnectionId || !connectedIds.has(activeConnectionId)) {
+    if (!latestActiveConnectionId || !latestConnectedIds.has(latestActiveConnectionId)) {
       setShowStartupConnectionManager(true);
       void applyDesktopWindowProfile("launcher");
     }
-  }, [activeConnectionId, applyDesktopWindowProfile, connectedIds]);
+  }, [applyDesktopWindowProfile]);
 
   const handleToggleWindowMenu = useCallback((event?: ReactMouseEvent<HTMLElement>) => {
     event?.stopPropagation();
@@ -364,21 +533,315 @@ function App() {
   }, [activeConnectionId, addTab, currentDatabase, setActiveTab, tabs]);
 
   const handleImportSqlFile = useCallback(async () => {
+    if (!activeConnectionId || !activeConn) {
+      emitAppToast({
+        tone: "info",
+        title: language === "vi" ? "Chua mo workspace" : "Open a workspace first",
+        description:
+          language === "vi"
+            ? "Hay mo mot ket noi SQL truoc khi nap tep .sql."
+            : "Open a SQL workspace before loading a .sql file.",
+      });
+      return;
+    }
+
+    if (getQueryProfile(activeConn.db_type).surface !== "sql") {
+      emitAppToast({
+        tone: "info",
+        title: language === "vi" ? "Engine hien tai khong dung tep .sql" : "SQL files are not used here",
+        description:
+          language === "vi"
+            ? "Engine hien tai dung command surface, khong mo tep .sql theo kieu query."
+            : "The current engine uses a command surface, so .sql files are not opened as SQL tabs.",
+      });
+      return;
+    }
+
     try {
       const result = await invokeMutation<{ file_name: string; content: string }>("read_sql_file", {});
+      const fileName = result?.file_name || (result as { fileName?: string } | null)?.fileName || "query.sql";
       if (result?.content) {
-        window.dispatchEvent(
-          new CustomEvent("insert-sql-from-ai", {
-            detail: { sql: result.content, label: result.file_name },
-          })
-        );
+        addTab({
+          id: `query-${crypto.randomUUID()}`,
+          type: "query",
+          title: fileName,
+          connectionId: activeConnectionId,
+          database: currentDatabase || undefined,
+          content: result.content,
+        });
+        emitAppToast({
+          tone: "success",
+          title: language === "vi" ? "Da mo tep SQL" : "SQL file opened",
+          description:
+            language === "vi"
+              ? `${fileName} da duoc mo thanh mot query tab moi.`
+              : `${fileName} was opened in a new query tab.`,
+        });
       }
     } catch (e) {
       if (e instanceof Error && e.message !== "No file selected.") {
         console.error("Failed to import SQL file:", e);
       }
     }
-  }, []);
+  }, [activeConn, activeConnectionId, addTab, currentDatabase, language]);
+
+  const handleImportSqlFileFromMenu = useCallback(() => {
+    void handleImportSqlFile();
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuItemPath(null);
+  }, [handleImportSqlFile]);
+
+  const handleImportSqlIntoCurrentDatabase = useCallback(async () => {
+    if (!activeConnectionId || !activeConn) {
+      emitAppToast({
+        tone: "info",
+        title: language === "vi" ? "Chua mo workspace" : "Open a workspace first",
+        description:
+          language === "vi"
+            ? "Hay mo mot ket noi SQL truoc khi import tep .sql."
+            : "Open a SQL workspace before importing a .sql file.",
+      });
+      return;
+    }
+
+    if (getQueryProfile(activeConn.db_type).surface !== "sql") {
+      emitAppToast({
+        tone: "info",
+        title: language === "vi" ? "Engine hien tai khong ho tro import SQL" : "SQL import is not available here",
+        description:
+          language === "vi"
+            ? "Engine hien tai dung command surface, khong import tep .sql theo kieu SQL database."
+            : "The current engine uses a command surface, so .sql import is not available here.",
+      });
+      return;
+    }
+
+    const startedAt = performance.now();
+
+    try {
+      const result = await invokeMutation<{ file_name: string; content: string }>("read_sql_file", {});
+      const fileName = result?.file_name || (result as { fileName?: string } | null)?.fileName || "import.sql";
+      const statements = splitSqlStatements(result?.content || "");
+      if (!statements.length) {
+        emitAppToast({
+          tone: "info",
+          title: language === "vi" ? "Tep SQL khong co cau lenh" : "The SQL file is empty",
+          description:
+            language === "vi"
+              ? "Khong tim thay cau lenh nao de import."
+              : "No SQL statements were found to import.",
+        });
+        return;
+      }
+
+      for (const statement of statements) {
+        await invokeMutation<{ affected_rows?: number }>("execute_query", {
+          connectionId: activeConnectionId,
+          sql: statement,
+        });
+      }
+
+      await handleRefreshWorkspace();
+      window.dispatchEvent(
+        new CustomEvent("workspace-activity", {
+          detail: {
+            connectionId: activeConnectionId,
+            label: language === "vi" ? "Import SQL" : "Import SQL",
+            durationMs: Math.max(1, Math.round(performance.now() - startedAt)),
+          },
+        }),
+      );
+
+      emitAppToast({
+        tone: "success",
+        title: language === "vi" ? "Da import tep SQL" : "SQL import complete",
+        description:
+          language === "vi"
+            ? `${fileName} da duoc ap dung vao ${activeConn.name || currentDatabase || activeConn.db_type}. ${statements.length} cau lenh da chay.`
+            : `${fileName} was applied to ${activeConn.name || currentDatabase || activeConn.db_type}. ${statements.length} statements ran.`,
+      });
+    } catch (e) {
+      if (e instanceof Error && e.message === "No file selected.") return;
+      const message = e instanceof Error ? e.message : String(e);
+      setError(
+        language === "vi"
+          ? `Khong the import tep SQL: ${message}`
+          : `Could not import the SQL file: ${message}`,
+      );
+      emitAppToast({
+        tone: "error",
+        title: language === "vi" ? "Import SQL that bai" : "SQL import failed",
+        description: message,
+      });
+    }
+  }, [activeConn, activeConnectionId, currentDatabase, handleRefreshWorkspace, language, setError]);
+
+  const handleImportSqlIntoCurrentDatabaseFromMenu = useCallback(() => {
+    void handleImportSqlIntoCurrentDatabase();
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuItemPath(null);
+  }, [handleImportSqlIntoCurrentDatabase]);
+
+  const handleOpenDatabaseFile = useCallback(async () => {
+    try {
+      const selection = await invokeMutation<DatabaseFileSelection>("pick_database_file", {});
+      const fileName =
+        selection?.file_name || (selection as { fileName?: string } | null)?.fileName || "database";
+      const filePath =
+        selection?.file_path || (selection as { filePath?: string } | null)?.filePath || "";
+      if (!filePath) return;
+
+      const normalizedPath = filePath.replace(/\\/g, "/").toLowerCase();
+      const existingConnection = connections.find((connection) => {
+        const candidatePath = (connection.file_path || "").replace(/\\/g, "/").toLowerCase();
+        return candidatePath === normalizedPath;
+      });
+
+      if (existingConnection) {
+        window.dispatchEvent(
+          new CustomEvent("launcher-focus-connection", {
+            detail: { connectionId: existingConnection.id },
+          }),
+        );
+
+        if (connectedIds.has(existingConnection.id)) {
+          const targetDatabase = existingConnection.database ?? null;
+          useAppStore.setState({
+            activeConnectionId: existingConnection.id,
+            currentDatabase: targetDatabase,
+            schemaObjects: [],
+            ...(targetDatabase ? {} : { tables: [] }),
+          });
+          void fetchDatabases(existingConnection.id);
+          if (targetDatabase) {
+            void fetchTables(existingConnection.id, targetDatabase);
+          }
+        } else {
+          await useAppStore.getState().connectSavedConnection(existingConnection.id);
+        }
+
+        await loadSavedConnections();
+
+        emitAppToast({
+          tone: "success",
+          title: language === "vi" ? "Da dung lai card da luu" : "Reused the saved connection card",
+          description:
+            language === "vi"
+              ? `${fileName} da ton tai trong launcher duoi ten ${existingConnection.name || fileName}.`
+              : `${fileName} already exists in the launcher as ${existingConnection.name || fileName}.`,
+        });
+        return;
+      }
+
+      const nextConfig = buildDatabaseFileConnection(
+        { file_name: fileName, file_path: filePath },
+        `file-${crypto.randomUUID()}`,
+      );
+      if (!nextConfig) {
+        emitAppToast({
+          tone: "error",
+          title: language === "vi" ? "Khong nhan dien duoc tep database" : "Database file type not recognized",
+          description:
+            language === "vi"
+              ? "TableR hien chi mo truc tiep tep SQLite va DuckDB o launcher."
+              : "TableR currently opens SQLite and DuckDB files directly from the launcher.",
+        });
+        return;
+      }
+
+      await useAppStore.getState().connectToDatabase(nextConfig);
+      await loadSavedConnections();
+      window.dispatchEvent(
+        new CustomEvent("launcher-focus-connection", {
+          detail: { connectionId: nextConfig.id },
+        }),
+      );
+      emitAppToast({
+        tone: "success",
+        title: language === "vi" ? "Da mo tep database" : "Database file opened",
+        description:
+          language === "vi"
+            ? `${fileName} da duoc mo thanh workspace moi.`
+            : `${fileName} was opened as a workspace.`,
+      });
+    } catch (e) {
+      if (e instanceof Error && e.message === "No file selected.") return;
+      const message = e instanceof Error ? e.message : String(e);
+      setError(
+        language === "vi"
+          ? `Khong the mo tep database: ${message}`
+          : `Could not open the database file: ${message}`,
+      );
+      emitAppToast({
+        tone: "error",
+        title: language === "vi" ? "Mo tep database that bai" : "Opening the database file failed",
+        description: message,
+      });
+    }
+  }, [connectedIds, connections, fetchDatabases, fetchTables, language, loadSavedConnections, setError]);
+
+  const handleOpenDatabaseFileFromMenu = useCallback(() => {
+    void handleOpenDatabaseFile();
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuItemPath(null);
+  }, [handleOpenDatabaseFile]);
+
+  const handleExportDatabase = useCallback(async () => {
+    if (!activeConnectionId || !activeConn || isExportingDatabase) return;
+
+    const startedAt = performance.now();
+    setIsExportingDatabase(true);
+
+    try {
+      await invokeMutation<{
+        filePath: string;
+        format: string;
+        tableCount: number;
+        rowCount: number;
+      }>("export_database", {
+        connectionId: activeConnectionId,
+        database: currentDatabase || null,
+        dbType: activeConn.db_type,
+        connectionName: activeConn.name || activeConn.host || activeConn.file_path || activeConn.db_type,
+      });
+
+      emitAppToast({
+        tone: "success",
+        title: language === "vi" ? "Da xuat database" : "Database exported",
+        description:
+          language === "vi"
+            ? `${activeConn.name || activeConn.db_type} da duoc xuat thanh cong.`
+            : `${activeConn.name || activeConn.db_type} was exported successfully.`,
+      });
+
+      window.dispatchEvent(
+        new CustomEvent("workspace-activity", {
+          detail: {
+            connectionId: activeConnectionId,
+            label: language === "vi" ? "Export" : "Export",
+            durationMs: Math.max(1, Math.round(performance.now() - startedAt)),
+          },
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== "No file selected.") {
+        setError(
+          language === "vi"
+            ? `Không thể xuất database: ${message}`
+            : `Could not export database: ${message}`,
+        );
+      }
+    } finally {
+      setIsExportingDatabase(false);
+    }
+  }, [activeConn, activeConnectionId, currentDatabase, isExportingDatabase, language, setError]);
+
+  const handleExportDatabaseFromMenu = useCallback(() => {
+    void handleExportDatabase();
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuItemPath(null);
+  }, [handleExportDatabase]);
 
   const handleOpenMetricsBoardFromMenu = useCallback(() => {
     setIsWindowMenuOpen(false);
@@ -628,6 +1091,87 @@ function App() {
     setShowSQLFavorites(false);
   }, []);
 
+  const handleOpenAdminQuery = useCallback(
+    (kind: AdminQueryKind) => {
+      if (!activeConnectionId || !activeConn) return;
+
+      const preset = getAdminQueryPreset(activeConn.db_type, kind);
+      const itemLabel =
+        kind === "process-list" ? t("menu.item.processList") : t("menu.item.userManagement");
+
+      if (!preset.supported || !preset.content.trim()) {
+        setError(
+          language === "vi"
+            ? `${itemLabel.replace(/\.\.\.$/, "")}: ${preset.reason || "Chưa có preset phù hợp cho engine hiện tại."}`
+            : `${itemLabel.replace(/\.\.\.$/, "")}: ${preset.reason || "No preset is available for the current engine."}`,
+        );
+        setIsWindowMenuOpen(false);
+        setActiveWindowMenuItemPath(null);
+        return;
+      }
+
+      const tabId = `query-${crypto.randomUUID()}`;
+      const queryTitle = itemLabel.replace(/\.\.\.$/, "");
+
+      addTab({
+        id: tabId,
+        type: "query",
+        title: queryTitle,
+        connectionId: activeConnectionId,
+        database: currentDatabase || undefined,
+        content: preset.content,
+      });
+
+      setQueryRunRequestByTab((prev) => ({
+        ...prev,
+        [tabId]: (prev[tabId] ?? 0) + 1,
+      }));
+      setIsWindowMenuOpen(false);
+      setActiveWindowMenuItemPath(null);
+    },
+    [activeConn, activeConnectionId, addTab, currentDatabase, language, setError, t],
+  );
+
+  const handleOpenProcessListFromMenu = useCallback(() => {
+    handleOpenAdminQuery("process-list");
+  }, [handleOpenAdminQuery]);
+
+  const handleOpenUserManagementFromMenu = useCallback(() => {
+    handleOpenAdminQuery("user-management");
+  }, [handleOpenAdminQuery]);
+
+  const handleToggleQueryHistoryFromMenu = useCallback(() => {
+    setShowQueryHistory((current) => !current);
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuItemPath(null);
+  }, []);
+
+  const handleToggleSQLFavoritesFromMenu = useCallback(() => {
+    setShowSQLFavorites((current) => !current);
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuItemPath(null);
+  }, []);
+
+  const handleOpenPluginManagerFromMenu = useCallback(() => {
+    setShowPluginManager(true);
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuItemPath(null);
+  }, []);
+
+  const handleToggleBottomSidebarFromMenu = useCallback(() => {
+    if (activeTab?.type === "query") {
+      window.dispatchEvent(
+        new CustomEvent("toggle-query-results-pane", {
+          detail: { tabId: activeTab.id },
+        }),
+      );
+    } else {
+      setShowTerminalPanel((current) => !current);
+    }
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuItemPath(null);
+  }, [activeTab]);
+
   const handleOpenAISlidePanel = useCallback((prompt?: string) => {
     if (typeof prompt === "string" && prompt.trim()) {
       setAiPanelDraft({
@@ -713,9 +1257,12 @@ function App() {
       items: [
         { label: t("menu.item.newConnection"), action: handleNewConnectionFromMenu },
         { label: t("menu.item.newQuery"), action: handleNewQueryFromMenu, disabled: !isConnected },
-        { label: t("menu.item.importSqlFile"), action: handleImportSqlFile, shortcut: "Ctrl+O" },
+        { label: t("menu.item.openDatabaseFile"), action: handleOpenDatabaseFileFromMenu, shortcut: "Ctrl+Shift+O" },
+        { label: t("menu.item.openSqlFile"), action: handleImportSqlFileFromMenu, shortcut: "Ctrl+O", disabled: !supportsSqlFileActions },
+        { label: t("menu.item.importSqlIntoDatabase"), action: handleImportSqlIntoCurrentDatabaseFromMenu, disabled: !supportsSqlFileActions },
+        { label: t("menu.item.exportDatabase"), action: handleExportDatabaseFromMenu, disabled: !isConnected },
         { divider: true },
-        { label: t("menu.item.openSqlFavorites"), action: handleToggleSQLFavorites, shortcut: "Ctrl+Shift+S" },
+        { label: t("menu.item.openSqlFavorites"), action: handleToggleSQLFavoritesFromMenu, shortcut: "Ctrl+Shift+S" },
         { divider: true },
         { label: t("menu.item.openMetrics"), action: handleOpenMetricsBoardFromMenu, disabled: !isConnected },
         { divider: true },
@@ -766,7 +1313,7 @@ function App() {
             {
               key: "toggle-bottom-sidebar",
               label: t("menu.item.toggleBottomSidebar"),
-              disabled: true,
+              action: handleToggleBottomSidebarFromMenu,
               shortcut: "Ctrl Shift C",
             },
             {
@@ -801,8 +1348,8 @@ function App() {
       key: "tools",
       label: t("menu.section.tools"),
       items: [
-        { label: t("menu.item.userManagement"), disabled: true },
-        { label: t("menu.item.processList"), disabled: true, shortcut: "Ctrl ." },
+        { label: t("menu.item.userManagement"), action: handleOpenUserManagementFromMenu, disabled: !isConnected },
+        { label: t("menu.item.processList"), action: handleOpenProcessListFromMenu, disabled: !isConnected, shortcut: "Ctrl ." },
         { divider: true },
         { label: t("menu.item.searchInDatabase"), action: handleSearchInDatabaseFromMenu, disabled: !isConnected },
         { divider: true },
@@ -823,7 +1370,7 @@ function App() {
       label: t("menu.section.plugins"),
       items: [
         { label: t("menu.item.askAI"), action: handleOpenAISlidePanelFromMenu, disabled: !isConnected },
-        { label: t("menu.item.pluginManager"), disabled: true },
+        { label: t("menu.item.pluginManager"), action: handleOpenPluginManagerFromMenu },
       ],
     },
     {
@@ -832,7 +1379,7 @@ function App() {
       items: [
         { label: t("menu.item.explorer"), action: handleShowDatabaseWorkspaceFromMenu, disabled: !isConnected },
         { label: t("menu.item.metrics"), action: handleOpenMetricsBoardFromMenu, disabled: !isConnected },
-        { label: t("menu.item.queryHistory"), action: handleToggleQueryHistory, shortcut: "Ctrl+H" },
+        { label: t("menu.item.queryHistory"), action: handleToggleQueryHistoryFromMenu, shortcut: "Ctrl+H" },
       ],
     },
     {
@@ -1017,23 +1564,24 @@ function App() {
 
   useEffect(() => {
     if (activeConnectionId && (connectedIds.has(activeConnectionId) || isConnecting)) {
+      setForceLauncherVisible(false);
       setShowStartupConnectionManager(false);
       setConnectionFormIntent(null);
     }
   }, [activeConnectionId, connectedIds, isConnecting]);
 
   useEffect(() => {
-    if (isConnected || isConnecting || connectionFormIntent) return;
+    if (isConnected || isConnecting || connectionFormIntent || isRecoverableErrorDelayActive) return;
 
     setShowStartupConnectionManager(true);
     setShowAISlidePanel(false);
     setIsWindowMenuOpen(false);
     setActiveWindowMenuSection(null);
     setActiveWindowMenuItemPath(null);
-  }, [connectionFormIntent, isConnected, isConnecting]);
+  }, [connectionFormIntent, isConnected, isConnecting, isRecoverableErrorDelayActive]);
 
   useEffect(() => {
-    if (!isDesktopWindow || isConnected || isConnecting) return;
+    if (!isDesktopWindow || isConnected || isConnecting || isRecoverableErrorDelayActive) return;
 
     const windowProfile: "launcher" | "form" = connectionFormIntent
       ? "form"
@@ -1058,7 +1606,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [applyDesktopWindowProfile, connectionFormIntent, isConnected, isConnecting, isDesktopWindow]);
+  }, [applyDesktopWindowProfile, connectionFormIntent, isConnected, isConnecting, isDesktopWindow, isRecoverableErrorDelayActive]);
 
   useEffect(() => {
     if (!isDesktopWindow || !isConnected) return;
@@ -1100,6 +1648,36 @@ function App() {
     setSidebarWidth(sidebarMinWidth);
   }, [isSidebarCollapsed, sidebarMinWidth, sidebarWidth]);
 
+  const globalToastMarkup = globalToast ? (
+    <div className="app-toast-region" aria-live="polite" aria-atomic="true">
+      <div className={`app-toast ${globalToast.tone} ${globalToast.isClosing ? "closing" : ""}`}>
+        <div className={`app-toast-icon ${globalToast.tone}`}>
+          {globalToast.tone === "success" ? (
+            <CheckCircle2 className="h-4 w-4" />
+          ) : globalToast.tone === "error" ? (
+            <TriangleAlert className="h-4 w-4" />
+          ) : (
+            <Info className="h-4 w-4" />
+          )}
+        </div>
+        <div className="app-toast-copy">
+          <span className="app-toast-title">{globalToast.title}</span>
+          {globalToast.description ? (
+            <span className="app-toast-description">{globalToast.description}</span>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="app-toast-close"
+          onClick={dismissGlobalToast}
+          aria-label={language === "vi" ? "Dong thong bao" : "Dismiss notification"}
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   if (showStartupShell) {
     return (
       <div className="app-root startup-shell-active">
@@ -1116,6 +1694,7 @@ function App() {
         {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
           <StartupConnectionManager
             onNewConnection={() => handleOpenConnectionForm("connect")}
+            onOpenDatabaseFile={handleOpenDatabaseFile}
             windowControls={
               <div className="titlebar-window-controls startup-window-controls" data-no-window-drag="true">
                 <button
@@ -1153,6 +1732,7 @@ function App() {
             }
           />
         )}
+        {globalToastMarkup}
       </div>
     );
   }
@@ -1204,6 +1784,7 @@ function App() {
         onNewQuery={handleNewQuery}
         onClearVisibleTabs={handleClearVisibleTabs}
         onRefreshWorkspace={handleRefreshWorkspace}
+        onExportDatabase={handleExportDatabase}
         onOpenMetricsBoard={handleOpenMetricsBoard}
         onFocusExplorerSearch={handleFocusExplorerSearch}
         onOpenAISlidePanel={handleOpenAISlidePanel}
@@ -1212,6 +1793,7 @@ function App() {
         onHandleQuerySessionChange={handleQuerySessionChange}
         onRunActiveQuery={handleRunActiveQuery}
         showTerminalPanel={showTerminalPanel}
+        isExportingDatabase={isExportingDatabase}
         onToggleTerminalPanel={handleToggleTerminalPanel}
         onToggleSidebar={handleToggleSidebar}
         onSetConnectionFormIntent={setConnectionFormIntent}
@@ -1247,12 +1829,16 @@ function App() {
       {showAboutModal && (
         <AppAboutModal onClose={() => setShowAboutModal(false)} />
       )}
+      {showPluginManager && (
+        <AppPluginManagerModal onClose={() => setShowPluginManager(false)} />
+      )}
       {showKeyboardShortcutsModal && (
         <AppShortcutsModal onClose={() => setShowKeyboardShortcutsModal(false)} />
       )}
       {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
         <StartupConnectionManager
           onNewConnection={() => handleOpenConnectionForm("connect")}
+          onOpenDatabaseFile={handleOpenDatabaseFile}
           windowControls={
             <div className="titlebar-window-controls startup-window-controls" data-no-window-drag="true">
               <button
@@ -1316,6 +1902,7 @@ function App() {
         onRunQuery={handleRunQueryFromFavorites}
         currentEditorSql={activeTab?.type === "query" ? activeTab.content : ""}
       />
+      {globalToastMarkup}
     </div>
   );
 }

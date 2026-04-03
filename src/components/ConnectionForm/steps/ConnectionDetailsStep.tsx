@@ -217,6 +217,9 @@ export function ConnectionDetailsStep({
   const getExtraFieldHint = (field: EngineExtraField) =>
     language === "vi" ? field.hintVi || field.hint || "" : field.hint || "";
 
+  const showBootstrapSection = showBootstrapWorkflow && (!isFileEngine || bootstrapMode);
+  const showCreateAndOpenAction = showBootstrapWorkflow && (!isFileEngine || bootstrapMode);
+
   return (
     <>
       <div className="connection-form-header">
@@ -537,7 +540,7 @@ export function ConnectionDetailsStep({
             )}
 
             {/* Bootstrap section */}
-            {!isFileEngine && showBootstrapWorkflow && (
+            {showBootstrapSection && (
               <section className="connection-form-section">
                 <div className="connection-form-section-head">
                   <div>
@@ -616,7 +619,7 @@ export function ConnectionDetailsStep({
           <button onClick={onTest} disabled={isTesting} className="btn btn-secondary">
             {strings.testConnection}
           </button>
-          {showBootstrapWorkflow && (
+          {showCreateAndOpenAction && !bootstrapMode && (
             <button
               type="button"
               onClick={onCreateDatabase}
@@ -630,9 +633,20 @@ export function ConnectionDetailsStep({
 
         <div className="connection-form-footer-actions">
           <button onClick={onClose} className="btn btn-secondary">{strings.cancel}</button>
-          <button onClick={onConnect} disabled={isConnecting} className="btn btn-primary">
-            {strings.connect}
-          </button>
+          {showCreateAndOpenAction && bootstrapMode ? (
+            <button
+              type="button"
+              onClick={onCreateDatabase}
+              disabled={isBootstrappingWorkspace || (!isFileEngine && !hasBootstrapDatabaseName)}
+              className="btn btn-primary"
+            >
+              {strings.createAndOpen}
+            </button>
+          ) : (
+            <button onClick={onConnect} disabled={isConnecting} className="btn btn-primary">
+              {strings.connect}
+            </button>
+          )}
         </div>
       </div>
     </>

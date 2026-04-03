@@ -136,7 +136,7 @@ export interface ConnectionListViewProps {
   layoutMode: ConnectionLayoutMode;
   onSelectConnection: (id: string) => void;
   onConnect: (connection: ConnectionConfig) => void;
-  onHover: (event: React.MouseEvent<HTMLButtonElement>, id: string) => void;
+  onHover: (event: React.MouseEvent<HTMLDivElement>, id: string) => void;
   onLeaveHover: () => void;
   listRef: React.RefObject<HTMLDivElement | null>;
 }
@@ -144,7 +144,7 @@ export interface ConnectionListViewProps {
 export interface ConnectionRowProps {
   data: ConnectionRowData;
   onClick: () => void;
-  onMouseEnter: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => void;
   onMouseLeave: () => void;
 }
 

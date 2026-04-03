@@ -1,6 +1,8 @@
+use crate::database::driver::DatabaseDriver;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{ConnectionConfig, DatabaseInfo, DatabaseType, ParsedConnectionUrl};
 use crate::database::safety::{quote_mysql_identifier, quote_postgres_identifier};
+use crate::database::sqlite::SqliteDriver;
 use crate::storage::connection_storage::ConnectionStorage;
 use crate::utils::rate_limiter::ConnectionAttemptLimiter;
 use rfd::FileDialog;
@@ -234,6 +236,64 @@ fn default_sqlite_database_path(database_name: &str) -> Result<PathBuf, String> 
         .join("TableR")
         .join("databases")
         .join(format!("{}.sqlite", sanitize_sqlite_file_stem(database_name))))
+}
+
+async fn create_local_sqlite_database(
+    config: &ConnectionConfig,
+    database_name: &str,
+    bootstrap_statements: &[String],
+) -> Result<String, String> {
+    let resolved_file_path = config
+        .file_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            default_sqlite_database_path(database_name)
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "local-database.sqlite".to_string())
+        });
+
+    let existed_before = if resolved_file_path == ":memory:" || resolved_file_path.starts_with("sqlite:") {
+        false
+    } else {
+        PathBuf::from(&resolved_file_path).exists()
+    };
+
+    let driver = SqliteDriver::connect(&resolved_file_path)
+        .await
+        .map_err(|_| format_local_bootstrap_error("SQLite", "opening the database file"))?;
+
+    for statement in bootstrap_statements {
+        driver
+            .execute_query(statement)
+            .await
+            .map_err(|_| format_local_bootstrap_error("SQLite", "applying bootstrap SQL"))?;
+    }
+
+    driver
+        .disconnect()
+        .await
+        .map_err(|_| "SQLite local bootstrap finished, but the database file did not close cleanly.".to_string())?;
+
+    Ok(if existed_before {
+        if bootstrap_statements.is_empty() {
+            format!("SQLite database file is ready at {}.", resolved_file_path)
+        } else {
+            format!(
+                "SQLite database file already existed at {}. Bootstrap SQL was applied successfully.",
+                resolved_file_path
+            )
+        }
+    } else if bootstrap_statements.is_empty() {
+        format!("Created local SQLite database at {}.", resolved_file_path)
+    } else {
+        format!(
+            "Created local SQLite database at {} and applied bootstrap SQL.",
+            resolved_file_path
+        )
+    })
 }
 
 async fn create_local_postgres_database(
@@ -581,6 +641,17 @@ pub async fn create_local_database(
         return Err("Database name cannot be empty.".to_string());
     }
 
+    let bootstrap_statements = bootstrap_statements.unwrap_or_default();
+
+    if config.db_type == DatabaseType::SQLite {
+        return timeout(
+            BOOTSTRAP_TIMEOUT,
+            create_local_sqlite_database(&config, requested_database, &bootstrap_statements),
+        )
+        .await
+        .map_err(|_| "Local SQLite bootstrap timed out after 60 seconds.".to_string())?;
+    }
+
     let host = config
         .host
         .as_deref()
@@ -589,8 +660,6 @@ pub async fn create_local_database(
     if !is_local_host(host) {
         return Err("Local database creation is only enabled for localhost or 127.0.0.1.".to_string());
     }
-
-    let bootstrap_statements = bootstrap_statements.unwrap_or_default();
 
     match config.db_type {
         DatabaseType::PostgreSQL => timeout(
@@ -607,9 +676,6 @@ pub async fn create_local_database(
             .await
             .map_err(|_| "Local MySQL bootstrap timed out after 60 seconds.".to_string())?
         }
-        DatabaseType::SQLite => Ok(
-            "SQLite already supports creating a new database from a fresh file path.".to_string(),
-        ),
         _ => Err(format!(
             "{:?} local database bootstrap is not wired into this build yet.",
             config.db_type

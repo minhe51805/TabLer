@@ -304,104 +304,72 @@ export function ConnectionPickerStep({
   const selectedStatus = selectedDb ? getPickerStatus(selectedDb, bootstrapMode, language) : null;
   const selectedMeta = selectedDb ? getPickerMetaLabel(selectedDb, language) : "";
   const selectedDescription = selectedDb ? getPickerDescription(selectedDb, bootstrapMode, language) : "";
-  const selectedCapabilities = selectedDb ? getPickerCapabilities(selectedDb, bootstrapMode, language) : [];
-  const selectedHighlights = selectedDb ? getPickerHighlights(selectedDb, bootstrapMode, language) : [];
+  const selectedCapabilities = selectedDb ? getPickerCapabilities(selectedDb, bootstrapMode, language).slice(0, 2) : [];
+  const selectedHighlights = selectedDb ? getPickerHighlights(selectedDb, bootstrapMode, language).slice(0, 2) : [];
+  const selectedBrandStyle = selectedDb
+    ? ({ "--picker-selected-brand": selectedDb.color } as CSSProperties)
+    : undefined;
 
   return (
-    <>
+    <div className="connection-picker-v2">
       <div className="connection-picker-head">
         <div className="connection-picker-copy">
           <span className="panel-kicker">{strings.pickerKicker}</span>
-          <h2 className="connection-picker-title">
-            {bootstrapMode ? strings.pickerLocalTitle : strings.pickerTitle}
-          </h2>
-          <p className="connection-picker-subtitle">
-            {bootstrapMode ? strings.pickerLocalSubtitle : strings.pickerSubtitle}
-          </p>
-          {!editConnection && (
-            <div className="connection-picker-mode-switch" role="group" aria-label={strings.flowLabel}>
-              <button
-                type="button"
-                className={`connection-picker-mode-btn ${!bootstrapMode ? "active" : ""}`}
-                onClick={() => onSwitchIntent("connect")}
-                aria-pressed={!bootstrapMode}
-              >
-                <Plug className="w-3.5 h-3.5" />
-                <span>{strings.remoteSaved}</span>
-              </button>
-              <button
-                type="button"
-                className={`connection-picker-mode-btn ${bootstrapMode ? "active" : ""}`}
-                onClick={() => onSwitchIntent("bootstrap")}
-                aria-pressed={bootstrapMode}
-              >
-                <Database className="w-3.5 h-3.5" />
-                <span>{strings.localDb}</span>
-              </button>
+          <div className="connection-picker-hero">
+            <div className="connection-picker-hero-copy">
+              <h2 className="connection-picker-title">
+                {bootstrapMode ? strings.pickerLocalTitle : strings.pickerTitle}
+              </h2>
+              <p className="connection-picker-subtitle">
+                {bootstrapMode ? strings.pickerLocalSubtitle : strings.pickerSubtitle}
+              </p>
             </div>
-          )}
-          <div className="connection-picker-stats">
-            <span className="connection-picker-stat accent">
-              <strong>{readyCount}</strong>
-              <span>{bootstrapMode ? strings.localReady : strings.ready}</span>
-            </span>
-            <span className="connection-picker-stat">
-              <strong>{roadmapTotal}</strong>
-              <span>{bootstrapMode ? strings.localRoadmap : strings.roadmap}</span>
-            </span>
-            <span className="connection-picker-stat">
-              <strong>{filteredDbs.length}</strong>
-              <span>{strings.shown}</span>
-            </span>
           </div>
         </div>
 
-        <div className="connection-picker-head-side">
-          <div className={`connection-picker-head-glance ${selectedDb ? "has-selection" : ""}`}>
-            <span className="connection-picker-footer-label">{strings.selection}</span>
-
-            {selectedDb && selectedStatus ? (
-              <div className="connection-picker-head-glance-main has-selection">
-                <div
-                  className="connection-db-tile-icon connection-picker-head-glance-icon"
-                  style={{ "--db-brand": selectedDb.color } as CSSProperties}
+        <div className="connection-picker-topbar">
+          <div className="connection-picker-flow-card">
+            {!editConnection ? (
+              <div className="connection-picker-mode-switch" role="group" aria-label={strings.flowLabel}>
+                <button
+                  type="button"
+                  className={`connection-picker-mode-btn ${!bootstrapMode ? "active" : ""}`}
+                  onClick={() => onSwitchIntent("connect")}
+                  aria-pressed={!bootstrapMode}
                 >
-                  <DatabaseBrandIcon
-                    dbKey={selectedDb.key}
-                    label={selectedDb.label}
-                    className="connection-db-brand-lg"
-                    fallbackClassName="!w-6 !h-6 text-white"
-                  />
-                </div>
-
-                <div className="connection-picker-head-glance-copy">
-                  <div className="connection-picker-head-glance-row">
-                    <strong>{selectedDb.label}</strong>
-                    <span className={`connection-picker-footer-pill ${selectedStatus.tone}`}>
-                      {selectedStatus.label}
-                    </span>
-                  </div>
-                  <span>{selectedMeta}</span>
-                  <p>{selectedDescription}</p>
-                </div>
+                  <Plug className="w-3.5 h-3.5" />
+                  <span>{strings.remoteSaved}</span>
+                </button>
+                <button
+                  type="button"
+                  className={`connection-picker-mode-btn ${bootstrapMode ? "active" : ""}`}
+                  onClick={() => onSwitchIntent("bootstrap")}
+                  aria-pressed={bootstrapMode}
+                >
+                  <Database className="w-3.5 h-3.5" />
+                  <span>{strings.localDb}</span>
+                </button>
               </div>
             ) : (
-              <div className="connection-picker-head-glance-main">
-                <div className="connection-picker-head-glance-copy">
-                  <strong>{bootstrapMode ? strings.pickLocalEngine : strings.pickDatabaseType}</strong>
-                  <p>{strings.selectionHint}</p>
-                </div>
+              <div className="connection-picker-mode-switch static" aria-hidden="true">
+                <span className="connection-picker-mode-static">
+                  {bootstrapMode ? strings.localDb : strings.remoteSaved}
+                </span>
               </div>
             )}
 
-            <div className="connection-picker-head-glance-meta">
-              <span className="connection-picker-head-glance-chip accent">
+            <div className="connection-picker-mini-stats">
+              <span className="connection-picker-mini-stat accent">
                 <strong>{readyCount}</strong>
                 <span>{bootstrapMode ? strings.localReady : strings.ready}</span>
               </span>
-              <span className="connection-picker-head-glance-chip">
+              <span className="connection-picker-mini-stat">
                 <strong>{roadmapTotal}</strong>
                 <span>{bootstrapMode ? strings.localRoadmap : strings.roadmap}</span>
+              </span>
+              <span className="connection-picker-mini-stat">
+                <strong>{filteredDbs.length}</strong>
+                <span>{strings.shown}</span>
               </span>
             </div>
           </div>
@@ -409,7 +377,7 @@ export function ConnectionPickerStep({
           <button
             type="button"
             onClick={onClose}
-            className="connection-picker-close"
+            className="connection-picker-close connection-picker-topbar-close"
             title={strings.close}
           >
             <X className="w-4 h-4" />
@@ -421,7 +389,7 @@ export function ConnectionPickerStep({
         <div className="connection-picker-layout">
           <div className="connection-picker-main">
             <div className="connection-picker-browser">
-              <div className="connection-picker-toolbar">
+              <div className="connection-picker-browser-head">
                 <div className="connection-picker-searchbar">
                   <Search className="connection-picker-search-icon h-4 w-4 shrink-0" />
                   <input
@@ -514,15 +482,12 @@ export function ConnectionPickerStep({
 
                               <div className="connection-picker-card-footer">
                                 <div className="connection-picker-card-tags">
-                                  {getPickerCapabilities(db, bootstrapMode, language).map((capability) => (
+                                  {getPickerCapabilities(db, bootstrapMode, language).slice(0, 2).map((capability) => (
                                     <span key={`${db.key}-${capability}`} className="connection-picker-card-tag">
                                       {capability}
                                     </span>
                                   ))}
                                 </div>
-                                <span className="connection-picker-card-hint">
-                                  {status.canContinue ? strings.doubleClickContinue : strings.previewOnly}
-                                </span>
                               </div>
                             </button>
                           );
@@ -536,7 +501,10 @@ export function ConnectionPickerStep({
           </div>
 
           <aside className="connection-picker-aside">
-            <div className={`connection-picker-selection-card ${selectedDb ? "has-selection" : ""}`}>
+            <div
+              className={`connection-picker-selection-card ${selectedDb ? "has-selection" : ""}`}
+              style={selectedBrandStyle}
+            >
               <span className="connection-picker-footer-label">{strings.selection}</span>
 
               {selectedDb && selectedStatus ? (
@@ -556,13 +524,30 @@ export function ConnectionPickerStep({
 
                     <div className="connection-picker-selection-copy">
                       <strong>{selectedDb.label}</strong>
-                      <span className={`connection-picker-footer-pill ${selectedStatus.tone}`}>
-                        {selectedStatus.label}
-                      </span>
+                      <span className="connection-picker-selection-meta-line">{selectedMeta}</span>
                     </div>
+
+                    <span className={`connection-picker-footer-pill ${selectedStatus.tone}`}>
+                      {selectedStatus.label}
+                    </span>
                   </div>
 
                   <p className="connection-picker-selection-description">{selectedDescription}</p>
+
+                  <div className="connection-picker-inspector-facts">
+                    <div className="connection-picker-inspector-fact">
+                      <span>{strings.workflow}</span>
+                      <strong>{selectedMeta}</strong>
+                    </div>
+                    <div className="connection-picker-inspector-fact">
+                      <span>{strings.mode}</span>
+                      <strong>{bootstrapMode ? strings.localBootstrap : strings.connectionSetup}</strong>
+                    </div>
+                    <div className="connection-picker-inspector-fact">
+                      <span>{strings.engineType}</span>
+                      <strong>{selectedDb.isFile ? strings.fileDatabase : strings.serverDatabase}</strong>
+                    </div>
+                  </div>
 
                   <div className="connection-picker-selection-tags">
                     {selectedCapabilities.map((capability) => (
@@ -570,25 +555,6 @@ export function ConnectionPickerStep({
                         {capability}
                       </span>
                     ))}
-                  </div>
-
-                  <div className="connection-picker-selection-meta">
-                    <div className="connection-picker-selection-meta-item">
-                      <span>{strings.workflow}</span>
-                      <strong>{selectedMeta}</strong>
-                    </div>
-                    <div className="connection-picker-selection-meta-item">
-                      <span>{strings.mode}</span>
-                      <strong>{bootstrapMode ? strings.localBootstrap : strings.connectionSetup}</strong>
-                    </div>
-                    <div className="connection-picker-selection-meta-item">
-                      <span>{strings.availability}</span>
-                      <strong>{selectedStatus.label}</strong>
-                    </div>
-                    <div className="connection-picker-selection-meta-item">
-                      <span>{strings.engineType}</span>
-                      <strong>{selectedDb.isFile ? strings.fileDatabase : strings.serverDatabase}</strong>
-                    </div>
                   </div>
 
                   <div className="connection-picker-selection-list">
@@ -639,7 +605,7 @@ export function ConnectionPickerStep({
           </aside>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

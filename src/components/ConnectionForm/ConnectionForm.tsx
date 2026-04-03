@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useAppStore } from "../../stores/appStore";
 import { useI18n } from "../../i18n";
 import type { ConnectionConfig, DatabaseType } from "../../types";
+import { emitAppToast } from "../../utils/app-toast";
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import { ConnectionPickerStep } from "./steps/ConnectionPickerStep";
 import { ConnectionDetailsStep, type DetailsStrings } from "./steps/ConnectionDetailsStep";
@@ -117,6 +118,7 @@ export function ConnectionForm({
 }: Props) {
   const { language, t } = useI18n();
   const connectToDatabase = useAppStore((state) => state.connectToDatabase);
+  const loadSavedConnections = useAppStore((state) => state.loadSavedConnections);
   const testConnection = useAppStore((state) => state.testConnection);
   const createLocalDatabase = useAppStore((state) => state.createLocalDatabase);
   const suggestSqliteDatabasePath = useAppStore((state) => state.suggestSqliteDatabasePath);
@@ -410,6 +412,18 @@ export function ConnectionForm({
   const passwordLabel = currentEngine?.passwordKind === "token" ? copy.authToken : copy.password;
   const passwordPlaceholder = currentEngine?.passwordKind === "token" ? copy.enterAuthToken : copy.enterPassword;
 
+  const getConnectionFeedbackLabel = useCallback(
+    (config: ConnectionConfig, databaseName?: string) => {
+      const explicitName = config.name.trim();
+      if (explicitName) return explicitName;
+
+      const engineLabel = selectedDb?.label || currentEngine?.label || config.db_type.toUpperCase();
+      const targetLabel = (databaseName || config.database || "").trim();
+      return targetLabel ? `${engineLabel} ${targetLabel}` : engineLabel;
+    },
+    [currentEngine?.label, selectedDb?.label],
+  );
+
   const bootstrapPresetLabels = useMemo(
     () => ({
       none: copy.emptyDatabase,
@@ -498,10 +512,25 @@ export function ConnectionForm({
   };
 
   const handleConnect = async () => {
+    if (bootstrapMode && showBootstrapWorkflow) {
+      await handleCreateDatabase();
+      return;
+    }
+
     try {
-      await connectToDatabase({
+      const connectionConfig = {
         ...formData,
         password: showPasswordField ? passwordDraftRef.current : undefined,
+      };
+      await connectToDatabase(connectionConfig);
+      await loadSavedConnections();
+      emitAppToast({
+        tone: "success",
+        title: language === "vi" ? "Da ket noi thanh cong" : "Connection ready",
+        description:
+          language === "vi"
+            ? `Da mo workspace ${getConnectionFeedbackLabel(connectionConfig)}.`
+            : `Opened workspace ${getConnectionFeedbackLabel(connectionConfig)}.`,
       });
       passwordDraftRef.current = "";
       onClose();
@@ -526,6 +555,9 @@ export function ConnectionForm({
     setIsCreatingDatabase(true);
     setTestResult(null);
     try {
+      const presetSql = getBootstrapPresetSql(bootstrapPreset, formData.db_type);
+      const combinedBootstrapSql = [presetSql, bootstrapSql.trim()].filter((s) => s.trim().length > 0).join("\n\n");
+      const bootstrapStatements = splitSqlStatements(combinedBootstrapSql);
       if (isSqlite) {
         const resolvedFilePath = formData.file_path?.trim() || (await suggestSqliteDatabasePath(sqliteDatabaseName));
         if (!resolvedFilePath) {
@@ -539,8 +571,22 @@ export function ConnectionForm({
           name: formData.name.trim() || `${selectedDb?.label || formData.db_type} ${sqliteDatabaseName}`,
           password: undefined,
         };
+        const message = await createLocalDatabase(sqliteConfig, sqliteDatabaseName, bootstrapStatements);
         setTestResult({ success: true, message: language === "vi" ? `Đang tạo cơ sở dữ liệu SQLite từ ${resolvedFilePath}...` : `Creating SQLite database from ${resolvedFilePath}...` });
+        setTestResult({
+          success: true,
+          message: language === "vi" ? `${message} Dang mo workspace SQLite...` : `${message} Opening the SQLite workspace...`,
+        });
         await connectToDatabase(sqliteConfig);
+        await loadSavedConnections();
+        emitAppToast({
+          tone: "success",
+          title: language === "vi" ? "Da import va mo SQLite" : "SQLite workspace ready",
+          description:
+            language === "vi"
+              ? `${getConnectionFeedbackLabel(sqliteConfig, sqliteDatabaseName)} da duoc tao va mo.`
+              : `${getConnectionFeedbackLabel(sqliteConfig, sqliteDatabaseName)} was created and opened.`,
+        });
         passwordDraftRef.current = "";
         onClose();
         return;
@@ -552,9 +598,6 @@ export function ConnectionForm({
         return;
       }
 
-      const presetSql = getBootstrapPresetSql(bootstrapPreset, formData.db_type);
-      const combinedBootstrapSql = [presetSql, bootstrapSql.trim()].filter((s) => s.trim().length > 0).join("\n\n");
-      const bootstrapStatements = splitSqlStatements(combinedBootstrapSql);
       const bootstrapConfig = {
         ...formData,
         name: formData.name.trim() || `${selectedDb?.label || formData.db_type} ${requestedDatabase}`,
@@ -564,6 +607,15 @@ export function ConnectionForm({
       const message = await createLocalDatabase(bootstrapConfig, requestedDatabase, bootstrapStatements);
       setTestResult({ success: true, message: language === "vi" ? `${message} Đang kết nối tới ${requestedDatabase}...` : `${message} Connecting to ${requestedDatabase}...` });
       await connectToDatabase(bootstrapConfig);
+      await loadSavedConnections();
+      emitAppToast({
+        tone: "success",
+        title: language === "vi" ? "Da import va mo database" : "Database workspace ready",
+        description:
+          language === "vi"
+            ? `${getConnectionFeedbackLabel(bootstrapConfig, requestedDatabase)} da san sang de su dung.`
+            : `${getConnectionFeedbackLabel(bootstrapConfig, requestedDatabase)} is ready to use.`,
+      });
       passwordDraftRef.current = "";
       onClose();
     } catch (e) {
@@ -771,7 +823,15 @@ export function ConnectionForm({
       />
     );
 
-    if (embeddedInStartupShell) return <div className="connection-picker-shell">{pickerContent}</div>;
+    if (embeddedInStartupShell) {
+      return (
+        <div className="connection-picker-shell">
+          <div className="connection-picker-shell-viewport">
+            {pickerContent}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="connection-picker-overlay">
         <div className="connection-picker-modal">{pickerContent}</div>
@@ -835,7 +895,15 @@ export function ConnectionForm({
     />
   );
 
-  if (embeddedInStartupShell) return <div className="connection-form-shell">{formContent}</div>;
+  if (embeddedInStartupShell) {
+    return (
+      <div className="connection-form-shell">
+        <div className="connection-form-shell-viewport">
+          <div className="connection-form-shell-frame">{formContent}</div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="connection-form-overlay">
       <div className="connection-form-modal">{formContent}</div>

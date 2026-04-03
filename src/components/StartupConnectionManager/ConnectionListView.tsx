@@ -1,4 +1,4 @@
-import { Database, LayoutGrid, LayoutList, Plus, Search } from "lucide-react";
+import { Database, FolderOpen, LayoutGrid, LayoutList, Plus, Search } from "lucide-react";
 import { useI18n } from "../../i18n";
 import type { ConnectionConfig, ConnectionGroup, ConnectionLayoutMode, ConnectionTag } from "./types";
 import {
@@ -28,9 +28,11 @@ interface Props {
   collapsedGroupIds: Set<string>;
   onSelectConnection: (id: string) => void;
   onConnect: (connection: ConnectionConfig) => void;
-  onHover: (e: React.MouseEvent<HTMLButtonElement>, id: string) => void;
+  onDeleteConnection: (connection: ConnectionConfig) => void;
+  onHover: (e: React.MouseEvent<HTMLDivElement>, id: string) => void;
   onLeaveHover: () => void;
   onNewConnection: () => void;
+  onOpenDatabaseFile: () => void;
   onToggleGroup: (groupId: string) => void;
   onRenameGroup: (groupId: string, name: string) => void;
   onChangeGroupColor: (groupId: string, color: string) => void;
@@ -53,9 +55,11 @@ export function ConnectionListView({
   collapsedGroupIds,
   onSelectConnection,
   onConnect,
+  onDeleteConnection,
   onHover,
   onLeaveHover,
   onNewConnection,
+  onOpenDatabaseFile,
   onToggleGroup,
   onRenameGroup,
   onChangeGroupColor,
@@ -95,6 +99,28 @@ export function ConnectionListView({
           <span className="startup-manager-kicker">{t("common.connections")}</span>
           <h3>{t("startup.manager.pickWorkspace")}</h3>
         </div>
+
+        <div className="startup-manager-action-group" role="group" aria-label={t("common.connections")}>
+          <button
+            type="button"
+            className="startup-manager-search-add primary"
+            onClick={onNewConnection}
+            aria-label={t("startup.manager.createConnection")}
+            title={t("startup.manager.createConnection")}
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            className="startup-manager-search-add secondary"
+            onClick={onOpenDatabaseFile}
+            aria-label={t("menu.item.openDatabaseFile")}
+            title={t("menu.item.openDatabaseFile")}
+          >
+            <FolderOpen className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       <div className="startup-manager-search-row">
@@ -132,16 +158,6 @@ export function ConnectionListView({
             <LayoutGrid className="w-3.5 h-3.5" />
           </button>
         </div>
-
-        <button
-          type="button"
-          className="startup-manager-search-add"
-          onClick={onNewConnection}
-          aria-label={t("startup.manager.createConnection")}
-          title={t("startup.manager.createConnection")}
-        >
-          <Plus className="w-4 h-4" />
-        </button>
       </div>
 
       <div className="startup-manager-content">
@@ -207,9 +223,14 @@ export function ConnectionListView({
                     secondaryBadgeLabel: buildSecondaryBadgeLabel(conn.db_type, !!conn.use_ssl),
                   }}
                   onClick={() => {
+                    if (selectedConnectionId === conn.id) {
+                      void onConnect(conn);
+                      return;
+                    }
                     onSelectConnection(conn.id);
-                    void onConnect(conn);
                   }}
+                  onDelete={() => onDeleteConnection(conn)}
+                  deleteLabel={t("connections.delete")}
                   onMouseEnter={(e) => onHover(e, conn.id)}
                   onMouseLeave={onLeaveHover}
                   tagName={tag?.name}

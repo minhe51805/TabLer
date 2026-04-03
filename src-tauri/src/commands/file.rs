@@ -42,9 +42,40 @@ pub async fn read_sql_file_from_path(path: String) -> Result<SqlFileContent, Str
     read_file_from_path(file_path)
 }
 
+#[tauri::command]
+pub async fn pick_database_file() -> Result<DatabaseFileSelection, String> {
+    let file_path = FileDialog::new()
+        .add_filter(
+            "Database files",
+            &["sqlite", "sqlite3", "db", "db3", "duckdb"],
+        )
+        .add_filter("SQLite databases", &["sqlite", "sqlite3", "db", "db3"])
+        .add_filter("DuckDB databases", &["duckdb"])
+        .pick_file()
+        .ok_or_else(|| "No file selected.".to_string())?;
+
+    let file_name = file_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    Ok(DatabaseFileSelection {
+        file_name,
+        file_path: file_path.to_string_lossy().to_string(),
+    })
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SqlFileContent {
     pub file_name: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseFileSelection {
+    pub file_name: String,
+    pub file_path: String,
 }

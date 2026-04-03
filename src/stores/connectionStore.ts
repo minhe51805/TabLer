@@ -2,19 +2,6 @@ import { create } from "zustand";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
 import type { ConnectionConfig, DatabaseInfo, TableInfo, SchemaObjectInfo } from "../types";
 
-const connectionSignature = (c: ConnectionConfig) =>
-  [
-    c.db_type,
-    (c.host || "").trim().toLowerCase(),
-    c.port || "",
-    (c.username || "").trim(),
-    (c.database || "").trim().toLowerCase(),
-    (c.file_path || "").trim().toLowerCase(),
-    JSON.stringify(
-      Object.entries(c.additional_fields ?? {}).sort(([left], [right]) => left.localeCompare(right))
-    ),
-  ].join("|");
-
 const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig => ({
   ...config,
   password: undefined,
@@ -106,42 +93,36 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       const normalizedConfig = ensureConnectionName(config);
       const connections = get().connections;
       const sameId = connections.find((c) => c.id === normalizedConfig.id);
-      const sameTarget = connections.find(
-        (c) => c.id !== normalizedConfig.id && connectionSignature(c) === connectionSignature(normalizedConfig)
-      );
-      const finalConnectionId = sameTarget?.id || normalizedConfig.id;
-      const connectionRequest = { ...normalizedConfig, id: finalConnectionId };
-      const finalConfig = sanitizeConnectionConfig({ ...normalizedConfig, id: finalConnectionId });
+      const connectionRequest = normalizedConfig;
+      const finalConfig = sanitizeConnectionConfig(normalizedConfig);
 
       await invokeMutation("connect_database", { config: connectionRequest });
 
       const connectedIds = new Set(get().connectedIds);
-      connectedIds.add(finalConnectionId);
+      connectedIds.add(normalizedConfig.id);
 
       let newConnections = connections;
       if (sameId) {
         newConnections = connections.map((c) => (c.id === normalizedConfig.id ? finalConfig : c));
-      } else if (sameTarget) {
-        newConnections = connections.map((c) => c.id === sameTarget.id ? finalConfig : c);
       } else {
         newConnections = [...connections, finalConfig];
       }
 
       set({
         connectedIds,
-        activeConnectionId: finalConnectionId,
+        activeConnectionId: normalizedConfig.id,
         connections: newConnections,
         currentDatabase: normalizedConfig.database ?? null,
         ...(normalizedConfig.database ? {} : { tables: [], schemaObjects: [] }),
         isConnecting: false,
       });
 
-      await get().fetchDatabases(finalConnectionId);
+      await get().fetchDatabases(normalizedConfig.id);
       if (normalizedConfig.database) {
         set({ currentDatabase: normalizedConfig.database });
         await Promise.all([
-          get().fetchTables(finalConnectionId, normalizedConfig.database),
-          get().fetchSchemaObjects(finalConnectionId, normalizedConfig.database),
+          get().fetchTables(normalizedConfig.id, normalizedConfig.database),
+          get().fetchSchemaObjects(normalizedConfig.id, normalizedConfig.database),
         ]);
       }
     } catch (e) {

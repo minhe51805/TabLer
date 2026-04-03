@@ -1,29 +1,44 @@
+import { Trash2 } from "lucide-react";
 import type { ConnectionRowProps } from "./types";
 
 interface Props extends ConnectionRowProps {
   tagName?: string;
   tagColor?: string;
   envBadge?: { label: string; color: string } | null;
+  onDelete: () => void;
+  deleteLabel: string;
 }
 
 export function ConnectionRow({
   data,
   onClick,
+  onDelete,
+  deleteLabel,
   onMouseEnter,
   onMouseLeave,
   tagName,
   tagColor,
   envBadge,
 }: Props) {
-  const { connection, isSelected, isConnected, isActive, isBusy, isGridLayout, statusLabel, dbInfo, endpointLabel, databaseLabel, engineLabel, secondaryBadgeLabel } = data;
+  const { connection, isSelected, isConnected, isActive, isBusy, isGridLayout, statusLabel, dbInfo, endpointLabel, databaseLabel, secondaryBadgeLabel } = data;
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={isBusy ? -1 : 0}
+      aria-disabled={Boolean(isBusy)}
       className={`startup-connection-row ${isSelected ? "active" : ""}`}
       data-conn-id={connection.id}
-      disabled={Boolean(isBusy)}
-      onClick={onClick}
+      onClick={() => {
+        if (isBusy) return;
+        onClick();
+      }}
+      onKeyDown={(event) => {
+        if (isBusy) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onClick();
+      }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
@@ -50,33 +65,48 @@ export function ConnectionRow({
             {connection.name || "Untitled"}
           </strong>
 
-          {envBadge ? (
-            <span
-              className="startup-connection-env-badge"
-              style={{ color: envBadge.color, borderColor: envBadge.color }}
-              title={`Environment: ${envBadge.label}`}
-            >
-              ({envBadge.label})
-            </span>
-          ) : null}
+          <div className="startup-connection-title-actions">
+            {envBadge ? (
+              <span
+                className="startup-connection-env-badge"
+                style={{ color: envBadge.color, borderColor: envBadge.color }}
+                title={`Environment: ${envBadge.label}`}
+              >
+                ({envBadge.label})
+              </span>
+            ) : null}
 
-          {tagName ? (
-            <span
-              className="startup-connection-tag-pill"
-              style={{ color: tagColor || "var(--text-secondary)", borderColor: tagColor || "var(--text-muted)" }}
-              title={`Tag: ${tagName}`}
-            >
-              {tagName}
-            </span>
-          ) : null}
+            {tagName ? (
+              <span
+                className="startup-connection-tag-pill"
+                style={{ color: tagColor || "var(--text-secondary)", borderColor: tagColor || "var(--text-muted)" }}
+                title={`Tag: ${tagName}`}
+              >
+                {tagName}
+              </span>
+            ) : null}
 
-          <span
-            className={`startup-connection-status ${
-              isActive ? "active" : isConnected ? "connected" : ""
-            }`}
-          >
-            {statusLabel}
-          </span>
+            <span
+              className={`startup-connection-status ${
+                isActive ? "active" : isConnected ? "connected" : ""
+              }`}
+            >
+              {statusLabel}
+            </span>
+
+            <button
+              type="button"
+              className="startup-connection-delete"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+              title={deleteLabel}
+              aria-label={deleteLabel}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         <span
@@ -95,13 +125,7 @@ export function ConnectionRow({
             {databaseLabel}
           </span>
         ) : null}
-
-        {isGridLayout ? (
-          <div className="startup-connection-footer">
-            <span className="startup-connection-badge engine">{engineLabel}</span>
-          </div>
-        ) : null}
       </div>
-    </button>
+    </div>
   );
 }

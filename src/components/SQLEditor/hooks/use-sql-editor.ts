@@ -84,7 +84,10 @@ export function useSQLEditor({
   const [notice, setNotice] = useState<string | null>(() => initialState?.notice ?? null);
   const [queryCount, setQueryCount] = useState(() => initialState?.queryCount ?? 0);
   const [editorHeight, setEditorHeight] = useState(() => initialState?.editorHeight ?? 42);
-  const [showResultsPane, setShowResultsPane] = useState(() => initialState?.showResultsPane ?? true);
+  const [showResultsPane, setShowResultsPane] = useState(() => {
+    const initialRowCount = initialState?.result?.rows.length ?? 0;
+    return initialRowCount > 0;
+  });
   const [isBatchExecuting, setIsBatchExecuting] = useState(false);
   const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
 
@@ -135,7 +138,6 @@ export function useSQLEditor({
       setError(null);
       setResult(null);
       setNotice(translateCurrent("tabs.noSqlToExecute"));
-      setShowResultsPane(true);
       editor.focus();
       return;
     }
@@ -150,6 +152,9 @@ export function useSQLEditor({
       try {
         const queryResult = await executeQuery(connectionId, commandText);
         setResult(queryResult);
+        if (queryResult.rows.length > 0) {
+          setShowResultsPane(true);
+        }
         setQueryCount((c) => c + 1);
 
         void saveQueryEntry(
@@ -251,6 +256,9 @@ export function useSQLEditor({
 
       const queryResult = await executeSandboxQuery(connectionId, statementsToExecute);
       setResult(queryResult);
+      if (queryResult.rows.length > 0) {
+        setShowResultsPane(true);
+      }
       setQueryCount((c) => c + 1);
 
       // Auto-save to query history

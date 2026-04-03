@@ -1,4 +1,5 @@
-import { Database } from "lucide-react";
+import { Database, TriangleAlert, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   useEffect,
   useMemo,
@@ -10,6 +11,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import { useI18n } from "../../i18n";
 import { useAppStore } from "../../stores/appStore";
+import { emitAppToast } from "../../utils/app-toast";
 import {
   changeGroupColor,
   deleteGroup,
@@ -33,6 +35,7 @@ import { StartupBrandingPanel } from "./StartupBrandingPanel";
 
 interface Props {
   onNewConnection: () => void;
+  onOpenDatabaseFile: () => void;
   windowControls?: ReactNode;
 }
 
@@ -46,14 +49,18 @@ function getInitialLayoutMode(): ConnectionLayoutMode {
 
 // ─── Orchestrator ─────────────────────────────────────────────────────────────
 
-export function StartupConnectionManager({ onNewConnection, windowControls }: Props) {
-  const { t } = useI18n();
+export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, windowControls }: Props) {
+  const { t, language } = useI18n();
+  const isDesktopWindow = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   const {
     connections,
     activeConnectionId,
     connectedIds,
     isConnecting,
+    loadSavedConnections,
     connectSavedConnection,
+    disconnectFromDatabase,
+    deleteSavedConnection,
     fetchDatabases,
     fetchTables,
   } = useAppStore(
@@ -62,7 +69,10 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
       activeConnectionId: state.activeConnectionId,
       connectedIds: state.connectedIds,
       isConnecting: state.isConnecting,
+      loadSavedConnections: state.loadSavedConnections,
       connectSavedConnection: state.connectSavedConnection,
+      disconnectFromDatabase: state.disconnectFromDatabase,
+      deleteSavedConnection: state.deleteSavedConnection,
       fetchDatabases: state.fetchDatabases,
       fetchTables: state.fetchTables,
     })),
@@ -82,6 +92,7 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [layoutMode, setLayoutMode] = useState<ConnectionLayoutMode>(getInitialLayoutMode);
   const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
+  const [pendingDeleteConnection, setPendingDeleteConnection] = useState<ConnectionConfig | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // ── Derived Data ───────────────────────────────────────────────────────────
@@ -115,6 +126,10 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
   // ── Effects ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
+    void loadSavedConnections();
+  }, [loadSavedConnections]);
+
+  useEffect(() => {
     if (!selectedConnectionId || !filteredConnections.some((c) => c.id === selectedConnectionId)) {
       setSelectedConnectionId(filteredConnections[0]?.id ?? null);
     }
@@ -139,6 +154,42 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
       window.removeEventListener("resize", clear);
     };
   }, []);
+
+  useEffect(() => {
+    const focusConnectionCard = (connectionId: string, behavior: ScrollBehavior = "smooth") => {
+      setSelectedConnectionId(connectionId);
+      window.requestAnimationFrame(() => {
+        const card = listRef.current?.querySelector<HTMLElement>(`[data-conn-id="${connectionId}"]`);
+        card?.scrollIntoView({ block: "nearest", behavior });
+      });
+    };
+
+    const handleLauncherFocusConnection = (event: Event) => {
+      const detail = (event as CustomEvent<{ connectionId?: string; immediate?: boolean }>).detail;
+      if (!detail?.connectionId) return;
+      focusConnectionCard(detail.connectionId, detail.immediate ? "auto" : "smooth");
+    };
+
+    window.addEventListener("launcher-focus-connection", handleLauncherFocusConnection);
+
+    return () => {
+      window.removeEventListener("launcher-focus-connection", handleLauncherFocusConnection);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pendingDeleteConnection) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setPendingDeleteConnection(null);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [pendingDeleteConnection]);
 
   // ── Group Handlers ─────────────────────────────────────────────────────────
 
@@ -193,7 +244,41 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
     await connectSavedConnection(connection.id);
   };
 
-  const handleConnectionHover = (event: ReactMouseEvent<HTMLButtonElement>, connectionId: string) => {
+  const handleDeleteConnection = (connection: ConnectionConfig) => {
+    setPendingDeleteConnection(connection);
+  };
+
+  const confirmDeleteConnection = async () => {
+    if (!pendingDeleteConnection) return;
+
+    const connection = pendingDeleteConnection;
+    const label =
+      connection.name ||
+      connection.database ||
+      connection.host ||
+      connection.file_path ||
+      t("connections.untitled");
+
+    setHoverPreview(null);
+    setPendingDeleteConnection(null);
+
+    if (connectedIds.has(connection.id)) {
+      await disconnectFromDatabase(connection.id);
+    }
+
+    await deleteSavedConnection(connection.id);
+
+    const stillExists = useAppStore.getState().connections.some((item) => item.id === connection.id);
+    if (stillExists) return;
+
+    emitAppToast({
+      tone: "success",
+      title: t("connections.delete"),
+      description: label,
+    });
+  };
+
+  const handleConnectionHover = (event: ReactMouseEvent<HTMLDivElement>, connectionId: string) => {
     if (layoutMode !== "grid") return;
     const rect = event.currentTarget.getBoundingClientRect();
     setHoverPreview({ connectionId, top: rect.top, left: rect.left, right: rect.right });
@@ -238,12 +323,57 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
     };
   }, [activeConnectionId, connectedIds, connections, filteredConnections, hoverPreview, layoutMode, t]);
 
+  const pendingDeleteLabel =
+    pendingDeleteConnection?.name ||
+    pendingDeleteConnection?.database ||
+    pendingDeleteConnection?.host ||
+    pendingDeleteConnection?.file_path ||
+    t("connections.untitled");
+  const deleteConnectionTitle =
+    language === "vi"
+      ? "Xóa kết nối đã lưu này?"
+      : language === "zh"
+        ? "删除这个已保存连接？"
+        : "Delete this saved connection?";
+  const deleteConnectionDescription =
+    language === "vi"
+      ? "Thao tác này chỉ xóa card đã lưu trong launcher, không xóa cơ sở dữ liệu thật."
+      : language === "zh"
+        ? "这只会移除启动器里的已保存卡片，不会删除真实数据库。"
+        : "This removes only the saved launcher card. It does not delete the real database.";
+  const deleteConnectionDisconnectHint =
+    language === "vi"
+      ? "Kết nối hiện tại sẽ được ngắt trước khi card đã lưu bị xóa."
+      : language === "zh"
+        ? "当前连接会先断开，然后才会移除这张已保存卡片。"
+        : "The current connection will be disconnected first before the saved card is removed.";
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="startup-manager-backdrop">
       <div className="startup-manager-modal">
-        <div className="startup-manager-topbar">
+        <div
+          className="startup-manager-topbar"
+          onMouseDown={(event) => {
+            if (!isDesktopWindow) return;
+            const target = event.target as HTMLElement | null;
+            if (
+              target?.closest(
+                "button, input, textarea, select, option, a, [role='button'], [contenteditable='true'], [data-no-window-drag='true']",
+              )
+            ) {
+              return;
+            }
+            void (async () => {
+              try {
+                await getCurrentWindow().startDragging();
+              } catch (windowError) {
+                console.error("Failed to start dragging launcher window", windowError);
+              }
+            })();
+          }}
+        >
           <div className="startup-manager-topbar-brand">
             <Database className="startup-manager-topbar-icon w-4 h-4" />
             <span>TabLer</span>
@@ -269,9 +399,11 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
             collapsedGroupIds={collapsedGroupIds}
             onSelectConnection={setSelectedConnectionId}
             onConnect={handleOpenConnection}
+            onDeleteConnection={handleDeleteConnection}
             onHover={handleConnectionHover}
             onLeaveHover={() => setHoverPreview(null)}
             onNewConnection={onNewConnection}
+            onOpenDatabaseFile={onOpenDatabaseFile}
             onToggleGroup={handleToggleGroup}
             onRenameGroup={handleRenameGroup}
             onChangeGroupColor={handleChangeGroupColor}
@@ -281,6 +413,82 @@ export function StartupConnectionManager({ onNewConnection, windowControls }: Pr
         </div>
 
         <HoverPopover data={hoveredConnectionPanel} />
+
+        {pendingDeleteConnection ? (
+          <div
+            className="startup-manager-confirm-backdrop"
+            onClick={() => setPendingDeleteConnection(null)}
+          >
+            <div
+              className="startup-manager-confirm-card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="startup-delete-connection-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="startup-manager-confirm-head">
+                <div className="startup-manager-confirm-title-wrap">
+                  <div className="startup-manager-confirm-icon">
+                    <TriangleAlert className="w-4 h-4" />
+                  </div>
+                  <div className="startup-manager-confirm-copy">
+                    <span className="startup-manager-kicker">
+                      {t("connections.delete")}
+                    </span>
+                    <strong id="startup-delete-connection-title">
+                      {deleteConnectionTitle}
+                    </strong>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="startup-manager-confirm-close"
+                  onClick={() => setPendingDeleteConnection(null)}
+                  aria-label={t("common.cancel")}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="startup-manager-confirm-body">
+                <div className="startup-manager-confirm-target">
+                  <span className="startup-manager-confirm-label">{t("common.connections")}</span>
+                  <strong className="startup-manager-confirm-value">{pendingDeleteLabel}</strong>
+                </div>
+
+                <p className="startup-manager-confirm-description">
+                  {deleteConnectionDescription}
+                </p>
+
+                {connectedIds.has(pendingDeleteConnection.id) ? (
+                  <p className="startup-manager-confirm-note">
+                    {deleteConnectionDisconnectHint}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="startup-manager-confirm-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setPendingDeleteConnection(null)}
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary danger"
+                  onClick={() => {
+                    void confirmDeleteConnection();
+                  }}
+                >
+                  {t("common.delete")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

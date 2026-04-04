@@ -1,13 +1,16 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import {
   useReactTable,
   getCoreRowModel,
   flexRender,
   type ColumnDef,
 } from "@tanstack/react-table";
-import { Copy, Loader2 } from "lucide-react";
+import { Copy, Loader2, Plus, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
+import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import { useAppStore } from "../../stores/appStore";
+import { EventCenter } from "../../stores/event-center";
 import type { ColumnDetail, ConnectionConfig, QueryResult } from "../../types";
 import { devLogError } from "../../utils/logger";
 import {
@@ -41,6 +44,9 @@ import { buildDataGridColumns, editingDraftRef } from "./DataGridColumns";
 import {
   generateInsertSql,
   generateUpdateSql,
+  generateInsertSqlParameterized,
+  generateUpdateSqlParameterized,
+  generateDeleteSqlParameterized,
   copyToClipboard,
 } from "../../utils/sql-generator";
 
@@ -65,6 +71,7 @@ export function DataGrid({
   queryResult: externalResult,
   isActive = true,
 }: Props) {
+  const { settings } = useDataGridSettings();
   const {
     getTableData,
     countRows,
@@ -109,6 +116,16 @@ export function DataGrid({
   const [isDeletingRows, setIsDeletingRows] = useState(false);
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
   const [undoableChanges, setUndoableChanges] = useState(0);
+  const [isInsertDialogOpen, setIsInsertDialogOpen] = useState(false);
+  const [insertDialogColumns, setInsertDialogColumns] = useState<ColumnDetail[]>([]);
+  const [insertDialogBaseValues, setInsertDialogBaseValues] = useState<[string, unknown][]>([]);
+  const [insertDraft, setInsertDraft] = useState<Record<string, string>>({});
+  const [insertDialogError, setInsertDialogError] = useState<string | null>(null);
+  const [isSubmittingInsert, setIsSubmittingInsert] = useState(false);
+  const [columnSizes, setColumnSizes] = useState<Record<string, number>>({});
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: "cell" | "header" | "row"; colName?: string; rowIndex?: number } | null>(null);
+  const tableWrapRef = useRef<HTMLDivElement | null>(null);
+  const columnNamesRef = useRef<string[]>([]);
   const requestIdRef = useRef(0);
   const structureRequestIdRef = useRef(0);
   const structurePromiseRef = useRef<Promise<ColumnDetail[]> | null>(null);
@@ -384,6 +401,33 @@ export function DataGrid({
     isActiveRef.current = isActive;
   }, [isActive]);
 
+  const closeInsertDialog = useCallback(() => {
+    setIsInsertDialogOpen(false);
+    setInsertDialogColumns([]);
+    setInsertDialogBaseValues([]);
+    setInsertDraft({});
+    setInsertDialogError(null);
+    setIsSubmittingInsert(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isInsertDialogOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeInsertDialog();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [closeInsertDialog, isInsertDialogOpen]);
+
+  useEffect(() => {
+    closeInsertDialog();
+  }, [closeInsertDialog, connectionId, database, tableName]);
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -521,11 +565,79 @@ export function DataGrid({
     setCurrentPage(0);
   }, [sortColumn]);
 
+  const handleSortAsc = useCallback((colName: string) => {
+    setSortColumn(colName);
+    setSortDir("ASC");
+    setCurrentPage(0);
+  }, []);
+
+  const handleSortDesc = useCallback((colName: string) => {
+    setSortColumn(colName);
+    setSortDir("DESC");
+    setCurrentPage(0);
+  }, []);
+
   const handleCopyValue = useCallback((value: GridCellValue, cellKey: string) => {
     navigator.clipboard.writeText(value === null ? "NULL" : String(value));
     setCopiedCell(cellKey);
     setTimeout(() => setCopiedCell(null), 1200);
   }, []);
+
+  // Auto-fit column to content: double-click on divider
+  const handleColumnAutoFit = useCallback((colId: string) => {
+    if (colId === "_row_num") return;
+    const wrap = tableWrapRef.current;
+    if (!wrap) return;
+
+    // Find column index from ref
+    const colIndex = columnNamesRef.current.indexOf(colId);
+    if (colIndex < 0) return;
+
+    // Measure header text width
+    const headerEl = wrap.querySelector(`th[data-col-id="${colId}"]`);
+    const headerWidth = headerEl?.textContent?.length ?? colId.length;
+    const headerSize = Math.max(40, headerWidth * 8.5 + 32);
+
+    // Measure content width from rendered cells
+    let maxContentWidth = 0;
+    const cellSelector = `.datagrid-row td:nth-child(${colIndex + 2})`;
+    const cellEls = wrap.querySelectorAll<HTMLElement>(cellSelector);
+    cellEls.forEach((el) => {
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.style.position = "absolute";
+      clone.style.visibility = "hidden";
+      clone.style.whiteSpace = "nowrap";
+      clone.style.width = "auto";
+      clone.style.maxWidth = "none";
+      clone.style.overflow = "visible";
+      document.body.appendChild(clone);
+      maxContentWidth = Math.max(maxContentWidth, clone.scrollWidth);
+      document.body.removeChild(clone);
+    });
+
+    const newWidth = Math.max(40, Math.max(maxContentWidth + 22, headerSize));
+    setColumnSizes((prev) => ({ ...prev, [colId]: newWidth }));
+  }, []);
+
+  // Context menu handler
+  const handleContextMenu = useCallback((
+    e: React.MouseEvent,
+    type: "cell" | "header" | "row",
+    colName?: string,
+    rowIndex?: number,
+  ) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, type, colName, rowIndex });
+  }, []);
+
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = () => setContextMenu(null);
+    document.addEventListener("click", handler, { once: true });
+    document.addEventListener("contextmenu", handler, { once: true });
+    return () => document.removeEventListener("click", handler);
+  }, [contextMenu]);
 
   const dataColumns = data?.columns || [];
   const dataColumnSignature = useMemo(() => buildColumnSignature(dataColumns), [dataColumns]);
@@ -536,13 +648,38 @@ export function DataGrid({
 
   const resolvedColumns = useMemo<ResolvedColumn[]>(() => {
     if (dataColumns.length === 0) return [];
-    return buildResolvedColumns(dataColumns, structureColumns);
+    const cols = buildResolvedColumns(dataColumns, structureColumns);
+    columnNamesRef.current = cols.map((c) => c.name);
+    return cols;
   }, [dataColumnSignature, structureColumnSignature]);
 
   const primaryKeyColumns = useMemo(
     () => resolvedColumns.filter((column) => column.is_primary_key),
     [resolvedColumns],
   );
+
+  const handleOpenRowInspector = useCallback(
+    (rowIndex: number) => {
+      if (!data || !data.rows[rowIndex]) return;
+      const row = data.rows[rowIndex];
+      const absoluteRowNumber = currentPage * 100 + rowIndex + 1;
+      const pkEntries = buildRowPrimaryKeys(row, resolvedColumns, primaryKeyColumns);
+      const pkValues: Record<string, string | number | boolean | null> = {};
+      pkEntries.forEach((entry) => {
+        pkValues[entry.column] = entry.value;
+      });
+      EventCenter.emit("row-inspector-open", {
+        rowIndex: absoluteRowNumber,
+        row,
+        columns: resolvedColumns,
+        primaryKeyValues: pkValues,
+        tableName,
+        database,
+      });
+    },
+    [data, currentPage, resolvedColumns, primaryKeyColumns, tableName, database],
+  );
+
   const canAttemptInlineEdit = Boolean(tableName && !externalResult);
   const canSelectRows = Boolean(tableName && !externalResult && primaryKeyColumns.length > 0);
   const isTableEditable = Boolean(
@@ -847,62 +984,164 @@ export function DataGrid({
     tableName,
   ]);
 
+  const analyzeInsertPlan = useCallback(() => {
+    const baseValues: [string, unknown][] = [];
+    const promptColumns: ColumnDetail[] = [];
+
+    for (const col of structureColumns) {
+      const colType = (col.column_type || col.data_type || "").toLowerCase();
+      const extra = (col.extra || "").toLowerCase();
+      const defaultVal = (col.default_value || "").trim();
+      const defaultLower = defaultVal.toLowerCase();
+      const hasDatabaseDefault = defaultVal.length > 0;
+      const isUuidColumn = colType.includes("uuid") || colType.includes("uniqueidentifier");
+      const isAutoGeneratedColumn =
+        colType.includes("serial") ||
+        colType.includes("identity") ||
+        extra.includes("auto_increment") ||
+        extra.includes("generated") ||
+        defaultLower.includes("nextval(") ||
+        defaultLower.includes("gen_random_uuid(") ||
+        defaultLower.includes("uuid_generate_v4(") ||
+        defaultLower.includes("identity");
+
+      if (col.is_primary_key) {
+        if (isUuidColumn && !hasDatabaseDefault && !isAutoGeneratedColumn) {
+          const uuid = crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}-${Math.random().toString(16).slice(2, 6)}-${Math.random().toString(16).slice(2, 6)}-${Math.random().toString(16).slice(2, 14)}`;
+          baseValues.push([col.name, uuid]);
+        } else if (isAutoGeneratedColumn || hasDatabaseDefault) {
+          continue;
+        } else {
+          promptColumns.push(col);
+        }
+        continue;
+      }
+
+      if (isAutoGeneratedColumn || hasDatabaseDefault) {
+        continue;
+      }
+
+      if (!col.is_nullable) {
+        promptColumns.push(col);
+        continue;
+      }
+
+      baseValues.push([col.name, null]);
+    }
+
+    return { baseValues, promptColumns };
+  }, [structureColumns]);
+
+  const performInsertRow = useCallback(async (values: [string, unknown][]) => {
+    if (!tableName) return;
+
+    await insertTableRow(connectionId, {
+      table: tableName,
+      database,
+      values,
+    });
+
+    invalidateTableCaches(connectionId, tableName, database);
+    window.dispatchEvent(
+      new CustomEvent("table-data-updated", {
+        detail: {
+          connectionId,
+          database,
+          tableName,
+          sourceId: dataGridInstanceIdRef.current,
+        },
+      }),
+    );
+    await fetchData(currentPage);
+  }, [connectionId, currentPage, database, fetchData, insertTableRow, tableName]);
+
   const handleInsertRow = useCallback(async () => {
     if (!tableName || structureColumns.length === 0) {
       return;
     }
 
-    const values: [string, unknown][] = structureColumns.map((col) => {
-      const defaultVal = col.default_value ?? null;
-      let parsed: unknown = null;
-      if (defaultVal !== null) {
-        const lower = defaultVal.toLowerCase();
-        if (lower === "null") {
-          parsed = null;
-        } else if (lower === "true" || lower === "false") {
-          parsed = lower === "true";
-        } else if (/^-?\d+(\.\d+)?$/.test(lower)) {
-          parsed = Number(defaultVal);
-        } else {
-          parsed = defaultVal;
-        }
-      }
-      return [col.name, parsed];
-    });
+    const { baseValues, promptColumns } = analyzeInsertPlan();
+
+    if (promptColumns.length > 0) {
+      setInsertDialogColumns(promptColumns);
+      setInsertDialogBaseValues(baseValues);
+      setInsertDraft(
+        Object.fromEntries(promptColumns.map((column) => [column.name, ""])),
+      );
+      setInsertDialogError(null);
+      setIsInsertDialogOpen(true);
+      return;
+    }
 
     try {
-      await insertTableRow(connectionId, {
-        table: tableName,
-        database,
-        values,
-      });
-
-      invalidateTableCaches(connectionId, tableName, database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: {
-            connectionId,
-            database,
-            tableName,
-            sourceId: dataGridInstanceIdRef.current,
-          },
-        }),
-      );
-      void fetchData(currentPage);
+      await performInsertRow(baseValues);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setError(`Insert row failed: ${message}`);
     }
   }, [
-    connectionId,
-    tableName,
-    database,
-    structureColumns,
-    insertTableRow,
-    currentPage,
-    fetchData,
+    analyzeInsertPlan,
+    performInsertRow,
     setError,
+    structureColumns.length,
+    tableName,
   ]);
+
+  const handleInsertDraftChange = useCallback((columnName: string, value: string) => {
+    setInsertDraft((previous) => ({
+      ...previous,
+      [columnName]: value,
+    }));
+  }, []);
+
+  const handleSubmitInsertDialog = useCallback(async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+
+    const missingColumns: string[] = [];
+    const nextValues: [string, unknown][] = [...insertDialogBaseValues];
+
+    for (const column of insertDialogColumns) {
+      const rawValue = insertDraft[column.name] ?? "";
+      const trimmed = rawValue.trim();
+
+      if (trimmed.length === 0) {
+        if (!column.is_nullable) {
+          missingColumns.push(column.name);
+        } else {
+          nextValues.push([column.name, null]);
+        }
+        continue;
+      }
+
+      try {
+        nextValues.push([column.name, parseEditorValue(rawValue, column as ResolvedColumn)]);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setInsertDialogError(`${column.name}: ${message}`);
+        return;
+      }
+    }
+
+    if (missingColumns.length > 0) {
+      setInsertDialogError(`Please enter values for: ${missingColumns.join(", ")}`);
+      return;
+    }
+
+    setInsertDialogError(null);
+    setIsSubmittingInsert(true);
+
+    try {
+      await performInsertRow(nextValues);
+      closeInsertDialog();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setInsertDialogError(`Insert row failed: ${message}`);
+    } finally {
+      setIsSubmittingInsert(false);
+    }
+  }, [closeInsertDialog, insertDialogBaseValues, insertDialogColumns, insertDraft, performInsertRow]);
 
   const handleCopyAsInsert = useCallback(async () => {
     if (selectedRows.size === 0 || !data || !tableName || resolvedColumns.length === 0) return;
@@ -953,6 +1192,44 @@ export function DataGrid({
     connectionId,
     setError,
   ]);
+
+  const handleCopyAsInsertParam = useCallback(async () => {
+    if (!tableName || resolvedColumns.length === 0) return;
+    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
+    const dbType = connection?.db_type;
+    const cols: string[] = resolvedColumns.map((c) => c.name);
+    const sql = generateInsertSqlParameterized(tableName, cols, dbType);
+    const ok = await copyToClipboard(sql);
+    if (!ok) setError("Failed to copy SQL to clipboard.");
+  }, [tableName, resolvedColumns, connections, connectionId, setError]);
+
+  const handleCopyAsUpdateParam = useCallback(async () => {
+    if (!tableName || resolvedColumns.length === 0 || primaryKeyColumns.length === 0) return;
+    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
+    const dbType = connection?.db_type;
+    const cols: string[] = resolvedColumns.map((c) => c.name);
+    const sql = generateUpdateSqlParameterized(
+      tableName,
+      cols,
+      primaryKeyColumns.map((c) => c.name),
+      dbType,
+    );
+    const ok = await copyToClipboard(sql);
+    if (!ok) setError("Failed to copy SQL to clipboard.");
+  }, [tableName, resolvedColumns, primaryKeyColumns, connections, connectionId, setError]);
+
+  const handleCopyAsDeleteParam = useCallback(async () => {
+    if (!tableName || primaryKeyColumns.length === 0) return;
+    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
+    const dbType = connection?.db_type;
+    const sql = generateDeleteSqlParameterized(
+      tableName,
+      primaryKeyColumns.map((c) => c.name),
+      dbType,
+    );
+    const ok = await copyToClipboard(sql);
+    if (!ok) setError("Failed to copy SQL to clipboard.");
+  }, [tableName, primaryKeyColumns, connections, connectionId, setError]);
 
   const displayedRows = useMemo(() => {
     if (!data?.rows) return [];
@@ -1011,6 +1288,11 @@ export function DataGrid({
       lookupValuesCache,
       onLoadLookupValues: handleLoadLookupValues,
       connectionId,
+      onOpenRowInspector: handleOpenRowInspector,
+      onColumnAutoFit: handleColumnAutoFit,
+      onContextMenu: handleContextMenu,
+      columnSizes,
+      nullPlaceholder: settings.nullPlaceholder,
     });
   }, [
     cancelEditingCell,
@@ -1040,6 +1322,11 @@ export function DataGrid({
     lookupValuesCache,
     getForeignKeyLookupValues,
     connectionId,
+    handleOpenRowInspector,
+    handleColumnAutoFit,
+    handleContextMenu,
+    columnSizes,
+    settings,
   ]);
 
   const tableData = useMemo(() => displayedRows, [displayedRows]);
@@ -1048,11 +1335,158 @@ export function DataGrid({
     data: tableData,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: "onChange",
+    state: { columnSizing: columnSizes },
+    onColumnSizingChange: (updater) => {
+      setColumnSizes((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        return next;
+      });
+    },
   });
 
   const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
   const visibleRowCount = tableData.length;
   const columnCount = resolvedColumns.length;
+  const insertDialogModal =
+    isInsertDialogOpen && typeof document !== "undefined"
+      ? createPortal(
+          <div className="datagrid-insert-dialog-backdrop" onClick={closeInsertDialog}>
+            <div
+              className="datagrid-insert-dialog"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="datagrid-insert-dialog-title"
+            >
+              <div className="datagrid-insert-dialog-header">
+                <div className="datagrid-insert-dialog-copy">
+                  <span className="datagrid-insert-dialog-kicker">Insert row</span>
+                  <h3 id="datagrid-insert-dialog-title" className="datagrid-insert-dialog-title">
+                    {tableName ? `Add row to ${tableName.split(".").pop() || tableName}` : "Add row"}
+                  </h3>
+                  <p className="datagrid-insert-dialog-description">
+                    Enter the required values below. Columns with database defaults are handled automatically.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="datagrid-insert-dialog-close"
+                  onClick={closeInsertDialog}
+                  aria-label="Close insert dialog"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form className="datagrid-insert-dialog-form" onSubmit={handleSubmitInsertDialog}>
+                <div className="datagrid-insert-dialog-fields">
+                  {insertDialogColumns.map((column, index) => {
+                    const normalizedType = (column.column_type || column.data_type || "").toLowerCase();
+                    const usesTextarea =
+                      normalizedType.includes("json") ||
+                      normalizedType.includes("text") ||
+                      normalizedType.includes("blob");
+                    const isBooleanInput = isBooleanColumn(column as ResolvedColumn);
+                    const placeholder = isBooleanInput
+                      ? "true / false"
+                      : normalizedType.includes("uuid")
+                        ? "UUID value"
+                        : normalizedType.includes("int") || normalizedType.includes("numeric")
+                          ? "Numeric value"
+                          : column.is_nullable
+                            ? "Leave blank for NULL"
+                            : "Required value";
+
+                    return (
+                      <label key={column.name} className="datagrid-insert-field">
+                        <span className="datagrid-insert-field-head">
+                          <span className="datagrid-insert-field-name">{column.name}</span>
+                          {!column.is_nullable && (
+                            <span className="datagrid-insert-field-required">Required</span>
+                          )}
+                        </span>
+                        <span className="datagrid-insert-field-meta">
+                          {column.column_type || column.data_type}
+                        </span>
+                        {isBooleanInput ? (
+                          <select
+                            className="datagrid-insert-field-input"
+                            value={insertDraft[column.name] ?? ""}
+                            onChange={(event) =>
+                              handleInsertDraftChange(column.name, event.currentTarget.value)
+                            }
+                            autoFocus={index === 0}
+                          >
+                            {column.is_nullable && <option value="">NULL</option>}
+                            <option value="true">true</option>
+                            <option value="false">false</option>
+                          </select>
+                        ) : usesTextarea ? (
+                          <textarea
+                            className="datagrid-insert-field-input datagrid-insert-field-input-textarea"
+                            value={insertDraft[column.name] ?? ""}
+                            onChange={(event) =>
+                              handleInsertDraftChange(column.name, event.currentTarget.value)
+                            }
+                            placeholder={placeholder}
+                            autoFocus={index === 0}
+                            rows={4}
+                          />
+                        ) : (
+                          <input
+                            className="datagrid-insert-field-input"
+                            type="text"
+                            value={insertDraft[column.name] ?? ""}
+                            onChange={(event) =>
+                              handleInsertDraftChange(column.name, event.currentTarget.value)
+                            }
+                            placeholder={placeholder}
+                            autoFocus={index === 0}
+                          />
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+
+                {insertDialogError && (
+                  <div className="datagrid-insert-dialog-error">{insertDialogError}</div>
+                )}
+
+                <div className="datagrid-insert-dialog-actions">
+                  <button
+                    type="button"
+                    className="datagrid-insert-dialog-btn"
+                    onClick={closeInsertDialog}
+                    disabled={isSubmittingInsert}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="datagrid-insert-dialog-btn is-primary"
+                    disabled={isSubmittingInsert}
+                  >
+                    {isSubmittingInsert ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Inserting...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4" />
+                        Insert row
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
 
   if (!data && !isLoading) {
     return (
@@ -1064,7 +1498,8 @@ export function DataGrid({
   }
 
   return (
-    <div className={`datagrid-shell ${externalResult ? "" : "compact"}`}>
+    <>
+    <div className={`datagrid-shell${externalResult ? "" : " compact"}${settings.rowHeight !== "medium" ? ` row-height-${settings.rowHeight}` : ""}${!settings.alternatingRows ? " alternating-rows-disabled" : ""}`}>
       <DataGridToolbar
         tableName={tableName}
         externalResult={externalResult}
@@ -1078,6 +1513,9 @@ export function DataGrid({
         handleInsertRow={handleInsertRow}
         handleCopyAsInsert={handleCopyAsInsert}
         handleCopyAsUpdate={handleCopyAsUpdate}
+        handleCopyAsInsertParam={handleCopyAsInsertParam}
+        handleCopyAsUpdateParam={handleCopyAsUpdateParam}
+        handleCopyAsDeleteParam={handleCopyAsDeleteParam}
         isTableEditable={isTableEditable}
         structureStatus={structureStatus}
         resolvedColumns={resolvedColumns}
@@ -1085,7 +1523,7 @@ export function DataGrid({
         undoableChanges={undoableChanges}
       />
 
-      <div className="datagrid-table-wrap">
+      <div className="datagrid-table-wrap" ref={tableWrapRef}>
         {isQueryResultTruncated && (
           <div className="datagrid-query-result-notice">
             Showing the first {MAX_QUERY_RESULT_RENDER_ROWS.toLocaleString()} rows from a larger
@@ -1110,17 +1548,48 @@ export function DataGrid({
                   <th
                     key={header.id}
                     className={`datagrid-th ${header.column.id === "_row_num" ? "datagrid-th-index" : ""}`}
-                    style={{ width: header.getSize(), minWidth: header.getSize() }}
+                    data-col-id={header.column.id}
+                    style={{
+                      width: columnSizes[header.column.id] ?? header.getSize(),
+                      minWidth: columnSizes[header.column.id] ?? header.getSize(),
+                    }}
                   >
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(header.column.columnDef.header, header.getContext())}
+                    <div className="datagrid-th-inner">
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(header.column.columnDef.header, header.getContext())}
+                      {header.column.id !== "_row_num" && (
+                        <div
+                          className="datagrid-col-resize-handle"
+                          onMouseDown={header.getResizeHandler()}
+                          onDoubleClick={() => handleColumnAutoFit(header.column.id)}
+                          title="Drag to resize, double-click to auto-fit"
+                        />
+                      )}
+                    </div>
                   </th>
                 ))}
               </tr>
             ))}
           </thead>
-          <tbody>
+          <tbody onContextMenu={(e) => {
+            e.preventDefault();
+            const target = e.target as HTMLElement;
+            const rowEl = target.closest("tr.datagrid-row");
+            const thEl = target.closest("th.datagrid-th");
+            if (thEl) {
+              const colId = thEl.getAttribute("data-col-id") || undefined;
+              handleContextMenu(e, "header", colId);
+            } else if (rowEl) {
+              const rowIdx = rowEl.querySelector(".datagrid-index-selectable, .datagrid-index-value");
+              if (rowIdx) {
+                const idx = Number(rowIdx.textContent?.trim() ?? -1) - 1;
+                handleContextMenu(e, "row", undefined, idx >= 0 ? idx : undefined);
+              }
+            } else {
+              handleContextMenu(e, "cell");
+            }
+          }}>
             {table.getRowModel().rows.map((row, rowIdx) => (
               <tr
                 key={row.id}
@@ -1145,6 +1614,73 @@ export function DataGrid({
           </div>
         )}
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="datagrid-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {contextMenu.type === "header" && contextMenu.colName && (
+            <>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => {
+                  handleSortAsc(contextMenu.colName!);
+                  setContextMenu(null);
+                }}
+              >
+                Sort ascending
+              </button>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => {
+                  handleSortDesc(contextMenu.colName!);
+                  setContextMenu(null);
+                }}
+              >
+                Sort descending
+              </button>
+              <div className="datagrid-context-menu-separator" />
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => {
+                  handleColumnAutoFit(contextMenu.colName!);
+                  setContextMenu(null);
+                }}
+              >
+                Auto-fit column
+              </button>
+            </>
+          )}
+          {contextMenu.type === "row" && (
+            <>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => {
+                  handleOpenRowInspector(contextMenu.rowIndex ?? 0);
+                  setContextMenu(null);
+                }}
+              >
+                Inspect row
+              </button>
+            </>
+          )}
+          {contextMenu.type === "cell" && (
+            <>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => {
+                  handleInsertRow();
+                  setContextMenu(null);
+                }}
+              >
+                Add row
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="datagrid-footer">
         <div className="datagrid-footer-meta">
@@ -1193,5 +1729,7 @@ export function DataGrid({
         )}
       </div>
     </div>
+    {insertDialogModal}
+    </>
   );
 }

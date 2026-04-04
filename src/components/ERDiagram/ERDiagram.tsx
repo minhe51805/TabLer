@@ -105,6 +105,17 @@ const DIAGRAM_POSITION_SEARCH_RADIUS = 18;
 const DIAGRAM_EXPORT_PADDING = 40;
 const DIAGRAM_EXPORT_SCALE = 2;
 const CUSTOM_ER_RELATIONSHIPS_STORAGE_KEY = "tabler.erd.customRelationships.v1";
+const ER_DIAGRAM_CACHE_TTL_MS = 30 * 60 * 1000;
+const ER_DIAGRAM_STRUCTURE_BATCH_SIZE = 10;
+
+interface ERDiagramCacheEntry {
+  schema: ERDiagramSchema;
+  cachedAt: number;
+  lastUsedAt: number;
+}
+
+const erDiagramSchemaCache = new Map<string, ERDiagramCacheEntry>();
+const erDiagramSchemaRequests = new Map<string, Promise<ERDiagramSchema>>();
 
 function getTableColor(index: number): string {
   return TABLE_COLORS[index % TABLE_COLORS.length];
@@ -133,6 +144,35 @@ function getQualifiedTableName(table: Pick<TableSchema, "name" | "schema">) {
 
 function getERDiagramScopeKey(connectionId: string, database?: string) {
   return `${connectionId}|${database || ""}`;
+}
+
+function getCachedERDiagramSchema(connectionId: string, database?: string) {
+  const scopeKey = getERDiagramScopeKey(connectionId, database);
+  const cached = erDiagramSchemaCache.get(scopeKey);
+  if (!cached) return null;
+
+  if (Date.now() - cached.lastUsedAt > ER_DIAGRAM_CACHE_TTL_MS) {
+    erDiagramSchemaCache.delete(scopeKey);
+    return null;
+  }
+
+  cached.lastUsedAt = Date.now();
+  erDiagramSchemaCache.set(scopeKey, cached);
+  return cached.schema;
+}
+
+function setCachedERDiagramSchema(connectionId: string, database: string | undefined, schema: ERDiagramSchema) {
+  const scopeKey = getERDiagramScopeKey(connectionId, database);
+  erDiagramSchemaCache.set(scopeKey, {
+    schema,
+    cachedAt: Date.now(),
+    lastUsedAt: Date.now(),
+  });
+}
+
+function invalidateCachedERDiagramSchema(connectionId: string, database?: string) {
+  const scopeKey = getERDiagramScopeKey(connectionId, database);
+  erDiagramSchemaCache.delete(scopeKey);
 }
 
 function readCustomRelationships(connectionId: string, database?: string): ERRelationship[] {
@@ -931,15 +971,37 @@ function buildEdges(
     });
 }
 
-async function fetchSchema(connectionId: string, database?: string): Promise<ERDiagramSchema> {
+async function fetchSchema(
+  connectionId: string,
+  database?: string,
+  options?: { force?: boolean },
+): Promise<ERDiagramSchema> {
+  const scopeKey = getERDiagramScopeKey(connectionId, database);
+
+  if (!options?.force) {
+    const cachedSchema = getCachedERDiagramSchema(connectionId, database);
+    if (cachedSchema) {
+      return cachedSchema;
+    }
+  }
+
+  const existingRequest = erDiagramSchemaRequests.get(scopeKey);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  if (options?.force) {
+    invalidateCachedERDiagramSchema(connectionId, database);
+  }
+
+  const request = (async () => {
   const tables = await invoke<TableInfo[]>("list_tables", { connectionId, database: database || null });
 
   const tableSchemas: TableSchema[] = [];
   const allRelationships: ERRelationship[] = [];
-  const batchSize = 5;
 
-  for (let index = 0; index < tables.length; index += batchSize) {
-    const batch = tables.slice(index, index + batchSize);
+  for (let index = 0; index < tables.length; index += ER_DIAGRAM_STRUCTURE_BATCH_SIZE) {
+    const batch = tables.slice(index, index + ER_DIAGRAM_STRUCTURE_BATCH_SIZE);
     const structures = await Promise.all(
       batch.map((table) =>
         invoke<TableStructure>("get_table_structure", {
@@ -972,7 +1034,20 @@ async function fetchSchema(connectionId: string, database?: string): Promise<ERD
     });
   }
 
-  return { tables: tableSchemas, relationships: allRelationships };
+    const schema = { tables: tableSchemas, relationships: allRelationships };
+    setCachedERDiagramSchema(connectionId, database, schema);
+    return schema;
+  })();
+
+  erDiagramSchemaRequests.set(scopeKey, request);
+
+  try {
+    return await request;
+  } finally {
+    if (erDiagramSchemaRequests.get(scopeKey) === request) {
+      erDiagramSchemaRequests.delete(scopeKey);
+    }
+  }
 }
 
 export function ERDiagram({ connectionId, database }: Props) {
@@ -980,6 +1055,7 @@ export function ERDiagram({ connectionId, database }: Props) {
   const hasInitializedSelectionRef = useRef(false);
   const rememberedNodePositionsRef = useRef<Map<string, DiagramPoint>>(new Map());
   const rememberedEdgeBendsRef = useRef<Map<string, DiagramPoint>>(new Map());
+  const loadRequestIdRef = useRef(0);
   const addTab = useAppStore((state) => state.addTab);
   const setActiveTab = useAppStore((state) => state.setActiveTab);
   const updateTab = useAppStore((state) => state.updateTab);
@@ -1032,12 +1108,22 @@ export function ERDiagram({ connectionId, database }: Props) {
     setExpandedTables(new Set());
   }, [connectionId, database]);
 
-  const loadSchema = useCallback(async () => {
+  const loadSchema = useCallback(async (options?: { force?: boolean }) => {
+    const cachedSchema = !options?.force ? getCachedERDiagramSchema(connectionId, database) : null;
+    if (cachedSchema) {
+      setSchema(cachedSchema);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     setError(null);
 
     try {
-      const data = await fetchSchema(connectionId, database);
+      const data = await fetchSchema(connectionId, database, options);
+      if (requestId !== loadRequestIdRef.current) return;
       setSchema(data);
       setSelectedTables((current) => {
         const allTableNames = data.tables.map((table) => table.name);
@@ -1053,9 +1139,12 @@ export function ERDiagram({ connectionId, database }: Props) {
         return preservedNames.length > 0 ? new Set(preservedNames) : new Set(allTableNames);
       });
     } catch (reason) {
+      if (requestId !== loadRequestIdRef.current) return;
       setError(String(reason));
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [connectionId, database]);
 
@@ -1261,7 +1350,8 @@ export function ERDiagram({ connectionId, database }: Props) {
       }
 
       await executeStructureStatements(connectionId, quickColumnSqlPreview.statements);
-      await loadSchema();
+      invalidateCachedERDiagramSchema(connectionId, database);
+      await loadSchema({ force: true });
       window.dispatchEvent(
         new CustomEvent("table-structure-updated", {
           detail: {
@@ -1669,7 +1759,10 @@ export function ERDiagram({ connectionId, database }: Props) {
         <div className="erd-toolbar-group">
           <button
             type="button"
-            onClick={loadSchema}
+            onClick={() => {
+              invalidateCachedERDiagramSchema(connectionId, database);
+              void loadSchema({ force: true });
+            }}
             disabled={loading}
             className="erd-toolbar-button"
           >

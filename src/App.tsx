@@ -44,6 +44,7 @@ import { buildDatabaseFileConnection, type DatabaseFileSelection } from "./utils
 import { splitSqlStatements } from "./utils/sqlStatements";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "./utils/ui-scale";
 import "./index.css";
+import "./App.css";
 
 interface QueryChromeState {
   isRunning: boolean;

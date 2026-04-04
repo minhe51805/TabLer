@@ -51,7 +51,7 @@ interface DataGridColumnsProps {
   currentPage: number;
   copiedCell: string | null;
   editingDraftRef: EditingDraft;
-  handleSort: (colName: string) => void;
+  handleSort: (colName: string, event?: MouseEvent) => void;
   handleRowSelection: (rowIndex: number, event?: Pick<MouseEvent, "shiftKey" | "metaKey" | "ctrlKey">) => void;
   handleToggleSelectAllRows: () => void;
   handleEditorBlur: () => void;
@@ -80,6 +80,8 @@ interface DataGridColumnsProps {
   onContextMenu?: (e: React.MouseEvent, type: "cell" | "header" | "row", colName?: string, rowIndex?: number) => void;
   /** Current column sizes (for manual resize) */
   columnSizes?: Record<string, number>;
+  /** Multi-column sort state */
+  multiSort?: Array<{ column: string; direction: "ASC" | "DESC"; priority: number }>;
   /** NULL display placeholder (e.g. "NULL", "—", "(null)") */
   nullPlaceholder?: string;
 }
@@ -116,6 +118,8 @@ export function buildDataGridColumns({
   onLoadLookupValues,
   connectionId,
   onOpenRowInspector,
+  columnSizes,
+  multiSort = [],
   nullPlaceholder = "NULL",
 }: DataGridColumnsProps): ColumnDef<unknown[], unknown>[] {
   return [
@@ -157,27 +161,41 @@ export function buildDataGridColumns({
           </span>
         ),
       size: 72,
+      minSize: 40,
+      maxSize: 800,
     },
     ...resolvedColumns.map((col, idx) => ({
       id: col.name,
-      header: () => (
-        <button
-          className="flex items-center gap-1.5 w-full text-left font-semibold group/header"
-          onClick={() => handleSort(col.name)}
-        >
-          {col.is_primary_key && <Key className="w-3 h-3 text-[var(--warning)] shrink-0" />}
-          <span className="truncate">{col.name}</span>
-          {sortColumn === col.name ? (
-            sortDir === "ASC" ? (
-              <ArrowUp className="w-3 h-3 shrink-0 text-[var(--accent)]" />
+      size: columnSizes?.[col.name] ?? 150,
+      minSize: 40,
+      maxSize: 800,
+      header: () => {
+        const multiEntry = multiSort.find((s) => s.column === col.name);
+        const isSorted = sortColumn === col.name || !!multiEntry;
+        const dir = multiEntry ? multiEntry.direction : sortDir;
+        const priority = multiEntry ? multiEntry.priority : null;
+        return (
+          <button
+            className="flex items-center gap-1.5 w-full text-left font-semibold group/header"
+            onClick={(e) => handleSort(col.name, e.nativeEvent)}
+            title={multiSort.length > 0 ? "Click to toggle direction, Shift+Click to remove from multi-sort" : "Click to sort, Shift+Click to add to multi-sort"}
+          >
+            {col.is_primary_key && <Key className="w-3 h-3 text-[var(--warning)] shrink-0" />}
+            <span className="truncate">{col.name}</span>
+            {priority !== null ? (
+              <span className="datagrid-sort-priority">{priority}</span>
+            ) : isSorted ? (
+              dir === "ASC" ? (
+                <ArrowUp className="w-3 h-3 shrink-0 text-[var(--accent)]" />
+              ) : (
+                <ArrowDown className="w-3 h-3 shrink-0 text-[var(--accent)]" />
+              )
             ) : (
-              <ArrowDown className="w-3 h-3 shrink-0 text-[var(--accent)]" />
-            )
-          ) : (
-            <ArrowUpDown className="w-3 h-3 shrink-0 opacity-0 group-hover/header:opacity-50 transition-opacity" />
-          )}
-        </button>
-      ),
+              <ArrowUpDown className="w-3 h-3 shrink-0 opacity-0 group-hover/header:opacity-50 transition-opacity" />
+            )}
+          </button>
+        );
+      },
       accessorFn: (row: unknown[]) => (row as (string | number | boolean | null)[])[idx],
       cell: ({ getValue, row: tableRow }: { getValue: () => unknown; row: { index: number } }) => {
         const value = getValue() as GridCellValue;
@@ -357,7 +375,6 @@ export function buildDataGridColumns({
           </div>
         );
       },
-      size: 180,
     })),
   ];
 }

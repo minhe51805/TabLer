@@ -25,7 +25,8 @@ export type ShortcutAction =
   | "copy"
   | "paste"
   | "undo"
-  | "redo";
+  | "redo"
+  | "duplicate-row";
 
 export interface ShortcutBinding {
   action: ShortcutAction;
@@ -75,6 +76,7 @@ const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   { action: "open-query-history", label: "Query History", defaultKey: "Ctrl+H", currentKey: "Ctrl+H", category: "query" },
   { action: "open-keyboard-shortcuts", label: "Keyboard Shortcuts", defaultKey: "Ctrl+Shift+/", currentKey: "Ctrl+Shift+/", category: "general" },
   { action: "open-database-file", label: "Open Database File", defaultKey: "Ctrl+Shift+O", currentKey: "Ctrl+Shift+O", category: "query" },
+  { action: "duplicate-row", label: "Duplicate row", defaultKey: "Ctrl+D", currentKey: "Ctrl+D", category: "editing" },
 ];
 
 // Singleton state

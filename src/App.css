@@ -1,1 +1,39 @@
- 
+/* Multi-column sort priority badge */
+.datagrid-sort-priority {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--accent);
+  color: var(--bg-primary);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* Clear sort button in toolbar */
+.datagrid-sort-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: 4px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.datagrid-sort-clear-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}

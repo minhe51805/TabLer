@@ -30,6 +30,10 @@ interface DataGridToolbarProps {
   dataRows?: (string | number | boolean | null)[][];
   /** Number of pending undoable changes */
   undoableChanges?: number;
+  /** Multi-column sort state */
+  multiSort?: Array<{ column: string; direction: "ASC" | "DESC"; priority: number }>;
+  /** Clear all multi-column sorts */
+  onClearMultiSort?: () => void;
 }
 
 function buildExportFilename(tableName: string | undefined, extension: string): string {
@@ -48,6 +52,8 @@ export function DataGridToolbar({
   sortColumn,
   sortDir,
   selectedRowCount,
+  multiSort = [],
+  onClearMultiSort,
   isDeletingRows,
   handleDeleteSelectedRows,
   handleInsertRow,
@@ -78,7 +84,13 @@ export function DataGridToolbar({
     : compactQuery
       ? compactQuery
       : "Rows returned from the latest SQL execution.";
-  const activeSortLabel = sortColumn ? `${sortColumn} ${sortDir}` : "Natural order";
+  const activeSortLabel = sortColumn
+    ? sortColumn + " " + sortDir
+    : multiSort.length > 0
+      ? multiSort
+          .map((s) => `${s.priority}.${s.column} ${s.direction}`)
+          .join(", ")
+      : "Natural order";
 
   const canExport = resolvedColumns.length > 0 && dataRows.length > 0;
   const exportFilenameBase = tableName
@@ -118,9 +130,19 @@ export function DataGridToolbar({
         <div className="datagrid-topbar-stats">
           <span className="datagrid-stat-pill">{columnCount} columns</span>
           <span className="datagrid-stat-pill">{visibleRowCount} loaded</span>
-          <span className={`datagrid-stat-pill ${sortColumn ? "active" : ""}`}>
-            {sortColumn ? activeSortLabel : "Natural order"}
+          <span className={`datagrid-stat-pill ${sortColumn || multiSort.length > 0 ? "active" : ""}`}>
+            {activeSortLabel}
           </span>
+          {multiSort.length > 0 && onClearMultiSort && (
+            <button
+              type="button"
+              className="datagrid-sort-clear-btn"
+              onClick={onClearMultiSort}
+              title="Clear all sorts"
+            >
+              <X className="w-3! h-3!" />
+            </button>
+          )}
         </div>
 
         <div className="datagrid-topbar-actions">

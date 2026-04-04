@@ -64,6 +64,11 @@ export interface AIWorkspaceCopy {
     modeNeedsSchemaHint: string;
     openSettings: string;
     switchToPrompt: string;
+    historyTitle: string;
+    historyHint: string;
+    historyEmpty: string;
+    historyDeleteTitle?: string;
+    historyDeleteConfirm?: string;
     placeholder: string;
     note: string;
     generating: string;
@@ -159,6 +164,11 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       modeNeedsSchemaHint: "This mode needs schema sharing enabled in AI Provider Settings.",
       openSettings: "Open settings",
       switchToPrompt: "Use prompt mode",
+      historyTitle: "Conversation history",
+      historyHint: "Reopen a previous thread and continue where you left off.",
+      historyEmpty: "Ask AI to start the first conversation in this workspace.",
+      historyDeleteTitle: "Delete thread",
+      historyDeleteConfirm: "Delete this conversation thread?",
       placeholder: "Ask about this database, request SQL, or describe the change you want.",
       note: "Enter to send. Use Inspect to capture context from the workspace.",
       generating: "Generating...",
@@ -273,6 +283,9 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       modeNeedsSchemaHint: "Chế độ này cần bật chia sẻ schema trong AI Provider Settings.",
       openSettings: "Mở settings",
       switchToPrompt: "Dùng chỉ prompt",
+      historyTitle: "Lịch sử trò chuyện",
+      historyHint: "Mở lại cuộc trò chuyện trước đó và tiếp tục đúng ngữ cảnh đang làm.",
+      historyEmpty: "Hãy hỏi AI để bắt đầu cuộc trò chuyện đầu tiên trong workspace này.",
       placeholder: "Hỏi về DB này, yêu cầu SQL, hoặc mô tả thay đổi bạn muốn.",
       note: "Enter để gửi. Inspect để lấy ngữ cảnh.",
       generating: "Đang tạo...",
@@ -387,6 +400,9 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       modeNeedsSchemaHint: "这个模式需要在 AI Provider Settings 中开启 schema sharing。",
       openSettings: "打开设置",
       switchToPrompt: "改用提示词模式",
+      historyTitle: "对话历史",
+      historyHint: "重新打开之前的线程，并从上次停下的位置继续。",
+      historyEmpty: "先向 AI 发出一个请求，工作区里的第一段对话就会出现在这里。",
       placeholder: "询问当前数据库、请求 SQL，或描述你想做的改动。",
       note: "按 Enter 发送。使用 Inspect 从工作区捕获上下文。",
       generating: "生成中...",

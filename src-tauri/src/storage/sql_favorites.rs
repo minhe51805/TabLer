@@ -77,11 +77,6 @@ impl SqlFavoritesStorage {
         items
     }
 
-    #[allow(dead_code)]
-    pub fn get(&self, id: &str) -> Option<SqlFavorite> {
-        self.cache.get(id).cloned()
-    }
-
     pub fn save(&mut self, mut favorite: SqlFavorite) -> Result<SqlFavorite, String> {
         if favorite.id.is_empty() {
             favorite.id = uuid::Uuid::new_v4().to_string();

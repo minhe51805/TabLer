@@ -1,5 +1,7 @@
-import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal } from "lucide-react";
+import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X } from "lucide-react";
+import { useState } from "react";
 import { exportToCSV, exportToJSON } from "../../utils/export-utils";
+import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import type { ResolvedColumn } from "./hooks/useDataGrid";
 
 interface DataGridToolbarProps {
@@ -15,10 +17,15 @@ interface DataGridToolbarProps {
   handleInsertRow: () => void;
   handleCopyAsInsert: () => void;
   handleCopyAsUpdate: () => void;
+  handleCopyAsInsertParam: () => void;
+  handleCopyAsUpdateParam: () => void;
+  handleCopyAsDeleteParam: () => void;
   isTableEditable: boolean;
   structureStatus: "idle" | "loading" | "ready" | "failed";
   /** Column definitions for export (uses resolved display name) */
   resolvedColumns?: ResolvedColumn[];
+  /** Primary key columns for parameterized SQL generation */
+  primaryKeyColumns?: ResolvedColumn[];
   /** Raw row data to export (uses same row order as displayed in grid) */
   dataRows?: (string | number | boolean | null)[][];
   /** Number of pending undoable changes */
@@ -46,12 +53,18 @@ export function DataGridToolbar({
   handleInsertRow,
   handleCopyAsInsert,
   handleCopyAsUpdate,
+  handleCopyAsInsertParam,
+  handleCopyAsUpdateParam,
+  handleCopyAsDeleteParam,
   isTableEditable,
   structureStatus,
   resolvedColumns = [],
+  primaryKeyColumns = [],
   dataRows = [],
   undoableChanges = 0,
 }: DataGridToolbarProps) {
+  const [showSettings, setShowSettings] = useState(false);
+  const { settings, updateSettings } = useDataGridSettings();
   const compactQuery = externalResult?.query?.replace(/\s+/g, " ").trim() ?? "";
   const dataViewTitle = tableName ? tableName.split(".").pop() || tableName : "Result set";
   const dataViewSubtitle = tableName
@@ -159,6 +172,53 @@ export function DataGridToolbar({
                   <span>Copy UPDATE</span>
                 </button>
               </span>
+
+              <span
+                className="popover-container"
+                data-popover="Copy INSERT SQL with $.columnName placeholders"
+              >
+                <button
+                  type="button"
+                  className="datagrid-footer-action"
+                  onClick={() => void handleCopyAsInsertParam()}
+                  title="Copy parameterized INSERT SQL"
+                >
+                  <Braces className="!w-3.5 !h-3.5" />
+                  <span>INSERT $.</span>
+                </button>
+              </span>
+
+              <span
+                className="popover-container"
+                data-popover="Copy UPDATE SQL with $.columnName placeholders"
+              >
+                <button
+                  type="button"
+                  className="datagrid-footer-action"
+                  onClick={() => void handleCopyAsUpdateParam()}
+                  title="Copy parameterized UPDATE SQL"
+                >
+                  <Braces className="!w-3.5 !h-3.5" />
+                  <span>UPDATE $.</span>
+                </button>
+              </span>
+
+              {selectedRowCount > 0 && tableName && primaryKeyColumns?.length > 0 && (
+                <span
+                  className="popover-container"
+                  data-popover="Copy DELETE SQL with $.columnName placeholders"
+                >
+                  <button
+                    type="button"
+                    className="datagrid-footer-action"
+                    onClick={() => void handleCopyAsDeleteParam()}
+                    title="Copy parameterized DELETE SQL"
+                  >
+                    <Braces className="!w-3.5 !h-3.5" />
+                    <span>DELETE $.</span>
+                  </button>
+                </span>
+              )}
             </>
           )}
 
@@ -236,6 +296,74 @@ export function DataGridToolbar({
                 <span>Delete selected</span>
               </button>
             </span>
+          )}
+
+          <span
+            className="popover-container"
+            data-popover="Data grid settings"
+          >
+            <button
+              type="button"
+              className={`datagrid-footer-action ${showSettings ? "active" : ""}`}
+              onClick={() => setShowSettings((v) => !v)}
+              title="Data grid settings"
+            >
+              <Settings2 className="!w-3.5 !h-3.5" />
+            </button>
+          </span>
+
+          {showSettings && (
+            <div className="datagrid-settings-popover">
+              <div className="datagrid-settings-popover-header">
+                <span className="datagrid-settings-popover-title">Grid Settings</span>
+                <button
+                  type="button"
+                  className="datagrid-settings-popover-close"
+                  onClick={() => setShowSettings(false)}
+                >
+                  <X className="!w-3 !h-3" />
+                </button>
+              </div>
+
+              <div className="datagrid-settings-section">
+                <label className="datagrid-settings-label">NULL display</label>
+                <input
+                  type="text"
+                  className="datagrid-settings-input"
+                  value={settings.nullPlaceholder}
+                  maxLength={20}
+                  onChange={(e) => updateSettings({ nullPlaceholder: e.target.value })}
+                  placeholder="NULL"
+                />
+              </div>
+
+              <div className="datagrid-settings-section">
+                <label className="datagrid-settings-label">Row height</label>
+                <div className="datagrid-settings-row">
+                  {(["small", "medium", "large"] as const).map((size) => (
+                    <button
+                      key={size}
+                      type="button"
+                      className={`datagrid-settings-toggle ${settings.rowHeight === size ? "active" : ""}`}
+                      onClick={() => updateSettings({ rowHeight: size })}
+                    >
+                      {size.charAt(0).toUpperCase() + size.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="datagrid-settings-section">
+                <label className="datagrid-settings-label">Alternating rows</label>
+                <button
+                  type="button"
+                  className={`datagrid-settings-toggle ${settings.alternatingRows ? "active" : ""}`}
+                  onClick={() => updateSettings({ alternatingRows: !settings.alternatingRows })}
+                >
+                  {settings.alternatingRows ? "On" : "Off"}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>

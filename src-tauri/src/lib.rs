@@ -1,9 +1,11 @@
 mod commands;
+mod ai_workspace_history;
 mod database;
 mod query_history;
 mod storage;
 mod utils;
 
+use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::connection::*;
 use commands::export::*;
 use commands::file::*;
@@ -120,6 +122,9 @@ pub fn run() {
             delete_query_history_entry,
             delete_query_history_entries,
             clear_query_history,
+            // AI workspace history commands
+            get_ai_workspace_history,
+            save_ai_workspace_history,
             // File commands
             read_sql_file,
             read_sql_file_from_path,

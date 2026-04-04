@@ -20,6 +20,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "./stores/appStore";
+import { EventCenter } from "./stores/event-center";
 import { getLastPathSegment } from "./utils/path-utils";
 import { ThemeEngine, useTheme } from "./stores/useTheme";
 import { useI18n, type AppLanguagePreference } from "./i18n";
@@ -34,6 +35,7 @@ import { AppShortcutsModal } from "./components/AppShortcutsModal";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { QueryHistoryPanel } from "./components/QueryHistory/QueryHistoryPanel";
 import { SQLFavoritesPanel } from "./components/SQLFavorites/SQLFavoritesPanel";
+import { RowInspector, type RowInspectorData } from "./components/RowInspector/RowInspector";
 import { getAdminQueryPreset, type AdminQueryKind } from "./utils/admin-query-presets";
 import { APP_TOAST_EVENT, type AppToastPayload, emitAppToast } from "./utils/app-toast";
 import { invokeMutation } from "./utils/tauri-utils";
@@ -163,6 +165,8 @@ function App() {
   const [showTerminalPanel, setShowTerminalPanel] = useState(false);
   const [showQueryHistory, setShowQueryHistory] = useState(false);
   const [showSQLFavorites, setShowSQLFavorites] = useState(false);
+  const [showRowInspector, setShowRowInspector] = useState(false);
+  const [rowInspectorData, setRowInspectorData] = useState<RowInspectorData | null>(null);
   const [isExportingDatabase, setIsExportingDatabase] = useState(false);
   const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
   const [leftPanel, setLeftPanel] = useState<"database" | "metrics">("database");
@@ -323,6 +327,39 @@ function App() {
       window.removeEventListener(APP_TOAST_EVENT, handleGlobalToast);
     };
   }, [clearGlobalToastTimers]);
+
+  // Row inspector event handlers
+  const handleRowInspectorOpen = useCallback((detail: {
+    rowIndex: number;
+    row: (string | number | boolean | null)[];
+    columns: import("./components/DataGrid/hooks/useDataGrid").ResolvedColumn[];
+    primaryKeyValues: Record<string, string | number | boolean | null>;
+    tableName?: string;
+    database?: string;
+  }) => {
+    setRowInspectorData({
+      rowIndex: detail.rowIndex,
+      row: detail.row,
+      columns: detail.columns,
+      primaryKeyValues: detail.primaryKeyValues,
+      tableName: detail.tableName,
+      database: detail.database,
+    });
+    setShowRowInspector(true);
+  }, []);
+
+  const handleRowInspectorClose = useCallback(() => {
+    setShowRowInspector(false);
+  }, []);
+
+  useEffect(() => {
+    const offOpen = EventCenter.on("row-inspector-open", (e) => handleRowInspectorOpen(e.detail));
+    const offClose = EventCenter.on("row-inspector-close", () => handleRowInspectorClose());
+    return () => {
+      offOpen();
+      offClose();
+    };
+  }, [handleRowInspectorOpen, handleRowInspectorClose]);
 
   useEffect(() => {
     if (!isWindowMenuOpen) return;
@@ -1738,7 +1775,9 @@ function App() {
   }
 
   return (
-    <div className={`app-root ${isWindowMaximized ? "window-maximized" : ""}`}>
+    <div
+      className={`app-root ${isWindowMaximized ? "window-maximized" : ""} ${showAISlidePanel ? "workspace-ai-open" : ""}`}
+    >
       <AppTitleBar
         titlebarContextTitle={titlebarContextTitle}
         titlebarContextLabel={titlebarContextLabel}
@@ -1901,6 +1940,16 @@ function App() {
         onClose={() => setShowSQLFavorites(false)}
         onRunQuery={handleRunQueryFromFavorites}
         currentEditorSql={activeTab?.type === "query" ? activeTab.content : ""}
+      />
+      <RowInspector
+        isOpen={showRowInspector}
+        data={rowInspectorData}
+        onClose={handleRowInspectorClose}
+        onEditCell={(columnName, value) => {
+          if (rowInspectorData?.tableName && activeConnectionId) {
+            void EventCenter.emit("row-inspector-edit-cell", { columnName, value });
+          }
+        }}
       />
       {globalToastMarkup}
     </div>

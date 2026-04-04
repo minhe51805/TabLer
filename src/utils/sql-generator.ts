@@ -165,3 +165,70 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     return false;
   }
 }
+
+// ─── Parameterized SQL generators ────────────────────────────────────────────
+//
+// These generate SQL with $.columnName placeholders — useful for building
+// reusable SQL templates that can be find-and-replaced or used with query tools.
+
+/**
+ * Generates a parameterized INSERT statement using $.columnName placeholders.
+ * Single statement — one row per VALUES clause.
+ */
+export function generateInsertSqlParameterized(
+  tableName: string,
+  columns: string[],
+  dbType?: DatabaseType,
+): string {
+  if (columns.length === 0) return "";
+
+  const quote = getQuoteFn(dbType);
+  const colList = columns.map(quote).join(", ");
+  const placeholders = columns.map((col) => `$.${col}`).join(", ");
+
+  return `INSERT INTO ${quote(tableName)} (${colList}) VALUES (${placeholders});`;
+}
+
+/**
+ * Generates a parameterized UPDATE statement using $.columnName placeholders.
+ * SET and WHERE clauses both use $.columnName — non-PK columns in SET, PKs in WHERE.
+ */
+export function generateUpdateSqlParameterized(
+  tableName: string,
+  columns: string[],
+  primaryKeyColumns: string[],
+  dbType?: DatabaseType,
+): string {
+  if (columns.length === 0 || primaryKeyColumns.length === 0) return "";
+
+  const quote = getQuoteFn(dbType);
+  const pkSet = new Set(primaryKeyColumns);
+
+  const sets = columns
+    .filter((col) => !pkSet.has(col))
+    .map((col) => `${quote(col)} = $.${col}`)
+    .join(", ");
+
+  const whereParts = primaryKeyColumns.map((col) => `${quote(col)} = $.${col}`).join(" AND ");
+
+  if (sets.length === 0) return "";
+
+  return `UPDATE ${quote(tableName)} SET ${sets} WHERE ${whereParts};`;
+}
+
+/**
+ * Generates a parameterized DELETE statement using $.columnName placeholders.
+ * WHERE clause uses all provided primary key columns.
+ */
+export function generateDeleteSqlParameterized(
+  tableName: string,
+  primaryKeyColumns: string[],
+  dbType?: DatabaseType,
+): string {
+  if (primaryKeyColumns.length === 0) return "";
+
+  const quote = getQuoteFn(dbType);
+  const whereParts = primaryKeyColumns.map((col) => `${quote(col)} = $.${col}`).join(" AND ");
+
+  return `DELETE FROM ${quote(tableName)} WHERE ${whereParts};`;
+}

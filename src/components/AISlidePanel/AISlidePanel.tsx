@@ -1,7 +1,9 @@
-import { Database, Loader2, RotateCcw, Sparkles, Target, Wand2, X } from "lucide-react";
+import { History, Loader2, RotateCcw, Sparkles, Target, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import type { AIConversationMessage } from "../../types";
+import { invokeMutation } from "../../utils/tauri-utils";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 import { AIBubbleDetailModal } from "./AIBubbleDetailModal";
 import { useAISlidePanel } from "./hooks/use-ai-slide-panel";
@@ -24,13 +26,27 @@ interface Props {
 const ERROR_BUBBLE_AUTO_DISMISS_MS = 9000;
 const MAX_HISTORY_BUBBLES = 4;
 const MAX_HISTORY_MESSAGE_CHARS = 1000;
+const AI_WORKSPACE_HISTORY_LEGACY_STORAGE_KEY = "tabler.ai.workspace.history.v1";
+const AI_WORKSPACE_HISTORY_VERSION = 1;
+const MAX_STORED_THREADS_PER_WORKSPACE = 12;
+const MAX_STORED_BUBBLES_PER_THREAD = 24;
+const AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS = 300;
 
 interface AIChatThread {
   id: string;
   workspaceKey: string;
   label: string;
   createdAt: number;
+  updatedAt: number;
   isAutoLabel: boolean;
+}
+
+interface PersistedAIWorkspaceState {
+  version: number;
+  threads: AIChatThread[];
+  bubbles: AIWorkspaceBubbleData[];
+  interactionModes: Record<string, AIWorkspaceInteractionMode>;
+  activeThreadIds: Record<string, string>;
 }
 
 interface SelectionContextState {
@@ -77,12 +93,193 @@ function buildAIWorkspaceKey(connectionId: string | null, database: string | nul
   return `${connectionId || "no-connection"}::${database || "no-database"}`;
 }
 
+function getHistoryLocale(language: string) {
+  if (language === "vi") return "vi-VN";
+  if (language === "zh") return "zh-CN";
+  return "en-US";
+}
+
+function formatThreadTimestamp(timestamp: number, language: string) {
+  const locale = getHistoryLocale(language);
+  const targetDate = new Date(timestamp);
+  const now = new Date();
+  const isSameDay =
+    targetDate.getFullYear() === now.getFullYear() &&
+    targetDate.getMonth() === now.getMonth() &&
+    targetDate.getDate() === now.getDate();
+
+  const formatter = new Intl.DateTimeFormat(locale, isSameDay
+    ? { hour: "2-digit", minute: "2-digit" }
+    : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+  return formatter.format(targetDate);
+}
+
+function isAIWorkspaceInteractionMode(value: unknown): value is AIWorkspaceInteractionMode {
+  return value === "prompt" || value === "edit" || value === "agent";
+}
+
+function createEmptyPersistedAIWorkspaceState(): PersistedAIWorkspaceState {
+  return {
+    version: AI_WORKSPACE_HISTORY_VERSION,
+    threads: [],
+    bubbles: [],
+    interactionModes: {},
+    activeThreadIds: {},
+  };
+}
+
+function loadLegacyPersistedAIWorkspaceState(): PersistedAIWorkspaceState {
+  if (typeof window === "undefined") {
+    return createEmptyPersistedAIWorkspaceState();
+  }
+
+  try {
+    const raw = window.localStorage.getItem(AI_WORKSPACE_HISTORY_LEGACY_STORAGE_KEY);
+    if (!raw) return createEmptyPersistedAIWorkspaceState();
+
+    const parsed = JSON.parse(raw) as Partial<PersistedAIWorkspaceState> | null;
+    if (!parsed || typeof parsed !== "object") {
+      return createEmptyPersistedAIWorkspaceState();
+    }
+
+    const threads = Array.isArray(parsed.threads)
+      ? parsed.threads
+          .filter((thread): thread is AIChatThread => (
+            !!thread &&
+            typeof thread.id === "string" &&
+            typeof thread.workspaceKey === "string" &&
+            typeof thread.label === "string" &&
+            typeof thread.createdAt === "number"
+          ))
+          .map((thread) => ({
+            ...thread,
+            updatedAt: typeof thread.updatedAt === "number" ? thread.updatedAt : thread.createdAt,
+            isAutoLabel: Boolean(thread.isAutoLabel),
+          }))
+      : [];
+
+    const bubbles = Array.isArray(parsed.bubbles)
+      ? parsed.bubbles.filter((bubble): bubble is AIWorkspaceBubbleData => (
+          !!bubble &&
+          typeof bubble.id === "string" &&
+          typeof bubble.threadId === "string" &&
+          typeof bubble.workspaceKey === "string" &&
+          isAIWorkspaceInteractionMode(bubble.interactionMode) &&
+          typeof bubble.kind === "string" &&
+          typeof bubble.status === "string" &&
+          typeof bubble.title === "string" &&
+          typeof bubble.subtitle === "string" &&
+          typeof bubble.prompt === "string" &&
+          typeof bubble.preview === "string" &&
+          typeof bubble.detail === "string" &&
+          typeof bubble.createdAt === "number" &&
+          typeof bubble.x === "number" &&
+          typeof bubble.y === "number" &&
+          !!bubble.pointer &&
+          typeof bubble.pointer.x === "number" &&
+          typeof bubble.pointer.y === "number" &&
+          typeof bubble.pointer.visible === "boolean"
+        ))
+      : [];
+
+    const interactionModes = Object.fromEntries(
+      Object.entries(parsed.interactionModes || {}).filter((entry): entry is [string, AIWorkspaceInteractionMode] => (
+        typeof entry[0] === "string" && isAIWorkspaceInteractionMode(entry[1])
+      ))
+    );
+
+    const activeThreadIds = Object.fromEntries(
+      Object.entries(parsed.activeThreadIds || {}).filter((entry): entry is [string, string] => (
+        typeof entry[0] === "string" && typeof entry[1] === "string"
+      ))
+    );
+
+    return {
+      version: AI_WORKSPACE_HISTORY_VERSION,
+      threads,
+      bubbles,
+      interactionModes,
+      activeThreadIds,
+    };
+  } catch {
+    return createEmptyPersistedAIWorkspaceState();
+  }
+}
+
+function prunePersistedAIWorkspaceState(state: PersistedAIWorkspaceState): PersistedAIWorkspaceState {
+  const threadsByWorkspace = new Map<string, AIChatThread[]>();
+  state.threads.forEach((thread) => {
+    const collection = threadsByWorkspace.get(thread.workspaceKey) || [];
+    collection.push({
+      ...thread,
+      updatedAt: typeof thread.updatedAt === "number" ? thread.updatedAt : thread.createdAt,
+    });
+    threadsByWorkspace.set(thread.workspaceKey, collection);
+  });
+
+  const keptThreads = [...threadsByWorkspace.entries()].flatMap(([, workspaceThreads]) =>
+    [...workspaceThreads]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, MAX_STORED_THREADS_PER_WORKSPACE)
+  );
+
+  const keptThreadIds = new Set(keptThreads.map((thread) => thread.id));
+  const keptWorkspaceKeys = new Set(keptThreads.map((thread) => thread.workspaceKey));
+
+  const bubblesByThread = new Map<string, AIWorkspaceBubbleData[]>();
+  state.bubbles
+    .filter((bubble) => keptThreadIds.has(bubble.threadId) && bubble.status !== "loading")
+    .forEach((bubble) => {
+      const collection = bubblesByThread.get(bubble.threadId) || [];
+      collection.push(bubble);
+      bubblesByThread.set(bubble.threadId, collection);
+    });
+
+  const keptBubbles = [...bubblesByThread.values()]
+    .flatMap((threadBubbles) =>
+      [...threadBubbles]
+        .sort((left, right) => left.createdAt - right.createdAt)
+        .slice(-MAX_STORED_BUBBLES_PER_THREAD)
+    )
+    .sort((left, right) => left.createdAt - right.createdAt);
+
+  const interactionModes = Object.fromEntries(
+    Object.entries(state.interactionModes).filter(([workspaceKey]) => keptWorkspaceKeys.has(workspaceKey))
+  );
+
+  const activeThreadIds = Object.fromEntries(
+    Object.entries(state.activeThreadIds).filter(([workspaceKey, threadId]) => (
+      keptWorkspaceKeys.has(workspaceKey) && keptThreadIds.has(threadId)
+    ))
+  );
+
+  return {
+    version: AI_WORKSPACE_HISTORY_VERSION,
+    threads: keptThreads.sort((left, right) => right.updatedAt - left.updatedAt),
+    bubbles: keptBubbles,
+    interactionModes,
+    activeThreadIds,
+  };
+}
+
+function hasPersistedAIWorkspaceStateData(state: PersistedAIWorkspaceState) {
+  return (
+    state.threads.length > 0 ||
+    state.bubbles.length > 0 ||
+    Object.keys(state.interactionModes).length > 0 ||
+    Object.keys(state.activeThreadIds).length > 0
+  );
+}
+
 function createChatThread(index: number, workspaceKey: string): AIChatThread {
+  const now = Date.now();
   return {
     id: createId(),
     workspaceKey,
     label: `#${index}`,
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
     isAutoLabel: true,
   };
 }
@@ -240,7 +437,9 @@ export function AISlidePanel({
   const composerRef = useRef<HTMLDivElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const chatThreadRef = useRef<HTMLDivElement>(null);
+  const historyPanelRef = useRef<HTMLDivElement>(null);
   const bubbleDismissTimersRef = useRef(new Map<string, number>());
+  const historySaveTimerRef = useRef<number | null>(null);
   const currentWorkspaceKey = useMemo(
     () => buildAIWorkspaceKey(connectionId, currentDatabase),
     [connectionId, currentDatabase]
@@ -253,13 +452,21 @@ export function AISlidePanel({
 
   const [promptDraft, setPromptDraft] = useState(initialPrompt);
   const [bubbles, setBubbles] = useState<AIWorkspaceBubbleData[]>([]);
-  const [chatThreads, setChatThreads] = useState<AIChatThread[]>(() => [initialThreadRef.current!]);
-  const [workspaceInteractionModes, setWorkspaceInteractionModes] = useState<Record<string, AIWorkspaceInteractionMode>>({});
-  const [activeThreadId, setActiveThreadId] = useState<string>(() => initialThreadRef.current!.id);
+  const [chatThreads, setChatThreads] = useState<AIChatThread[]>([]);
+  const [workspaceInteractionModes, setWorkspaceInteractionModes] = useState<Record<string, AIWorkspaceInteractionMode>>(
+    {}
+  );
+  const [activeThreadIdsByWorkspace, setActiveThreadIdsByWorkspace] = useState<Record<string, string>>(
+    {}
+  );
+  const [activeThreadId, setActiveThreadId] = useState<string>(initialThreadRef.current!.id);
+  const [historyHydrated, setHistoryHydrated] = useState(false);
   const [detailBubbleId, setDetailBubbleId] = useState<string | null>(null);
   const [isInspectMode, setIsInspectMode] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [selectionContext, setSelectionContext] = useState<SelectionContextState | null>(null);
   const [attachedSelection, setAttachedSelection] = useState<SelectionContextState | null>(null);
+  const [deleteThreadPending, setDeleteThreadPending] = useState<string | null>(null);
 
   const detailBubble = useMemo(
     () => bubbles.find((bubble) => bubble.id === detailBubbleId) ?? null,
@@ -268,6 +475,10 @@ export function AISlidePanel({
   const workspaceThreads = useMemo(
     () => chatThreads.filter((thread) => thread.workspaceKey === currentWorkspaceKey),
     [chatThreads, currentWorkspaceKey]
+  );
+  const recentWorkspaceThreads = useMemo(
+    () => [...workspaceThreads].sort((left, right) => right.updatedAt - left.updatedAt),
+    [workspaceThreads]
   );
   const currentThread = useMemo(
     () => workspaceThreads.find((thread) => thread.id === activeThreadId) ?? workspaceThreads[0] ?? null,
@@ -293,6 +504,15 @@ export function AISlidePanel({
     () => [...activeThreadBubbles].sort((left, right) => left.createdAt - right.createdAt),
     [activeThreadBubbles]
   );
+  const bubbleCountByThread = useMemo(() => {
+    const counts = new Map<string, number>();
+    bubbles
+      .filter((bubble) => bubble.workspaceKey === currentWorkspaceKey && bubble.status !== "loading")
+      .forEach((bubble) => {
+        counts.set(bubble.threadId, (counts.get(bubble.threadId) || 0) + 1);
+      });
+    return counts;
+  }, [bubbles, currentWorkspaceKey]);
   const latestConversationBubble = useMemo(
     () => conversationBubbles[conversationBubbles.length - 1] ?? null,
     [conversationBubbles]
@@ -357,6 +577,71 @@ export function AISlidePanel({
       ? aiCopy.composer.inspectHint
       : "";
 
+  const persistHistoryState = useCallback(async (state: PersistedAIWorkspaceState) => {
+    const prunedState = prunePersistedAIWorkspaceState(state);
+    await invokeMutation<void>("save_ai_workspace_history", { state: prunedState });
+  }, []);
+
+  useEffect(() => {
+    if (historyHydrated || !isOpen) return;
+
+    let isCancelled = false;
+
+    const hydrateHistory = async () => {
+      try {
+        let persistedState = await invokeMutation<PersistedAIWorkspaceState>("get_ai_workspace_history", {});
+        const normalizedPersistedState = createEmptyPersistedAIWorkspaceState();
+        normalizedPersistedState.version = typeof persistedState.version === "number"
+          ? persistedState.version
+          : AI_WORKSPACE_HISTORY_VERSION;
+        normalizedPersistedState.threads = Array.isArray(persistedState.threads) ? persistedState.threads : [];
+        normalizedPersistedState.bubbles = Array.isArray(persistedState.bubbles) ? persistedState.bubbles : [];
+        normalizedPersistedState.interactionModes = persistedState.interactionModes || {};
+        normalizedPersistedState.activeThreadIds = persistedState.activeThreadIds || {};
+        persistedState = normalizedPersistedState;
+
+        if (!hasPersistedAIWorkspaceStateData(persistedState)) {
+          const legacyState = prunePersistedAIWorkspaceState(loadLegacyPersistedAIWorkspaceState());
+          if (hasPersistedAIWorkspaceStateData(legacyState)) {
+            persistedState = legacyState;
+            await invokeMutation<void>("save_ai_workspace_history", { state: legacyState });
+          }
+        }
+
+        if (isCancelled) return;
+
+        setChatThreads(persistedState.threads);
+        setBubbles(persistedState.bubbles);
+        setWorkspaceInteractionModes(persistedState.interactionModes);
+        setActiveThreadIdsByWorkspace(persistedState.activeThreadIds);
+
+        const workspaceThreadsForCurrentKey = persistedState.threads.filter(
+          (thread) => thread.workspaceKey === currentWorkspaceKey
+        );
+        const preferredThreadId = persistedState.activeThreadIds[currentWorkspaceKey];
+        const nextThreadId =
+          workspaceThreadsForCurrentKey.find((thread) => thread.id === preferredThreadId)?.id ??
+          [...workspaceThreadsForCurrentKey].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.id ??
+          initialThreadRef.current?.id ??
+          activeThreadId;
+
+        setActiveThreadId(nextThreadId);
+      } catch {
+        if (isCancelled) return;
+      } finally {
+        if (!isCancelled) {
+          setHistoryHydrated(true);
+        }
+      }
+    };
+
+    void hydrateHistory();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeThreadId, currentWorkspaceKey, historyHydrated, isOpen]);
+
   useEffect(() => {
     if (!isOpen || !isInspectMode) return;
     window.requestAnimationFrame(() => {
@@ -367,6 +652,44 @@ export function AISlidePanel({
   }, [conversationBubbles, isOpen]);
 
   useEffect(() => {
+    if (!isOpen) {
+      setIsHistoryOpen(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    setIsHistoryOpen(false);
+  }, [currentWorkspaceKey]);
+
+  useEffect(() => {
+    if (!isHistoryOpen) return;
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (target && historyPanelRef.current?.contains(target)) return;
+      setIsHistoryOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsHistoryOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown, true);
+    window.addEventListener("touchstart", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown, true);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown, true);
+      window.removeEventListener("touchstart", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [isHistoryOpen]);
+
+  useEffect(() => {
+    if (!historyHydrated) return;
+
     if (workspaceThreads.length === 0) {
       const nextThread = createChatThread(1, currentWorkspaceKey);
       setChatThreads((current) => (
@@ -375,13 +698,36 @@ export function AISlidePanel({
           : [...current, nextThread]
       ));
       setActiveThreadId(nextThread.id);
+      setActiveThreadIdsByWorkspace((current) => ({
+        ...current,
+        [currentWorkspaceKey]: nextThread.id,
+      }));
       return;
     }
 
-    if (!workspaceThreads.some((thread) => thread.id === activeThreadId)) {
-      setActiveThreadId(workspaceThreads[0]?.id ?? "");
+    const preferredThreadId = activeThreadIdsByWorkspace[currentWorkspaceKey];
+    const nextActiveThread =
+      workspaceThreads.find((thread) => thread.id === preferredThreadId) ??
+      recentWorkspaceThreads[0] ??
+      workspaceThreads[0] ??
+      null;
+
+    if (nextActiveThread && nextActiveThread.id !== activeThreadId) {
+      setActiveThreadId(nextActiveThread.id);
     }
-  }, [activeThreadId, currentWorkspaceKey, workspaceThreads]);
+  }, [activeThreadId, activeThreadIdsByWorkspace, currentWorkspaceKey, historyHydrated, recentWorkspaceThreads, workspaceThreads]);
+
+  useEffect(() => {
+    if (!currentThread?.id) return;
+    setActiveThreadIdsByWorkspace((current) => (
+      current[currentWorkspaceKey] === currentThread.id
+        ? current
+        : {
+            ...current,
+            [currentWorkspaceKey]: currentThread.id,
+          }
+    ));
+  }, [currentThread?.id, currentWorkspaceKey]);
 
   useEffect(() => {
     if (lastWorkspaceKeyRef.current === currentWorkspaceKey) {
@@ -489,6 +835,15 @@ export function AISlidePanel({
 
   useEffect(() => {
     return () => {
+      if (historySaveTimerRef.current !== null) {
+        window.clearTimeout(historySaveTimerRef.current);
+        historySaveTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
       bubbleDismissTimersRef.current.forEach((timerId) => window.clearTimeout(timerId));
       bubbleDismissTimersRef.current.clear();
     };
@@ -520,6 +875,45 @@ export function AISlidePanel({
       bubbleDismissTimersRef.current.set(bubble.id, timerId);
     });
   }, [bubbles]);
+
+  useEffect(() => {
+    if (!historyHydrated) {
+      return;
+    }
+
+    const nextState: PersistedAIWorkspaceState = {
+      version: AI_WORKSPACE_HISTORY_VERSION,
+      threads: chatThreads,
+      bubbles,
+      interactionModes: workspaceInteractionModes,
+      activeThreadIds: activeThreadIdsByWorkspace,
+    };
+
+    if (historySaveTimerRef.current !== null) {
+      window.clearTimeout(historySaveTimerRef.current);
+    }
+
+    historySaveTimerRef.current = window.setTimeout(() => {
+      historySaveTimerRef.current = null;
+      persistHistoryState(nextState).catch((error) => {
+        console.error("[AIWorkspace] Failed to persist workspace state:", error);
+      });
+    }, AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (historySaveTimerRef.current !== null) {
+        window.clearTimeout(historySaveTimerRef.current);
+        historySaveTimerRef.current = null;
+      }
+    };
+  }, [
+    activeThreadIdsByWorkspace,
+    bubbles,
+    chatThreads,
+    historyHydrated,
+    persistHistoryState,
+    workspaceInteractionModes,
+  ]);
 
   const buildLoadingBubble = useCallback((
     prompt: string,
@@ -588,15 +982,24 @@ export function AISlidePanel({
     setBubbles((current) => [...current, loadingBubble]);
     setChatThreads((current) =>
       current.map((thread, index) =>
-        thread.id === targetThreadId && thread.isAutoLabel
+        thread.id === targetThreadId
           ? {
               ...thread,
-              label: buildThreadLabel(loadingBubble.promptSummary || normalizedPrompt, index + 1),
-              isAutoLabel: false,
+              updatedAt: loadingBubble.createdAt,
+              ...(thread.isAutoLabel
+                ? {
+                    label: buildThreadLabel(loadingBubble.promptSummary || normalizedPrompt, index + 1),
+                    isAutoLabel: false,
+                  }
+                : {}),
             }
           : thread
       )
     );
+    setActiveThreadIdsByWorkspace((current) => ({
+      ...current,
+      [targetWorkspaceKey]: targetThreadId,
+    }));
 
     try {
       const result = await generateAssist(normalizedPrompt, options?.history, { interactionMode });
@@ -786,6 +1189,56 @@ export function AISlidePanel({
     }
   }, [aiCopy, runSql]);
 
+  const handleSelectThread = useCallback((threadId: string) => {
+    setActiveThreadId(threadId);
+    setActiveThreadIdsByWorkspace((current) => ({
+      ...current,
+      [currentWorkspaceKey]: threadId,
+    }));
+    setIsHistoryOpen(false);
+    setAttachedSelection(null);
+    setDetailBubbleId(null);
+  }, [currentWorkspaceKey]);
+
+  const handleRequestDeleteThread = useCallback((threadId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    setDeleteThreadPending(threadId);
+  }, []);
+
+  const handleConfirmDeleteThread = useCallback(() => {
+    const threadId = deleteThreadPending;
+    if (!threadId) return;
+
+    setDeleteThreadPending(null);
+
+    const updatedThreads = chatThreads.filter((thread) => thread.id !== threadId);
+    const updatedBubbles = bubbles.filter((bubble) => bubble.threadId !== threadId);
+    const remainingWorkspaceThreads = updatedThreads.filter((thread) => thread.workspaceKey === currentWorkspaceKey);
+    const nextActiveThreadId =
+      activeThreadIdsByWorkspace[currentWorkspaceKey] === threadId
+        ? remainingWorkspaceThreads[0]?.id ?? null
+        : activeThreadIdsByWorkspace[currentWorkspaceKey] ?? activeThreadId;
+
+    setChatThreads(updatedThreads);
+    setBubbles(updatedBubbles);
+    setActiveThreadIdsByWorkspace((current) => {
+      const next = { ...current };
+      if (nextActiveThreadId) {
+        next[currentWorkspaceKey] = nextActiveThreadId;
+      } else {
+        delete next[currentWorkspaceKey];
+      }
+      return next;
+    });
+    setActiveThreadId(nextActiveThreadId ?? initialThreadRef.current?.id ?? createId());
+  }, [activeThreadId, activeThreadIdsByWorkspace, bubbles, chatThreads, currentWorkspaceKey, deleteThreadPending]);
+
+  const handleCancelDeleteThread = useCallback(() => {
+    setDeleteThreadPending(null);
+  }, []);
+
+
+
   const handleRewriteBubble = useCallback(async (bubble: AIWorkspaceBubbleData, note: string) => {
     const normalizedNote = note.trim();
     if (!normalizedNote) return;
@@ -809,6 +1262,7 @@ export function AISlidePanel({
     const nextThread = createChatThread(workspaceThreads.length + 1, currentWorkspaceKey);
     setChatThreads((current) => [...current, nextThread]);
     setActiveThreadId(nextThread.id);
+    setIsHistoryOpen(false);
     setPromptDraft(initialPrompt);
     setAttachedSelection(null);
     setSelectionContext(null);
@@ -869,79 +1323,142 @@ export function AISlidePanel({
             ref={composerRef}
             className={`ai-workspace-composer is-docked ${isLongformComposer ? "is-longform" : ""} ${activeInteractionMode === "agent" ? "is-agent" : ""}`}
           >
-            <div className="ai-workspace-composer-header">
-              <div className="ai-workspace-composer-brand">
-                <div className="ai-workspace-composer-icon">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <div className="ai-workspace-composer-copy">
-                  <span className="ai-workspace-composer-kicker">{aiCopy.composer.kicker}</span>
-                  <strong className="ai-workspace-composer-title">{aiCopy.composer.title}</strong>
-                </div>
-              </div>
-              <div className="ai-workspace-composer-head-actions">
-                <button
-                  type="button"
-                  className={`ai-workspace-composer-head-btn ${isInspectMode ? "is-active" : ""}`}
-                  onClick={() => setIsInspectMode((current) => !current)}
-                  title={isInspectMode ? aiCopy.composer.inspectOnTitle : aiCopy.composer.inspectOffTitle}
-                >
-                  <Target className="w-3.5 h-3.5" />
-                </button>
-                <button type="button" className="ai-workspace-composer-head-btn" onClick={handleResetStage}>
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className="ai-workspace-composer-head-btn"
-                  onClick={() => {
-                    setIsInspectMode(false);
-                    onClose();
-                  }}
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
             <div className="ai-workspace-composer-body">
-              <div className="ai-workspace-composer-toolbar">
-                <div className="ai-workspace-chat-tabs" role="tablist" aria-label="AI chat threads">
-                  <div className="ai-workspace-chat-tabs-list">
-                    {workspaceThreads.map((thread) => (
-                      <button
-                        key={thread.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={thread.id === currentThread?.id}
-                        className={`ai-workspace-chat-tab ${thread.id === currentThread?.id ? "is-active" : ""}`}
-                        onClick={() => {
-                          setActiveThreadId(thread.id);
-                          setAttachedSelection(null);
-                          setDetailBubbleId(null);
-                        }}
-                      >
-                        {thread.label}
-                      </button>
-                    ))}
+              <div className="ai-workspace-panel-header workspace-toolbar">
+                <div className="workspace-toolbar-main ai-workspace-panel-header-main">
+                  <div className="workspace-toolbar-topline ai-workspace-panel-header-topline">
+                    <span className="workspace-toolbar-kicker">{aiCopy.composer.kicker}</span>
+                    {currentDatabase ? (
+                      <span className="workspace-toolbar-chip ai-workspace-panel-header-chip">{currentDatabase}</span>
+                    ) : null}
                   </div>
-                  <button type="button" className="ai-workspace-chat-tab-add" onClick={handleCreateChatThread}>
-                    +
-                  </button>
+                  <div className="workspace-toolbar-title-row ai-workspace-panel-header-row">
+                    <span className="workspace-toolbar-title ai-workspace-panel-header-title">
+                      {aiCopy.composer.title}
+                    </span>
+                    <div className="workspace-toolbar-status ai-workspace-panel-header-status">
+                      <span className="workspace-toolbar-status-pill">
+                        {activeProvider?.name || aiCopy.composer.noProvider}
+                      </span>
+                      <span className="workspace-toolbar-status-pill">
+                        {tableContextCount}{" "}
+                        {tableContextCount === 1 ? aiCopy.composer.tableOne : aiCopy.composer.tableOther}
+                      </span>
+                    </div>
+                  </div>
                 </div>
+                <div className="workspace-toolbar-actions ai-workspace-panel-header-actions">
+                  <div className="workspace-toolbar-utility ai-workspace-panel-header-utility">
+                    <button
+                      type="button"
+                      className={`toolbar-btn icon-only ai-workspace-composer-head-btn ${isInspectMode ? "is-active" : ""}`}
+                      onClick={() => setIsInspectMode((current) => !current)}
+                      title={isInspectMode ? aiCopy.composer.inspectOnTitle : aiCopy.composer.inspectOffTitle}
+                      aria-label={isInspectMode ? aiCopy.composer.inspectOnTitle : aiCopy.composer.inspectOffTitle}
+                    >
+                      <Target className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="toolbar-btn icon-only ai-workspace-composer-head-btn"
+                      onClick={handleResetStage}
+                      title="Reset"
+                      aria-label="Reset"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="toolbar-btn icon-only ai-workspace-composer-head-btn is-close"
+                      onClick={() => {
+                        setIsInspectMode(false);
+                        onClose();
+                      }}
+                      title={aiCopy.composer.alertDismiss}
+                      aria-label={aiCopy.composer.alertDismiss}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
 
-                <div className="ai-workspace-composer-context">
-                  <span className="ai-workspace-composer-context-pill">
-                    <Database className="w-3.5 h-3.5" />
-                    {currentDatabase || aiCopy.composer.noDatabaseSelected}
-                  </span>
-                  <span className="ai-workspace-composer-context-pill">
-                    <Wand2 className="w-3.5 h-3.5" />
-                    {activeProvider?.name || aiCopy.composer.noProvider}
-                  </span>
-                  <span className="ai-workspace-composer-context-pill">
-                    {tableContextCount} {tableContextCount === 1 ? aiCopy.composer.tableOne : aiCopy.composer.tableOther}
-                  </span>
+              <div className="ai-workspace-composer-toolbar">
+                <div className="ai-workspace-chat-toolbar">
+                  <div className="ai-workspace-chat-tabs" aria-label="AI chat threads">
+                    <div className="ai-workspace-chat-tabs-list">
+                      <span className="ai-workspace-chat-tab ai-workspace-chat-tab-current is-active">
+                        {currentThread?.label || "#1"}
+                      </span>
+                    </div>
+
+                    <div className="ai-workspace-chat-toolbar-actions">
+                      <div
+                        ref={historyPanelRef}
+                        className={`ai-workspace-history-dropdown ${isHistoryOpen ? "is-open" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          className={`ai-workspace-history-toggle ${isHistoryOpen ? "is-active" : ""}`}
+                          aria-expanded={isHistoryOpen}
+                          aria-haspopup="dialog"
+                          onClick={() => setIsHistoryOpen((current) => !current)}
+                          title={aiCopy.composer.historyTitle}
+                        >
+                          <History className="w-3.5 h-3.5" />
+                          <span>{aiCopy.composer.historyTitle}</span>
+                          <span className="ai-workspace-history-toggle-count">{recentWorkspaceThreads.length}</span>
+                        </button>
+
+                        {isHistoryOpen && (
+                          <div className="ai-workspace-history-popover">
+                            <div className="ai-workspace-history-head">
+                              <span className="ai-workspace-history-label">{aiCopy.composer.historyTitle}</span>
+                              <span className="ai-workspace-history-note">{aiCopy.composer.historyHint}</span>
+                            </div>
+                            <div className="ai-workspace-history-list">
+                              {recentWorkspaceThreads.length > 0 ? (
+                                recentWorkspaceThreads.map((thread) => (
+                                  <button
+                                    key={`history-${thread.id}`}
+                                    type="button"
+                                    className={`ai-workspace-history-item ${thread.id === currentThread?.id ? "is-active" : ""}`}
+                                    onClick={() => handleSelectThread(thread.id)}
+                                  >
+                                    <span className="ai-workspace-history-item-copy">
+                                      <strong className="ai-workspace-history-item-title">{thread.label}</strong>
+                                      <span className="ai-workspace-history-item-meta">
+                                        {formatThreadTimestamp(thread.updatedAt || thread.createdAt, language)}
+                                      </span>
+                                    </span>
+                                    <span className="ai-workspace-history-item-actions">
+                                      <button
+                                        type="button"
+                                        className="ai-workspace-history-item-delete"
+                                        onClick={(e) => handleRequestDeleteThread(thread.id, e)}
+                                        title={aiCopy.composer.historyDeleteTitle ?? "Delete conversation"}
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <span className="ai-workspace-history-item-count">
+                                        {bubbleCountByThread.get(thread.id) || 0}
+                                      </span>
+                                    </span>
+                                  </button>
+                                ))
+                              ) : (
+                                <div className="ai-workspace-history-empty">{aiCopy.composer.historyEmpty}</div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <button type="button" className="ai-workspace-chat-tab-add" onClick={handleCreateChatThread}>
+                        +
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="ai-workspace-composer-controls">
@@ -1071,9 +1588,34 @@ export function AISlidePanel({
                         );
                       })}
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="ai-workspace-chat-empty">
+                      <div className="ai-workspace-chat-empty-illustration">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div className="ai-workspace-chat-empty-copy">
+                        <strong className="ai-workspace-chat-empty-title">{aiCopy.composer.title}</strong>
+                        <p className="ai-workspace-chat-empty-text">{aiCopy.composer.note}</p>
+                        <div className="ai-workspace-chat-empty-suggestions">
+                          {aiCopy.composer.promptIdeas.slice(0, 3).map((idea) => (
+                            <button
+                              key={idea.title}
+                              type="button"
+                              className="ai-workspace-suggestion-chip"
+                              onClick={() => {
+                                setPromptDraft(idea.prompt);
+                                window.requestAnimationFrame(() => composerTextareaRef.current?.focus());
+                              }}
+                            >
+                              {idea.title}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-            </div>
+              </div>
 
               <div className="ai-workspace-compose-dock">
                 {attachedSelection && (
@@ -1133,6 +1675,16 @@ export function AISlidePanel({
           onRewrite={(bubble, note) => void handleRewriteBubble(bubble, note)}
         />
       )}
+
+      <ConfirmDialog
+        isOpen={deleteThreadPending !== null}
+        title={aiCopy.composer.historyDeleteTitle ?? "Delete conversation"}
+        message={aiCopy.composer.historyDeleteConfirm ?? "Delete this conversation thread?"}
+        confirmText="Delete"
+        cancelText="Cancel"
+        onConfirm={handleConfirmDeleteThread}
+        onCancel={handleCancelDeleteThread}
+      />
     </div>
   );
 }

@@ -54,6 +54,11 @@ export type EventMap = {
   // Query history events
   "query-history-updated": { connectionId?: string };
 
+  // Row inspector events
+  "row-inspector-open": { rowIndex: number; row: (string | number | boolean | null)[]; columns: import("../components/DataGrid/hooks/useDataGrid").ResolvedColumn[]; primaryKeyValues: Record<string, string | number | boolean | null>; tableName?: string; database?: string };
+  "row-inspector-close": void;
+  "row-inspector-edit-cell": { columnName: string; value: string | number | boolean | null };
+
   // App lifecycle
   "app-ready": void;
   "app-panic": { error: string; stack?: string };

@@ -72,6 +72,16 @@ interface DataGridColumnsProps {
   onLoadLookupValues?: (table: string, column: string) => Promise<LookupValue[]>;
   /** Connection ID for FK lookups */
   connectionId?: string;
+  /** Callback when a row index is double-clicked to open the inspector */
+  onOpenRowInspector?: (rowIndex: number) => void;
+  /** Auto-fit column to content */
+  onColumnAutoFit?: (colId: string) => void;
+  /** Context menu handler */
+  onContextMenu?: (e: React.MouseEvent, type: "cell" | "header" | "row", colName?: string, rowIndex?: number) => void;
+  /** Current column sizes (for manual resize) */
+  columnSizes?: Record<string, number>;
+  /** NULL display placeholder (e.g. "NULL", "—", "(null)") */
+  nullPlaceholder?: string;
 }
 
 export function buildDataGridColumns({
@@ -105,6 +115,8 @@ export function buildDataGridColumns({
   lookupValuesCache,
   onLoadLookupValues,
   connectionId,
+  onOpenRowInspector,
+  nullPlaceholder = "NULL",
 }: DataGridColumnsProps): ColumnDef<unknown[], unknown>[] {
   return [
     {
@@ -131,7 +143,11 @@ export function buildDataGridColumns({
               event.stopPropagation();
               handleRowSelection(row.index, event.nativeEvent);
             }}
-            title={selectedRows.has(row.index) ? "Row selected" : "Select row"}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              onOpenRowInspector?.(row.index);
+            }}
+            title={selectedRows.has(row.index) ? "Row selected" : "Select row, double-click to inspect"}
           >
             {currentPage * 100 + row.index + 1}
           </button>
@@ -334,7 +350,7 @@ export function buildDataGridColumns({
                     </a>
                   </div>
                 ) : (
-                  <span className="datagrid-cell-value">{value === null ? "NULL" : String(value)}</span>
+                  <span className="datagrid-cell-value" data-null-placeholder={nullPlaceholder}>{value === null ? nullPlaceholder : String(value)}</span>
                 )}
               </>
             )}

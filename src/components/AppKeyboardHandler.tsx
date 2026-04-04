@@ -127,6 +127,12 @@ export function AppKeyboardHandler({
         window.dispatchEvent(new CustomEvent("datagrid-redo"));
         return;
       }
+
+      if (metaPressed && key === "d") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("datagrid-duplicate-row"));
+        return;
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);

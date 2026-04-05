@@ -10,6 +10,8 @@ interface KeyboardHandlerProps {
   onToggleSidebar: () => void;
   onToggleQueryHistory: () => void;
   onToggleSQLFavorites: () => void;
+  onToggleVimMode: () => void;
+  onOpenCommandPalette: () => void;
   setUiFontScale: (fn: (current: number) => number) => void;
   setShowAISlidePanel: (value: boolean | ((current: boolean) => boolean)) => void;
 }
@@ -22,6 +24,8 @@ export function AppKeyboardHandler({
   onToggleSidebar,
   onToggleQueryHistory,
   onToggleSQLFavorites,
+  onToggleVimMode,
+  onOpenCommandPalette,
   setUiFontScale,
   setShowAISlidePanel,
 }: KeyboardHandlerProps) {
@@ -52,6 +56,13 @@ export function AppKeyboardHandler({
       if (metaPressed && key === "n") {
         e.preventDefault();
         onNewQuery();
+        return;
+      }
+
+      // Command Palette: Ctrl+Shift+P / Cmd+Shift+P
+      if (metaPressed && e.shiftKey && key === "p") {
+        e.preventDefault();
+        onOpenCommandPalette();
         return;
       }
 
@@ -97,6 +108,12 @@ export function AppKeyboardHandler({
         return;
       }
 
+      if (metaPressed && e.shiftKey && key === "v") {
+        e.preventDefault();
+        onToggleVimMode();
+        return;
+      }
+
       if (metaPressed && e.code === "Backquote" && !e.shiftKey) {
         e.preventDefault();
         e.stopPropagation();
@@ -133,11 +150,17 @@ export function AppKeyboardHandler({
         window.dispatchEvent(new CustomEvent("datagrid-duplicate-row"));
         return;
       }
+
+      if (metaPressed && key === "Enter") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("datagrid-fk-preview"));
+        return;
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [activeTab, onNewQuery, onRunActiveQuery, onToggleSidebar, onToggleQueryHistory, onToggleSQLFavorites, onToggleTerminalPanel, setUiFontScale, setShowAISlidePanel]);
+  }, [activeTab, onNewQuery, onOpenCommandPalette, onRunActiveQuery, onToggleQueryHistory, onToggleSQLFavorites, onToggleSidebar, onToggleTerminalPanel, onToggleVimMode, setUiFontScale, setShowAISlidePanel]);
 
   return null;
 }

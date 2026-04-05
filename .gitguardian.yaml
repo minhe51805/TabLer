@@ -1,0 +1,10 @@
+# GitGuardian configuration - silence false positives for legitimate code
+# These are React state variables, not leaked secrets
+version: 2
+detectors-ignore:
+  - name: "Generic Password"
+    matches-ignore:
+      - name: "password React state variable"
+        match: "password"
+      - name: "isDecrypting state variable"
+        match: "isDecrypting"

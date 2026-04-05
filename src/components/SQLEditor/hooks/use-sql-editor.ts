@@ -1,6 +1,8 @@
-import { useRef, useCallback, useEffect, useState } from "react";
+import { useRef, useCallback, useEffect, useState, type RefObject } from "react";
 import type { OnMount } from "@monaco-editor/react";
+import { initVimMode, type VimAdapterInstance } from "monaco-vim";
 import { useAppStore } from "../../../stores/appStore";
+import { useEditorPreferencesStore } from "../../../stores/editorPreferencesStore";
 import { useQueryHistoryStore } from "../../../stores/queryHistoryStore";
 import type { QueryResult } from "../../../types";
 import { translateCurrent } from "../../../i18n";
@@ -15,8 +17,9 @@ import {
   isHighRiskStatement,
 } from "../SQLEditorUtils";
 import { registerInlineAICompletionProvider } from "../SQLEditorAICompletion";
-import { registerStandardCompletionProvider, defineTableRTheme } from "../SQLEditorMonacoSetup";
+import { registerSchemaCompletionProvider, defineTableRTheme } from "../SQLEditorMonacoSetup";
 import { formatSql } from "../../../utils/sql-formatter";
+import { parseExplainOutput, buildExplainQuery, type ParsedExplainPlan } from "../../../utils/explain-parser";
 
 export interface QueryChromeState {
   isRunning: boolean;
@@ -33,12 +36,14 @@ export interface QueryEditorSessionState {
   queryCount: number;
   editorHeight: number;
   showResultsPane: boolean;
+  explainPlan?: ParsedExplainPlan;
 }
 
 export interface UseSQLEditorOptions {
   connectionId: string;
   tabId?: string;
   initialContent: string;
+  vimStatusRef?: RefObject<HTMLDivElement | null>;
   initialState?: QueryEditorSessionState;
   runRequestNonce: number;
   onChromeChange?: (state: QueryChromeState) => void;
@@ -49,6 +54,7 @@ export function useSQLEditor({
   connectionId,
   tabId,
   initialContent,
+  vimStatusRef,
   initialState,
   runRequestNonce,
   onChromeChange,
@@ -60,6 +66,7 @@ export function useSQLEditor({
   const switchDatabase = useAppStore((state) => state.switchDatabase);
   const updateTab = useAppStore((state) => state.updateTab);
   const saveQueryEntry = useQueryHistoryStore((state) => state.saveEntry);
+  const isVimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
   const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
   const queryProfile = getQueryProfile(dbType);
   const usesDirectExecution = queryProfile.executionPath === "direct";
@@ -70,6 +77,7 @@ export function useSQLEditor({
   const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const selectionContextDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const contentPersistTimerRef = useRef<number | null>(null);
+  const vimModeRef = useRef<VimAdapterInstance | null>(null);
   const contentDraftRef = useRef(initialContent);
   const onChromeChangeRef = useRef(onChromeChange);
   const onStateChangeRef = useRef(onStateChange);
@@ -90,6 +98,8 @@ export function useSQLEditor({
   });
   const [isBatchExecuting, setIsBatchExecuting] = useState(false);
   const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
+  const [explainPlan, setExplainPlan] = useState<ParsedExplainPlan | undefined>(() => initialState?.explainPlan);
+  const [isRunningExplain, setIsRunningExplain] = useState(false);
 
   const flushPersistedContent = useCallback(() => {
     if (!tabId) return;
@@ -336,6 +346,70 @@ export function useSQLEditor({
     }
   }, [connectionId, queryProfile.supportsFormatting, schedulePersistedContent]);
 
+  /** Executes EXPLAIN [ANALYZE] on the current editor content and parses the plan. */
+  const handleExplain = useCallback(async (analyze = false) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const selection = editor.getSelection();
+    let sql = "";
+    if (selection && !selection.isEmpty()) {
+      sql = editor.getModel()?.getValueInRange(selection) || "";
+    } else {
+      sql = editor.getValue();
+    }
+    if (!sql.trim()) {
+      setError("Nothing to explain. Write a SELECT or DML statement first.");
+      return;
+    }
+
+    const conn = useAppStore.getState().connections.find((c) => c.id === connectionId);
+    const dbType = conn?.db_type ?? "sqlite";
+
+    setIsRunningExplain(true);
+    setExplainPlan(undefined);
+
+    try {
+      const explainQuery = buildExplainQuery(sql.trim(), dbType, analyze);
+      const queryResult = await executeQuery(connectionId, explainQuery);
+
+      // Parse the result — EXPLAIN returns rows with columns
+      let rawOutput: unknown = null;
+      if (queryResult.rows.length === 1 && queryResult.columns.length === 1) {
+        // Common: single row, single text/JSON column
+        rawOutput = queryResult.rows[0][0];
+      } else if (queryResult.rows.length > 0) {
+        // Multiple rows or columns — reconstruct
+        rawOutput = queryResult.rows.map((row) => {
+          const obj: Record<string, unknown> = {};
+          queryResult.columns.forEach((col, i) => {
+            obj[col.name] = row[i];
+          });
+          return obj;
+        });
+        if (queryResult.rows.length === 1) {
+          rawOutput = (rawOutput as Record<string, unknown>[])[0];
+        }
+      }
+
+      // If raw output is a string (plain text format), try to parse as JSON
+      if (typeof rawOutput === "string") {
+        try {
+          rawOutput = JSON.parse(rawOutput);
+        } catch {
+          // Keep as-is (text format)
+        }
+      }
+
+      const plan = parseExplainOutput(dbType, rawOutput);
+      setExplainPlan(plan);
+    } catch (e) {
+      setError(`EXPLAIN failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsRunningExplain(false);
+    }
+  }, [connectionId, executeQuery]);
+
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
 
@@ -361,7 +435,10 @@ export function useSQLEditor({
     editor.addAction({
       id: "format-sql",
       label: "Format SQL",
-      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
+      keybindings: [
+        monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF,
+        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF,
+      ],
       run: () => handleFormatSql(),
     });
 
@@ -377,11 +454,16 @@ export function useSQLEditor({
 
     completionDisposableRef.current?.dispose();
     completionDisposableRef.current = queryProfile.surface === "sql"
-      ? registerStandardCompletionProvider(
-          monaco,
-          () => useAppStore.getState().tables,
-          () => {}
-        )
+      ? registerSchemaCompletionProvider(monaco, {
+          getTables: () => useAppStore.getState().tables,
+          getTableStructure: (tableName: string) =>
+            useAppStore.getState().getTableStructure(
+              connectionId,
+              tableName,
+              useAppStore.getState().currentDatabase ?? undefined
+            ),
+          dbType,
+        })
       : null;
 
     selectionContextDisposableRef.current?.dispose();
@@ -404,6 +486,31 @@ export function useSQLEditor({
     defineTableRTheme(monaco);
     editor.updateOptions({ theme: "tabler-dark" });
   };
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    if (!isVimModeEnabled) {
+      vimModeRef.current?.dispose();
+      vimModeRef.current = null;
+      if (vimStatusRef?.current) {
+        vimStatusRef.current.textContent = "";
+      }
+      return;
+    }
+
+    vimModeRef.current?.dispose();
+    vimModeRef.current = initVimMode(editor, vimStatusRef?.current ?? null);
+
+    return () => {
+      vimModeRef.current?.dispose();
+      vimModeRef.current = null;
+      if (vimStatusRef?.current) {
+        vimStatusRef.current.textContent = "";
+      }
+    };
+  }, [isVimModeEnabled, vimStatusRef]);
 
   useEffect(() => {
     if (!onChromeChangeRef.current) return;
@@ -432,8 +539,8 @@ export function useSQLEditor({
 
   useEffect(() => {
     if (!onStateChangeRef.current) return;
-    onStateChangeRef.current({ result, error, notice, queryCount, editorHeight, showResultsPane });
-  }, [editorHeight, error, notice, queryCount, result, showResultsPane]);
+    onStateChangeRef.current({ result, error, notice, queryCount, editorHeight, showResultsPane, explainPlan });
+  }, [editorHeight, error, explainPlan, notice, queryCount, result, showResultsPane]);
 
   useEffect(() => {
     const onInsertSQLFromAI = (e: Event) => {
@@ -474,6 +581,7 @@ export function useSQLEditor({
   useEffect(() => {
     return () => {
       flushPersistedContent();
+      vimModeRef.current?.dispose();
       inlineCompletionDisposableRef.current?.dispose();
       completionDisposableRef.current?.dispose();
       selectionContextDisposableRef.current?.dispose();
@@ -529,7 +637,11 @@ export function useSQLEditor({
     handleEditorMount,
     handleExecute,
     handleFormatSql,
+    handleExplain,
     handleSplitDrag,
     schedulePersistedContent,
+    explainPlan,
+    isRunningExplain,
+    setExplainPlan,
   };
 }

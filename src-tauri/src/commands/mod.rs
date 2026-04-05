@@ -1,4 +1,5 @@
 pub mod connection;
+pub mod connection_export;
 pub mod export;
 pub mod file;
 pub mod query;
@@ -6,3 +7,6 @@ pub mod table;
 pub mod ai;
 pub mod terminal;
 pub mod window;
+pub mod plugins;
+pub mod tabs;
+pub mod deep_link;

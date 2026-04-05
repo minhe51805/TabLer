@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
+import { resolveEnvVars } from "../utils/env-resolve";
 import type { ConnectionConfig, DatabaseInfo, TableInfo, SchemaObjectInfo } from "../types";
 
 const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig => ({
@@ -90,7 +91,23 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     if (get().isConnecting) return;
     set({ isConnecting: true });
     try {
-      const normalizedConfig = ensureConnectionName(config);
+      const resolvedConfig: ConnectionConfig = {
+        ...config,
+        host: config.host ? resolveEnvVars(config.host) : config.host,
+        port: config.port,
+        username: config.username ? resolveEnvVars(config.username) : config.username,
+        password: config.password ? resolveEnvVars(config.password) : config.password,
+        database: config.database ? resolveEnvVars(config.database) : config.database,
+        file_path: config.file_path ? resolveEnvVars(config.file_path) : config.file_path,
+        additional_fields: config.additional_fields
+          ? Object.fromEntries(
+              Object.entries(config.additional_fields).map(
+                ([k, v]) => [k, typeof v === "string" ? resolveEnvVars(v) : v]
+              )
+            )
+          : config.additional_fields,
+      };
+      const normalizedConfig = ensureConnectionName(resolvedConfig);
       const connections = get().connections;
       const sameId = connections.find((c) => c.id === normalizedConfig.id);
       const connectionRequest = normalizedConfig;
@@ -184,13 +201,31 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
 
-  testConnection: async (config: ConnectionConfig) =>
-    invokeWithTimeout<string>(
+  testConnection: async (config: ConnectionConfig) => {
+    // Resolve env vars in the config before sending to backend
+    const resolvedConfig: ConnectionConfig = {
+      ...config,
+      host: config.host ? resolveEnvVars(config.host) : config.host,
+      port: config.port,
+      username: config.username ? resolveEnvVars(config.username) : config.username,
+      password: config.password ? resolveEnvVars(config.password) : config.password,
+      database: config.database ? resolveEnvVars(config.database) : config.database,
+      file_path: config.file_path ? resolveEnvVars(config.file_path) : config.file_path,
+      additional_fields: config.additional_fields
+        ? Object.fromEntries(
+            Object.entries(config.additional_fields).map(
+              ([k, v]) => [k, typeof v === "string" ? resolveEnvVars(v) : v]
+            )
+          )
+        : config.additional_fields,
+    };
+    return invokeWithTimeout<string>(
       "test_connection",
-      { config: ensureConnectionName(config) },
+      { config: ensureConnectionName(resolvedConfig) },
       FRONTEND_TIMEOUT_MS,
       "Testing database connection"
-    ),
+    );
+  },
 
   deleteSavedConnection: async (connectionId: string) => {
     try {

@@ -11,7 +11,9 @@ import {
   getCellEditorType,
   getForeignKeyForColumn,
   getEnumValues,
+  isGeometryColumn,
 } from "./editors";
+import { renderGeometryCell } from "../../utils/geometry-renderer";
 import type { ICellEditorProps } from "./editors/types";
 import {
   BooleanCellEditor,
@@ -21,8 +23,10 @@ import {
   EnumCellEditor,
   JSONCellEditor,
   HexCellEditor,
+  GeometryCellEditor,
   FKLookupCellEditor,
 } from "./editors";
+import { formatDate, parseDate } from "../../stores/dateFormatStore";
 
 interface EditingDraft {
   current: string;
@@ -84,6 +88,10 @@ interface DataGridColumnsProps {
   multiSort?: Array<{ column: string; direction: "ASC" | "DESC"; priority: number }>;
   /** NULL display placeholder (e.g. "NULL", "—", "(null)") */
   nullPlaceholder?: string;
+  /** Custom date format string for date/datetime/time cells */
+  dateFormat?: string;
+  /** Database type for default date format fallback */
+  dbType?: string;
 }
 
 export function buildDataGridColumns({
@@ -121,6 +129,8 @@ export function buildDataGridColumns({
   columnSizes,
   multiSort = [],
   nullPlaceholder = "NULL",
+  dateFormat,
+  dbType: _dbType,
 }: DataGridColumnsProps): ColumnDef<unknown[], unknown>[] {
   return [
     {
@@ -211,6 +221,17 @@ export function buildDataGridColumns({
         const isImageCell = isUrlCell && isImageUrl(stringValue);
         const faviconUrl = isUrlCell && stringValue ? getFaviconUrl(stringValue) : null;
 
+        // Detect date column for custom date formatting
+        const editorType = getCellEditorType(col, undefined, undefined);
+        const isDateType = editorType === "date" || editorType === "datetime" || editorType === "time";
+        const displayValue = isDateType && dateFormat && stringValue !== null
+          ? (() => {
+              const parsed = parseDate(stringValue);
+              if (parsed) return formatDate(parsed, dateFormat);
+              return stringValue;
+            })()
+          : null;
+
         return (
           <div
             className={[
@@ -285,6 +306,7 @@ export function buildDataGridColumns({
                   <DateTimeCellEditor
                     {...editorProps}
                     editorType={dtType}
+                    dateFormat={dateFormat}
                   />
                 );
               }
@@ -315,6 +337,7 @@ export function buildDataGridColumns({
               if (editorType === "enum") return <EnumCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLSelectElement | null>} />;
               if (editorType === "json") return <JSONCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;
               if (editorType === "hex") return <HexCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;
+              if (editorType === "geometry") return <GeometryCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;
               return <TextCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>} />;
             })() : (
               <>
@@ -367,6 +390,10 @@ export function buildDataGridColumns({
                       <span>{getUrlDomain(stringValue)}</span>
                     </a>
                   </div>
+                ) : isDateType && displayValue !== null ? (
+                  <span className="datagrid-cell-value datagrid-cell-date" title={`Original: ${stringValue}`}>{displayValue}</span>
+                ) : isGeometryColumn(col) && stringValue !== null ? (
+                  <span className="datagrid-cell-value" title={stringValue}>{renderGeometryCell(stringValue).emoji} {renderGeometryCell(stringValue).display}</span>
                 ) : (
                   <span className="datagrid-cell-value" data-null-placeholder={nullPlaceholder}>{value === null ? nullPlaceholder : String(value)}</span>
                 )}

@@ -5,6 +5,7 @@ export { DateTimeCellEditor } from "./DateTimeCellEditor";
 export { EnumCellEditor } from "./EnumCellEditor";
 export { JSONCellEditor } from "./JSONCellEditor";
 export { HexCellEditor } from "./HexCellEditor";
+export { GeometryCellEditor } from "./GeometryCellEditor";
 export { FKLookupCellEditor, type LookupValue } from "./FKLookupCellEditor";
 export {
   getCellEditorType,
@@ -19,6 +20,7 @@ export {
   isJSONColumn,
   isBlobColumn,
   isEnumColumn,
+  isGeometryColumn,
   getForeignKeyForColumn,
   getEnumValues,
 } from "./column-type-detectors";

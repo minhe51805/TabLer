@@ -18,11 +18,13 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "./stores/appStore";
 import { EventCenter } from "./stores/event-center";
 import { getLastPathSegment } from "./utils/path-utils";
 import { ThemeEngine, useTheme } from "./stores/useTheme";
+import { useEditorPreferencesStore } from "./stores/editorPreferencesStore";
 import { useI18n, type AppLanguagePreference } from "./i18n";
 import { StartupConnectionManager } from "./components/StartupConnectionManager";
 import type { QueryEditorSessionState } from "./components/SQLEditor";
@@ -36,6 +38,11 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { QueryHistoryPanel } from "./components/QueryHistory/QueryHistoryPanel";
 import { SQLFavoritesPanel } from "./components/SQLFavorites/SQLFavoritesPanel";
 import { RowInspector, type RowInspectorData } from "./components/RowInspector/RowInspector";
+import { CommandPalette } from "./components/CommandPalette/CommandPalette";
+import { ThemeCustomizer } from "./components/ThemeCustomizer/ThemeCustomizer";
+import { SafeModeConfirmDialog } from "./components/SafeMode/SafeModeConfirmDialog";
+import { ConnectionExporter, ConnectionImporter } from "./components/ConnectionExporter";
+import { useCommandPaletteStore } from "./stores/commandPaletteStore";
 import { getAdminQueryPreset, type AdminQueryKind } from "./utils/admin-query-presets";
 import { APP_TOAST_EVENT, type AppToastPayload, emitAppToast } from "./utils/app-toast";
 import { invokeMutation } from "./utils/tauri-utils";
@@ -97,6 +104,32 @@ interface WindowMenuItem {
   onDecrease?: () => void;
   onIncrease?: () => void;
 }
+
+// --- DeepLink type definitions ---
+interface DeepLinkConnectPayload {
+  action: "connect";
+  host?: string;
+  port?: number;
+  database?: string;
+  db_type?: string;
+  user?: string;
+  password?: string;
+}
+
+interface DeepLinkQueryPayload {
+  action: "query";
+  connection?: string;
+  sql?: string;
+}
+
+interface DeepLinkTablePayload {
+  action: "table";
+  connection?: string;
+  database?: string;
+  table?: string;
+}
+
+type DeepLinkPayload = DeepLinkConnectPayload | DeepLinkQueryPayload | DeepLinkTablePayload;
 
 const GLOBAL_ERROR_AUTO_DISMISS_MS = 8000;
 const GLOBAL_TOAST_AUTO_DISMISS_MS = 4200;
@@ -193,6 +226,12 @@ function App() {
     const stored = Number(window.localStorage.getItem(UI_FONT_SCALE_STORAGE_KEY));
     return Number.isFinite(stored) && stored >= UI_FONT_SCALE_MIN && stored <= UI_FONT_SCALE_MAX ? stored : 100;
   });
+  const vimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
+  const toggleVimMode = useEditorPreferencesStore((state) => state.toggleVimMode);
+  const { open: openCommandPalette } = useCommandPaletteStore();
+  const [showThemeCustomizer, setShowThemeCustomizer] = useState(false);
+  const [showConnectionExporter, setShowConnectionExporter] = useState(false);
+  const [showConnectionImporter, setShowConnectionImporter] = useState(false);
 
   const isResizing = useRef(false);
   const startX = useRef(0);
@@ -240,9 +279,9 @@ function App() {
   }`;
   const sidebarMinWidth = 300;
   const themeMenuLabel =
-    language === "vi" ? "Giao dien" : language === "zh" ? "Zhu ti" : "Theme";
+    language === "vi" ? "Giao dien" : language === "zh" ? "Zhu ti" : language === "tr" ? "Tema" : language === "ko" ? "테마" : "Theme";
   const toggleTerminalLabel =
-    language === "vi" ? "Bat/tat terminal" : language === "zh" ? "Toggle terminal" : "Toggle Terminal";
+    language === "vi" ? "Bat/tat terminal" : language === "zh" ? "Toggle terminal" : language === "tr" ? "Terminali ac/kapa" : language === "ko" ? "터미널 전환" : "Toggle Terminal";
   const themeMenuOptions = ThemeEngine.getAvailableThemes().filter((option) =>
     ["tabler.dark", "tabler.midnight", "tabler.graphite", "tabler.forest"].includes(option.id),
   );
@@ -1229,6 +1268,10 @@ function App() {
     setIsSidebarCollapsed((collapsed) => !collapsed);
   }, []);
 
+  const handleOpenThemeCustomizer = useCallback(() => {
+    setShowThemeCustomizer(true);
+  }, []);
+
   const handleMinimizeWindow = useCallback(() => {
     if (!isDesktopWindow) return;
 
@@ -1300,6 +1343,9 @@ function App() {
         { label: t("menu.item.importSqlIntoDatabase"), action: handleImportSqlIntoCurrentDatabaseFromMenu, disabled: !supportsSqlFileActions },
         { label: t("menu.item.exportDatabase"), action: handleExportDatabaseFromMenu, disabled: !isConnected },
         { divider: true },
+        { label: t("menu.item.exportConnections"), action: () => { setShowConnectionExporter(true); setIsWindowMenuOpen(false); setActiveWindowMenuItemPath(null); }, disabled: connections.length === 0 },
+        { label: t("menu.item.importConnections"), action: () => { setShowConnectionImporter(true); setIsWindowMenuOpen(false); setActiveWindowMenuItemPath(null); } },
+        { divider: true },
         { label: t("menu.item.openSqlFavorites"), action: handleToggleSQLFavoritesFromMenu, shortcut: "Ctrl+Shift+S" },
         { divider: true },
         { label: t("menu.item.openMetrics"), action: handleOpenMetricsBoardFromMenu, disabled: !isConnected },
@@ -1330,6 +1376,14 @@ function App() {
           onValueChange: handleSetFontSizeFromMenu,
           onDecrease: handleDecreaseFontSizeInline,
           onIncrease: handleIncreaseFontSizeInline,
+        },
+        { divider: true },
+        {
+          key: "toggle-vim-mode",
+          label: t("menu.item.toggleVimMode"),
+          action: toggleVimMode,
+          selected: vimModeEnabled,
+          shortcut: "Ctrl Shift V",
         },
         { divider: true },
         {
@@ -1440,6 +1494,16 @@ function App() {
           action: () => handleChangeLanguage("zh"),
           selected: languagePreference === "zh",
         },
+        {
+          label: t("common.turkish"),
+          action: () => handleChangeLanguage("tr"),
+          selected: languagePreference === "tr",
+        },
+        {
+          label: t("common.korean"),
+          action: () => handleChangeLanguage("ko"),
+          selected: languagePreference === "ko",
+        },
       ],
     },
     {
@@ -1478,6 +1542,169 @@ function App() {
   useEffect(() => {
     void loadSavedConnections();
   }, [loadSavedConnections]);
+
+  // Deep link handler: restore tabs after a successful connection
+  useEffect(() => {
+    if (!activeConnectionId || !connectedIds.has(activeConnectionId)) return;
+
+    let cancelled = false;
+    const restoreTabs = async () => {
+      const store = await import("./stores/appStore").then((m) => m.useAppStore.getState());
+      if (cancelled) return;
+
+      const persisted = await store.loadTabState(activeConnectionId);
+      if (cancelled || persisted.length === 0) return;
+
+      const activePersistedTab = persisted.find((t) => t.isActive);
+
+      for (const pt of persisted) {
+        const newTabId = pt.tabId;
+        // Check if tab already exists
+        if (store.tabs.some((t) => t.id === newTabId)) continue;
+
+        if (pt.tabType === "query") {
+          store.addTab({
+            id: newTabId,
+            type: pt.tabType,
+            title: pt.title,
+            connectionId: activeConnectionId,
+            database: pt.database,
+            content: pt.content,
+          });
+        } else if (pt.tabType === "table" && pt.tableName) {
+          store.addTab({
+            id: newTabId,
+            type: pt.tabType,
+            title: pt.title,
+            connectionId: activeConnectionId,
+            database: pt.database,
+            tableName: pt.tableName,
+          });
+        } else if (pt.tabType === "structure" && pt.tableName) {
+          store.addTab({
+            id: newTabId,
+            type: pt.tabType,
+            title: pt.title,
+            connectionId: activeConnectionId,
+            database: pt.database,
+            tableName: pt.tableName,
+          });
+        }
+      }
+
+      if (activePersistedTab) {
+        store.setActiveTab(activePersistedTab.tabId);
+      }
+    };
+
+    void restoreTabs();
+    return () => { cancelled = true; };
+  }, [activeConnectionId, connectedIds]);
+
+  // Save tabs on connection when tabs change or app closes
+  useEffect(() => {
+    if (!activeConnectionId || !connectedIds.has(activeConnectionId)) return;
+
+    const store = useAppStore.getState();
+    void store.saveTabState(activeConnectionId);
+
+    const handleBeforeUnload = () => {
+      const state = useAppStore.getState();
+      if (state.activeConnectionId && state.connectedIds.has(state.activeConnectionId)) {
+        void state.saveTabState(state.activeConnectionId);
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [activeConnectionId, connectedIds, tabs]);
+
+  // Deep link handler: listen for tabler:// URLs from the backend
+  useEffect(() => {
+    if (!isDesktopWindow) return;
+
+    let unlisten: (() => void) | undefined;
+
+    listen<string>("deep-link", async (event: { payload: string }) => {
+      const url: string = event.payload;
+      try {
+        const parsed = await invoke<DeepLinkPayload>("parse_deep_link", { url });
+
+        if (parsed.action === "connect") {
+          const conn = parsed as DeepLinkConnectPayload;
+          const confirmed = window.confirm(
+            `Open TableR and connect to ${conn.host || "database"}:${conn.port || ""}?`
+          );
+          if (!confirmed) return;
+
+          handleOpenConnectionForm("connect");
+          // Dispatch to connection form via event
+          window.dispatchEvent(new CustomEvent("tabler-deep-link-connect", {
+            detail: {
+              host: conn.host,
+              port: conn.port,
+              database: conn.database,
+              dbType: conn.db_type,
+              user: conn.user,
+              password: conn.password,
+            },
+          }));
+        } else if (parsed.action === "query") {
+          const q = parsed as DeepLinkQueryPayload;
+          const sql = q.sql || "";
+          if (!sql) return;
+
+          if (!isConnected) {
+            const confirmed = window.confirm(
+              `Open query tab with SQL?\n\n${sql.length > 200 ? sql.slice(0, 200) + "..." : sql}\n\n(Requires an active connection to execute.)`
+            );
+            if (!confirmed) return;
+          }
+
+          if (!isConnected || !activeConnectionId) {
+            handleOpenConnectionForm("connect");
+            return;
+          }
+
+          const tabId = `query-${crypto.randomUUID()}`;
+          addTab({
+            id: tabId,
+            type: "query",
+            title: "Deep Link Query",
+            connectionId: activeConnectionId,
+            database: currentDatabase || undefined,
+            content: sql,
+          });
+
+          setQueryRunRequestByTab((prev) => ({
+            ...prev,
+            [tabId]: (prev[tabId] ?? 0) + 1,
+          }));
+        } else if (parsed.action === "table") {
+          const t = parsed as DeepLinkTablePayload;
+          const connectionId = t.connection || activeConnectionId;
+          if (!connectionId) {
+            handleOpenConnectionForm("connect");
+            return;
+          }
+
+          const tabId = `table-${crypto.randomUUID()}`;
+          addTab({
+            id: tabId,
+            type: "table",
+            title: t.table || "Table",
+            connectionId,
+            database: t.database || currentDatabase || undefined,
+            tableName: t.table,
+          });
+        }
+      } catch (err) {
+        console.error("[DeepLink] Failed to parse URL:", url, err);
+      }
+    }).then((off: () => void) => { unlisten = off; });
+
+    return () => { unlisten?.(); };
+  }, [isDesktopWindow, isConnected, activeConnectionId, currentDatabase, addTab, setActiveTab, setQueryRunRequestByTab]);
 
   useEffect(() => {
     const handleOpenAI = (event: Event) => {
@@ -1848,6 +2075,8 @@ function App() {
         onToggleSidebar={handleToggleSidebar}
         onToggleQueryHistory={handleToggleQueryHistory}
         onToggleSQLFavorites={handleToggleSQLFavorites}
+        onToggleVimMode={toggleVimMode}
+        onOpenCommandPalette={openCommandPalette}
         setUiFontScale={setUiFontScale}
         setShowAISlidePanel={setShowAISlidePanel}
       />
@@ -1875,6 +2104,27 @@ function App() {
       {showKeyboardShortcutsModal && (
         <AppShortcutsModal onClose={() => setShowKeyboardShortcutsModal(false)} />
       )}
+      {showThemeCustomizer && (
+        <ThemeCustomizer onClose={() => setShowThemeCustomizer(false)} />
+      )}
+      <CommandPalette
+        onToggleSidebar={handleToggleSidebar}
+        onToggleTerminal={() => setShowTerminalPanel((v) => !v)}
+        onRunQuery={handleRunActiveQuery}
+        onFormatSQL={() => window.dispatchEvent(new CustomEvent("format-sql-palette"))}
+        onFocusSQL={() => window.dispatchEvent(new CustomEvent("focus-sql-editor-palette"))}
+        onFocusResults={() => window.dispatchEvent(new CustomEvent("focus-results-palette"))}
+        onToggleQueryHistory={handleToggleQueryHistory}
+        onToggleSQLFavorites={handleToggleSQLFavorites}
+        onOpenKeyboardShortcuts={() => setShowKeyboardShortcutsModal(true)}
+        onOpenPluginManager={() => setShowPluginManager(true)}
+        onOpenSettings={handleOpenThemeCustomizer}
+        onOpenAbout={() => setShowAboutModal(true)}
+        onOpenSQLFile={() => window.dispatchEvent(new CustomEvent("open-sql-file-palette"))}
+        onImportSQLFile={() => window.dispatchEvent(new CustomEvent("import-sql-file-palette"))}
+        onClearAIHistory={() => window.dispatchEvent(new CustomEvent("clear-ai-history-palette"))}
+        onToggleAISlidePanel={(open) => setShowAISlidePanel(open)}
+      />
       {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
         <StartupConnectionManager
           onNewConnection={() => handleOpenConnectionForm("connect")}
@@ -1952,6 +2202,21 @@ function App() {
           }
         }}
       />
+      <SafeModeConfirmDialog />
+      {showConnectionExporter && (
+        <ConnectionExporter
+          connections={connections}
+          onClose={() => setShowConnectionExporter(false)}
+        />
+      )}
+      {showConnectionImporter && (
+        <ConnectionImporter
+          onImport={(_imported) => {
+            void useAppStore.getState().loadSavedConnections();
+          }}
+          onClose={() => setShowConnectionImporter(false)}
+        />
+      )}
       {globalToastMarkup}
     </div>
   );

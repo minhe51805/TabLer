@@ -1,11 +1,14 @@
 import Editor from "@monaco-editor/react";
+import { useRef } from "react";
 import { useSQLEditor } from "./hooks/use-sql-editor";
 import type { QueryEditorSessionState, QueryChromeState } from "./hooks/use-sql-editor";
 import { SQLEditorResultsPane } from "./SQLEditorResultsPane";
-import { AlignLeft, Terminal } from "lucide-react";
+import { AlignLeft, Keyboard, Terminal, GitBranch, Loader2 } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useAppStore } from "../../stores/appStore";
+import { useEditorPreferencesStore } from "../../stores/editorPreferencesStore";
 import { getQueryProfile } from "../../utils/query-profile";
+import { ExplainVisualizer } from "../ExplainVisualizer/ExplainVisualizer";
 
 interface Props {
   connectionId: string;
@@ -27,8 +30,11 @@ export function SQLEditor({
   onStateChange,
 }: Props) {
   const { t, language } = useI18n();
+  const vimStatusRef = useRef<HTMLDivElement | null>(null);
   const toggleResultsTitle =
     language === "vi" ? "Bat/tat vung ket qua (Ctrl+Shift+`)" : "Toggle results pane (Ctrl+Shift+`)";
+  const vimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
+  const toggleVimMode = useEditorPreferencesStore((state) => state.toggleVimMode);
   const connections = useAppStore((state) => state.connections);
   const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
   const queryProfile = getQueryProfile(dbType);
@@ -44,10 +50,15 @@ export function SQLEditor({
     handleSplitDrag,
     handleFormatSql,
     schedulePersistedContent,
+    explainPlan,
+    isRunningExplain,
+    handleExplain,
+    setExplainPlan,
   } = useSQLEditor({
     connectionId,
     tabId,
     initialContent,
+    vimStatusRef,
     initialState,
     runRequestNonce,
     onChromeChange,
@@ -112,8 +123,47 @@ export function SQLEditor({
                 <AlignLeft className="w-3.5 h-3.5" />
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={toggleVimMode}
+              title={language === "vi" ? "Bat/tat Vim Mode" : "Toggle Vim Mode"}
+              aria-label={language === "vi" ? "Bat/tat Vim Mode" : "Toggle Vim Mode"}
+              className={`sql-editor-tool-btn ${vimModeEnabled ? "active" : ""}`}
+            >
+              <Keyboard className="w-3.5 h-3.5" />
+              <span>Vim</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleExplain(false)}
+              disabled={isRunningExplain}
+              title={language === "vi" ? "Xem Query Plan" : "Show EXPLAIN plan"}
+              aria-label="EXPLAIN"
+              className="sql-editor-tool-btn"
+            >
+              {isRunningExplain ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <GitBranch className="w-3.5 h-3.5" />
+              )}
+              <span>EXPLAIN</span>
+            </button>
+            <div
+              ref={vimStatusRef}
+              className={`sql-editor-vim-status ${vimModeEnabled ? "visible" : ""}`}
+              aria-live="polite"
+            />
           </div>
         </div>
+
+        {explainPlan && (
+          <ExplainVisualizer
+            plan={explainPlan}
+            onClose={() => setExplainPlan(undefined)}
+          />
+        )}
 
         <SQLEditorResultsPane
           error={error}
@@ -125,6 +175,19 @@ export function SQLEditor({
           onSplitDrag={handleSplitDrag}
           onToggleResultsPane={() => setShowResultsPane((current) => !current)}
         />
+        {!showResultsPane && (
+          <button
+            type="button"
+            className="sql-results-collapsed-bar"
+            onClick={() => setShowResultsPane(true)}
+            title={t("tabs.showResults")}
+            aria-label={t("tabs.showResults")}
+          >
+            <Terminal className="w-3 h-3 opacity-60" />
+            <span>{t("tabs.results")}</span>
+            <kbd className="kbd kbd-sm">Ctrl+Shift+`</kbd>
+          </button>
+        )}
       </div>
     </div>
   );

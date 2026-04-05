@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { lazy, Suspense } from "react";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { DataGrid } from "./DataGrid/DataGrid";
 import { MetricsSidebar } from "./MetricsSidebar/MetricsSidebar";
 import { Sidebar } from "./Sidebar";
 import { TabBar } from "./TabBar";
@@ -31,9 +32,12 @@ import { getLastPathSegment } from "../utils/path-utils";
 import { getQueryProfile } from "../utils/query-profile";
 
 const SQLEditor = lazy(() => import("./SQLEditor").then((module) => ({ default: module.SQLEditor })));
-const DataGrid = lazy(() => import("./DataGrid").then((module) => ({ default: module.DataGrid })));
-const TableStructure = lazy(() => import("./TableStructure").then((module) => ({ default: module.TableStructure })));
-const MetricsBoard = lazy(() => import("./MetricsBoard").then((module) => ({ default: module.MetricsBoard })));
+const TableStructure = lazy(() =>
+  import("./TableStructure/TableStructure").then((module) => ({ default: module.TableStructure })),
+);
+const MetricsBoard = lazy(() =>
+  import("./MetricsBoard/MetricsBoard").then((module) => ({ default: module.MetricsBoard })),
+);
 
 interface QueryChromeState {
   isRunning: boolean;

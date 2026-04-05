@@ -1,11 +1,14 @@
-import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X } from "lucide-react";
+import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X, FileCode, ClipboardPaste } from "lucide-react";
 import { useState } from "react";
 import { exportToCSV, exportToJSON } from "../../utils/export-utils";
+import { exportXLSX } from "../../utils/export-xlsx";
+import { exportToMQL } from "../../utils/export-mql";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import type { ResolvedColumn } from "./hooks/useDataGrid";
 
 interface DataGridToolbarProps {
   tableName?: string;
+  database?: string;
   externalResult?: import("../../types").QueryResult;
   columnCount: number;
   visibleRowCount: number;
@@ -34,6 +37,8 @@ interface DataGridToolbarProps {
   multiSort?: Array<{ column: string; direction: "ASC" | "DESC"; priority: number }>;
   /** Clear all multi-column sorts */
   onClearMultiSort?: () => void;
+  /** Trigger paste rows from clipboard */
+  onPasteRows?: () => void;
 }
 
 function buildExportFilename(tableName: string | undefined, extension: string): string {
@@ -46,6 +51,7 @@ function buildExportFilename(tableName: string | undefined, extension: string): 
 
 export function DataGridToolbar({
   tableName,
+  database,
   externalResult,
   columnCount,
   visibleRowCount,
@@ -54,6 +60,7 @@ export function DataGridToolbar({
   selectedRowCount,
   multiSort = [],
   onClearMultiSort,
+  onPasteRows,
   isDeletingRows,
   handleDeleteSelectedRows,
   handleInsertRow,
@@ -109,6 +116,26 @@ export function DataGridToolbar({
     exportToJSON(cols, dataRows, buildExportFilename(exportFilenameBase, "json"));
   };
 
+  const handleExportXLSX = () => {
+    if (!canExport) return;
+    const cols = resolvedColumns.map((c) => ({ name: c.name, data_type: c.data_type || "" }));
+    exportXLSX(
+      [{ name: tableName || "Result", columns: cols, rows: dataRows }],
+      buildExportFilename(exportFilenameBase, "xlsx"),
+    );
+  };
+
+  const handleExportMQL = async () => {
+    if (!canExport) return;
+    const cols = resolvedColumns.map((c) => c.name);
+    await exportToMQL({
+      collectionName: tableName,
+      databaseName: database,
+      columns: cols,
+      rows: dataRows,
+    });
+  };
+
   return (
     <div className="datagrid-topbar">
       <div className="datagrid-topbar-copy">
@@ -159,6 +186,23 @@ export function DataGridToolbar({
               >
                 <Plus className="!w-3.5 !h-3.5" />
                 <span>Insert Row</span>
+              </button>
+            </span>
+          )}
+
+          {isTableEditable && tableName && (
+            <span
+              className="popover-container"
+              data-popover="Paste rows from clipboard (TSV/CSV)"
+            >
+              <button
+                type="button"
+                className="datagrid-footer-action"
+                onClick={() => void onPasteRows?.()}
+                title="Paste rows from clipboard (Ctrl+Shift+V)"
+              >
+                <ClipboardPaste className="!w-3.5 !h-3.5" />
+                <span>Paste Rows</span>
               </button>
             </span>
           )}
@@ -296,6 +340,38 @@ export function DataGridToolbar({
             >
               <FileJson className="!w-3.5 !h-3.5" />
               <span>JSON</span>
+            </button>
+          </span>
+
+          <span
+            className="popover-container"
+            data-popover={canExport ? "Export data as XLSX (Excel)" : "No data to export"}
+          >
+            <button
+              type="button"
+              className="datagrid-footer-action"
+              onClick={handleExportXLSX}
+              disabled={!canExport}
+              title="Export to XLSX (Excel)"
+            >
+              <FileSpreadsheet className="!w-3.5 !h-3.5" />
+              <span>XLSX</span>
+            </button>
+          </span>
+
+          <span
+            className="popover-container"
+            data-popover={canExport ? "Export data as MongoDB shell script" : "No data to export"}
+          >
+            <button
+              type="button"
+              className="datagrid-footer-action"
+              onClick={() => void handleExportMQL()}
+              disabled={!canExport}
+              title="Export to MQL (MongoDB Shell)"
+            >
+              <FileCode className="!w-3.5 !h-3.5" />
+              <span>MQL</span>
             </button>
           </span>
 

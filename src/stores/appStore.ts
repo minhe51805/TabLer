@@ -6,6 +6,7 @@ export { useConnectionStore } from "./connectionStore";
 export { useQueryStore } from "./queryStore";
 export { useAIStore } from "./aiStore";
 export { useUIStore } from "./uiStore";
+export { useSafeModeStore } from "./safeModeStore";
 
 import type {
   ConnectionConfig,
@@ -24,6 +25,8 @@ import type {
   ColumnDetail,
 } from "../types";
 import { getActiveAIProvider } from "../types";
+import { useSafeModeStore } from "./safeModeStore";
+import { isBlockedAtLevel, requiresConfirmationAtLevel } from "../types/safe-mode";
 
 const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig => ({
   ...config,
@@ -98,6 +101,30 @@ function invokeWithTimeout<T>(
 
 function invokeMutation<T>(command: string, args: Record<string, unknown>) {
   return invoke<T>(command, args);
+}
+
+/**
+ * Prompts Safe Mode confirmation for SQL execution.
+ * Dispatches a custom event so UI components can show a modal.
+ * Returns a Promise<boolean> that resolves when the user responds.
+ */
+function promptSafeModeConfirmation(sql: string, connectionId?: string): Promise<boolean> {
+  const safeLevel = useSafeModeStore.getState().getEffectiveLevel(connectionId);
+  const detail = { sql, connectionId, level: safeLevel };
+  window.dispatchEvent(new CustomEvent("safe-mode-confirm-request", { detail }));
+  // Resolve only when the UI resolves it via safe-mode-confirm-response
+  return new Promise<boolean>((resolve) => {
+    const handler = (e: Event) => {
+      window.removeEventListener("safe-mode-confirm-response", handler);
+      resolve((e as CustomEvent<{ sql: string; approved: boolean }>).detail.approved);
+    };
+    window.addEventListener("safe-mode-confirm-response", handler);
+    // Auto-reject after 5 minutes to avoid hanging
+    setTimeout(() => {
+      window.removeEventListener("safe-mode-confirm-response", handler);
+      resolve(false);
+    }, 300_000);
+  });
 }
 
 const MISSING_CONNECTION_ERROR_PATTERNS = [
@@ -220,6 +247,8 @@ interface AppState {
   clearTabs: () => void;
   setActiveTab: (tabId: string) => void;
   updateTab: (tabId: string, updates: Partial<Tab>) => void;
+  saveTabState: (connectionId: string) => Promise<void>;
+  loadTabState: (connectionId: string) => Promise<PersistedTab[]>;
 
   loadAIConfigs: () => Promise<{
     aiConfigs: AIProviderConfig[];
@@ -383,6 +412,22 @@ export const useAppStore = create<AppState>((set, get) => ({
         isConnecting: false,
       });
 
+      // Execute startup commands after successful connection
+      if (normalizedConfig.startupCommands?.trim()) {
+        const commands = normalizedConfig.startupCommands.split(";").map((s) => s.trim()).filter(Boolean);
+        for (const cmd of commands) {
+          if (!cmd) continue;
+          try {
+            await invokeMutation<QueryResult>("execute_query", {
+              connectionId: normalizedConfig.id,
+              sql: cmd,
+            });
+          } catch (err) {
+            console.warn("[StartupCommands] Failed to execute:", cmd, err);
+          }
+        }
+      }
+
       void get().fetchDatabases(normalizedConfig.id);
       if (normalizedConfig.database) {
         set({ currentDatabase: normalizedConfig.database });
@@ -443,6 +488,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (connection?.database) {
         set({ currentDatabase: connection.database });
         void get().fetchTables(connectionId, connection.database);
+      }
+
+      // Execute startup commands after successful connection
+      if (connection?.startupCommands?.trim()) {
+        const commands = connection.startupCommands.split(";").map((s) => s.trim()).filter(Boolean);
+        for (const cmd of commands) {
+          if (!cmd) continue;
+          try {
+            await invokeMutation<QueryResult>("execute_query", {
+              connectionId,
+              sql: cmd,
+            });
+          } catch (err) {
+            console.warn("[StartupCommands] Failed to execute:", cmd, err);
+          }
+        }
       }
     } catch (e) {
       set({
@@ -660,6 +721,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     ),
 
   executeQuery: async (connectionId: string, sql: string) => {
+    // Safe mode guard
+    const safeLevel = useSafeModeStore.getState().getEffectiveLevel(connectionId);
+    if (isBlockedAtLevel(safeLevel, sql)) {
+      throw new Error(
+        `[Safe Mode level ${safeLevel}] This statement is blocked. ` +
+        "Upgrade to a lower protection level or disable Safe Mode in settings to proceed."
+      );
+    }
+    // Level 5 always needs confirmation; level 4 needs it for writes
+    if (safeLevel === 5 || requiresConfirmationAtLevel(safeLevel, sql)) {
+      const confirmed = await promptSafeModeConfirmation(sql, connectionId);
+      if (!confirmed) {
+        throw new Error("Query cancelled by Safe Mode confirmation.");
+      }
+    }
+
     set({ isExecutingQuery: true });
     try {
       const result = await invokeMutation<QueryResult>(
@@ -859,4 +936,60 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setError: (error: string | null) => set({ error }),
   clearError: () => set({ error: null }),
+
+  // --- Tab Persistence ---
+  saveTabState: async (connectionId: string) => {
+    const { tabs } = get();
+    const persistableTabs = tabs
+      .filter((tab) => tab.type !== "metrics")
+      .map((tab): PersistedTab => ({
+        tabId: tab.id,
+        tabType: tab.type,
+        title: tab.title,
+        database: tab.database,
+        tableName: tab.tableName,
+        content: tab.content,
+        isActive: tab.id === get().activeTabId,
+        createdAtMs: Date.now(),
+      }));
+
+    try {
+      await invoke("save_tabs", {
+        connectionId,
+        tabsJson: JSON.stringify(persistableTabs),
+      });
+    } catch (e) {
+      // Non-critical: log but don't fail
+      console.warn("[TabPersistence] Failed to save tabs:", e);
+    }
+  },
+
+  loadTabState: async (connectionId: string): Promise<PersistedTab[]> => {
+    try {
+      const tabs = await invokeWithTimeout<PersistedTab[]>(
+        "load_tabs",
+        { connectionId },
+        FRONTEND_TIMEOUTS.metadata,
+        "Loading persisted tabs",
+      );
+      return tabs || [];
+    } catch (e) {
+      console.warn("[TabPersistence] Failed to load tabs:", e);
+      return [];
+    }
+  },
 }));
+
+// --- PersistedTab type (mirrors Rust backend) ---
+export interface PersistedTab {
+  tabId: string;
+  tabType: "query" | "table" | "structure" | "metrics" | "er-diagram";
+  title: string;
+  database?: string;
+  tableName?: string;
+  content?: string;
+  scrollTop?: number;
+  panelHeights?: { editorHeight?: number; resultsHeight?: number };
+  isActive: boolean;
+  createdAtMs: number;
+}

@@ -210,7 +210,7 @@ export function isJSONColumn(column: ResolvedColumn) {
 
 export function isBlobColumn(column: ResolvedColumn) {
   const type = (column.column_type || column.data_type || "").toLowerCase();
-  return /^(bytea|blob|binary|varbinary|longblob|mediumblob|tinyblob|geometry|text)/i.test(type);
+  return /^(bytea|blob|binary|varbinary|longblob|mediumblob|tinyblob|geometry)/i.test(type);
 }
 
 export function editorValueFromCell(value: GridCellValue) {

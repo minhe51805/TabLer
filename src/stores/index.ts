@@ -11,6 +11,7 @@ export { useConnectionStore } from "./connectionStore";
 export { useQueryStore } from "./queryStore";
 export { useAIStore } from "./aiStore";
 export { useUIStore } from "./uiStore";
+export { useSafeModeStore } from "./safeModeStore";
 
 // Re-export from appStore (monolithic - kept for backward compatibility)
 export { useAppStore } from "./appStore";

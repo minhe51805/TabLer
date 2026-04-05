@@ -64,9 +64,7 @@ export function JSONCellEditor({
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      if (isValid) {
-        onCommit(isNullable && /^null$/i.test(localValue) ? null : localValue);
-      }
+      onCommit(isNullable && /^null$/i.test(localValue) ? null : localValue);
     }
     if (e.key === "Escape") {
       e.preventDefault();
@@ -83,9 +81,7 @@ export function JSONCellEditor({
         value={localValue}
         onChange={handleChange}
         onBlur={() => {
-          if (isValid) {
-            onCommit(isNullable && /^null$/i.test(localValue) ? null : localValue);
-          }
+          onCommit(isNullable && /^null$/i.test(localValue) ? null : localValue);
         }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}

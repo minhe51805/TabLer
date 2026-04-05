@@ -81,9 +81,10 @@ export function HexCellEditor({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
+      // Always close on Enter — let DB validate
       if (!localValue.trim() || /^null$/i.test(localValue)) {
         onCommit(null);
-      } else if (isValid) {
+      } else {
         onCommit(localValue.replace(/\s+/g, ""));
       }
     }
@@ -102,9 +103,10 @@ export function HexCellEditor({
         value={localValue}
         onChange={handleChange}
         onBlur={() => {
+          // Always commit on blur — let DB validate hex format
           if (!localValue.trim() || /^null$/i.test(localValue)) {
             onCommit(null);
-          } else if (isValid) {
+          } else {
             onCommit(localValue.replace(/\s+/g, ""));
           }
         }}

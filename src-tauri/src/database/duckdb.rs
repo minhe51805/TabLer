@@ -824,8 +824,14 @@ mod tests {
             database: None,
             file_path: Some(temp_path_string.clone()),
             use_ssl: false,
+            ssl_mode: None,
+            ssl_ca_cert_path: None,
+            ssl_client_cert_path: None,
+            ssl_client_key_path: None,
+            ssl_skip_host_verification: None,
             color: None,
             additional_fields: HashMap::new(),
+            startup_commands: None,
         };
 
         {

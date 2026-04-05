@@ -35,7 +35,13 @@ export function isJSONColumn(column: ResolvedColumn): boolean {
 
 export function isBlobColumn(column: ResolvedColumn): boolean {
   const type = (column.column_type || column.data_type || "").toLowerCase();
-  return /^(bytea|blob|binary|varbinary|longblob|mediumblob|tinyblob|geometry|text)/i.test(type);
+  return /^(bytea|blob|binary|varbinary|longblob|mediumblob|tinyblob|geometry)/i.test(type);
+}
+
+export function isGeometryColumn(column: ResolvedColumn): boolean {
+  const type = (column.column_type || column.data_type || "").toLowerCase();
+  return /^(geometry|geography|point|linestring|polygon|multipoint|multilinestring|multipolygon|geometrycollection)\b/i.test(type)
+    || /^st_(geom|geomfromtext|point|linestring|polygon)/i.test(type);
 }
 
 export function isEnumColumn(column: ResolvedColumn): boolean {

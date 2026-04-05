@@ -4,6 +4,7 @@ import { DatabaseBrandIcon } from "../DatabaseBrandIcon";
 import type { ConnectionConfig } from "../../../types";
 import type { AppLanguage } from "../../../i18n";
 import type { DbEntry, EngineExtraField } from "../engine-registry";
+import { resolveFieldWithMeta } from "../../../utils/env-resolve";
 
 export interface ConnectionDetailsStepProps {
   language: AppLanguage;
@@ -118,6 +119,23 @@ export interface DetailsStrings {
   createAndOpen: string;
   cancel: string;
   connect: string;
+}
+
+// ---------------------------------------------------------------------------
+// ENV badge for fields with environment variable references
+// ---------------------------------------------------------------------------
+
+function EnvBadge({ value }: { value: string }) {
+  const meta = resolveFieldWithMeta(value);
+  if (!meta.hasEnvVar) return null;
+  return (
+    <span
+      className="env-badge"
+      title={meta.tooltipText || `Resolved: ${meta.resolved}`}
+    >
+      ENV
+    </span>
+  );
 }
 
 interface ColorPaletteProps {
@@ -366,7 +384,10 @@ export function ConnectionDetailsStep({
 
                 {showSqliteAdvancedPath && (
                   <div className="connection-form-field">
-                    <label className="form-label uppercase tracking-wide">{strings.customFilePath}</label>
+                    <div className="connection-form-field-label-row">
+                      <label className="form-label uppercase tracking-wide">{strings.customFilePath}</label>
+                      <EnvBadge value={formData.file_path || ""} />
+                    </div>
                     <input
                       type="text"
                       value={formData.file_path || ""}
@@ -381,7 +402,10 @@ export function ConnectionDetailsStep({
               </div>
             ) : (
               <div className="connection-form-field">
-                <label className="form-label uppercase tracking-wide">{strings.databaseFile}</label>
+                <div className="connection-form-field-label-row">
+                  <label className="form-label uppercase tracking-wide">{strings.databaseFile}</label>
+                  <EnvBadge value={formData.file_path || ""} />
+                </div>
                 <input
                   type="text"
                   value={formData.file_path || ""}
@@ -405,7 +429,10 @@ export function ConnectionDetailsStep({
 
             <div className="connection-form-grid connection-form-grid-host">
               <div className="connection-form-field">
-                <label className="form-label uppercase tracking-wide">{strings.host}</label>
+                <div className="connection-form-field-label-row">
+                  <label className="form-label uppercase tracking-wide">{strings.host}</label>
+                  <EnvBadge value={formData.host || ""} />
+                </div>
                 <input
                   type="text"
                   value={formData.host || ""}
@@ -416,7 +443,10 @@ export function ConnectionDetailsStep({
               </div>
 
               <div className="connection-form-field">
-                <label className="form-label uppercase tracking-wide">{strings.port}</label>
+                <div className="connection-form-field-label-row">
+                  <label className="form-label uppercase tracking-wide">{strings.port}</label>
+                  <EnvBadge value={String(formData.port ?? "")} />
+                </div>
                 <input
                   type="number"
                   value={formData.port || ""}
@@ -431,7 +461,10 @@ export function ConnectionDetailsStep({
               <div className="connection-form-grid">
                 {showUsernameField && (
                   <div className="connection-form-field">
-                    <label className="form-label uppercase tracking-wide">{strings.username}</label>
+                    <div className="connection-form-field-label-row">
+                      <label className="form-label uppercase tracking-wide">{strings.username}</label>
+                      <EnvBadge value={formData.username || ""} />
+                    </div>
                     <input
                       type="text"
                       value={formData.username || ""}
@@ -444,7 +477,10 @@ export function ConnectionDetailsStep({
 
                 {showPasswordField && (
                   <div className="connection-form-field">
-                    <label className="form-label uppercase tracking-wide">{passwordLabel}</label>
+                    <div className="connection-form-field-label-row">
+                      <label className="form-label uppercase tracking-wide">{passwordLabel}</label>
+                      <EnvBadge value={passwordDraftRef.current} />
+                    </div>
                     <div className="connection-form-password">
                       <input
                         type={showPassword ? "text" : "password"}
@@ -468,9 +504,12 @@ export function ConnectionDetailsStep({
 
             {showDatabaseField && (
               <div className="connection-form-field">
-                <label className="form-label uppercase tracking-wide">
-                  {strings.databaseOptional} <span className="opacity-60">({strings.optional})</span>
-                </label>
+                <div className="connection-form-field-label-row">
+                  <label className="form-label uppercase tracking-wide">
+                    {strings.databaseOptional} <span className="opacity-60">({strings.optional})</span>
+                  </label>
+                  <EnvBadge value={formData.database || ""} />
+                </div>
                 <input
                   type="text"
                   value={formData.database || ""}
@@ -505,6 +544,25 @@ export function ConnectionDetailsStep({
                 </label>
               </div>
             )}
+
+            {/* Startup commands section */}
+            <div className="connection-form-field">
+              <div className="connection-form-field-label-row">
+                <label className="form-label uppercase tracking-wide">
+                  Startup Commands <span className="opacity-60">({strings.optional})</span>
+                </label>
+              </div>
+              <textarea
+                value={formData.startupCommands || ""}
+                onChange={(e) => onFieldChange("startupCommands", e.target.value)}
+                placeholder="SET search_path TO 'public';&#10;SET timezone = 'UTC';&#10;SELECT 1;"
+                className="input connection-form-textarea"
+                rows={4}
+              />
+              <span className="connection-form-field-hint">
+                SQL executed automatically after connecting. Separate multiple commands with semicolons.
+              </span>
+            </div>
 
             {engineExtraFields.length > 0 && (
               <section className="connection-form-section">

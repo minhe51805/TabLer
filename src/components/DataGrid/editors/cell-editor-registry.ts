@@ -1,6 +1,6 @@
 import type { CellEditorType } from "./types";
 import type { ResolvedColumn } from "../hooks/useDataGrid";
-import { isBooleanColumn, isNumericColumn, isDateColumn, isDateTimeColumn, isTimeColumn, isJSONColumn, isBlobColumn, getForeignKeyForColumn, getEnumValues, isEnumColumn } from "./column-type-detectors";
+import { isBooleanColumn, isNumericColumn, isDateColumn, isDateTimeColumn, isTimeColumn, isJSONColumn, isBlobColumn, isGeometryColumn, getForeignKeyForColumn, getEnumValues, isEnumColumn } from "./column-type-detectors";
 
 export const detectColumnEditorType = getCellEditorType;
 export function getCellEditorType(
@@ -25,8 +25,9 @@ export function getCellEditorType(
   // JSON / JSONB
   if (isJSONColumn(column)) return "json";
 
-  // BLOB / Binary
+  // BLOB / Binary / Geometry
   if (isBlobColumn(column)) return "hex";
+  if (isGeometryColumn(column)) return "geometry";
 
   // Numeric → number input
   if (isNumericColumn(column)) return "numeric";

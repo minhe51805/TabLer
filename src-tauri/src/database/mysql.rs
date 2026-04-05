@@ -9,7 +9,7 @@ use crate::utils::sql::split_sql_statements;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode};
+use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, ConnectOptions, Executor, MySql, QueryBuilder, Row, TypeInfo};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -42,12 +42,46 @@ impl MySqlDriver {
             options = options.database(database_name);
         }
 
-        options = options.ssl_mode(if config.use_ssl {
-            MySqlSslMode::Required
-        } else {
-            MySqlSslMode::Preferred
-        });
         options = options.disable_statement_logging();
+
+        // sqlx 0.8 does not expose a dedicated "skip host verification" toggle
+        // for MySQL. If the config asks to skip hostname checks, the closest safe
+        // mapping is to verify the CA but not force full identity verification.
+        let ssl_mode = match config.effective_ssl_mode() {
+            SslMode::VerifyFull if config.ssl_skip_host_verification.unwrap_or(false) => {
+                SslMode::VerifyCa
+            }
+            mode => mode,
+        };
+
+        options = match ssl_mode {
+            SslMode::Disable => options.ssl_mode(sqlx::mysql::MySqlSslMode::Disabled),
+            SslMode::Prefer => options.ssl_mode(sqlx::mysql::MySqlSslMode::Preferred),
+            SslMode::Require => options.ssl_mode(sqlx::mysql::MySqlSslMode::Required),
+            SslMode::VerifyCa => {
+                let mut opts = options.ssl_mode(sqlx::mysql::MySqlSslMode::VerifyCa);
+                if let Some(ref ca_path) = config.ssl_ca_cert_path {
+                    opts = opts.ssl_ca(std::path::Path::new(ca_path));
+                }
+                opts
+            }
+            SslMode::VerifyFull => {
+                let mut opts = options.ssl_mode(sqlx::mysql::MySqlSslMode::VerifyIdentity);
+                if let Some(ref ca_path) = config.ssl_ca_cert_path {
+                    opts = opts.ssl_ca(std::path::Path::new(ca_path));
+                }
+                opts
+            }
+        };
+
+        // Apply client certificate if provided
+        if let (Some(ref cert_path), Some(ref key_path)) =
+            (&config.ssl_client_cert_path, &config.ssl_client_key_path)
+        {
+            options = options
+                .ssl_client_cert(std::path::Path::new(cert_path))
+                .ssl_client_key(std::path::Path::new(key_path));
+        }
 
         // Try to connect with retry logic
         let mut last_error = None;

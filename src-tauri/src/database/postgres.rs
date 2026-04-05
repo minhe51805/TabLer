@@ -9,13 +9,119 @@ use crate::utils::sql::split_sql_statements;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::types::Json;
 use sqlx::{Column, ConnectOptions, Executor, Postgres, QueryBuilder, Row, TypeInfo, ValueRef};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
+
+/// Read the ~/.pgpass file (or %APPDATA%\postgresql\pgpass.conf on Windows).
+/// Returns the first matching password for the given host:port:database:username.
+fn read_pgpass(host: &str, port: u16, database: &str, username: &str) -> Option<String> {
+    let pgpass_path = if cfg!(windows) {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("postgresql")
+            .join("pgpass.conf")
+    } else {
+        dirs::home_dir()?.join(".pgpass")
+    };
+
+    let content = std::fs::read_to_string(&pgpass_path).ok()?;
+    for line in content.lines() {
+        let line = line.trim();
+        // Skip comments and empty lines
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Format: hostname:port:database:username:password
+        let parts: Vec<&str> = line.split(':').collect();
+        if parts.len() < 5 {
+            continue;
+        }
+        let (pg_host, pg_port, pg_db, pg_user, password) =
+            (parts[0], parts[1], parts[2], parts[3], parts[4]);
+
+        if !match_pattern(pg_host, host) {
+            continue;
+        }
+        if !match_pattern(pg_port, &port.to_string()) {
+            continue;
+        }
+        if !match_pattern(pg_db, database) {
+            continue;
+        }
+        if !match_pattern(pg_user, username) {
+            continue;
+        }
+        // Unescape colons and backslashes in password
+        return Some(password.replace("\\:", ":").replace("\\\\", "\\"));
+    }
+    None
+}
+
+/// Match a pgpass pattern against a value. '*' matches anything.
+fn match_pattern(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    pattern == value
+}
+
+/// Read ~/.pg_service.conf (libpq service file).
+/// Returns connection parameters for the matching service name.
+#[allow(dead_code)]
+fn read_pg_service(service: &str) -> Option<(String, Option<u16>, Option<String>)> {
+    let service_path = dirs::home_dir()?.join(".pg_service.conf");
+    let content = std::fs::read_to_string(&service_path).ok()?;
+
+    let mut in_service = false;
+    let mut host: Option<String> = None;
+    let mut port: Option<u16> = None;
+    let mut password: Option<String> = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        if line.starts_with('[') && line.ends_with(']') {
+            let current_service = &line[1..line.len() - 1];
+            if in_service {
+                // End of service block
+                break;
+            }
+            if current_service == service {
+                in_service = true;
+                continue;
+            }
+        }
+
+        if in_service {
+            if let Some((key, val)) = line.split_once('=') {
+                let key = key.trim();
+                let val = val.trim();
+                match key {
+                    "host" => host = Some(val.to_string()),
+                    "port" => port = val.parse().ok(),
+                    "password" => password = Some(val.to_string()),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if in_service && (host.is_some() || password.is_some()) {
+        // Return host if found, plus port and password
+        Some((host.unwrap_or_default(), port, password))
+    } else {
+        None
+    }
+}
 
 pub struct PostgresDriver {
     pool: PgPool,
@@ -34,19 +140,66 @@ impl PostgresDriver {
             .context("PostgreSQL username is required")?;
         let database = config.database.as_deref().unwrap_or("postgres");
 
+        // Determine password: explicit > env > pgpass
+        let password = if let Some(ref pwd) = config.password {
+            if !pwd.is_empty() {
+                Some(pwd.clone())
+            } else {
+                read_pgpass(host, port, database, user)
+            }
+        } else {
+            // No explicit password — check pgpass
+            read_pgpass(host, port, database, user)
+        };
+
         let mut options = PgConnectOptions::new()
             .host(host)
             .port(port)
             .username(user)
-            .password(config.password.as_deref().unwrap_or(""))
+            .password(password.as_deref().unwrap_or(""))
             .database(database);
 
-        options = options.ssl_mode(if config.use_ssl {
-            PgSslMode::Require
-        } else {
-            PgSslMode::Prefer
-        });
         options = options.disable_statement_logging();
+
+        // sqlx 0.8 does not expose a dedicated "skip host verification" toggle
+        // for PostgreSQL. If the config requests it, use VerifyCa instead of
+        // VerifyFull so we still validate the certificate chain without forcing
+        // host identity verification.
+        let ssl_mode = match config.effective_ssl_mode() {
+            SslMode::VerifyFull if config.ssl_skip_host_verification.unwrap_or(false) => {
+                SslMode::VerifyCa
+            }
+            mode => mode,
+        };
+
+        options = match ssl_mode {
+            SslMode::Disable => options.ssl_mode(sqlx::postgres::PgSslMode::Disable),
+            SslMode::Prefer => options.ssl_mode(sqlx::postgres::PgSslMode::Prefer),
+            SslMode::Require => options.ssl_mode(sqlx::postgres::PgSslMode::Require),
+            SslMode::VerifyCa => {
+                let mut opts = options.ssl_mode(sqlx::postgres::PgSslMode::VerifyCa);
+                if let Some(ref ca_path) = config.ssl_ca_cert_path {
+                    opts = opts.ssl_root_cert(std::path::Path::new(ca_path));
+                }
+                opts
+            }
+            SslMode::VerifyFull => {
+                let mut opts = options.ssl_mode(sqlx::postgres::PgSslMode::VerifyFull);
+                if let Some(ref ca_path) = config.ssl_ca_cert_path {
+                    opts = opts.ssl_root_cert(std::path::Path::new(ca_path));
+                }
+                opts
+            }
+        };
+
+        // Apply client certificate if provided
+        if let (Some(ref cert_path), Some(ref key_path)) =
+            (&config.ssl_client_cert_path, &config.ssl_client_key_path)
+        {
+            options = options
+                .ssl_client_cert(std::path::Path::new(cert_path))
+                .ssl_client_key(std::path::Path::new(key_path));
+        }
 
         // Try to connect with retry logic
         let mut last_error = None;

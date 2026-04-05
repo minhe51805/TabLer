@@ -524,6 +524,7 @@ pub async fn connect_database(
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
 ) -> Result<String, String> {
+    config.resolve_env_vars();
     config.fill_generated_name();
     // Validate connection config before attempting to connect
     config.validate().map_err(|e| format!("Invalid connection config: {}", e))?;
@@ -575,6 +576,7 @@ pub async fn test_connection(
     mut config: ConnectionConfig,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
 ) -> Result<String, String> {
+    config.resolve_env_vars();
     config.fill_generated_name();
     // Validate connection config before testing
     config.validate().map_err(|e| format!("Invalid connection config: {}", e))?;
@@ -630,6 +632,7 @@ pub async fn create_local_database(
     bootstrap_statements: Option<Vec<String>>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
 ) -> Result<String, String> {
+    config.resolve_env_vars();
     config.fill_generated_name();
     config
         .validate()
@@ -750,12 +753,13 @@ pub async fn connect_saved_connection(
 ) -> Result<String, String> {
     let storage = conn_storage.inner().clone();
     let requested_connection_id = connection_id.clone();
-    let config = run_blocking_storage_task(move || {
+    let mut config = run_blocking_storage_task(move || {
         storage
             .load_connection_by_id(&requested_connection_id)
             .map_err(|_| "Failed to load the saved connection profile.".to_string())
     })
     .await?;
+    config.resolve_env_vars();
     connection_rate_limiter.check(&format!("saved|{}", connection_rate_limit_key(&config))).await?;
 
     timeout(CONNECTION_TIMEOUT, db_manager.connect(&config))

@@ -1,3 +1,4 @@
+use tauri::{Manager, Emitter};
 mod commands;
 mod ai_workspace_history;
 mod database;
@@ -7,6 +8,10 @@ mod utils;
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::connection::*;
+use commands::plugins::{
+    install_plugin_bundle, list_installed_plugins, reload_installed_plugins,
+    set_plugin_enabled, uninstall_plugin_bundle,
+};
 use commands::export::*;
 use commands::file::*;
 use commands::query::*;
@@ -14,13 +19,20 @@ use commands::table::*;
 use commands::terminal::{close_terminal, open_terminal, resize_terminal, write_terminal, TerminalManager};
 use commands::ai::{ask_ai, get_ai_configs, save_ai_configs};
 use commands::window::{apply_window_profile, apply_window_profile_to_main, WindowProfile};
+use commands::tabs::{save_tabs, load_tabs, delete_tabs};
+use commands::deep_link::parse_deep_link;
+use commands::connection_export::{
+    export_connections_to_file, import_connections_from_file,
+};
 use database::manager::DatabaseManager;
 use query_history::{
     clear_query_history, delete_query_history_entries, delete_query_history_entry,
     get_query_history, save_query_history,
 };
 use storage::connection_storage::ConnectionStorage;
+use storage::plugin_storage::PluginStorage;
 use storage::ai_storage::AIStorage;
+use storage::tab_persistence::TabPersistence;
 use storage::sql_favorites::{
     delete_sql_favorite, get_sql_favorites, save_sql_favorite,
 };
@@ -44,6 +56,20 @@ pub fn run() {
             return;
         }
     };
+    let plugin_storage = match PluginStorage::new() {
+        Ok(storage) => storage,
+        Err(error) => {
+            eprintln!("Failed to initialize plugin storage: {error}");
+            return;
+        }
+    };
+    let tab_storage = match TabPersistence::new() {
+        Ok(storage) => storage,
+        Err(error) => {
+            eprintln!("Failed to initialize tab persistence storage: {error}");
+            return;
+        }
+    };
     let connection_rate_limiter = ConnectionAttemptLimiter::new(
         Duration::from_secs(60),
         8,
@@ -58,9 +84,13 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(db_manager)
         .manage(conn_storage)
+        .manage(plugin_storage)
         .manage(ai_storage)
+        .manage(tab_storage)
         .manage(terminal_manager)
         .manage(connection_rate_limiter)
         .manage(ai_rate_limiter)
@@ -74,6 +104,23 @@ pub fn run() {
 
             if let Err(error) = apply_window_profile_to_main(app.handle(), WindowProfile::Launcher) {
                 eprintln!("Failed to apply launcher window profile: {error}");
+            }
+
+            // Register deep link handler
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let app_handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        let url_str = url.to_string();
+                        eprintln!("[DeepLink] Received: {}", url_str);
+                        // Emit to frontend via event
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            let _ = window.emit("deep-link", url_str);
+                        }
+                    }
+                });
             }
 
             Ok(())
@@ -139,8 +186,23 @@ pub fn run() {
             get_sql_favorites,
             save_sql_favorite,
             delete_sql_favorite,
+            // Plugin commands
+            list_installed_plugins,
+            install_plugin_bundle,
+            set_plugin_enabled,
+            uninstall_plugin_bundle,
+            reload_installed_plugins,
             // Window commands
             apply_window_profile,
+            // Tab persistence commands
+            save_tabs,
+            load_tabs,
+            delete_tabs,
+            // Deep link commands
+            parse_deep_link,
+            // Connection export/import commands
+            export_connections_to_file,
+            import_connections_from_file,
         ]);
 
     if let Err(error) = app.run(tauri::generate_context!()) {

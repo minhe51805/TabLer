@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use fs2::FileExt;
 use serde::de::DeserializeOwned;
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -90,6 +91,51 @@ where
 fn read_json_vec<T>(path: &Path, parse_context: &str) -> Result<Vec<T>>
 where
     T: DeserializeOwned,
+{
+    let content = fs::read_to_string(path).with_context(|| {
+        format!("Failed to read storage file '{}'", path.display())
+    })?;
+
+    serde_json::from_str(&content).with_context(|| parse_context.to_string())
+}
+
+pub fn read_json_map_with_backup<K, V>(
+    path: &Path,
+    parse_context: &str,
+) -> Result<HashMap<K, V>>
+where
+    K: DeserializeOwned + std::hash::Hash + Eq,
+    V: DeserializeOwned,
+{
+    let _lock = StorageFileLock::acquire(path, false)?;
+    let backup_path = backup_path_for(path);
+
+    if path.exists() {
+        match read_json_map::<K, V>(path, parse_context) {
+            Ok(items) => return Ok(items),
+            Err(primary_error) if backup_path.exists() => {
+                return read_json_map::<K, V>(&backup_path, parse_context).with_context(|| {
+                    format!(
+                        "{parse_context} (primary file was unreadable: {primary_error})"
+                    )
+                });
+            }
+            Err(primary_error) => return Err(primary_error),
+        }
+    }
+
+    if backup_path.exists() {
+        return read_json_map::<K, V>(&backup_path, parse_context)
+            .with_context(|| format!("{parse_context} (using backup file)"));
+    }
+
+    Ok(HashMap::new())
+}
+
+fn read_json_map<K, V>(path: &Path, parse_context: &str) -> Result<HashMap<K, V>>
+where
+    K: DeserializeOwned + std::hash::Hash + Eq,
+    V: DeserializeOwned,
 {
     let content = fs::read_to_string(path).with_context(|| {
         format!("Failed to read storage file '{}'", path.display())

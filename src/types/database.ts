@@ -29,13 +29,26 @@ export interface ConnectionConfig {
   password?: string;
   database?: string;
   file_path?: string;
+  /** @deprecated Use `ssl_mode` instead for fine-grained SSL control. `use_ssl` is kept for backward compatibility. */
   use_ssl: boolean;
+  /** Fine-grained SSL/TLS mode (PostgreSQL, MySQL, MariaDB). Falls back to `use_ssl` when undefined. */
+  ssl_mode?: "disable" | "prefer" | "require" | "verify_ca" | "verify_full";
+  /** Path to CA certificate file (for verify_ca / verify_full modes). */
+  ssl_ca_cert_path?: string;
+  /** Path to client certificate file (for verify_ca / verify_full modes). */
+  ssl_client_cert_path?: string;
+  /** Path to client key file (for verify_ca / verify_full modes). */
+  ssl_client_key_path?: string;
+  /** Skip hostname verification in SSL handshake (for verify_ca / verify_full modes). */
+  ssl_skip_host_verification?: boolean;
   color?: string;
   additional_fields?: Record<string, string>;
   /** Assigned connection group ID */
   groupId?: string;
   /** Assigned connection tag ID */
   tagId?: string;
+  /** SQL commands to execute immediately after connecting. */
+  startupCommands?: string;
 }
 
 export interface QueryResult {

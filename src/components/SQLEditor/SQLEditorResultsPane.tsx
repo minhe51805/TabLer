@@ -1,5 +1,5 @@
 import { AlertCircle, Terminal, X } from "lucide-react";
-import { DataGrid } from "../DataGrid";
+import { DataGrid } from "../DataGrid/DataGrid";
 import type { QueryResult } from "../../types";
 import { useI18n } from "../../i18n";
 

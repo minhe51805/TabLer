@@ -1,5 +1,4 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
   "productName": "TableR",
   "version": "0.1.0",
   "identifier": "com.tabler.app",
@@ -20,7 +19,8 @@
         "resizable": true,
         "maximizable": true,
         "decorations": false,
-        "center": true
+        "center": true,
+        "visible": true
       }
     ],
     "security": {
@@ -37,5 +37,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["tabler"]
+      }
+    }
   }
 }

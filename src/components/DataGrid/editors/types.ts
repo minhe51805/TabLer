@@ -11,7 +11,8 @@ export type CellEditorType =
   | "foreign_key"
   | "enum"
   | "json"
-  | "hex";
+  | "hex"
+  | "geometry";
 
 export interface CellEditorCommitResult {
   success: boolean;

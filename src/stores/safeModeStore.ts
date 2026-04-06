@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SafeModeLevel, SafeModeSettings, ConnectionSafeModeOverride } from "../types/safe-mode";
+import type { SafeModeLevel, SafeModeSettings } from "../types/safe-mode";
 import { isBlockedAtLevel, requiresConfirmationAtLevel } from "../types/safe-mode";
 
 const STORAGE_KEY = "tabler.safe-mode.v1";
@@ -169,7 +169,7 @@ export const useSafeModeStore = create<SafeModeState>((set, get) => {
     },
 
     confirmSql: async (sql: string, connectionId?: string, bypassPassword?: string) => {
-      const { settings, canBypassConfirmation, needsConfirmation, getEffectiveLevel } = get();
+      const { canBypassConfirmation, needsConfirmation, getEffectiveLevel } = get();
       const level = getEffectiveLevel(connectionId);
 
       // If needs no confirmation, allow through

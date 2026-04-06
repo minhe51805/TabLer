@@ -198,7 +198,7 @@ export function exportXLSX(sheets: XlsxSheet[], filename?: string): void {
 
     // Sanitize sheet name (max 31 chars, no special chars)
     const sheetName = sheet.name
-      .replace(/[\\/?*\[\]]/g, "_")
+      .replace(/[\\/?*[\]]/g, "_")
       .slice(0, 31)
       .trim() || `Result ${index + 1}`;
 

@@ -1,7 +1,6 @@
 import type { Command } from "../../stores/commandPaletteStore";
 import { useAppStore } from "../../stores/appStore";
 import { useEditorPreferencesStore } from "../../stores/editorPreferencesStore";
-import { useCommandPaletteStore } from "../../stores/commandPaletteStore";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../../utils/ui-scale";
 
 // Type for command action context that handlers can use
@@ -37,7 +36,6 @@ function makeAction(id: string, action: () => void, ctx: CommandContext): () => 
  * executing it also records it in recent commands and closes the palette.
  */
 export function buildCommandRegistry(ctx: CommandContext): Command[] {
-  const appStore = useAppStore.getState();
   const editorPrefs = useEditorPreferencesStore.getState();
 
   const uiFontScale = () => {

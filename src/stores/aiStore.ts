@@ -59,17 +59,13 @@ export const useAIStore = create<AIState>((set, get) => ({
   askAI: async (prompt: string, context: string, mode = "panel", intent = "sql", history = []) => {
     const config = getActiveAIProvider(get().aiConfigs);
     if (!config) throw new Error("AI Provider not found");
-    try {
-      const resp = await invokeWithTimeout<{ text: string; error?: string }>(
-        "ask_ai",
-        { request: { prompt, context, mode, intent, language: getCurrentAppLanguage(), history } },
-        60_000,
-        "AI request"
-      );
-      if (resp.error) throw new Error(resp.error);
-      return resp.text;
-    } catch (e) {
-      throw e;
-    }
+    const resp = await invokeWithTimeout<{ text: string; error?: string }>(
+      "ask_ai",
+      { request: { prompt, context, mode, intent, language: getCurrentAppLanguage(), history } },
+      60_000,
+      "AI request"
+    );
+    if (resp.error) throw new Error(resp.error);
+    return resp.text;
   },
 }));

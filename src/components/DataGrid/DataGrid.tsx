@@ -9,6 +9,7 @@ import {
 import { Copy, Loader2, Plus, X, ClipboardPaste } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
+import { useChangeTrackingStore } from "../../stores/change-tracking-store";
 import { useAppStore } from "../../stores/appStore";
 import { EventCenter } from "../../stores/event-center";
 import {
@@ -47,6 +48,7 @@ import { useDateFormatStore } from "../../stores/dateFormatStore";
 const TABLE_COUNT_CACHE_TTL_MS = 600_000;
 import { DataGridToolbar } from "./DataGridToolbar";
 import { DataGridPagination } from "./DataGridPagination";
+import { ChangeTrackingPreviewModal } from "./components/ChangeTrackingPreviewModal";
 import { buildDataGridColumns, editingDraftRef } from "./DataGridColumns";
 import {
   generateInsertSql,
@@ -105,6 +107,15 @@ export function DataGrid({
     })),
   );
 
+  const {
+    stagedChanges,
+    stageChange,
+    unstageChange,
+    setColumnNameMap,
+    setDbType,
+    getChangeCount,
+  } = useChangeTrackingStore();
+
   const [data, setData] = useState<QueryResult | null>(externalResult || null);
   const [structureColumns, setStructureColumns] = useState<ColumnDetail[]>([]);
   const [foreignKeys, setForeignKeys] = useState<import("../../types").ForeignKeyInfo[]>([]);
@@ -137,6 +148,8 @@ export function DataGrid({
   const [isPasteDialogOpen, setIsPasteDialogOpen] = useState(false);
   const [pastePreview, setPastePreview] = useState<PastePreview | null>(null);
   const [isSubmittingPaste, setIsSubmittingPaste] = useState(false);
+  /** Set of row indices with pending staged changes */
+  const [stagedRowIndices, setStagedRowIndices] = useState<Set<number>>(new Set());
   /** FK Preview: {table, column, value, rowIndex, colIndex} */
   const [fkPreview, setFkPreview] = useState<{ table: string; column: string; value: string | number | boolean; rowIndex: number; colIndex: number } | null>(null);
   const [fkPreviewData, setFkPreviewData] = useState<import("../../types").QueryResult | null>(null);
@@ -381,6 +394,18 @@ export function DataGrid({
         setStructureColumns(structure.columns);
         setForeignKeys(structure.foreign_keys);
         setStructureStatus("ready");
+
+        // Setup change tracking column name map for SQL preview generation
+        if (tableName) {
+          const colNameMap: Record<number, string> = {};
+          structure.columns.forEach((col, idx) => {
+            colNameMap[idx] = col.name;
+          });
+          setColumnNameMap(tableName, colNameMap);
+
+          const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
+          setDbType(tableName, connection?.db_type);
+        }
         return structure.columns;
       })
       .catch((error) => {
@@ -570,7 +595,7 @@ export function DataGrid({
     const dbType = connection?.db_type;
 
     const needsQuoting =
-      (dbType === "mysql" || dbType === "postgres" || dbType === "mariadb" || dbType === "sqlite") &&
+      (dbType === "mysql" || dbType === "postgresql" || dbType === "mariadb" || dbType === "sqlite") &&
       typeof sourceOrderValue === "string";
 
     const fmt = (v: unknown) =>
@@ -1201,67 +1226,56 @@ export function DataGrid({
       }
 
       const primaryKeys = buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns);
-
-      setSavingCell(editingCell);
-      const affectedRows = await updateTableCell(connectionId, {
-        table: tableName,
-        database,
-        target_column: targetColumn.name,
-        value: nextValue,
-        primary_keys: primaryKeys,
-      });
-
-      if (affectedRows === 0) {
-        throw new Error(
-          "Database did not persist the change. The row may not be updatable or the key match returned 0 rows.",
-        );
+      const rowKeyRecord: Record<string, unknown> = {};
+      for (const pk of primaryKeys) {
+        rowKeyRecord[pk.column] = pk.value;
       }
 
+      // Stage the change in the queue (change tracking)
+      stageChange({
+        type: "update",
+        tableName,
+        database,
+        rowIndex: editingCell.row,
+        rowKey: rowKeyRecord,
+        columns: {
+          [editingCell.col]: { old: currentValue, new: nextValue },
+        },
+        originalRow: rowValues as (string | number | boolean | null)[],
+      });
+
+      // Optimistic local update — apply change immediately to the grid
       setData((previous) => {
         if (!previous) return previous;
-
         const nextRows = previous.rows.map((row, index) => {
           if (index !== editingCell.row) return row;
           const nextRow = [...row];
           nextRow[editingCell.col] = nextValue;
           return nextRow;
         });
-
-        return {
-          ...previous,
-          rows: nextRows,
-        };
+        return { ...previous, rows: nextRows };
       });
 
-      invalidateTableCaches(connectionId, tableName, database);
+      // Track staged row for visual indicator
+      setStagedRowIndices((prev) => new Set([...prev, editingCell.row]));
       cancelEditingCell();
       setUndoableChanges((prev) => prev + 1);
-      void fetchData(currentPage);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setError(`Inline update failed: ${message}`);
-      window.setTimeout(() => {
-        editorRef.current?.focus();
-        if (editorRef.current && "select" in editorRef.current) {
-          editorRef.current.select();
-        }
-      }, 0);
+      setError(`Failed to stage change: ${message}`);
     } finally {
       setSavingCell(null);
     }
   }, [
     cancelEditingCell,
-    connectionId,
     data,
     database,
     editingCell,
-    fetchData,
-    currentPage,
     primaryKeyColumns,
     resolvedColumns,
     setError,
+    stageChange,
     tableName,
-    updateTableCell,
   ]);
 
   const handleEditorBlur = useCallback(() => {
@@ -1277,6 +1291,82 @@ export function DataGrid({
 
     void commitEditingCell();
   }, [commitEditingCell]);
+
+  /** Apply all staged changes to the database (commit) */
+  const applyStagedChanges = useCallback(async () => {
+    const tableChanges = stagedChanges.filter((c) => c.tableName === tableName && c.database === database);
+    if (tableChanges.length === 0) return;
+
+    let successCount = 0;
+    let errorCount = 0;
+    let lastError = "";
+
+    setIsLoading(true);
+    try {
+      for (const change of tableChanges) {
+        try {
+          if (change.type === "update") {
+            for (const [colName, { new: newVal }] of Object.entries(change.columns)) {
+              const pkRows: Array<{ column: string; value: string | number | boolean | null }> = Object.entries(change.rowKey).map(([column, value]) => ({
+                column,
+                value: value as string | number | boolean | null,
+              }));
+              const affectedRows = await updateTableCell(connectionId, {
+                table: change.tableName,
+                database: change.database,
+                target_column: colName,
+                value: newVal as string | number | boolean | null,
+                primary_keys: pkRows,
+              });
+              if (affectedRows === 0) {
+                errorCount++;
+                lastError = `No rows updated for ${change.tableName} WHERE ${JSON.stringify(change.rowKey)}`;
+              } else {
+                successCount++;
+              }
+            }
+          }
+          void successCount; // suppress unused
+        } catch (err) {
+          errorCount++;
+          lastError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      // Clear staged changes for this table
+      for (const change of tableChanges) {
+        unstageChange(change.id);
+      }
+      setStagedRowIndices(new Set());
+
+      invalidateTableCaches(connectionId, tableName ?? "", database);
+      window.dispatchEvent(
+        new CustomEvent("table-data-updated", {
+          detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
+        }),
+      );
+      await fetchData(currentPage);
+
+      if (errorCount > 0) {
+        setError(`Committed ${successCount} changes. ${errorCount} failed: ${lastError}`);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, [stagedChanges, tableName, database, connectionId, updateTableCell, unstageChange, invalidateTableCaches, fetchData, currentPage, setError]);
+
+  /** Discard all staged changes for this table */
+  const discardStagedChanges = useCallback(() => {
+    const tableChanges = stagedChanges.filter((c) => c.tableName === tableName && c.database === database);
+    for (const change of tableChanges) {
+      unstageChange(change.id);
+    }
+    setStagedRowIndices(new Set());
+    // Reload original data
+    if (tableName) {
+      void fetchData(currentPage);
+    }
+  }, [stagedChanges, tableName, database, unstageChange, fetchData, currentPage]);
 
   const handleRowSelection = useCallback(
     (rowIndex: number, event?: Pick<MouseEvent, "shiftKey" | "metaKey" | "ctrlKey">) => {
@@ -1835,6 +1925,9 @@ export function DataGrid({
     },
   });
 
+  const stagedChangeCount = stagedChanges.filter(
+    (c) => c.tableName === tableName && c.database === database,
+  ).length;
   const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
   const visibleRowCount = tableData.length;
   const columnCount = resolvedColumns.length;
@@ -2015,6 +2108,9 @@ export function DataGrid({
         undoableChanges={undoableChanges}
         multiSort={multiSort}
         onClearMultiSort={handleMultiSortClear}
+        stagedChangeCount={tableName ? getChangeCount(tableName) : 0}
+        onApplyChanges={applyStagedChanges}
+        onDiscardChanges={discardStagedChanges}
       />
 
       <div className="datagrid-table-wrap" ref={tableWrapRef}>
@@ -2094,6 +2190,7 @@ export function DataGrid({
                   dragSourceIndex === row.index ? "dragging" : "",
                   dropTargetIndex === row.index ? "drop-target" : "",
                   isTableEditable && orderColumn ? "datagrid-row-draggable" : "",
+                  stagedRowIndices.has(row.index) ? "staged-change" : "",
                 ].join(" ")}
                 draggable={isTableEditable && !!orderColumn}
                 onDragStart={() => handleDragStart(row.index)}
@@ -2104,7 +2201,11 @@ export function DataGrid({
                 {row.getVisibleCells().map((cell) => (
                   <td
                     key={cell.id}
-                    className={`datagrid-td ${cell.column.id === "_row_num" ? "datagrid-td-index" : ""}`}
+                    className={[
+                      "datagrid-td",
+                      cell.column.id === "_row_num" ? "datagrid-td-index" : "",
+                      stagedRowIndices.has(row.index) ? "staged-cell" : "",
+                    ].join(" ")}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
@@ -2325,6 +2426,20 @@ export function DataGrid({
       </div>
     </div>
     {insertDialogModal}
+
+    {/* Change Tracking Preview Modal */}
+    {stagedChangeCount > 0 && typeof document !== "undefined"
+      ? createPortal(
+          <ChangeTrackingPreviewModal
+            tableName={tableName}
+            database={database}
+            onApply={applyStagedChanges}
+            onDiscard={discardStagedChanges}
+            isApplying={isLoading}
+          />,
+          document.body,
+        )
+      : null}
 
       {/* Paste Rows Dialog */}
       {isPasteDialogOpen && pastePreview && typeof document !== "undefined"

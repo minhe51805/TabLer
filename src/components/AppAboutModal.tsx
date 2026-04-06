@@ -1,5 +1,6 @@
 import { X, Shield, Zap, Globe, Code2 } from "lucide-react";
 import { useI18n } from "../i18n";
+import { UpdateButton } from "./UpdateButton";
 
 interface AppAboutModalProps {
   onClose: () => void;
@@ -124,6 +125,7 @@ export function AppAboutModal({ onClose }: AppAboutModalProps) {
         </div>
 
         <div className="app-help-modal-actions">
+          <UpdateButton variant="secondary" size="md" />
           <button
             type="button"
             className="btn btn-primary"

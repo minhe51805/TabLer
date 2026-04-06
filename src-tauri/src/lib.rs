@@ -21,6 +21,9 @@ use commands::ai::{ask_ai, get_ai_configs, save_ai_configs};
 use commands::window::{apply_window_profile, apply_window_profile_to_main, WindowProfile};
 use commands::tabs::{save_tabs, load_tabs, delete_tabs};
 use commands::deep_link::parse_deep_link;
+use commands::update::{
+    check_for_update, download_and_install_update, get_app_version,
+};
 use commands::connection_export::{
     export_connections_to_file, import_connections_from_file,
 };
@@ -86,6 +89,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(db_manager)
         .manage(conn_storage)
         .manage(plugin_storage)
@@ -203,6 +207,10 @@ pub fn run() {
             // Connection export/import commands
             export_connections_to_file,
             import_connections_from_file,
+            // Update commands
+            check_for_update,
+            download_and_install_update,
+            get_app_version,
         ]);
 
     if let Err(error) = app.run(tauri::generate_context!()) {

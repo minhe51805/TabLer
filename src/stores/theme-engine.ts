@@ -869,7 +869,7 @@ export function registerMonacoTheme(monaco: unknown): void {
   const theme = ThemeEngine.loadActive();
   const { editor } = theme.colors;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   (monaco as any).editor.defineTheme("tabler-dark", {
     base: "vs-dark",
     inherit: true,

@@ -10,3 +10,4 @@ pub mod window;
 pub mod plugins;
 pub mod tabs;
 pub mod deep_link;
+pub mod update;

@@ -1,5 +1,6 @@
 import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X, FileCode, ClipboardPaste } from "lucide-react";
-import { useState } from "react";
+import { useState, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { exportToCSV, exportToJSON } from "../../utils/export-utils";
 import { exportXLSX } from "../../utils/export-xlsx";
 import { exportToMQL } from "../../utils/export-mql";
@@ -39,6 +40,12 @@ interface DataGridToolbarProps {
   onClearMultiSort?: () => void;
   /** Trigger paste rows from clipboard */
   onPasteRows?: () => void;
+  /** Number of pending staged changes in the change tracking queue */
+  stagedChangeCount?: number;
+  /** Apply all staged changes to the database */
+  onApplyChanges?: () => void;
+  /** Discard all staged changes */
+  onDiscardChanges?: () => void;
 }
 
 function buildExportFilename(tableName: string | undefined, extension: string): string {
@@ -75,8 +82,12 @@ export function DataGridToolbar({
   primaryKeyColumns = [],
   dataRows = [],
   undoableChanges = 0,
+  stagedChangeCount = 0,
+  onApplyChanges,
+  onDiscardChanges,
 }: DataGridToolbarProps) {
   const [showSettings, setShowSettings] = useState(false);
+  const settingsBtnRef = useRef<HTMLSpanElement>(null);
   const { settings, updateSettings } = useDataGridSettings();
   const compactQuery = externalResult?.query?.replace(/\s+/g, " ").trim() ?? "";
   const dataViewTitle = tableName ? tableName.split(".").pop() || tableName : "Result set";
@@ -169,6 +180,11 @@ export function DataGridToolbar({
             >
               <X className="w-3! h-3!" />
             </button>
+          )}
+          {stagedChangeCount > 0 && (
+            <span className="datagrid-stat-pill staged-change-badge" title="Staged changes pending">
+              {stagedChangeCount} staged
+            </span>
           )}
         </div>
 
@@ -311,6 +327,29 @@ export function DataGridToolbar({
             </>
           )}
 
+          {stagedChangeCount > 0 && (
+            <span className="popover-container" data-popover={`${stagedChangeCount} change${stagedChangeCount > 1 ? "s" : ""} staged — preview before applying`}>
+              <button
+                type="button"
+                className="datagrid-footer-action active"
+                onClick={() => void onApplyChanges?.()}
+                title="Apply all staged changes"
+              >
+                <Settings2 className="!w-3.5 !h-3.5" />
+                <span>Apply {stagedChangeCount}</span>
+              </button>
+              <button
+                type="button"
+                className="datagrid-footer-action danger"
+                onClick={() => void onDiscardChanges?.()}
+                title="Discard all staged changes"
+              >
+                <X className="!w-3.5 !h-3.5" />
+                <span>Discard</span>
+              </button>
+            </span>
+          )}
+
           <span
             className="popover-container"
             data-popover={canExport ? "Export data as CSV" : "No data to export"}
@@ -397,6 +436,7 @@ export function DataGridToolbar({
           )}
 
           <span
+            ref={settingsBtnRef}
             className="popover-container"
             data-popover="Data grid settings"
           >
@@ -410,59 +450,66 @@ export function DataGridToolbar({
             </button>
           </span>
 
-          {showSettings && (
-            <div className="datagrid-settings-popover">
-              <div className="datagrid-settings-popover-header">
-                <span className="datagrid-settings-popover-title">Grid Settings</span>
-                <button
-                  type="button"
-                  className="datagrid-settings-popover-close"
-                  onClick={() => setShowSettings(false)}
-                >
-                  <X className="!w-3 !h-3" />
-                </button>
-              </div>
-
-              <div className="datagrid-settings-section">
-                <label className="datagrid-settings-label">NULL display</label>
-                <input
-                  type="text"
-                  className="datagrid-settings-input"
-                  value={settings.nullPlaceholder}
-                  maxLength={20}
-                  onChange={(e) => updateSettings({ nullPlaceholder: e.target.value })}
-                  placeholder="NULL"
-                />
-              </div>
-
-              <div className="datagrid-settings-section">
-                <label className="datagrid-settings-label">Row height</label>
-                <div className="datagrid-settings-row">
-                  {(["small", "medium", "large"] as const).map((size) => (
-                    <button
-                      key={size}
-                      type="button"
-                      className={`datagrid-settings-toggle ${settings.rowHeight === size ? "active" : ""}`}
-                      onClick={() => updateSettings({ rowHeight: size })}
-                    >
-                      {size.charAt(0).toUpperCase() + size.slice(1)}
-                    </button>
-                  ))}
+          {useMemo(() => {
+            if (!showSettings || !settingsBtnRef.current) return null;
+            const rect = settingsBtnRef.current.getBoundingClientRect();
+            const top = rect.bottom + 6;
+            const right = window.innerWidth - rect.right;
+            const popoverContent = (
+              <div
+                className="datagrid-settings-popover"
+                style={{ position: "fixed", top, right, zIndex: 9999 }}
+              >
+                <div className="datagrid-settings-popover-header">
+                  <span className="datagrid-settings-popover-title">Grid Settings</span>
+                  <button
+                    type="button"
+                    className="datagrid-settings-popover-close"
+                    onClick={() => setShowSettings(false)}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+                <div className="datagrid-settings-section">
+                  <label className="datagrid-settings-label">NULL display</label>
+                  <input
+                    type="text"
+                    className="datagrid-settings-input"
+                    value={settings.nullPlaceholder}
+                    maxLength={20}
+                    onChange={(e) => updateSettings({ nullPlaceholder: e.target.value })}
+                    placeholder="NULL"
+                  />
+                </div>
+                <div className="datagrid-settings-section">
+                  <label className="datagrid-settings-label">Row height</label>
+                  <div className="datagrid-settings-row">
+                    {(["small", "medium", "large"] as const).map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        className={`datagrid-settings-toggle ${settings.rowHeight === size ? "active" : ""}`}
+                        onClick={() => updateSettings({ rowHeight: size })}
+                      >
+                        {size.charAt(0).toUpperCase() + size.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="datagrid-settings-section">
+                  <label className="datagrid-settings-label">Alternating rows</label>
+                  <button
+                    type="button"
+                    className={`datagrid-settings-toggle ${settings.alternatingRows ? "active" : ""}`}
+                    onClick={() => updateSettings({ alternatingRows: !settings.alternatingRows })}
+                  >
+                    {settings.alternatingRows ? "On" : "Off"}
+                  </button>
                 </div>
               </div>
-
-              <div className="datagrid-settings-section">
-                <label className="datagrid-settings-label">Alternating rows</label>
-                <button
-                  type="button"
-                  className={`datagrid-settings-toggle ${settings.alternatingRows ? "active" : ""}`}
-                  onClick={() => updateSettings({ alternatingRows: !settings.alternatingRows })}
-                >
-                  {settings.alternatingRows ? "On" : "Off"}
-                </button>
-              </div>
-            </div>
-          )}
+            );
+            return createPortal(popoverContent, document.body);
+          }, [showSettings, settings, updateSettings])}
         </div>
       </div>
     </div>

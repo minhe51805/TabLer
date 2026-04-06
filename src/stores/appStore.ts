@@ -345,20 +345,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     const config = getActiveAIProvider(get().aiConfigs);
     if (!config) throw new Error("AI Provider not found");
 
-    try {
-      const resp = await invokeWithTimeout<{ text: string; error?: string }>(
-        "ask_ai",
-        {
-          request: { prompt, context, mode, intent, language: getCurrentAppLanguage(), history },
-        },
-        FRONTEND_TIMEOUTS.ai,
-        "AI request"
-      );
-      if (resp.error) throw new Error(resp.error);
-      return resp.text;
-    } catch (e) {
-      throw e;
-    }
+    const resp = await invokeWithTimeout<{ text: string; error?: string }>(
+      "ask_ai",
+      {
+        request: { prompt, context, mode, intent, language: getCurrentAppLanguage(), history },
+      },
+      FRONTEND_TIMEOUTS.ai,
+      "AI request"
+    );
+    if (resp.error) throw new Error(resp.error);
+    return resp.text;
   },
 
   connectToDatabase: async (config: ConnectionConfig) => {

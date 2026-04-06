@@ -39,10 +39,12 @@ import { QueryHistoryPanel } from "./components/QueryHistory/QueryHistoryPanel";
 import { SQLFavoritesPanel } from "./components/SQLFavorites/SQLFavoritesPanel";
 import { RowInspector, type RowInspectorData } from "./components/RowInspector/RowInspector";
 import { CommandPalette } from "./components/CommandPalette/CommandPalette";
+import { QuickSwitcher } from "./components/QuickSwitcher/QuickSwitcher";
 import { ThemeCustomizer } from "./components/ThemeCustomizer/ThemeCustomizer";
 import { SafeModeConfirmDialog } from "./components/SafeMode/SafeModeConfirmDialog";
 import { ConnectionExporter, ConnectionImporter } from "./components/ConnectionExporter";
 import { useCommandPaletteStore } from "./stores/commandPaletteStore";
+import { useQuickSwitcherStore } from "./stores/quickSwitcherStore";
 import { getAdminQueryPreset, type AdminQueryKind } from "./utils/admin-query-presets";
 import { APP_TOAST_EVENT, type AppToastPayload, emitAppToast } from "./utils/app-toast";
 import { invokeMutation } from "./utils/tauri-utils";
@@ -229,6 +231,7 @@ function App() {
   const vimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
   const toggleVimMode = useEditorPreferencesStore((state) => state.toggleVimMode);
   const { open: openCommandPalette } = useCommandPaletteStore();
+  const { open: openQuickSwitcher } = useQuickSwitcherStore();
   const [showThemeCustomizer, setShowThemeCustomizer] = useState(false);
   const [showConnectionExporter, setShowConnectionExporter] = useState(false);
   const [showConnectionImporter, setShowConnectionImporter] = useState(false);
@@ -2077,6 +2080,7 @@ function App() {
         onToggleSQLFavorites={handleToggleSQLFavorites}
         onToggleVimMode={toggleVimMode}
         onOpenCommandPalette={openCommandPalette}
+        onOpenQuickSwitcher={openQuickSwitcher}
         setUiFontScale={setUiFontScale}
         setShowAISlidePanel={setShowAISlidePanel}
       />
@@ -2124,6 +2128,14 @@ function App() {
         onImportSQLFile={() => window.dispatchEvent(new CustomEvent("import-sql-file-palette"))}
         onClearAIHistory={() => window.dispatchEvent(new CustomEvent("clear-ai-history-palette"))}
         onToggleAISlidePanel={(open) => setShowAISlidePanel(open)}
+      />
+      <QuickSwitcher
+        onOpenSavedQuery={(id) => {
+          window.dispatchEvent(new CustomEvent("open-saved-query-switcher", { detail: { id } }));
+        }}
+        onConnect={(connectionId) => {
+          window.dispatchEvent(new CustomEvent("connect-switcher", { detail: { connectionId } }));
+        }}
       />
       {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
         <StartupConnectionManager

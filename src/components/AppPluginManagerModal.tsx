@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import {
   Box,
   Database,
@@ -16,39 +15,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../i18n";
 import { emitAppToast } from "../utils/app-toast";
 import { ALL_DATABASES } from "./ConnectionForm/engine-registry";
+import { usePluginStore } from "../stores/pluginStore";
+import type { InstalledPluginRecord } from "../types/plugin";
 
 interface AppPluginManagerModalProps {
   onClose: () => void;
-}
-
-interface PluginManifest {
-  id: string;
-  name: string;
-  version: string;
-  kind: string;
-  description?: string | null;
-  author?: string | null;
-  entry?: string | null;
-  capabilities: string[];
-}
-
-interface InstalledPluginRecord {
-  manifest: PluginManifest;
-  bundlePath: string;
-  enabled: boolean;
-  installedAt: number;
-  updatedAt: number;
 }
 
 const CORE_MODULES = ["Explorer", "SQL Editor", "Metrics", "ER Diagram", "Terminal", "AI Assist"];
 
 export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
   const { language } = useI18n();
-  const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const installedPlugins = usePluginStore((s) => s.plugins);
+  const isLoading = usePluginStore((s) => s.isLoading);
+  const error = usePluginStore((s) => s.error);
+  const { loadPlugins, reloadPlugins, installPlugin, setPluginEnabled, uninstallPlugin } = usePluginStore();
   const [isInstalling, setIsInstalling] = useState(false);
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const copy = useMemo(() => {
     if (language === "vi") {
@@ -121,93 +104,45 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
   const readyAdapters = ALL_DATABASES.filter((db) => db.supported);
   const roadmapAdapters = ALL_DATABASES.filter((db) => !db.supported);
 
-  const loadInstalledPlugins = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const plugins = await invoke<InstalledPluginRecord[]>("list_installed_plugins");
-      setInstalledPlugins(plugins);
-    } catch (loadError) {
-      setError(String(loadError));
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void loadInstalledPlugins();
-  }, [loadInstalledPlugins]);
+    void loadPlugins();
+  }, [loadPlugins]);
 
   const handleReload = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const plugins = await invoke<InstalledPluginRecord[]>("reload_installed_plugins");
-      setInstalledPlugins(plugins);
-    } catch (reloadError) {
-      setError(String(reloadError));
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    await reloadPlugins();
+  }, [reloadPlugins]);
 
   const handleInstallPlugin = useCallback(async () => {
     setIsInstalling(true);
-    setError(null);
     try {
-      const installedPlugin = await invoke<InstalledPluginRecord>("install_plugin_bundle");
-      setInstalledPlugins((current) => {
-        const existingIndex = current.findIndex(
-          (plugin) => plugin.manifest.id === installedPlugin.manifest.id,
-        );
-        if (existingIndex >= 0) {
-          const next = [...current];
-          next[existingIndex] = installedPlugin;
-          return next;
-        }
-        return [...current, installedPlugin];
-      });
-      emitAppToast({
-        tone: "success",
-        title: copy.installSuccess,
-        description: `${installedPlugin.manifest.name} v${installedPlugin.manifest.version}`,
-      });
-    } catch (installError) {
-      const message = String(installError);
-      if (!/No plugin bundle selected/i.test(message)) {
-        setError(message);
+      const installedPlugin = await installPlugin();
+      if (installedPlugin) {
+        emitAppToast({
+          tone: "success",
+          title: copy.installSuccess,
+          description: `${installedPlugin.manifest.name} v${installedPlugin.manifest.version}`,
+        });
       }
     } finally {
       setIsInstalling(false);
     }
-  }, [copy.installSuccess]);
+  }, [copy.installSuccess, installPlugin]);
 
   const handleTogglePlugin = useCallback(
     async (plugin: InstalledPluginRecord) => {
       setBusyPluginId(plugin.manifest.id);
-      setError(null);
       try {
-        const updated = await invoke<InstalledPluginRecord>("set_plugin_enabled", {
-          pluginId: plugin.manifest.id,
-          enabled: !plugin.enabled,
-        });
-        setInstalledPlugins((current) =>
-          current.map((entry) =>
-            entry.manifest.id === updated.manifest.id ? updated : entry,
-          ),
-        );
+        await setPluginEnabled(plugin.manifest.id, !plugin.enabled);
         emitAppToast({
           tone: "success",
           title: copy.pluginUpdated,
-          description: `${updated.manifest.name} · ${updated.enabled ? copy.enabled : copy.disabled}`,
+          description: `${plugin.manifest.name} · ${!plugin.enabled ? copy.enabled : copy.disabled}`,
         });
-      } catch (toggleError) {
-        setError(String(toggleError));
       } finally {
         setBusyPluginId(null);
       }
     },
-    [copy.disabled, copy.enabled, copy.pluginUpdated],
+    [copy.disabled, copy.enabled, copy.pluginUpdated, setPluginEnabled],
   );
 
   const handleRemovePlugin = useCallback(
@@ -220,24 +155,18 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
       if (!confirmed) return;
 
       setBusyPluginId(plugin.manifest.id);
-      setError(null);
       try {
-        await invoke("uninstall_plugin_bundle", { pluginId: plugin.manifest.id });
-        setInstalledPlugins((current) =>
-          current.filter((entry) => entry.manifest.id !== plugin.manifest.id),
-        );
+        await uninstallPlugin(plugin.manifest.id);
         emitAppToast({
           tone: "success",
           title: copy.pluginRemoved,
           description: plugin.manifest.name,
         });
-      } catch (removeError) {
-        setError(String(removeError));
       } finally {
         setBusyPluginId(null);
       }
     },
-    [copy.pluginRemoved, language],
+    [copy.pluginRemoved, language, uninstallPlugin],
   );
 
   return (

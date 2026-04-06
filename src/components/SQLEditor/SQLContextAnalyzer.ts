@@ -184,9 +184,9 @@ export function analyzeSqlContext(
     if (clauseStart >= 0) {
       const beforeClause = afterLastBoundary.substring(0, clauseStart);
       // Find the previous token (table name)
-      const tokenMatch = beforeClause.match(/([\w.`"\[\]]+)\s*$/);
+      const tokenMatch = beforeClause.match(/([\w.`"[\]]+)\s*$/);
       if (tokenMatch) {
-        table = tokenMatch[1].replace(/[`"\[\]]/g, "");
+        table = tokenMatch[1].replace(/[`"[\]]/g, "");
       }
     }
   }
@@ -226,12 +226,12 @@ export function extractTableAliases(
   const result = new Map<string, { table: string; alias: string }>();
 
   // Regex to find FROM/JOIN clauses: table_name [AS] alias
-  const fromJoinPattern = /\b(FROM|JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|INNER\s+JOIN|OUTER\s+JOIN|CROSS\s+JOIN|FULL\s+JOIN)\s+([`"'\[]?[\w]+[`"'\]]?)\s*(?:AS\s+)?([`"'\[]?[\w]+[`"'\]]?)?/gi;
+  const fromJoinPattern = /\b(FROM|JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|INNER\s+JOIN|OUTER\s+JOIN|CROSS\s+JOIN|FULL\s+JOIN)\s+([`"[']?[\w]+[`"'\]]?)\s*(?:AS\s+)?([`"[']?[\w]+[`"'\]]?)?/gi;
 
   let match: RegExpExecArray | null;
   while ((match = fromJoinPattern.exec(text)) !== null) {
-    const tableName = match[2].replace(/[`"'\[\]]/g, "");
-    const alias = match[3]?.replace(/[`"'\[\]]/g, "") || tableName;
+    const tableName = match[2].replace(/[`"'[\]]/g, "");
+    const alias = match[3]?.replace(/[`"'[\]]/g, "") || tableName;
     if (alias) {
       result.set(alias.toLowerCase(), { table: tableName, alias });
     }

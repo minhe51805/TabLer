@@ -1,5 +1,5 @@
 export type AIProviderType = "openai" | "anthropic" | "gemini" | "openrouter" | "ollama" | "custom";
-export type AIResponseLanguage = "en" | "vi" | "zh";
+export type AIResponseLanguage = "en" | "vi" | "zh" | "tr" | "ko";
 export type AIConversationRole = "user" | "assistant";
 
 export interface AIProviderConfig {

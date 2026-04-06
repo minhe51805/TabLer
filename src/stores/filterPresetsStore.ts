@@ -21,6 +21,10 @@ interface FilterPresetsActions {
   getPreset: (id: string) => FilterPreset | undefined;
   setActivePreset: (id: string | null) => void;
   getActivePreset: () => FilterPreset | undefined;
+  /** Export all presets as JSON string */
+  exportPresets: () => string;
+  /** Import presets from JSON string, returns number of imported */
+  importPresets: (json: string) => number;
 }
 
 export type FilterPresetsStore = FilterPresetsState & FilterPresetsActions;
@@ -70,6 +74,56 @@ const useFilterPresetsBase = create<FilterPresetsStore>()(
         const { presets, activePresetId } = get();
         if (!activePresetId) return undefined;
         return presets.find((p) => p.id === activePresetId);
+      },
+
+      exportPresets: () => {
+        const { presets } = get();
+        const exportData = presets.map(({ name, tableFilter, schemaFilter, objectTypes, tags, columnFilter, conditions, conditionLogic, columnMode, tableOperator, schemaOperator }) => ({
+          name,
+          tableFilter,
+          schemaFilter,
+          objectTypes,
+          tags,
+          columnFilter,
+          conditions,
+          conditionLogic,
+          columnMode,
+          tableOperator,
+          schemaOperator,
+        }));
+        return JSON.stringify(exportData, null, 2);
+      },
+
+      importPresets: (json) => {
+        try {
+          const imported = JSON.parse(json);
+          if (!Array.isArray(imported)) return 0;
+          let count = 0;
+          for (const item of imported) {
+            if (item.name && Array.isArray(item.conditions)) {
+              get().savePreset({
+                name: item.name,
+                tableFilter: item.tableFilter ?? "",
+                schemaFilter: item.schemaFilter ?? "",
+                objectTypes: item.objectTypes ?? [],
+                tags: item.tags ?? [],
+                columnFilter: item.columnFilter,
+                conditions: item.conditions.map((c: FilterCondition) => ({
+                  ...c,
+                  id: crypto.randomUUID(),
+                })),
+                conditionLogic: item.conditionLogic ?? "AND",
+                columnMode: item.columnMode ?? false,
+                tableOperator: item.tableOperator ?? "contains",
+                schemaOperator: item.schemaOperator ?? "contains",
+              });
+              count++;
+            }
+          }
+          return count;
+        } catch {
+          return 0;
+        }
       },
     }),
     {

@@ -11,6 +11,7 @@ import {
   getCellEditorType,
   getForeignKeyForColumn,
   getEnumValues,
+  getSetValues,
   isGeometryColumn,
 } from "./editors";
 import { renderGeometryCell } from "../../utils/geometry-renderer";
@@ -21,6 +22,7 @@ import {
   NumericCellEditor,
   DateTimeCellEditor,
   EnumCellEditor,
+  SetCellEditor,
   JSONCellEditor,
   HexCellEditor,
   GeometryCellEditor,
@@ -274,6 +276,7 @@ export function buildDataGridColumns({
               // Resolve editor type and props
               const fkInfo = getForeignKeyForColumn(col.name, foreignKeys);
               const enumValues = getEnumValues(col);
+              const setValues = getSetValues(col);
               const editorType = getCellEditorType(col, fkInfo, enumValues);
               const lookupCacheKey = fkInfo ? `${fkInfo.referenced_table}|${fkInfo.referenced_column}` : "";
               const cachedLookupValues = lookupCacheKey ? (lookupValuesCache?.get(lookupCacheKey) ?? []) : [];
@@ -298,6 +301,7 @@ export function buildDataGridColumns({
                 referencedColumn: fkInfo?.referenced_column,
                 lookupValues: cachedLookupValues,
                 enumValues,
+                setValues,
               };
 
               if (editorType === "date" || editorType === "datetime" || editorType === "time") {
@@ -335,6 +339,7 @@ export function buildDataGridColumns({
               if (editorType === "boolean") return <BooleanCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLSelectElement | null>} />;
               if (editorType === "numeric") return <NumericCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>} />;
               if (editorType === "enum") return <EnumCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLSelectElement | null>} />;
+              if (editorType === "set") return <SetCellEditor {...editorProps} setValues={setValues} inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>} />;
               if (editorType === "json") return <JSONCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;
               if (editorType === "hex") return <HexCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;
               if (editorType === "geometry") return <GeometryCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;

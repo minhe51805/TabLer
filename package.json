@@ -11,7 +11,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit",
-    "check:sql-splitter": "node scripts/check-sql-splitter.mjs && cargo test sql_splitter_contract --manifest-path src-tauri/Cargo.toml"
+    "check:sql-splitter": "node scripts/check-sql-splitter.mjs && cargo test sql_splitter_contract --manifest-path src-tauri/Cargo.toml",
+    "build:release": "npm run build && node scripts/generate-updater-manifest.mjs $(node -p \"require('./src-tauri/tauri.conf.json').version\")"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

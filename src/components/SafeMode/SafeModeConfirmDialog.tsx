@@ -19,7 +19,7 @@ export function SafeModeConfirmDialog() {
   const [request, setRequest] = useState<ConfirmRequest | null>(null);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
-  const { hasAdminPassword, verifyAdminPassword, settings } = useSafeModeStore();
+  const { hasAdminPassword, verifyAdminPassword } = useSafeModeStore();
 
   useEffect(() => {
     const handleRequest = (e: Event) => {

@@ -16,6 +16,8 @@ export interface ParsedClipboardData {
   rowCount: number;
   /** Number of columns */
   columnCount: number;
+  /** Whether the first row was detected as a header */
+  firstRowWasHeader: boolean;
 }
 
 export interface ColumnMapping {
@@ -111,6 +113,7 @@ export function parseClipboardText(text: string): ParsedClipboardData | null {
     dataRows,
     rowCount: dataRows.length,
     columnCount: firstRow.length,
+    firstRowWasHeader,
   };
 }
 

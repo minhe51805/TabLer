@@ -3,6 +3,7 @@ export { TextCellEditor } from "./TextCellEditor";
 export { NumericCellEditor } from "./NumericCellEditor";
 export { DateTimeCellEditor } from "./DateTimeCellEditor";
 export { EnumCellEditor } from "./EnumCellEditor";
+export { SetCellEditor } from "./SetCellEditor";
 export { JSONCellEditor } from "./JSONCellEditor";
 export { HexCellEditor } from "./HexCellEditor";
 export { GeometryCellEditor } from "./GeometryCellEditor";
@@ -20,8 +21,10 @@ export {
   isJSONColumn,
   isBlobColumn,
   isEnumColumn,
+  isSetColumn,
   isGeometryColumn,
   getForeignKeyForColumn,
   getEnumValues,
+  getSetValues,
 } from "./column-type-detectors";
 export type { CellEditorType, ICellEditorProps, CellEditorCommitResult } from "./types";

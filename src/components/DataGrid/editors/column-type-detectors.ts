@@ -57,6 +57,26 @@ export function isEnumColumn(column: ResolvedColumn): boolean {
   return false;
 }
 
+export function isSetColumn(column: ResolvedColumn): boolean {
+  const columnType = column.column_type || "";
+  // MySQL/MariaDB: column_type starts with "set("
+  return /^set\(/i.test(columnType);
+}
+
+export function getSetValues(column: ResolvedColumn): string[] {
+  const columnType = column.column_type || "";
+  const match = columnType.match(/^set\((.+)\)$/i);
+  if (!match) return [];
+  const inner = match[1];
+  const values: string[] = [];
+  const regex = /'([^'\\]*(?:\\.[^'\\]*)*)'/g;
+  let m;
+  while ((m = regex.exec(inner)) !== null) {
+    values.push(m[1].replace(/\\'/g, "'"));
+  }
+  return values;
+}
+
 // ─── Enum Value Extraction ──────────────────────────────────────────────────────
 
 export function getEnumValues(column: ResolvedColumn): string[] {

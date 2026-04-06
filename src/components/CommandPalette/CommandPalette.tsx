@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Command, X } from "lucide-react";
+import { Command as LucideCommand, X } from "lucide-react";
 import { useCommandPaletteStore } from "../../stores/commandPaletteStore";
 import { buildCommandRegistry, filterCommands } from "./commands-registry";
-import type { CommandCategory } from "../../stores/commandPaletteStore";
+import type { Command, CommandCategory } from "../../stores/commandPaletteStore";
 
 const CATEGORY_ORDER: CommandCategory[] = [
   "File",
@@ -68,7 +68,6 @@ export function CommandPalette(props: CommandPaletteProps) {
     onImportSQLFile,
     onClearAIHistory,
     onToggleAISlidePanel,
-    onSetFontScale,
   } = props;
 
   const { isOpen, searchQuery, recentCommandIds, allCommands, close, setSearchQuery, addRecentCommand, registerCommands } =
@@ -213,7 +212,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       >
         {/* Search input */}
         <div className="command-palette-search">
-          <Command className="command-palette-search-icon" size={16} />
+          <LucideCommand className="command-palette-search-icon" size={16} />
           <input
             ref={inputRef}
             type="text"

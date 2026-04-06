@@ -10,7 +10,6 @@ import {
   Save,
   Trash2,
   Filter,
-  Columns,
   X,
   Check,
 } from "lucide-react";
@@ -62,7 +61,7 @@ function OperatorSelector({ value, onChange, isOpen, onToggle }: OperatorSelecto
         title={FILTER_OPERATOR_LABELS[value]?.hint ?? ""}
       >
         <span className="filter-operator-label">{FILTER_OPERATOR_LABELS[value]?.label ?? value}</span>
-        <ChevronDown className="w-3 h-3" />
+        <ChevronDown className="w-3.5 h-3.5 opacity-60" />
       </button>
       {isOpen && (
         <div className="filter-operator-menu">
@@ -283,89 +282,113 @@ function FilterToolbar({
 
   return (
     <div className="filter-toolbar">
-      <div className="filter-toolbar-row">
-        <div className="filter-toolbar-label">Filter mode</div>
-        <button
-          type="button"
-          className={`filter-toolbar-toggle ${!columnModeActive ? "active" : ""}`}
-          onClick={() => setColumnModeActive(false)}
-        >
-          Table name
-        </button>
-        <button
-          type="button"
-          className={`filter-toolbar-toggle ${columnModeActive ? "active" : ""}`}
-          onClick={() => setColumnModeActive(true)}
-        >
-          <Columns className="w-3.5 h-3.5" />
-          Column name
-        </button>
-      </div>
-
-      {!columnModeActive && (
-        <div className="filter-toolbar-row">
-          <div className="filter-toolbar-label">Operator</div>
-          <OperatorSelector
-            value={tableOperator}
-            onChange={setTableOperator}
-            isOpen={operatorSelectorOpen}
-            onToggle={() => setOperatorSelectorOpen(!operatorSelectorOpen)}
-          />
+      {/* Filter Mode Row */}
+      <div className="filter-section">
+        <div className="filter-section-header">
+          <span className="filter-section-label">FILTER</span>
+          <span className="filter-section-sublabel">MODE</span>
         </div>
-      )}
-
-      {columnModeActive && (
-        <div className="filter-toolbar-row">
-          <div className="filter-toolbar-label">Column</div>
-          <select
-            className="filter-toolbar-select"
-            value={columnOperator}
-            onChange={(e) => setColumnOperator(e.target.value as typeof columnOperator)}
-          >
-            <option value="name_contains">Contains</option>
-            <option value="name_equals">Equals</option>
-            <option value="name_matches_regex">Regex</option>
-          </select>
-          <input
-            type="text"
-            className="filter-toolbar-input"
-            value={columnPattern}
-            onChange={(e) => setColumnPattern(e.target.value)}
-            placeholder="Column name pattern..."
-          />
-        </div>
-      )}
-
-      <div className="filter-toolbar-row filter-conditions-row">
-        <div className="filter-toolbar-label">Conditions</div>
-        <div className="filter-conditions-list">
+        <div className="filter-mode-toggles">
           <button
             type="button"
-            className="filter-conditions-logic"
+            className={`filter-mode-btn ${!columnModeActive ? "active" : ""}`}
+            onClick={() => setColumnModeActive(false)}
+          >
+            <span>Table</span>
+            <span className="filter-mode-btn-sub">name</span>
+          </button>
+          <button
+            type="button"
+            className={`filter-mode-btn ${columnModeActive ? "active" : ""}`}
+            onClick={() => setColumnModeActive(true)}
+          >
+            <span>Column</span>
+            <span className="filter-mode-btn-sub">name</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Operator Row */}
+      {!columnModeActive && (
+        <div className="filter-section">
+          <div className="filter-section-header">
+            <span className="filter-section-label">OPERATOR</span>
+          </div>
+          <div className="filter-operator-row">
+            <OperatorSelector
+              value={tableOperator}
+              onChange={setTableOperator}
+              isOpen={operatorSelectorOpen}
+              onToggle={() => setOperatorSelectorOpen(!operatorSelectorOpen)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Column Mode Row */}
+      {columnModeActive && (
+        <div className="filter-section">
+          <div className="filter-section-header">
+            <span className="filter-section-label">COLUMN</span>
+          </div>
+          <div className="filter-column-layout">
+            <div className="filter-column-op">
+              <select
+                className="filter-toolbar-select"
+                value={columnOperator}
+                onChange={(e) => setColumnOperator(e.target.value as typeof columnOperator)}
+              >
+                <option value="name_contains">Contains</option>
+                <option value="name_equals">Equals</option>
+                <option value="name_matches_regex">Regex</option>
+              </select>
+            </div>
+            <input
+              type="text"
+              className="filter-toolbar-input filter-column-input"
+              value={columnPattern}
+              onChange={(e) => setColumnPattern(e.target.value)}
+              placeholder="Pattern..."
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Conditions Row */}
+      <div className="filter-section">
+        <div className="filter-section-header">
+          <span className="filter-section-label">CONDITIONS</span>
+        </div>
+        <div className="filter-conditions-area">
+          <button
+            type="button"
+            className="filter-logic-btn"
             onClick={() => setConditionLogic(conditionLogic === "AND" ? "OR" : "AND")}
             title={`Current: ${conditionLogic}. Click to toggle.`}
           >
             {conditionLogic}
           </button>
-          {conditions.map((cond) => (
-            <div key={cond.id} className="filter-condition-row">
-              <input
-                type="text"
-                className="filter-condition-value"
-                value={cond.value}
-                onChange={(e) => updateCondition(cond.id, { value: e.target.value })}
-                placeholder="Value..."
-              />
-              <button
-                type="button"
-                className="filter-condition-remove"
-                onClick={() => removeCondition(cond.id)}
-                title="Remove condition"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
+          <div className="filter-conditions-list">
+            {conditions.map((cond) => (
+              <div key={cond.id} className="filter-condition-row">
+                <input
+                  type="text"
+                  className="filter-condition-value"
+                  value={cond.value}
+                  onChange={(e) => updateCondition(cond.id, { value: e.target.value })}
+                  placeholder="Value..."
+                />
+                <button
+                  type="button"
+                  className="filter-condition-remove"
+                  onClick={() => removeCondition(cond.id)}
+                  title="Remove condition"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
           <button
             type="button"
             className="filter-condition-add"

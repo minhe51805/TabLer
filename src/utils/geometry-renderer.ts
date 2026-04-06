@@ -280,9 +280,7 @@ function parseGeometryCollection(
 }
 
 function parseHexFloat(hex: string, littleEndian: boolean): string {
-  const bytes = parseInt(hex.slice(0, 16), 16);
   // Re-interpret the hex bytes as IEEE 754 double
-  // Simple approach: build the 8-byte array
   const buf = new Uint8Array(8);
   for (let i = 0; i < 8; i++) {
     buf[littleEndian ? i : 7 - i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
@@ -317,44 +315,44 @@ export function parseWKT(wkt: string): string | null {
   const trimmed = wkt.trim().toUpperCase();
 
   if (trimmed.startsWith("POINT")) {
-    const match = wkt.match(/POINT\s*\(\s*([^\)]+)\s*\)/i);
+    const match = wkt.match(/POINT\s*\(\s*([^)]+)\s*\)/i);
     if (match) {
       return `POINT(${formatWKTPoints(match[1])})`;
     }
   }
   if (trimmed.startsWith("LINESTRING")) {
-    const match = wkt.match(/LINESTRING\s*\(\s*([^\)]+)\s*\)/i);
+    const match = wkt.match(/LINESTRING\s*\(\s*([^)]+)\s*\)/i);
     if (match) {
       return `LINESTRING(${formatWKTPoints(match[1])})`;
     }
   }
   if (trimmed.startsWith("POLYGON")) {
-    const match = wkt.match(/POLYGON\s*\(\s*([^\)]+)\s*\)/i);
+    const match = wkt.match(/POLYGON\s*\(\s*([^)]+)\s*\)/i);
     if (match) {
       return `POLYGON(${formatWKTRings(match[1])})`;
     }
   }
   if (trimmed.startsWith("MULTIPOINT")) {
-    const match = wkt.match(/MULTIPOINT\s*\(\s*([^\)]+)\s*\)/i);
+    const match = wkt.match(/MULTIPOINT\s*\(\s*([^)]+)\s*\)/i);
     if (match) {
       const points = match[1].split(",").map((p) => p.trim()).filter(Boolean);
       return `MULTIPOINT(${formatMultiPoints(points)})`;
     }
   }
   if (trimmed.startsWith("MULTILINESTRING")) {
-    const match = wkt.match(/MULTILINESTRING\s*\(\s*([^\)]+)\s*\)/i);
+    const match = wkt.match(/MULTILINESTRING\s*\(\s*([^)]+)\s*\)/i);
     if (match) {
       return `MULTILINESTRING: count=${countParts(match[1], "(")}`;
     }
   }
   if (trimmed.startsWith("MULTIPOLYGON")) {
-    const match = wkt.match(/MULTIPOLYGON\s*\(\s*([^\)]+)\s*\)/i);
+    const match = wkt.match(/MULTIPOLYGON\s*\(\s*([^)]+)\s*\)/i);
     if (match) {
       return `MULTIPOLYGON: count=${countParts(match[1], "((")}`;
     }
   }
   if (trimmed.startsWith("GEOMETRYCOLLECTION")) {
-    const match = wkt.match(/GEOMETRYCOLLECTION\s*\(\s*([^\)]+)\s*\)/i);
+    const match = wkt.match(/GEOMETRYCOLLECTION\s*\(\s*([^)]+)\s*\)/i);
     if (match) {
       return `GEOMETRYCOLLECTION: count=${countParts(match[1], "GEOMETRY")}`;
     }
@@ -457,16 +455,15 @@ export function renderGeometryCell(value: unknown): {
     return { display: "NULL", emoji: "", wkt: "", type: "" };
   }
 
-  let wkt = "";
-
-  // Try WKB first
-  if (typeof value === "string") {
-    wkt = parseWKB(value) || parseWKT(value) || value;
-  } else if (value instanceof Uint8Array) {
-    wkt = parseWKB(value) || "";
-  } else {
-    wkt = String(value);
-  }
+  const wkt = (() => {
+    if (typeof value === "string") {
+      return parseWKB(value) || parseWKT(value) || value;
+    } else if (value instanceof Uint8Array) {
+      return parseWKB(value) || "";
+    } else {
+      return String(value);
+    }
+  })();
 
   const display = wkt.length > 80 ? wkt.slice(0, 80) + "..." : wkt;
   const emoji = getGeometryEmoji(wkt);

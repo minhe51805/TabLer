@@ -74,7 +74,7 @@ interface DatabaseTreeProps {
   visibleTableCount: number;
   visibleObjectCount: number;
   language: AppLanguage;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   t: (key: any, opts?: Record<string, any>) => string;
   // Interactions
   onToggleDb: (db: DatabaseInfo) => void;

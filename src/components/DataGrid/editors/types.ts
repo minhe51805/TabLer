@@ -10,6 +10,7 @@ export type CellEditorType =
   | "numeric"
   | "foreign_key"
   | "enum"
+  | "set"
   | "json"
   | "hex"
   | "geometry";
@@ -35,4 +36,6 @@ export interface ICellEditorProps {
   lookupValues?: Array<{ value: unknown; label: string }>;
   // Enum-specific props
   enumValues?: string[];
+  // SET-specific props (MySQL SET type — multiple selection)
+  setValues?: string[];
 }

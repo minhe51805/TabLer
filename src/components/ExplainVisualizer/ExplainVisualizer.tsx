@@ -207,7 +207,7 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
   });
 
   const [showRaw, setShowRaw] = useState(false);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; content: string } | null>(null);
+  const [tooltip] = useState<{ x: number; y: number; content: string } | null>(null);
 
   const handleToggle = useCallback((id: string) => {
     setExpandedIds((prev) => {

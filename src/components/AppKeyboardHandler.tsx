@@ -12,6 +12,7 @@ interface KeyboardHandlerProps {
   onToggleSQLFavorites: () => void;
   onToggleVimMode: () => void;
   onOpenCommandPalette: () => void;
+  onOpenQuickSwitcher: () => void;
   setUiFontScale: (fn: (current: number) => number) => void;
   setShowAISlidePanel: (value: boolean | ((current: boolean) => boolean)) => void;
 }
@@ -26,6 +27,7 @@ export function AppKeyboardHandler({
   onToggleSQLFavorites,
   onToggleVimMode,
   onOpenCommandPalette,
+  onOpenQuickSwitcher,
   setUiFontScale,
   setShowAISlidePanel,
 }: KeyboardHandlerProps) {
@@ -56,6 +58,14 @@ export function AppKeyboardHandler({
       if (metaPressed && key === "n") {
         e.preventDefault();
         onNewQuery();
+        return;
+      }
+
+      // Quick Switcher: Ctrl+P / Cmd+P (no shift)
+      if (metaPressed && !e.shiftKey && key === "p") {
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenQuickSwitcher();
         return;
       }
 

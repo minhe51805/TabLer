@@ -4,11 +4,22 @@ import tailwindcss from "@tailwindcss/vite";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// @ts-expect-error process is a nodejs global
+const tauriPlatform = process.env.TAURI_ENV_PLATFORM;
+const isTauriDev = !!host;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
+  base: isTauriDev ? "/" : "./",
   build: {
+    target:
+      tauriPlatform === "windows"
+        ? "chrome105"
+        : tauriPlatform === "macos"
+          ? "safari13"
+          : "es2020",
+    cssTarget: tauriPlatform === "windows" ? "chrome105" : undefined,
     rollupOptions: {
       output: {
         manualChunks(id) {

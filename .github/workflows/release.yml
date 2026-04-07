@@ -1,0 +1,126 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            args: ""
+            target: "macos"
+          - platform: "ubuntu-22.04"
+            args: ""
+            target: "linux"
+          - platform: "windows-latest"
+            args: ""
+            target: "windows"
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-action@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Linux dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS code signing (optional)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Windows code signing (optional)
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          # macOS notarization (optional)
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "TableR v__VERSION__"
+          releaseBody: "See the assets to download this version of TableR."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  # Generate updater manifest after all builds complete
+  updater-manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Download Windows NSIS build
+        uses: actions/download-artifact@v4
+        with:
+          name: tabler-bundle-windows-nsis
+          path: src-tauri/target/release/bundle/nsis/
+
+      - name: Download Windows MSI build
+        uses: actions/download-artifact@v4
+        with:
+          name: tabler-bundle-windows-msi
+          path: src-tauri/target/release/bundle/msi/
+
+      - name: Download macOS build
+        uses: actions/download-artifact@v4
+        with:
+          name: tabler-bundle-macos-dmg
+          path: src-tauri/target/release/bundle/dmg/
+
+      - name: Download Linux build
+        uses: actions/download-artifact@v4
+        with:
+          name: tabler-bundle-linux-deb
+          path: src-tauri/target/release/bundle/deb/
+
+      - name: Generate updater manifest
+        run: node scripts/generate-updater-manifest.mjs ${{ github.ref_name }}
+
+      - name: Upload updater manifest to release
+        uses: softprops/upload-gh-release-asset@v1
+        with:
+          asset_path: src-tauri/target/release/latest.json
+          asset_name: latest.json
+          asset_content_type: application/json

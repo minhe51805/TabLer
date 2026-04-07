@@ -29,6 +29,10 @@ pub fn apply_window_profile_to_main(app: &AppHandle, profile: WindowProfile) -> 
         .get_webview_window("main")
         .ok_or_else(|| "Main window not found".to_string())?;
 
+    window
+        .set_decorations(false)
+        .map_err(|error| format!("Failed to disable native window decorations: {error}"))?;
+
     if let Ok(true) = window.is_maximized() {
         window
             .unmaximize()

@@ -38,7 +38,7 @@ jobs:
           cache: "npm"
 
       - name: Install Rust stable
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
@@ -119,8 +119,6 @@ jobs:
         run: node scripts/generate-updater-manifest.mjs ${{ github.ref_name }}
 
       - name: Upload updater manifest to release
-        uses: softprops/upload-gh-release-asset@v1
+        uses: softprops/action-gh-release@v1
         with:
-          asset_path: src-tauri/target/release/latest.json
-          asset_name: latest.json
-          asset_content_type: application/json
+          files: src-tauri/target/release/latest.json

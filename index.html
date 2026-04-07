@@ -122,14 +122,18 @@
             bootScreen.classList.add("is-hidden");
           }
         };
+        window.__TABLER_SET_BOOT_STATUS__ = function (message, tone) {
+          if (!bootStatus) return;
+          bootStatus.textContent = message;
+          bootStatus.classList.toggle("is-warning", tone === "warning");
+        };
 
         setTimeout(function () {
           if (window.__TABLER_BOOTED__) return;
-          if (bootStatus) {
-            bootStatus.classList.add("is-warning");
-            bootStatus.textContent =
-              "Startup is taking longer than expected. The frontend bundle may have failed to load or the WebView runtime may be blocked on this machine.";
-          }
+          window.__TABLER_SET_BOOT_STATUS__?.(
+            "Startup is taking longer than expected. The frontend bundle may have failed to load or the WebView runtime may be blocked on this machine.",
+            "warning"
+          );
           if (bootMetaTime) {
             bootMetaTime.textContent = "Still waiting after 8 seconds";
           }
@@ -137,11 +141,10 @@
 
         setTimeout(function () {
           if (window.__TABLER_BOOTED__) return;
-          if (bootStatus) {
-            bootStatus.classList.add("is-warning");
-            bootStatus.textContent =
-              "TableR is still waiting for the frontend to boot. If this stays here, please send a screenshot because the issue is now happening before React finishes startup.";
-          }
+          window.__TABLER_SET_BOOT_STATUS__?.(
+            "TableR is still waiting for the frontend to boot. If this stays here, please send a screenshot because the issue is now happening before React finishes startup.",
+            "warning"
+          );
           if (bootMetaTime) {
             bootMetaTime.textContent =
               "Still waiting after " + Math.round((Date.now() - startedAt) / 1000) + " seconds";
@@ -149,6 +152,15 @@
         }, 20000);
       })();
     </script>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module">
+      import("/src/main.tsx").catch((error) => {
+        console.error("[TableR boot] Failed to import main entry", error);
+        const message = error instanceof Error ? error.message : String(error ?? "Unknown import error");
+        window.__TABLER_SET_BOOT_STATUS__?.(
+          `Failed to load frontend bundle: ${message}`,
+          "warning"
+        );
+      });
+    </script>
   </body>
 </html>

@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Copy,
   Info,
+  LoaderCircle,
   Minus,
   Square,
   TriangleAlert,
@@ -29,7 +30,6 @@ import { useI18n, type AppLanguagePreference } from "./i18n";
 import { StartupConnectionManager } from "./components/StartupConnectionManager";
 import type { QueryEditorSessionState } from "./components/SQLEditor";
 import { AppTitleBar } from "./components/AppTitleBar";
-import { AppWorkspacePanel } from "./components/AppWorkspacePanel";
 import { AppKeyboardHandler } from "./components/AppKeyboardHandler";
 import { AppAboutModal } from "./components/AppAboutModal";
 import { AppPluginManagerModal } from "./components/AppPluginManagerModal";
@@ -143,10 +143,35 @@ const RECOVERABLE_CONNECTION_ERROR_PATTERNS = [/please connect first/i];
 const ConnectionForm = lazy(() => import("./components/ConnectionForm").then((module) => ({ default: module.ConnectionForm })));
 const AISettingsModal = lazy(() => import("./components/AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
 const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel").then((module) => ({ default: module.AISlidePanel })));
+const AppWorkspacePanel = lazy(() =>
+  import("./components/AppWorkspacePanel").then((module) => ({ default: module.AppWorkspacePanel })),
+);
 
 function isRecoverableConnectionError(error: string | null) {
   if (!error) return false;
   return RECOVERABLE_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(error));
+}
+
+function WorkspaceBootFallback() {
+  return (
+    <div className="workspace-empty">
+      <div className="workspace-empty-panel workspace-connecting-panel">
+        <div className="workspace-empty-hero">
+          <div className="workspace-empty-icon workspace-ready-icon">
+            <LoaderCircle className="workspace-empty-glyph w-10 h-10 animate-spin" />
+          </div>
+
+          <div className="workspace-empty-copy">
+            <span className="workspace-empty-kicker">Workspace</span>
+            <h2 className="workspace-empty-title">Loading workspace shell</h2>
+            <p className="workspace-empty-description">
+              Preparing panels, editors, and database tools.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function App() {
@@ -2033,42 +2058,46 @@ function App() {
         t={t}
       />
 
-      <AppWorkspacePanel
-        tabs={tabs}
-        activeTab={activeTab}
-        isConnected={isConnected}
-        isConnecting={isConnecting}
-        isSidebarCollapsed={isSidebarCollapsed}
-        sidebarWidth={sidebarWidth}
-        leftPanel={leftPanel}
-        isMetricsWorkspace={isMetricsWorkspace}
-        activeConn={activeConn}
-        currentDatabase={currentDatabase}
-        activeDatabaseLabel={activeDatabaseLabel}
-        activeQueryChrome={activeQueryChrome}
-        activeWorkspaceActivity={activeWorkspaceActivity}
-        querySessionByTab={querySessionByTab}
-        queryRunRequestByTab={queryRunRequestByTab}
-        error={error}
-        onClearError={clearError}
-        onNewQuery={handleNewQuery}
-        onClearVisibleTabs={handleClearVisibleTabs}
-        onRefreshWorkspace={handleRefreshWorkspace}
-        onExportDatabase={handleExportDatabase}
-        onOpenMetricsBoard={handleOpenMetricsBoard}
-        onFocusExplorerSearch={handleFocusExplorerSearch}
-        onOpenAISlidePanel={handleOpenAISlidePanel}
-        onHandleShowDatabaseWorkspace={handleShowDatabaseWorkspace}
-        onHandleQueryChromeChange={handleQueryChromeChange}
-        onHandleQuerySessionChange={handleQuerySessionChange}
-        onRunActiveQuery={handleRunActiveQuery}
-        showTerminalPanel={showTerminalPanel}
-        isExportingDatabase={isExportingDatabase}
-        onToggleTerminalPanel={handleToggleTerminalPanel}
-        onToggleSidebar={handleToggleSidebar}
-        onSetConnectionFormIntent={setConnectionFormIntent}
-        onHandleMouseDown={handleMouseDown}
-      />
+      <ErrorBoundary>
+        <Suspense fallback={<WorkspaceBootFallback />}>
+          <AppWorkspacePanel
+            tabs={tabs}
+            activeTab={activeTab}
+            isConnected={isConnected}
+            isConnecting={isConnecting}
+            isSidebarCollapsed={isSidebarCollapsed}
+            sidebarWidth={sidebarWidth}
+            leftPanel={leftPanel}
+            isMetricsWorkspace={isMetricsWorkspace}
+            activeConn={activeConn}
+            currentDatabase={currentDatabase}
+            activeDatabaseLabel={activeDatabaseLabel}
+            activeQueryChrome={activeQueryChrome}
+            activeWorkspaceActivity={activeWorkspaceActivity}
+            querySessionByTab={querySessionByTab}
+            queryRunRequestByTab={queryRunRequestByTab}
+            error={error}
+            onClearError={clearError}
+            onNewQuery={handleNewQuery}
+            onClearVisibleTabs={handleClearVisibleTabs}
+            onRefreshWorkspace={handleRefreshWorkspace}
+            onExportDatabase={handleExportDatabase}
+            onOpenMetricsBoard={handleOpenMetricsBoard}
+            onFocusExplorerSearch={handleFocusExplorerSearch}
+            onOpenAISlidePanel={handleOpenAISlidePanel}
+            onHandleShowDatabaseWorkspace={handleShowDatabaseWorkspace}
+            onHandleQueryChromeChange={handleQueryChromeChange}
+            onHandleQuerySessionChange={handleQuerySessionChange}
+            onRunActiveQuery={handleRunActiveQuery}
+            showTerminalPanel={showTerminalPanel}
+            isExportingDatabase={isExportingDatabase}
+            onToggleTerminalPanel={handleToggleTerminalPanel}
+            onToggleSidebar={handleToggleSidebar}
+            onSetConnectionFormIntent={setConnectionFormIntent}
+            onHandleMouseDown={handleMouseDown}
+          />
+        </Suspense>
+      </ErrorBoundary>
 
       <AppKeyboardHandler
         activeTab={activeTab}

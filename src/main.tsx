@@ -10,7 +10,12 @@ interface BootFailureSnapshot {
 
 type TablerBootGlobal = typeof globalThis & {
   __TABLER_HIDE_BOOT_SCREEN__?: () => void;
+  __TABLER_SET_BOOT_STATUS__?: (message: string, tone?: "warning") => void;
 };
+
+declare global {
+  interface Window extends TablerBootGlobal {}
+}
 
 const BOOT_FAILURE_STORAGE_KEY = "tabler.bootFailure";
 
@@ -168,18 +173,29 @@ function renderBootFailure(source: string, error: unknown) {
 }
 
 window.addEventListener("error", (event) => {
-  renderBootFailure("window.error", event.error ?? event.message);
+  const err = event.error ?? event.message;
+  console.error("[TableR] window.error:", err);
+  renderBootFailure("window.error", err);
 });
 
 window.addEventListener("unhandledrejection", (event) => {
-  renderBootFailure("unhandledrejection", event.reason);
+  const err = event.reason;
+  console.error("[TableR] unhandledrejection:", err);
+  renderBootFailure("unhandledrejection", err);
 });
 
 async function startApp() {
   try {
+    // Log what modules are being loaded to help debug
+    window.__TABLER_SET_BOOT_STATUS__?.("Importing App module...", "warning");
+
     const module = await import("./App");
+
     clearPersistedBootFailure();
     (globalThis as TablerBootGlobal).__TABLER_HIDE_BOOT_SCREEN__?.();
+
+    window.__TABLER_SET_BOOT_STATUS__?.("Rendering React tree...");
+
     root.render(
       <React.StrictMode>
         <module.default />
@@ -190,4 +206,6 @@ async function startApp() {
   }
 }
 
+// Log boot start
+window.__TABLER_SET_BOOT_STATUS__?.("Starting TableR...");
 void startApp();

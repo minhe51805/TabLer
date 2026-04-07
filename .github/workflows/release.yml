@@ -6,6 +6,9 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   NODE_VERSION: "20"
 
@@ -58,8 +61,8 @@ jobs:
           # macOS: use "-" to skip signing when no certificate configured
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
         with:
-          tagName: v__VERSION__
-          releaseName: "TableR v__VERSION__"
+          tagName: ${{ github.ref_name }}
+          releaseName: "TableR ${{ github.ref_name }}"
           releaseBody: "See the assets to download this version of TableR."
           releaseDraft: false
           prerelease: false

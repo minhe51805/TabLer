@@ -140,7 +140,7 @@ const RECOVERABLE_CONNECTION_ERROR_DELAY_MS = 3000;
 const UI_FONT_SCALE_STORAGE_KEY = "tabler.uiFontScale";
 const DEFAULT_WINDOW_MENU_SECTION: WindowMenuSectionKey = "file";
 const RECOVERABLE_CONNECTION_ERROR_PATTERNS = [/please connect first/i];
-const ConnectionForm = lazy(() => import("./components/ConnectionForm").then((module) => ({ default: module.ConnectionForm })));
+import { ConnectionForm } from "./components/ConnectionForm";
 const AISettingsModal = lazy(() => import("./components/AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
 const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel").then((module) => ({ default: module.AISlidePanel })));
 const AppWorkspacePanel = lazy(() =>
@@ -1975,13 +1975,11 @@ function App() {
     return (
       <div className="app-root startup-shell-active">
         {connectionFormIntent && (
-          <Suspense fallback={null}>
             <ConnectionForm
               initialIntent={connectionFormIntent}
               embeddedInStartupShell
               onClose={handleCloseConnectionForm}
             />
-          </Suspense>
         )}
 
         {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
@@ -2115,13 +2113,11 @@ function App() {
       />
 
       {connectionFormIntent && (
-        <Suspense fallback={null}>
           <ConnectionForm
             initialIntent={connectionFormIntent}
             embeddedInStartupShell={false}
             onClose={handleCloseConnectionForm}
           />
-        </Suspense>
       )}
       {showAISettings && (
         <Suspense fallback={null}>

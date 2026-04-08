@@ -28,20 +28,26 @@
   100% { background-position: 34px 34px; }
 }
 
-/* Disable expensive CSS animations on WebKit (Safari/macOS WKWebView) to prevent main thread blocking */
+/* Disable expensive animations and backdrop-filter on WebKit (macOS Safari/WKWebView) */
 @media (-webkit-min-device-pixel-ratio: 0) {
-  .startup-manager-backdrop::before {
-    animation: none !important;
-  }
-  .startup-hero-glow {
-    animation: none !important;
-  }
-  .startup-hero-glow::after {
-    animation: none !important;
-  }
-  .startup-manager-backdrop::after {
-    animation: none !important;
-  }
+  /* Animations */
+  .startup-manager-backdrop::before { animation: none !important; }
+  .startup-hero-glow { animation: none !important; }
+  .startup-hero-glow::after { animation: none !important; }
+  .startup-manager-backdrop::after { animation: none !important; }
+  .startup-hero-chart { animation: none !important; }
+  .startup-hero-chart::before { animation: none !important; }
+  .ai-workspace-orb { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+  .ai-workspace-orb::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+  .ai-workspace-pulse { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+  .ai-workspace-orb-pulse { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+  .staged-pulse { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+  .skeleton-shimmer { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+  .erd-spin { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+  .spin { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+  /* backdrop-filter is expensive on WKWebView */
+  .startup-manager-search { backdrop-filter: none !important; }
+  .startup-manager-backdrop { backdrop-filter: none !important; }
 }
 
 @keyframes fintech-glow-pulse {

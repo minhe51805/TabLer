@@ -188,19 +188,24 @@ async function startApp() {
   try {
     // Log what modules are being loaded to help debug
     window.__TABLER_SET_BOOT_STATUS__?.("Importing App module...", "warning");
+    console.log("[TableR] Step 1: Importing ./App module...");
+    const t0 = performance.now();
 
     const module = await import("./App");
 
+    console.log(`[TableR] Step 1 DONE: ./App imported in ${(performance.now() - t0).toFixed(0)}ms`);
     clearPersistedBootFailure();
     (globalThis as TablerBootGlobal).__TABLER_HIDE_BOOT_SCREEN__?.();
 
     window.__TABLER_SET_BOOT_STATUS__?.("Rendering React tree...");
+    console.log("[TableR] Step 2: Rendering React tree...");
 
     root.render(
       <React.StrictMode>
         <module.default />
       </React.StrictMode>,
     );
+    console.log("[TableR] Step 2 DONE: React tree rendered");
   } catch (error) {
     renderBootFailure("boot.import", error);
   }

@@ -44,32 +44,49 @@ use std::time::Duration;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let start_time = std::time::Instant::now();
+    eprintln!("[TableR] Application starting...");
+
     let db_manager = DatabaseManager::new();
+    eprintln!("[TableR] DatabaseManager initialized: {:?}", start_time.elapsed());
+
     let conn_storage = match ConnectionStorage::new() {
-        Ok(storage) => storage,
+        Ok(storage) => {
+            eprintln!("[TableR] ConnectionStorage initialized: {:?}", start_time.elapsed());
+            storage
+        }
         Err(error) => {
-            eprintln!("Failed to initialize connection storage: {error}");
+            eprintln!("[TableR] FAILED to initialize connection storage: {error}");
             return;
         }
     };
     let ai_storage = match AIStorage::new() {
-        Ok(storage) => storage,
+        Ok(storage) => {
+            eprintln!("[TableR] AIStorage initialized: {:?}", start_time.elapsed());
+            storage
+        }
         Err(error) => {
-            eprintln!("Failed to initialize AI storage: {error}");
+            eprintln!("[TableR] FAILED to initialize AI storage: {error}");
             return;
         }
     };
     let plugin_storage = match PluginStorage::new() {
-        Ok(storage) => storage,
+        Ok(storage) => {
+            eprintln!("[TableR] PluginStorage initialized: {:?}", start_time.elapsed());
+            storage
+        }
         Err(error) => {
-            eprintln!("Failed to initialize plugin storage: {error}");
+            eprintln!("[TableR] FAILED to initialize plugin storage: {error}");
             return;
         }
     };
     let tab_storage = match TabPersistence::new() {
-        Ok(storage) => storage,
+        Ok(storage) => {
+            eprintln!("[TableR] TabPersistence initialized: {:?}", start_time.elapsed());
+            storage
+        }
         Err(error) => {
-            eprintln!("Failed to initialize tab persistence storage: {error}");
+            eprintln!("[TableR] FAILED to initialize tab persistence storage: {error}");
             return;
         }
     };

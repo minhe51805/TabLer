@@ -43,6 +43,12 @@
         "type": "embedBootstrapper",
         "silent": true
       }
+    },
+    "macOS": {
+      "frameworks": [],
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "entitlements": null
     }
   },
   "plugins": {

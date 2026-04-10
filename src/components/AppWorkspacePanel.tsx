@@ -827,7 +827,7 @@ export function AppWorkspacePanel({
             <kbd className="kbd">Ctrl+`</kbd>
             <kbd className="kbd">Ctrl+Shift+P</kbd>
           </span>
-          <span>TableR v0.1.0</span>
+          <span>TableR v0.1.1</span>
         </div>
       </footer>
     </>

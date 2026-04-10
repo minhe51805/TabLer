@@ -34,7 +34,7 @@ export function AppAboutModal({ onClose }: AppAboutModalProps) {
         <div className="app-help-modal-grid">
           <div className="app-help-modal-metric">
             <span className="app-help-modal-metric-label">{t("help.about.version")}</span>
-            <strong className="app-help-modal-metric-value">0.1.0</strong>
+            <strong className="app-help-modal-metric-value">0.1.1</strong>
           </div>
           <div className="app-help-modal-metric">
             <span className="app-help-modal-metric-label">{t("help.about.build")}</span>

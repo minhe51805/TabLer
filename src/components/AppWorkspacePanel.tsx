@@ -239,7 +239,7 @@ export function AppWorkspacePanel({
               </div>
 
               <div className="workspace-empty-copy flex flex-col items-center w-full text-center gap-1.5 m-0 p-0">
-                <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--accent)] opacity-80">{t("common.loading", "LOADING...")}</span>
+                <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--accent)] opacity-80">{t("common.loading")}</span>
                 <h2 className="text-xl font-bold text-[var(--text-primary)] truncate w-full max-w-[280px]" title={activeConn.name || t("workspace.ready.connectedWorkspace")}>
                   {activeConn.name || t("workspace.ready.connectedWorkspace")}
                 </h2>

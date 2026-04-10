@@ -545,6 +545,123 @@ export function ConnectionDetailsStep({
               </div>
             )}
 
+            {/* SSH Tunnel section */}
+            <div className="connection-form-toggle-row" style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>
+              <label className="connection-form-toggle-card">
+                <input
+                  type="checkbox"
+                  checked={formData.ssh_config?.enabled || false}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    onFieldChange("ssh_config", {
+                      enabled,
+                      host: formData.ssh_config?.host || "",
+                      port: formData.ssh_config?.port || 22,
+                      user: formData.ssh_config?.user || "",
+                      authType: formData.ssh_config?.authType || "password",
+                      password: formData.ssh_config?.password || "",
+                      privateKeyPath: formData.ssh_config?.privateKeyPath || "",
+                      passphrase: formData.ssh_config?.passphrase || ""
+                    });
+                  }}
+                  className="sr-only"
+                />
+                <div className="connection-form-toggle-copy">
+                  <span className="connection-form-toggle-title">SSH Tunnel</span>
+                  <span className="connection-form-toggle-note">Connect to the database via SSH.</span>
+                </div>
+                <div className="connection-form-toggle-track" aria-hidden="true">
+                  <div className="connection-form-toggle-thumb" />
+                </div>
+              </label>
+            </div>
+
+            {formData.ssh_config?.enabled && (
+              <div className="connection-form-grid" style={{ marginBottom: '1.5rem' }}>
+                <div className="connection-form-field">
+                  <label className="form-label uppercase tracking-wide">SSH Host</label>
+                  <input
+                    type="text"
+                    value={formData.ssh_config.host || ""}
+                    onChange={(e) => onFieldChange("ssh_config", { ...formData.ssh_config!, host: e.target.value })}
+                    placeholder="example.com or IP"
+                    className="input h-11"
+                  />
+                </div>
+                <div className="connection-form-field">
+                  <label className="form-label uppercase tracking-wide">SSH Port</label>
+                  <input
+                    type="number"
+                    value={formData.ssh_config.port || ""}
+                    onChange={(e) => onFieldChange("ssh_config", { ...formData.ssh_config!, port: parseInt(e.target.value) || 22 })}
+                    placeholder="22"
+                    className="input h-11"
+                  />
+                </div>
+                <div className="connection-form-field">
+                  <label className="form-label uppercase tracking-wide">SSH Username</label>
+                  <input
+                    type="text"
+                    value={formData.ssh_config.user || ""}
+                    onChange={(e) => onFieldChange("ssh_config", { ...formData.ssh_config!, user: e.target.value })}
+                    placeholder="ubuntu"
+                    className="input h-11"
+                  />
+                </div>
+                <div className="connection-form-field">
+                  <label className="form-label uppercase tracking-wide">SSH Auth Type</label>
+                  <select
+                    value={formData.ssh_config.authType || "password"}
+                    onChange={(e) => onFieldChange("ssh_config", { ...formData.ssh_config!, authType: e.target.value as any })}
+                    className="input h-11"
+                  >
+                    <option value="password">Password</option>
+                    <option value="privateKey">Private Key File</option>
+                    <option value="privateKeyWithPassphrase">Private Key + Passphrase</option>
+                  </select>
+                </div>
+                
+                {formData.ssh_config.authType === "password" && (
+                  <div className="connection-form-field">
+                    <label className="form-label uppercase tracking-wide">SSH Password</label>
+                    <input
+                      type="password"
+                      value={formData.ssh_config.password || ""}
+                      onChange={(e) => onFieldChange("ssh_config", { ...formData.ssh_config!, password: e.target.value })}
+                      placeholder="Password"
+                      className="input h-11"
+                    />
+                  </div>
+                )}
+                
+                {(formData.ssh_config.authType === "privateKey" || formData.ssh_config.authType === "privateKeyWithPassphrase") && (
+                  <div className="connection-form-field">
+                    <label className="form-label uppercase tracking-wide">Private Key File Path</label>
+                    <input
+                      type="text"
+                      value={formData.ssh_config.privateKeyPath || ""}
+                      onChange={(e) => onFieldChange("ssh_config", { ...formData.ssh_config!, privateKeyPath: e.target.value })}
+                      placeholder="~/.ssh/id_rsa"
+                      className="input h-11"
+                    />
+                  </div>
+                )}
+                
+                {formData.ssh_config.authType === "privateKeyWithPassphrase" && (
+                  <div className="connection-form-field">
+                    <label className="form-label uppercase tracking-wide">Passphrase</label>
+                    <input
+                      type="password"
+                      value={formData.ssh_config.passphrase || ""}
+                      onChange={(e) => onFieldChange("ssh_config", { ...formData.ssh_config!, passphrase: e.target.value })}
+                      placeholder="Passphrase"
+                      className="input h-11"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Startup commands section */}
             <div className="connection-form-field">
               <div className="connection-form-field-label-row">
@@ -561,6 +678,24 @@ export function ConnectionDetailsStep({
               />
               <span className="connection-form-field-hint">
                 SQL executed automatically after connecting. Separate multiple commands with semicolons.
+              </span>
+            </div>
+
+            <div className="connection-form-field-group">
+              <div className="connection-form-field-header">
+                <label className="connection-form-label">
+                  Pre-connect Shell Script
+                </label>
+              </div>
+              <textarea
+                value={formData.pre_connect_script || ""}
+                onChange={(e) => onFieldChange("pre_connect_script", e.target.value)}
+                placeholder="#!/bin/bash&#10;aws sso login --profile prod"
+                className="input connection-form-textarea"
+                rows={3}
+              />
+              <span className="connection-form-field-hint">
+                Shell script executed locally before establishing the connection to the database.
               </span>
             </div>
 

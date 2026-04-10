@@ -57,9 +57,7 @@ impl AIStorage {
     }
 
     pub fn new() -> Result<Self> {
-        let data_dir = dirs::data_dir()
-            .context("Cannot find user data directory")?
-            .join("TableR");
+        let data_dir = crate::utils::paths::resolve_data_dir()?;
 
         fs::create_dir_all(&data_dir)?;
 

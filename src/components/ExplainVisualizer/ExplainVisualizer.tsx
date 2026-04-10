@@ -3,7 +3,7 @@
  * Renders a parsed explain plan as an interactive, collapsible tree.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   ChevronRight,
   ChevronDown,
@@ -12,9 +12,13 @@ import {
   X,
   TreePine,
   ScrollText,
+  Workflow,
 } from "lucide-react";
 import type { ParsedExplainPlan, ExplainNode } from "../../utils/explain-parser";
 import { getNodeCategory } from "../../utils/explain-parser";
+import { ExplainDiagram } from "./ExplainDiagram";
+
+type ExplainViewMode = "tree" | "diagram" | "raw";
 
 interface ExplainVisualizerProps {
   plan: ParsedExplainPlan;
@@ -186,10 +190,15 @@ function buildTooltip(node: ExplainNode): string {
 }
 
 export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
-  const nodeMap = new Map<string, ExplainNode>();
-  for (const node of plan.nodes) {
-    nodeMap.set(node.id, node);
-  }
+  const nodeMap = useMemo(() => {
+    const map = new Map<string, ExplainNode>();
+    for (const node of plan.nodes) {
+      map.set(node.id, node);
+    }
+    return map;
+  }, [plan.nodes]);
+
+  const allNodeIds = useMemo(() => new Set(nodeMap.keys()), [nodeMap]);
 
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => {
     // Expand first two levels by default
@@ -206,8 +215,7 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
     return initial;
   });
 
-  const [showRaw, setShowRaw] = useState(false);
-  const [tooltip] = useState<{ x: number; y: number; content: string } | null>(null);
+  const [viewMode, setViewMode] = useState<ExplainViewMode>("tree");
 
   const handleToggle = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -219,12 +227,12 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
   }, []);
 
   const handleExpandAll = useCallback(() => {
-    setExpandedIds(new Set(nodeMap.keys()));
-  }, [nodeMap]);
+    setExpandedIds(new Set(allNodeIds));
+  }, [allNodeIds]);
 
   const handleCollapseAll = useCallback(() => {
     setExpandedIds(new Set(plan.rootIds));
-  }, [plan.rootIds, nodeMap]);
+  }, [plan.rootIds]);
 
   const planState: ParsedPlanState = { analyzed: plan.analyzed, nodes: nodeMap, expandedIds };
 
@@ -248,31 +256,55 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
         </div>
 
         <div className="explain-visualizer-header-right">
-          <button
-            type="button"
-            className="explain-header-btn"
-            onClick={handleExpandAll}
-            title="Expand all nodes"
-          >
-            Expand All
-          </button>
-          <button
-            type="button"
-            className="explain-header-btn"
-            onClick={handleCollapseAll}
-            title="Collapse all nodes"
-          >
-            Collapse All
-          </button>
-          <button
-            type="button"
-            className={`explain-header-btn ${showRaw ? "active" : ""}`}
-            onClick={() => setShowRaw((v) => !v)}
-            title="Toggle raw output"
-          >
-            <ScrollText className="!w-3.5 !h-3.5" />
-            <span>Raw</span>
-          </button>
+          <div className="explain-view-mode-tabs">
+            <button
+              type="button"
+              className={`explain-view-mode-tab ${viewMode === "tree" ? "active" : ""}`}
+              onClick={() => setViewMode("tree")}
+              title="Tree view"
+            >
+              <TreePine className="!w-3.5 !h-3.5" />
+              <span>Tree</span>
+            </button>
+            <button
+              type="button"
+              className={`explain-view-mode-tab ${viewMode === "diagram" ? "active" : ""}`}
+              onClick={() => setViewMode("diagram")}
+              title="Diagram view"
+            >
+              <Workflow className="!w-3.5 !h-3.5" />
+              <span>Diagram</span>
+            </button>
+            <button
+              type="button"
+              className={`explain-view-mode-tab ${viewMode === "raw" ? "active" : ""}`}
+              onClick={() => setViewMode("raw")}
+              title="Raw output"
+            >
+              <ScrollText className="!w-3.5 !h-3.5" />
+              <span>Raw</span>
+            </button>
+          </div>
+          {viewMode === "tree" && (
+            <>
+              <button
+                type="button"
+                className="explain-header-btn"
+                onClick={handleExpandAll}
+                title="Expand all nodes"
+              >
+                Expand All
+              </button>
+              <button
+                type="button"
+                className="explain-header-btn"
+                onClick={handleCollapseAll}
+                title="Collapse all nodes"
+              >
+                Collapse All
+              </button>
+            </>
+          )}
           {onClose && (
             <button
               type="button"
@@ -317,8 +349,14 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
       )}
 
       <div className="explain-plan-body">
-        {showRaw ? (
+        {viewMode === "raw" ? (
           <pre className="explain-raw-output">{plan.rawText}</pre>
+        ) : viewMode === "diagram" ? (
+          plan.nodes.length === 0 ? (
+            <div className="explain-empty">No plan data available.</div>
+          ) : (
+            <ExplainDiagram plan={plan} />
+          )
         ) : plan.nodes.length === 0 ? (
           <div className="explain-empty">No plan data available.</div>
         ) : (
@@ -341,14 +379,6 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
         )}
       </div>
 
-      {tooltip && (
-        <div
-          className="explain-tooltip"
-          style={{ left: tooltip.x + 12, top: tooltip.y + 12 }}
-        >
-          {tooltip.content}
-        </div>
-      )}
     </div>
   );
 }

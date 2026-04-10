@@ -18,7 +18,6 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "./stores/appStore";
 import { EventCenter } from "./stores/event-center";
@@ -29,20 +28,12 @@ import { useI18n, type AppLanguagePreference } from "./i18n";
 import { StartupConnectionManager } from "./components/StartupConnectionManager";
 import type { QueryEditorSessionState } from "./components/SQLEditor";
 import { AppTitleBar } from "./components/AppTitleBar";
-import { AppWorkspacePanel } from "./components/AppWorkspacePanel";
 import { AppKeyboardHandler } from "./components/AppKeyboardHandler";
-import { AppAboutModal } from "./components/AppAboutModal";
-import { AppPluginManagerModal } from "./components/AppPluginManagerModal";
-import { AppShortcutsModal } from "./components/AppShortcutsModal";
+import { AppGlobalModals } from "./components/layout/AppGlobalModals";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { QueryHistoryPanel } from "./components/QueryHistory/QueryHistoryPanel";
 import { SQLFavoritesPanel } from "./components/SQLFavorites/SQLFavoritesPanel";
-import { RowInspector, type RowInspectorData } from "./components/RowInspector/RowInspector";
-import { CommandPalette } from "./components/CommandPalette/CommandPalette";
-import { QuickSwitcher } from "./components/QuickSwitcher/QuickSwitcher";
-import { ThemeCustomizer } from "./components/ThemeCustomizer/ThemeCustomizer";
-import { SafeModeConfirmDialog } from "./components/SafeMode/SafeModeConfirmDialog";
-import { ConnectionExporter, ConnectionImporter } from "./components/ConnectionExporter";
+import { RowInspector } from "./components/RowInspector/RowInspector";
 import { useCommandPaletteStore } from "./stores/commandPaletteStore";
 import { useQuickSwitcherStore } from "./stores/quickSwitcherStore";
 import { getAdminQueryPreset, type AdminQueryKind } from "./utils/admin-query-presets";
@@ -52,10 +43,12 @@ import { getNewQueryTabTitle, getQueryProfile } from "./utils/query-profile";
 import { buildDatabaseFileConnection, type DatabaseFileSelection } from "./utils/database-file";
 import { splitSqlStatements } from "./utils/sqlStatements";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "./utils/ui-scale";
+import { useConnectionHealthMonitor } from "./hooks/useConnectionHealthMonitor";
+import { useDeepLink } from "./hooks/useDeepLink";
 import "./index.css";
 import "./App.css";
 
-interface QueryChromeState {
+export interface QueryChromeState {
   isRunning: boolean;
   executionTimeMs?: number;
   rowCount?: number;
@@ -107,32 +100,6 @@ interface WindowMenuItem {
   onIncrease?: () => void;
 }
 
-// --- DeepLink type definitions ---
-interface DeepLinkConnectPayload {
-  action: "connect";
-  host?: string;
-  port?: number;
-  database?: string;
-  db_type?: string;
-  user?: string;
-  password?: string;
-}
-
-interface DeepLinkQueryPayload {
-  action: "query";
-  connection?: string;
-  sql?: string;
-}
-
-interface DeepLinkTablePayload {
-  action: "table";
-  connection?: string;
-  database?: string;
-  table?: string;
-}
-
-type DeepLinkPayload = DeepLinkConnectPayload | DeepLinkQueryPayload | DeepLinkTablePayload;
-
 const GLOBAL_ERROR_AUTO_DISMISS_MS = 8000;
 const GLOBAL_TOAST_AUTO_DISMISS_MS = 4200;
 const GLOBAL_TOAST_EXIT_MS = 220;
@@ -140,16 +107,26 @@ const RECOVERABLE_CONNECTION_ERROR_DELAY_MS = 3000;
 const UI_FONT_SCALE_STORAGE_KEY = "tabler.uiFontScale";
 const DEFAULT_WINDOW_MENU_SECTION: WindowMenuSectionKey = "file";
 const RECOVERABLE_CONNECTION_ERROR_PATTERNS = [/please connect first/i];
-const ConnectionForm = lazy(() => import("./components/ConnectionForm").then((module) => ({ default: module.ConnectionForm })));
-const AISettingsModal = lazy(() => import("./components/AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
+import { ConnectionForm } from "./components/ConnectionForm";
 const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel").then((module) => ({ default: module.AISlidePanel })));
+const AppWorkspacePanel = lazy(() =>
+  import("./components/AppWorkspacePanel").then((module) => ({ default: module.AppWorkspacePanel })),
+);
 
 function isRecoverableConnectionError(error: string | null) {
   if (!error) return false;
   return RECOVERABLE_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(error));
 }
 
+import { WorkspaceBootFallback } from "./components/layout/WorkspaceBootFallback";
+import { WorkspaceErrorFallback } from "./components/layout/WorkspaceErrorFallback";
+import { useModalStore } from "./stores/modalStore";
+import { useAppLayoutStore } from "./stores/appLayoutStore";
+
+/* replaced WorkspaceBootFallback */
+
 function App() {
+  useConnectionHealthMonitor();
   const { language, languagePreference, setLanguage, t } = useI18n();
   const { theme: activeTheme, activateTheme } = useTheme();
   const {
@@ -190,26 +167,36 @@ function App() {
     }))
   );
 
-  const [connectionFormIntent, setConnectionFormIntent] = useState<"connect" | "bootstrap" | null>(null);
-  const [showStartupConnectionManager, setShowStartupConnectionManager] = useState(true);
-  const [showAISettings, setShowAISettings] = useState(false);
-  const [showAboutModal, setShowAboutModal] = useState(false);
-  const [showPluginManager, setShowPluginManager] = useState(false);
-  const [showKeyboardShortcutsModal, setShowKeyboardShortcutsModal] = useState(false);
+  const {
+    connectionFormIntent, setConnectionFormIntent,
+    showStartupConnectionManager, setShowStartupConnectionManager,
+    showAISettings, setShowAISettings,
+    showAboutModal, setShowAboutModal,
+    showPluginManager, setShowPluginManager,
+    showKeyboardShortcutsModal, setShowKeyboardShortcutsModal,
+    showThemeCustomizer, setShowThemeCustomizer,
+    showConnectionExporter, setShowConnectionExporter,
+    showConnectionImporter, setShowConnectionImporter
+  } = useModalStore();
+
+  const {
+    showTerminalPanel, setShowTerminalPanel,
+    showQueryHistory, setShowQueryHistory,
+    showSQLFavorites, setShowSQLFavorites,
+    showRowInspector, setShowRowInspector,
+    rowInspectorData, setRowInspectorData,
+    leftPanel, setLeftPanel,
+    isSidebarCollapsed, setIsSidebarCollapsed,
+    sidebarWidth, setSidebarWidth,
+    isWindowMaximized, setIsWindowMaximized,
+    isWindowFocused, setIsWindowFocused,
+    forceLauncherVisible, setForceLauncherVisible
+  } = useAppLayoutStore();
+
   const [showAISlidePanel, setShowAISlidePanel] = useState(false);
   const [hasMountedAISlidePanel, setHasMountedAISlidePanel] = useState(false);
-  const [showTerminalPanel, setShowTerminalPanel] = useState(false);
-  const [showQueryHistory, setShowQueryHistory] = useState(false);
-  const [showSQLFavorites, setShowSQLFavorites] = useState(false);
-  const [showRowInspector, setShowRowInspector] = useState(false);
-  const [rowInspectorData, setRowInspectorData] = useState<RowInspectorData | null>(null);
   const [isExportingDatabase, setIsExportingDatabase] = useState(false);
   const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
-  const [leftPanel, setLeftPanel] = useState<"database" | "metrics">("database");
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(320);
-  const [isWindowMaximized, setIsWindowMaximized] = useState(false);
-  const [isWindowFocused, setIsWindowFocused] = useState(true);
   const [queryChromeByTab, setQueryChromeByTab] = useState<Record<string, QueryChromeState>>({});
   const [querySessionByTab, setQuerySessionByTab] = useState<Record<string, QueryEditorSessionState>>({});
   const [queryRunRequestByTab, setQueryRunRequestByTab] = useState<Record<string, number>>({});
@@ -218,7 +205,6 @@ function App() {
   >({});
   const [globalToast, setGlobalToast] = useState<GlobalToastState | null>(null);
   const [isRecoverableErrorDelayActive, setIsRecoverableErrorDelayActive] = useState(false);
-  const [forceLauncherVisible, setForceLauncherVisible] = useState(false);
   const [isWindowMenuOpen, setIsWindowMenuOpen] = useState(false);
   const [activeWindowMenuSection, setActiveWindowMenuSection] =
     useState<WindowMenuSectionKey | null>(null);
@@ -232,9 +218,6 @@ function App() {
   const toggleVimMode = useEditorPreferencesStore((state) => state.toggleVimMode);
   const { open: openCommandPalette } = useCommandPaletteStore();
   const { open: openQuickSwitcher } = useQuickSwitcherStore();
-  const [showThemeCustomizer, setShowThemeCustomizer] = useState(false);
-  const [showConnectionExporter, setShowConnectionExporter] = useState(false);
-  const [showConnectionImporter, setShowConnectionImporter] = useState(false);
 
   const isResizing = useRef(false);
   const startX = useRef(0);
@@ -1622,92 +1605,7 @@ function App() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [activeConnectionId, connectedIds, tabs]);
 
-  // Deep link handler: listen for tabler:// URLs from the backend
-  useEffect(() => {
-    if (!isDesktopWindow) return;
-
-    let unlisten: (() => void) | undefined;
-
-    listen<string>("deep-link", async (event: { payload: string }) => {
-      const url: string = event.payload;
-      try {
-        const parsed = await invoke<DeepLinkPayload>("parse_deep_link", { url });
-
-        if (parsed.action === "connect") {
-          const conn = parsed as DeepLinkConnectPayload;
-          const confirmed = window.confirm(
-            `Open TableR and connect to ${conn.host || "database"}:${conn.port || ""}?`
-          );
-          if (!confirmed) return;
-
-          handleOpenConnectionForm("connect");
-          // Dispatch to connection form via event
-          window.dispatchEvent(new CustomEvent("tabler-deep-link-connect", {
-            detail: {
-              host: conn.host,
-              port: conn.port,
-              database: conn.database,
-              dbType: conn.db_type,
-              user: conn.user,
-              password: conn.password,
-            },
-          }));
-        } else if (parsed.action === "query") {
-          const q = parsed as DeepLinkQueryPayload;
-          const sql = q.sql || "";
-          if (!sql) return;
-
-          if (!isConnected) {
-            const confirmed = window.confirm(
-              `Open query tab with SQL?\n\n${sql.length > 200 ? sql.slice(0, 200) + "..." : sql}\n\n(Requires an active connection to execute.)`
-            );
-            if (!confirmed) return;
-          }
-
-          if (!isConnected || !activeConnectionId) {
-            handleOpenConnectionForm("connect");
-            return;
-          }
-
-          const tabId = `query-${crypto.randomUUID()}`;
-          addTab({
-            id: tabId,
-            type: "query",
-            title: "Deep Link Query",
-            connectionId: activeConnectionId,
-            database: currentDatabase || undefined,
-            content: sql,
-          });
-
-          setQueryRunRequestByTab((prev) => ({
-            ...prev,
-            [tabId]: (prev[tabId] ?? 0) + 1,
-          }));
-        } else if (parsed.action === "table") {
-          const t = parsed as DeepLinkTablePayload;
-          const connectionId = t.connection || activeConnectionId;
-          if (!connectionId) {
-            handleOpenConnectionForm("connect");
-            return;
-          }
-
-          const tabId = `table-${crypto.randomUUID()}`;
-          addTab({
-            id: tabId,
-            type: "table",
-            title: t.table || "Table",
-            connectionId,
-            database: t.database || currentDatabase || undefined,
-            tableName: t.table,
-          });
-        }
-      } catch (err) {
-        console.error("[DeepLink] Failed to parse URL:", url, err);
-      }
-    }).then((off: () => void) => { unlisten = off; });
-
-    return () => { unlisten?.(); };
-  }, [isDesktopWindow, isConnected, activeConnectionId, currentDatabase, addTab, setActiveTab, setQueryRunRequestByTab]);
+  useDeepLink(isDesktopWindow, isConnected, handleOpenConnectionForm, setQueryRunRequestByTab);
 
   useEffect(() => {
     const handleOpenAI = (event: Event) => {
@@ -1950,13 +1848,11 @@ function App() {
     return (
       <div className="app-root startup-shell-active">
         {connectionFormIntent && (
-          <Suspense fallback={null}>
             <ConnectionForm
               initialIntent={connectionFormIntent}
               embeddedInStartupShell
               onClose={handleCloseConnectionForm}
             />
-          </Suspense>
         )}
 
         {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
@@ -2033,42 +1929,60 @@ function App() {
         t={t}
       />
 
-      <AppWorkspacePanel
-        tabs={tabs}
-        activeTab={activeTab}
-        isConnected={isConnected}
-        isConnecting={isConnecting}
-        isSidebarCollapsed={isSidebarCollapsed}
-        sidebarWidth={sidebarWidth}
-        leftPanel={leftPanel}
-        isMetricsWorkspace={isMetricsWorkspace}
-        activeConn={activeConn}
-        currentDatabase={currentDatabase}
-        activeDatabaseLabel={activeDatabaseLabel}
-        activeQueryChrome={activeQueryChrome}
-        activeWorkspaceActivity={activeWorkspaceActivity}
-        querySessionByTab={querySessionByTab}
-        queryRunRequestByTab={queryRunRequestByTab}
-        error={error}
-        onClearError={clearError}
-        onNewQuery={handleNewQuery}
-        onClearVisibleTabs={handleClearVisibleTabs}
-        onRefreshWorkspace={handleRefreshWorkspace}
-        onExportDatabase={handleExportDatabase}
-        onOpenMetricsBoard={handleOpenMetricsBoard}
-        onFocusExplorerSearch={handleFocusExplorerSearch}
-        onOpenAISlidePanel={handleOpenAISlidePanel}
-        onHandleShowDatabaseWorkspace={handleShowDatabaseWorkspace}
-        onHandleQueryChromeChange={handleQueryChromeChange}
-        onHandleQuerySessionChange={handleQuerySessionChange}
-        onRunActiveQuery={handleRunActiveQuery}
-        showTerminalPanel={showTerminalPanel}
-        isExportingDatabase={isExportingDatabase}
-        onToggleTerminalPanel={handleToggleTerminalPanel}
-        onToggleSidebar={handleToggleSidebar}
-        onSetConnectionFormIntent={setConnectionFormIntent}
-        onHandleMouseDown={handleMouseDown}
-      />
+      <ErrorBoundary
+        maxRetries={2}
+        onMaxRetriesExceeded={() => {
+          useAppStore.setState({ activeConnectionId: null });
+        }}
+        fallback={(error, reset) => (
+          <WorkspaceErrorFallback
+            error={error}
+            onRetry={reset}
+            onGoToLauncher={() => {
+              useAppStore.setState({ activeConnectionId: null });
+            }}
+          />
+        )}
+      >
+        <Suspense fallback={<WorkspaceBootFallback />}>
+          <AppWorkspacePanel
+            tabs={tabs}
+            activeTab={activeTab}
+            isConnected={isConnected}
+            isConnecting={isConnecting}
+            isSidebarCollapsed={isSidebarCollapsed}
+            sidebarWidth={sidebarWidth}
+            leftPanel={leftPanel}
+            isMetricsWorkspace={isMetricsWorkspace}
+            activeConn={activeConn}
+            currentDatabase={currentDatabase}
+            activeDatabaseLabel={activeDatabaseLabel}
+            activeQueryChrome={activeQueryChrome}
+            activeWorkspaceActivity={activeWorkspaceActivity}
+            querySessionByTab={querySessionByTab}
+            queryRunRequestByTab={queryRunRequestByTab}
+            error={error}
+            onClearError={clearError}
+            onNewQuery={handleNewQuery}
+            onClearVisibleTabs={handleClearVisibleTabs}
+            onRefreshWorkspace={handleRefreshWorkspace}
+            onExportDatabase={handleExportDatabase}
+            onOpenMetricsBoard={handleOpenMetricsBoard}
+            onFocusExplorerSearch={handleFocusExplorerSearch}
+            onOpenAISlidePanel={handleOpenAISlidePanel}
+            onHandleShowDatabaseWorkspace={handleShowDatabaseWorkspace}
+            onHandleQueryChromeChange={handleQueryChromeChange}
+            onHandleQuerySessionChange={handleQuerySessionChange}
+            onRunActiveQuery={handleRunActiveQuery}
+            showTerminalPanel={showTerminalPanel}
+            isExportingDatabase={isExportingDatabase}
+            onToggleTerminalPanel={handleToggleTerminalPanel}
+            onToggleSidebar={handleToggleSidebar}
+            onSetConnectionFormIntent={setConnectionFormIntent}
+            onHandleMouseDown={handleMouseDown}
+          />
+        </Suspense>
+      </ErrorBoundary>
 
       <AppKeyboardHandler
         activeTab={activeTab}
@@ -2086,56 +2000,35 @@ function App() {
       />
 
       {connectionFormIntent && (
-        <Suspense fallback={null}>
           <ConnectionForm
             initialIntent={connectionFormIntent}
             embeddedInStartupShell={false}
             onClose={handleCloseConnectionForm}
           />
-        </Suspense>
       )}
-      {showAISettings && (
-        <Suspense fallback={null}>
-          <AISettingsModal onClose={() => setShowAISettings(false)} />
-        </Suspense>
-      )}
-      {showAboutModal && (
-        <AppAboutModal onClose={() => setShowAboutModal(false)} />
-      )}
-      {showPluginManager && (
-        <AppPluginManagerModal onClose={() => setShowPluginManager(false)} />
-      )}
-      {showKeyboardShortcutsModal && (
-        <AppShortcutsModal onClose={() => setShowKeyboardShortcutsModal(false)} />
-      )}
-      {showThemeCustomizer && (
-        <ThemeCustomizer onClose={() => setShowThemeCustomizer(false)} />
-      )}
-      <CommandPalette
-        onToggleSidebar={handleToggleSidebar}
-        onToggleTerminal={() => setShowTerminalPanel((v) => !v)}
-        onRunQuery={handleRunActiveQuery}
-        onFormatSQL={() => window.dispatchEvent(new CustomEvent("format-sql-palette"))}
-        onFocusSQL={() => window.dispatchEvent(new CustomEvent("focus-sql-editor-palette"))}
-        onFocusResults={() => window.dispatchEvent(new CustomEvent("focus-results-palette"))}
-        onToggleQueryHistory={handleToggleQueryHistory}
-        onToggleSQLFavorites={handleToggleSQLFavorites}
-        onOpenKeyboardShortcuts={() => setShowKeyboardShortcutsModal(true)}
-        onOpenPluginManager={() => setShowPluginManager(true)}
-        onOpenSettings={handleOpenThemeCustomizer}
-        onOpenAbout={() => setShowAboutModal(true)}
-        onOpenSQLFile={() => window.dispatchEvent(new CustomEvent("open-sql-file-palette"))}
-        onImportSQLFile={() => window.dispatchEvent(new CustomEvent("import-sql-file-palette"))}
-        onClearAIHistory={() => window.dispatchEvent(new CustomEvent("clear-ai-history-palette"))}
-        onToggleAISlidePanel={(open) => setShowAISlidePanel(open)}
-      />
-      <QuickSwitcher
-        onOpenSavedQuery={(id) => {
-          window.dispatchEvent(new CustomEvent("open-saved-query-switcher", { detail: { id } }));
-        }}
-        onConnect={(connectionId) => {
-          window.dispatchEvent(new CustomEvent("connect-switcher", { detail: { connectionId } }));
-        }}
+      <AppGlobalModals
+        showAISettings={showAISettings}
+        setShowAISettings={setShowAISettings}
+        showAboutModal={showAboutModal}
+        setShowAboutModal={setShowAboutModal}
+        showPluginManager={showPluginManager}
+        setShowPluginManager={setShowPluginManager}
+        showKeyboardShortcutsModal={showKeyboardShortcutsModal}
+        setShowKeyboardShortcutsModal={setShowKeyboardShortcutsModal}
+        showThemeCustomizer={showThemeCustomizer}
+        setShowThemeCustomizer={setShowThemeCustomizer}
+        showConnectionExporter={showConnectionExporter}
+        setShowConnectionExporter={setShowConnectionExporter}
+        showConnectionImporter={showConnectionImporter}
+        setShowConnectionImporter={setShowConnectionImporter}
+        connections={connections}
+        handleToggleSidebar={handleToggleSidebar}
+        setShowTerminalPanel={setShowTerminalPanel}
+        handleRunActiveQuery={handleRunActiveQuery}
+        handleToggleQueryHistory={handleToggleQueryHistory}
+        handleToggleSQLFavorites={handleToggleSQLFavorites}
+        handleOpenThemeCustomizer={handleOpenThemeCustomizer}
+        setShowAISlidePanel={setShowAISlidePanel}
       />
       {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
         <StartupConnectionManager
@@ -2214,21 +2107,6 @@ function App() {
           }
         }}
       />
-      <SafeModeConfirmDialog />
-      {showConnectionExporter && (
-        <ConnectionExporter
-          connections={connections}
-          onClose={() => setShowConnectionExporter(false)}
-        />
-      )}
-      {showConnectionImporter && (
-        <ConnectionImporter
-          onImport={(_imported) => {
-            void useAppStore.getState().loadSavedConnections();
-          }}
-          onClose={() => setShowConnectionImporter(false)}
-        />
-      )}
       {globalToastMarkup}
     </div>
   );

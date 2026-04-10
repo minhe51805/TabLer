@@ -61,7 +61,8 @@ export function FKLookupCellEditor({
       .finally(() => {
         setIsLoading(false);
       });
-  }, [referencedTable, referencedColumn]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- seedValue included to re-resolve label when value changes
+  }, [referencedTable, referencedColumn, seedValue]);
 
   useEffect(() => {
     selectRef.current?.focus();

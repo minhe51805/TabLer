@@ -79,6 +79,7 @@ interface DatabaseTreeProps {
   // Interactions
   onToggleDb: (db: DatabaseInfo) => void;
   onTableClick: (table: Pick<TableInfo, "name" | "schema">) => void;
+  onTableDoubleClick?: (table: Pick<TableInfo, "name" | "schema">) => void;
   onStructureClick: (e: React.MouseEvent, table: Pick<TableInfo, "name" | "schema">) => void;
   onObjectSqlClick: (e: React.MouseEvent, object: SchemaObjectInfo) => void;
   onTableContextMenu: (event: React.MouseEvent, table: Pick<TableInfo, "name" | "schema" | "row_count">) => void;
@@ -123,6 +124,7 @@ export function DatabaseTree({
   t,
   onToggleDb,
   onTableClick,
+  onTableDoubleClick,
   onStructureClick,
   onObjectSqlClick,
   onTableContextMenu,
@@ -315,6 +317,7 @@ export function DatabaseTree({
                                   />
                                   <button
                                     onClick={() => onTableClick(table)}
+                                    onDoubleClick={(e) => { e.stopPropagation(); onTableDoubleClick?.(table); }}
                                     className="explorer-table-main"
                                   >
                                     <div className="explorer-table-icon">
@@ -366,6 +369,7 @@ export function DatabaseTree({
                                   />
                                   <button
                                     onClick={() => onTableClick({ name: view.name, schema: view.schema })}
+                                    onDoubleClick={(e) => { e.stopPropagation(); onTableDoubleClick?.({ name: view.name, schema: view.schema }); }}
                                     className="explorer-table-main"
                                   >
                                     <div className="explorer-table-icon">

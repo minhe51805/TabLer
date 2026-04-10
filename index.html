@@ -5,10 +5,162 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TabLeR - Database Client</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #090d14;
+      }
+
+      body {
+        font-family: "Segoe UI", Inter, system-ui, sans-serif;
+      }
+
+      #boot-screen {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background:
+          radial-gradient(circle at top, rgba(0, 212, 170, 0.08), transparent 28%),
+          #090d14;
+        color: #e7edf7;
+        z-index: 9999;
+      }
+
+      #boot-screen.is-hidden {
+        display: none;
+      }
+
+      .boot-card {
+        width: min(520px, calc(100% - 32px));
+        border-radius: 18px;
+        border: 1px solid rgba(0, 212, 170, 0.18);
+        background: rgba(10, 16, 26, 0.96);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.38);
+        padding: 22px 24px;
+        box-sizing: border-box;
+      }
+
+      .boot-kicker {
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #00d4aa;
+      }
+
+      .boot-title {
+        margin: 10px 0 8px;
+        font-size: 28px;
+        line-height: 1.15;
+      }
+
+      .boot-copy {
+        margin: 0;
+        color: #9fb0c8;
+        line-height: 1.6;
+        font-size: 14px;
+      }
+
+      .boot-status {
+        margin-top: 18px;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: rgba(9, 13, 20, 0.92);
+        border: 1px solid rgba(111, 147, 190, 0.18);
+        color: #bcd0eb;
+        font-size: 13px;
+        line-height: 1.6;
+        word-break: break-word;
+      }
+
+      .boot-status.is-warning {
+        border-color: rgba(255, 196, 107, 0.22);
+        background: rgba(40, 28, 7, 0.55);
+        color: #ffe3b0;
+      }
+
+      .boot-meta {
+        margin-top: 14px;
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: #7f93ad;
+      }
+    </style>
   </head>
 
   <body>
+    <div id="boot-screen">
+      <div class="boot-card">
+        <div class="boot-kicker">Starting TableR</div>
+        <h1 class="boot-title">Preparing workspace</h1>
+        <p class="boot-copy">
+          The app is loading the desktop shell and frontend bundles.
+        </p>
+        <div id="boot-status" class="boot-status">Loading application bundle...</div>
+        <div class="boot-meta">
+          <span id="boot-meta-time">Started just now</span>
+          <span>Mode: desktop</span>
+        </div>
+      </div>
+    </div>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      (function () {
+        const bootScreen = document.getElementById("boot-screen");
+        const bootStatus = document.getElementById("boot-status");
+        const bootMetaTime = document.getElementById("boot-meta-time");
+        const startedAt = Date.now();
+        window.__TABLER_BOOTED__ = false;
+        window.__TABLER_HIDE_BOOT_SCREEN__ = function () {
+          window.__TABLER_BOOTED__ = true;
+          if (bootScreen) {
+            bootScreen.classList.add("is-hidden");
+          }
+        };
+        window.__TABLER_SET_BOOT_STATUS__ = function (message, tone) {
+          if (!bootStatus) return;
+          bootStatus.textContent = message;
+          bootStatus.classList.toggle("is-warning", tone === "warning");
+        };
+
+        setTimeout(function () {
+          if (window.__TABLER_BOOTED__) return;
+          window.__TABLER_SET_BOOT_STATUS__?.(
+            "Startup is taking longer than expected. The frontend bundle may have failed to load or the WebView runtime may be blocked on this machine.",
+            "warning"
+          );
+          if (bootMetaTime) {
+            bootMetaTime.textContent = "Still waiting after 8 seconds";
+          }
+        }, 8000);
+
+        setTimeout(function () {
+          if (window.__TABLER_BOOTED__) return;
+          window.__TABLER_SET_BOOT_STATUS__?.(
+            "TableR is still waiting for the frontend to boot. If this stays here, please send a screenshot because the issue is now happening before React finishes startup.",
+            "warning"
+          );
+          if (bootMetaTime) {
+            bootMetaTime.textContent =
+              "Still waiting after " + Math.round((Date.now() - startedAt) / 1000) + " seconds";
+          }
+        }, 20000);
+      })();
+    </script>
+    <script type="module">
+      import("/src/main.tsx").catch((error) => {
+        console.error("[TableR boot] Failed to import main entry", error);
+        const message = error instanceof Error ? error.message : String(error ?? "Unknown import error");
+        window.__TABLER_SET_BOOT_STATUS__?.(
+          `Failed to load frontend bundle: ${message}`,
+          "warning"
+        );
+      });
+    </script>
   </body>
 </html>

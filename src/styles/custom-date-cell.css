@@ -1,0 +1,4 @@
+/* ─── Custom Date Cell ───────────────────────────────────────────────── */
+.datagrid-cell-date {
+  color: var(--accent, #00D4AA);
+}

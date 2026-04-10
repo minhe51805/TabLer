@@ -5,6 +5,8 @@ mod database;
 mod query_history;
 mod storage;
 mod utils;
+pub mod ssh;
+mod watcher;
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::connection::*;
@@ -27,6 +29,7 @@ use commands::update::{
 use commands::connection_export::{
     export_connections_to_file, import_connections_from_file,
 };
+use commands::maintenance::run_maintenance_command;
 use database::manager::DatabaseManager;
 use query_history::{
     clear_query_history, delete_query_history_entries, delete_query_history_entry,
@@ -44,32 +47,49 @@ use std::time::Duration;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let start_time = std::time::Instant::now();
+    eprintln!("[TableR] Application starting...");
+
     let db_manager = DatabaseManager::new();
+    eprintln!("[TableR] DatabaseManager initialized: {:?}", start_time.elapsed());
+
     let conn_storage = match ConnectionStorage::new() {
-        Ok(storage) => storage,
+        Ok(storage) => {
+            eprintln!("[TableR] ConnectionStorage initialized: {:?}", start_time.elapsed());
+            storage
+        }
         Err(error) => {
-            eprintln!("Failed to initialize connection storage: {error}");
+            eprintln!("[TableR] FAILED to initialize connection storage: {error}");
             return;
         }
     };
     let ai_storage = match AIStorage::new() {
-        Ok(storage) => storage,
+        Ok(storage) => {
+            eprintln!("[TableR] AIStorage initialized: {:?}", start_time.elapsed());
+            storage
+        }
         Err(error) => {
-            eprintln!("Failed to initialize AI storage: {error}");
+            eprintln!("[TableR] FAILED to initialize AI storage: {error}");
             return;
         }
     };
     let plugin_storage = match PluginStorage::new() {
-        Ok(storage) => storage,
+        Ok(storage) => {
+            eprintln!("[TableR] PluginStorage initialized: {:?}", start_time.elapsed());
+            storage
+        }
         Err(error) => {
-            eprintln!("Failed to initialize plugin storage: {error}");
+            eprintln!("[TableR] FAILED to initialize plugin storage: {error}");
             return;
         }
     };
     let tab_storage = match TabPersistence::new() {
-        Ok(storage) => storage,
+        Ok(storage) => {
+            eprintln!("[TableR] TabPersistence initialized: {:?}", start_time.elapsed());
+            storage
+        }
         Err(error) => {
-            eprintln!("Failed to initialize tab persistence storage: {error}");
+            eprintln!("[TableR] FAILED to initialize tab persistence storage: {error}");
             return;
         }
     };
@@ -95,10 +115,15 @@ pub fn run() {
         .manage(plugin_storage)
         .manage(ai_storage)
         .manage(tab_storage)
+        .manage(watcher::LinkedFoldersState::new())
         .manage(terminal_manager)
         .manage(connection_rate_limiter)
         .manage(ai_rate_limiter)
         .setup(|app| {
+            if let Err(e) = watcher::start_watcher(app.handle().clone()) {
+                eprintln!("[TableR] Failed to start watcher: {e}");
+            }
+
             #[cfg(target_os = "windows")]
             {
                 if let Err(error) = app.hide_menu() {
@@ -211,6 +236,14 @@ pub fn run() {
             check_for_update,
             download_and_install_update,
             get_app_version,
+            // Linked folders commands
+            watcher::add_linked_folder,
+            watcher::remove_linked_folder,
+            watcher::get_linked_folders,
+            watcher::scan_linked_folder,
+            watcher::read_linked_file,
+            // Maintenance commands
+            run_maintenance_command,
         ]);
 
     if let Err(error) = app.run(tauri::generate_context!()) {

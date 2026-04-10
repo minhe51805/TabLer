@@ -41,6 +41,8 @@ export interface ConnectionConfig {
   ssl_client_key_path?: string;
   /** Skip hostname verification in SSL handshake (for verify_ca / verify_full modes). */
   ssl_skip_host_verification?: boolean;
+  /** Shell script to execute before establishing database connection. */
+  pre_connect_script?: string;
   color?: string;
   additional_fields?: Record<string, string>;
   /** Assigned connection group ID */
@@ -49,6 +51,20 @@ export interface ConnectionConfig {
   tagId?: string;
   /** SQL commands to execute immediately after connecting. */
   startupCommands?: string;
+  /** SSH tunnel configuration */
+  ssh_config?: SshConfig;
+}
+
+export interface SshConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  user: string;
+  authType: "password" | "privateKey" | "privateKeyWithPassphrase";
+  password?: string;
+  privateKey?: string;
+  privateKeyPath?: string;
+  passphrase?: string;
 }
 
 export interface QueryResult {
@@ -216,10 +232,12 @@ export interface Tab {
   title: string;
   connectionId: string;
   tableName?: string;
+  filePath?: string;
   database?: string;
   content?: string;
   metricsBoardId?: string;
   structureFocusSection?: StructureFocusSection;
   structureFocusColumn?: string;
+  isPreview?: boolean;
   structureFocusToken?: string;
 }

@@ -24,15 +24,21 @@ fn size(width: f64, height: f64) -> Size {
     Size::Logical(LogicalSize::new(width, height))
 }
 
+/// Apply window profile settings asynchronously to avoid macOS first responder issues
 pub fn apply_window_profile_to_main(app: &AppHandle, profile: WindowProfile) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Main window not found".to_string())?;
 
-    if let Ok(true) = window.is_maximized() {
-        window
-            .unmaximize()
-            .map_err(|error| format!("Failed to unmaximize window: {error}"))?;
+    window
+        .set_decorations(false)
+        .map_err(|error| format!("Failed to disable native window decorations: {error}"))?;
+
+    // On macOS, calling window methods during setup can cause first responder issues.
+    // We safely check maximized state and ignore errors.
+    let was_maximized = window.is_maximized().unwrap_or(false);
+    if was_maximized {
+        let _ = window.unmaximize();
     }
 
     match profile {

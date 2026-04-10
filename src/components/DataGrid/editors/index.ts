@@ -26,5 +26,7 @@ export {
   getForeignKeyForColumn,
   getEnumValues,
   getSetValues,
+  formatCellValueForDisplay,
+  type ColumnDisplayFormat,
 } from "./column-type-detectors";
 export type { CellEditorType, ICellEditorProps, CellEditorCommitResult } from "./types";

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
+import { invoke } from "@tauri-apps/api/core";
 
 import { useAppStore } from "../../../stores/appStore";
 import { useI18n } from "../../../i18n";
@@ -11,6 +12,7 @@ import {
   normalizeObjectSql,
   copyToClipboard,
 } from "../SidebarUtils";
+import { emitAppToast } from "../../../utils/app-toast";
 import {
   usePinnedTables,
   useSchemaSections,
@@ -353,6 +355,9 @@ export function useSidebar() {
   useEffect(() => {
     if (!activeConnectionId || !currentDatabase) return;
     if (schemaObjects.length > 0 || isLoadingSchemaObjects) return;
+    
+    const isConnected = useAppStore.getState().connectedIds.has(activeConnectionId);
+    if (!isConnected) return;
 
     const delayMs = search.trim() ? 0 : 900;
     const timer = window.setTimeout(() => {
@@ -398,9 +403,20 @@ export function useSidebar() {
         connectionId: activeConnectionId,
         tableName: qualifiedName,
         database: currentDatabase || undefined,
+        isPreview: true,
       });
     },
     [activeConnectionId, currentDatabase, addTab],
+  );
+
+  const handleTableDoubleClick = useCallback(
+    (table: Pick<TableInfo, "name" | "schema">) => {
+      if (!activeConnectionId) return;
+      const qualifiedName = table.schema ? `${table.schema}.${table.name}` : table.name;
+      const tabId = `table-${activeConnectionId}-${currentDatabase}-${qualifiedName}`;
+      useAppStore.getState().pinTab(tabId);
+    },
+    [activeConnectionId, currentDatabase],
   );
 
   const handleStructureClick = useCallback(
@@ -634,6 +650,31 @@ export function useSidebar() {
     setTableContextMenu(null);
     setActiveContextSubmenuKey(null);
   }, []);
+
+  const runMaintenanceCommand = useCallback(async (command: string, tableName: string) => {
+    if (!activeConnectionId) return;
+    try {
+      await invoke("run_maintenance_command", {
+        connectionId: activeConnectionId,
+        command,
+        table: tableName,
+        database: currentDatabase || undefined,
+      });
+      emitAppToast({
+        tone: "success",
+        title: `${command.toUpperCase()} completed`,
+        description: `Maintenance command ${command.toUpperCase()} ran successfully on ${tableName}.`,
+      });
+      // Refresh workspace after maintenance
+      await handleRefresh();
+    } catch (err) {
+      emitAppToast({
+        tone: "error",
+        title: `${command.toUpperCase()} failed`,
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [activeConnectionId, currentDatabase, handleRefresh]);
 
   const handleTableContextMenu = useCallback(
     (
@@ -882,6 +923,53 @@ export function useSidebar() {
           },
         ],
       },
+      { key: "divider-maintenance", divider: true },
+      {
+        key: "maintenance",
+        label: "Maintenance",
+        children: [
+          // VACUUM: PostgreSQL, SQLite
+          ...(["postgresql", "greenplum", "cockroachdb", "redshift", "vertica", "sqlite", "libsql", "cloudflare_d1"].includes(dbType || "")
+            ? [{
+                key: "maintenance-vacuum",
+                label: "VACUUM",
+                action: () => void runMaintenanceCommand("vacuum", table.name),
+              }]
+            : []),
+          // ANALYZE: PostgreSQL, MySQL, SQLite
+          ...(["postgresql", "greenplum", "cockroachdb", "redshift", "vertica", "mysql", "mariadb", "sqlite", "libsql", "cloudflare_d1"].includes(dbType || "")
+            ? [{
+                key: "maintenance-analyze",
+                label: "ANALYZE",
+                action: () => void runMaintenanceCommand("analyze", table.name),
+              }]
+            : []),
+          // OPTIMIZE TABLE: MySQL, ClickHouse
+          ...(["mysql", "mariadb", "clickhouse"].includes(dbType || "")
+            ? [{
+                key: "maintenance-optimize",
+                label: "OPTIMIZE TABLE",
+                action: () => void runMaintenanceCommand("optimize", table.name),
+              }]
+            : []),
+          // REINDEX: PostgreSQL, SQLite
+          ...(["postgresql", "greenplum", "cockroachdb", "redshift", "vertica", "sqlite", "libsql", "cloudflare_d1"].includes(dbType || "")
+            ? [{
+                key: "maintenance-reindex",
+                label: "REINDEX",
+                action: () => void runMaintenanceCommand("reindex", table.name),
+              }]
+            : []),
+          // CHECK TABLE: MySQL, PostgreSQL
+          ...(["mysql", "mariadb", "postgresql", "greenplum", "cockroachdb"].includes(dbType || "")
+            ? [{
+                key: "maintenance-check",
+                label: "CHECK TABLE",
+                action: () => void runMaintenanceCommand("check_table", table.name),
+              }]
+            : []),
+        ],
+      },
       { key: "divider-danger", divider: true },
       {
         key: "clone",
@@ -901,7 +989,7 @@ export function useSidebar() {
         danger: true,
       },
     ];
-  }, [dbType, pinnedTableSet, t, tableContextMenu, handleOpenTableInNewTab, handleOpenStructureDraft, handleCopyTableName, openQueryDraft, togglePinnedTable]);
+  }, [dbType, pinnedTableSet, t, tableContextMenu, handleOpenTableInNewTab, handleOpenStructureDraft, handleCopyTableName, openQueryDraft, togglePinnedTable, activeConnectionId, currentDatabase]);
 
   // --- Effects ---
   useEffect(() => {
@@ -1064,6 +1152,7 @@ export function useSidebar() {
     // Actions
     toggleDb,
     handleTableClick,
+    handleTableDoubleClick,
     handleStructureClick,
     handleObjectSqlClick,
     handleTableContextMenu,

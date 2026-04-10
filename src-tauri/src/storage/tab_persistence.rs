@@ -1,5 +1,5 @@
 use crate::storage::file_storage::{read_json_map_with_backup, write_json_atomically};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -40,9 +40,7 @@ pub struct TabPersistence {
 
 impl TabPersistence {
     pub fn new() -> Result<Self> {
-        let data_dir = dirs::data_dir()
-            .context("Cannot find user data directory")?
-            .join("TableR");
+        let data_dir = crate::utils::paths::resolve_data_dir()?;
 
         fs::create_dir_all(&data_dir)?;
 

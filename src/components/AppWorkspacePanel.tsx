@@ -14,8 +14,9 @@ import {
   AlertCircle,
   LoaderCircle,
 } from "lucide-react";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { WorkspaceErrorFallback } from "./layout/WorkspaceErrorFallback";
 import { DataGrid } from "./DataGrid/DataGrid";
 import { MetricsSidebar } from "./MetricsSidebar/MetricsSidebar";
 import { Sidebar } from "./Sidebar";
@@ -155,6 +156,25 @@ export function AppWorkspacePanel({
   const isMetricsPanelActive = !isERDiagramWorkspace && leftPanel === "metrics";
   const isERDiagramPanelActive = activeTab?.type === "er-diagram";
 
+  const [loadingTimeoutExceeded, setLoadingTimeoutExceeded] = useState(false);
+
+  useEffect(() => {
+    let timeoutId: number | null = null;
+
+    if (!isConnected && isConnecting && activeConn) {
+      setLoadingTimeoutExceeded(false);
+      timeoutId = window.setTimeout(() => {
+        setLoadingTimeoutExceeded(true);
+      }, 30000);
+    } else {
+      setLoadingTimeoutExceeded(false);
+    }
+
+    return () => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+  }, [isConnected, isConnecting, activeConn]);
+
   // EventCenter: respond to global sidebar toggle
   useEvent("workspace-toggle-sidebar", () => {
     onToggleSidebar();
@@ -180,21 +200,50 @@ export function AppWorkspacePanel({
   };
 
   const renderTabContent = () => {
+    if (loadingTimeoutExceeded) {
+      return (
+        <WorkspaceErrorFallback
+          error={new Error("Workspace connection timed out after 30 seconds.")}
+          onRetry={() => {
+            setLoadingTimeoutExceeded(false);
+            if (activeConn?.id) {
+              useAppStore.setState({ isConnecting: false });
+              void useAppStore.getState().connectSavedConnection(activeConn.id);
+            } else {
+              onRefreshWorkspace();
+            }
+          }}
+          onGoToLauncher={() => {
+            setLoadingTimeoutExceeded(false);
+            if (activeConn?.id) {
+              useAppStore.setState({ isConnecting: false });
+              void useAppStore.getState().disconnectFromDatabase(activeConn.id);
+            }
+            useAppStore.setState({ activeConnectionId: null });
+          }}
+        />
+      );
+    }
+
     if (!isConnected && isConnecting && activeConn) {
       return (
-        <div className="workspace-empty">
-          <div className="workspace-empty-panel workspace-connecting-panel">
-            <div className="workspace-empty-hero">
-              <div className="workspace-empty-icon workspace-ready-icon">
-                <LoaderCircle className="workspace-empty-glyph w-10 h-10 animate-spin" />
+        <div className="workspace-empty fixed inset-0 z-50 flex items-center justify-center bg-[var(--bg-primary)]">
+          <div className="workspace-empty-panel workspace-connecting-panel max-w-[340px] flex flex-col items-center justify-center overflow-hidden border border-[var(--border-color)] bg-[var(--bg-secondary)] shadow-2xl p-8 rounded-2xl mx-4 relative overflow-hidden">
+            
+            {/* Ambient animated glow */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120px] h-[120px] bg-[var(--accent)]/10 rounded-full blur-[60px] animate-pulse"></div>
+
+            <div className="workspace-empty-hero w-full flex flex-col items-center justify-center gap-6 relative z-10 m-0 p-0">
+              <div className="w-14 h-14 rounded-full border border-[var(--border-color)] bg-[var(--bg-primary)] shadow-sm flex items-center justify-center">
+                <LoaderCircle className="w-6 h-6 text-[var(--accent)] animate-spin" strokeWidth={2.5} />
               </div>
 
-              <div className="workspace-empty-copy">
-                <span className="workspace-empty-kicker">{t("common.loading")}</span>
-                <h2 className="workspace-empty-title">
+              <div className="workspace-empty-copy flex flex-col items-center w-full text-center gap-1.5 m-0 p-0">
+                <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--accent)] opacity-80">{t("common.loading", "LOADING...")}</span>
+                <h2 className="text-xl font-bold text-[var(--text-primary)] truncate w-full max-w-[280px]" title={activeConn.name || t("workspace.ready.connectedWorkspace")}>
                   {activeConn.name || t("workspace.ready.connectedWorkspace")}
                 </h2>
-                <p className="workspace-empty-description">
+                <p className="text-sm text-[var(--text-secondary)] opacity-70 truncate w-full max-w-[280px]" title={currentDatabase || activeConn.database || activeConn.host || activeConn.file_path || ""}>
                   {currentDatabase || activeConn.database || activeConn.host || activeConn.file_path || ""}
                 </p>
               </div>

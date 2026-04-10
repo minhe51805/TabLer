@@ -2,6 +2,7 @@ pub mod connection;
 pub mod connection_export;
 pub mod export;
 pub mod file;
+pub mod maintenance;
 pub mod query;
 pub mod table;
 pub mod ai;

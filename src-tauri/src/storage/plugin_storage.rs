@@ -1,5 +1,5 @@
 use crate::storage::file_storage::{read_json_vec_with_backup, write_json_atomically};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -38,9 +38,7 @@ pub struct PluginStorage {
 
 impl PluginStorage {
     pub fn new() -> Result<Self> {
-        let data_dir = dirs::data_dir()
-            .context("Cannot find user data directory")?
-            .join("TableR");
+        let data_dir = crate::utils::paths::resolve_data_dir()?;
         let bundles_dir = data_dir.join("plugins");
 
         fs::create_dir_all(&bundles_dir)?;

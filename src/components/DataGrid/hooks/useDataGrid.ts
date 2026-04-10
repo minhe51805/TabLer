@@ -108,6 +108,11 @@ export function invalidateTableScopeCaches(
   }
 }
 
+export function clearAllTableCaches() {
+  tableCountCache.clear();
+  tablePageCache.clear();
+}
+
 export function invalidateTableCaches(
   connectionId: string,
   tableName: string,

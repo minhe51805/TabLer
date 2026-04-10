@@ -1,0 +1,44 @@
+/* ─── ENV Badge ──────────────────────────────────────────────────────── */
+.connection-form-field-label-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.env-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #FBBF24;
+  cursor: default;
+  flex-shrink: 0;
+}
+.env-badge-resolved {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+.connection-form-field-env-preview {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: monospace;
+  margin-top: 3px;
+}
+.connection-form-field-env-preview span {
+  color: #00D4AA;
+}
+
+.confirm-dialog-btn-confirm:active {
+  background: rgba(239, 68, 68, 0.28);
+  cursor: pointer;
+}

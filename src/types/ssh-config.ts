@@ -1,6 +1,13 @@
 /**
  * SSH Tunnel configuration types.
  * Used for connecting to databases through SSH bastion/jump hosts.
+ *
+ * @todo These types define the intended API surface but have NO Rust backend
+ * implementation yet. No `.rs` file in src-tauri contains SSH tunnel logic.
+ * To implement SSH tunnels, add an `ssh2` or `async-ssh2-tokio` crate to
+ * Cargo.toml and create `src-tauri/src/commands/ssh.rs` with tunnel
+ * lifecycle commands (create, connect, disconnect, reconnect).
+ * See Phase 45 in the development roadmap for full requirements.
  */
 
 export type SshAuthMethod = "password" | "privateKey" | "privateKeyPassphrase";

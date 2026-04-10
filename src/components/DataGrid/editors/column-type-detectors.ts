@@ -44,6 +44,20 @@ export function isGeometryColumn(column: ResolvedColumn): boolean {
     || /^st_(geom|geomfromtext|point|linestring|polygon)/i.test(type);
 }
 
+export function isUuidColumn(column: ResolvedColumn): boolean {
+  const dataType = (column.data_type || "").toLowerCase();
+  const columnType = (column.column_type || "").toLowerCase();
+  
+  // Explicit UUID/GUID types
+  if (/(uuid|guid)/.test(dataType) || /(uuid|guid)/.test(columnType)) return true;
+  
+  // Smart UUID detection for BINARY(16)
+  if (columnType === "binary(16)") return true;
+  if (dataType === "binary" && columnType.includes("(16)")) return true;
+  
+  return false;
+}
+
 export function isEnumColumn(column: ResolvedColumn): boolean {
   const dataType = column.data_type || "";
   const columnType = column.column_type || "";
@@ -122,8 +136,54 @@ export function getForeignKeyForColumn(
 
 // ─── Display Helpers ─────────────────────────────────────────────────────────────
 
-export function formatCellValueForDisplay(value: string | number | boolean | null): string {
+export type ColumnDisplayFormat = "default" | "uuid" | "hex" | "text" | "json";
+
+export function formatCellValueForDisplay(
+  value: string | number | boolean | null,
+  format: ColumnDisplayFormat = "default",
+  isBinary = false
+): string {
   if (value === null || value === undefined) return "NULL";
+  
+  let strVal = String(value);
+
+  // If the value is binary/blob data, we need to handle its raw format first
+  if (isBinary && typeof value === 'string') {
+    // If it's passed as a byte array string like "12,34,56" or similar
+    if (/^\d+(,\d+)*$/.test(strVal) && strVal.includes(',')) {
+      const bytes = strVal.split(',').map(Number);
+      strVal = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+  }
+
+  // UUID Formatting (e.g. 32-char hex string -> 8-4-4-4-12 dash format)
+  if (format === "uuid" || (format === "default" && isBinary && strVal.length === 32 && /^[0-9a-f]{32}$/i.test(strVal))) {
+    // Strip existing dashes if any
+    const clean = strVal.replace(/-/g, "");
+    if (clean.length === 32) {
+      return `${clean.slice(0, 8)}-${clean.slice(8, 12)}-${clean.slice(12, 16)}-${clean.slice(16, 20)}-${clean.slice(20)}`.toLowerCase();
+    }
+  }
+
+  // Hex Formatting
+  if (format === "hex") {
+    // If it's already hex, return as is. If it's text, convert back to hex.
+    if (!/^[0-9a-fA-F]+$/.test(strVal)) {
+       return Array.from(strVal).map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('').toUpperCase();
+    }
+    return strVal.toUpperCase();
+  }
+
+  // JSON Formatting
+  if (format === "json") {
+    try {
+      const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      return strVal;
+    }
+  }
+
   if (typeof value === "boolean") return value ? "true" : "false";
-  return String(value);
+  return strVal;
 }

@@ -50,6 +50,7 @@ import { DataGridToolbar } from "./DataGridToolbar";
 import { DataGridPagination } from "./DataGridPagination";
 import { ChangeTrackingPreviewModal } from "./components/ChangeTrackingPreviewModal";
 import { buildDataGridColumns, editingDraftRef } from "./DataGridColumns";
+import type { ColumnDisplayFormat } from "./editors";
 import {
   generateInsertSql,
   generateUpdateSql,
@@ -69,9 +70,9 @@ interface Props {
   isActive?: boolean;
 }
 
-const MAX_TABLE_PAGE_CACHE_ENTRIES = 160;
-const MAX_TABLE_COUNT_CACHE_ENTRIES = 96;
-const MAX_INLINE_STRUCTURE_CACHE_ENTRIES = 96;
+const MAX_TABLE_PAGE_CACHE_ENTRIES = 48;
+const MAX_TABLE_COUNT_CACHE_ENTRIES = 24;
+const MAX_INLINE_STRUCTURE_CACHE_ENTRIES = 48;
 
 export function DataGrid({
   connectionId,
@@ -157,6 +158,7 @@ export function DataGrid({
   const [columnSizes, setColumnSizes] = useState<Record<string, number>>(() =>
     getColumnWidths(connectionId, tableName ?? "", database),
   );
+  const [columnDisplayFormats, setColumnDisplayFormats] = useState<Record<string, ColumnDisplayFormat>>({});
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: "cell" | "header" | "row"; colName?: string; rowIndex?: number } | null>(null);
   /** Row drag-and-drop state */
   const [dragSourceIndex, setDragSourceIndex] = useState<number | null>(null);
@@ -1861,6 +1863,7 @@ export function DataGrid({
       nullPlaceholder: settings.nullPlaceholder,
       dateFormat,
       dbType,
+      columnDisplayFormats,
     });
   }, [
     cancelEditingCell,
@@ -2287,6 +2290,24 @@ export function DataGrid({
               >
                 Auto-fit column
               </button>
+              <div className="datagrid-context-menu-separator" />
+              <div className="datagrid-context-menu-label" style={{ padding: "4px 12px", fontSize: "11px", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Display As</div>
+              {(["default", "uuid", "hex", "text", "json"] as ColumnDisplayFormat[]).map((fmt) => (
+                <button
+                  key={fmt}
+                  className="datagrid-context-menu-item"
+                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+                  onClick={() => {
+                     setColumnDisplayFormats(prev => ({ ...prev, [contextMenu.colName!]: fmt }));
+                     setContextMenu(null);
+                  }}
+                >
+                  <span style={{ textTransform: "capitalize" }}>{fmt}</span>
+                  {(columnDisplayFormats[contextMenu.colName!] || "default") === fmt && (
+                    <span style={{ color: "var(--accent)" }}>✓</span>
+                  )}
+                </button>
+              ))}
             </>
           )}
           {contextMenu.type === "row" && (

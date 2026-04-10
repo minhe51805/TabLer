@@ -13,6 +13,9 @@ import {
   getEnumValues,
   getSetValues,
   isGeometryColumn,
+  isBlobColumn,
+  formatCellValueForDisplay,
+  type ColumnDisplayFormat,
 } from "./editors";
 import { renderGeometryCell } from "../../utils/geometry-renderer";
 import type { ICellEditorProps } from "./editors/types";
@@ -94,6 +97,8 @@ interface DataGridColumnsProps {
   dateFormat?: string;
   /** Database type for default date format fallback */
   dbType?: string;
+  /** Custom display formatting overrides per column */
+  columnDisplayFormats?: Record<string, ColumnDisplayFormat>;
 }
 
 export function buildDataGridColumns({
@@ -133,6 +138,7 @@ export function buildDataGridColumns({
   nullPlaceholder = "NULL",
   dateFormat,
   dbType: _dbType,
+  columnDisplayFormats = {},
 }: DataGridColumnsProps): ColumnDef<unknown[], unknown>[] {
   return [
     {
@@ -400,7 +406,11 @@ export function buildDataGridColumns({
                 ) : isGeometryColumn(col) && stringValue !== null ? (
                   <span className="datagrid-cell-value" title={stringValue}>{renderGeometryCell(stringValue).emoji} {renderGeometryCell(stringValue).display}</span>
                 ) : (
-                  <span className="datagrid-cell-value" data-null-placeholder={nullPlaceholder}>{value === null ? nullPlaceholder : String(value)}</span>
+                  <span className="datagrid-cell-value" data-null-placeholder={nullPlaceholder}>
+                    {value === null 
+                      ? nullPlaceholder 
+                      : formatCellValueForDisplay(value, columnDisplayFormats[col.name] || "default", isBlobColumn(col))}
+                  </span>
                 )}
               </>
             )}

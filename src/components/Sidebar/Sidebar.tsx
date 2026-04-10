@@ -402,11 +402,16 @@ function FilterToolbar({
   );
 }
 
+import { LinkedFoldersPanel } from "./LinkedFoldersPanel";
+import { FolderSearch } from "lucide-react";
+import { useState } from "react";
+
 // ---------------------------------------------------------------------------
 // Sidebar
 // ---------------------------------------------------------------------------
 
 export function Sidebar() {
+  const [activeSidebarTab, setActiveSidebarTab] = useState<"database" | "linked">("database");
   const { t } = useI18n();
   const {
     activeConnectionId,
@@ -445,6 +450,7 @@ export function Sidebar() {
     addTab,
     toggleDb,
     handleTableClick,
+    handleTableDoubleClick,
     handleStructureClick,
     handleObjectSqlClick,
     handleTableContextMenu,
@@ -487,20 +493,21 @@ export function Sidebar() {
 
   const [filterToolbarOpen, setFilterToolbarOpen] = useState(false);
 
-  if (!activeConnectionId || !connectedIds.has(activeConnectionId)) {
+  const renderDatabaseExplorer = () => {
+    if (!activeConnectionId || !connectedIds.has(activeConnectionId)) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full px-6 text-center text-[var(--text-muted)]">
+          <Database className="w-12 h-12 mb-4 opacity-15" />
+          <p className="text-sm font-medium opacity-60">{t("explorer.noActiveConnection")}</p>
+          <p className="text-xs mt-1.5 opacity-40">{t("explorer.connectToExplore")}</p>
+        </div>
+      );
+    }
+
+    const hasActiveFilter = hasSearch || conditions.length > 0 || columnModeActive || mixedStateFilter.isActive;
+
     return (
-      <div className="flex flex-col items-center justify-center h-full px-6 text-center text-[var(--text-muted)]">
-        <Database className="w-12 h-12 mb-4 opacity-15" />
-        <p className="text-sm font-medium opacity-60">{t("explorer.noActiveConnection")}</p>
-        <p className="text-xs mt-1.5 opacity-40">{t("explorer.connectToExplore")}</p>
-      </div>
-    );
-  }
-
-  const hasActiveFilter = hasSearch || conditions.length > 0 || columnModeActive || mixedStateFilter.isActive;
-
-  return (
-    <div className="explorer-shell">
+      <div className="explorer-shell">
       <div className="panel-header panel-header-rich explorer-header">
         <div className="explorer-header-bar">
           <div className="explorer-header-identity">
@@ -675,6 +682,7 @@ export function Sidebar() {
         t={t}
         onToggleDb={toggleDb}
         onTableClick={handleTableClick}
+        onTableDoubleClick={handleTableDoubleClick}
         onStructureClick={handleStructureClick}
         onObjectSqlClick={handleObjectSqlClick}
         onTableContextMenu={handleTableContextMenu}
@@ -718,7 +726,29 @@ export function Sidebar() {
       )}
     </div>
   );
-}
+  };
 
-// Need useState for local component state
-import { useState } from "react";
+  return (
+    <div className="flex flex-col h-full bg-[var(--bg-primary)]">
+      <div className="flex items-center gap-2 px-2 py-1.5 border-b border-[var(--border-color)]">
+        <button
+          className={`flex-1 flex items-center justify-center gap-1.5 py-1 text-xs rounded transition-colors ${activeSidebarTab === 'database' ? 'bg-[var(--bg-hover)] text-[var(--accent)] font-medium' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'}`}
+          onClick={() => setActiveSidebarTab('database')}
+        >
+          <Database className="w-3.5 h-3.5" />
+          Databases
+        </button>
+        <button
+          className={`flex-1 flex items-center justify-center gap-1.5 py-1 text-xs rounded transition-colors ${activeSidebarTab === 'linked' ? 'bg-[var(--bg-hover)] text-[var(--accent)] font-medium' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'}`}
+          onClick={() => setActiveSidebarTab('linked')}
+        >
+          <FolderSearch className="w-3.5 h-3.5" />
+          Folders
+        </button>
+      </div>
+      <div className="flex-1 overflow-hidden relative">
+        {activeSidebarTab === "database" ? renderDatabaseExplorer() : <LinkedFoldersPanel />}
+      </div>
+    </div>
+  );
+}

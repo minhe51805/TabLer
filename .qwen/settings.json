@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(cargo check)"
+    ]
+  },
+  "$version": 3
+}

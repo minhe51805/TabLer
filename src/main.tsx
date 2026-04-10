@@ -153,9 +153,11 @@ if (!rootElement) {
 
 const root = ReactDOM.createRoot(rootElement);
 let bootFailureShown = false;
+let isAppBooted = false;
 
 function renderBootFailure(source: string, error: unknown) {
   if (bootFailureShown) return;
+  if (isAppBooted) return; // Do not crash the entire app if it's already booted
   bootFailureShown = true;
 
   const normalized = normalizeBootError(error);
@@ -206,6 +208,10 @@ async function startApp() {
       </React.StrictMode>,
     );
     console.log("[TableR] Step 2 DONE: React tree rendered");
+    // After 2 seconds, consider it successfully booted and prevent future errors from turning into boot failures
+    setTimeout(() => {
+      isAppBooted = true;
+    }, 2000);
   } catch (error) {
     renderBootFailure("boot.import", error);
   }

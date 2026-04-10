@@ -1,0 +1,15 @@
+/* ─── Tag Pills ─────────────────────────────────────────────────────────────── */
+
+.startup-connection-tag-pill {
+  font-size: 0.62rem;
+  font-weight: 500;
+  padding: 1px 6px;
+  border: 1px solid;
+  border-radius: 10px;
+  opacity: 0.8;
+  flex-shrink: 0;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

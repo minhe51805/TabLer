@@ -180,6 +180,8 @@ interface AppState {
   isExecutingQuery: boolean;
 
   error: string | null;
+  connectionHealthy: boolean;
+  setConnectionHealthy: (healthy: boolean) => void;
 
   loadSavedConnections: () => Promise<void>;
   connectToDatabase: (config: ConnectionConfig) => Promise<void>;
@@ -247,6 +249,7 @@ interface AppState {
   clearTabs: () => void;
   setActiveTab: (tabId: string) => void;
   updateTab: (tabId: string, updates: Partial<Tab>) => void;
+  pinTab: (tabId: string) => void;
   saveTabState: (connectionId: string) => Promise<void>;
   loadTabState: (connectionId: string) => Promise<PersistedTab[]>;
 
@@ -291,6 +294,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   isLoadingSchemaObjects: false,
   isExecutingQuery: false,
   error: null,
+  connectionHealthy: true,
+  setConnectionHealthy: (healthy: boolean) => set({ connectionHealthy: healthy }),
 
   aiConfigs: [],
 
@@ -430,14 +435,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         void get().fetchTables(normalizedConfig.id, normalizedConfig.database);
       }
     } catch (e) {
-      set({
-        isConnecting: false,
-        error: `Connection failed: ${e}`,
-        activeConnectionId: previousState.activeConnectionId,
-        currentDatabase: previousState.currentDatabase,
-        tables: previousState.tables,
-        schemaObjects: previousState.schemaObjects,
-      });
+      const currentState = get();
+      const targetId = config?.id || previousState.activeConnectionId;
+      if (currentState.activeConnectionId === targetId || currentState.activeConnectionId === config?.id) {
+        set({
+          isConnecting: false,
+          error: `Connection to target failed: ${e}`,
+          activeConnectionId: previousState.activeConnectionId,
+          currentDatabase: previousState.currentDatabase,
+          tables: previousState.tables,
+          schemaObjects: previousState.schemaObjects,
+        });
+      } else {
+        set({ isConnecting: false });
+      }
       throw e;
     }
   },
@@ -502,14 +513,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
     } catch (e) {
-      set({
-        isConnecting: false,
-        error: `Connection failed: ${e}`,
-        activeConnectionId: previousState.activeConnectionId,
-        currentDatabase: previousState.currentDatabase,
-        tables: previousState.tables,
-        schemaObjects: previousState.schemaObjects,
-      });
+      const currentState = get();
+      if (currentState.activeConnectionId === connectionId) {
+        set({
+          isConnecting: false,
+          error: `Connection to target failed: ${e}`,
+          activeConnectionId: previousState.activeConnectionId,
+          currentDatabase: previousState.currentDatabase,
+          tables: previousState.tables,
+          schemaObjects: previousState.schemaObjects,
+        });
+      } else {
+        set({ isConnecting: false });
+      }
       throw e;
     }
   },
@@ -901,12 +917,41 @@ export const useAppStore = create<AppState>((set, get) => ({
   addTab: (tab: Tab) => {
     const tabs = get().tabs;
     const exists = tabs.find((t) => t.id === tab.id);
-    if (exists) set({ activeTabId: tab.id });
-    else set({ tabs: [...tabs, tab], activeTabId: tab.id });
+    if (exists) {
+      // If it exists but was a preview, making it active doesn't change it to permanent unless explicitly requested, 
+      // but usually navigating to an existing tab just makes it active.
+      set({ activeTabId: tab.id });
+    } else {
+      if (tab.isPreview) {
+        // Recycle existing preview tab if it exists
+        const previewTabIdx = tabs.findIndex((t) => t.isPreview);
+        if (previewTabIdx >= 0) {
+          const newTabs = [...tabs];
+          newTabs[previewTabIdx] = tab;
+          set({ tabs: newTabs, activeTabId: tab.id });
+          return;
+        }
+      }
+      set({ tabs: [...tabs, tab], activeTabId: tab.id });
+    }
   },
 
   removeTab: (tabId: string) => {
-    const tabs = get().tabs.filter((t) => t.id !== tabId);
+    const tabsState = get().tabs;
+    const tabToRemove = tabsState.find((t) => t.id === tabId);
+    
+    // Evict heavy memory caches natively when a table tab is closed
+    if (tabToRemove && tabToRemove.type === "table") {
+      import("../components/DataGrid/hooks/useDataGrid").then((m) => {
+        m.invalidateTableScopeCaches(
+          tabToRemove.connectionId,
+          tabToRemove.database,
+          tabToRemove.tableName
+        );
+      }).catch(err => console.error("Cache eviction error:", err));
+    }
+
+    const tabs = tabsState.filter((t) => t.id !== tabId);
     const visibleTabs = tabs.filter((tab) => tab.type !== "metrics");
     const activeTabId =
       get().activeTabId === tabId
@@ -917,18 +962,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ tabs, activeTabId });
   },
 
-  clearTabs: () =>
+  clearTabs: () => {
+    import("../components/DataGrid/hooks/useDataGrid")
+      .then((m) => m.clearAllTableCaches())
+      .catch((err) => console.error("Cache eviction error:", err));
+
     set((state) => ({
       tabs: state.tabs.filter((tab) => tab.type === "metrics"),
       activeTabId: null,
-    })),
+    }));
+  },
 
   setActiveTab: (tabId: string) => set({ activeTabId: tabId }),
 
   updateTab: (tabId: string, updates: Partial<Tab>) => {
-    const tabs = get().tabs.map((t) => (t.id === tabId ? { ...t, ...updates } : t));
-    set({ tabs });
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, ...updates } : t)),
+    }));
   },
+
+  pinTab: (tabId: string) =>
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, isPreview: false } : t)),
+    })),
 
   setError: (error: string | null) => set({ error }),
   clearError: () => set({ error: null }),

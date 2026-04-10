@@ -1,0 +1,361 @@
+/* ─── Connection Group Headers ─────────────────────────────────────────────── */
+
+.startup-connection-group-header-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px 4px;
+}
+
+.startup-connection-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.startup-connection-group-header:hover {
+  background: rgba(16, 185, 129, 0.06);
+  border-color: rgba(16, 185, 129, 0.1);
+  color: var(--fintech-green);
+}
+
+.startup-connection-group-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.startup-connection-group-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.startup-connection-group-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.startup-connection-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.startup-connection-group-count {
+  font-size: 0.65rem;
+  color: var(--fintech-green);
+  padding: 1px 5px;
+  background: rgba(16, 185, 129, 0.08);
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.startup-connection-group-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  outline: none;
+}
+
+/* Group Actions / Context Menu */
+
+.startup-connection-group-actions {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.startup-connection-group-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.startup-connection-group-header-row:hover .startup-connection-group-menu-btn {
+  opacity: 1;
+}
+
+.startup-connection-group-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.startup-connection-group-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 160px;
+  background: rgba(10, 14, 23, 0.98);
+  border: 1px solid rgba(16, 185, 129, 0.12);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 20px rgba(16, 185, 129, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.startup-connection-group-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.78rem;
+  text-align: left;
+  transition: background 0.1s, color 0.1s;
+}
+
+.startup-connection-group-menu-item:hover {
+  background: rgba(16, 185, 129, 0.08);
+  color: var(--fintech-green);
+}
+
+.startup-connection-group-menu-item.danger:hover {
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+}
+
+/* Theme preset styling */
+
+.titlebar-icon-btn,
+.titlebar-window-btn,
+.panel-header-action,
+.explorer-header-btn,
+.explorer-refresh-btn,
+.tabbar-clear-btn,
+.tabbar-run-btn,
+.tabbar-sandbox-btn,
+.tabbar-tab,
+.ai-workspace-stage--sidebar .ai-workspace-chat-tab,
+.ai-workspace-stage--sidebar .ai-workspace-chat-tab-add,
+.ai-workspace-stage--sidebar .ai-workspace-mode-option,
+.ai-workspace-stage--sidebar .ai-workspace-mode-action-btn,
+.ai-workspace-stage--sidebar .ai-workspace-generate-btn,
+.ws-action-btn,
+.connection-list-new-btn,
+.connection-list-sort-btn {
+  border-radius: var(--theme-button-radius);
+}
+
+.titlebar-window-menu-popover,
+.titlebar-window-submenu,
+.titlebar-window-submenu-nested,
+.ai-settings-modal,
+.workspace-ready-context,
+.workspace-ready-action-card,
+.workspace-ready-support-card,
+.explorer-table-panel,
+.connection-card,
+.ai-workspace-stage--sidebar .ai-workspace-composer.is-docked,
+.ai-workspace-stage--sidebar .ai-workspace-compose-box,
+.ai-workspace-stage--sidebar .ai-workspace-chat-surface {
+  border-radius: var(--theme-card-radius);
+}
+
+[data-theme-preset="tabler.dark"] .app-root {
+  background:
+    radial-gradient(circle at top right, rgba(0, 212, 170, 0.1), transparent 32%),
+    radial-gradient(circle at bottom left, rgba(99, 102, 241, 0.08), transparent 28%),
+    radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.03), transparent 40%),
+    var(--bg-primary);
+}
+
+[data-theme-preset="tabler.dark"] .titlebar {
+  background: linear-gradient(180deg, rgba(3, 7, 18, 0.98), rgba(10, 15, 26, 0.96));
+  border-bottom-color: rgba(0, 212, 170, 0.08);
+}
+
+[data-theme-preset="tabler.dark"] .titlebar-window-btn,
+[data-theme-preset="tabler.dark"] .titlebar-icon-btn {
+  background: rgba(0, 212, 170, 0.04);
+}
+
+[data-theme-preset="tabler.dark"] .tabbar-shell {
+  background:
+    linear-gradient(180deg, rgba(3, 7, 18, 0.96), rgba(10, 15, 26, 0.96));
+}
+
+[data-theme-preset="tabler.dark"] .workspace-ready-action-card,
+[data-theme-preset="tabler.dark"] .connection-card,
+[data-theme-preset="tabler.dark"] .ai-workspace-stage--sidebar .ai-workspace-composer.is-docked {
+  box-shadow:
+    0 18px 40px rgba(0, 0, 0, 0.3),
+    0 0 30px rgba(0, 212, 170, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+[data-theme-preset="tabler.midnight"] .app-root {
+  background:
+    radial-gradient(circle at top right, rgba(99, 102, 241, 0.12), transparent 34%),
+    radial-gradient(circle at bottom left, rgba(0, 212, 170, 0.06), transparent 30%),
+    radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.02), transparent 35%),
+    var(--bg-primary);
+}
+
+[data-theme-preset="tabler.midnight"] .titlebar {
+  background: linear-gradient(180deg, rgba(10, 15, 30, 0.98), rgba(12, 18, 35, 0.96));
+  border-bottom-color: rgba(99, 102, 241, 0.15);
+}
+
+[data-theme-preset="tabler.midnight"] .titlebar-window-btn,
+[data-theme-preset="tabler.midnight"] .titlebar-icon-btn,
+[data-theme-preset="tabler.midnight"] .panel-header-action,
+[data-theme-preset="tabler.midnight"] .explorer-header-btn {
+  background: rgba(99, 102, 241, 0.06);
+  border-color: rgba(99, 102, 241, 0.15);
+}
+
+[data-theme-preset="tabler.midnight"] .tabbar-shell {
+  background:
+    linear-gradient(180deg, rgba(10, 15, 30, 0.96), rgba(12, 18, 35, 0.96));
+}
+
+[data-theme-preset="tabler.midnight"] .workspace-ready-action-card,
+[data-theme-preset="tabler.midnight"] .connection-card,
+[data-theme-preset="tabler.midnight"] .ai-workspace-stage--sidebar .ai-workspace-composer.is-docked {
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.3),
+    0 0 30px rgba(99, 102, 241, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+[data-theme-preset="tabler.midnight"] .ai-workspace-stage--sidebar .ai-workspace-composer.is-docked,
+[data-theme-preset="tabler.midnight"] .workspace-ready-context,
+[data-theme-preset="tabler.midnight"] .explorer-table-panel {
+  backdrop-filter: blur(18px);
+}
+
+[data-theme-preset="tabler.graphite"] .app-root {
+  background:
+    radial-gradient(circle at top right, rgba(0, 212, 170, 0.06), transparent 32%),
+    radial-gradient(circle at bottom left, rgba(99, 102, 241, 0.04), transparent 28%),
+    linear-gradient(180deg, #15181d 0%, #0f1115 100%);
+}
+
+[data-theme-preset="tabler.graphite"] .titlebar {
+  background: linear-gradient(180deg, rgba(20, 23, 27, 0.98), rgba(16, 18, 22, 0.98));
+  border-bottom-color: rgba(143, 211, 255, 0.08);
+}
+
+[data-theme-preset="tabler.graphite"] .titlebar-window-btn,
+[data-theme-preset="tabler.graphite"] .titlebar-icon-btn,
+[data-theme-preset="tabler.graphite"] .panel-header-action,
+[data-theme-preset="tabler.graphite"] .explorer-header-btn {
+  background: rgba(255, 255, 255, 0.022);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+[data-theme-preset="tabler.graphite"] .workspace-ready-action-card,
+[data-theme-preset="tabler.graphite"] .connection-card,
+[data-theme-preset="tabler.graphite"] .ai-workspace-stage--sidebar .ai-workspace-composer.is-docked {
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
+}
+
+[data-theme-preset="tabler.graphite"] .workspace-ready-action-card::before {
+  width: 2px;
+}
+
+[data-theme-preset="tabler.graphite"] .ai-workspace-stage--sidebar .ai-workspace-composer.is-docked {
+  background:
+    linear-gradient(180deg, rgba(24, 26, 30, 0.98), rgba(18, 20, 24, 0.98)),
+    rgba(18, 20, 24, 0.98);
+}
+
+[data-theme-preset="tabler.forest"] .app-root {
+  background:
+    radial-gradient(circle at top right, rgba(0, 212, 170, 0.1), transparent 34%),
+    radial-gradient(circle at bottom left, rgba(0, 212, 170, 0.06), transparent 30%),
+    radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.03), transparent 40%),
+    var(--bg-primary);
+}
+
+[data-theme-preset="tabler.forest"] .titlebar {
+  background: linear-gradient(180deg, rgba(3, 15, 12, 0.98), rgba(5, 12, 10, 0.96));
+  border-bottom-color: rgba(0, 212, 170, 0.15);
+}
+
+[data-theme-preset="tabler.forest"] .titlebar-window-btn,
+[data-theme-preset="tabler.forest"] .titlebar-icon-btn,
+[data-theme-preset="tabler.forest"] .panel-header-action,
+[data-theme-preset="tabler.forest"] .explorer-header-btn {
+  background: rgba(0, 212, 170, 0.05);
+  border-color: rgba(0, 212, 170, 0.18);
+}
+
+[data-theme-preset="tabler.forest"] .tabbar-shell {
+  background:
+    linear-gradient(180deg, rgba(3, 15, 12, 0.96), rgba(5, 12, 10, 0.96));
+}
+
+[data-theme-preset="tabler.forest"] .workspace-ready-action-card,
+[data-theme-preset="tabler.forest"] .connection-card,
+[data-theme-preset="tabler.forest"] .ai-workspace-stage--sidebar .ai-workspace-composer.is-docked {
+  box-shadow:
+    0 18px 40px rgba(0, 0, 0, 0.3),
+    0 0 30px rgba(0, 212, 170, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.startup-connection-group-color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 6px;
+}
+
+.startup-connection-group-color-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.1s;
+  padding: 0;
+}
+
+.startup-connection-group-color-swatch:hover {
+  transform: scale(1.2);
+}
+
+.startup-connection-group-color-swatch.active {
+  border-color: white;
+}

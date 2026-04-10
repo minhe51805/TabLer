@@ -2,22 +2,25 @@ import { Component, type ReactNode } from 'react'
 
 interface Props {
   children: ReactNode
-  fallback?: ReactNode
+  fallback?: ReactNode | ((error: Error, reset: () => void) => ReactNode)
   onReset?: () => void
+  maxRetries?: number
+  onMaxRetriesExceeded?: () => void
 }
 
 interface State {
   hasError: boolean
   error?: Error
+  retryCount: number
 }
 
 export class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props)
-    this.state = { hasError: false }
+    this.state = { hasError: false, retryCount: 0 }
   }
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { hasError: true, error }
   }
 
@@ -26,13 +29,22 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   handleReset = (): void => {
-    this.setState({ hasError: false, error: undefined })
+    const maxRetries = this.props.maxRetries ?? Infinity;
+    if (this.state.retryCount >= maxRetries) {
+      this.props.onMaxRetriesExceeded?.();
+      return;
+    }
+    this.setState((prev) => ({ hasError: false, error: undefined, retryCount: prev.retryCount + 1 }))
     this.props.onReset?.()
   }
 
   render(): ReactNode {
     if (this.state.hasError) {
-      if (this.props.fallback) return this.props.fallback
+      if (typeof this.props.fallback === 'function' && this.state.error) {
+        return this.props.fallback(this.state.error, this.handleReset);
+      } else if (this.props.fallback) {
+        return this.props.fallback as ReactNode;
+      }
       return (
         <div className="flex items-center justify-center h-full">
           <div className="text-center p-4">

@@ -98,6 +98,7 @@ export function SQLEditor({
               autoClosingBrackets: "always",
               automaticLayout: true,
               inlineSuggest: { enabled: true },
+              maxTokenizationLineLength: 10000,
               scrollbar: { verticalScrollbarSize: 7, horizontalScrollbarSize: 7 },
             }}
           />

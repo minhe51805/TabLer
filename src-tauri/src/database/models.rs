@@ -53,8 +53,12 @@ pub struct ConnectionConfig {
     pub color: Option<String>,
     #[serde(default)]
     pub additional_fields: HashMap<String, String>,
+    /// Shell command to execute locally before connecting.
+    pub pre_connect_script: Option<String>,
     /// SQL commands to execute after connecting.
     pub startup_commands: Option<String>,
+    /// SSH connection config
+    pub ssh_config: Option<crate::ssh::ssh_tunnel::SshConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -87,7 +91,9 @@ impl Default for ConnectionConfig {
             ssl_skip_host_verification: None,
             color: None,
             additional_fields: HashMap::new(),
+            pre_connect_script: None,
             startup_commands: None,
+            ssh_config: None,
         }
     }
 }
@@ -119,6 +125,8 @@ impl ConnectionConfig {
         self.ssl_client_cert_path = resolve_string(self.ssl_client_cert_path.take());
         self.ssl_client_key_path = resolve_string(self.ssl_client_key_path.take());
         self.color = resolve_string(self.color.take());
+        self.pre_connect_script = resolve_string(self.pre_connect_script.take());
+        self.startup_commands = resolve_string(self.startup_commands.take());
 
         // Resolve env vars in additional_fields values
         let resolved_additional: std::collections::HashMap<String, String> = self
@@ -541,7 +549,9 @@ impl ConnectionConfig {
             ssl_skip_host_verification: None,
             color: None,
             additional_fields: HashMap::new(),
+            pre_connect_script: None,
             startup_commands: None,
+            ssh_config: None,
         })
     }
 

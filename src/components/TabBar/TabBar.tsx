@@ -16,12 +16,13 @@ interface Props {
 
 export function TabBar({ queryChrome, onRunActiveQuery, onClearVisibleTabs }: Props) {
   const { t } = useI18n();
-  const { tabs, activeTabId, setActiveTab, removeTab, connections } = useAppStore(
+  const { tabs, activeTabId, setActiveTab, removeTab, pinTab, connections } = useAppStore(
     useShallow((state) => ({
       tabs: state.tabs,
       activeTabId: state.activeTabId,
       setActiveTab: state.setActiveTab,
       removeTab: state.removeTab,
+      pinTab: state.pinTab,
       connections: state.connections,
     }))
   );
@@ -69,16 +70,16 @@ export function TabBar({ queryChrome, onRunActiveQuery, onClearVisibleTabs }: Pr
               key={tab.id}
               className={[
                 "tabbar-tab",
-                isActive
-                  ? "active"
-                  : "",
+                isActive ? "active" : "",
+                tab.isPreview ? "preview" : "",
               ].join(" ")}
               onClick={() => setActiveTab(tab.id)}
+              onDoubleClick={() => pinTab(tab.id)}
             >
               <span className={`tabbar-tab-icon ${isActive ? "active" : ""}`}>
                 {getTabIcon(tab.type, tab.connectionId)}
               </span>
-              <span className="tabbar-tab-title">{tab.title}</span>
+              <span className="tabbar-tab-title" style={{ fontStyle: tab.isPreview ? "italic" : "normal" }}>{tab.title}</span>
 
               <button
                 className={[

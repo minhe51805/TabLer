@@ -1,0 +1,12 @@
+/* ─── Environment Badges ─────────────────────────────────────────────────────── */
+
+.startup-connection-env-badge {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border: 1px solid;
+  border-radius: 4px;
+  opacity: 0.85;
+  flex-shrink: 0;
+}

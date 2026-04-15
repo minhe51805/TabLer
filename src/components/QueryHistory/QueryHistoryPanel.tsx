@@ -15,6 +15,7 @@ import { useI18n } from "../../i18n";
 import { useEvent } from "../../stores/event-center";
 import { useQueryHistoryStore } from "../../stores/queryHistoryStore";
 import type { QueryHistoryEntry } from "../../types";
+import "../../styles/lazy-overlays.css";
 
 interface Props {
   isOpen: boolean;

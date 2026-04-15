@@ -1,6 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Plus, Trash2, Brain, Sparkles, Loader2, Check } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
+import { invokeWithTimeout } from "../../utils/tauri-utils";
+import { getCurrentAppLanguage } from "../../i18n";
 import type { AIProviderConfig } from "../../types";
 
 const PROVIDER_NAMES: Record<string, string> = {
@@ -45,6 +47,10 @@ export function AISettingsModal({ onClose }: Props) {
     const [editingId, setEditingId] = useState<string | null>(null);
     const [saveError, setSaveError] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
+    const [connectionCheckStatus, setConnectionCheckStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
+    const [connectionCheckMessage, setConnectionCheckMessage] = useState<string | null>(null);
+    const [isProviderMenuOpen, setIsProviderMenuOpen] = useState(false);
+    const providerMenuRef = useRef<HTMLDivElement | null>(null);
 
     useEffect(() => {
         let isMounted = true;
@@ -82,6 +88,27 @@ export function AISettingsModal({ onClose }: Props) {
             setEditingId(configs[0].id);
         }
     }, [configs, editingId]);
+
+    useEffect(() => {
+        setConnectionCheckStatus("idle");
+        setConnectionCheckMessage(null);
+    }, [editingId]);
+
+    useEffect(() => {
+        if (!isProviderMenuOpen) return;
+
+        const handleClickOutside = (event: MouseEvent) => {
+            const target = event.target as Node | null;
+            if (providerMenuRef.current && target && !providerMenuRef.current.contains(target)) {
+                setIsProviderMenuOpen(false);
+            }
+        };
+
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+        };
+    }, [isProviderMenuOpen]);
 
     const handleAdd = () => {
         setSaveError(null);
@@ -136,6 +163,47 @@ export function AISettingsModal({ onClose }: Props) {
         }
     };
 
+    const handleCheckConnection = async () => {
+        if (!activeConfig) return;
+        if (!activeConfig.is_enabled) {
+            setConnectionCheckStatus("error");
+            setConnectionCheckMessage("Enable this provider before checking the connection.");
+            return;
+        }
+        if (!activeConfig.is_primary) {
+            setConnectionCheckStatus("error");
+            setConnectionCheckMessage("Set this provider as active to check connectivity.");
+            return;
+        }
+        const apiKeyUpdates = Object.fromEntries(
+            Object.entries(keyDrafts).filter(([, value]) => value.trim().length > 0)
+        );
+        setConnectionCheckStatus("checking");
+        setConnectionCheckMessage(null);
+        setSaveError(null);
+        try {
+            const { aiConfigs, aiKeyStatus } = await saveAIConfigs(configs, apiKeyUpdates, clearedKeyIds);
+            setConfigs(normalizeProviderDrafts(aiConfigs));
+            setStoredKeyStatus(aiKeyStatus);
+            const resp = await invokeWithTimeout<{ text: string; error?: string }>(
+                "ask_ai",
+                { request: { prompt: "ping", context: "", mode: "panel", intent: "sql", language: getCurrentAppLanguage(), history: [] } },
+                20_000,
+                "AI provider check"
+            );
+            if (resp.error) {
+                throw new Error(resp.error);
+            }
+            setConnectionCheckStatus("ok");
+            setConnectionCheckMessage("Connection OK");
+        } catch (error) {
+            setConnectionCheckStatus("error");
+            const message = error instanceof Error ? error.message : String(error);
+            setConnectionCheckMessage(message);
+            setSaveError(message);
+        }
+    };
+
     const updateConfig = (id: string, updates: Partial<AIProviderConfig>) => {
         setSaveError(null);
         setConfigs((current) => normalizeProviderDrafts(current.map((config) => {
@@ -162,6 +230,23 @@ export function AISettingsModal({ onClose }: Props) {
     const inUseCount = configs.filter((config) => config.is_enabled && config.is_primary).length;
     const hasStoredKey = activeConfig ? storedKeyStatus[activeConfig.id] && !clearedKeyIds.includes(activeConfig.id) : false;
     const isActiveProviderInUse = !!activeConfig?.is_enabled && !!activeConfig?.is_primary;
+    const connectionStatusLabel =
+        connectionCheckStatus === "checking"
+            ? "Checking..."
+            : connectionCheckStatus === "ok"
+                ? "Connection OK"
+                : connectionCheckStatus === "error"
+                    ? "Check failed"
+                    : isActiveProviderInUse
+                        ? "Using for AI"
+                        : activeConfig?.is_enabled
+                            ? "ENABLED ONLY"
+                            : "DISABLED";
+    const connectionStatusClass = connectionCheckStatus === "ok"
+        ? "ai-settings-workspace-status is-ok"
+        : connectionCheckStatus === "error"
+            ? "ai-settings-workspace-status is-error"
+            : "ai-settings-workspace-status";
 
     const handleKeyDraftChange = (providerId: string, value: string) => {
         setSaveError(null);
@@ -295,9 +380,12 @@ export function AISettingsModal({ onClose }: Props) {
                                     )}
                                 </div>
                                 <div className="ai-settings-workspace-actions">
-                                    <span className="ai-settings-workspace-status">
-                                        {isActiveProviderInUse ? "Using for AI" : activeConfig.is_enabled ? "ENABLED ONLY" : "DISABLED"}
+                                    <span className={connectionStatusClass} title={connectionCheckMessage || undefined}>
+                                        {connectionStatusLabel}
                                     </span>
+                                    <button type="button" onClick={handleCheckConnection} className="ai-settings-btn-check" disabled={connectionCheckStatus === "checking" || isSaving}>
+                                        {connectionCheckStatus === "checking" ? "Checking..." : "Check connection"}
+                                    </button>
                                     {!isActiveProviderInUse && (
                                         <button
                                             type="button"
@@ -325,6 +413,36 @@ export function AISettingsModal({ onClose }: Props) {
                                 <div className="ai-settings-panel">
                                     <h4 className="ai-settings-panel-title">Identity</h4>
                                     <div className="ai-settings-fields">
+                                        <div className="ai-settings-field">
+                                            <label className="ai-settings-label">Provider</label>
+                                            <div className="ai-settings-select-shell" ref={providerMenuRef}>
+                                                <button
+                                                    type="button"
+                                                    className="ai-settings-select-trigger"
+                                                    onClick={() => setIsProviderMenuOpen((prev) => !prev)}
+                                                >
+                                                    <span>{PROVIDER_NAMES[activeConfig.provider_type] || "Select provider"}</span>
+                                                    <span className="ai-settings-select-caret" />
+                                                </button>
+                                                {isProviderMenuOpen && (
+                                                    <div className="ai-settings-select-menu">
+                                                        {Object.entries(PROVIDER_NAMES).map(([value, label]) => (
+                                                            <button
+                                                                key={value}
+                                                                type="button"
+                                                                className={`ai-settings-select-option ${activeConfig.provider_type === value ? "active" : ""}`}
+                                                                onClick={() => {
+                                                                    updateConfig(activeConfig.id, { provider_type: value as AIProviderConfig["provider_type"] });
+                                                                    setIsProviderMenuOpen(false);
+                                                                }}
+                                                            >
+                                                                {label}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
                                         <div className="ai-settings-field">
                                             <label className="ai-settings-label">Name</label>
                                             <input
@@ -457,3 +575,10 @@ export function AISettingsModal({ onClose }: Props) {
         </div>
     );
 }
+
+
+
+
+
+
+

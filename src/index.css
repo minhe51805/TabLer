@@ -1,4 +1,6 @@
-/* AI extracted imports */
+@import "tailwindcss";
+
+/* ─── Component styles - imported after tailwindcss to override defaults */
 @import "./styles/fintech-glassmorphism-design-system.css";
 @import "./styles/connection-group-headers.css";
 @import "./styles/environment-badges.css";
@@ -7,10 +9,7 @@
 @import "./styles/mixed-state-checkboxes.css";
 @import "./styles/custom-date-cell.css";
 @import "./styles/env-badge.css";
-
-/* AI extracted imports */
+@import "./styles/explain-diagram.css";
 @import "./styles/ai-settings-modal.css";
 @import "./styles/quick-switcher.css";
 @import "./styles/filter-presets-operators.css";
-
-@import "tailwindcss";

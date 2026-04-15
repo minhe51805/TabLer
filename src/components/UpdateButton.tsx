@@ -38,6 +38,10 @@ export function UpdateButton({
   };
 
   const handleCheckForUpdate = async () => {
+    if (import.meta.env.DEV) {
+      setError("Updates are available in the release build only.");
+      return;
+    }
     setChecking(true);
     setError(null);
     try {
@@ -121,7 +125,7 @@ export function UpdateButton({
       {error && (
         <span className="text-xs text-[var(--error)] flex items-center gap-1">
           <AlertCircle size={12} />
-          Failed to check updates
+          {error}
         </span>
       )}
     </div>

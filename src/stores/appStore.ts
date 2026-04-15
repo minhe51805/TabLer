@@ -104,6 +104,23 @@ function invokeMutation<T>(command: string, args: Record<string, unknown>) {
 }
 
 /**
+ * Executes startup commands for a newly connected database.
+ * Silently skips failures so startup commands don't block the connection.
+ */
+async function executeStartupCommands(connectionId: string, commands: string) {
+  if (!commands?.trim()) return;
+  const normalized = commands.split(";").map((s) => s.trim()).filter(Boolean);
+  for (const cmd of normalized) {
+    if (!cmd) continue;
+    try {
+      await invokeMutation<QueryResult>("execute_query", { connectionId, sql: cmd });
+    } catch (err) {
+      console.warn("[StartupCommands] Failed to execute:", cmd, err);
+    }
+  }
+}
+
+/**
  * Prompts Safe Mode confirmation for SQL execution.
  * Dispatches a custom event so UI components can show a modal.
  * Returns a Promise<boolean> that resolves when the user responds.
@@ -180,8 +197,8 @@ interface AppState {
   isExecutingQuery: boolean;
 
   error: string | null;
-  connectionHealthy: boolean;
-  setConnectionHealthy: (healthy: boolean) => void;
+  connectionHealth: Record<string, boolean>;
+  setConnectionHealth: (connectionId: string, healthy: boolean) => void;
 
   loadSavedConnections: () => Promise<void>;
   connectToDatabase: (config: ConnectionConfig) => Promise<void>;
@@ -250,9 +267,6 @@ interface AppState {
   setActiveTab: (tabId: string) => void;
   updateTab: (tabId: string, updates: Partial<Tab>) => void;
   pinTab: (tabId: string) => void;
-  saveTabState: (connectionId: string) => Promise<void>;
-  loadTabState: (connectionId: string) => Promise<PersistedTab[]>;
-
   loadAIConfigs: () => Promise<{
     aiConfigs: AIProviderConfig[];
     aiKeyStatus: Record<string, boolean>;
@@ -294,8 +308,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   isLoadingSchemaObjects: false,
   isExecutingQuery: false,
   error: null,
-  connectionHealthy: true,
-  setConnectionHealthy: (healthy: boolean) => set({ connectionHealthy: healthy }),
+  connectionHealth: {},
+  setConnectionHealth: (connectionId: string, healthy: boolean) =>
+    set((state) => ({ connectionHealth: { ...state.connectionHealth, [connectionId]: healthy } })),
 
   aiConfigs: [],
 
@@ -413,22 +428,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         isConnecting: false,
       });
 
-      // Execute startup commands after successful connection
-      if (normalizedConfig.startupCommands?.trim()) {
-        const commands = normalizedConfig.startupCommands.split(";").map((s) => s.trim()).filter(Boolean);
-        for (const cmd of commands) {
-          if (!cmd) continue;
-          try {
-            await invokeMutation<QueryResult>("execute_query", {
-              connectionId: normalizedConfig.id,
-              sql: cmd,
-            });
-          } catch (err) {
-            console.warn("[StartupCommands] Failed to execute:", cmd, err);
-          }
-        }
-      }
-
+      await executeStartupCommands(normalizedConfig.id, normalizedConfig.startupCommands ?? "");
       void get().fetchDatabases(normalizedConfig.id);
       if (normalizedConfig.database) {
         set({ currentDatabase: normalizedConfig.database });
@@ -491,26 +491,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         isConnecting: false,
       });
 
+      await executeStartupCommands(connectionId, connection?.startupCommands ?? "");
       void get().fetchDatabases(connectionId);
       if (connection?.database) {
         set({ currentDatabase: connection.database });
         void get().fetchTables(connectionId, connection.database);
-      }
-
-      // Execute startup commands after successful connection
-      if (connection?.startupCommands?.trim()) {
-        const commands = connection.startupCommands.split(";").map((s) => s.trim()).filter(Boolean);
-        for (const cmd of commands) {
-          if (!cmd) continue;
-          try {
-            await invokeMutation<QueryResult>("execute_query", {
-              connectionId,
-              sql: cmd,
-            });
-          } catch (err) {
-            console.warn("[StartupCommands] Failed to execute:", cmd, err);
-          }
-        }
       }
     } catch (e) {
       const currentState = get();
@@ -988,60 +973,4 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setError: (error: string | null) => set({ error }),
   clearError: () => set({ error: null }),
-
-  // --- Tab Persistence ---
-  saveTabState: async (connectionId: string) => {
-    const { tabs } = get();
-    const persistableTabs = tabs
-      .filter((tab) => tab.type !== "metrics")
-      .map((tab): PersistedTab => ({
-        tabId: tab.id,
-        tabType: tab.type,
-        title: tab.title,
-        database: tab.database,
-        tableName: tab.tableName,
-        content: tab.content,
-        isActive: tab.id === get().activeTabId,
-        createdAtMs: Date.now(),
-      }));
-
-    try {
-      await invoke("save_tabs", {
-        connectionId,
-        tabsJson: JSON.stringify(persistableTabs),
-      });
-    } catch (e) {
-      // Non-critical: log but don't fail
-      console.warn("[TabPersistence] Failed to save tabs:", e);
-    }
-  },
-
-  loadTabState: async (connectionId: string): Promise<PersistedTab[]> => {
-    try {
-      const tabs = await invokeWithTimeout<PersistedTab[]>(
-        "load_tabs",
-        { connectionId },
-        FRONTEND_TIMEOUTS.metadata,
-        "Loading persisted tabs",
-      );
-      return tabs || [];
-    } catch (e) {
-      console.warn("[TabPersistence] Failed to load tabs:", e);
-      return [];
-    }
-  },
 }));
-
-// --- PersistedTab type (mirrors Rust backend) ---
-export interface PersistedTab {
-  tabId: string;
-  tabType: "query" | "table" | "structure" | "metrics" | "er-diagram";
-  title: string;
-  database?: string;
-  tableName?: string;
-  content?: string;
-  scrollTop?: number;
-  panelHeights?: { editorHeight?: number; resultsHeight?: number };
-  isActive: boolean;
-  createdAtMs: number;
-}

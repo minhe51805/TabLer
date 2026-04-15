@@ -9,6 +9,7 @@ use crate::utils::sql::split_sql_statements;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
+use log::warn;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::types::Json;
 use sqlx::{Column, ConnectOptions, Executor, Postgres, QueryBuilder, Row, TypeInfo, ValueRef};
@@ -519,7 +520,8 @@ impl DatabaseDriver for PostgresDriver {
                     (None, Some(table)) => Some(table),
                     _ => table_name,
                 },
-                definition: Some(
+                definition: Some(format!(
+                    "{}\n{}",
                     [
                         timing.unwrap_or_default(),
                         events.unwrap_or_default(),
@@ -527,11 +529,9 @@ impl DatabaseDriver for PostgresDriver {
                         row.try_get::<String, _>(3).unwrap_or_default(),
                     ]
                     .join(" ")
-                    .trim()
-                    .to_string()
-                        + "\n"
-                        + statement.unwrap_or_default().trim(),
-                ),
+                    .trim(),
+                    statement.unwrap_or_default().trim(),
+                )),
             }
         }));
 
@@ -688,14 +688,14 @@ impl DatabaseDriver for PostgresDriver {
         let idx_rows: Vec<PgRow> = match idx_result {
             Ok(Ok(rows)) => rows,
             Ok(Err(error)) => {
-                eprintln!(
+                warn!(
                     "Failed to load PostgreSQL indexes for {}.{}: {:?}",
                     schema, table_name, error
                 );
                 Vec::new()
             }
             Err(_) => {
-                eprintln!(
+                warn!(
                     "Timed out loading PostgreSQL indexes for {}.{}",
                     schema, table_name
                 );
@@ -725,14 +725,14 @@ impl DatabaseDriver for PostgresDriver {
         let fk_rows: Vec<PgRow> = match fk_result {
             Ok(Ok(rows)) => rows,
             Ok(Err(error)) => {
-                eprintln!(
+                warn!(
                     "Failed to load PostgreSQL foreign keys for {}.{}: {:?}",
                     schema, table_name, error
                 );
                 Vec::new()
             }
             Err(_) => {
-                eprintln!(
+                warn!(
                     "Timed out loading PostgreSQL foreign keys for {}.{}",
                     schema, table_name
                 );

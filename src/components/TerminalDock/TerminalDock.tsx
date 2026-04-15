@@ -6,6 +6,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { useI18n } from "../../i18n";
 import "@xterm/xterm/css/xterm.css";
+import "../../styles/lazy-overlays.css";
 
 interface TerminalDockProps {
   isOpen: boolean;

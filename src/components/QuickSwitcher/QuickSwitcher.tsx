@@ -16,6 +16,7 @@ import { useQuickSwitcherStore, fuzzySearch, type SwitcherItem, type SwitcherIte
 import { useUIStore } from "../../stores/uiStore";
 import { useSqlFavoritesStore } from "../../stores/sql-favorites-store";
 import { useConnectionStore } from "../../stores/connectionStore";
+import "../../styles/lazy-overlays.css";
 
 const ITEM_ICONS: Record<SwitcherItemKind, React.ReactNode> = {
   tab: <FileText size={14} />,

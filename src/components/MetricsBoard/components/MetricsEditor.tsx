@@ -1,4 +1,5 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
+import type * as Monaco from "monaco-editor";
 import { Trash2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useAppStore } from "../../../stores/appStore";
@@ -55,7 +56,7 @@ export function MetricsEditor({
     metricsEditorCompletionRef.current?.dispose();
 
     metricsEditorCompletionRef.current = monaco.languages.registerCompletionItemProvider("sql", {
-      provideCompletionItems: (model: any, position: any) => {
+      provideCompletionItems: (model: Monaco.editor.ITextModel, position: Monaco.Position) => {
         const word = model.getWordUntilPosition(position);
         const range = {
           startLineNumber: position.lineNumber,

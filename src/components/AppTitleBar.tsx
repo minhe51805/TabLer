@@ -14,41 +14,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { RefObject } from "react";
 import type { ConnectionConfig } from "../types/database";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
-
-type WindowMenuSectionKey =
-  | "file"
-  | "edit"
-  | "view"
-  | "tools"
-  | "connection"
-  | "plugins"
-  | "navigate"
-  | "language"
-  | "help";
-
-interface WindowMenuItem {
-  key?: string;
-  label?: string;
-  action?: () => void;
-  disabled?: boolean;
-  divider?: boolean;
-  selected?: boolean;
-  shortcut?: string;
-  children?: WindowMenuItem[];
-  controlType?: "font-scale-slider";
-  value?: number;
-  min?: number;
-  max?: number;
-  step?: number;
-  onValueChange?: (next: number) => void;
-  onDecrease?: () => void;
-  onIncrease?: () => void;
-}
+import type { WindowMenuSectionKey, WindowMenuItem } from "../types/app-types";
 
 interface AppTitleBarProps {
   titlebarContextTitle: string;
   titlebarContextLabel: string;
   isConnected: boolean;
+  isHealthy?: boolean;
   activeConn: ConnectionConfig | undefined;
   isWindowMaximized: boolean;
   isWindowFocused: boolean;
@@ -290,6 +262,7 @@ export function AppTitleBar({
   titlebarContextTitle,
   titlebarContextLabel,
   isConnected,
+  isHealthy = true,
   activeConn,
   isWindowMaximized,
   isWindowFocused,
@@ -415,9 +388,12 @@ export function AppTitleBar({
         <div className="titlebar-context">
           <span className="titlebar-context-label">{t("common.workspace")}</span>
           {isConnected && activeConn ? (
-            <div className="titlebar-badge" title={titlebarContextTitle}>
+            <div
+              className="titlebar-badge"
+              title={`${titlebarContextTitle}${!isHealthy ? " (unhealthy)" : ""}`}
+            >
               <span
-                className="titlebar-badge-dot"
+                className={`titlebar-badge-dot ${!isHealthy ? "is-unhealthy" : ""}`}
                 style={{ backgroundColor: activeConn.color || "var(--success)" }}
               />
               <span className="truncate">

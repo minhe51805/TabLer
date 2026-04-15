@@ -74,8 +74,8 @@ interface DatabaseTreeProps {
   visibleTableCount: number;
   visibleObjectCount: number;
   language: AppLanguage;
-   
-  t: (key: any, opts?: Record<string, any>) => string;
+
+  t: (key: import("../../../i18n").TranslationKey, opts?: Record<string, string | number>) => string;
   // Interactions
   onToggleDb: (db: DatabaseInfo) => void;
   onTableClick: (table: Pick<TableInfo, "name" | "schema">) => void;

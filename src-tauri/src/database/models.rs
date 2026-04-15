@@ -244,13 +244,21 @@ impl ParsedConnectionUrl {
         let (scheme, rest) = url.split_once("://")
             .ok_or_else(|| "Invalid URL: missing scheme (e.g., postgresql://)".to_string())?;
 
-        let db_type = match scheme.to_lowercase().as_str() {
+        // Strip SQLAlchemy driver suffix (e.g., "postgresql+psycopg2" -> "postgresql")
+        let scheme_clean = if let Some((base, _)) = scheme.split_once('+') {
+            base.to_lowercase()
+        } else {
+            scheme.to_lowercase()
+        };
+
+        let db_type = match scheme_clean.as_str() {
             "postgresql" | "postgres" => DatabaseType::PostgreSQL,
             "cockroachdb" | "cockroach" => DatabaseType::CockroachDB,
             "greenplum" => DatabaseType::Greenplum,
             "redshift" => DatabaseType::Redshift,
             "vertica" => DatabaseType::Vertica,
             "mysql" => DatabaseType::MySQL,
+            "mssql" => DatabaseType::MSSQL,
             "mariadb" => DatabaseType::MariaDB,
             "snowflake" => DatabaseType::Snowflake,
             "cassandra" | "scylla" => DatabaseType::Cassandra,
@@ -258,7 +266,7 @@ impl ParsedConnectionUrl {
             "libsql" => DatabaseType::LibSQL,
             "sqlite" => DatabaseType::SQLite,
             "redis" | "rediss" => DatabaseType::Redis,
-            "mongodb" | "mongodb+srv" => DatabaseType::MongoDB,
+            "mongodb" => DatabaseType::MongoDB,
             _ => return Err(format!("Unsupported database scheme: {}", scheme)),
         };
 
@@ -1209,6 +1217,8 @@ mod tests {
             color: None,
             additional_fields: HashMap::new(),
             startup_commands: None,
+            pre_connect_script: None,
+            ssh_config: None,
         };
 
         assert!(config.validate().is_ok());
@@ -1261,6 +1271,39 @@ mod tests {
     }
 
     #[test]
+    fn parses_sqlalchemy_style_urls() {
+        // postgresql+driver:// scheme should strip +driver suffix
+        let parsed = ParsedConnectionUrl::parse("postgresql+psycopg2://user:pass@localhost:5432/mydb")
+            .unwrap();
+        assert_eq!(parsed.db_type, DatabaseType::PostgreSQL);
+        assert_eq!(parsed.host, "localhost");
+        assert_eq!(parsed.port, Some(5432));
+        assert_eq!(parsed.username, "user");
+        assert_eq!(parsed.password, "pass");
+        assert_eq!(parsed.database, "mydb");
+
+        // mysql+aiomysql://
+        let parsed = ParsedConnectionUrl::parse("mysql+aiomysql://root:secret@db.example.com/mydb")
+            .unwrap();
+        assert_eq!(parsed.db_type, DatabaseType::MySQL);
+        assert_eq!(parsed.host, "db.example.com");
+        assert_eq!(parsed.port, Some(3306));
+        assert_eq!(parsed.username, "root");
+        assert_eq!(parsed.password, "secret");
+        assert_eq!(parsed.database, "mydb");
+
+        // mssql+pymssql://
+        let parsed = ParsedConnectionUrl::parse("mssql+pymssql://sa:Password123@192.168.1.100:1433/TablerDB")
+            .unwrap();
+        assert_eq!(parsed.db_type, DatabaseType::MSSQL);
+        assert_eq!(parsed.host, "192.168.1.100");
+        assert_eq!(parsed.port, Some(1433));
+        assert_eq!(parsed.username, "sa");
+        assert_eq!(parsed.password, "Password123");
+        assert_eq!(parsed.database, "TablerDB");
+    }
+
+    #[test]
     fn parses_snowflake_url() {
         let placeholder_credential = "example-snowflake-credential";
         let parsed = ParsedConnectionUrl::parse(
@@ -1304,6 +1347,8 @@ mod tests {
             color: None,
             additional_fields,
             startup_commands: None,
+            pre_connect_script: None,
+            ssh_config: None,
         };
 
         assert!(config.validate().is_ok());
@@ -1334,6 +1379,8 @@ mod tests {
             color: None,
             additional_fields,
             startup_commands: None,
+            pre_connect_script: None,
+            ssh_config: None,
         };
 
         assert!(config.validate().is_ok());
@@ -1365,6 +1412,8 @@ mod tests {
             color: None,
             additional_fields,
             startup_commands: None,
+            pre_connect_script: None,
+            ssh_config: None,
         };
 
         assert!(config.validate().is_ok());

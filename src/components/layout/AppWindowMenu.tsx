@@ -1,7 +1,6 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
 import { Menu, ChevronRight, Minus, Check, Plus } from "lucide-react";
-// @ts-ignore
-import { useTranslation } from "react-i18next";
+import { useI18n } from "../../i18n";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../../utils/ui-scale";
 
 export type WindowMenuSectionKey =
@@ -104,7 +103,7 @@ export function AppWindowMenu({
   themeMenuLabel,
   activeTheme = { id: "" }
 }: AppWindowMenuProps) {
-  const { t } = useTranslation();
+  const { t } = useI18n();
   const [isWindowMenuOpen, setIsWindowMenuOpen] = useState(false);
   const [activeWindowMenuSection, setActiveWindowMenuSection] = useState<WindowMenuSectionKey | null>(null);
   const [activeWindowMenuItemPath, setActiveWindowMenuItemPath] = useState<string | null>(null);

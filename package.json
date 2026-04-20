@@ -29,6 +29,8 @@
     "monaco-vim": "^0.4.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-is": "^19.2.5",
+    "recharts": "^3.8.1",
     "sql-formatter": "^15.7.3",
     "tailwindcss": "^4.2.1",
     "xlsx": "^0.18.5",

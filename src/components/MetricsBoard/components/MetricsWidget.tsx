@@ -60,10 +60,17 @@ export function MetricsWidgetCard({
     lastRunAt: null,
   });
   const requestIdRef = useRef(0);
+  const isRunningRef = useRef(false);
+  const rerunRequestedRef = useRef(false);
   const holdTimerRef = useRef<number | null>(null);
   const suppressClickRef = useRef(false);
 
   const runWidgetQuery = useCallback(async () => {
+    if (isRunningRef.current) {
+      rerunRequestedRef.current = true;
+      return;
+    }
+
     const validation = validateMetricsQuery(widget.query);
     if (!validation.ok) {
       setState({
@@ -77,6 +84,7 @@ export function MetricsWidgetCard({
 
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
+    isRunningRef.current = true;
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
@@ -97,6 +105,16 @@ export function MetricsWidgetCard({
         error: formatExecutionError(error),
         lastRunAt: Date.now(),
       });
+    } finally {
+      if (requestIdRef.current === requestId) {
+        isRunningRef.current = false;
+      }
+      if (rerunRequestedRef.current) {
+        rerunRequestedRef.current = false;
+        window.setTimeout(() => {
+          void runWidgetQuery();
+        }, 0);
+      }
     }
   }, [connectionId, widget.query]);
 
@@ -239,6 +257,7 @@ export function MetricsWidgetCard({
     <div
       role="button"
       tabIndex={0}
+      data-metrics-widget-id={widget.id}
       className={`metrics-widget-card ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${resizing ? "resizing" : ""}`}
       style={layoutStyle}
       onPointerDown={beginCardHoldDrag}

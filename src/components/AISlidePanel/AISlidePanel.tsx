@@ -1,8 +1,23 @@
-import { History, Loader2, RotateCcw, Sparkles, Target, Trash2, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  History,
+  Loader2,
+  MessageSquare,
+  PencilLine,
+  RotateCcw,
+  Settings2,
+  Sparkles,
+  Target,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
-import type { AIConversationMessage } from "../../types";
+import { useAppStore } from "../../stores/appStore";
+import type { AIConversationMessage, AIProviderConfig, DatabaseType } from "../../types";
 import { invokeMutation } from "../../utils/tauri-utils";
+import { splitSqlStatements } from "../../utils/sqlStatements";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 import { AIBubbleDetailModal } from "./AIBubbleDetailModal";
@@ -20,7 +35,21 @@ interface Props {
   isOpen: boolean;
   initialPrompt?: string;
   initialPromptNonce?: number;
+  initialAttachment?: {
+    text: string;
+    source: string;
+  };
+  initialAttachmentNonce?: number;
   onClose: () => void;
+}
+
+interface OpenMetricsBoardResult {
+  success: boolean;
+  boardId?: string;
+  didChange: boolean;
+  addedCount: number;
+  addedTitles: string[];
+  created: boolean;
 }
 
 const ERROR_BUBBLE_AUTO_DISMISS_MS = 9000;
@@ -81,6 +110,30 @@ function summarizeSelectionText(text: string) {
 
 function summarizePromptForDisplay(text: string) {
   return summarizeSelectionText(text);
+}
+
+function buildExecutionDetail(summary: string, query: string, previousDetail?: string) {
+  return [
+    previousDetail?.trim() || "",
+    "## Execution",
+    summary,
+    "## Query",
+    `\`\`\`sql\n${query}\n\`\`\``,
+  ]
+    .filter(Boolean)
+    .join("\n\n---\n\n");
+}
+
+function buildAutoRunFailureDetail(message: string, sql: string, previousDetail?: string) {
+  return [
+    previousDetail?.trim() || "",
+    "## Auto Run Error",
+    message,
+    "## Proposed SQL",
+    `\`\`\`sql\n${sql}\n\`\`\``,
+  ]
+    .filter(Boolean)
+    .join("\n\n---\n\n");
 }
 
 function buildThreadLabel(prompt: string, index: number) {
@@ -293,6 +346,59 @@ function getInteractionModeLabel(
   return copy.composer.modePrompt;
 }
 
+function getInteractionModeHint(
+  interactionMode: AIWorkspaceInteractionMode,
+  copy: ReturnType<typeof getAIWorkspaceCopy>
+) {
+  if (interactionMode === "agent") return copy.composer.modeAgentHint;
+  if (interactionMode === "edit") return copy.composer.modeEditHint;
+  return copy.composer.modePromptHint;
+}
+
+function getInteractionModeIcon(interactionMode: AIWorkspaceInteractionMode) {
+  if (interactionMode === "agent") return Sparkles;
+  if (interactionMode === "edit") return PencilLine;
+  return MessageSquare;
+}
+
+function normalizeAIProviderConfigs(configs: AIProviderConfig[]) {
+  const normalized = configs.map((config) => ({
+    ...config,
+    is_enabled: config.is_enabled ?? true,
+    is_primary: config.is_primary ?? false,
+    allow_schema_context: config.allow_schema_context ?? false,
+    allow_inline_completion: config.allow_inline_completion ?? false,
+  }));
+
+  const primaryIndex = normalized.findIndex((config) => config.is_enabled && config.is_primary);
+  const enabledIndex = normalized.findIndex((config) => config.is_enabled);
+  const activeIndex = primaryIndex >= 0 ? primaryIndex : enabledIndex;
+
+  return normalized.map((config, index) => ({
+    ...config,
+    is_primary: activeIndex >= 0 ? index === activeIndex : false,
+  }));
+}
+
+function formatProviderTypeLabel(providerType: AIProviderConfig["provider_type"]) {
+  switch (providerType) {
+    case "openai":
+      return "OpenAI";
+    case "anthropic":
+      return "Claude";
+    case "gemini":
+      return "Gemini";
+    case "openrouter":
+      return "OpenRouter";
+    case "ollama":
+      return "Ollama";
+    case "custom":
+      return "Custom";
+    default:
+      return "AI";
+  }
+}
+
 function trimHistoryText(text: string, maxChars = MAX_HISTORY_MESSAGE_CHARS) {
   const compact = text.replace(/\s+/g, " ").trim();
   if (compact.length <= maxChars) return compact;
@@ -341,6 +447,210 @@ function buildPromptWithSelection(prompt: string, selection: SelectionContextSta
     "Selected content:",
     selection.text,
   ].join("\n");
+}
+
+async function waitForUIPaint() {
+  await new Promise<void>((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(resolve, 0);
+      });
+      return;
+    }
+
+    setTimeout(resolve, 0);
+  });
+}
+
+function isVisualizationPrompt(prompt: string) {
+  const normalized = prompt.trim().toLowerCase();
+  if (!normalized) return false;
+
+  return [
+    "chart",
+    "charts",
+    "graph",
+    "plot",
+    "dashboard",
+    "visualize",
+    "visualization",
+    "bar chart",
+    "line chart",
+    "pie chart",
+    "bieu do",
+    "biểu đồ",
+    "ve bieu do",
+    "vẽ biểu đồ",
+  ].some((signal) => normalized.includes(signal));
+}
+
+function normalizeVisualizationText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .trim();
+}
+
+function prefersVietnameseSystemReply(prompt: string, uiLanguage: string) {
+  if (uiLanguage === "vi") return true;
+  const normalizedPrompt = normalizeVisualizationText(prompt);
+  if (!normalizedPrompt) return false;
+
+  return [
+    "xem",
+    "bieu do",
+    "chart",
+    "bo sung",
+    "them",
+    "thieu",
+    "day du",
+    "giu",
+    "doi",
+    "hien tai",
+    "duoc khong",
+    "cho tui",
+    "giup tui",
+  ].some((signal) => normalizedPrompt.includes(signal));
+}
+
+function supportsOverviewMetricsBoard(dbType?: DatabaseType) {
+  switch (dbType) {
+    case "postgresql":
+    case "cockroachdb":
+    case "greenplum":
+    case "redshift":
+    case "mysql":
+    case "mariadb":
+    case "mssql":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isDashboardVisualizationPrompt(prompt: string, intent?: string) {
+  const normalizedPrompt = normalizeVisualizationText(prompt);
+  if (!normalizedPrompt) return false;
+
+  const dashboardSignals = [
+    "dashboard",
+    "multi chart",
+    "multiple charts",
+    "many charts",
+    "nhieu bieu do",
+    "nhiều biểu đồ",
+    "nhieu chart",
+    "nhiều chart",
+    "metrics board",
+  ];
+
+  return (
+    isOverviewVisualizationPrompt(prompt, intent) ||
+    (isVisualizationPrompt(normalizedPrompt) &&
+      dashboardSignals.some((signal) => normalizedPrompt.includes(signal)))
+  );
+}
+
+function isDashboardAugmentPrompt(prompt: string) {
+  const normalizedPrompt = normalizeVisualizationText(prompt);
+  if (!normalizedPrompt || !isVisualizationPrompt(normalizedPrompt)) {
+    return false;
+  }
+
+  const augmentSignals = [
+    "add chart",
+    "add more chart",
+    "add more charts",
+    "more chart",
+    "more charts",
+    "missing chart",
+    "missing charts",
+    "complete chart",
+    "complete dashboard",
+    "fill out dashboard",
+    "expand dashboard",
+    "augment dashboard",
+    "bo sung",
+    "them bieu do",
+    "them chart",
+    "thieu",
+    "day du",
+    "lam day",
+    "bo sung them",
+  ];
+
+  return augmentSignals.some((signal) => normalizedPrompt.includes(signal));
+}
+
+function buildWorkspaceOverviewChartSql(dbType?: DatabaseType) {
+  switch (dbType) {
+    case "postgresql":
+    case "cockroachdb":
+    case "greenplum":
+    case "redshift":
+      return [
+        "SELECT",
+        "  relname AS label,",
+        "  COALESCE(n_live_tup, 0)::bigint AS value",
+        "FROM pg_stat_user_tables",
+        "WHERE schemaname NOT IN ('pg_catalog', 'information_schema')",
+        "ORDER BY value DESC NULLS LAST, label ASC",
+        "LIMIT 12;",
+      ].join("\n");
+    case "mysql":
+    case "mariadb":
+      return [
+        "SELECT",
+        "  table_name AS label,",
+        "  COALESCE(table_rows, 0) AS value",
+        "FROM information_schema.tables",
+        "WHERE table_schema = DATABASE()",
+        "ORDER BY value DESC, label ASC",
+        "LIMIT 12;",
+      ].join("\n");
+    case "mssql":
+      return [
+        "SELECT TOP (12)",
+        "  t.name AS label,",
+        "  SUM(p.rows) AS value",
+        "FROM sys.tables t",
+        "JOIN sys.partitions p",
+        "  ON t.object_id = p.object_id",
+        " AND p.index_id IN (0, 1)",
+        "GROUP BY t.name",
+        "ORDER BY value DESC, label ASC;",
+      ].join("\n");
+    default:
+      return null;
+  }
+}
+
+function isOverviewVisualizationPrompt(prompt: string, intent?: string) {
+  const normalizedPrompt = prompt.trim().toLowerCase();
+  const overviewSignals = [
+    "overview",
+    "database overview",
+    "schema overview",
+    "tong quan",
+    "tổng quan",
+    "overview db",
+    "overview database",
+  ];
+
+  const hasOverviewSignal =
+    intent === "overview" || overviewSignals.some((signal) => normalizedPrompt.includes(signal));
+
+  return hasOverviewSignal && isVisualizationPrompt(normalizedPrompt);
+}
+
+function isSingleSqlStatement(sql: string) {
+  try {
+    return splitSqlStatements(sql).length === 1;
+  } catch {
+    return false;
+  }
 }
 
 function getBubbleConversationText(bubble: AIWorkspaceBubbleData) {
@@ -415,10 +725,18 @@ export function AISlidePanel({
   isOpen,
   initialPrompt = "",
   initialPromptNonce = 0,
+  initialAttachment,
+  initialAttachmentNonce = 0,
   onClose,
 }: Props) {
   const { language } = useI18n();
   const aiCopy = useMemo(() => getAIWorkspaceCopy(language), [language]);
+  const aiConfigs = useAppStore((state) => state.aiConfigs);
+  const loadAIConfigs = useAppStore((state) => state.loadAIConfigs);
+  const saveAIConfigs = useAppStore((state) => state.saveAIConfigs);
+  const activeConnectionDbType = useAppStore((state) =>
+    state.connections.find((connection) => connection.id === state.activeConnectionId)?.db_type
+  );
   const {
     activeProvider,
     tableContextCount,
@@ -438,8 +756,12 @@ export function AISlidePanel({
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const chatThreadRef = useRef<HTMLDivElement>(null);
   const historyPanelRef = useRef<HTMLDivElement>(null);
+  const modeMenuRef = useRef<HTMLDivElement>(null);
+  const providerMenuRef = useRef<HTMLDivElement>(null);
   const bubbleDismissTimersRef = useRef(new Map<string, number>());
   const historySaveTimerRef = useRef<number | null>(null);
+  const openSessionRef = useRef(0);
+  const isOpenRef = useRef(isOpen);
   const currentWorkspaceKey = useMemo(
     () => buildAIWorkspaceKey(connectionId, currentDatabase),
     [connectionId, currentDatabase]
@@ -464,6 +786,9 @@ export function AISlidePanel({
   const [detailBubbleId, setDetailBubbleId] = useState<string | null>(null);
   const [isInspectMode, setIsInspectMode] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isModeMenuOpen, setIsModeMenuOpen] = useState(false);
+  const [isProviderMenuOpen, setIsProviderMenuOpen] = useState(false);
+  const [isSwitchingProvider, setIsSwitchingProvider] = useState(false);
   const [selectionContext, setSelectionContext] = useState<SelectionContextState | null>(null);
   const [attachedSelection, setAttachedSelection] = useState<SelectionContextState | null>(null);
   const [deleteThreadPending, setDeleteThreadPending] = useState<string | null>(null);
@@ -513,64 +838,30 @@ export function AISlidePanel({
       });
     return counts;
   }, [bubbles, currentWorkspaceKey]);
-  const latestConversationBubble = useMemo(
-    () => conversationBubbles[conversationBubbles.length - 1] ?? null,
-    [conversationBubbles]
-  );
-  const isSchemaModeBlocked = activeInteractionMode !== "prompt" && !activeProvider?.allow_schema_context;
   const isLongformComposer = activeInteractionMode === "agent" || activeThreadBubbles.length >= 2;
-  const composerModeHint = useMemo(() => {
-    if (isSchemaModeBlocked) {
-      return aiCopy.composer.modeNeedsSchemaHint;
-    }
-    if (activeInteractionMode === "agent") {
-      return aiCopy.composer.modeAgentHint;
-    }
-    if (activeInteractionMode === "edit") {
-      return aiCopy.composer.modeEditHint;
-    }
-    return aiCopy.composer.modePromptHint;
-  }, [activeInteractionMode, aiCopy, isSchemaModeBlocked]);
   const hasConversation = conversationBubbles.length > 0;
-  const agentStatusText = useMemo(() => {
-    if (activeInteractionMode !== "agent") return "";
-    if (!latestConversationBubble) return composerModeHint;
-    if (latestConversationBubble.status === "loading") return aiCopy.bubbleMeta.thinking;
-    if (latestConversationBubble.sql) {
-      return latestConversationBubble.subtitle || aiCopy.bubbleStates.readySqlReviewSubtitle;
-    }
-    return latestConversationBubble.subtitle || aiCopy.bubbleMeta.ready;
-  }, [
-    activeInteractionMode,
-    aiCopy.bubbleMeta.ready,
-    aiCopy.bubbleMeta.thinking,
-    aiCopy.bubbleStates.readySqlReviewSubtitle,
-    composerModeHint,
-    latestConversationBubble,
-  ]);
-  const agentStripState = useMemo(() => {
-    if (activeInteractionMode !== "agent") return "is-idle";
-    if (!latestConversationBubble) return "is-idle";
-    if (latestConversationBubble.status === "loading") return "is-loading";
-    if (latestConversationBubble.kind === "error") return "is-error";
-    if (latestConversationBubble.kind === "result") return "is-done";
-    if (latestConversationBubble.sql) return "is-actionable";
-    return "is-ready";
-  }, [activeInteractionMode, latestConversationBubble]);
-  const shouldShowAgentActions =
-    activeInteractionMode === "agent" &&
-    !isSchemaModeBlocked &&
-    !!latestConversationBubble &&
-    latestConversationBubble.status !== "loading";
-  const modePanelState = useMemo(() => {
-    if (isSchemaModeBlocked) return "is-warning";
-    if (activeInteractionMode === "agent") return agentStripState;
-    if (activeInteractionMode === "edit") return "is-edit";
-    return "is-prompt";
-  }, [activeInteractionMode, agentStripState, isSchemaModeBlocked]);
-  const shouldShowModeInline =
-    isSchemaModeBlocked ||
-    (activeInteractionMode === "agent" && (hasConversation || isGenerating || shouldShowAgentActions));
+  const latestConversationBubbleId = conversationBubbles[conversationBubbles.length - 1]?.id ?? null;
+  const switchableProviders = useMemo(() => {
+    const normalized = normalizeAIProviderConfigs(aiConfigs);
+    return [...normalized].sort((left, right) => {
+      const leftScore =
+        (left.id === activeProvider?.id ? 4 : 0) +
+        (left.is_enabled ? 2 : 0) +
+        (left.is_primary ? 1 : 0);
+      const rightScore =
+        (right.id === activeProvider?.id ? 4 : 0) +
+        (right.is_enabled ? 2 : 0) +
+        (right.is_primary ? 1 : 0);
+      return rightScore - leftScore;
+    });
+  }, [activeProvider?.id, aiConfigs]);
+  const ActiveInteractionModeIcon = getInteractionModeIcon(activeInteractionMode);
+  const activeProviderValue = activeProvider?.model?.trim() || activeProvider?.name?.trim() || aiCopy.composer.noProvider;
+  const activeProviderCaption = activeProvider
+    ? activeProvider.name?.trim() && activeProvider.name.trim() !== activeProviderValue
+      ? activeProvider.name.trim()
+      : formatProviderTypeLabel(activeProvider.provider_type)
+    : aiCopy.composer.openSettings;
   const composerFooterNote = attachedSelection
     ? `${aiCopy.composer.selectionReady} · ${attachedSelection.source}`
     : isInspectMode
@@ -580,6 +871,20 @@ export function AISlidePanel({
   const persistHistoryState = useCallback(async (state: PersistedAIWorkspaceState) => {
     const prunedState = prunePersistedAIWorkspaceState(state);
     await invokeMutation<void>("save_ai_workspace_history", { state: prunedState });
+  }, []);
+
+  const scrollChatToLatest = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const thread = chatThreadRef.current;
+      if (!thread) return;
+      thread.scrollTop = thread.scrollHeight;
+
+      window.requestAnimationFrame(() => {
+        const currentThreadElement = chatThreadRef.current;
+        if (!currentThreadElement) return;
+        currentThreadElement.scrollTop = currentThreadElement.scrollHeight;
+      });
+    });
   }, []);
 
   useEffect(() => {
@@ -643,17 +948,20 @@ export function AISlidePanel({
   }, [activeThreadId, currentWorkspaceKey, historyHydrated, isOpen]);
 
   useEffect(() => {
-    if (!isOpen || !isInspectMode) return;
-    window.requestAnimationFrame(() => {
-      const thread = chatThreadRef.current;
-      if (!thread) return;
-      thread.scrollTop = thread.scrollHeight;
-    });
-  }, [conversationBubbles, isOpen]);
+    if (!isOpen || !historyHydrated || !hasConversation) return;
+    scrollChatToLatest();
+  }, [currentThread?.id, hasConversation, historyHydrated, isOpen, latestConversationBubbleId, scrollChatToLatest]);
 
   useEffect(() => {
     if (!isOpen) {
       setIsHistoryOpen(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+    if (isOpen) {
+      openSessionRef.current += 1;
     }
   }, [isOpen]);
 
@@ -686,6 +994,42 @@ export function AISlidePanel({
       window.removeEventListener("keydown", handleKeyDown, true);
     };
   }, [isHistoryOpen]);
+
+  useEffect(() => {
+    if (!isOpen || aiConfigs.length > 0) return;
+    void loadAIConfigs().catch(() => {
+      /* Keep the panel usable even if settings fail to hydrate here. */
+    });
+  }, [aiConfigs.length, isOpen, loadAIConfigs]);
+
+  useEffect(() => {
+    if (!isModeMenuOpen && !isProviderMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (target && modeMenuRef.current?.contains(target)) return;
+      if (target && providerMenuRef.current?.contains(target)) return;
+      setIsModeMenuOpen(false);
+      setIsProviderMenuOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsModeMenuOpen(false);
+        setIsProviderMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown, true);
+    window.addEventListener("touchstart", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown, true);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown, true);
+      window.removeEventListener("touchstart", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [isModeMenuOpen, isProviderMenuOpen]);
 
   useEffect(() => {
     if (!historyHydrated) return;
@@ -751,6 +1095,25 @@ export function AISlidePanel({
       composerTextareaRef.current?.setSelectionRange(initialPrompt.length, initialPrompt.length);
     });
   }, [initialPrompt, initialPromptNonce, setError]);
+
+  useEffect(() => {
+    if (!initialAttachmentNonce || !initialAttachment?.text.trim()) return;
+
+    setAttachedSelection({
+      text: initialAttachment.text.trim(),
+      source: initialAttachment.source?.trim() || "Workspace attachment",
+      rect: null,
+      updatedAt: Date.now(),
+    });
+    setIsInspectMode(false);
+    setError(null);
+
+    window.requestAnimationFrame(() => {
+      composerTextareaRef.current?.focus();
+      const cursorPosition = composerTextareaRef.current?.value.length ?? 0;
+      composerTextareaRef.current?.setSelectionRange(cursorPosition, cursorPosition);
+    });
+  }, [initialAttachment, initialAttachmentNonce, setError]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -954,6 +1317,258 @@ export function AISlidePanel({
     };
   }, [activeInteractionMode, activeProvider?.name, aiCopy, currentThread, currentWorkspaceKey, workspaceThreads]);
 
+  const openSqlInWorkspace = useCallback((
+    sql: string,
+    options?: {
+      title?: string;
+      viewMode?: "table" | "chart";
+      autoRun?: boolean;
+      focusWorkspace?: boolean;
+    }
+  ) => {
+    const normalizedSql = sql.trim();
+    if (!normalizedSql) return false;
+
+    if (!connectionId) {
+      setError(
+        language === "vi"
+          ? "Hay ket noi database truoc khi mo query AI trong workspace."
+          : "Connect to a database before opening an AI query in the workspace.",
+      );
+      return false;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("open-ai-workspace-query", {
+        detail: {
+          sql: normalizedSql,
+          connectionId,
+          database: currentDatabase || undefined,
+          title: options?.title,
+          resultViewMode: options?.viewMode ?? "table",
+          autoRun: options?.autoRun ?? false,
+          focusWorkspace: options?.focusWorkspace ?? false,
+        },
+      }),
+    );
+    return true;
+  }, [connectionId, currentDatabase, language, setError]);
+
+  const openMetricsBoardInWorkspace = useCallback(async (
+    options?: {
+      title?: string;
+      template?: "database-overview";
+      mode?: "create" | "augment";
+      boardId?: string;
+      focusWorkspace?: boolean;
+    }
+  ) => {
+    if (!connectionId) {
+      setError(
+        language === "vi"
+          ? "Hay ket noi database truoc khi mo dashboard AI trong workspace."
+          : "Connect to a database before opening an AI dashboard in the workspace.",
+      );
+      return {
+        success: false,
+        didChange: false,
+        addedCount: 0,
+        addedTitles: [],
+        created: false,
+      } satisfies OpenMetricsBoardResult;
+    }
+
+    const requestId = createId();
+
+    const completion = await new Promise<OpenMetricsBoardResult>((resolve) => {
+      const timeoutId = window.setTimeout(() => {
+        window.removeEventListener("open-ai-metrics-board-complete", handleComplete);
+        resolve({
+          success: false,
+          didChange: false,
+          addedCount: 0,
+          addedTitles: [],
+          created: false,
+        });
+      }, 10_000);
+
+      const handleComplete = (event: Event) => {
+        const detail = (
+          event as CustomEvent<{
+            requestId?: string;
+            success?: boolean;
+            error?: string;
+            boardId?: string;
+            didChange?: boolean;
+            addedCount?: number;
+            addedTitles?: string[];
+            created?: boolean;
+          }>
+        ).detail;
+        if (detail?.requestId !== requestId) return;
+        window.clearTimeout(timeoutId);
+        window.removeEventListener("open-ai-metrics-board-complete", handleComplete);
+        if (!detail.success && detail.error) {
+          setError(detail.error);
+        }
+        resolve({
+          success: Boolean(detail?.success),
+          boardId: detail?.boardId,
+          didChange: Boolean(detail?.didChange),
+          addedCount: Math.max(0, detail?.addedCount ?? 0),
+          addedTitles: Array.isArray(detail?.addedTitles) ? detail.addedTitles.filter((value) => typeof value === "string") : [],
+          created: Boolean(detail?.created),
+        });
+      };
+
+      window.addEventListener("open-ai-metrics-board-complete", handleComplete);
+      window.dispatchEvent(
+        new CustomEvent("open-ai-metrics-board", {
+          detail: {
+            requestId,
+            template: options?.template ?? "database-overview",
+            mode: options?.mode ?? "create",
+            boardId: options?.boardId,
+            connectionId,
+            database: currentDatabase || undefined,
+            title: options?.title,
+            focusWorkspace: options?.focusWorkspace ?? false,
+          },
+        }),
+      );
+    });
+
+    return completion;
+  }, [connectionId, currentDatabase, language, setError]);
+
+  const updateBubbleForDashboardNoChange = useCallback((bubbleId: string, promptText: string, addedCount = 0) => {
+    const useVietnamese = prefersVietnameseSystemReply(promptText, language);
+    const preview = useVietnamese
+      ? "Dashboard hien tai chua co widget moi de them tu dong. Mình giu chat mo de ban noi ro muon them hoac doi chart nao."
+      : "The current dashboard does not have new widgets to add automatically yet. I kept chat open so you can tell me which charts to add or change.";
+    const detail = useVietnamese
+      ? [
+          "Dashboard hien tai da duoc mo, nhung TableR chua tim thay chart moi de them vao board nay tu template hien co.",
+          addedCount > 0 ? `So widget vua them: ${addedCount}.` : "Chua co thay doi chart nao duoc ap dung.",
+          "",
+          "Hay noi ro hon, vi du:",
+          "- them bieu do kich thuoc bang",
+          "- doi pie chart nay thanh bar chart",
+          "- them widget thong ke tong so cot",
+        ].join("\n")
+      : [
+          "The dashboard is open, but TableR did not find any new template widgets to add to this board.",
+          addedCount > 0 ? `Widgets added just now: ${addedCount}.` : "No chart changes were applied.",
+          "",
+          "Try being more specific, for example:",
+          "- add a table size chart",
+          "- change this pie chart to a bar chart",
+          "- add a total columns scoreboard",
+        ].join("\n");
+
+    setBubbles((current) =>
+      current.map((bubble) =>
+        bubble.id === bubbleId
+          ? {
+              ...bubble,
+              kind: "assistant",
+              status: "ready",
+              title: useVietnamese ? "Dashboard chua thay doi" : "Dashboard unchanged",
+              subtitle: useVietnamese ? "Khong co chart moi duoc ap dung" : "No new chart changes were applied",
+              preview,
+              detail,
+              sql: undefined,
+              risk: undefined,
+              autoDismissAt: undefined,
+            }
+          : bubble,
+      ),
+    );
+  }, [language]);
+
+  const updateBubbleForDashboardApplied = useCallback((
+    bubbleId: string,
+    promptText: string,
+    addedCount = 0,
+    addedTitles: string[] = [],
+  ) => {
+    const normalizedCount = Math.max(0, addedCount);
+    const useVietnamese = prefersVietnameseSystemReply(promptText, language);
+    const summarizedTitles = addedTitles.slice(0, 4);
+    const title = useVietnamese
+      ? normalizedCount > 0
+        ? "Da bo sung dashboard"
+        : "Dashboard da duoc dong bo"
+      : normalizedCount > 0
+        ? "Dashboard updated"
+        : "Dashboard synced";
+    const subtitle = useVietnamese
+      ? normalizedCount > 0
+        ? `Da them ${normalizedCount} widget moi vao board hien tai`
+        : "Khong can tao board moi"
+      : normalizedCount > 0
+        ? `Added ${normalizedCount} new widget${normalizedCount === 1 ? "" : "s"} to the current board`
+        : "No new board was created";
+    const preview = useVietnamese
+      ? normalizedCount > 0
+        ? `Mình da bo sung ${normalizedCount} widget vao dashboard hien tai va giu chat mo de ban chinh tiep.`
+        : "Mình da dong bo dashboard hien tai va giu chat mo de ban chinh tiep."
+      : normalizedCount > 0
+        ? `I added ${normalizedCount} chart widget${normalizedCount === 1 ? "" : "s"} directly to the current dashboard and kept chat open for follow-up changes.`
+        : "I updated the current dashboard and kept chat open for follow-up changes.";
+    const detail = useVietnamese
+      ? [
+          normalizedCount > 0
+            ? `Dashboard hien tai da duoc cap nhat voi ${normalizedCount} widget moi.`
+            : "Dashboard hien tai da duoc mo va dong bo lai.",
+          summarizedTitles.length > 0 ? `Da them: ${summarizedTitles.join(", ")}.` : "",
+          "",
+          "Ban co the yeu cau tiep, vi du:",
+          "- doi pie chart thanh bar chart",
+          "- them bieu do kich thuoc bang",
+          "- gop bieu do score vao hang dau",
+        ].filter(Boolean).join("\n")
+      : [
+          normalizedCount > 0
+            ? `The current dashboard was updated with ${normalizedCount} new widget${normalizedCount === 1 ? "" : "s"}.`
+            : "The current dashboard is active and ready for more edits.",
+          summarizedTitles.length > 0 ? `Added: ${summarizedTitles.join(", ")}.` : "",
+          "",
+          "You can keep going, for example:",
+          "- change the pie chart to a bar chart",
+          "- add a table size chart",
+          "- move the score widgets to the first row",
+        ].filter(Boolean).join("\n");
+
+    setBubbles((current) =>
+      current.map((bubble) =>
+        bubble.id === bubbleId
+          ? {
+              ...bubble,
+              kind: "assistant",
+              status: "ready",
+              title,
+              subtitle,
+              preview,
+              detail,
+              sql: undefined,
+              risk: undefined,
+              autoDismissAt: undefined,
+            }
+          : bubble,
+      ),
+    );
+  }, [language]);
+
+  const completeWorkspaceRedirect = useCallback((bubbleId?: string, sessionId?: number) => {
+    if (!isOpenRef.current) return;
+    if (typeof sessionId === "number" && sessionId !== openSessionRef.current) return;
+    if (bubbleId) {
+      setBubbles((current) => current.filter((bubble) => bubble.id !== bubbleId));
+    }
+    onClose();
+  }, [onClose]);
+
   const createAssistantBubble = useCallback(async (
     prompt: string,
     options?: {
@@ -972,6 +1587,7 @@ export function AISlidePanel({
     const targetWorkspaceKey = options?.workspaceKey || currentWorkspaceKey;
     const targetThreadId = options?.threadId || currentThread?.id || workspaceThreads[0]?.id || createId();
     const interactionMode = options?.interactionMode || activeInteractionMode;
+    const sessionId = openSessionRef.current;
     const loadingBubble = buildLoadingBubble(normalizedPrompt, {
       mode: options?.mode,
       promptSummary: options?.displayPrompt?.trim() || summarizePromptForDisplay(normalizedPrompt),
@@ -1001,36 +1617,176 @@ export function AISlidePanel({
       [targetWorkspaceKey]: targetThreadId,
     }));
 
+    await waitForUIPaint();
+
+    const shouldAugmentDashboardDirectly =
+      supportsOverviewMetricsBoard(activeConnectionDbType) &&
+      isDashboardAugmentPrompt(normalizedPrompt);
+
+    if (shouldAugmentDashboardDirectly) {
+      const dashboardResult = await openMetricsBoardInWorkspace({
+        title: "DB Overview Dashboard",
+        template: "database-overview",
+        mode: "augment",
+        focusWorkspace: true,
+      });
+
+        if (dashboardResult.success && dashboardResult.didChange) {
+          if (dashboardResult.created) {
+            completeWorkspaceRedirect(loadingBubble.id, sessionId);
+          } else {
+            updateBubbleForDashboardApplied(
+              loadingBubble.id,
+              normalizedPrompt,
+              dashboardResult.addedCount,
+              dashboardResult.addedTitles,
+            );
+          }
+          return { bubbleId: loadingBubble.id, success: true };
+        }
+        if (dashboardResult.success) {
+        updateBubbleForDashboardNoChange(loadingBubble.id, normalizedPrompt, dashboardResult.addedCount);
+          return { bubbleId: loadingBubble.id, success: true };
+        }
+    }
+
     try {
       const result = await generateAssist(normalizedPrompt, options?.history, { interactionMode });
+      const readyTitle = options?.mode === "inspect"
+        ? aiCopy.bubbleStates.readyInspectTitle
+        : result.intent === "optimize"
+          ? aiCopy.bubbleStates.readyOptimizeTitle
+          : result.intent === "fix-error"
+            ? aiCopy.bubbleStates.readyFixErrorTitle
+            : result.sql
+              ? aiCopy.bubbleStates.readySqlTitle
+              : aiCopy.bubbleStates.readyNoteTitle;
+      const readySubtitle = options?.mode === "inspect"
+        ? result.sql
+          ? aiCopy.bubbleStates.readyInspectSqlSubtitle
+          : aiCopy.bubbleStates.readyInspectNoteSubtitle
+        : result.intent === "optimize"
+          ? aiCopy.bubbleStates.readyOptimizeSubtitle
+          : result.intent === "fix-error"
+            ? aiCopy.bubbleStates.readyFixErrorSubtitle
+            : result.sql
+              ? result.risk?.level === "safe" ? aiCopy.bubbleStates.readySqlSafeSubtitle : aiCopy.bubbleStates.readySqlReviewSubtitle
+              : aiCopy.bubbleStates.readyNoteSubtitle;
+      const readyPreview = summarizeResponse(result.rawResponse, result.sql);
+      const wantsVisualization = isVisualizationPrompt(normalizedPrompt);
+      const wantsMetricsDashboard =
+        isDashboardVisualizationPrompt(normalizedPrompt, result.intent) &&
+        supportsOverviewMetricsBoard(activeConnectionDbType);
+      const deterministicOverviewChartSql =
+        isOverviewVisualizationPrompt(normalizedPrompt, result.intent)
+          ? buildWorkspaceOverviewChartSql(activeConnectionDbType)
+          : null;
+      const preferredVisualizationSql =
+        deterministicOverviewChartSql ||
+        (result.sql && isSingleSqlStatement(result.sql) ? result.sql : null);
+
+      if (wantsMetricsDashboard) {
+        const dashboardOpened = await openMetricsBoardInWorkspace({
+          title: "DB Overview Dashboard",
+          template: "database-overview",
+          focusWorkspace: true,
+        });
+
+        if (dashboardOpened.success && dashboardOpened.didChange) {
+          if (dashboardOpened.created) {
+            completeWorkspaceRedirect(loadingBubble.id, sessionId);
+          } else {
+            updateBubbleForDashboardApplied(
+              loadingBubble.id,
+              normalizedPrompt,
+              dashboardOpened.addedCount,
+              dashboardOpened.addedTitles,
+            );
+          }
+          return { bubbleId: loadingBubble.id, success: true };
+        }
+        if (dashboardOpened.success) {
+          updateBubbleForDashboardNoChange(loadingBubble.id, normalizedPrompt, dashboardOpened.addedCount);
+          return { bubbleId: loadingBubble.id, success: true };
+        }
+      }
+
+      if (wantsVisualization && preferredVisualizationSql) {
+        const autoRunInWorkspace =
+          deterministicOverviewChartSql !== null || result.risk?.level === "safe";
+        const workspaceOpened = openSqlInWorkspace(preferredVisualizationSql, {
+          title: deterministicOverviewChartSql ? "DB Overview Chart" : "AI Chart",
+          viewMode: "chart",
+          autoRun: autoRunInWorkspace,
+          focusWorkspace: true,
+        });
+
+        if (workspaceOpened) {
+          completeWorkspaceRedirect(loadingBubble.id, sessionId);
+          return { bubbleId: loadingBubble.id, success: true };
+        }
+      }
+
+      if (interactionMode === "agent" && result.sql && result.risk?.level === "safe") {
+        try {
+          const runResult = await runSql(result.sql);
+          setBubbles((current) =>
+            current.map((bubble) =>
+              bubble.id === loadingBubble.id
+                ? {
+                    ...bubble,
+                    kind: "result",
+                    status: "ready",
+                    title: aiCopy.bubbleStates.runSuccessTitle,
+                    subtitle: runResult.queryResult.sandboxed
+                      ? aiCopy.bubbleStates.runSuccessSandboxSubtitle
+                      : aiCopy.bubbleStates.runSuccessDirectSubtitle,
+                    promptSummary: loadingBubble.promptSummary,
+                    preview: runResult.summary,
+                    detail: buildExecutionDetail(runResult.summary, runResult.queryResult.query, result.rawResponse),
+                    sql: result.sql || undefined,
+                    risk: result.risk,
+                    autoDismissAt: undefined,
+                  }
+                : bubble
+            )
+          );
+          return { bubbleId: loadingBubble.id, success: true };
+        } catch (errorValue) {
+          const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+          setBubbles((current) =>
+            current.map((bubble) =>
+              bubble.id === loadingBubble.id
+                ? {
+                    ...bubble,
+                    kind: "assistant",
+                    status: "ready",
+                    title: readyTitle,
+                    subtitle: aiCopy.bubbleStates.runFailedSubtitle,
+                    promptSummary: loadingBubble.promptSummary,
+                    preview: message,
+                    detail: buildAutoRunFailureDetail(message, result.sql || "", result.rawResponse),
+                    sql: result.sql || undefined,
+                    risk: result.risk,
+                    autoDismissAt: undefined,
+                  }
+                : bubble
+            )
+          );
+          return { bubbleId: loadingBubble.id, success: true };
+        }
+      }
+
       setBubbles((current) =>
         current.map((bubble) =>
           bubble.id === loadingBubble.id
             ? {
                 ...bubble,
                 status: "ready",
-                title: options?.mode === "inspect"
-                  ? aiCopy.bubbleStates.readyInspectTitle
-                  : result.intent === "optimize"
-                    ? aiCopy.bubbleStates.readyOptimizeTitle
-                    : result.intent === "fix-error"
-                      ? aiCopy.bubbleStates.readyFixErrorTitle
-                      : result.sql
-                        ? aiCopy.bubbleStates.readySqlTitle
-                        : aiCopy.bubbleStates.readyNoteTitle,
-                subtitle: options?.mode === "inspect"
-                  ? result.sql
-                    ? aiCopy.bubbleStates.readyInspectSqlSubtitle
-                    : aiCopy.bubbleStates.readyInspectNoteSubtitle
-                  : result.intent === "optimize"
-                    ? aiCopy.bubbleStates.readyOptimizeSubtitle
-                    : result.intent === "fix-error"
-                      ? aiCopy.bubbleStates.readyFixErrorSubtitle
-                      : result.sql
-                        ? result.risk?.level === "safe" ? aiCopy.bubbleStates.readySqlSafeSubtitle : aiCopy.bubbleStates.readySqlReviewSubtitle
-                        : aiCopy.bubbleStates.readyNoteSubtitle,
+                title: readyTitle,
+                subtitle: readySubtitle,
                 promptSummary: loadingBubble.promptSummary,
-                preview: summarizeResponse(result.rawResponse, result.sql),
+                preview: readyPreview,
                 detail: result.rawResponse,
                 sql: result.sql || undefined,
                 risk: result.risk,
@@ -1070,7 +1826,22 @@ export function AISlidePanel({
       );
       return { bubbleId: loadingBubble.id, success: false };
     }
-  }, [activeInteractionMode, aiCopy, buildLoadingBubble, currentThread, currentWorkspaceKey, generateAssist, setError, workspaceThreads]);
+  }, [
+    activeConnectionDbType,
+    activeInteractionMode,
+    aiCopy,
+    buildLoadingBubble,
+    currentThread,
+    currentWorkspaceKey,
+    generateAssist,
+    language,
+    completeWorkspaceRedirect,
+    openMetricsBoardInWorkspace,
+    openSqlInWorkspace,
+    runSql,
+    setError,
+    workspaceThreads,
+  ]);
 
   const handleGenerate = useCallback(async () => {
     const normalizedPrompt = promptDraft.trim();
@@ -1150,21 +1921,79 @@ export function AISlidePanel({
 
   const handleRunBubble = useCallback(async (bubble: AIWorkspaceBubbleData) => {
     if (!bubble.sql || !aiModeAllowsRun(bubble.interactionMode)) return;
+    const sessionId = openSessionRef.current;
+
+    if (isVisualizationPrompt(bubble.prompt)) {
+      const wantsMetricsDashboard =
+        isDashboardVisualizationPrompt(bubble.prompt) &&
+        supportsOverviewMetricsBoard(activeConnectionDbType);
+      const deterministicOverviewChartSql = isOverviewVisualizationPrompt(bubble.prompt)
+        ? buildWorkspaceOverviewChartSql(activeConnectionDbType)
+        : null;
+      const preferredVisualizationSql =
+        deterministicOverviewChartSql ||
+        (bubble.sql && isSingleSqlStatement(bubble.sql) ? bubble.sql : null);
+
+      if (wantsMetricsDashboard) {
+        const dashboardOpened = await openMetricsBoardInWorkspace({
+          title: "DB Overview Dashboard",
+          template: "database-overview",
+          focusWorkspace: true,
+        });
+
+        if (dashboardOpened.success && dashboardOpened.didChange) {
+          if (dashboardOpened.created) {
+            completeWorkspaceRedirect(bubble.id, sessionId);
+          } else {
+            updateBubbleForDashboardApplied(
+              bubble.id,
+              bubble.prompt,
+              dashboardOpened.addedCount,
+              dashboardOpened.addedTitles,
+            );
+          }
+          return;
+        }
+        if (dashboardOpened.success) {
+          updateBubbleForDashboardNoChange(bubble.id, bubble.prompt, dashboardOpened.addedCount);
+          return;
+        }
+      }
+
+      if (!preferredVisualizationSql) {
+        return;
+      }
+
+      const autoRunInWorkspace =
+        deterministicOverviewChartSql !== null || bubble.risk?.level === "safe";
+      const workspaceOpened = openSqlInWorkspace(preferredVisualizationSql, {
+        title: deterministicOverviewChartSql ? "DB Overview Chart" : "AI Chart",
+        viewMode: "chart",
+        autoRun: autoRunInWorkspace,
+        focusWorkspace: true,
+      });
+
+      if (workspaceOpened) {
+        completeWorkspaceRedirect(bubble.id, sessionId);
+        return;
+      }
+    }
+
     try {
       const result = await runSql(bubble.sql);
       setBubbles((current) =>
         current.map((currentBubble) =>
           currentBubble.id === bubble.id
-            ? {
-                ...currentBubble,
-                kind: "result",
-                status: "ready",
-                title: aiCopy.bubbleStates.runSuccessTitle,
-                subtitle: result.queryResult.sandboxed ? aiCopy.bubbleStates.runSuccessSandboxSubtitle : aiCopy.bubbleStates.runSuccessDirectSubtitle,
-                preview: result.summary,
-                detail: `${result.summary}\n\nQuery:\n${result.queryResult.query}`,
-                autoDismissAt: undefined,
-              }
+              ? {
+                  ...currentBubble,
+                  kind: "result",
+                  status: "ready",
+                  title: aiCopy.bubbleStates.runSuccessTitle,
+                  subtitle: result.queryResult.sandboxed ? aiCopy.bubbleStates.runSuccessSandboxSubtitle : aiCopy.bubbleStates.runSuccessDirectSubtitle,
+                  preview: result.summary,
+                  detail: buildExecutionDetail(result.summary, result.queryResult.query, currentBubble.detail),
+                  autoDismissAt: undefined,
+                }
             : currentBubble
         )
       );
@@ -1187,7 +2016,7 @@ export function AISlidePanel({
         )
       );
     }
-  }, [aiCopy, runSql]);
+  }, [activeConnectionDbType, aiCopy, language, completeWorkspaceRedirect, openMetricsBoardInWorkspace, openSqlInWorkspace, runSql, updateBubbleForDashboardApplied, updateBubbleForDashboardNoChange]);
 
   const handleSelectThread = useCallback((threadId: string) => {
     setActiveThreadId(threadId);
@@ -1196,6 +2025,8 @@ export function AISlidePanel({
       [currentWorkspaceKey]: threadId,
     }));
     setIsHistoryOpen(false);
+    setIsModeMenuOpen(false);
+    setIsProviderMenuOpen(false);
     setAttachedSelection(null);
     setDetailBubbleId(null);
   }, [currentWorkspaceKey]);
@@ -1263,6 +2094,8 @@ export function AISlidePanel({
     setChatThreads((current) => [...current, nextThread]);
     setActiveThreadId(nextThread.id);
     setIsHistoryOpen(false);
+    setIsModeMenuOpen(false);
+    setIsProviderMenuOpen(false);
     setPromptDraft(initialPrompt);
     setAttachedSelection(null);
     setSelectionContext(null);
@@ -1280,6 +2113,52 @@ export function AISlidePanel({
   const handleResetStage = useCallback(() => {
     handleCreateChatThread();
   }, [handleCreateChatThread]);
+
+  const handleOpenAISettings = useCallback(() => {
+    setIsHistoryOpen(false);
+    setIsModeMenuOpen(false);
+    setIsProviderMenuOpen(false);
+    window.dispatchEvent(new CustomEvent("open-ai-settings"));
+  }, []);
+
+  const handleSelectInteractionMode = useCallback((mode: AIWorkspaceInteractionMode) => {
+    setWorkspaceInteractionModes((current) => ({
+      ...current,
+      [currentWorkspaceKey]: mode,
+    }));
+    setIsModeMenuOpen(false);
+  }, [currentWorkspaceKey]);
+
+  const handleActivateProvider = useCallback(async (providerId: string) => {
+    const targetProvider = aiConfigs.find((config) => config.id === providerId);
+    if (!targetProvider) return;
+    if (targetProvider.id === activeProvider?.id && targetProvider.is_enabled && targetProvider.is_primary) {
+      setIsProviderMenuOpen(false);
+      return;
+    }
+
+    const nextConfigs = normalizeAIProviderConfigs(
+      aiConfigs.map((config) => (
+        config.id === providerId
+          ? { ...config, is_enabled: true, is_primary: true }
+          : { ...config, is_primary: false }
+      ))
+    );
+
+    setIsProviderMenuOpen(false);
+    setIsModeMenuOpen(false);
+    setIsSwitchingProvider(true);
+    setError(null);
+
+    try {
+      await saveAIConfigs(nextConfigs, {}, []);
+    } catch (errorValue) {
+      setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
+    } finally {
+      setIsSwitchingProvider(false);
+    }
+  }, [activeProvider?.id, aiConfigs, saveAIConfigs, setError]);
+
   if (!isOpen) return null;
 
   return (
@@ -1460,93 +2339,6 @@ export function AISlidePanel({
                     </div>
                   </div>
                 </div>
-
-                <div className="ai-workspace-composer-controls">
-                  <div className="ai-workspace-mode-picker" role="tablist" aria-label={aiCopy.composer.title}>
-                    {(["prompt", "edit", "agent"] as AIWorkspaceInteractionMode[]).map((mode) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        role="tab"
-                        aria-selected={mode === activeInteractionMode}
-                        className={`ai-workspace-mode-option ${mode === activeInteractionMode ? "is-active" : ""}`}
-                        onClick={() =>
-                          setWorkspaceInteractionModes((current) => ({
-                            ...current,
-                            [currentWorkspaceKey]: mode,
-                          }))
-                        }
-                        title={getInteractionModeLabel(mode, aiCopy)}
-                      >
-                        {getInteractionModeLabel(mode, aiCopy)}
-                      </button>
-                    ))}
-                  </div>
-
-                  {shouldShowModeInline && (
-                    <div className={`ai-workspace-mode-inline ${modePanelState}`}>
-                      <strong className="ai-workspace-mode-inline-text">
-                        {activeInteractionMode === "agent" && !isSchemaModeBlocked ? agentStatusText : composerModeHint}
-                      </strong>
-
-                      {isSchemaModeBlocked && (
-                        <div className="ai-workspace-mode-actions">
-                          <button
-                            type="button"
-                            className="ai-workspace-mode-action-btn primary"
-                            onClick={() => window.dispatchEvent(new CustomEvent("open-ai-settings"))}
-                          >
-                            {aiCopy.composer.openSettings}
-                          </button>
-                          <button
-                            type="button"
-                            className="ai-workspace-mode-action-btn"
-                            onClick={() =>
-                              setWorkspaceInteractionModes((current) => ({
-                                ...current,
-                                [currentWorkspaceKey]: "prompt",
-                              }))
-                            }
-                          >
-                            {aiCopy.composer.switchToPrompt}
-                          </button>
-                        </div>
-                      )}
-
-                      {shouldShowAgentActions && latestConversationBubble && (
-                        <div className="ai-workspace-mode-actions">
-                          <button
-                            type="button"
-                            className="ai-workspace-mode-action-btn"
-                            onClick={() => setDetailBubbleId(latestConversationBubble.id)}
-                          >
-                            {aiCopy.bubbleActions.detail}
-                          </button>
-                          {latestConversationBubble.sql && aiModeAllowsInsert(latestConversationBubble.interactionMode) && (
-                            <button
-                              type="button"
-                              className="ai-workspace-mode-action-btn"
-                              onClick={() => handleInsertBubble(latestConversationBubble)}
-                            >
-                              {aiCopy.bubbleActions.insert}
-                            </button>
-                          )}
-                          {latestConversationBubble.sql &&
-                            latestConversationBubble.kind !== "result" &&
-                            aiModeAllowsRun(latestConversationBubble.interactionMode) && (
-                              <button
-                                type="button"
-                                className="ai-workspace-mode-action-btn primary"
-                                onClick={() => void handleRunBubble(latestConversationBubble)}
-                              >
-                                {aiCopy.bubbleActions.approveRun}
-                              </button>
-                            )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
               </div>
 
               <div className="ai-workspace-chat-shell">
@@ -1555,6 +2347,13 @@ export function AISlidePanel({
                     <div ref={chatThreadRef} className="ai-workspace-chat-thread">
                       {conversationBubbles.map((bubble) => {
                         const conversationText = getBubbleConversationText(bubble);
+                        const canShowDetail = bubble.status !== "loading" && Boolean(bubble.detail || bubble.preview || bubble.sql);
+                        const canInsertBubbleSql = Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
+                        const canRunBubbleSql =
+                          Boolean(bubble.sql) &&
+                          bubble.kind !== "result" &&
+                          aiModeAllowsRun(bubble.interactionMode);
+                        const hasBubbleActions = canShowDetail || canInsertBubbleSql || canRunBubbleSql;
                         return (
                           <article key={`chat-${bubble.id}`} className="ai-workspace-chat-turn">
                             <div className="ai-workspace-chat-turn-header">
@@ -1582,6 +2381,37 @@ export function AISlidePanel({
                               {conversationText && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={conversationText} />}
                               {bubble.sql && bubble.status !== "error" && (
                                 <pre className="ai-workspace-chat-code">{bubble.sql}</pre>
+                              )}
+                              {hasBubbleActions && (
+                                <div className="ai-workspace-chat-actions">
+                                  {canShowDetail && (
+                                    <button
+                                      type="button"
+                                      className="ai-workspace-mode-action-btn"
+                                      onClick={() => setDetailBubbleId(bubble.id)}
+                                    >
+                                      {aiCopy.bubbleActions.detail}
+                                    </button>
+                                  )}
+                                  {canInsertBubbleSql && (
+                                    <button
+                                      type="button"
+                                      className="ai-workspace-mode-action-btn"
+                                      onClick={() => handleInsertBubble(bubble)}
+                                    >
+                                      {aiCopy.bubbleActions.insert}
+                                    </button>
+                                  )}
+                                  {canRunBubbleSql && (
+                                    <button
+                                      type="button"
+                                      className="ai-workspace-mode-action-btn primary"
+                                      onClick={() => void handleRunBubble(bubble)}
+                                    >
+                                      {aiCopy.bubbleActions.approveRun}
+                                    </button>
+                                  )}
+                                </div>
                               )}
                             </div>
                           </article>
@@ -1641,11 +2471,174 @@ export function AISlidePanel({
                   />
 
                   <div className={`ai-workspace-composer-footer ${composerFooterNote ? "" : "is-note-hidden"}`}>
-                    {composerFooterNote ? (
-                      <div className="ai-workspace-composer-note">{composerFooterNote}</div>
-                    ) : (
-                      <div className="ai-workspace-composer-note-spacer" aria-hidden="true" />
-                    )}
+                    <div className="ai-workspace-composer-footer-main">
+                      {composerFooterNote ? (
+                        <div className="ai-workspace-composer-note">{composerFooterNote}</div>
+                      ) : (
+                        <div className="ai-workspace-composer-note-spacer" aria-hidden="true" />
+                      )}
+
+                      <div className="ai-workspace-commandbar ai-workspace-commandbar--dock">
+                        <div
+                          ref={modeMenuRef}
+                          className={`ai-workspace-command-dropdown ${isModeMenuOpen ? "is-open" : ""}`}
+                        >
+                          <button
+                            type="button"
+                            className={`ai-workspace-command-trigger ${isModeMenuOpen ? "is-active" : ""}`}
+                            aria-expanded={isModeMenuOpen}
+                            aria-haspopup="menu"
+                            onClick={() => {
+                              setIsHistoryOpen(false);
+                              setIsProviderMenuOpen(false);
+                              setIsModeMenuOpen((current) => !current);
+                            }}
+                            title={getInteractionModeLabel(activeInteractionMode, aiCopy)}
+                          >
+                            <span className="ai-workspace-command-trigger-icon">
+                              <ActiveInteractionModeIcon className="w-3.5 h-3.5" />
+                            </span>
+                            <span className="ai-workspace-command-trigger-copy">
+                              <span className="ai-workspace-command-trigger-label">Mode</span>
+                              <strong className="ai-workspace-command-trigger-value">
+                                {getInteractionModeLabel(activeInteractionMode, aiCopy)}
+                              </strong>
+                            </span>
+                            <ChevronDown className="w-3.5 h-3.5 ai-workspace-command-trigger-caret" />
+                          </button>
+
+                          {isModeMenuOpen && (
+                            <div className="ai-workspace-command-popover" role="menu" aria-label="Choose chat mode">
+                              {(["prompt", "edit", "agent"] as AIWorkspaceInteractionMode[]).map((mode) => {
+                                const ModeIcon = getInteractionModeIcon(mode);
+                                return (
+                                  <button
+                                    key={mode}
+                                    type="button"
+                                    role="menuitemradio"
+                                    aria-checked={mode === activeInteractionMode}
+                                    className={`ai-workspace-command-item ${mode === activeInteractionMode ? "is-active" : ""}`}
+                                    onClick={() => handleSelectInteractionMode(mode)}
+                                  >
+                                    <span className="ai-workspace-command-item-icon">
+                                      <ModeIcon className="w-3.5 h-3.5" />
+                                    </span>
+                                    <span className="ai-workspace-command-item-copy">
+                                      <strong>{getInteractionModeLabel(mode, aiCopy)}</strong>
+                                      <span>{getInteractionModeHint(mode, aiCopy)}</span>
+                                    </span>
+                                    {mode === activeInteractionMode && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+
+                        <div
+                          ref={providerMenuRef}
+                          className={`ai-workspace-command-dropdown ai-workspace-command-dropdown--provider ${isProviderMenuOpen ? "is-open" : ""}`}
+                        >
+                          <button
+                            type="button"
+                            className={`ai-workspace-command-trigger ai-workspace-command-trigger--provider ${isProviderMenuOpen ? "is-active" : ""}`}
+                            aria-expanded={isProviderMenuOpen}
+                            aria-haspopup="menu"
+                            disabled={isSwitchingProvider}
+                            onClick={() => {
+                              setIsHistoryOpen(false);
+                              setIsModeMenuOpen(false);
+                              setIsProviderMenuOpen((current) => !current);
+                            }}
+                            title={activeProviderValue}
+                          >
+                            <span className="ai-workspace-command-trigger-icon">
+                              {isSwitchingProvider ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Sparkles className="w-3.5 h-3.5" />
+                              )}
+                            </span>
+                            <span className="ai-workspace-command-trigger-copy">
+                              <span className="ai-workspace-command-trigger-label">Model</span>
+                              <strong className="ai-workspace-command-trigger-value">{activeProviderValue}</strong>
+                              <span className="ai-workspace-command-trigger-note">{activeProviderCaption}</span>
+                            </span>
+                            <ChevronDown className="w-3.5 h-3.5 ai-workspace-command-trigger-caret" />
+                          </button>
+
+                          {isProviderMenuOpen && (
+                            <div className="ai-workspace-command-popover ai-workspace-command-popover--provider" role="menu" aria-label="Choose AI model">
+                              <div className="ai-workspace-command-popover-head">
+                                <strong>Switch model</strong>
+                                <span>Switch the active AI provider without leaving the chat panel.</span>
+                              </div>
+                              <div className="ai-workspace-command-provider-list">
+                                {switchableProviders.length > 0 ? (
+                                  switchableProviders.map((config) => {
+                                    const providerValue = config.model?.trim() || config.name?.trim() || formatProviderTypeLabel(config.provider_type);
+                                    const providerCaption =
+                                      config.name?.trim() && config.name.trim() !== providerValue
+                                        ? `${config.name.trim()} / ${formatProviderTypeLabel(config.provider_type)}`
+                                        : formatProviderTypeLabel(config.provider_type);
+
+                                    return (
+                                      <button
+                                        key={config.id}
+                                        type="button"
+                                        role="menuitemradio"
+                                        aria-checked={config.id === activeProvider?.id}
+                                        className={`ai-workspace-command-item ai-workspace-command-item--provider ${config.id === activeProvider?.id ? "is-active" : ""}`}
+                                        onClick={() => void handleActivateProvider(config.id)}
+                                      >
+                                        <span className="ai-workspace-command-item-copy">
+                                          <strong>{providerValue}</strong>
+                                          <span>{providerCaption}</span>
+                                        </span>
+                                        <span className="ai-workspace-command-provider-meta">
+                                          {!config.is_enabled && (
+                                            <span className="ai-workspace-command-provider-tag">Disabled</span>
+                                          )}
+                                          {config.id === activeProvider?.id && (
+                                            <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />
+                                          )}
+                                        </span>
+                                      </button>
+                                    );
+                                  })
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="ai-workspace-command-empty"
+                                    onClick={handleOpenAISettings}
+                                  >
+                                    No provider configured yet. Open settings
+                                  </button>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                className="ai-workspace-command-settings-link"
+                                onClick={handleOpenAISettings}
+                              >
+                                {aiCopy.composer.openSettings}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          className="ai-workspace-command-settings-btn"
+                          onClick={handleOpenAISettings}
+                          title={aiCopy.composer.openSettings}
+                          aria-label={aiCopy.composer.openSettings}
+                        >
+                          <Settings2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
                     <button
                       type="button"
                       className="ai-workspace-generate-btn"

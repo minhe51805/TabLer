@@ -19,6 +19,8 @@ import type {
   TableRowDeleteRequest,
   TableStructure,
   AIProviderConfig,
+  LocalOllamaSetupResult,
+  LocalOllamaStatus,
   AIConversationMessage,
   AIRequestIntent,
   AIRequestMode,
@@ -69,6 +71,10 @@ const FRONTEND_TIMEOUTS = {
   rowCount: 10_000,
   query: 300_000,
   ai: 60_000,
+  aiRemotePanel: 180_000,
+  aiRemoteAgentPanel: 360_000,
+  aiLocalOllamaPanel: 600_000,
+  aiLocalOllamaInline: 120_000,
 } as const;
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -101,6 +107,24 @@ function invokeWithTimeout<T>(
 
 function invokeMutation<T>(command: string, args: Record<string, unknown>) {
   return invoke<T>(command, args);
+}
+
+function getAIRequestTimeout(config: AIProviderConfig, mode: AIRequestMode, intent: AIRequestIntent) {
+  if (config.provider_type === "ollama") {
+    return mode === "inline"
+      ? FRONTEND_TIMEOUTS.aiLocalOllamaInline
+      : FRONTEND_TIMEOUTS.aiLocalOllamaPanel;
+  }
+
+  if (mode === "panel" && intent === "agent") {
+    return FRONTEND_TIMEOUTS.aiRemoteAgentPanel;
+  }
+
+  if (mode === "panel") {
+    return FRONTEND_TIMEOUTS.aiRemotePanel;
+  }
+
+  return FRONTEND_TIMEOUTS.ai;
 }
 
 /**
@@ -279,6 +303,8 @@ interface AppState {
     aiConfigs: AIProviderConfig[];
     aiKeyStatus: Record<string, boolean>;
   }>;
+  getLocalOllamaStatus: () => Promise<LocalOllamaStatus>;
+  setupLocalOllama: () => Promise<LocalOllamaSetupResult>;
   askAI: (
     prompt: string,
     context: string,
@@ -361,16 +387,42 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  getLocalOllamaStatus: async () => {
+    try {
+      return await invokeWithTimeout<LocalOllamaStatus>(
+        "get_local_ollama_status",
+        {},
+        FRONTEND_TIMEOUTS.metadata,
+        "Loading local Ollama status"
+      );
+    } catch (e) {
+      set({ error: `Failed to load local Ollama status: ${e}` });
+      throw e;
+    }
+  },
+
+  setupLocalOllama: async () => {
+    try {
+      const result = await invokeMutation<LocalOllamaSetupResult>("setup_local_ollama", {});
+      set({ aiConfigs: result.aiConfigs, error: null });
+      return result;
+    } catch (e) {
+      set({ error: `Failed to set up local Ollama: ${e}` });
+      throw e;
+    }
+  },
+
   askAI: async (prompt: string, context: string, mode = "panel", intent = "sql", history = []) => {
     const config = getActiveAIProvider(get().aiConfigs);
     if (!config) throw new Error("AI Provider not found");
+    const timeoutMs = getAIRequestTimeout(config, mode, intent);
 
     const resp = await invokeWithTimeout<{ text: string; error?: string }>(
       "ask_ai",
       {
         request: { prompt, context, mode, intent, language: getCurrentAppLanguage(), history },
       },
-      FRONTEND_TIMEOUTS.ai,
+      timeoutMs,
       "AI request"
     );
     if (resp.error) throw new Error(resp.error);

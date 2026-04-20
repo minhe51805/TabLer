@@ -39,6 +39,11 @@ import { APP_TOAST_EVENT, type AppToastPayload, emitAppToast } from "./utils/app
 import { invokeMutation } from "./utils/tauri-utils";
 import { getNewQueryTabTitle, getQueryProfile } from "./utils/query-profile";
 import { buildDatabaseFileConnection, type DatabaseFileSelection } from "./utils/database-file";
+import type {
+  AIMetricsSchemaTableHint,
+  OpenAIMetricsBoardCompletionDetail,
+  OpenAIMetricsBoardDetail,
+} from "./utils/metrics-board-templates";
 import { splitSqlStatements } from "./utils/sqlStatements";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "./utils/ui-scale";
 import { useConnectionHealthMonitor } from "./hooks/useConnectionHealthMonitor";
@@ -63,6 +68,16 @@ import {
 
 export interface QueryEditorSessionState extends QueryEditorSessionStateBase {}
 import type { QueryEditorSessionState as QueryEditorSessionStateBase } from "./components/SQLEditor";
+
+interface OpenAIWorkspaceQueryDetail {
+  sql?: string;
+  connectionId?: string;
+  database?: string;
+  title?: string;
+  resultViewMode?: "table" | "chart";
+  autoRun?: boolean;
+  focusWorkspace?: boolean;
+}
 
 const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel").then((module) => ({ default: module.AISlidePanel })));
 const ConnectionForm = lazy(() =>
@@ -117,6 +132,7 @@ function App() {
     loadSavedConnections,
     addTab,
     setActiveTab,
+    updateTab,
     fetchDatabases,
     fetchTables,
     fetchSchemaObjects,
@@ -136,6 +152,7 @@ function App() {
       loadSavedConnections: state.loadSavedConnections,
       addTab: state.addTab,
       setActiveTab: state.setActiveTab,
+      updateTab: state.updateTab,
       fetchDatabases: state.fetchDatabases,
       fetchTables: state.fetchTables,
       fetchSchemaObjects: state.fetchSchemaObjects,
@@ -173,6 +190,7 @@ function App() {
   const [hasMountedGlobalModals, setHasMountedGlobalModals] = useState(false);
   const [isExportingDatabase, setIsExportingDatabase] = useState(false);
   const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
+  const [aiPanelAttachment, setAiPanelAttachment] = useState<{ text: string; source: string; nonce: number } | null>(null);
   const [queryChromeByTab, setQueryChromeByTab] = useState<Record<string, QueryChromeState>>({});
   const [querySessionByTab, setQuerySessionByTab] = useState<Record<string, QueryEditorSessionState>>({});
   const [queryRunRequestByTab, setQueryRunRequestByTab] = useState<Record<string, number>>({});
@@ -1022,7 +1040,9 @@ function App() {
         current?.notice === state.notice &&
         current?.queryCount === state.queryCount &&
         current?.editorHeight === state.editorHeight &&
-        current?.showResultsPane === state.showResultsPane
+        current?.showResultsPane === state.showResultsPane &&
+        current?.resultViewMode === state.resultViewMode &&
+        current?.explainPlan === state.explainPlan
       ) {
         return prev;
       }
@@ -1101,6 +1121,343 @@ function App() {
     setShowSQLFavorites(false);
   }, []);
 
+  const handleOpenAIWorkspaceQuery = useCallback((detail: OpenAIWorkspaceQueryDetail) => {
+    const sql = detail.sql?.trim();
+    const targetConnectionId = detail.connectionId || activeConnectionId;
+    if (!sql || !targetConnectionId) return;
+
+    const resultViewMode = detail.resultViewMode ?? "table";
+    const shouldShowResultsPane = resultViewMode === "chart" || Boolean(detail.autoRun);
+    const tabId = `query-${crypto.randomUUID()}`;
+
+    addTab({
+      id: tabId,
+      type: "query",
+      title: detail.title?.trim() || (resultViewMode === "chart" ? "AI Chart" : "AI Query"),
+      connectionId: targetConnectionId,
+      database: detail.database || currentDatabase || undefined,
+      content: sql,
+    });
+
+    setQuerySessionByTab((prev) => ({
+      ...prev,
+      [tabId]: {
+        result: null,
+        error: null,
+        notice: null,
+        queryCount: 0,
+        editorHeight: 42,
+        showResultsPane: shouldShowResultsPane,
+        resultViewMode,
+      },
+    }));
+
+    if (detail.autoRun) {
+      setQueryRunRequestByTab((prev) => ({
+        ...prev,
+        [tabId]: (prev[tabId] ?? 0) + 1,
+      }));
+    }
+
+  }, [activeConnectionId, addTab, currentDatabase]);
+
+  const handleOpenAIMetricsBoard = useCallback(async (detail: OpenAIMetricsBoardDetail) => {
+    const dispatchMetricsBoardCompletion = (payload: OpenAIMetricsBoardCompletionDetail) => {
+      if (!detail.requestId) return;
+      window.dispatchEvent(
+        new CustomEvent("open-ai-metrics-board-complete", {
+          detail: {
+            requestId: detail.requestId,
+            ...payload,
+          },
+        }),
+      );
+    };
+
+    const targetConnectionId = detail.connectionId || activeConnectionId;
+    const targetDatabase = detail.database || currentDatabase || undefined;
+    if (!targetConnectionId) {
+      dispatchMetricsBoardCompletion({
+        success: false,
+        error: "Missing target connection",
+      });
+      return;
+    }
+
+    const targetConnection = connections.find((connection) => connection.id === targetConnectionId);
+    if (!targetConnection) {
+      dispatchMetricsBoardCompletion({
+        success: false,
+        error: "Target connection not found",
+      });
+      return;
+    }
+
+    try {
+      const [
+        metricsStorageModule,
+        metricsTemplateModule,
+      ] = await Promise.all([
+        import("./components/MetricsBoard/utils/query-builder"),
+        import("./utils/metrics-board-templates"),
+      ]);
+
+      const collectMetricsSchemaHints = async (): Promise<AIMetricsSchemaTableHint[]> => {
+        const appState = useAppStore.getState();
+        const activeStoreConnectionId = appState.activeConnectionId;
+        const activeStoreDatabase = appState.currentDatabase || undefined;
+
+        if (targetConnectionId !== activeStoreConnectionId || (targetDatabase || "") !== (activeStoreDatabase || "")) {
+          return [];
+        }
+
+        let latestTables = appState.tables ?? [];
+        if (latestTables.length === 0 && targetDatabase) {
+          await appState.fetchTables(targetConnectionId, targetDatabase);
+          latestTables = useAppStore.getState().tables ?? [];
+        }
+
+        if (latestTables.length === 0) {
+          return [];
+        }
+
+        const normalizeTableName = (value: string) =>
+          value
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "_")
+            .replace(/^_+|_+$/g, "");
+
+        const businessPriority = [
+          "job_post",
+          "job_posts",
+          "job_application",
+          "job_applications",
+          "organization",
+          "organizations",
+          "organization_type",
+          "organization_types",
+          "industry",
+          "industries",
+          "province",
+          "provinces",
+          "country",
+          "countries",
+          "interview_schedule",
+          "interview_schedules",
+          "interview_feedback",
+          "interview_feedbacks",
+          "interview_participants",
+        ];
+
+        const prioritizedTables = [...latestTables]
+          .sort((left, right) => {
+            const leftPriority = businessPriority.indexOf(normalizeTableName(left.name));
+            const rightPriority = businessPriority.indexOf(normalizeTableName(right.name));
+            if (leftPriority !== rightPriority) {
+              return (leftPriority === -1 ? Number.MAX_SAFE_INTEGER : leftPriority) -
+                (rightPriority === -1 ? Number.MAX_SAFE_INTEGER : rightPriority);
+            }
+
+            const leftRowCount = left.row_count ?? -1;
+            const rightRowCount = right.row_count ?? -1;
+            if (leftRowCount !== rightRowCount) {
+              return rightRowCount - leftRowCount;
+            }
+
+            return left.name.localeCompare(right.name);
+          })
+          .filter((table, index, collection) =>
+            collection.findIndex((candidate) => normalizeTableName(candidate.name) === normalizeTableName(table.name)) === index
+          )
+          .slice(0, 14);
+
+        return await Promise.all(
+          prioritizedTables.map(async (table) => {
+            try {
+              const structure = await appState.getTableStructure(targetConnectionId, table.name, targetDatabase);
+              return {
+                name: table.name,
+                schema: table.schema,
+                rowCount: table.row_count ?? null,
+                columns: structure.columns.map((column) => column.name),
+              } satisfies AIMetricsSchemaTableHint;
+            } catch {
+              return {
+                name: table.name,
+                schema: table.schema,
+                rowCount: table.row_count ?? null,
+                columns: [],
+              } satisfies AIMetricsSchemaTableHint;
+            }
+          }),
+        );
+      };
+
+      const schemaHints = await collectMetricsSchemaHints();
+
+      const allBoards = metricsStorageModule.readStoredBoards();
+      const connectionBoards = allBoards.filter((board) => board.connection_id === targetConnectionId);
+      const existingMetricsTab =
+        tabs.find(
+          (tab) =>
+            tab.type === "metrics" &&
+            tab.connectionId === targetConnectionId &&
+            (tab.database || "") === (targetDatabase || ""),
+        ) || null;
+      const targetBoardId =
+        detail.boardId ||
+        (detail.mode === "augment" ? activeTab?.metricsBoardId || existingMetricsTab?.metricsBoardId : undefined);
+
+      const targetBoard =
+        (targetBoardId && connectionBoards.find((board) => board.id === targetBoardId)) || null;
+
+      let nextBoard: (typeof targetBoard) | null = null;
+      let nextAllBoards = allBoards;
+      let didChange = false;
+      let created = false;
+      let addedCount = 0;
+      let addedTitles: string[] = [];
+      let addedWidgetIds: string[] = [];
+
+      if (detail.mode === "augment" && targetBoard) {
+        const augmented = metricsTemplateModule.augmentAIMetricsBoardDefinition({
+          board: targetBoard,
+          detail: {
+            ...detail,
+            database: targetDatabase,
+          },
+          dbType: targetConnection.db_type,
+          schemaHints,
+        });
+
+        if (augmented) {
+          nextBoard = augmented.board;
+          addedCount = augmented.addedCount;
+          addedTitles = augmented.addedTitles;
+          addedWidgetIds = augmented.addedWidgetIds;
+          const renamed = augmented.board.name.trim() !== targetBoard.name.trim();
+          didChange = addedCount > 0 || renamed;
+          if (didChange) {
+            nextAllBoards = allBoards.map((board) => (board.id === augmented.board.id ? augmented.board : board));
+          } else {
+            nextBoard = targetBoard;
+          }
+        }
+      }
+
+      if (!nextBoard) {
+        nextBoard = metricsTemplateModule.createAIMetricsBoardDefinition({
+          detail: {
+            ...detail,
+            database: targetDatabase,
+          },
+          dbType: targetConnection.db_type,
+          connectionId: targetConnectionId,
+          existingBoards: connectionBoards,
+          schemaHints,
+        });
+        if (nextBoard) {
+          nextAllBoards = [...allBoards, nextBoard];
+          didChange = true;
+          created = true;
+        }
+      }
+
+      if (!nextBoard) {
+        emitAppToast({
+          tone: "info",
+          title: language === "vi" ? "Dashboard chua ho tro cho engine nay" : "Dashboard template is not available here",
+          description:
+            language === "vi"
+              ? "TableR chua co san dashboard overview da widget cho engine database hien tai."
+              : "TableR does not have a built-in multi-chart overview dashboard for the current database engine yet.",
+        });
+        dispatchMetricsBoardCompletion({
+          success: false,
+          error: "Dashboard template is not available for the current database engine",
+        });
+        return;
+      }
+
+      if (didChange) {
+        metricsStorageModule.writeStoredBoards(nextAllBoards);
+        window.dispatchEvent(
+          new CustomEvent("metrics-boards-updated", {
+            detail: { connectionId: targetConnectionId },
+          }),
+        );
+      }
+
+      setLeftPanel("metrics");
+
+      if (existingMetricsTab) {
+        updateTab(existingMetricsTab.id, {
+          metricsBoardId: nextBoard.id,
+          title: nextBoard.name,
+          database: nextBoard.database,
+        });
+        setActiveTab(existingMetricsTab.id);
+      } else {
+        addTab({
+          id: `metrics-${crypto.randomUUID()}`,
+          type: "metrics",
+          title: nextBoard.name,
+          connectionId: targetConnectionId,
+          database: nextBoard.database,
+          metricsBoardId: nextBoard.id,
+        });
+      }
+
+      dispatchMetricsBoardCompletion({
+        success: true,
+        boardId: nextBoard.id,
+        didChange,
+        addedCount,
+        addedTitles,
+        addedWidgetIds,
+        created,
+      });
+
+      if (didChange && addedWidgetIds.length > 0) {
+        const focusTargetBoardId = nextBoard.id;
+        const focusTargetWidgetId = addedWidgetIds[0];
+        window.setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent("focus-metrics-widget", {
+              detail: {
+                boardId: focusTargetBoardId,
+                widgetId: focusTargetWidgetId,
+              },
+            }),
+          );
+        }, 60);
+      }
+    } catch (errorValue) {
+      const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+      setError(
+        language === "vi"
+          ? `Khong the mo dashboard AI: ${message}`
+          : `Could not open the AI dashboard: ${message}`,
+      );
+      dispatchMetricsBoardCompletion({
+        success: false,
+        error: message,
+      });
+    }
+  }, [
+    activeConnectionId,
+    addTab,
+    connections,
+    currentDatabase,
+    language,
+    activeTab?.metricsBoardId,
+    setActiveTab,
+    setError,
+    setLeftPanel,
+    tabs,
+    updateTab,
+  ]);
+
   const handleOpenAdminQuery = useCallback(
     (kind: AdminQueryKind) => {
       if (!activeConnectionId || !activeConn) return;
@@ -1142,10 +1499,17 @@ function App() {
     [activeConn, activeConnectionId, addTab, currentDatabase, language, setError, t],
   );
 
-  const handleOpenAISlidePanel = useCallback((prompt?: string) => {
+  const handleOpenAISlidePanel = useCallback((prompt?: string, attachment?: { text: string; source: string }) => {
     if (typeof prompt === "string" && prompt.trim()) {
       setAiPanelDraft({
         prompt,
+        nonce: Date.now(),
+      });
+    }
+    if (attachment?.text.trim()) {
+      setAiPanelAttachment({
+        text: attachment.text.trim(),
+        source: attachment.source?.trim() || "Workspace attachment",
         nonce: Date.now(),
       });
     }
@@ -1382,12 +1746,41 @@ function App() {
 
   useEffect(() => {
     const handleOpenAI = (event: Event) => {
-      const detail = (event as CustomEvent<{ prompt?: string }>).detail;
-      handleOpenAISlidePanel(detail?.prompt);
+      const detail = (event as CustomEvent<{
+        prompt?: string;
+        attachment?: { text?: string; source?: string };
+      }>).detail;
+      handleOpenAISlidePanel(
+        detail?.prompt,
+        detail?.attachment?.text
+          ? {
+              text: detail.attachment.text,
+              source: detail.attachment.source || "Workspace attachment",
+            }
+          : undefined,
+      );
     };
     window.addEventListener("open-ai-slide-panel", handleOpenAI);
     return () => window.removeEventListener("open-ai-slide-panel", handleOpenAI);
   }, [handleOpenAISlidePanel]);
+
+  useEffect(() => {
+    const handleOpenAIWorkspaceQueryEvent = (event: Event) => {
+      const detail = (event as CustomEvent<OpenAIWorkspaceQueryDetail>).detail;
+      handleOpenAIWorkspaceQuery(detail ?? {});
+    };
+    window.addEventListener("open-ai-workspace-query", handleOpenAIWorkspaceQueryEvent);
+    return () => window.removeEventListener("open-ai-workspace-query", handleOpenAIWorkspaceQueryEvent);
+  }, [handleOpenAIWorkspaceQuery]);
+
+  useEffect(() => {
+    const handleOpenAIMetricsBoardEvent = (event: Event) => {
+      const detail = (event as CustomEvent<OpenAIMetricsBoardDetail>).detail;
+      void handleOpenAIMetricsBoard(detail ?? {});
+    };
+    window.addEventListener("open-ai-metrics-board", handleOpenAIMetricsBoardEvent);
+    return () => window.removeEventListener("open-ai-metrics-board", handleOpenAIMetricsBoardEvent);
+  }, [handleOpenAIMetricsBoard]);
 
   useEffect(() => {
     const handleOpenAISettings = () => {
@@ -1857,6 +2250,11 @@ function App() {
               isOpen={showAISlidePanel}
               initialPrompt={aiPanelDraft?.prompt ?? ""}
               initialPromptNonce={aiPanelDraft?.nonce ?? 0}
+              initialAttachment={aiPanelAttachment ? {
+                text: aiPanelAttachment.text,
+                source: aiPanelAttachment.source,
+              } : undefined}
+              initialAttachmentNonce={aiPanelAttachment?.nonce ?? 0}
               onClose={() => setShowAISlidePanel(false)}
             />
           </ErrorBoundary>

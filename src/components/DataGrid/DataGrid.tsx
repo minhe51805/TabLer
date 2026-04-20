@@ -20,6 +20,10 @@ import {
 import type { ColumnDetail, ConnectionConfig, QueryResult } from "../../types";
 import { devLogError } from "../../utils/logger";
 import { computeNewRowPlan, computeColumnPlan } from "./hooks/useInsertColumnPlan";
+import { lazy, Suspense } from "react";
+import "./DataChart.css";
+
+const DataChart = lazy(() => import("./DataChart").then((m) => ({ default: m.DataChart })));
 import {
   PAGE_SIZE,
   buildTableScopeKey,
@@ -69,6 +73,8 @@ interface Props {
   database?: string;
   queryResult?: QueryResult;
   isActive?: boolean;
+  initialViewMode?: "table" | "chart";
+  onViewModeChange?: (mode: "table" | "chart") => void;
 }
 
 const MAX_TABLE_PAGE_CACHE_ENTRIES = 48;
@@ -81,6 +87,8 @@ export function DataGrid({
   database,
   queryResult: externalResult,
   isActive = true,
+  initialViewMode = "table",
+  onViewModeChange,
 }: Props) {
   const { settings } = useDataGridSettings();
   const {
@@ -156,6 +164,7 @@ export function DataGrid({
   const [fkPreview, setFkPreview] = useState<{ table: string; column: string; value: string | number | boolean; rowIndex: number; colIndex: number } | null>(null);
   const [fkPreviewData, setFkPreviewData] = useState<import("../../types").QueryResult | null>(null);
   const [isLoadingFkPreview, setIsLoadingFkPreview] = useState(false);
+  const [viewMode, setViewMode] = useState<"table" | "chart">(initialViewMode);
   const [columnSizes, setColumnSizes] = useState<Record<string, number>>(() =>
     getColumnWidths(connectionId, tableName ?? "", database),
   );
@@ -180,6 +189,15 @@ export function DataGrid({
   const assignInputRef = useCallback((element: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null) => {
     editorRef.current = element;
   }, []);
+
+  useEffect(() => {
+    setViewMode(initialViewMode);
+  }, [initialViewMode]);
+
+  const handleViewModeChange = useCallback((mode: "table" | "chart") => {
+    setViewMode(mode);
+    onViewModeChange?.(mode);
+  }, [onViewModeChange]);
 
   const fetchData = useCallback(
     async (page: number) => {
@@ -764,6 +782,11 @@ export function DataGrid({
   useEffect(() => {
     setUndoableChanges(0);
   }, [tableName, connectionId, database]);
+
+  // Reset view mode when switching data source
+  useEffect(() => {
+    setViewMode("table");
+  }, [tableName, connectionId, database, externalResult]);
 
   /** Duplicate selected row(s) — opens insert dialog pre-filled with source row values. */
   const handleDuplicateRow = useCallback(async () => {
@@ -1942,6 +1965,8 @@ export function DataGrid({
     <>
     <div className={`datagrid-shell${externalResult ? "" : " compact"}${settings.rowHeight !== "medium" ? ` row-height-${settings.rowHeight}` : ""}${!settings.alternatingRows ? " alternating-rows-disabled" : ""}`}>
       <DataGridToolbar
+        viewMode={viewMode}
+        onViewModeChange={handleViewModeChange}
         tableName={tableName}
         database={database}
         externalResult={externalResult}
@@ -1988,7 +2013,14 @@ export function DataGrid({
           </div>
         )}
 
-        <table className="datagrid-table">
+        {viewMode === "chart" ? (
+          <div className="datachart-view-wrap">
+            <Suspense fallback={<div className="datachart-loading"><Loader2 className="w-5 h-5 animate-spin" /> Loading chart...</div>}>
+              <DataChart resolvedColumns={resolvedColumns} queryResult={data} />
+            </Suspense>
+          </div>
+        ) : (
+          <table className="datagrid-table">
           <thead className="datagrid-head">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
@@ -2079,6 +2111,7 @@ export function DataGrid({
             )}
           </tbody>
         </table>
+        )}
 
         {data && data.rows.length === 0 && (
           <div className="datagrid-empty">

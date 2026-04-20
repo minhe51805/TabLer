@@ -36,6 +36,7 @@ export interface QueryEditorSessionState {
   queryCount: number;
   editorHeight: number;
   showResultsPane: boolean;
+  resultViewMode?: "table" | "chart";
   explainPlan?: ParsedExplainPlan;
 }
 
@@ -85,7 +86,8 @@ export function useSQLEditor({
   const inlineCompletionInFlightRef = useRef<{ key: string; promise: Promise<string> } | null>(null);
   const lastInlineCompletionAtRef = useRef(0);
   const dailyInlineCompletionRef = useRef({ count: 0, date: new Date().toDateString() });
-  const lastRunRequestNonceRef = useRef(runRequestNonce);
+  const lastRunRequestNonceRef = useRef(0);
+  const pendingRunRequestNonceRef = useRef<number | null>(null);
 
   const [result, setResult] = useState<QueryResult | null>(() => initialState?.result ?? null);
   const [error, setError] = useState<string | null>(() => initialState?.error ?? null);
@@ -93,9 +95,15 @@ export function useSQLEditor({
   const [queryCount, setQueryCount] = useState(() => initialState?.queryCount ?? 0);
   const [editorHeight, setEditorHeight] = useState(() => initialState?.editorHeight ?? 42);
   const [showResultsPane, setShowResultsPane] = useState(() => {
+    if (typeof initialState?.showResultsPane === "boolean") {
+      return initialState.showResultsPane;
+    }
     const initialRowCount = initialState?.result?.rows.length ?? 0;
     return initialRowCount > 0;
   });
+  const [resultViewMode, setResultViewMode] = useState<"table" | "chart">(
+    () => initialState?.resultViewMode ?? "table"
+  );
   const [isBatchExecuting, setIsBatchExecuting] = useState(false);
   const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
   const [explainPlan, setExplainPlan] = useState<ParsedExplainPlan | undefined>(() => initialState?.explainPlan);
@@ -485,6 +493,16 @@ export function useSQLEditor({
 
     defineTableRTheme(monaco);
     editor.updateOptions({ theme: "tabler-dark" });
+
+    if (pendingRunRequestNonceRef.current !== null) {
+      const pendingNonce = pendingRunRequestNonceRef.current;
+      pendingRunRequestNonceRef.current = null;
+      window.setTimeout(() => {
+        if (lastRunRequestNonceRef.current === pendingNonce) {
+          void handleExecute();
+        }
+      }, 0);
+    }
   };
 
   useEffect(() => {
@@ -539,8 +557,8 @@ export function useSQLEditor({
 
   useEffect(() => {
     if (!onStateChangeRef.current) return;
-    onStateChangeRef.current({ result, error, notice, queryCount, editorHeight, showResultsPane, explainPlan });
-  }, [editorHeight, error, explainPlan, notice, queryCount, result, showResultsPane]);
+    onStateChangeRef.current({ result, error, notice, queryCount, editorHeight, showResultsPane, resultViewMode, explainPlan });
+  }, [editorHeight, error, explainPlan, notice, queryCount, result, resultViewMode, showResultsPane]);
 
   useEffect(() => {
     const onInsertSQLFromAI = (e: Event) => {
@@ -575,6 +593,10 @@ export function useSQLEditor({
   useEffect(() => {
     if (runRequestNonce <= lastRunRequestNonceRef.current) return;
     lastRunRequestNonceRef.current = runRequestNonce;
+    if (!editorRef.current) {
+      pendingRunRequestNonceRef.current = runRequestNonce;
+      return;
+    }
     void handleExecute();
   }, [handleExecute, runRequestNonce]);
 
@@ -632,6 +654,8 @@ export function useSQLEditor({
     setEditorHeight,
     showResultsPane,
     setShowResultsPane,
+    resultViewMode,
+    setResultViewMode,
     editorRef,
     splitRef,
     handleEditorMount,

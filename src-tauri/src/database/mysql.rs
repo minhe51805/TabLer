@@ -386,7 +386,8 @@ impl DatabaseDriver for MySqlDriver {
                 schema: schema.clone(),
                 object_type: "TRIGGER".to_string(),
                 related_table,
-                definition: Some(
+                definition: Some(format!(
+                    "{}\n{}",
                     [
                         timing.unwrap_or_default(),
                         event.unwrap_or_default(),
@@ -394,11 +395,9 @@ impl DatabaseDriver for MySqlDriver {
                         definition_table_name,
                     ]
                     .join(" ")
-                    .trim()
-                    .to_string()
-                        + "\n"
-                        + statement.unwrap_or_default().trim(),
-                ),
+                    .trim(),
+                    statement.unwrap_or_default().trim(),
+                )),
             }
         }));
 

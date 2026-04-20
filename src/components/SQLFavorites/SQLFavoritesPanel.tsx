@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useSqlFavoritesStore } from "../../stores/sql-favorites-store";
+import "../../styles/lazy-overlays.css";
 
 interface Props {
   isOpen: boolean;

@@ -13,6 +13,7 @@ import { useI18n } from "../../i18n";
 import { copyToClipboard } from "../../utils/sql-generator";
 import type { ResolvedColumn } from "../DataGrid/hooks/useDataGrid";
 import type { GridCellValue } from "../DataGrid/hooks/useDataGrid";
+import "../../styles/lazy-overlays.css";
 import {
   isBooleanColumn,
   isBlobColumn,

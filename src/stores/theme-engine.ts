@@ -864,13 +864,19 @@ export function useTheme() {
 // ---------------------------------------------------------------------------
 // Monaco Editor Theme Registration
 // ---------------------------------------------------------------------------
+// NOTE: `(monaco as any)` is required here because `registerMonacoTheme` receives
+// `unknown` — `monaco-editor` types are not available at the module level.
+// This is safe because the caller (use-sql-editor) always passes a real
+// Monaco instance. The `(monaco as any)` avoids a @monaco-editor/react type mismatch.
 
 export function registerMonacoTheme(monaco: unknown): void {
   const theme = ThemeEngine.loadActive();
   const { editor } = theme.colors;
 
-   
-  (monaco as any).editor.defineTheme("tabler-dark", {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const m = monaco as any;
+
+  m.editor.defineTheme("tabler-dark", {
     base: "vs-dark",
     inherit: true,
     rules: [

@@ -3,6 +3,7 @@ import { Command as LucideCommand, X } from "lucide-react";
 import { useCommandPaletteStore } from "../../stores/commandPaletteStore";
 import { buildCommandRegistry, filterCommands } from "./commands-registry";
 import type { Command, CommandCategory } from "../../stores/commandPaletteStore";
+import "../../styles/command-palette.css";
 
 const CATEGORY_ORDER: CommandCategory[] = [
   "File",

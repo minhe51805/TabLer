@@ -8,6 +8,8 @@ interface SQLEditorResultsPaneProps {
   notice: string | null;
   result: QueryResult | null;
   connectionId: string;
+  resultViewMode: "table" | "chart";
+  onResultViewModeChange: (mode: "table" | "chart") => void;
   showResultsPane: boolean;
   splitRef: React.RefObject<HTMLDivElement | null>;
   onSplitDrag: (e: React.MouseEvent) => void;
@@ -19,6 +21,8 @@ export function SQLEditorResultsPane({
   notice,
   result,
   connectionId,
+  resultViewMode,
+  onResultViewModeChange,
   showResultsPane,
   splitRef,
   onSplitDrag,
@@ -79,7 +83,12 @@ export function SQLEditorResultsPane({
               </div>
             </div>
           ) : result ? (
-            <DataGrid connectionId={connectionId} queryResult={result} />
+            <DataGrid
+              connectionId={connectionId}
+              queryResult={result}
+              initialViewMode={resultViewMode}
+              onViewModeChange={onResultViewModeChange}
+            />
           ) : (
             <div className="sql-results-empty">
               <Terminal className="h-8 w-8 text-[var(--fintech-green)] opacity-50" />

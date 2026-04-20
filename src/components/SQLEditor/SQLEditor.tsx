@@ -45,6 +45,8 @@ export function SQLEditor({
     editorHeight,
     showResultsPane,
     setShowResultsPane,
+    resultViewMode,
+    setResultViewMode,
     splitRef,
     handleEditorMount,
     handleSplitDrag,
@@ -171,6 +173,8 @@ export function SQLEditor({
           notice={notice}
           result={result}
           connectionId={connectionId}
+          resultViewMode={resultViewMode}
+          onResultViewModeChange={setResultViewMode}
           showResultsPane={showResultsPane}
           splitRef={splitRef}
           onSplitDrag={handleSplitDrag}

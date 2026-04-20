@@ -24,6 +24,11 @@ pub enum AIRequestIntent {
     Sql,
     Explain,
     Overview,
+    Optimize,
+    #[serde(rename = "fix-error")]
+    FixError,
+    General,
+    Agent,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -32,6 +37,8 @@ pub enum AIResponseLanguage {
     En,
     Vi,
     Zh,
+    Tr,
+    Ko,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

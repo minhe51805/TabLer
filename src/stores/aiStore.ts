@@ -3,6 +3,32 @@ import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
 import { getCurrentAppLanguage } from "../i18n";
 import { getActiveAIProvider, type AIConversationMessage, type AIProviderConfig, type AIRequestIntent, type AIRequestMode } from "../types";
 
+const AI_TIMEOUTS = {
+  default: 60_000,
+  remotePanel: 180_000,
+  remoteAgentPanel: 360_000,
+  localOllamaPanel: 600_000,
+  localOllamaInline: 120_000,
+} as const;
+
+function getAIRequestTimeout(config: AIProviderConfig, mode: AIRequestMode, intent: AIRequestIntent) {
+  if (config.provider_type === "ollama") {
+    return mode === "inline"
+      ? AI_TIMEOUTS.localOllamaInline
+      : AI_TIMEOUTS.localOllamaPanel;
+  }
+
+  if (mode === "panel" && intent === "agent") {
+    return AI_TIMEOUTS.remoteAgentPanel;
+  }
+
+  if (mode === "panel") {
+    return AI_TIMEOUTS.remotePanel;
+  }
+
+  return AI_TIMEOUTS.default;
+}
+
 interface AIState {
   aiConfigs: AIProviderConfig[];
 
@@ -59,10 +85,11 @@ export const useAIStore = create<AIState>((set, get) => ({
   askAI: async (prompt: string, context: string, mode = "panel", intent = "sql", history = []) => {
     const config = getActiveAIProvider(get().aiConfigs);
     if (!config) throw new Error("AI Provider not found");
+    const timeoutMs = getAIRequestTimeout(config, mode, intent);
     const resp = await invokeWithTimeout<{ text: string; error?: string }>(
       "ask_ai",
       { request: { prompt, context, mode, intent, language: getCurrentAppLanguage(), history } },
-      60_000,
+      timeoutMs,
       "AI request"
     );
     if (resp.error) throw new Error(resp.error);

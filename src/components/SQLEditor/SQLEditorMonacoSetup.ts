@@ -4,6 +4,20 @@ import { analyzeSqlContext, getTablesInScope } from "./SQLContextAnalyzer";
 import { getCompletionSet } from "../../utils/sql-completions";
 import type { DatabaseType } from "../../types/database";
 
+// Type for column objects from the table structure API
+type TableColumn = TableStructure["columns"][number];
+
+// Shape of a Monaco completion item we build internally
+type CompletionItem = {
+  label: string;
+  kind: Monaco.languages.CompletionItemKind;
+  insertText: string;
+  insertTextRules?: Monaco.languages.CompletionItemInsertTextRule;
+  detail?: string;
+  documentation?: string;
+  range: Monaco.IRange;
+};
+
 // Theme definition matching Monaco's IStandaloneThemeData shape
 const TABLER_DARK_THEME = {
   base: "vs-dark",
@@ -26,6 +40,7 @@ const TABLER_DARK_THEME = {
   },
 };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function defineTableRTheme(monaco: any) {
   monaco.editor.defineTheme("tabler-dark", TABLER_DARK_THEME);
 }
@@ -54,6 +69,7 @@ const CACHE_TTL_MS = 30_000; // 30 seconds
  * SQL keywords, functions, and operators.
  */
 export function registerSchemaCompletionProvider(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   monaco: any,
   deps: CompletionProviderDeps,
   _onDispose?: () => void
@@ -99,15 +115,13 @@ export function registerSchemaCompletionProvider(
     };
   }
 
-  function colDetail(col: any, prefix: string): string {
+  function colDetail(col: TableColumn, prefix: string): string {
     const pk = col.is_primary_key ? " (PK)" : "";
     return col.data_type + pk + prefix;
   }
 
-  async function provideCompletionItems(
-    model: any,
-    position: any
-  ): Promise<any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function provideCompletionItems(model: any, position: any): Promise<any> {
     const analysis = analyzeSqlContext(model, position);
     const word = model.getWordUntilPosition(position);
     const range = makeRange({
@@ -117,7 +131,7 @@ export function registerSchemaCompletionProvider(
       endColumn: word.endColumn,
     });
 
-    const suggestions: any[] = [];
+    const suggestions: CompletionItem[] = [];
     const completionSet = getCompletionSet(dbType);
 
     // ── Context-specific completions ──────────────────────────────────────────
@@ -563,11 +577,13 @@ export function registerSchemaCompletionProvider(
 
 /** Legacy completion provider providing only table names + basic SQL keywords. */
 export function registerStandardCompletionProvider(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   monaco: any,
   getTables: () => Array<{ name: string }>,
   _onDispose?: () => void
 ): { dispose: () => void } {
   return monaco.languages.registerCompletionItemProvider("sql", {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     provideCompletionItems: (model: any, position: any) => {
       const word = model.getWordUntilPosition(position);
       const range = {

@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./styles/boot-failure.css";
 
 interface BootFailureSnapshot {
   source: string;
@@ -56,87 +57,25 @@ function clearPersistedBootFailure() {
 
 function BootFailureScreen({ failure }: { failure: BootFailureSnapshot }) {
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background:
-          "radial-gradient(circle at top, rgba(0,212,170,0.08), transparent 28%), #090d14",
-        color: "#e7edf7",
-        fontFamily: "Segoe UI, Inter, system-ui, sans-serif",
-        padding: "24px",
-        boxSizing: "border-box",
-      }}
-    >
-      <div
-        style={{
-          width: "min(760px, 100%)",
-          borderRadius: "18px",
-          border: "1px solid rgba(0,212,170,0.18)",
-          background: "rgba(10, 16, 26, 0.96)",
-          boxShadow: "0 24px 60px rgba(0, 0, 0, 0.38)",
-          padding: "24px",
-        }}
-      >
-        <div style={{ fontSize: "12px", letterSpacing: "0.12em", textTransform: "uppercase", color: "#00d4aa" }}>
-          Startup Error
-        </div>
-        <h1 style={{ margin: "12px 0 8px", fontSize: "28px", lineHeight: 1.15 }}>
-          TableR failed to start
-        </h1>
-        <p style={{ margin: 0, color: "#9fb0c8", lineHeight: 1.6 }}>
+    <div className="boot-failure-screen">
+      <div className="boot-failure-card">
+        <div className="boot-failure-kicker">Startup Error</div>
+        <h1 className="boot-failure-title">TableR failed to start</h1>
+        <p className="boot-failure-description">
           The release build hit a runtime error before the main UI could render.
         </p>
 
-        <div
-          style={{
-            marginTop: "18px",
-            padding: "14px 16px",
-            borderRadius: "14px",
-            background: "rgba(71, 16, 16, 0.56)",
-            border: "1px solid rgba(255, 120, 120, 0.18)",
-            color: "#ffd4d4",
-            fontSize: "14px",
-            lineHeight: 1.6,
-            wordBreak: "break-word",
-          }}
-        >
+        <div className="boot-failure-error-box">
           {failure.message}
         </div>
 
-        <div
-          style={{
-            marginTop: "14px",
-            display: "flex",
-            gap: "10px",
-            flexWrap: "wrap",
-            color: "#8ea4c3",
-            fontSize: "12px",
-          }}
-        >
+        <div className="boot-failure-meta">
           <span>Source: {failure.source}</span>
           <span>At: {failure.at}</span>
         </div>
 
         {failure.stack ? (
-          <pre
-            style={{
-              marginTop: "18px",
-              padding: "16px",
-              borderRadius: "14px",
-              background: "rgba(6, 10, 18, 0.92)",
-              border: "1px solid rgba(111, 147, 190, 0.18)",
-              color: "#bcd0eb",
-              fontSize: "12px",
-              lineHeight: 1.6,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              overflow: "auto",
-              maxHeight: "42vh",
-            }}
-          >
+          <pre className="boot-failure-stack">
             {failure.stack}
           </pre>
         ) : null}
@@ -188,26 +127,17 @@ window.addEventListener("unhandledrejection", (event) => {
 
 async function startApp() {
   try {
-    // Log what modules are being loaded to help debug
     window.__TABLER_SET_BOOT_STATUS__?.("Importing App module...", "warning");
-    console.log("[TableR] Step 1: Importing ./App module...");
-    const t0 = performance.now();
-
     const module = await import("./App");
-
-    console.log(`[TableR] Step 1 DONE: ./App imported in ${(performance.now() - t0).toFixed(0)}ms`);
     clearPersistedBootFailure();
     (globalThis as TablerBootGlobal).__TABLER_HIDE_BOOT_SCREEN__?.();
-
     window.__TABLER_SET_BOOT_STATUS__?.("Rendering React tree...");
-    console.log("[TableR] Step 2: Rendering React tree...");
 
     root.render(
       <React.StrictMode>
         <module.default />
       </React.StrictMode>,
     );
-    console.log("[TableR] Step 2 DONE: React tree rendered");
     // After 2 seconds, consider it successfully booted and prevent future errors from turning into boot failures
     setTimeout(() => {
       isAppBooted = true;

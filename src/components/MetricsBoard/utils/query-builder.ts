@@ -619,13 +619,58 @@ export function createWidgetDefinition(
 // Query execution
 // ---------------------------------------------------------------------------
 
+const METRICS_QUERY_MAX_CONCURRENCY = 3;
+
+type MetricsQueryTask = {
+  run: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
+};
+
+const metricsQueryQueue: MetricsQueryTask[] = [];
+let activeMetricsQueries = 0;
+
+function pumpMetricsQueryQueue() {
+  while (activeMetricsQueries < METRICS_QUERY_MAX_CONCURRENCY && metricsQueryQueue.length > 0) {
+    const task = metricsQueryQueue.shift();
+    if (!task) return;
+
+    activeMetricsQueries += 1;
+    void task
+      .run()
+      .then((value) => {
+        task.resolve(value);
+      })
+      .catch((error) => {
+        task.reject(error);
+      })
+      .finally(() => {
+        activeMetricsQueries = Math.max(0, activeMetricsQueries - 1);
+        window.setTimeout(pumpMetricsQueryQueue, 0);
+      });
+  }
+}
+
+function enqueueMetricsQuery<T>(run: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    metricsQueryQueue.push({
+      run: () => run(),
+      resolve: (value) => resolve(value as T),
+      reject,
+    });
+    pumpMetricsQueryQueue();
+  });
+}
+
 export async function executeMetricsQuery(connectionId: string, statement: string): Promise<QueryResult> {
-  return withTimeout<QueryResult>(
-    invoke("execute_sandboxed_query", {
-      connectionId,
-      statements: [statement],
-    }),
-    METRICS_QUERY_TIMEOUT_MS,
-    "Metrics query",
+  return enqueueMetricsQuery(() =>
+    withTimeout<QueryResult>(
+      invoke("execute_sandboxed_query", {
+        connectionId,
+        statements: [statement],
+      }),
+      METRICS_QUERY_TIMEOUT_MS,
+      "Metrics query",
+    ),
   );
 }

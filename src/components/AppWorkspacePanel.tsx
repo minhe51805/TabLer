@@ -17,12 +17,13 @@ import {
 import { lazy, Suspense, useEffect, useState } from "react";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { WorkspaceErrorFallback } from "./layout/WorkspaceErrorFallback";
-import { DataGrid } from "./DataGrid/DataGrid";
 import { MetricsSidebar } from "./MetricsSidebar/MetricsSidebar";
 import { Sidebar } from "./Sidebar";
 import { TabBar } from "./TabBar";
-import ERDiagram from "./ERDiagram/ERDiagram";
-import { TerminalDock } from "./TerminalDock/TerminalDock";
+// Lazy-loaded components (performance optimization P1/P2)
+const DataGrid = lazy(() => import("./DataGrid/DataGrid").then((m) => ({ default: m.DataGrid })));
+const ERDiagram = lazy(() => import("./ERDiagram/ERDiagram").then((m) => ({ default: m.default })));
+const TerminalDock = lazy(() => import("./TerminalDock/TerminalDock").then((m) => ({ default: m.TerminalDock })));
 import type { Tab } from "../types";
 import type { ConnectionConfig } from "../types/database";
 import type { QueryEditorSessionState } from "./SQLEditor";
@@ -86,6 +87,7 @@ interface AppWorkspacePanelProps {
   showTerminalPanel: boolean;
   isExportingDatabase: boolean;
   onToggleTerminalPanel: () => void;
+  onGoToLauncher: () => void;
   onToggleSidebar: () => void;
   onSetConnectionFormIntent: (intent: "connect" | "bootstrap") => void;
   onHandleMouseDown: (e: React.MouseEvent) => void;
@@ -96,6 +98,38 @@ function LazyPanelFallback() {
     <div className="flex items-center justify-center h-full min-h-[220px] text-sm text-[var(--text-muted)]">
       Loading workspace...
     </div>
+  );
+}
+
+function LazyTerminalFallback() {
+  return (
+    <section
+      aria-hidden={false}
+      style={{
+        borderTop: "1px solid rgba(0, 212, 170, 0.14)",
+        background: "rgba(5, 10, 18, 0.92)",
+        padding: "10px 12px",
+      }}
+    >
+      <div
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+          minHeight: 30,
+          padding: "0 10px",
+          borderRadius: 10,
+          border: "1px solid rgba(0, 212, 170, 0.16)",
+          background: "rgba(0, 212, 170, 0.05)",
+          color: "var(--fintech-green)",
+          fontSize: 12,
+          fontWeight: 600,
+        }}
+      >
+        <Terminal className="w-3.5 h-3.5" />
+        <span>Loading terminal...</span>
+      </div>
+    </section>
   );
 }
 
@@ -131,6 +165,7 @@ export function AppWorkspacePanel({
   showTerminalPanel,
   isExportingDatabase,
   onToggleTerminalPanel,
+  onGoToLauncher,
   onToggleSidebar,
   onSetConnectionFormIntent,
   onHandleMouseDown,
@@ -157,6 +192,7 @@ export function AppWorkspacePanel({
   const isERDiagramPanelActive = activeTab?.type === "er-diagram";
 
   const [loadingTimeoutExceeded, setLoadingTimeoutExceeded] = useState(false);
+  const [hasMountedTerminalDock, setHasMountedTerminalDock] = useState(showTerminalPanel);
 
   useEffect(() => {
     let timeoutId: number | null = null;
@@ -174,6 +210,12 @@ export function AppWorkspacePanel({
       if (timeoutId) window.clearTimeout(timeoutId);
     };
   }, [isConnected, isConnecting, activeConn]);
+
+  useEffect(() => {
+    if (showTerminalPanel) {
+      setHasMountedTerminalDock(true);
+    }
+  }, [showTerminalPanel]);
 
   // EventCenter: respond to global sidebar toggle
   useEvent("workspace-toggle-sidebar", () => {
@@ -203,7 +245,8 @@ export function AppWorkspacePanel({
     if (loadingTimeoutExceeded) {
       return (
         <WorkspaceErrorFallback
-          error={new Error("Workspace connection timed out after 30 seconds.")}
+            variant="inline"
+            error={new Error("Workspace connection timed out after 30 seconds.")}
           onRetry={() => {
             setLoadingTimeoutExceeded(false);
             if (activeConn?.id) {
@@ -215,11 +258,7 @@ export function AppWorkspacePanel({
           }}
           onGoToLauncher={() => {
             setLoadingTimeoutExceeded(false);
-            if (activeConn?.id) {
-              useAppStore.setState({ isConnecting: false });
-              void useAppStore.getState().disconnectFromDatabase(activeConn.id);
-            }
-            useAppStore.setState({ activeConnectionId: null });
+            onGoToLauncher();
           }}
         />
       );
@@ -239,7 +278,7 @@ export function AppWorkspacePanel({
               </div>
 
               <div className="workspace-empty-copy flex flex-col items-center w-full text-center gap-1.5 m-0 p-0">
-                <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--accent)] opacity-80">{t("common.loading", "LOADING...")}</span>
+                <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-[var(--accent)] opacity-80">{t("common.loading")}</span>
                 <h2 className="text-xl font-bold text-[var(--text-primary)] truncate w-full max-w-[280px]" title={activeConn.name || t("workspace.ready.connectedWorkspace")}>
                   {activeConn.name || t("workspace.ready.connectedWorkspace")}
                 </h2>
@@ -272,11 +311,11 @@ export function AppWorkspacePanel({
             </div>
 
             <div className="workspace-empty-actions">
-              <button onClick={() => onSetConnectionFormIntent("connect")} className="btn btn-primary">
+              <button type="button" onClick={() => onSetConnectionFormIntent("connect")} className="btn btn-primary">
                 <Plus className="w-3.5 h-3.5" />
                 {t("workspace.empty.newConnection")}
               </button>
-              <button onClick={() => onSetConnectionFormIntent("bootstrap")} className="btn btn-secondary">
+              <button type="button" onClick={() => onSetConnectionFormIntent("bootstrap")} className="btn btn-secondary">
                 <Database className="w-3.5 h-3.5" />
                 {t("workspace.empty.createLocalDb")}
               </button>
@@ -507,11 +546,13 @@ export function AppWorkspacePanel({
       case "er-diagram":
         return (
           <ErrorBoundary>
-            <ERDiagram
-              key={tab.id}
-              connectionId={tab.connectionId}
-              database={tab.database}
-            />
+            <Suspense fallback={<LazyPanelFallback />}>
+              <ERDiagram
+                key={tab.id}
+                connectionId={tab.connectionId}
+                database={tab.database}
+              />
+            </Suspense>
           </ErrorBoundary>
         );
       default:
@@ -585,7 +626,7 @@ export function AppWorkspacePanel({
         <div className="error-bar">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span className="flex-1">{error}</span>
-          <button onClick={onClearError} className="error-bar-close">
+          <button type="button" onClick={onClearError} className="error-bar-close">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -714,6 +755,7 @@ export function AppWorkspacePanel({
                 <>
                   {!isMetricsWorkspace && (
                     <button
+                      type="button"
                       onClick={onNewQuery}
                       className="toolbar-btn primary"
                       title={t("toolbar.newQueryShortcut")}
@@ -733,6 +775,7 @@ export function AppWorkspacePanel({
 
                   <div className="workspace-toolbar-utility">
                     <button
+                      type="button"
                       onClick={() => void onRefreshWorkspace()}
                       className="toolbar-btn icon-only"
                       title={t("toolbar.refreshWorkspace")}
@@ -741,6 +784,7 @@ export function AppWorkspacePanel({
                     </button>
 
                     <button
+                      type="button"
                       onClick={onExportDatabase}
                       className="toolbar-btn icon-only"
                       title={t("toolbar.exportDatabase")}
@@ -754,6 +798,7 @@ export function AppWorkspacePanel({
                     </button>
 
                     <button
+                      type="button"
                       onClick={onToggleTerminalPanel}
                       className={`toolbar-btn icon-only ${showTerminalPanel ? "is-active" : ""}`}
                       title={terminalToggleTitle}
@@ -762,6 +807,7 @@ export function AppWorkspacePanel({
                     </button>
 
                     <button
+                      type="button"
                       onClick={() => onOpenAISlidePanel()}
                       className="toolbar-btn icon-only"
                       title={t("toolbar.askAiShortcut")}
@@ -798,10 +844,16 @@ export function AppWorkspacePanel({
             )}
           </div>
 
-          <TerminalDock
-            isOpen={showTerminalPanel}
-            onClose={onToggleTerminalPanel}
-          />
+          {(showTerminalPanel || hasMountedTerminalDock) && (
+            <ErrorBoundary>
+              <Suspense fallback={showTerminalPanel ? <LazyTerminalFallback /> : null}>
+                <TerminalDock
+                  isOpen={showTerminalPanel}
+                  onClose={onToggleTerminalPanel}
+                />
+              </Suspense>
+            </ErrorBoundary>
+          )}
         </main>
       </div>
 
@@ -827,9 +879,11 @@ export function AppWorkspacePanel({
             <kbd className="kbd">Ctrl+`</kbd>
             <kbd className="kbd">Ctrl+Shift+P</kbd>
           </span>
-          <span>TableR v0.1.0</span>
+          <span>TableR v0.1.1</span>
         </div>
       </footer>
     </>
   );
 }
+
+

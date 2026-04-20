@@ -14,13 +14,43 @@ export interface AIProviderConfig {
     allow_inline_completion: boolean;
 }
 
+export interface LocalOllamaStatus {
+    supported: boolean;
+    autoInstallSupported: boolean;
+    platform: string;
+    version?: string | null;
+    recommendedModel: string;
+    endpoint: string;
+    isInstalled: boolean;
+    isRunning: boolean;
+    hasRecommendedModel: boolean;
+    hasConfiguredProvider: boolean;
+    configuredAsPrimary: boolean;
+    configuredProviderId?: string | null;
+    executablePath?: string | null;
+}
+
+export interface LocalOllamaSetupResult {
+    status: LocalOllamaStatus;
+    aiConfigs: AIProviderConfig[];
+    aiKeyStatus: Record<string, boolean>;
+    message: string;
+}
+
+export interface LocalOllamaSetupProgressEvent {
+    step: string;
+    message: string;
+    percent: number;
+    isEstimated: boolean;
+}
+
 export function getActiveAIProvider(configs: AIProviderConfig[]) {
     return configs.find((config) => config.is_enabled && config.is_primary)
         ?? configs.find((config) => config.is_enabled);
 }
 
 export type AIRequestMode = "panel" | "inline";
-export type AIRequestIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error";
+export type AIRequestIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error" | "general" | "agent";
 
 export interface AIConversationMessage {
     role: AIConversationRole;

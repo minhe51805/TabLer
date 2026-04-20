@@ -817,8 +817,8 @@
 }
 
 .erd-sidepanel.is-collapsed {
-  width: 52px;
-  padding: 6px 5px;
+  width: 56px;
+  padding: 8px 6px;
 }
 
 .erd-sidepanel-header,
@@ -952,7 +952,7 @@
   flex-direction: column;
   gap: 4px;
   margin-top: 5px;
-  max-height: min(58vh, 560px);
+  max-height: 380px;
   overflow-y: auto;
   padding-right: 4px;
   scrollbar-width: thin;
@@ -1029,26 +1029,22 @@
 }
 
 .erd-sidepanel.is-collapsed .erd-table-list {
-  margin-top: 4px;
-  gap: 4px;
-  max-height: min(64vh, 600px);
-}
-
-.erd-sidepanel.is-collapsed .erd-empty-list {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  padding: 8px 4px;
-}
-
-.erd-sidepanel.is-collapsed .erd-empty-list strong {
-  font-size: 0.52rem;
-  text-align: center;
+  margin-top: 4px;
+  gap: 6px;
+  max-height: 400px;
 }
 
 .erd-sidepanel.is-collapsed .erd-table-toggle {
   justify-content: center;
-  min-height: 28px;
-  padding: 4px;
-  gap: 5px;
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+  gap: 4px;
+  border-radius: 9px;
+  flex-shrink: 0;
 }
 
 .erd-sidepanel.is-collapsed .erd-table-toggle::before {
@@ -1058,13 +1054,12 @@
 }
 
 .erd-sidepanel.is-collapsed .erd-table-toggle-check {
-  width: 11px;
-  height: 11px;
+  display: none;
 }
 
 .erd-sidepanel.is-collapsed .erd-table-toggle-dot {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 
 .erd-table-toggle::before {

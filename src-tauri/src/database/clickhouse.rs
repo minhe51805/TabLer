@@ -727,8 +727,8 @@ impl DatabaseDriver for ClickHouseDriver {
 
         let col_quoted = quote_clickhouse_identifier(referenced_column)?;
 
-        let sql = if search.is_some() {
-            let like_pattern = format!("%{}%", search.unwrap());
+        let sql = if let Some(s) = search {
+            let like_pattern = format!("%{}%", s);
             format!(
                 "SELECT {} AS value, {} AS label \
                  FROM {} \

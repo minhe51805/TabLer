@@ -1,8 +1,10 @@
 import {
   useState,
   useEffect,
+  useEffectEvent,
   useRef,
   useCallback,
+  useMemo,
   lazy,
   Suspense,
   type MouseEvent as ReactMouseEvent,
@@ -26,14 +28,10 @@ import { ThemeEngine, useTheme } from "./stores/useTheme";
 import { useEditorPreferencesStore } from "./stores/editorPreferencesStore";
 import { useI18n, type AppLanguagePreference } from "./i18n";
 import { StartupConnectionManager } from "./components/StartupConnectionManager";
-import type { QueryEditorSessionState } from "./components/SQLEditor";
+
 import { AppTitleBar } from "./components/AppTitleBar";
 import { AppKeyboardHandler } from "./components/AppKeyboardHandler";
-import { AppGlobalModals } from "./components/layout/AppGlobalModals";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { QueryHistoryPanel } from "./components/QueryHistory/QueryHistoryPanel";
-import { SQLFavoritesPanel } from "./components/SQLFavorites/SQLFavoritesPanel";
-import { RowInspector } from "./components/RowInspector/RowInspector";
 import { useCommandPaletteStore } from "./stores/commandPaletteStore";
 import { useQuickSwitcherStore } from "./stores/quickSwitcherStore";
 import { getAdminQueryPreset, type AdminQueryKind } from "./utils/admin-query-presets";
@@ -41,77 +39,69 @@ import { APP_TOAST_EVENT, type AppToastPayload, emitAppToast } from "./utils/app
 import { invokeMutation } from "./utils/tauri-utils";
 import { getNewQueryTabTitle, getQueryProfile } from "./utils/query-profile";
 import { buildDatabaseFileConnection, type DatabaseFileSelection } from "./utils/database-file";
+import type {
+  AIMetricsSchemaTableHint,
+  OpenAIMetricsBoardCompletionDetail,
+  OpenAIMetricsBoardDetail,
+} from "./utils/metrics-board-templates";
 import { splitSqlStatements } from "./utils/sqlStatements";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "./utils/ui-scale";
 import { useConnectionHealthMonitor } from "./hooks/useConnectionHealthMonitor";
 import { useDeepLink } from "./hooks/useDeepLink";
+import { useWindowMenu } from "./hooks/useWindowMenu";
 import "./index.css";
 import "./App.css";
 
-export interface QueryChromeState {
-  isRunning: boolean;
-  executionTimeMs?: number;
-  rowCount?: number;
-  affectedRows?: number;
-  queryCount?: number;
+import {
+  QueryChromeState,
+  WorkspaceActivityState,
+  GlobalToastState,
+  type WindowMenuSectionKey,
+  GLOBAL_ERROR_AUTO_DISMISS_MS,
+  GLOBAL_TOAST_AUTO_DISMISS_MS,
+  GLOBAL_TOAST_EXIT_MS,
+  RECOVERABLE_CONNECTION_ERROR_DELAY_MS,
+  UI_FONT_SCALE_STORAGE_KEY,
+  DEFAULT_WINDOW_MENU_SECTION,
+  RECOVERABLE_CONNECTION_ERROR_PATTERNS,
+} from "./types/app-types";
+
+export interface QueryEditorSessionState extends QueryEditorSessionStateBase {}
+import type { QueryEditorSessionState as QueryEditorSessionStateBase } from "./components/SQLEditor";
+
+interface OpenAIWorkspaceQueryDetail {
+  sql?: string;
+  connectionId?: string;
+  database?: string;
+  title?: string;
+  resultViewMode?: "table" | "chart";
+  autoRun?: boolean;
+  focusWorkspace?: boolean;
 }
 
-interface WorkspaceActivityState {
-  label: string;
-  durationMs: number;
-  at: number;
-}
-
-interface GlobalToastState {
-  id: number;
-  tone: "success" | "info" | "error";
-  title: string;
-  description?: string;
-  isClosing: boolean;
-}
-
-type WindowMenuSectionKey =
-  | "file"
-  | "edit"
-  | "view"
-  | "tools"
-  | "connection"
-  | "plugins"
-  | "navigate"
-  | "language"
-  | "help";
-
-interface WindowMenuItem {
-  key?: string;
-  label?: string;
-  action?: () => void;
-  disabled?: boolean;
-  divider?: boolean;
-  selected?: boolean;
-  shortcut?: string;
-  children?: WindowMenuItem[];
-  controlType?: "font-scale-slider";
-  value?: number;
-  min?: number;
-  max?: number;
-  step?: number;
-  onValueChange?: (next: number) => void;
-  onDecrease?: () => void;
-  onIncrease?: () => void;
-}
-
-const GLOBAL_ERROR_AUTO_DISMISS_MS = 8000;
-const GLOBAL_TOAST_AUTO_DISMISS_MS = 4200;
-const GLOBAL_TOAST_EXIT_MS = 220;
-const RECOVERABLE_CONNECTION_ERROR_DELAY_MS = 3000;
-const UI_FONT_SCALE_STORAGE_KEY = "tabler.uiFontScale";
-const DEFAULT_WINDOW_MENU_SECTION: WindowMenuSectionKey = "file";
-const RECOVERABLE_CONNECTION_ERROR_PATTERNS = [/please connect first/i];
-import { ConnectionForm } from "./components/ConnectionForm";
 const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel").then((module) => ({ default: module.AISlidePanel })));
+const ConnectionForm = lazy(() =>
+  import("./components/ConnectionForm").then((module) => ({ default: module.ConnectionForm })),
+);
+const AppGlobalModals = lazy(() =>
+  import("./components/layout/AppGlobalModals").then((module) => ({ default: module.AppGlobalModals })),
+);
 const AppWorkspacePanel = lazy(() =>
   import("./components/AppWorkspacePanel").then((module) => ({ default: module.AppWorkspacePanel })),
 );
+const QueryHistoryPanel = lazy(() =>
+  import("./components/QueryHistory/QueryHistoryPanel").then((module) => ({ default: module.QueryHistoryPanel })),
+);
+const SQLFavoritesPanel = lazy(() =>
+  import("./components/SQLFavorites/SQLFavoritesPanel").then((module) => ({ default: module.SQLFavoritesPanel })),
+);
+const RowInspector = lazy(() =>
+  import("./components/RowInspector/RowInspector").then((module) => ({ default: module.RowInspector })),
+);
+
+function loadTabPersistenceModule() {
+  return import("./utils/tab-persistence");
+}
 
 function isRecoverableConnectionError(error: string | null) {
   if (!error) return false;
@@ -123,12 +113,10 @@ import { WorkspaceErrorFallback } from "./components/layout/WorkspaceErrorFallba
 import { useModalStore } from "./stores/modalStore";
 import { useAppLayoutStore } from "./stores/appLayoutStore";
 
-/* replaced WorkspaceBootFallback */
-
 function App() {
   useConnectionHealthMonitor();
   const { language, languagePreference, setLanguage, t } = useI18n();
-  const { theme: activeTheme, activateTheme } = useTheme();
+  const { theme: _activeTheme, activateTheme } = useTheme();
   const {
     activeConnectionId,
     connectedIds,
@@ -137,12 +125,14 @@ function App() {
     activeTabId,
     currentDatabase,
     isConnecting,
+    connectionHealth,
     error,
     clearError,
     setError,
     loadSavedConnections,
     addTab,
     setActiveTab,
+    updateTab,
     fetchDatabases,
     fetchTables,
     fetchSchemaObjects,
@@ -155,12 +145,14 @@ function App() {
       activeTabId: state.activeTabId,
       currentDatabase: state.currentDatabase,
       isConnecting: state.isConnecting,
+      connectionHealth: state.connectionHealth,
       error: state.error,
       clearError: state.clearError,
       setError: state.setError,
       loadSavedConnections: state.loadSavedConnections,
       addTab: state.addTab,
       setActiveTab: state.setActiveTab,
+      updateTab: state.updateTab,
       fetchDatabases: state.fetchDatabases,
       fetchTables: state.fetchTables,
       fetchSchemaObjects: state.fetchSchemaObjects,
@@ -195,8 +187,10 @@ function App() {
 
   const [showAISlidePanel, setShowAISlidePanel] = useState(false);
   const [hasMountedAISlidePanel, setHasMountedAISlidePanel] = useState(false);
+  const [hasMountedGlobalModals, setHasMountedGlobalModals] = useState(false);
   const [isExportingDatabase, setIsExportingDatabase] = useState(false);
   const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
+  const [aiPanelAttachment, setAiPanelAttachment] = useState<{ text: string; source: string; nonce: number } | null>(null);
   const [queryChromeByTab, setQueryChromeByTab] = useState<Record<string, QueryChromeState>>({});
   const [querySessionByTab, setQuerySessionByTab] = useState<Record<string, QueryEditorSessionState>>({});
   const [queryRunRequestByTab, setQueryRunRequestByTab] = useState<Record<string, number>>({});
@@ -214,10 +208,11 @@ function App() {
     const stored = Number(window.localStorage.getItem(UI_FONT_SCALE_STORAGE_KEY));
     return Number.isFinite(stored) && stored >= UI_FONT_SCALE_MIN && stored <= UI_FONT_SCALE_MAX ? stored : 100;
   });
-  const vimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
   const toggleVimMode = useEditorPreferencesStore((state) => state.toggleVimMode);
-  const { open: openCommandPalette } = useCommandPaletteStore();
-  const { open: openQuickSwitcher } = useQuickSwitcherStore();
+  const openCommandPalette = useCommandPaletteStore((state) => state.open);
+  const isCommandPaletteOpen = useCommandPaletteStore((state) => state.isOpen);
+  const openQuickSwitcher = useQuickSwitcherStore((state) => state.open);
+  const isQuickSwitcherOpen = useQuickSwitcherStore((state) => state.isOpen);
 
   const isResizing = useRef(false);
   const startX = useRef(0);
@@ -264,14 +259,17 @@ function App() {
     activeDatabaseLabel ? ` / ${activeDatabaseLabel}` : ""
   }`;
   const sidebarMinWidth = 300;
-  const themeMenuLabel =
-    language === "vi" ? "Giao dien" : language === "zh" ? "Zhu ti" : language === "tr" ? "Tema" : language === "ko" ? "테마" : "Theme";
-  const toggleTerminalLabel =
-    language === "vi" ? "Bat/tat terminal" : language === "zh" ? "Toggle terminal" : language === "tr" ? "Terminali ac/kapa" : language === "ko" ? "터미널 전환" : "Toggle Terminal";
-  const themeMenuOptions = ThemeEngine.getAvailableThemes().filter((option) =>
-    ["tabler.dark", "tabler.midnight", "tabler.graphite", "tabler.forest"].includes(option.id),
-  );
-
+  const shouldMountGlobalModalsNow =
+    showAISettings ||
+    showAboutModal ||
+    showPluginManager ||
+    showKeyboardShortcutsModal ||
+    showThemeCustomizer ||
+    showConnectionExporter ||
+    showConnectionImporter ||
+    isCommandPaletteOpen ||
+    isQuickSwitcherOpen;
+  const shouldRenderGlobalModals = hasMountedGlobalModals || shouldMountGlobalModalsNow;
   useEffect(() => {
     document.documentElement.lang = language;
   }, [language]);
@@ -395,7 +393,6 @@ function App() {
       if (target && windowMenuRef.current?.contains(target)) {
         return;
       }
-
       setIsWindowMenuOpen(false);
       setActiveWindowMenuItemPath(null);
     };
@@ -489,15 +486,17 @@ function App() {
       setShowStartupConnectionManager(true);
       setConnectionFormIntent(null);
       setShowAISlidePanel(false);
-      setIsWindowMenuOpen(false);
+  
       setActiveWindowMenuSection(null);
-      setActiveWindowMenuItemPath(null);
+  
       setForceLauncherVisible(true);
       setIsRecoverableErrorDelayActive(false);
       recoveredConnectionErrorRef.current = null;
       recoverableConnectionErrorTimeoutRef.current = null;
       clearError();
-      void applyDesktopWindowProfile("launcher");
+      void applyDesktopWindowProfile("launcher").catch((e) =>
+        console.error("[WindowProfile] failed to apply launcher profile:", e),
+      );
     }, RECOVERABLE_CONNECTION_ERROR_DELAY_MS);
   }, [applyDesktopWindowProfile, clearError, error, isConnecting, isRecoverableErrorDelayActive]);
 
@@ -514,7 +513,9 @@ function App() {
     (intent: "connect" | "bootstrap") => {
       setShowStartupConnectionManager(false);
       setConnectionFormIntent(intent);
-      void applyDesktopWindowProfile("form");
+      void applyDesktopWindowProfile("form").catch((e) =>
+        console.error("[WindowProfile] failed to apply form profile:", e),
+      );
     },
     [applyDesktopWindowProfile],
   );
@@ -526,9 +527,60 @@ function App() {
     setConnectionFormIntent(null);
     if (!latestActiveConnectionId || !latestConnectedIds.has(latestActiveConnectionId)) {
       setShowStartupConnectionManager(true);
-      void applyDesktopWindowProfile("launcher");
+      void applyDesktopWindowProfile("launcher").catch((e) =>
+        console.error("[WindowProfile] failed to apply launcher profile:", e),
+      );
     }
   }, [applyDesktopWindowProfile]);
+
+  const handleGoToLauncher = useCallback(() => {
+    const currentState = useAppStore.getState();
+    const nextConnectedIds = new Set(currentState.connectedIds);
+    if (currentState.activeConnectionId) {
+      nextConnectedIds.delete(currentState.activeConnectionId);
+    }
+
+    useAppStore.setState({
+      activeConnectionId: null,
+      connectedIds: nextConnectedIds,
+      currentDatabase: null,
+      databases: [],
+      tables: [],
+      schemaObjects: [],
+      isConnecting: false,
+      error: null,
+    });
+
+    setShowStartupConnectionManager(true);
+    setConnectionFormIntent(null);
+    setShowAISlidePanel(false);
+    setShowTerminalPanel(false);
+    setShowQueryHistory(false);
+    setShowSQLFavorites(false);
+    setShowRowInspector(false);
+    setRowInspectorData(null);
+    setForceLauncherVisible(true);
+    setIsWindowMenuOpen(false);
+    setActiveWindowMenuSection(null);
+    setActiveWindowMenuItemPath(null);
+    clearError();
+
+    void applyDesktopWindowProfile("launcher").catch((e) =>
+      console.error("[WindowProfile] failed to apply launcher profile:", e),
+    );
+  }, [
+    applyDesktopWindowProfile,
+    clearError,
+    setConnectionFormIntent,
+    setForceLauncherVisible,
+    setRowInspectorData,
+    setShowAISlidePanel,
+    setShowQueryHistory,
+    setShowRowInspector,
+    setShowSQLFavorites,
+    setShowStartupConnectionManager,
+    setShowTerminalPanel,
+  ]);
 
   const handleToggleWindowMenu = useCallback((event?: ReactMouseEvent<HTMLElement>) => {
     event?.stopPropagation();
@@ -536,16 +588,11 @@ function App() {
       const next = !current;
       if (next) {
         setActiveWindowMenuSection(DEFAULT_WINDOW_MENU_SECTION);
-        setActiveWindowMenuItemPath(null);
+    
       }
       return next;
     });
   }, []);
-
-  const handleNewConnectionFromMenu = useCallback(() => {
-    handleOpenConnectionForm("connect");
-    setIsWindowMenuOpen(false);
-  }, [handleOpenConnectionForm]);
 
   const handleRefreshWorkspace = useCallback(async () => {
     if (!activeConnectionId) return;
@@ -648,12 +695,6 @@ function App() {
     }
   }, [activeConn, activeConnectionId, addTab, currentDatabase, language]);
 
-  const handleImportSqlFileFromMenu = useCallback(() => {
-    void handleImportSqlFile();
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
-  }, [handleImportSqlFile]);
-
   const handleImportSqlIntoCurrentDatabase = useCallback(async () => {
     if (!activeConnectionId || !activeConn) {
       emitAppToast({
@@ -738,12 +779,6 @@ function App() {
       });
     }
   }, [activeConn, activeConnectionId, currentDatabase, handleRefreshWorkspace, language, setError]);
-
-  const handleImportSqlIntoCurrentDatabaseFromMenu = useCallback(() => {
-    void handleImportSqlIntoCurrentDatabase();
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
-  }, [handleImportSqlIntoCurrentDatabase]);
 
   const handleOpenDatabaseFile = useCallback(async () => {
     try {
@@ -843,12 +878,6 @@ function App() {
     }
   }, [connectedIds, connections, fetchDatabases, fetchTables, language, loadSavedConnections, setError]);
 
-  const handleOpenDatabaseFileFromMenu = useCallback(() => {
-    void handleOpenDatabaseFile();
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
-  }, [handleOpenDatabaseFile]);
-
   const handleExportDatabase = useCallback(async () => {
     if (!activeConnectionId || !activeConn || isExportingDatabase) return;
 
@@ -900,22 +929,9 @@ function App() {
     }
   }, [activeConn, activeConnectionId, currentDatabase, isExportingDatabase, language, setError]);
 
-  const handleExportDatabaseFromMenu = useCallback(() => {
-    void handleExportDatabase();
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
-  }, [handleExportDatabase]);
-
-  const handleOpenMetricsBoardFromMenu = useCallback(() => {
-    setIsWindowMenuOpen(false);
-    void handleOpenMetricsBoard();
-  }, [handleOpenMetricsBoard]);
-
   const handleChangeLanguage = useCallback(
     (nextLanguage: AppLanguagePreference) => {
       setLanguage(nextLanguage);
-      setIsWindowMenuOpen(false);
-      setActiveWindowMenuItemPath(null);
     },
     [setLanguage],
   );
@@ -926,48 +942,19 @@ function App() {
       Math.max(UI_FONT_SCALE_MIN, Math.round(next / UI_FONT_SCALE_STEP) * UI_FONT_SCALE_STEP),
     );
     setUiFontScale(normalized);
-    setActiveWindowMenuItemPath(null);
   }, []);
 
   const handleIncreaseFontSizeInline = useCallback(() => {
     setUiFontScale((current) => Math.min(UI_FONT_SCALE_MAX, current + UI_FONT_SCALE_STEP));
-    setActiveWindowMenuItemPath(null);
   }, []);
 
   const handleDecreaseFontSizeInline = useCallback(() => {
     setUiFontScale((current) => Math.max(UI_FONT_SCALE_MIN, current - UI_FONT_SCALE_STEP));
-    setActiveWindowMenuItemPath(null);
-  }, []);
-
-  const handleToggleRightSidebarFromMenu = useCallback(() => {
-    setShowAISlidePanel((current) => !current);
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
   }, []);
 
   const handleToggleTerminalPanel = useCallback(() => {
     setShowTerminalPanel((current) => !current);
   }, []);
-
-  const handleToggleTerminalPanelFromMenu = useCallback(() => {
-    setShowTerminalPanel((current) => !current);
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
-  }, []);
-
-  const handleToggleQueryResultsPaneFromMenu = useCallback(() => {
-    if (activeTab?.type !== "query") {
-      return;
-    }
-
-    window.dispatchEvent(
-      new CustomEvent("toggle-query-results-pane", {
-        detail: { tabId: activeTab.id },
-      }),
-    );
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
-  }, [activeTab]);
 
   const handleShowDatabaseWorkspace = useCallback(() => {
     if (!isConnected) return;
@@ -1001,47 +988,11 @@ function App() {
     handleNewQuery();
   }, [activeConnectionId, currentDatabase, handleNewQuery, isConnected, setActiveTab, tabs]);
 
-  const handleShowDatabaseWorkspaceFromMenu = useCallback(() => {
-    setIsWindowMenuOpen(false);
-    handleShowDatabaseWorkspace();
-  }, [handleShowDatabaseWorkspace]);
-
-  const handleNewQueryFromMenu = useCallback(() => {
-    setIsWindowMenuOpen(false);
-    handleNewQuery();
-  }, [handleNewQuery]);
-
-  const handleOpenAISettingsFromMenu = useCallback(() => {
-    setShowAISettings(true);
-    setIsWindowMenuOpen(false);
-  }, []);
-
-  const handleOpenAboutModalFromMenu = useCallback(() => {
-    setShowAboutModal(true);
-    setIsWindowMenuOpen(false);
-  }, []);
-
-  const handleOpenKeyboardShortcutsFromMenu = useCallback(() => {
-    setShowKeyboardShortcutsModal(true);
-    setIsWindowMenuOpen(false);
-  }, []);
-
-  const handleRefreshWorkspaceFromMenu = useCallback(() => {
-    void handleRefreshWorkspace();
-    setIsWindowMenuOpen(false);
-  }, [handleRefreshWorkspace]);
-
-  const handleFocusExplorerSearchFromMenu = useCallback(() => {
-    handleFocusExplorerSearch();
-    setIsWindowMenuOpen(false);
-  }, [handleFocusExplorerSearch]);
-
   const handleSearchInDatabaseFromMenu = useCallback(() => {
     handleShowDatabaseWorkspace();
     window.setTimeout(() => {
       handleFocusExplorerSearch();
     }, 0);
-    setIsWindowMenuOpen(false);
   }, [handleFocusExplorerSearch, handleShowDatabaseWorkspace]);
 
   const handleRunActiveQuery = useCallback(() => {
@@ -1089,7 +1040,9 @@ function App() {
         current?.notice === state.notice &&
         current?.queryCount === state.queryCount &&
         current?.editorHeight === state.editorHeight &&
-        current?.showResultsPane === state.showResultsPane
+        current?.showResultsPane === state.showResultsPane &&
+        current?.resultViewMode === state.resultViewMode &&
+        current?.explainPlan === state.explainPlan
       ) {
         return prev;
       }
@@ -1106,6 +1059,20 @@ function App() {
       setHasMountedAISlidePanel(true);
     }
   }, [showAISlidePanel]);
+
+  useEffect(() => {
+    if (hasMountedGlobalModals) return;
+    if (shouldMountGlobalModalsNow) {
+      setHasMountedGlobalModals(true);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setHasMountedGlobalModals(true);
+    }, 1200);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [hasMountedGlobalModals, shouldMountGlobalModalsNow]);
 
   useEffect(() => {
     setQueryChromeByTab((prev) => {
@@ -1154,6 +1121,343 @@ function App() {
     setShowSQLFavorites(false);
   }, []);
 
+  const handleOpenAIWorkspaceQuery = useCallback((detail: OpenAIWorkspaceQueryDetail) => {
+    const sql = detail.sql?.trim();
+    const targetConnectionId = detail.connectionId || activeConnectionId;
+    if (!sql || !targetConnectionId) return;
+
+    const resultViewMode = detail.resultViewMode ?? "table";
+    const shouldShowResultsPane = resultViewMode === "chart" || Boolean(detail.autoRun);
+    const tabId = `query-${crypto.randomUUID()}`;
+
+    addTab({
+      id: tabId,
+      type: "query",
+      title: detail.title?.trim() || (resultViewMode === "chart" ? "AI Chart" : "AI Query"),
+      connectionId: targetConnectionId,
+      database: detail.database || currentDatabase || undefined,
+      content: sql,
+    });
+
+    setQuerySessionByTab((prev) => ({
+      ...prev,
+      [tabId]: {
+        result: null,
+        error: null,
+        notice: null,
+        queryCount: 0,
+        editorHeight: 42,
+        showResultsPane: shouldShowResultsPane,
+        resultViewMode,
+      },
+    }));
+
+    if (detail.autoRun) {
+      setQueryRunRequestByTab((prev) => ({
+        ...prev,
+        [tabId]: (prev[tabId] ?? 0) + 1,
+      }));
+    }
+
+  }, [activeConnectionId, addTab, currentDatabase]);
+
+  const handleOpenAIMetricsBoard = useCallback(async (detail: OpenAIMetricsBoardDetail) => {
+    const dispatchMetricsBoardCompletion = (payload: OpenAIMetricsBoardCompletionDetail) => {
+      if (!detail.requestId) return;
+      window.dispatchEvent(
+        new CustomEvent("open-ai-metrics-board-complete", {
+          detail: {
+            requestId: detail.requestId,
+            ...payload,
+          },
+        }),
+      );
+    };
+
+    const targetConnectionId = detail.connectionId || activeConnectionId;
+    const targetDatabase = detail.database || currentDatabase || undefined;
+    if (!targetConnectionId) {
+      dispatchMetricsBoardCompletion({
+        success: false,
+        error: "Missing target connection",
+      });
+      return;
+    }
+
+    const targetConnection = connections.find((connection) => connection.id === targetConnectionId);
+    if (!targetConnection) {
+      dispatchMetricsBoardCompletion({
+        success: false,
+        error: "Target connection not found",
+      });
+      return;
+    }
+
+    try {
+      const [
+        metricsStorageModule,
+        metricsTemplateModule,
+      ] = await Promise.all([
+        import("./components/MetricsBoard/utils/query-builder"),
+        import("./utils/metrics-board-templates"),
+      ]);
+
+      const collectMetricsSchemaHints = async (): Promise<AIMetricsSchemaTableHint[]> => {
+        const appState = useAppStore.getState();
+        const activeStoreConnectionId = appState.activeConnectionId;
+        const activeStoreDatabase = appState.currentDatabase || undefined;
+
+        if (targetConnectionId !== activeStoreConnectionId || (targetDatabase || "") !== (activeStoreDatabase || "")) {
+          return [];
+        }
+
+        let latestTables = appState.tables ?? [];
+        if (latestTables.length === 0 && targetDatabase) {
+          await appState.fetchTables(targetConnectionId, targetDatabase);
+          latestTables = useAppStore.getState().tables ?? [];
+        }
+
+        if (latestTables.length === 0) {
+          return [];
+        }
+
+        const normalizeTableName = (value: string) =>
+          value
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "_")
+            .replace(/^_+|_+$/g, "");
+
+        const businessPriority = [
+          "job_post",
+          "job_posts",
+          "job_application",
+          "job_applications",
+          "organization",
+          "organizations",
+          "organization_type",
+          "organization_types",
+          "industry",
+          "industries",
+          "province",
+          "provinces",
+          "country",
+          "countries",
+          "interview_schedule",
+          "interview_schedules",
+          "interview_feedback",
+          "interview_feedbacks",
+          "interview_participants",
+        ];
+
+        const prioritizedTables = [...latestTables]
+          .sort((left, right) => {
+            const leftPriority = businessPriority.indexOf(normalizeTableName(left.name));
+            const rightPriority = businessPriority.indexOf(normalizeTableName(right.name));
+            if (leftPriority !== rightPriority) {
+              return (leftPriority === -1 ? Number.MAX_SAFE_INTEGER : leftPriority) -
+                (rightPriority === -1 ? Number.MAX_SAFE_INTEGER : rightPriority);
+            }
+
+            const leftRowCount = left.row_count ?? -1;
+            const rightRowCount = right.row_count ?? -1;
+            if (leftRowCount !== rightRowCount) {
+              return rightRowCount - leftRowCount;
+            }
+
+            return left.name.localeCompare(right.name);
+          })
+          .filter((table, index, collection) =>
+            collection.findIndex((candidate) => normalizeTableName(candidate.name) === normalizeTableName(table.name)) === index
+          )
+          .slice(0, 14);
+
+        return await Promise.all(
+          prioritizedTables.map(async (table) => {
+            try {
+              const structure = await appState.getTableStructure(targetConnectionId, table.name, targetDatabase);
+              return {
+                name: table.name,
+                schema: table.schema,
+                rowCount: table.row_count ?? null,
+                columns: structure.columns.map((column) => column.name),
+              } satisfies AIMetricsSchemaTableHint;
+            } catch {
+              return {
+                name: table.name,
+                schema: table.schema,
+                rowCount: table.row_count ?? null,
+                columns: [],
+              } satisfies AIMetricsSchemaTableHint;
+            }
+          }),
+        );
+      };
+
+      const schemaHints = await collectMetricsSchemaHints();
+
+      const allBoards = metricsStorageModule.readStoredBoards();
+      const connectionBoards = allBoards.filter((board) => board.connection_id === targetConnectionId);
+      const existingMetricsTab =
+        tabs.find(
+          (tab) =>
+            tab.type === "metrics" &&
+            tab.connectionId === targetConnectionId &&
+            (tab.database || "") === (targetDatabase || ""),
+        ) || null;
+      const targetBoardId =
+        detail.boardId ||
+        (detail.mode === "augment" ? activeTab?.metricsBoardId || existingMetricsTab?.metricsBoardId : undefined);
+
+      const targetBoard =
+        (targetBoardId && connectionBoards.find((board) => board.id === targetBoardId)) || null;
+
+      let nextBoard: (typeof targetBoard) | null = null;
+      let nextAllBoards = allBoards;
+      let didChange = false;
+      let created = false;
+      let addedCount = 0;
+      let addedTitles: string[] = [];
+      let addedWidgetIds: string[] = [];
+
+      if (detail.mode === "augment" && targetBoard) {
+        const augmented = metricsTemplateModule.augmentAIMetricsBoardDefinition({
+          board: targetBoard,
+          detail: {
+            ...detail,
+            database: targetDatabase,
+          },
+          dbType: targetConnection.db_type,
+          schemaHints,
+        });
+
+        if (augmented) {
+          nextBoard = augmented.board;
+          addedCount = augmented.addedCount;
+          addedTitles = augmented.addedTitles;
+          addedWidgetIds = augmented.addedWidgetIds;
+          const renamed = augmented.board.name.trim() !== targetBoard.name.trim();
+          didChange = addedCount > 0 || renamed;
+          if (didChange) {
+            nextAllBoards = allBoards.map((board) => (board.id === augmented.board.id ? augmented.board : board));
+          } else {
+            nextBoard = targetBoard;
+          }
+        }
+      }
+
+      if (!nextBoard) {
+        nextBoard = metricsTemplateModule.createAIMetricsBoardDefinition({
+          detail: {
+            ...detail,
+            database: targetDatabase,
+          },
+          dbType: targetConnection.db_type,
+          connectionId: targetConnectionId,
+          existingBoards: connectionBoards,
+          schemaHints,
+        });
+        if (nextBoard) {
+          nextAllBoards = [...allBoards, nextBoard];
+          didChange = true;
+          created = true;
+        }
+      }
+
+      if (!nextBoard) {
+        emitAppToast({
+          tone: "info",
+          title: language === "vi" ? "Dashboard chua ho tro cho engine nay" : "Dashboard template is not available here",
+          description:
+            language === "vi"
+              ? "TableR chua co san dashboard overview da widget cho engine database hien tai."
+              : "TableR does not have a built-in multi-chart overview dashboard for the current database engine yet.",
+        });
+        dispatchMetricsBoardCompletion({
+          success: false,
+          error: "Dashboard template is not available for the current database engine",
+        });
+        return;
+      }
+
+      if (didChange) {
+        metricsStorageModule.writeStoredBoards(nextAllBoards);
+        window.dispatchEvent(
+          new CustomEvent("metrics-boards-updated", {
+            detail: { connectionId: targetConnectionId },
+          }),
+        );
+      }
+
+      setLeftPanel("metrics");
+
+      if (existingMetricsTab) {
+        updateTab(existingMetricsTab.id, {
+          metricsBoardId: nextBoard.id,
+          title: nextBoard.name,
+          database: nextBoard.database,
+        });
+        setActiveTab(existingMetricsTab.id);
+      } else {
+        addTab({
+          id: `metrics-${crypto.randomUUID()}`,
+          type: "metrics",
+          title: nextBoard.name,
+          connectionId: targetConnectionId,
+          database: nextBoard.database,
+          metricsBoardId: nextBoard.id,
+        });
+      }
+
+      dispatchMetricsBoardCompletion({
+        success: true,
+        boardId: nextBoard.id,
+        didChange,
+        addedCount,
+        addedTitles,
+        addedWidgetIds,
+        created,
+      });
+
+      if (didChange && addedWidgetIds.length > 0) {
+        const focusTargetBoardId = nextBoard.id;
+        const focusTargetWidgetId = addedWidgetIds[0];
+        window.setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent("focus-metrics-widget", {
+              detail: {
+                boardId: focusTargetBoardId,
+                widgetId: focusTargetWidgetId,
+              },
+            }),
+          );
+        }, 60);
+      }
+    } catch (errorValue) {
+      const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+      setError(
+        language === "vi"
+          ? `Khong the mo dashboard AI: ${message}`
+          : `Could not open the AI dashboard: ${message}`,
+      );
+      dispatchMetricsBoardCompletion({
+        success: false,
+        error: message,
+      });
+    }
+  }, [
+    activeConnectionId,
+    addTab,
+    connections,
+    currentDatabase,
+    language,
+    activeTab?.metricsBoardId,
+    setActiveTab,
+    setError,
+    setLeftPanel,
+    tabs,
+    updateTab,
+  ]);
+
   const handleOpenAdminQuery = useCallback(
     (kind: AdminQueryKind) => {
       if (!activeConnectionId || !activeConn) return;
@@ -1168,8 +1472,8 @@ function App() {
             ? `${itemLabel.replace(/\.\.\.$/, "")}: ${preset.reason || "Chưa có preset phù hợp cho engine hiện tại."}`
             : `${itemLabel.replace(/\.\.\.$/, "")}: ${preset.reason || "No preset is available for the current engine."}`,
         );
-        setIsWindowMenuOpen(false);
-        setActiveWindowMenuItemPath(null);
+    
+    
         return;
       }
 
@@ -1189,66 +1493,37 @@ function App() {
         ...prev,
         [tabId]: (prev[tabId] ?? 0) + 1,
       }));
-      setIsWindowMenuOpen(false);
-      setActiveWindowMenuItemPath(null);
+  
+  
     },
     [activeConn, activeConnectionId, addTab, currentDatabase, language, setError, t],
   );
 
-  const handleOpenProcessListFromMenu = useCallback(() => {
-    handleOpenAdminQuery("process-list");
-  }, [handleOpenAdminQuery]);
-
-  const handleOpenUserManagementFromMenu = useCallback(() => {
-    handleOpenAdminQuery("user-management");
-  }, [handleOpenAdminQuery]);
-
-  const handleToggleQueryHistoryFromMenu = useCallback(() => {
-    setShowQueryHistory((current) => !current);
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
-  }, []);
-
-  const handleToggleSQLFavoritesFromMenu = useCallback(() => {
-    setShowSQLFavorites((current) => !current);
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
-  }, []);
-
-  const handleOpenPluginManagerFromMenu = useCallback(() => {
-    setShowPluginManager(true);
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
-  }, []);
-
-  const handleToggleBottomSidebarFromMenu = useCallback(() => {
-    if (activeTab?.type === "query") {
-      window.dispatchEvent(
-        new CustomEvent("toggle-query-results-pane", {
-          detail: { tabId: activeTab.id },
-        }),
-      );
-    } else {
-      setShowTerminalPanel((current) => !current);
-    }
-    setIsWindowMenuOpen(false);
-    setActiveWindowMenuItemPath(null);
-  }, [activeTab]);
-
-  const handleOpenAISlidePanel = useCallback((prompt?: string) => {
+  const handleOpenAISlidePanel = useCallback((prompt?: string, attachment?: { text: string; source: string }) => {
     if (typeof prompt === "string" && prompt.trim()) {
       setAiPanelDraft({
         prompt,
         nonce: Date.now(),
       });
     }
+    if (attachment?.text.trim()) {
+      setAiPanelAttachment({
+        text: attachment.text.trim(),
+        source: attachment.source?.trim() || "Workspace attachment",
+        nonce: Date.now(),
+      });
+    }
     setShowAISlidePanel(true);
   }, []);
 
-  const handleOpenAISlidePanelFromMenu = useCallback(() => {
-    handleOpenAISlidePanel();
-    setIsWindowMenuOpen(false);
-  }, [handleOpenAISlidePanel]);
+  const handleActivateThemeFromMenu = useCallback(
+    (themeId: string) => {
+      const selectedTheme = ThemeEngine.getAvailableThemes().find((option) => option.id === themeId);
+      if (!selectedTheme) return;
+      activateTheme(selectedTheme);
+    },
+    [activateTheme],
+  );
 
   const handleToggleSidebar = useCallback(() => {
     setIsSidebarCollapsed((collapsed) => !collapsed);
@@ -1260,7 +1535,6 @@ function App() {
 
   const handleMinimizeWindow = useCallback(() => {
     if (!isDesktopWindow) return;
-
     void (async () => {
       try {
         await getCurrentWindow().minimize();
@@ -1272,7 +1546,6 @@ function App() {
 
   const handleToggleMaximizeWindow = useCallback(() => {
     if (!isDesktopWindow) return;
-
     void (async () => {
       try {
         const appWindow = getCurrentWindow();
@@ -1286,7 +1559,6 @@ function App() {
 
   const handleCloseWindow = useCallback(() => {
     if (!isDesktopWindow) return;
-
     void (async () => {
       try {
         await getCurrentWindow().close();
@@ -1296,211 +1568,68 @@ function App() {
     })();
   }, [isDesktopWindow]);
 
-  const handleCloseWindowFromMenu = useCallback(() => {
+  const handleWindowMenuClose = useCallback(() => {
     setIsWindowMenuOpen(false);
-    handleCloseWindow();
-  }, [handleCloseWindow]);
+    setActiveWindowMenuItemPath(null);
+  }, []);
 
-  const handleToggleSidebarFromMenu = useCallback(() => {
-    handleToggleSidebar();
-    setIsWindowMenuOpen(false);
-  }, [handleToggleSidebar]);
+  const menuActions = useMemo(() => ({
+    onNewConnection: handleOpenConnectionForm.bind(null, "connect"),
+    onOpenDatabaseFile: handleOpenDatabaseFile,
+    onImportSqlFile: handleImportSqlFile,
+    onImportSqlIntoCurrentDatabase: handleImportSqlIntoCurrentDatabase,
+    onExportDatabase: handleExportDatabase,
+    onOpenMetricsBoard: handleOpenMetricsBoard,
+    onCloseWindow: handleCloseWindow,
+    onNewQuery: handleNewQuery,
+    onToggleSidebar: handleToggleSidebar,
+    onToggleTerminalPanel: handleToggleTerminalPanel,
+    onToggleQueryResultsPane: () => {
+      if (activeTab?.type === "query") {
+        window.dispatchEvent(new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTab.id } }));
+      }
+    },
+    onToggleRightSidebar: () => setShowAISlidePanel((v) => !v),
+    onToggleBottomSidebar: () => {
+      if (activeTab?.type === "query") {
+        window.dispatchEvent(new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTab.id } }));
+      } else {
+        setShowTerminalPanel((v) => !v);
+      }
+    },
+    onFocusExplorerSearch: handleFocusExplorerSearch,
+    onShowDatabaseWorkspace: handleShowDatabaseWorkspace,
+    onRefreshWorkspace: handleRefreshWorkspace,
+    onSearchInDatabase: handleSearchInDatabaseFromMenu,
+    onSetFontSize: handleSetFontSizeFromMenu,
+    onIncreaseFontSize: handleIncreaseFontSizeInline,
+    onDecreaseFontSize: handleDecreaseFontSizeInline,
+    onActivateTheme: handleActivateThemeFromMenu,
+    onOpenUserManagement: () => handleOpenAdminQuery("user-management"),
+    onOpenProcessList: () => handleOpenAdminQuery("process-list"),
+    onOpenAISettings: () => setShowAISettings(true),
+    onOpenAISlidePanel: () => handleOpenAISlidePanel(),
+    onOpenPluginManager: () => setShowPluginManager(true),
+    onOpenAboutModal: () => setShowAboutModal(true),
+    onOpenKeyboardShortcuts: () => setShowKeyboardShortcutsModal(true),
+    onToggleQueryHistory: () => setShowQueryHistory((v) => !v),
+    onOpenConnectionExporter: () => setShowConnectionExporter(true),
+    onOpenConnectionImporter: () => setShowConnectionImporter(true),
+    onChangeLanguage: handleChangeLanguage,
+    onWindowMenuClose: handleWindowMenuClose,
+  }), [activeTab, handleActivateThemeFromMenu, handleChangeLanguage, handleCloseWindow, handleFocusExplorerSearch, handleIncreaseFontSizeInline, handleNewQuery, handleOpenAdminQuery, handleOpenAISlidePanel, handleOpenConnectionForm, handleOpenDatabaseFile, handleOpenMetricsBoard, handleRefreshWorkspace, handleSearchInDatabaseFromMenu, handleSetFontSizeFromMenu, handleToggleTerminalPanel, handleWindowMenuClose, handleImportSqlFile, handleImportSqlIntoCurrentDatabase, handleExportDatabase, handleToggleSidebar, handleShowDatabaseWorkspace, handleDecreaseFontSizeInline]);
 
-  const handleActivateThemeFromMenu = useCallback(
-    (themeId: string) => {
-      const selectedTheme = themeMenuOptions.find((option) => option.id === themeId);
-      if (!selectedTheme) return;
-      activateTheme(selectedTheme);
-      setIsWindowMenuOpen(false);
-      setActiveWindowMenuItemPath(null);
+  const { menuSections: windowMenuSections } = useWindowMenu({
+    state: {
+      isConnected,
+      supportsSqlFileActions,
+      activeTabType: activeTab?.type,
+      uiFontScale,
+      languagePreference,
+      connectionsCount: connections.length,
     },
-    [activateTheme, themeMenuOptions],
-  );
-
-  const windowMenuSections: { key: WindowMenuSectionKey; label: string; items: WindowMenuItem[] }[] = [
-    {
-      key: "file",
-      label: t("menu.section.file"),
-      items: [
-        { label: t("menu.item.newConnection"), action: handleNewConnectionFromMenu },
-        { label: t("menu.item.newQuery"), action: handleNewQueryFromMenu, disabled: !isConnected },
-        { label: t("menu.item.openDatabaseFile"), action: handleOpenDatabaseFileFromMenu, shortcut: "Ctrl+Shift+O" },
-        { label: t("menu.item.openSqlFile"), action: handleImportSqlFileFromMenu, shortcut: "Ctrl+O", disabled: !supportsSqlFileActions },
-        { label: t("menu.item.importSqlIntoDatabase"), action: handleImportSqlIntoCurrentDatabaseFromMenu, disabled: !supportsSqlFileActions },
-        { label: t("menu.item.exportDatabase"), action: handleExportDatabaseFromMenu, disabled: !isConnected },
-        { divider: true },
-        { label: t("menu.item.exportConnections"), action: () => { setShowConnectionExporter(true); setIsWindowMenuOpen(false); setActiveWindowMenuItemPath(null); }, disabled: connections.length === 0 },
-        { label: t("menu.item.importConnections"), action: () => { setShowConnectionImporter(true); setIsWindowMenuOpen(false); setActiveWindowMenuItemPath(null); } },
-        { divider: true },
-        { label: t("menu.item.openSqlFavorites"), action: handleToggleSQLFavoritesFromMenu, shortcut: "Ctrl+Shift+S" },
-        { divider: true },
-        { label: t("menu.item.openMetrics"), action: handleOpenMetricsBoardFromMenu, disabled: !isConnected },
-        { divider: true },
-        { label: t("menu.item.exit"), action: handleCloseWindowFromMenu },
-      ],
-    },
-    {
-      key: "edit",
-      label: t("menu.section.edit"),
-      items: [
-        { label: t("menu.item.aiSettings"), action: handleOpenAISettingsFromMenu },
-        { label: t("menu.item.askAI"), action: handleOpenAISlidePanelFromMenu, disabled: !isConnected },
-      ],
-    },
-    {
-      key: "view",
-      label: t("menu.section.view"),
-      items: [
-        {
-          key: "font-size-slider",
-          label: t("menu.item.fontSize"),
-          controlType: "font-scale-slider",
-          value: uiFontScale,
-          min: UI_FONT_SCALE_MIN,
-          max: UI_FONT_SCALE_MAX,
-          step: UI_FONT_SCALE_STEP,
-          onValueChange: handleSetFontSizeFromMenu,
-          onDecrease: handleDecreaseFontSizeInline,
-          onIncrease: handleIncreaseFontSizeInline,
-        },
-        { divider: true },
-        {
-          key: "toggle-vim-mode",
-          label: t("menu.item.toggleVimMode"),
-          action: toggleVimMode,
-          selected: vimModeEnabled,
-          shortcut: "Ctrl Shift V",
-        },
-        { divider: true },
-        {
-          key: "toggle-sidebars",
-          label: t("menu.item.toggleSidebars"),
-          children: [
-            {
-              key: "toggle-left-sidebar",
-              label: t("menu.item.toggleLeftSidebar"),
-              action: handleToggleSidebarFromMenu,
-              shortcut: "Ctrl 0",
-            },
-            {
-              key: "toggle-right-sidebar",
-              label: t("menu.item.toggleRightSidebar"),
-              action: handleToggleRightSidebarFromMenu,
-              shortcut: "Ctrl Space",
-            },
-            {
-              key: "toggle-bottom-sidebar",
-              label: t("menu.item.toggleBottomSidebar"),
-              action: handleToggleBottomSidebarFromMenu,
-              shortcut: "Ctrl Shift C",
-            },
-            {
-              key: "toggle-terminal-panel",
-              label: toggleTerminalLabel,
-              action: handleToggleTerminalPanelFromMenu,
-              shortcut: "Ctrl `",
-            },
-            {
-              key: "toggle-query-results-pane",
-              label: t("menu.item.toggleQueryResultsPane"),
-              action: handleToggleQueryResultsPaneFromMenu,
-              disabled: activeTab?.type !== "query",
-              shortcut: "Ctrl Shift `",
-            },
-          ],
-        },
-        { divider: true },
-        {
-          key: "theme",
-          label: themeMenuLabel,
-          children: themeMenuOptions.map((option) => ({
-            key: option.id,
-            label: option.name,
-            action: () => handleActivateThemeFromMenu(option.id),
-            selected: activeTheme.id === option.id,
-          })),
-        },
-      ],
-    },
-    {
-      key: "tools",
-      label: t("menu.section.tools"),
-      items: [
-        { label: t("menu.item.userManagement"), action: handleOpenUserManagementFromMenu, disabled: !isConnected },
-        { label: t("menu.item.processList"), action: handleOpenProcessListFromMenu, disabled: !isConnected, shortcut: "Ctrl ." },
-        { divider: true },
-        { label: t("menu.item.searchInDatabase"), action: handleSearchInDatabaseFromMenu, disabled: !isConnected },
-        { divider: true },
-        { label: t("menu.item.refreshWorkspace"), action: handleRefreshWorkspaceFromMenu, disabled: !isConnected },
-        { label: t("menu.item.focusExplorerSearch"), action: handleFocusExplorerSearchFromMenu, disabled: !isConnected },
-      ],
-    },
-    {
-      key: "connection",
-      label: t("menu.section.connection"),
-      items: [
-        { label: t("menu.item.openExplorer"), action: handleShowDatabaseWorkspaceFromMenu, disabled: !isConnected },
-        { label: t("menu.item.openMetrics"), action: handleOpenMetricsBoardFromMenu, disabled: !isConnected },
-      ],
-    },
-    {
-      key: "plugins",
-      label: t("menu.section.plugins"),
-      items: [
-        { label: t("menu.item.askAI"), action: handleOpenAISlidePanelFromMenu, disabled: !isConnected },
-        { label: t("menu.item.pluginManager"), action: handleOpenPluginManagerFromMenu },
-      ],
-    },
-    {
-      key: "navigate",
-      label: t("menu.section.navigate"),
-      items: [
-        { label: t("menu.item.explorer"), action: handleShowDatabaseWorkspaceFromMenu, disabled: !isConnected },
-        { label: t("menu.item.metrics"), action: handleOpenMetricsBoardFromMenu, disabled: !isConnected },
-        { label: t("menu.item.queryHistory"), action: handleToggleQueryHistoryFromMenu, shortcut: "Ctrl+H" },
-      ],
-    },
-    {
-      key: "language",
-      label: t("menu.section.language"),
-      items: [
-        { label: t("common.auto"), action: () => handleChangeLanguage("auto"), selected: languagePreference === "auto" },
-        {
-          label: t("common.englishUs"),
-          action: () => handleChangeLanguage("en"),
-          selected: languagePreference === "en",
-        },
-        {
-          label: t("common.vietnamese"),
-          action: () => handleChangeLanguage("vi"),
-          selected: languagePreference === "vi",
-        },
-        {
-          label: t("common.chineseSimplified"),
-          action: () => handleChangeLanguage("zh"),
-          selected: languagePreference === "zh",
-        },
-        {
-          label: t("common.turkish"),
-          action: () => handleChangeLanguage("tr"),
-          selected: languagePreference === "tr",
-        },
-        {
-          label: t("common.korean"),
-          action: () => handleChangeLanguage("ko"),
-          selected: languagePreference === "ko",
-        },
-      ],
-    },
-    {
-      key: "help",
-      label: t("menu.section.help"),
-      items: [
-        { label: t("menu.item.aboutTableR"), action: handleOpenAboutModalFromMenu },
-        { label: t("menu.item.keyboardShortcuts"), action: handleOpenKeyboardShortcutsFromMenu },
-      ],
-    },
-  ];
+    actions: menuActions,
+  });
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -1529,27 +1658,34 @@ function App() {
     void loadSavedConnections();
   }, [loadSavedConnections]);
 
+  const persistTabs = useEffectEvent((connectionId: string, tabsToPersist: typeof tabs, nextActiveTabId: string | null) => {
+    void loadTabPersistenceModule().then(({ saveTabState }) =>
+      saveTabState(connectionId, tabsToPersist, nextActiveTabId),
+    );
+  });
+
   // Deep link handler: restore tabs after a successful connection
   useEffect(() => {
     if (!activeConnectionId || !connectedIds.has(activeConnectionId)) return;
 
     let cancelled = false;
     const restoreTabs = async () => {
-      const store = await import("./stores/appStore").then((m) => m.useAppStore.getState());
+      const { loadTabState } = await loadTabPersistenceModule();
       if (cancelled) return;
 
-      const persisted = await store.loadTabState(activeConnectionId);
+      const persisted = await loadTabState(activeConnectionId);
       if (cancelled || persisted.length === 0) return;
 
       const activePersistedTab = persisted.find((t) => t.isActive);
+      const { addTab: addPersistedTab, setActiveTab: setPersistedActiveTab } = useAppStore.getState();
 
       for (const pt of persisted) {
         const newTabId = pt.tabId;
         // Check if tab already exists
-        if (store.tabs.some((t) => t.id === newTabId)) continue;
+        if (useAppStore.getState().tabs.some((t) => t.id === newTabId)) continue;
 
         if (pt.tabType === "query") {
-          store.addTab({
+          addPersistedTab({
             id: newTabId,
             type: pt.tabType,
             title: pt.title,
@@ -1558,7 +1694,7 @@ function App() {
             content: pt.content,
           });
         } else if (pt.tabType === "table" && pt.tableName) {
-          store.addTab({
+          addPersistedTab({
             id: newTabId,
             type: pt.tabType,
             title: pt.title,
@@ -1567,7 +1703,7 @@ function App() {
             tableName: pt.tableName,
           });
         } else if (pt.tabType === "structure" && pt.tableName) {
-          store.addTab({
+          addPersistedTab({
             id: newTabId,
             type: pt.tabType,
             title: pt.title,
@@ -1579,7 +1715,7 @@ function App() {
       }
 
       if (activePersistedTab) {
-        store.setActiveTab(activePersistedTab.tabId);
+        setPersistedActiveTab(activePersistedTab.tabId);
       }
     };
 
@@ -1591,30 +1727,60 @@ function App() {
   useEffect(() => {
     if (!activeConnectionId || !connectedIds.has(activeConnectionId)) return;
 
-    const store = useAppStore.getState();
-    void store.saveTabState(activeConnectionId);
+    persistTabs(activeConnectionId, tabs, activeTabId);
+  }, [activeConnectionId, activeTabId, connectedIds, persistTabs, tabs]);
 
+  useEffect(() => {
     const handleBeforeUnload = () => {
       const state = useAppStore.getState();
       if (state.activeConnectionId && state.connectedIds.has(state.activeConnectionId)) {
-        void state.saveTabState(state.activeConnectionId);
+        persistTabs(state.activeConnectionId, state.tabs, state.activeTabId);
       }
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [activeConnectionId, connectedIds, tabs]);
+  }, [persistTabs]);
 
   useDeepLink(isDesktopWindow, isConnected, handleOpenConnectionForm, setQueryRunRequestByTab);
 
   useEffect(() => {
     const handleOpenAI = (event: Event) => {
-      const detail = (event as CustomEvent<{ prompt?: string }>).detail;
-      handleOpenAISlidePanel(detail?.prompt);
+      const detail = (event as CustomEvent<{
+        prompt?: string;
+        attachment?: { text?: string; source?: string };
+      }>).detail;
+      handleOpenAISlidePanel(
+        detail?.prompt,
+        detail?.attachment?.text
+          ? {
+              text: detail.attachment.text,
+              source: detail.attachment.source || "Workspace attachment",
+            }
+          : undefined,
+      );
     };
     window.addEventListener("open-ai-slide-panel", handleOpenAI);
     return () => window.removeEventListener("open-ai-slide-panel", handleOpenAI);
   }, [handleOpenAISlidePanel]);
+
+  useEffect(() => {
+    const handleOpenAIWorkspaceQueryEvent = (event: Event) => {
+      const detail = (event as CustomEvent<OpenAIWorkspaceQueryDetail>).detail;
+      handleOpenAIWorkspaceQuery(detail ?? {});
+    };
+    window.addEventListener("open-ai-workspace-query", handleOpenAIWorkspaceQueryEvent);
+    return () => window.removeEventListener("open-ai-workspace-query", handleOpenAIWorkspaceQueryEvent);
+  }, [handleOpenAIWorkspaceQuery]);
+
+  useEffect(() => {
+    const handleOpenAIMetricsBoardEvent = (event: Event) => {
+      const detail = (event as CustomEvent<OpenAIMetricsBoardDetail>).detail;
+      void handleOpenAIMetricsBoard(detail ?? {});
+    };
+    window.addEventListener("open-ai-metrics-board", handleOpenAIMetricsBoardEvent);
+    return () => window.removeEventListener("open-ai-metrics-board", handleOpenAIMetricsBoardEvent);
+  }, [handleOpenAIMetricsBoard]);
 
   useEffect(() => {
     const handleOpenAISettings = () => {
@@ -1741,9 +1907,9 @@ function App() {
 
     setShowStartupConnectionManager(true);
     setShowAISlidePanel(false);
-    setIsWindowMenuOpen(false);
+
     setActiveWindowMenuSection(null);
-    setActiveWindowMenuItemPath(null);
+
   }, [connectionFormIntent, isConnected, isConnecting, isRecoverableErrorDelayActive]);
 
   useEffect(() => {
@@ -1848,11 +2014,13 @@ function App() {
     return (
       <div className="app-root startup-shell-active">
         {connectionFormIntent && (
+          <Suspense fallback={null}>
             <ConnectionForm
               initialIntent={connectionFormIntent}
               embeddedInStartupShell
               onClose={handleCloseConnectionForm}
             />
+          </Suspense>
         )}
 
         {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
@@ -1909,6 +2077,7 @@ function App() {
         titlebarContextTitle={titlebarContextTitle}
         titlebarContextLabel={titlebarContextLabel}
         isConnected={isConnected}
+        isHealthy={activeConnectionId ? (connectionHealth[activeConnectionId] ?? true) : true}
         activeConn={activeConn}
         isWindowMaximized={isWindowMaximized}
         isWindowFocused={isWindowFocused}
@@ -1931,16 +2100,12 @@ function App() {
 
       <ErrorBoundary
         maxRetries={2}
-        onMaxRetriesExceeded={() => {
-          useAppStore.setState({ activeConnectionId: null });
-        }}
+        onMaxRetriesExceeded={handleGoToLauncher}
         fallback={(error, reset) => (
           <WorkspaceErrorFallback
             error={error}
             onRetry={reset}
-            onGoToLauncher={() => {
-              useAppStore.setState({ activeConnectionId: null });
-            }}
+            onGoToLauncher={handleGoToLauncher}
           />
         )}
       >
@@ -1977,6 +2142,7 @@ function App() {
             showTerminalPanel={showTerminalPanel}
             isExportingDatabase={isExportingDatabase}
             onToggleTerminalPanel={handleToggleTerminalPanel}
+            onGoToLauncher={handleGoToLauncher}
             onToggleSidebar={handleToggleSidebar}
             onSetConnectionFormIntent={setConnectionFormIntent}
             onHandleMouseDown={handleMouseDown}
@@ -2000,36 +2166,42 @@ function App() {
       />
 
       {connectionFormIntent && (
+        <Suspense fallback={null}>
           <ConnectionForm
             initialIntent={connectionFormIntent}
             embeddedInStartupShell={false}
             onClose={handleCloseConnectionForm}
           />
+        </Suspense>
       )}
-      <AppGlobalModals
-        showAISettings={showAISettings}
-        setShowAISettings={setShowAISettings}
-        showAboutModal={showAboutModal}
-        setShowAboutModal={setShowAboutModal}
-        showPluginManager={showPluginManager}
-        setShowPluginManager={setShowPluginManager}
-        showKeyboardShortcutsModal={showKeyboardShortcutsModal}
-        setShowKeyboardShortcutsModal={setShowKeyboardShortcutsModal}
-        showThemeCustomizer={showThemeCustomizer}
-        setShowThemeCustomizer={setShowThemeCustomizer}
-        showConnectionExporter={showConnectionExporter}
-        setShowConnectionExporter={setShowConnectionExporter}
-        showConnectionImporter={showConnectionImporter}
-        setShowConnectionImporter={setShowConnectionImporter}
-        connections={connections}
-        handleToggleSidebar={handleToggleSidebar}
-        setShowTerminalPanel={setShowTerminalPanel}
-        handleRunActiveQuery={handleRunActiveQuery}
-        handleToggleQueryHistory={handleToggleQueryHistory}
-        handleToggleSQLFavorites={handleToggleSQLFavorites}
-        handleOpenThemeCustomizer={handleOpenThemeCustomizer}
-        setShowAISlidePanel={setShowAISlidePanel}
-      />
+      {shouldRenderGlobalModals && (
+        <Suspense fallback={null}>
+          <AppGlobalModals
+            showAISettings={showAISettings}
+            setShowAISettings={setShowAISettings}
+            showAboutModal={showAboutModal}
+            setShowAboutModal={setShowAboutModal}
+            showPluginManager={showPluginManager}
+            setShowPluginManager={setShowPluginManager}
+            showKeyboardShortcutsModal={showKeyboardShortcutsModal}
+            setShowKeyboardShortcutsModal={setShowKeyboardShortcutsModal}
+            showThemeCustomizer={showThemeCustomizer}
+            setShowThemeCustomizer={setShowThemeCustomizer}
+            showConnectionExporter={showConnectionExporter}
+            setShowConnectionExporter={setShowConnectionExporter}
+            showConnectionImporter={showConnectionImporter}
+            setShowConnectionImporter={setShowConnectionImporter}
+            connections={connections}
+            handleToggleSidebar={handleToggleSidebar}
+            setShowTerminalPanel={setShowTerminalPanel}
+            handleRunActiveQuery={handleRunActiveQuery}
+            handleToggleQueryHistory={handleToggleQueryHistory}
+            handleToggleSQLFavorites={handleToggleSQLFavorites}
+            handleOpenThemeCustomizer={handleOpenThemeCustomizer}
+            setShowAISlidePanel={setShowAISlidePanel}
+          />
+        </Suspense>
+      )}
       {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
         <StartupConnectionManager
           onNewConnection={() => handleOpenConnectionForm("connect")}
@@ -2078,35 +2250,52 @@ function App() {
               isOpen={showAISlidePanel}
               initialPrompt={aiPanelDraft?.prompt ?? ""}
               initialPromptNonce={aiPanelDraft?.nonce ?? 0}
+              initialAttachment={aiPanelAttachment ? {
+                text: aiPanelAttachment.text,
+                source: aiPanelAttachment.source,
+              } : undefined}
+              initialAttachmentNonce={aiPanelAttachment?.nonce ?? 0}
               onClose={() => setShowAISlidePanel(false)}
             />
           </ErrorBoundary>
         </Suspense>
       )}
-      <ErrorBoundary onReset={() => setShowQueryHistory(false)} fallback={null}>
-        <QueryHistoryPanel
-          isOpen={showQueryHistory}
-          activeConnectionId={activeConnectionId}
-          onClose={() => setShowQueryHistory(false)}
-          onRunQuery={handleRunQueryFromHistory}
-        />
-      </ErrorBoundary>
-      <SQLFavoritesPanel
-        isOpen={showSQLFavorites}
-        onClose={() => setShowSQLFavorites(false)}
-        onRunQuery={handleRunQueryFromFavorites}
-        currentEditorSql={activeTab?.type === "query" ? activeTab.content : ""}
-      />
-      <RowInspector
-        isOpen={showRowInspector}
-        data={rowInspectorData}
-        onClose={handleRowInspectorClose}
-        onEditCell={(columnName, value) => {
-          if (rowInspectorData?.tableName && activeConnectionId) {
-            void EventCenter.emit("row-inspector-edit-cell", { columnName, value });
-          }
-        }}
-      />
+      {showQueryHistory && (
+        <Suspense fallback={null}>
+          <ErrorBoundary onReset={() => setShowQueryHistory(false)} fallback={null}>
+            <QueryHistoryPanel
+              isOpen={showQueryHistory}
+              activeConnectionId={activeConnectionId}
+              onClose={() => setShowQueryHistory(false)}
+              onRunQuery={handleRunQueryFromHistory}
+            />
+          </ErrorBoundary>
+        </Suspense>
+      )}
+      {showSQLFavorites && (
+        <Suspense fallback={null}>
+          <SQLFavoritesPanel
+            isOpen={showSQLFavorites}
+            onClose={() => setShowSQLFavorites(false)}
+            onRunQuery={handleRunQueryFromFavorites}
+            currentEditorSql={activeTab?.type === "query" ? activeTab.content : ""}
+          />
+        </Suspense>
+      )}
+      {showRowInspector && (
+        <Suspense fallback={null}>
+          <RowInspector
+            isOpen={showRowInspector}
+            data={rowInspectorData}
+            onClose={handleRowInspectorClose}
+            onEditCell={(columnName, value) => {
+              if (rowInspectorData?.tableName && activeConnectionId) {
+                void EventCenter.emit("row-inspector-edit-cell", { columnName, value });
+              }
+            }}
+          />
+        </Suspense>
+      )}
       {globalToastMarkup}
     </div>
   );

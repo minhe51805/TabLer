@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
+use log::error;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FileEventPayload {
@@ -31,16 +32,23 @@ pub fn start_watcher(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let watcher = RecommendedWatcher::new(tx, Config::default())?;
 
     let state = app.state::<LinkedFoldersState>();
-    *state.watcher.lock().unwrap() = Some(watcher);
+    {
+        let mut watcher_guard = match state.watcher.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *watcher_guard = Some(watcher);
+    } // watcher_guard dropped here, releasing borrow of `app`
 
     std::thread::spawn(move || {
+        let app_for_event = app.clone();
         for res in rx {
             match res {
                 Ok(event) => {
-                    handle_event(&app, event);
+                    handle_event(&app_for_event, event);
                 }
                 Err(e) => {
-                    eprintln!("watch error: {:?}", e);
+                    error!("watch error: {:?}", e);
                 }
             }
         }
@@ -75,9 +83,17 @@ pub fn add_linked_folder(
     path: String,
     state: State<'_, LinkedFoldersState>,
 ) -> Result<(), String> {
-    let mut folders = state.folders.lock().unwrap();
+    let folders = match state.folders.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut folders = folders;
     if folders.insert(path.clone()) {
-        if let Some(watcher) = state.watcher.lock().unwrap().as_mut() {
+        let mut watcher_guard = match state.watcher.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(watcher) = watcher_guard.as_mut() {
             if let Err(e) = watcher.watch(Path::new(&path), RecursiveMode::Recursive) {
                 folders.remove(&path);
                 return Err(e.to_string());
@@ -92,9 +108,17 @@ pub fn remove_linked_folder(
     path: String,
     state: State<'_, LinkedFoldersState>,
 ) -> Result<(), String> {
-    let mut folders = state.folders.lock().unwrap();
+    let folders = match state.folders.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let mut folders = folders;
     if folders.remove(&path) {
-        if let Some(watcher) = state.watcher.lock().unwrap().as_mut() {
+        let mut watcher_guard = match state.watcher.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(watcher) = watcher_guard.as_mut() {
             let _ = watcher.unwatch(Path::new(&path));
         }
     }
@@ -103,7 +127,7 @@ pub fn remove_linked_folder(
 
 #[tauri::command]
 pub fn get_linked_folders(state: State<'_, LinkedFoldersState>) -> Result<Vec<String>, String> {
-    let folders = state.folders.lock().unwrap();
+    let folders = state.folders.lock().map_err(|e| e.to_string())?;
     Ok(folders.iter().cloned().collect())
 }
 

@@ -52,7 +52,6 @@ function getInitialLayoutMode(): ConnectionLayoutMode {
 
   const stored = window.localStorage.getItem(CONNECTION_LAYOUT_STORAGE_KEY);
   if (stored === "inline") return "inline";
-  if (stored === "list") return "inline";
   return "stacked";
 }
 
@@ -70,6 +69,7 @@ export function ConnectionList({ onNewConnection }: Props) {
     connections,
     activeConnectionId,
     connectedIds,
+    connectionHealth,
     connectSavedConnection,
     disconnectFromDatabase,
     deleteSavedConnection,
@@ -78,6 +78,7 @@ export function ConnectionList({ onNewConnection }: Props) {
       connections: state.connections,
       activeConnectionId: state.activeConnectionId,
       connectedIds: state.connectedIds,
+      connectionHealth: state.connectionHealth,
       connectSavedConnection: state.connectSavedConnection,
       disconnectFromDatabase: state.disconnectFromDatabase,
       deleteSavedConnection: state.deleteSavedConnection,
@@ -308,7 +309,9 @@ export function ConnectionList({ onNewConnection }: Props) {
 
                         <div className="connection-card-status-row">
                           <span
-                            className={`connection-card-status-dot ${isActive ? "active" : isConnected ? "online" : ""}`}
+                            className={`connection-card-status-dot ${
+                              isActive ? "active" : isConnected ? (connectionHealth[conn.id] === false ? "unhealthy" : "online") : ""
+                            }`}
                           />
                           <span className="connection-card-state">{stateLabel}</span>
                         </div>

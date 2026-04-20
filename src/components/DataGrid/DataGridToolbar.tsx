@@ -1,4 +1,4 @@
-import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X, FileCode, ClipboardPaste } from "lucide-react";
+import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X, FileCode, ClipboardPaste, List, BarChart3 } from "lucide-react";
 import { useState, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { exportToCSV, exportToJSON } from "../../utils/export-utils";
@@ -8,6 +8,8 @@ import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import type { ResolvedColumn } from "./hooks/useDataGrid";
 
 interface DataGridToolbarProps {
+  viewMode?: "table" | "chart";
+  onViewModeChange?: (mode: "table" | "chart") => void;
   tableName?: string;
   database?: string;
   externalResult?: import("../../types").QueryResult;
@@ -57,6 +59,8 @@ function buildExportFilename(tableName: string | undefined, extension: string): 
 }
 
 export function DataGridToolbar({
+  viewMode = "table",
+  onViewModeChange,
   tableName,
   database,
   externalResult,
@@ -186,6 +190,28 @@ export function DataGridToolbar({
               {stagedChangeCount} staged
             </span>
           )}
+        </div>
+
+        {/* View mode toggle: Table / Chart */}
+        <div className="datachart-toggle-group datagrid-view-toggle">
+          <button
+            type="button"
+            className={`datachart-toggle-btn${viewMode === "table" ? " active" : ""}`}
+            onClick={() => onViewModeChange?.("table")}
+            title="Table view"
+          >
+            <List className="!w-3.5 !h-3.5" />
+            <span>Table</span>
+          </button>
+          <button
+            type="button"
+            className={`datachart-toggle-btn${viewMode === "chart" ? " active" : ""}`}
+            onClick={() => onViewModeChange?.("chart")}
+            title="Chart view"
+          >
+            <BarChart3 className="!w-3.5 !h-3.5" />
+            <span>Chart</span>
+          </button>
         </div>
 
         <div className="datagrid-topbar-actions">

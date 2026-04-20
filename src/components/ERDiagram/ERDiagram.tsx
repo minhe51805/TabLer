@@ -1910,12 +1910,16 @@ export function ERDiagram({ connectionId, database }: Props) {
                 />
               </label>
 
-              <div className="erd-table-list">
+              <div className="erd-table-list custom-scrollbar">
                 {filteredTables.length === 0 ? (
                   <div className="erd-empty-list">
                     <Search className="erd-empty-list-icon" />
-                    <strong>No matching tables</strong>
-                    <span>Try a shorter name or clear the current filter.</span>
+                    {!isSidePanelCollapsed && (
+                      <>
+                        <strong>No matching tables</strong>
+                        <span>Try a shorter name or clear the filter.</span>
+                      </>
+                    )}
                   </div>
                 ) : (
                   filteredTables.map((table) => {
@@ -1935,11 +1939,15 @@ export function ERDiagram({ connectionId, database }: Props) {
                       >
                         <span className="erd-table-toggle-check" />
                         <span className="erd-table-toggle-dot" />
-                        <div className="erd-table-toggle-copy">
-                          <span className="erd-table-toggle-name">{table.name}</span>
-                          <span className="erd-table-toggle-meta">{table.schema || "Table"}</span>
-                        </div>
-                        <span className="erd-table-toggle-count">{table.columns.length}</span>
+                        {!isSidePanelCollapsed && (
+                          <>
+                            <div className="erd-table-toggle-copy">
+                              <span className="erd-table-toggle-name">{table.name}</span>
+                              <span className="erd-table-toggle-meta">{table.schema || "Table"}</span>
+                            </div>
+                            <span className="erd-table-toggle-count">{table.columns.length}</span>
+                          </>
+                        )}
                       </button>
                     );
                   })

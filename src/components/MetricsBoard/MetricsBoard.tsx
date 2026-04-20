@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Sparkles } from "lucide-react";
 import { useAppStore } from "../../stores/appStore";
 import { useI18n } from "../../i18n";
 import type {
@@ -89,6 +90,49 @@ type CanvasContextMenuState = {
   submenuOpen: boolean;
 };
 
+const MAX_AI_BOARD_ATTACHMENT_WIDGETS = 16;
+const MAX_AI_BOARD_ATTACHMENT_QUERY_CHARS = 420;
+
+function compactWidgetQueryForAI(query: string) {
+  const compact = query.replace(/\s+/g, " ").trim();
+  if (compact.length <= MAX_AI_BOARD_ATTACHMENT_QUERY_CHARS) {
+    return compact;
+  }
+  return `${compact.slice(0, MAX_AI_BOARD_ATTACHMENT_QUERY_CHARS - 3).trimEnd()}...`;
+}
+
+function buildMetricsBoardAttachmentSnapshot(args: {
+  board: MetricsBoardDefinition;
+  connectionLabel: string;
+  databaseLabel: string;
+}) {
+  const { board, connectionLabel, databaseLabel } = args;
+  const visibleWidgets = board.widgets.slice(0, MAX_AI_BOARD_ATTACHMENT_WIDGETS);
+  const hiddenWidgetCount = Math.max(0, board.widgets.length - visibleWidgets.length);
+
+  return [
+    "Metrics dashboard snapshot:",
+    `Board: ${board.name}`,
+    `Connection: ${connectionLabel}`,
+    `Database: ${databaseLabel}`,
+    `Widget count: ${board.widgets.length}`,
+    "",
+    "Widgets:",
+    ...visibleWidgets.map((widget, index) => [
+      `${index + 1}. [${widget.type}] ${widget.title}`,
+      `   layout: x=${widget.grid_x}, y=${widget.grid_y}, w=${widget.col_span}, h=${widget.row_span}, refresh=${widget.refresh_seconds}s`,
+      `   query: ${compactWidgetQueryForAI(widget.query)}`,
+    ].join("\n")),
+    hiddenWidgetCount > 0
+      ? `... ${hiddenWidgetCount} more widget(s) are present on this dashboard but omitted from this compact snapshot.`
+      : "",
+    "",
+    "Use this dashboard snapshot as the source of truth when recommending edits, removing redundant charts, renaming widgets, or proposing replacements.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -100,7 +144,7 @@ export function MetricsBoard({
   boardId,
   integratedSidebar = true,
 }: Props) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const updateTab = useAppStore((state) => state.updateTab);
   const connections = useAppStore((state) => state.connections);
   const [boards, setBoards] = useState<MetricsBoardDefinition[]>([]);
@@ -113,6 +157,10 @@ export function MetricsBoard({
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
   const [canvasWidth, setCanvasWidth] = useState(1080);
+  const [pendingFocusTarget, setPendingFocusTarget] = useState<{
+    boardId?: string;
+    widgetId: string;
+  } | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const boardSearchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -156,6 +204,31 @@ export function MetricsBoard({
     setEditingWidgetId(null);
   }, [boardId, connectionId, database, persistBoards]);
 
+  useEffect(() => {
+    const handleBoardsUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ connectionId?: string }>).detail;
+      if (detail?.connectionId && detail.connectionId !== connectionId) {
+        return;
+      }
+
+      const connectionBoards = readStoredBoards().filter((board) => board.connection_id === connectionId);
+      setBoards(connectionBoards);
+
+      setActiveBoardId((current) => {
+        if (current && connectionBoards.some((board) => board.id === current)) {
+          return current;
+        }
+        if (boardId && connectionBoards.some((board) => board.id === boardId)) {
+          return boardId;
+        }
+        return connectionBoards[0]?.id ?? null;
+      });
+    };
+
+    window.addEventListener("metrics-boards-updated", handleBoardsUpdated);
+    return () => window.removeEventListener("metrics-boards-updated", handleBoardsUpdated);
+  }, [boardId, connectionId]);
+
   const filteredBoards = useMemo(() => {
     const query = boardSearch.trim().toLowerCase();
     if (!query) return boards;
@@ -166,6 +239,7 @@ export function MetricsBoard({
     () => boards.find((board) => board.id === activeBoardId) || null,
     [activeBoardId, boards],
   );
+  const widgetLibrary = useMemo(() => _getWidgetLibrary(), [language]);
 
   const editingWidget = useMemo(
     () => activeBoard?.widgets.find((widget) => widget.id === editingWidgetId) || null,
@@ -223,12 +297,16 @@ export function MetricsBoard({
   useEffect(() => {
     if (!activeBoard) return;
     if (activeWidgetId && !activeBoard.widgets.some((widget) => widget.id === activeWidgetId)) {
-      setActiveWidgetId(null);
+      if (pendingFocusTarget?.widgetId !== activeWidgetId) {
+        setActiveWidgetId(null);
+      }
     }
     if (editingWidgetId && !activeBoard.widgets.some((widget) => widget.id === editingWidgetId)) {
-      setEditingWidgetId(null);
+      if (pendingFocusTarget?.widgetId !== editingWidgetId) {
+        setEditingWidgetId(null);
+      }
     }
-  }, [activeBoard, activeWidgetId, editingWidgetId]);
+  }, [activeBoard, activeWidgetId, editingWidgetId, pendingFocusTarget]);
 
   useEffect(() => {
     const element = canvasRef.current;
@@ -263,9 +341,13 @@ export function MetricsBoard({
       if (!detail?.widgetId) return;
 
       if (detail.boardId && detail.boardId !== activeBoardId) {
-      setActiveBoardId(detail.boardId);
+        setActiveBoardId(detail.boardId);
       }
 
+      setPendingFocusTarget({
+        boardId: detail.boardId,
+        widgetId: detail.widgetId,
+      });
       setActiveWidgetId(detail.widgetId);
       setEditingWidgetId(detail.widgetId);
       setCanvasContextMenu(null);
@@ -274,6 +356,81 @@ export function MetricsBoard({
     window.addEventListener("focus-metrics-widget", handleFocusMetricsWidget);
     return () => window.removeEventListener("focus-metrics-widget", handleFocusMetricsWidget);
   }, [activeBoardId]);
+
+  useEffect(() => {
+    if (!pendingFocusTarget?.widgetId || !activeBoard) return;
+    if (pendingFocusTarget.boardId && pendingFocusTarget.boardId !== activeBoard.id) return;
+
+    const focusedWidget = activeBoard.widgets.find((widget) => widget.id === pendingFocusTarget.widgetId);
+    if (!focusedWidget) return;
+
+    setActiveWidgetId(focusedWidget.id);
+    setEditingWidgetId(focusedWidget.id);
+    setPendingFocusTarget(null);
+  }, [activeBoard, pendingFocusTarget]);
+
+  useEffect(() => {
+    if (!activeWidgetId || !activeBoard) return;
+
+    const activeWidget = activeBoard.widgets.find((widget) => widget.id === activeWidgetId);
+    const canvasElement = canvasRef.current;
+    if (!activeWidget || !canvasElement) return;
+
+    const scrollToWidget = () => {
+      const rowUnit = METRICS_GRID_ROW_HEIGHT + METRICS_GRID_GAP;
+      const top = activeWidget.grid_y * rowUnit;
+      const height = rowSpanToHeightPx(activeWidget.row_span);
+      const padding = 20;
+
+      const maxTop = Math.max(0, top - padding);
+      const currentTop = canvasElement.scrollTop;
+      const currentBottom = currentTop + canvasElement.clientHeight;
+      const widgetBottom = top + height + padding;
+      const widgetVisible = maxTop >= currentTop && widgetBottom <= currentBottom;
+
+      if (!widgetVisible) {
+        canvasElement.scrollTo({
+          top: maxTop,
+          behavior: "smooth",
+        });
+      }
+
+      const widgetElement = canvasElement.querySelector<HTMLElement>(
+        `[data-metrics-widget-id="${activeWidget.id}"]`,
+      );
+      if (widgetElement) {
+        widgetElement.scrollIntoView({
+          block: "nearest",
+          inline: "nearest",
+          behavior: "smooth",
+        });
+      }
+    };
+
+    let attemptCount = 0;
+    let rafId = 0;
+    let timeoutId = 0;
+
+    const scheduleScroll = () => {
+      rafId = window.requestAnimationFrame(() => {
+        scrollToWidget();
+        const widgetElement = canvasElement.querySelector<HTMLElement>(
+          `[data-metrics-widget-id="${activeWidget.id}"]`,
+        );
+        if (!widgetElement && attemptCount < 8) {
+          attemptCount += 1;
+          timeoutId = window.setTimeout(scheduleScroll, 50);
+        }
+      });
+    };
+
+    scheduleScroll();
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeBoard, activeWidgetId]);
 
   const surfaceWidth = useMemo(
     () => Math.max(canvasWidth, METRICS_GRID_MIN_WIDTH),
@@ -361,6 +518,30 @@ export function MetricsBoard({
     boardSearchInputRef.current?.focus();
     boardSearchInputRef.current?.select();
   }, []);
+
+  const handleAttachBoardToAI = useCallback(() => {
+    if (!activeBoard) return;
+
+    const attachmentText = buildMetricsBoardAttachmentSnapshot({
+      board: activeBoard,
+      connectionLabel: displayConnectionLabel,
+      databaseLabel: displayDatabaseLabel,
+    });
+
+    window.dispatchEvent(
+      new CustomEvent("open-ai-slide-panel", {
+        detail: {
+          attachment: {
+            text: attachmentText,
+            source:
+              language === "vi"
+                ? `Dashboard: ${activeBoard.name}`
+                : `Dashboard: ${activeBoard.name}`,
+          },
+        },
+      }),
+    );
+  }, [activeBoard, displayConnectionLabel, displayDatabaseLabel, language]);
 
   const addWidget = useCallback(
     (type: MetricsWidgetType, preferredPosition?: Partial<GridPosition>) => {
@@ -763,6 +944,58 @@ export function MetricsBoard({
       )}
 
       <div className="metrics-board-main">
+        <div className="metrics-board-topbar">
+          <div className="metrics-board-topbar-copy">
+            <span className="metrics-board-topbar-kicker">{t("metrics.sidebarKicker")}</span>
+            <strong className="metrics-board-topbar-title">
+              {activeBoard?.name || t("metrics.createBoard")}
+            </strong>
+            <span className="metrics-board-topbar-meta">
+              {displayConnectionLabel}
+              {displayDatabaseLabel ? ` / ${displayDatabaseLabel}` : ""}
+            </span>
+          </div>
+
+          <div className="metrics-board-topbar-actions">
+            <button
+              type="button"
+              className="metrics-board-topbar-action"
+              onClick={handleAttachBoardToAI}
+              title={language === "vi" ? "Dinh kem dashboard vao AI chat" : "Attach this dashboard to AI chat"}
+              disabled={!activeBoard}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>{language === "vi" ? "Gan vao AI" : "Attach to AI"}</span>
+            </button>
+            <button
+              type="button"
+              className="metrics-board-topbar-action metrics-board-topbar-action--primary"
+              onClick={createBoard}
+              title={t("metrics.createBoard")}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>{t("metrics.createBoard")}</span>
+            </button>
+
+            {widgetLibrary.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.type}
+                  type="button"
+                  className="metrics-board-topbar-action"
+                  onClick={() => addWidget(item.type)}
+                  disabled={!activeBoard}
+                  title={item.description}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <MetricsBoardCanvas
           connectionId={connectionId}
           activeBoard={activeBoard}

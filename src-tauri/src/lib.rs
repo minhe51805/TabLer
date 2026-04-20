@@ -44,52 +44,53 @@ use storage::sql_favorites::{
 };
 use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter};
 use std::time::Duration;
+use log::{info, error};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let start_time = std::time::Instant::now();
-    eprintln!("[TableR] Application starting...");
+    info!("[TableR] Application starting...");
 
     let db_manager = DatabaseManager::new();
-    eprintln!("[TableR] DatabaseManager initialized: {:?}", start_time.elapsed());
+    info!("[TableR] DatabaseManager initialized: {:?}", start_time.elapsed());
 
     let conn_storage = match ConnectionStorage::new() {
         Ok(storage) => {
-            eprintln!("[TableR] ConnectionStorage initialized: {:?}", start_time.elapsed());
+            info!("[TableR] ConnectionStorage initialized: {:?}", start_time.elapsed());
             storage
         }
         Err(error) => {
-            eprintln!("[TableR] FAILED to initialize connection storage: {error}");
+            error!("[TableR] FAILED to initialize connection storage: {}", error);
             return;
         }
     };
     let ai_storage = match AIStorage::new() {
         Ok(storage) => {
-            eprintln!("[TableR] AIStorage initialized: {:?}", start_time.elapsed());
+            info!("[TableR] AIStorage initialized: {:?}", start_time.elapsed());
             storage
         }
         Err(error) => {
-            eprintln!("[TableR] FAILED to initialize AI storage: {error}");
+            error!("[TableR] FAILED to initialize AI storage: {}", error);
             return;
         }
     };
     let plugin_storage = match PluginStorage::new() {
         Ok(storage) => {
-            eprintln!("[TableR] PluginStorage initialized: {:?}", start_time.elapsed());
+            info!("[TableR] PluginStorage initialized: {:?}", start_time.elapsed());
             storage
         }
         Err(error) => {
-            eprintln!("[TableR] FAILED to initialize plugin storage: {error}");
+            error!("[TableR] FAILED to initialize plugin storage: {}", error);
             return;
         }
     };
     let tab_storage = match TabPersistence::new() {
         Ok(storage) => {
-            eprintln!("[TableR] TabPersistence initialized: {:?}", start_time.elapsed());
+            info!("[TableR] TabPersistence initialized: {:?}", start_time.elapsed());
             storage
         }
         Err(error) => {
-            eprintln!("[TableR] FAILED to initialize tab persistence storage: {error}");
+            error!("[TableR] FAILED to initialize tab persistence storage: {}", error);
             return;
         }
     };
@@ -121,18 +122,18 @@ pub fn run() {
         .manage(ai_rate_limiter)
         .setup(|app| {
             if let Err(e) = watcher::start_watcher(app.handle().clone()) {
-                eprintln!("[TableR] Failed to start watcher: {e}");
+                error!("[TableR] Failed to start watcher: {}", e);
             }
 
             #[cfg(target_os = "windows")]
             {
                 if let Err(error) = app.hide_menu() {
-                    eprintln!("Failed to hide native window menu: {error}");
+                    error!("Failed to hide native window menu: {}", error);
                 }
             }
 
             if let Err(error) = apply_window_profile_to_main(app.handle(), WindowProfile::Launcher) {
-                eprintln!("Failed to apply launcher window profile: {error}");
+                error!("Failed to apply launcher window profile: {}", error);
             }
 
             // Register deep link handler
@@ -143,7 +144,7 @@ pub fn run() {
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
                         let url_str = url.to_string();
-                        eprintln!("[DeepLink] Received: {}", url_str);
+                        info!("[DeepLink] Received: {}", url_str);
                         // Emit to frontend via event
                         if let Some(window) = app_handle.get_webview_window("main") {
                             let _ = window.emit("deep-link", url_str);
@@ -247,6 +248,6 @@ pub fn run() {
         ]);
 
     if let Err(error) = app.run(tauri::generate_context!()) {
-        eprintln!("error while running tauri application: {error}");
+        error!("error while running tauri application: {}", error);
     }
 }

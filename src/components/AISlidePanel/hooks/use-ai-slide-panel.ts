@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { getCurrentAppLanguage } from "../../../i18n";
 import { useAppStore } from "../../../stores/appStore";
-import { getActiveAIProvider, type AIConversationMessage, type AIRequestIntent, type AIResponseLanguage, type QueryResult, type TableStructure } from "../../../types";
+import { getActiveAIProvider, type AIConversationMessage, type AIProviderConfig, type AIResponseLanguage, type QueryResult, type TableStructure } from "../../../types";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
 import {
   formatExecutionError,
@@ -17,7 +17,7 @@ import {
   encodeStructureForAI,
   inferAISchemaCodecMode,
   analyzeGeneratedSql,
-  summarizeStructure,
+  type AISchemaCodecMode,
   type SqlRiskAnalysis,
   AI_SCHEMA_CODEC_VERSION,
   MAX_TABLE_NAMES_IN_CONTEXT,
@@ -38,13 +38,41 @@ export interface AIExecutedSqlResult {
   summary: string;
 }
 
-type AssistIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error";
+type AssistIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error" | "general";
+type AgentToolName = "list_tables" | "describe_table" | "run_readonly_sql" | "finish";
 
-const SQL_START_KEYWORDS = ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "WITH"];
+interface AgentToolAction {
+  action: AgentToolName;
+  args?: Record<string, unknown>;
+  message?: string;
+}
+
+interface AgentTraceStep {
+  step: number;
+  action: AgentToolName;
+  message: string;
+  observation: string;
+}
+
+const SQL_START_KEYWORDS = ["SELECT", "SHOW", "EXPLAIN", "DESCRIBE", "PRAGMA", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "WITH"];
 const AI_SCHEMA_CODEC_LEGEND =
-  "Codec legend: T=table, C=columns name:type!flags, I=indexes, F=foreign keys. Flags: pk primary key, nn not null, df default, ai auto increment.";
+  "Legend T=table C=col:type!flags I=index F=fk flags=pk|nn|df|ai";
 const MAX_OVERVIEW_SCHEMA_TABLES = 12;
-const MAX_SCHEMA_FETCH_CONCURRENCY = 4;
+const MAX_SCHEMA_FETCH_CONCURRENCY = 2;
+const MAX_AGENT_STEPS = 6;
+const MAX_REMOTE_AGENT_STEPS = 3;
+const MAX_LOCAL_COMPLEX_AGENT_STEPS = 7;
+const MAX_REMOTE_COMPLEX_AGENT_STEPS = 4;
+const MAX_AGENT_QUERY_PREVIEW_ROWS = 5;
+const MAX_AGENT_QUERY_PREVIEW_COLUMNS = 8;
+const MAX_AGENT_TRACE_OBSERVATION_CHARS = 1400;
+const MAX_REMOTE_AGENT_SCHEMA_TABLES = 3;
+const MAX_REMOTE_AGENT_OVERVIEW_TABLES = 4;
+const MAX_LOCAL_AGENT_VISIBLE_TABLES = 24;
+const MAX_REMOTE_AGENT_VISIBLE_TABLES = 12;
+const MAX_REMOTE_HISTORY_MESSAGES = 4;
+const MAX_REMOTE_RECOVERY_PASSES = 1;
+const MAX_SCHEMA_CAPSULE_PREVIEW_TABLES = 4;
 
 function setAiSchemaCodecCacheEntry(cache: Map<string, string>, key: string, value: string) {
   if (cache.has(key)) {
@@ -80,12 +108,354 @@ async function mapWithConcurrency<TInput, TOutput>(
   return results;
 }
 
+async function yieldToBrowserFrame() {
+  await new Promise<void>((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(resolve, 0);
+      });
+      return;
+    }
+
+    setTimeout(resolve, 0);
+  });
+}
+
 function normalizeIntentText(value: string) {
   return value
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/đ/g, "d");
+}
+
+function isVisualizationRequest(prompt: string) {
+  const normalizedPrompt = normalizeIntentText(prompt);
+  const visualizationSignals = [
+    "chart",
+    "charts",
+    "visual",
+    "visualize",
+    "visualization",
+    "graph",
+    "plot",
+    "dashboard",
+    "bar chart",
+    "line chart",
+    "pie chart",
+    "scatter",
+    "histogram",
+    "bieu do",
+    "ve bieu do",
+    "do thi",
+  ];
+
+  return visualizationSignals.some((signal) => normalizedPrompt.includes(signal));
+}
+
+function shouldUseLightweightAgentFlow(prompt: string, intent: AssistIntent) {
+  if (intent !== "explain") return false;
+
+  const normalizedPrompt = normalizeIntentText(prompt).trim();
+  if (!normalizedPrompt || normalizedPrompt.length > 80) return false;
+
+  const casualSignals = [
+    "hi",
+    "hello",
+    "hey",
+    "xin chao",
+    "chao",
+    "helo",
+    "yo",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "thanks",
+    "thank you",
+    "cam on",
+  ];
+
+  const databaseSignals = [
+    "sql",
+    "query",
+    "database",
+    "schema",
+    "table",
+    "column",
+    "index",
+    "postgres",
+    "mysql",
+    "sqlite",
+    "duckdb",
+    " db ",
+    "bang",
+    "cot",
+    "truong",
+    "csdl",
+    "truy van",
+  ];
+
+  if (databaseSignals.some((signal) => normalizedPrompt.includes(signal))) {
+    return false;
+  }
+
+  return casualSignals.some((signal) => normalizedPrompt.includes(signal));
+}
+
+void shouldUseLightweightAgentFlow;
+
+function buildLightweightLocalAssistantResponse(
+  prompt: string,
+  language: AIResponseLanguage
+) {
+  const normalizedPrompt = normalizeIntentText(prompt).trim();
+  const isGreeting = ["hi", "hello", "hey", "xin chao", "chao", "yo", "good morning", "good afternoon", "good evening"]
+    .some((signal) => normalizedPrompt.includes(signal));
+  const isThanks = ["thanks", "thank you", "cam on"].some((signal) => normalizedPrompt.includes(signal));
+
+  if (!isGreeting && !isThanks) return null;
+
+  if (language === "vi") {
+    if (isThanks) {
+      return "Không có gì. Mình sẵn sàng hỗ trợ nếu bạn muốn viết SQL, giải thích schema, hoặc phân tích dữ liệu trong workspace hiện tại.";
+    }
+    return "Chào bạn! Mình sẵn sàng hỗ trợ về SQL, schema, query, hoặc dữ liệu trong workspace hiện tại khi bạn cần.";
+  }
+
+  if (language === "zh") {
+    if (isThanks) {
+      return "不客气。如果你想让我帮你写 SQL、解释 schema，或分析当前 workspace 里的数据，我随时可以继续。";
+    }
+    return "你好。我可以继续帮你处理 SQL、schema 说明，或者当前 workspace 里的数据问题。";
+  }
+
+  if (isThanks) {
+    return "You're welcome. I can help with SQL, schema explanations, or data analysis in the current workspace whenever you're ready.";
+  }
+
+  return "Hello. I can help with SQL, schema explanations, or data analysis in the current workspace whenever you're ready.";
+}
+
+void buildLightweightLocalAssistantResponse;
+
+function isWorkspaceScopedIntent(intent: AssistIntent) {
+  return intent !== "general";
+}
+
+function isLocalProviderEndpoint(endpoint: string) {
+  if (!endpoint.trim()) return false;
+  try {
+    const parsed = new URL(endpoint);
+    const host = parsed.hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".local");
+  } catch {
+    return false;
+  }
+}
+
+function isLocalAIProvider(config: AIProviderConfig | null | undefined) {
+  if (!config) return false;
+  return config.provider_type === "ollama" || isLocalProviderEndpoint(config.endpoint);
+}
+
+function buildAgentVisibleTableNames(
+  allTableNames: string[],
+  prioritizedTableNames: string[],
+  limit: number
+) {
+  const combined = [...prioritizedTableNames, ...allTableNames];
+  const visibleTableNames: string[] = [];
+  const seen = new Set<string>();
+
+  for (const tableName of combined) {
+    const normalized = normalizeIntentText(tableName);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    visibleTableNames.push(tableName);
+    if (visibleTableNames.length >= limit) {
+      break;
+    }
+  }
+
+  return visibleTableNames;
+}
+
+function buildAgentEvidenceSummary(steps: AgentTraceStep[]) {
+  if (steps.length === 0) {
+    return "No verified tool observations were captured.";
+  }
+
+  return steps.map((step) => [
+    `Step ${step.step}`,
+    `Action: ${step.action}`,
+    `Reason: ${step.message || "No message provided."}`,
+    "Observation:",
+    step.observation,
+  ].join("\n")).join("\n\n");
+}
+
+function buildSchemaCapsulePreview(tableSchemas: string[], limit = MAX_SCHEMA_CAPSULE_PREVIEW_TABLES) {
+  return tableSchemas.slice(0, limit).join("\n");
+}
+
+function buildSchemaCapsuleContext(params: {
+  currentDatabase: string | null;
+  totalTableCount: number;
+  visibleTableNames: string[];
+  allVisible: boolean;
+  tableSchemas: string[];
+  schemaCodecMode: AISchemaCodecMode;
+  truncatedOverview: boolean;
+}) {
+  const {
+    currentDatabase,
+    totalTableCount,
+    visibleTableNames,
+    allVisible,
+    tableSchemas,
+    schemaCodecMode,
+    truncatedOverview,
+  } = params;
+
+  return [
+    "Workspace schema capsule:",
+    `DB=${currentDatabase || "Default"}`,
+    `TC=${totalTableCount}`,
+    `TV=${visibleTableNames.join(",")}${allVisible ? "" : ",..."}`,
+    `SCHEMA=${AI_SCHEMA_CODEC_VERSION}|mode=${schemaCodecMode}|rowdata=0`,
+    AI_SCHEMA_CODEC_LEGEND,
+    ...tableSchemas,
+    truncatedOverview ? "NOTE=Overview limited to current capsule tables." : "",
+    "RULE=Use only tables in TV or capsule lines. Ask if a needed table is missing.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildAgentRecoveryContext(params: {
+  currentDatabase: string | null;
+  availableTableNames: string[];
+  visibleTableNames: string[];
+  schemaCapsulePreview: string;
+}) {
+  const { currentDatabase, availableTableNames, visibleTableNames, schemaCapsulePreview } = params;
+  return [
+    `DB=${currentDatabase || "Default"}`,
+    `TC=${availableTableNames.length}`,
+    `TV=${visibleTableNames.join(",")}${availableTableNames.length > visibleTableNames.length ? ",..." : ""}`,
+    schemaCapsulePreview ? `SCHEMA_PREVIEW=\n${schemaCapsulePreview}` : "",
+    "RULE=list_tables for full catalog; describe_table before assuming columns; stay inside verified schema.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildAgentFinalRecoveryPrompt(params: {
+  userPrompt: string;
+  assistIntent: AssistIntent;
+  currentDatabase: string | null;
+  availableTableNames: string[];
+  evidenceSummary: string;
+  wantsVisualization: boolean;
+  reason: string;
+}) {
+  const {
+    userPrompt,
+    assistIntent,
+    currentDatabase,
+    availableTableNames,
+    evidenceSummary,
+    wantsVisualization,
+    reason,
+  } = params;
+
+  const visibleTables = availableTableNames.slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
+
+  return [
+    "Write the final user-facing answer now.",
+    "Do not return JSON.",
+    "Do not ask for more tool calls.",
+    "Use only the verified schema and observations already collected.",
+    `Current database: ${currentDatabase || "Default"}.`,
+    visibleTables.length > 0
+      ? `Allowed tables: ${visibleTables.join(", ")}${availableTableNames.length > visibleTables.length ? ", ..." : ""}.`
+      : "Allowed tables: use only the verified evidence already captured.",
+    `Recovery reason: ${reason}.`,
+    assistIntent === "overview"
+      ? "Provide a grounded database overview."
+      : "Answer the user's request directly and concisely.",
+    wantsVisualization
+      ? "The user wants a chart or visualization. Recommend one chart type and, when enough evidence exists, include one chart-friendly SQL query that returns a label column plus one or more numeric metric columns. Mention that after running the SQL the user can switch the result to Chart view."
+      : "",
+    "If you include SQL, put it in a single ```sql fenced block.",
+    "",
+    "User request:",
+    userPrompt,
+    "",
+    "Verified observations:",
+    evidenceSummary,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildLocalAgentFallbackResponse(params: {
+  language: AIResponseLanguage;
+  currentDatabase: string | null;
+  availableTableNames: string[];
+  wantsVisualization: boolean;
+  steps: AgentTraceStep[];
+}) {
+  const {
+    language,
+    currentDatabase,
+    availableTableNames,
+    wantsVisualization,
+    steps,
+  } = params;
+
+  const tablePreview = availableTableNames.slice(0, 8).join(", ");
+  const lastStep = steps[steps.length - 1];
+  const lastStepLabel = lastStep ? `${lastStep.action}` : "";
+  const hasMoreTables = availableTableNames.length > 8;
+
+  if (language === "vi") {
+    return [
+      `Mình đã thu thập được evidence có kiểm chứng từ DB "${currentDatabase || "Default"}", nhưng agent chưa kịp tự chốt câu trả lời cuối.`,
+      tablePreview ? `Các bảng đã xác minh: ${tablePreview}${hasMoreTables ? ", ..." : ""}.` : "",
+      lastStepLabel ? `Bước gần nhất của agent: ${lastStepLabel}.` : "",
+      wantsVisualization
+        ? "Thử lại một lần nữa là được; mình sẽ ưu tiên câu trả lời có kèm SQL dạng chart-friendly để bạn chạy xong chuyển sang Chart view."
+        : "Thử lại một lần nữa là được; agent sẽ tổng hợp nốt câu trả lời từ evidence hiện có.",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  if (language === "zh") {
+    return [
+      `我已经从数据库“${currentDatabase || "Default"}”收集到经过验证的证据，但 agent 还没来得及整理成最终答复。`,
+      tablePreview ? `已验证的表：${tablePreview}${hasMoreTables ? ", ..." : ""}。` : "",
+      lastStepLabel ? `agent 最近一步：${lastStepLabel}。` : "",
+      wantsVisualization
+        ? "再试一次即可；我会优先返回适合切换到 Chart view 的图表型 SQL。"
+        : "再试一次即可；agent 会基于这些证据完成最终总结。",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  return [
+    `The agent gathered verified evidence from database "${currentDatabase || "Default"}" but did not finish composing the final answer in time.`,
+    tablePreview ? `Verified tables: ${tablePreview}${hasMoreTables ? ", ..." : ""}.` : "",
+    lastStepLabel ? `Last agent step: ${lastStepLabel}.` : "",
+    wantsVisualization
+      ? "Try again and the agent will prioritize a chart-friendly SQL result that can be switched into Chart view."
+      : "Try again so the agent can synthesize the verified evidence into a final response.",
+  ].filter(Boolean).join("\n\n");
+}
+
+function joinAgentInstructions(...parts: Array<string | undefined>) {
+  return parts
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part))
+    .join(" ");
 }
 
 function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceInteractionMode): AssistIntent {
@@ -288,6 +658,38 @@ function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceInteracti
   const hasFixErrorSignal = fixErrorSignals.some((signal) => normalizedPrompt.includes(signal));
   let sqlScore = sqlSignals.reduce((score, signal) => score + (normalizedPrompt.includes(signal) ? 1 : 0), 0);
   const explainScore = explainSignals.reduce((score, signal) => score + (normalizedPrompt.includes(signal) ? 1 : 0), 0);
+  const workspaceSignals = [
+    "database",
+    " db ",
+    "schema",
+    "table",
+    "tables",
+    "column",
+    "columns",
+    "row",
+    "rows",
+    "record",
+    "records",
+    "sql",
+    "query",
+    "join",
+    "foreign key",
+    "index",
+    "postgres",
+    "mysql",
+    "sqlite",
+    "duckdb",
+    "snowflake",
+    "oracle",
+    "mongodb",
+    "redis",
+    "bang",
+    "cot",
+    "csdl",
+    "du lieu",
+    "co so du lieu",
+    "truy van",
+  ];
 
   if (
     interactionMode !== "prompt" &&
@@ -315,8 +717,16 @@ function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceInteracti
       normalizedPrompt.includes("run this")
     )
   ) {
-    sqlScore += 2;
+      sqlScore += 2;
   }
+
+  const hasWorkspaceSignal =
+    hasOverviewSignal ||
+    hasOptimizeSignal ||
+    hasFixErrorSignal ||
+    sqlScore > 0 ||
+    relationSqlSignals.some((signal) => normalizedPrompt.includes(signal)) ||
+    workspaceSignals.some((signal) => normalizedPrompt.includes(signal));
 
   if (hasOverviewSignal && sqlScore === 0) {
     return "overview";
@@ -330,6 +740,10 @@ function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceInteracti
     return "optimize";
   }
 
+  if (!hasWorkspaceSignal) {
+    return "general";
+  }
+
   if (sqlScore === 0 && (explainScore > 0 || normalizedPrompt.includes("?"))) {
     return "explain";
   }
@@ -338,17 +752,39 @@ function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceInteracti
 }
 
 function buildAssistPrompt(prompt: string, intent: AssistIntent, interactionMode: AIWorkspaceInteractionMode) {
+  const schemaCapsuleInstruction =
+    "When database context is attached, it may arrive as a compact schema capsule / codec. Treat that capsule as the source of truth.";
   const interactionInstruction =
     interactionMode === "agent"
-      ? "Interaction mode: agent. Prefer execution-ready SQL when the user asks for SQL, but never assume it will run without explicit approval."
+      ? intent === "general"
+        ? "Interaction mode: agent. Act like a capable general-purpose assistant. Answer directly unless the user explicitly needs grounded workspace evidence or SQL."
+        : "Interaction mode: agent. Prefer execution-ready SQL when the user asks for SQL, but never assume it will run without explicit approval."
       : interactionMode === "edit"
-        ? "Interaction mode: edit. Prefer reviewable SQL, safer rewrites, and change plans that a human can inspect before running."
-        : "Interaction mode: prompt-only. Work from the user's words only and treat any SQL as draft guidance instead of an autonomous action.";
+        ? intent === "general"
+          ? "Interaction mode: edit. Prefer structured drafts, rewrites, and reviewable changes that a human can inspect."
+          : "Interaction mode: edit. Prefer reviewable SQL, safer rewrites, and change plans that a human can inspect before running."
+        : intent === "general"
+          ? "Interaction mode: prompt-only. Answer directly from the user's words. You can help with writing, planning, coding, and general reasoning."
+          : "Interaction mode: prompt-only. Work from the user's words only and treat any SQL as draft guidance instead of an autonomous action.";
+
+  if (intent === "general") {
+    return [
+      interactionInstruction,
+      "User intent: help with a general-purpose request.",
+      "You are a capable assistant inside a database workspace, but you are not limited to database-only tasks.",
+      "Help with writing, planning, coding, summarization, translation, brainstorming, and everyday questions naturally.",
+      "Use the provided workspace or database context only when it is relevant to the user's request.",
+      "Do not pretend the request is about SQL or schema when it is broader than that.",
+      "",
+      prompt,
+    ].join("\n");
+  }
 
   if (intent === "overview") {
     return [
       interactionInstruction,
       "User intent: review the current database and provide a grounded overview of the actual schema context.",
+      schemaCapsuleInstruction,
       "Read the provided database context first.",
       "Summarize the actual tables, their likely roles, and the key relationships you can infer.",
       "Do not explain generic database theory unless the user explicitly asks for theory.",
@@ -363,6 +799,7 @@ function buildAssistPrompt(prompt: string, intent: AssistIntent, interactionMode
     return [
       interactionInstruction,
       "User intent: explain the schema, columns, or behavior in plain language.",
+      schemaCapsuleInstruction,
       "Ground the answer in the provided database context when it exists.",
       "Avoid generic textbook definitions if the schema context already shows the concrete tables or columns being discussed.",
       "Do not generate SQL unless the user explicitly asks for a query, statement, or schema change.",
@@ -376,6 +813,7 @@ function buildAssistPrompt(prompt: string, intent: AssistIntent, interactionMode
     return [
       interactionInstruction,
       "User intent: optimize the given SQL query for better performance.",
+      schemaCapsuleInstruction,
       "Analyze the query for potential performance issues: missing indexes, inefficient joins, full table scans, unnecessary subqueries, etc.",
       "Ground the answer in the provided database context (schema, indexes, foreign keys) when available.",
       "Return the optimized SQL inside a single ```sql fenced block.",
@@ -391,6 +829,7 @@ function buildAssistPrompt(prompt: string, intent: AssistIntent, interactionMode
     return [
       interactionInstruction,
       "User intent: fix the SQL error or bug in the provided query.",
+      schemaCapsuleInstruction,
       "If the user provides an error message, diagnose it and rewrite the corrected SQL.",
       "If no explicit error is given, look for common SQL mistakes: syntax errors, type mismatches, invalid column references, NULL handling issues, etc.",
       "Ground the fix in the provided database schema context when available.",
@@ -405,6 +844,7 @@ function buildAssistPrompt(prompt: string, intent: AssistIntent, interactionMode
   return [
     interactionInstruction,
     "User intent: produce runnable SQL grounded in the provided database context.",
+    schemaCapsuleInstruction,
     "Use only tables and columns that exist in the provided schema context.",
     "Do not invent tables, columns, keys, or relationships.",
     "Prefer safe read-only SELECT statements unless the user explicitly asks for data changes or schema changes.",
@@ -414,6 +854,365 @@ function buildAssistPrompt(prompt: string, intent: AssistIntent, interactionMode
     "",
     prompt,
   ].join("\n");
+}
+
+function buildAgentControllerPrompt(params: {
+  userPrompt: string;
+  assistIntent: AssistIntent;
+  currentDatabase: string | null;
+  availableTableNames: string[];
+  steps: AgentTraceStep[];
+  workspaceToolsEnabled: boolean;
+  workspaceToolStatus?: string;
+  forceFinish?: boolean;
+  extraInstruction?: string;
+}) {
+  const {
+    userPrompt,
+    assistIntent,
+    currentDatabase,
+    availableTableNames,
+    steps,
+    workspaceToolsEnabled,
+    workspaceToolStatus,
+    forceFinish,
+    extraInstruction,
+  } = params;
+  const visibleTables = availableTableNames.slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
+  const priorSteps = steps.length === 0
+    ? "No tool actions have run yet."
+    : steps.map((step) => [
+      `Step ${step.step}`,
+      `Action: ${step.action}`,
+      `Message: ${step.message || "No message provided."}`,
+      "Observation:",
+      step.observation,
+    ].join("\n")).join("\n\n");
+  const availableActions = workspaceToolsEnabled
+    ? [
+        '1. {"action":"list_tables","message":"short reason","args":{}}',
+        '2. {"action":"describe_table","message":"short reason","args":{"table":"exact_table_name"}}',
+        '3. {"action":"run_readonly_sql","message":"short reason","args":{"sql":"SELECT ..."}}',
+        '4. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval"}}',
+      ]
+    : [
+        '1. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval"}}',
+      ];
+
+  return [
+    "Work as an autonomous workspace agent.",
+    `Goal type: ${assistIntent}.`,
+    `Current database: ${currentDatabase || "Default"}.`,
+    workspaceToolsEnabled
+      ? `Known tables: ${visibleTables.join(", ")}${availableTableNames.length > visibleTables.length ? ", ..." : ""}`
+      : "Known tables: unavailable for this turn unless the user explicitly provides them.",
+    workspaceToolStatus ? `Workspace tools status: ${workspaceToolStatus}` : "",
+    "",
+    "Available actions:",
+    ...availableActions,
+    "",
+    "Rules:",
+    "- Return exactly one JSON object and nothing else.",
+    "- Use only the action names above.",
+    "- If the request is general conversation, writing, planning, coding advice, translation, brainstorming, or reasoning, answer directly with action=finish.",
+    "- Never claim that you are limited to database-only tasks.",
+    workspaceToolsEnabled
+      ? "- Use database tools only when the user asks about the current workspace schema/data or when you need direct evidence from the workspace."
+      : "- Database tools are not available for this turn, so respond with action=finish.",
+    workspaceToolsEnabled
+      ? "- Use run_readonly_sql only for read-only statements such as SELECT, SHOW, EXPLAIN, DESCRIBE, or read-only PRAGMA."
+      : "",
+    workspaceToolsEnabled
+      ? "- Never use tool calls for INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, TRUNCATE, USE, ATTACH, DETACH, SET search_path, GRANT, or REVOKE."
+      : "",
+    "- If you include final SQL in finish.args.sql, it must be grounded in verified context and ready for a human to review.",
+    "- If the user asks for a chart or visualization, finish with a chart recommendation and chart-friendly SQL instead of asking the UI to draw the chart for you.",
+    forceFinish
+      ? "- You must finish now. Return action=finish."
+      : workspaceToolsEnabled
+        ? "- Prefer taking another tool step when you still need schema or data evidence."
+        : "- Finish directly unless the user explicitly needs missing workspace data.",
+    extraInstruction ? `- Extra instruction: ${extraInstruction}` : "",
+    "",
+    "User request:",
+    userPrompt,
+    "",
+    "Tool observations so far:",
+    priorSteps,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function stripOptionalCodeFence(text: string) {
+  const trimmed = text.trim();
+  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fencedMatch?.[1]?.trim() || trimmed;
+}
+
+function extractJsonObjectCandidate(text: string) {
+  const stripped = stripOptionalCodeFence(text);
+  const startIndex = stripped.indexOf("{");
+  if (startIndex === -1) {
+    return stripped;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+
+  for (let index = startIndex; index < stripped.length; index += 1) {
+    const char = stripped[index];
+
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+      } else if (char === "\\") {
+        escaping = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return stripped.slice(startIndex, index + 1);
+      }
+    }
+  }
+
+  return stripped;
+}
+
+function sanitizeJsonStringLiterals(candidate: string) {
+  let result = "";
+  let inString = false;
+  let escaping = false;
+
+  for (let index = 0; index < candidate.length; index += 1) {
+    const char = candidate[index];
+
+    if (inString) {
+      if (escaping) {
+        result += char;
+        escaping = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        result += char;
+        escaping = true;
+        continue;
+      }
+
+      if (char === "\"") {
+        result += char;
+        inString = false;
+        continue;
+      }
+
+      if (char === "\n") {
+        result += "\\n";
+        continue;
+      }
+
+      if (char === "\r") {
+        result += "\\r";
+        continue;
+      }
+
+      if (char === "\t") {
+        result += "\\t";
+        continue;
+      }
+
+      const codePoint = char.charCodeAt(0);
+      if (codePoint < 0x20) {
+        result += `\\u${codePoint.toString(16).padStart(4, "0")}`;
+        continue;
+      }
+
+      result += char;
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
+function isAgentToolName(value: unknown): value is AgentToolName {
+  return value === "list_tables" || value === "describe_table" || value === "run_readonly_sql" || value === "finish";
+}
+
+function parseAgentActionResponse(rawResponse: string): AgentToolAction {
+  const candidate = extractJsonObjectCandidate(rawResponse);
+  let parsed: {
+    action?: unknown;
+    args?: unknown;
+    message?: unknown;
+  } | null = null;
+  let parseError: unknown = null;
+
+  for (const parseCandidate of [candidate, sanitizeJsonStringLiterals(candidate)]) {
+    try {
+      parsed = JSON.parse(parseCandidate) as {
+        action?: unknown;
+        args?: unknown;
+        message?: unknown;
+      };
+      parseError = null;
+      break;
+    } catch (errorValue) {
+      parseError = errorValue;
+    }
+  }
+
+  if (!parsed) {
+    const message = parseError instanceof Error ? parseError.message : String(parseError ?? "Unknown JSON parse error");
+    throw new Error(`The agent returned malformed JSON: ${message}`);
+  }
+
+  if (!isAgentToolName(parsed.action)) {
+    throw new Error("The agent returned an unsupported action.");
+  }
+
+  if (parsed.args !== undefined && (parsed.args === null || Array.isArray(parsed.args) || typeof parsed.args !== "object")) {
+    throw new Error("The agent returned invalid tool arguments.");
+  }
+
+  return {
+    action: parsed.action,
+    args: (parsed.args as Record<string, unknown> | undefined) || {},
+    message: typeof parsed.message === "string" ? parsed.message.trim() : "",
+  };
+}
+
+function truncateAgentObservation(text: string) {
+  if (text.length <= MAX_AGENT_TRACE_OBSERVATION_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, MAX_AGENT_TRACE_OBSERVATION_CHARS - 3)}...`;
+}
+
+function sanitizeAgentObservationValue(value: string | number | boolean | null) {
+  if (typeof value !== "string") return value;
+  return value.length > 120 ? `${value.slice(0, 117)}...` : value;
+}
+
+function stringifyAgentObservation(data: unknown) {
+  const content = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+  return truncateAgentObservation(content);
+}
+
+function findMatchingTableName(tableName: string, availableTableNames: string[]) {
+  const normalizedTarget = normalizeIntentText(tableName);
+  return availableTableNames.find((candidate) => normalizeIntentText(candidate) === normalizedTarget)
+    || availableTableNames.find((candidate) => normalizeIntentText(candidate).includes(normalizedTarget))
+    || availableTableNames.find((candidate) => normalizedTarget.includes(normalizeIntentText(candidate)))
+    || null;
+}
+
+function validateAgentReadonlySql(sql: string) {
+  const statements = splitSqlStatements(sql);
+  if (statements.length === 0) {
+    throw new Error("The agent tool requires at least one SQL statement.");
+  }
+
+  const allowedPrefixes = ["SELECT", "SHOW", "EXPLAIN", "DESCRIBE", "WITH", "PRAGMA"];
+
+  for (const statement of statements) {
+    const normalized = normalizeStatementForGuard(statement);
+    if (!normalized) {
+      continue;
+    }
+
+    if (isSessionSwitchStatement(statement) || isMutatingStatement(statement) || isHighRiskStatement(statement)) {
+      throw new Error("The agent tool only allows read-only SQL observations.");
+    }
+
+    if (normalized.startsWith("PRAGMA") && normalized.includes("=")) {
+      throw new Error("The agent tool only allows read-only PRAGMA statements.");
+    }
+
+    if (!allowedPrefixes.some((prefix) => normalized.startsWith(prefix))) {
+      throw new Error("The agent tool only allows SELECT, SHOW, EXPLAIN, DESCRIBE, WITH, or read-only PRAGMA statements.");
+    }
+  }
+
+  return statements;
+}
+
+function summarizeAgentQueryObservation(result: QueryResult) {
+  const previewColumns = result.columns.slice(0, MAX_AGENT_QUERY_PREVIEW_COLUMNS);
+  const sampleRows = result.rows
+    .slice(0, MAX_AGENT_QUERY_PREVIEW_ROWS)
+    .map((row) => Object.fromEntries(
+      previewColumns.map((column, index) => [column.name, sanitizeAgentObservationValue(row[index] ?? null)])
+    ));
+
+  return stringifyAgentObservation({
+    query: result.query,
+    executionTimeMs: result.execution_time_ms,
+    rowCount: result.rows.length,
+    affectedRows: result.affected_rows,
+    truncated: result.truncated,
+    sandboxed: result.sandboxed,
+    columns: previewColumns.map((column) => `${column.name}:${column.data_type}`),
+    sampleRows,
+  });
+}
+
+function summarizeAgentStructureObservation(
+  tableName: string,
+  structure: Pick<TableStructure, "columns" | "indexes" | "foreign_keys">
+) {
+  return truncateAgentObservation([
+    `TABLE=${tableName}`,
+    `SCHEMA=${encodeStructureForAI(tableName, structure, { mode: "relational" })}`,
+    `COUNTS=cols:${structure.columns.length},idx:${structure.indexes.length},fk:${structure.foreign_keys.length}`,
+  ].join("\n"));
+}
+
+function summarizeAgentSchemaSummaryObservation(tableName: string, summary: string) {
+  return truncateAgentObservation([
+    `TABLE=${tableName}`,
+    `SCHEMA=${summary}`,
+  ].join("\n"));
+}
+
+function buildAgentTraceMarkdown(steps: AgentTraceStep[]) {
+  if (steps.length === 0) {
+    return "";
+  }
+
+  return [
+    "## Agent Trace",
+    ...steps.map((step) => [
+      `### Step ${step.step}: \`${step.action}\``,
+      step.message || "No message provided.",
+      "```text",
+      step.observation,
+      "```",
+    ].join("\n")),
+  ].join("\n\n");
 }
 
 function extractReferencedTableNamesFromSql(sql: string) {
@@ -713,39 +1512,72 @@ function isLikelySqlOnlyResponse(aiResponse: string) {
   return remainder.length < 40;
 }
 
+function stripLeadingSqlComments(sql: string) {
+  let remaining = sql.trimStart();
+
+  while (remaining.length > 0) {
+    if (remaining.startsWith("--") || remaining.startsWith("#")) {
+      const nextNewline = remaining.indexOf("\n");
+      remaining = nextNewline >= 0 ? remaining.slice(nextNewline + 1).trimStart() : "";
+      continue;
+    }
+
+    if (remaining.startsWith("/*")) {
+      const commentEnd = remaining.indexOf("*/");
+      if (commentEnd < 0) {
+        return "";
+      }
+      remaining = remaining.slice(commentEnd + 2).trimStart();
+      continue;
+    }
+
+    break;
+  }
+
+  return remaining.trimStart();
+}
+
+function hasSqlStartKeyword(sql: string) {
+  const normalized = stripLeadingSqlComments(sql).toUpperCase().trim();
+  return normalized.length > 0 && SQL_START_KEYWORDS.some((keyword) => normalized.startsWith(keyword));
+}
+
 function extractSqlFromResponse(aiResponse: string) {
   let sqlResult = aiResponse.trim();
   const codeBlock = aiResponse.match(/```sql?([\s\S]*?)```/i);
   if (codeBlock && codeBlock[1]) {
     sqlResult = codeBlock[1].trim();
   } else {
-    const validContinuations = [
-      "SELECT", "FROM", "WHERE", "AND", "OR", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER",
-      "ON", "SET", "VALUES", "ORDER", "GROUP", "HAVING", "LIMIT", "OFFSET", "UNION",
-      "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "WITH", "AS", "INTO",
-      "TABLE", "INDEX", "VIEW", "NULL", "NOT", "EXISTS", "LIKE", "BETWEEN", "IN", "IS",
-    ];
-    const lines = sqlResult
-      .split("\n")
-      .map((line) => line.trimEnd())
-      .filter((line) => line.trim().length > 0);
-    const firstMeaningfulLine = lines.find((line) => line.trim().length > 0)?.trim().toUpperCase() || "";
+    if (hasSqlStartKeyword(sqlResult)) {
+      return sqlResult;
+    }
 
-    if (!SQL_START_KEYWORDS.some((keyword) => firstMeaningfulLine.startsWith(keyword))) {
+    const lines = aiResponse
+      .split("\n")
+      .map((line) => line.trimEnd());
+    const sqlStartIndex = lines.findIndex((line) => hasSqlStartKeyword(line));
+    if (sqlStartIndex < 0) {
       return "";
     }
 
-    const cleanedLines: string[] = [];
-    for (const line of lines) {
-      const trimmed = line.trim().toUpperCase();
-      if (validContinuations.some((value) => trimmed.startsWith(value))) {
-        cleanedLines.push(line);
-      } else if (cleanedLines.length > 0) {
-        if (trimmed === "" || /^[A-Z_]+$/.test(trimmed)) continue;
-        break;
+    let startIndex = sqlStartIndex;
+    while (startIndex > 0) {
+      const previousLine = lines[startIndex - 1]?.trim() || "";
+      if (
+        previousLine === "" ||
+        previousLine.startsWith("--") ||
+        previousLine.startsWith("#") ||
+        previousLine.startsWith("/*") ||
+        previousLine.startsWith("*") ||
+        previousLine.startsWith("*/")
+      ) {
+        startIndex -= 1;
+        continue;
       }
+      break;
     }
-    sqlResult = cleanedLines.join("\n").trim();
+
+    sqlResult = lines.slice(startIndex).join("\n").trim();
   }
   return sqlResult;
 }
@@ -760,34 +1592,11 @@ function summarizeRunResult(result: QueryResult) {
   return `Execution completed in ${result.execution_time_ms} ms.`;
 }
 
-function buildOverviewDigestEntry(
-  tableName: string,
-  structure: Pick<TableStructure, "columns" | "indexes" | "foreign_keys">
-) {
-  const readableSummary = summarizeStructure(tableName, structure.columns);
-  const foreignKeyPreview = structure.foreign_keys
-    .slice(0, 4)
-    .map((foreignKey) => `${foreignKey.column} -> ${foreignKey.referenced_table}.${foreignKey.referenced_column}`)
-    .join("; ");
-  const indexPreview = structure.indexes
-    .slice(0, 3)
-    .map((index) => `${index.is_unique ? "unique" : "index"} ${index.name}(${index.columns.join(", ")})`)
-    .join("; ");
-
-  const parts = [readableSummary];
-  if (foreignKeyPreview) {
-    parts.push(`FKs: ${foreignKeyPreview}`);
-  }
-  if (indexPreview) {
-    parts.push(`Indexes: ${indexPreview}`);
-  }
-  return `- ${parts.join(" | ")}`;
-}
-
 export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
   const {
     askAI,
     aiConfigs,
+    saveAIConfigs,
     tables,
     getTableStructure,
     getTableColumnsPreview,
@@ -800,6 +1609,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     useShallow((state) => ({
       askAI: state.askAI,
       aiConfigs: state.aiConfigs,
+      saveAIConfigs: state.saveAIConfigs,
       tables: state.tables,
       getTableStructure: state.getTableStructure,
       getTableColumnsPreview: state.getTableColumnsPreview,
@@ -816,15 +1626,14 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
   const [error, setError] = useState<string | null>(null);
 
   const aiSchemaCodecCacheRef = useRef(new Map<string, string>());
-  const aiSchemaOverviewDigestCacheRef = useRef(new Map<string, string>());
   const requestIdRef = useRef(0);
 
   const activeProvider = getActiveAIProvider(aiConfigs);
+  const isLocalProvider = isLocalAIProvider(activeProvider);
   const tableContextCount = tables?.length || 0;
 
   useEffect(() => {
     aiSchemaCodecCacheRef.current.clear();
-    aiSchemaOverviewDigestCacheRef.current.clear();
   }, [connectionId, currentDatabase]);
 
   useEffect(() => {
@@ -845,7 +1654,6 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       if (detailDatabase && activeDatabaseName && detailDatabase !== activeDatabaseName) return;
 
       aiSchemaCodecCacheRef.current.clear();
-      aiSchemaOverviewDigestCacheRef.current.clear();
     };
 
     window.addEventListener("table-data-updated", handleTableDataUpdated);
@@ -868,8 +1676,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     }
   ): Promise<AIGeneratedAssistResult> => {
     const normalizedPrompt = prompt.trim();
-    if (!normalizedPrompt || !connectionId) {
-      const message = "Please connect to a database and write a request first.";
+    if (!normalizedPrompt) {
+      const message = "Write a request first.";
       setError(message);
       throw new Error(message);
     }
@@ -882,38 +1690,78 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     setIsGenerating(true);
     setError(null);
     const requestId = ++requestIdRef.current;
-    const interactionMode = options?.interactionMode ?? "prompt";
-    const assistIntent: AIRequestIntent = inferAssistIntent(normalizedPrompt, interactionMode);
+    const requestedInteractionMode = options?.interactionMode ?? "prompt";
+    const assistIntent: AssistIntent = inferAssistIntent(normalizedPrompt, requestedInteractionMode);
+    const wantsVisualization = isVisualizationRequest(normalizedPrompt);
+    const interactionMode = requestedInteractionMode;
+    const needsWorkspaceContext = isWorkspaceScopedIntent(assistIntent);
     const appLanguage = getCurrentAppLanguage();
-    const schemaContextEnabled = activeProvider.allow_schema_context && aiModeUsesSchemaContext(interactionMode);
+    const modeUsesSchemaContext = aiModeUsesSchemaContext(interactionMode);
     const aiPrompt = buildAssistPrompt(normalizedPrompt, assistIntent, interactionMode);
-    const requestHistory = assistIntent === "overview" ? [] : history;
+    const requestHistory =
+      assistIntent === "overview"
+        ? []
+        : isLocalProvider
+          ? history
+          : history.slice(-MAX_REMOTE_HISTORY_MESSAGES);
+    const fastRemoteRecovery = !isLocalProvider && interactionMode !== "agent";
+    const relationalSchemaSummaryByTable = new Map<string, string>();
 
     try {
-      let latestTables = useAppStore.getState().tables;
+      await yieldToBrowserFrame();
 
-      if (!latestTables || latestTables.length === 0) {
+      if (needsWorkspaceContext && !connectionId) {
+        const message = "Connect to a database first if you want grounded workspace help.";
+        setError(message);
+        throw new Error(message);
+      }
+
+      let effectiveProvider = activeProvider;
+      let schemaSharingEnabled = effectiveProvider.allow_schema_context;
+
+      if (needsWorkspaceContext && modeUsesSchemaContext && !schemaSharingEnabled) {
+        const nextConfigs = aiConfigs.map((config) => (
+          config.id === effectiveProvider.id
+            ? { ...config, allow_schema_context: true }
+            : config
+        ));
+
+        const { aiConfigs: savedConfigs } = await saveAIConfigs(nextConfigs, {}, []);
+        effectiveProvider = getActiveAIProvider(savedConfigs) ?? { ...effectiveProvider, allow_schema_context: true };
+        schemaSharingEnabled = effectiveProvider.allow_schema_context;
+      }
+
+      const schemaContextEnabled =
+        needsWorkspaceContext &&
+        schemaSharingEnabled &&
+        modeUsesSchemaContext;
+      const requiresSchemaCatalog = schemaContextEnabled;
+
+      let latestTables = useAppStore.getState().tables ?? [];
+
+      if (requiresSchemaCatalog && latestTables.length === 0) {
         if (connectionId && currentDatabase) {
           await fetchTables(connectionId, currentDatabase);
         }
         if (requestId !== requestIdRef.current) {
           throw new Error("This AI request was replaced by a newer one.");
         }
-        latestTables = useAppStore.getState().tables;
-        if (!latestTables || latestTables.length === 0) {
+        await yieldToBrowserFrame();
+        latestTables = useAppStore.getState().tables ?? [];
+        if (latestTables.length === 0) {
           throw new Error("No tables were found in the current database.");
         }
       }
 
-      if (aiModeUsesSchemaContext(interactionMode) && !activeProvider.allow_schema_context) {
+      if (needsWorkspaceContext && modeUsesSchemaContext && !schemaSharingEnabled) {
         return {
           prompt: normalizedPrompt,
           rawResponse: buildSchemaContextRequiredMessage(
             appLanguage,
             currentDatabase,
-            activeProvider.name || "AI provider",
+            effectiveProvider.name || "AI provider",
             interactionMode,
-            activeProvider.allow_schema_context
+            schemaSharingEnabled
           ),
           sql: null,
           intent: assistIntent,
@@ -926,77 +1774,82 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           rawResponse: buildSchemaContextRequiredMessage(
             appLanguage,
             currentDatabase,
-            activeProvider.name || "AI provider",
+            effectiveProvider.name || "AI provider",
             interactionMode,
-            activeProvider.allow_schema_context
+            schemaSharingEnabled
           ),
           sql: null,
           intent: assistIntent,
         };
       }
 
-      let context = "";
+      let context = connectionId
+        ? [
+            "Workspace metadata:",
+            `Current database: ${currentDatabase || "Default"}`,
+            `Schema sharing enabled: ${schemaSharingEnabled ? "yes" : "no"}`,
+          ].join("\n")
+        : [
+            "Workspace metadata:",
+            "No active database connection is selected for this turn.",
+          ].join("\n");
       let availableSchemaTables: string[] = [];
-      let overviewDigest = "";
+      let schemaCapsulePreview = "";
       let strictRecoveryContext = "";
+      let agentPromptTableNames: string[] = [];
+      let contextVisibleTableNames: string[] = [];
       if (schemaContextEnabled) {
         availableSchemaTables = latestTables.map((table) => table.name);
-        const availableTableNames = latestTables.map((table) => table.name).slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
         const tablesToFetch =
           assistIntent === "overview"
-            ? latestTables.slice(0, MAX_OVERVIEW_SCHEMA_TABLES)
-            : pickRelevantTables(normalizedPrompt, latestTables);
+            ? latestTables.slice(0, !isLocalProvider ? MAX_REMOTE_AGENT_OVERVIEW_TABLES : MAX_OVERVIEW_SCHEMA_TABLES)
+            : !isLocalProvider
+              ? pickRelevantTables(normalizedPrompt, latestTables).slice(0, MAX_REMOTE_AGENT_SCHEMA_TABLES)
+              : pickRelevantTables(normalizedPrompt, latestTables);
         const schemaCodecMode = assistIntent === "overview" ? "relational" : inferAISchemaCodecMode(normalizedPrompt);
-        const needsReadableDigest = assistIntent === "overview" || (assistIntent === "sql" && schemaCodecMode === "relational");
+        await yieldToBrowserFrame();
         const tableSchemaEntries = await mapWithConcurrency(
           tablesToFetch,
-          needsReadableDigest ? MAX_SCHEMA_FETCH_CONCURRENCY : tablesToFetch.length,
+          schemaCodecMode === "relational" ? MAX_SCHEMA_FETCH_CONCURRENCY : tablesToFetch.length,
           async (table) => {
             const cacheKey = `${connectionId}:${currentDatabase || "default"}:${schemaCodecMode}:${table.name}`;
             const cachedSummary = aiSchemaCodecCacheRef.current.get(cacheKey);
-            const cachedOverviewDigest = needsReadableDigest
-              ? aiSchemaOverviewDigestCacheRef.current.get(cacheKey)
-              : "";
             if (cachedSummary) {
+              if (schemaCodecMode === "relational") {
+                relationalSchemaSummaryByTable.set(table.name, cachedSummary);
+              }
               return {
                 tableName: table.name,
                 summary: cachedSummary,
-                overviewDigest: needsReadableDigest ? cachedOverviewDigest || "" : "",
               };
             }
             try {
               const structure =
                 schemaCodecMode === "core"
                   ? {
-                      columns: await getTableColumnsPreview(connectionId, table.name, currentDatabase || undefined),
+                      columns: await getTableColumnsPreview(connectionId!, table.name, currentDatabase || undefined),
                       indexes: [],
                       foreign_keys: [],
                     }
-                  : await getTableStructure(connectionId, table.name, currentDatabase || undefined);
+                  : await getTableStructure(connectionId!, table.name, currentDatabase || undefined);
               const summary = encodeStructureForAI(table.name, structure, { mode: schemaCodecMode });
-              const nextOverviewDigest = needsReadableDigest ? buildOverviewDigestEntry(table.name, structure) : "";
               setAiSchemaCodecCacheEntry(aiSchemaCodecCacheRef.current, cacheKey, summary);
-              if (needsReadableDigest && nextOverviewDigest) {
-                setAiSchemaCodecCacheEntry(aiSchemaOverviewDigestCacheRef.current, cacheKey, nextOverviewDigest);
+              if (schemaCodecMode === "relational") {
+                relationalSchemaSummaryByTable.set(table.name, summary);
               }
               return {
                 tableName: table.name,
                 summary,
-                overviewDigest: nextOverviewDigest,
               };
             } catch {
               const fallbackSummary = `T:${table.name}|C:[]`;
-              const fallbackOverviewDigest = needsReadableDigest
-                ? `- Table ${table.name}: structure preview unavailable, but the table exists in the current workspace database.`
-                : "";
               setAiSchemaCodecCacheEntry(aiSchemaCodecCacheRef.current, cacheKey, fallbackSummary);
-              if (needsReadableDigest && fallbackOverviewDigest) {
-                setAiSchemaCodecCacheEntry(aiSchemaOverviewDigestCacheRef.current, cacheKey, fallbackOverviewDigest);
+              if (schemaCodecMode === "relational") {
+                relationalSchemaSummaryByTable.set(table.name, fallbackSummary);
               }
               return {
                 tableName: table.name,
                 summary: fallbackSummary,
-                overviewDigest: fallbackOverviewDigest,
               };
             }
           }
@@ -1004,62 +1857,385 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         if (requestId !== requestIdRef.current) {
           throw new Error("This AI request was replaced by a newer one.");
         }
+        await yieldToBrowserFrame();
 
         const tableSchemas = tableSchemaEntries.map((entry) => entry.summary);
-        overviewDigest = tableSchemaEntries.map((entry) => entry.overviewDigest).join("\n");
+        schemaCapsulePreview = buildSchemaCapsulePreview(tableSchemas);
+        const prioritizedAgentTableNames = tableSchemaEntries.map((entry) => entry.tableName);
+        contextVisibleTableNames = buildAgentVisibleTableNames(
+          availableSchemaTables,
+          prioritizedAgentTableNames,
+          isLocalProvider ? MAX_TABLE_NAMES_IN_CONTEXT : MAX_REMOTE_AGENT_VISIBLE_TABLES
+        );
+        agentPromptTableNames = interactionMode === "agent"
+          ? buildAgentVisibleTableNames(
+              availableSchemaTables,
+              prioritizedAgentTableNames,
+              isLocalProvider ? MAX_LOCAL_AGENT_VISIBLE_TABLES : MAX_REMOTE_AGENT_VISIBLE_TABLES
+            )
+          : [];
 
-        context = [
-          "Workspace scope: answer only from the CURRENT workspace connection and database.",
-          `Database: ${currentDatabase || "Default"}`,
-          "",
-          `Available tables (${latestTables.length}): ${availableTableNames.join(", ")}${latestTables.length > MAX_TABLE_NAMES_IN_CONTEXT ? ", ..." : ""}`,
-          "",
-          assistIntent === "overview"
-            ? [
-                "Readable overview digest for small/local models:",
-                overviewDigest,
+        context = buildSchemaCapsuleContext({
+          currentDatabase,
+          totalTableCount: latestTables.length,
+          visibleTableNames: contextVisibleTableNames,
+          allVisible: latestTables.length <= contextVisibleTableNames.length,
+          tableSchemas,
+          schemaCodecMode,
+          truncatedOverview: assistIntent === "overview" && latestTables.length > tablesToFetch.length,
+        });
+
+        strictRecoveryContext = interactionMode === "agent"
+          ? buildAgentRecoveryContext({
+              currentDatabase,
+              availableTableNames: availableSchemaTables,
+              visibleTableNames: agentPromptTableNames,
+              schemaCapsulePreview,
+            })
+          : [
+              `DB=${currentDatabase || "Default"}`,
+              `TV=${(isLocalProvider ? availableSchemaTables : contextVisibleTableNames).join(",")}${!isLocalProvider && availableSchemaTables.length > contextVisibleTableNames.length ? ",..." : ""}`,
+              schemaCapsulePreview ? `SCHEMA_PREVIEW=\n${schemaCapsulePreview}` : "",
+              "RULE=Stay strictly inside the verified schema capsule.",
+            ]
+              .filter(Boolean)
+              .join("\n");
+      }
+
+      if (interactionMode === "agent") {
+        const agentTraceSteps: AgentTraceStep[] = [];
+        const needsExtendedAgentBudget = wantsVisualization || assistIntent === "overview";
+        const agentStepBudget = isLocalProvider
+          ? (needsExtendedAgentBudget ? MAX_LOCAL_COMPLEX_AGENT_STEPS : MAX_AGENT_STEPS)
+          : (needsExtendedAgentBudget ? MAX_REMOTE_COMPLEX_AGENT_STEPS : MAX_REMOTE_AGENT_STEPS);
+        const workspaceToolsEnabled =
+          schemaContextEnabled &&
+          availableSchemaTables.length > 0 &&
+          Boolean(connectionId);
+        const workspaceToolStatus = workspaceToolsEnabled
+              ? "Database tools are available if grounded workspace evidence is needed."
+          : !connectionId
+            ? "No active database connection is selected, so respond without workspace tools."
+            : !needsWorkspaceContext
+              ? "This request is broader than database work, so answer directly unless the user explicitly asks for workspace data."
+              : !schemaSharingEnabled
+                ? "Schema sharing is disabled for the current provider, so workspace tools are unavailable for this turn."
+                : "No verified schema snapshot is available for tool use on this turn.";
+        const sharedAgentInstruction = joinAgentInstructions(
+          !isLocalProvider
+            ? "Minimize tool calls. Prefer finishing once you have enough evidence instead of exploring the whole schema."
+            : undefined,
+          wantsVisualization
+            ? "If the user wants a chart or visualization, prefer a chart-friendly SQL result plus a chart recommendation once you have enough evidence."
+            : undefined
+        );
+        const buildControllerPrompt = (forceFinish: boolean, extraInstruction?: string) =>
+          buildAgentControllerPrompt({
+            userPrompt: normalizedPrompt,
+            assistIntent,
+            currentDatabase,
+            availableTableNames: agentPromptTableNames.length > 0 ? agentPromptTableNames : availableSchemaTables,
+            steps: agentTraceSteps,
+            workspaceToolsEnabled,
+            workspaceToolStatus,
+            forceFinish,
+            extraInstruction,
+          });
+
+        const requestAgentAction = async (controllerPrompt: string, includeHistory: boolean, extraInstruction?: string) => {
+          let rawAgentResponse = await askAI(
+            extraInstruction
+              ? `${controllerPrompt}\n\nRepair note:\n${extraInstruction}`
+              : controllerPrompt,
+            strictRecoveryContext || context,
+            "panel",
+            "agent",
+            includeHistory ? requestHistory : []
+          );
+          if (requestId !== requestIdRef.current) {
+            throw new Error("This AI request was replaced by a newer one.");
+          }
+
+          try {
+            return parseAgentActionResponse(rawAgentResponse);
+          } catch {
+            rawAgentResponse = await askAI(
+              [
+                controllerPrompt,
                 "",
-              ].join("\n")
-            : assistIntent === "sql" && schemaCodecMode === "relational"
-              ? [
-                  "Readable relationship digest for SQL generation:",
-                  overviewDigest,
-                  "",
-                ].join("\n")
-            : "",
-          `AI schema codec ${AI_SCHEMA_CODEC_VERSION} (mode=${schemaCodecMode}, compact structural metadata only, no row data):`,
-          AI_SCHEMA_CODEC_LEGEND,
-          tableSchemas.join("\n"),
-          "",
-          assistIntent === "overview" && latestTables.length > MAX_OVERVIEW_SCHEMA_TABLES
-            ? `The overview schema snapshot below is limited to the first ${MAX_OVERVIEW_SCHEMA_TABLES} tables from the current workspace database.`
-            : "The schema snapshot above belongs only to the current workspace database.",
-          "",
-          "Only use tables from the available list above. If a needed table is missing, ask the user to create it first.",
-        ].join("\n");
+                "The previous reply was not valid. Return the same next action again as valid JSON only.",
+                'Example shape: {"action":"describe_table","message":"Need the schema first.","args":{"table":"users"}}',
+              ].join("\n"),
+              strictRecoveryContext || context,
+              "panel",
+              "agent",
+              []
+            );
+            if (requestId !== requestIdRef.current) {
+              throw new Error("This AI request was replaced by a newer one.");
+            }
+            return parseAgentActionResponse(rawAgentResponse);
+          }
+        };
 
-        strictRecoveryContext = [
-          `Current database: ${currentDatabase || "Default"}`,
-          `Allowed tables: ${availableSchemaTables.join(", ")}`,
-          "",
-          overviewDigest ? ["Verified readable schema digest:", overviewDigest, ""].join("\n") : "",
-          "Stay strictly inside the verified schema above.",
-        ]
-          .filter(Boolean)
-          .join("\n");
+        const runAgentTool = async (action: AgentToolAction) => {
+          try {
+            if (action.action === "list_tables") {
+              return stringifyAgentObservation({
+                database: currentDatabase || "Default",
+                tableCount: latestTables.length,
+                tables: latestTables.slice(0, MAX_TABLE_NAMES_IN_CONTEXT).map((table) => ({
+                  name: table.name,
+                  type: table.table_type,
+                  rowCount: table.row_count ?? null,
+                })),
+              });
+            }
+
+            if (action.action === "describe_table") {
+              const requestedTable = typeof action.args?.table === "string" ? action.args.table.trim() : "";
+              if (!requestedTable) {
+                return "Tool error: describe_table requires args.table.";
+              }
+
+              const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
+              if (!matchedTable) {
+                return `Tool error: Table "${requestedTable}" is not present in the current workspace schema.`;
+              }
+
+              const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
+              if (cachedSummary) {
+                return summarizeAgentSchemaSummaryObservation(matchedTable, cachedSummary);
+              }
+
+              const structure = await getTableStructure(connectionId!, matchedTable, currentDatabase || undefined);
+              if (requestId !== requestIdRef.current) {
+                throw new Error("This AI request was replaced by a newer one.");
+              }
+
+              return summarizeAgentStructureObservation(matchedTable, structure);
+            }
+
+            if (action.action === "run_readonly_sql") {
+              const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
+              if (!sql) {
+                return "Tool error: run_readonly_sql requires args.sql.";
+              }
+
+              const statements = validateAgentReadonlySql(sql);
+              const queryResult = await executeSandboxQuery(connectionId!, statements);
+              if (requestId !== requestIdRef.current) {
+                throw new Error("This AI request was replaced by a newer one.");
+              }
+
+              return summarizeAgentQueryObservation(queryResult);
+            }
+
+            return "Tool error: finish does not execute a tool observation.";
+          } catch (errorValue) {
+            if (errorValue instanceof Error && errorValue.message === "This AI request was replaced by a newer one.") {
+              throw errorValue;
+            }
+            return `Tool error: ${formatExecutionError(errorValue)}`;
+          }
+        };
+
+        const recoverAgentFinishAction = async (reason: string): Promise<AgentToolAction> => {
+          const allowedTables = agentPromptTableNames.length > 0 ? agentPromptTableNames : availableSchemaTables;
+          const fallbackResponse = buildLocalAgentFallbackResponse({
+            language: appLanguage,
+            currentDatabase,
+            availableTableNames: allowedTables,
+            wantsVisualization,
+            steps: agentTraceSteps,
+          });
+
+          try {
+            const recoveredResponse = await askAI(
+              buildAgentFinalRecoveryPrompt({
+                userPrompt: normalizedPrompt,
+                assistIntent,
+                currentDatabase,
+                availableTableNames: allowedTables,
+                evidenceSummary: buildAgentEvidenceSummary(agentTraceSteps),
+                wantsVisualization,
+                reason,
+              }),
+              strictRecoveryContext || context,
+              "panel",
+              assistIntent === "overview" ? "overview" : "explain",
+              []
+            );
+            if (requestId !== requestIdRef.current) {
+              throw new Error("This AI request was replaced by a newer one.");
+            }
+
+            const trimmedResponse = recoveredResponse.trim() || fallbackResponse;
+            const recoveredSql = extractSqlFromResponse(trimmedResponse);
+
+            return {
+              action: "finish",
+              message: reason,
+              args: {
+                response: trimmedResponse,
+                ...(recoveredSql ? { sql: recoveredSql } : {}),
+              },
+            };
+          } catch (errorValue) {
+            if (errorValue instanceof Error && errorValue.message === "This AI request was replaced by a newer one.") {
+              throw errorValue;
+            }
+
+            return {
+              action: "finish",
+              message: reason,
+              args: {
+                response: fallbackResponse,
+              },
+            };
+          }
+        };
+
+        let finalAgentAction: AgentToolAction | null = null;
+
+        if (!workspaceToolsEnabled) {
+          finalAgentAction = await requestAgentAction(
+            buildControllerPrompt(
+              true,
+              joinAgentInstructions(
+                sharedAgentInstruction,
+                "Respond as a general-purpose assistant unless the user explicitly needs current workspace evidence."
+              )
+            ),
+            true
+          );
+        } else {
+          for (let stepIndex = 0; stepIndex < agentStepBudget; stepIndex += 1) {
+            const forceFinish = stepIndex === agentStepBudget - 1;
+            const action = await requestAgentAction(
+              buildControllerPrompt(forceFinish, sharedAgentInstruction),
+              stepIndex === 0
+            );
+
+            if (action.action === "finish") {
+              finalAgentAction = action;
+              break;
+            }
+
+            const observation = await runAgentTool(action);
+            agentTraceSteps.push({
+              step: agentTraceSteps.length + 1,
+              action: action.action,
+              message: action.message || "No message provided.",
+              observation,
+            });
+          }
+
+          if (!finalAgentAction) {
+            finalAgentAction = await requestAgentAction(
+              buildControllerPrompt(
+                true,
+                joinAgentInstructions(
+                  sharedAgentInstruction,
+                  "You have reached the tool budget. Finish with the best grounded answer you can."
+                )
+              ),
+              false
+            );
+          }
+        }
+
+        if (finalAgentAction.action !== "finish") {
+          finalAgentAction = await recoverAgentFinishAction(
+            "The agent exhausted its tool budget without returning a final answer."
+          );
+        }
+
+        const finalArgs = finalAgentAction.args || {};
+        let finalSql = typeof finalArgs.sql === "string" ? finalArgs.sql.trim() : "";
+        if (finalSql) {
+          finalSql = extractSqlFromResponse(finalSql) || finalSql;
+        }
+
+        if (finalSql && availableSchemaTables.length > 0 && sqlResponseConflictsWithSchema(finalSql, availableSchemaTables)) {
+          agentTraceSteps.push({
+            step: agentTraceSteps.length + 1,
+            action: "finish",
+            message: finalAgentAction.message || "Final answer rejected.",
+            observation: "Tool error: The proposed final SQL referenced tables outside the current workspace schema.",
+          });
+
+          finalAgentAction = await requestAgentAction(
+            buildControllerPrompt(
+              true,
+              joinAgentInstructions(
+                sharedAgentInstruction,
+                "Your previous finish action referenced tables outside the current schema. Return a corrected finish action now."
+              )
+            ),
+            false
+          );
+
+          if (finalAgentAction.action !== "finish") {
+            finalAgentAction = await recoverAgentFinishAction(
+              "The agent failed to repair its final answer after SQL validation."
+            );
+          }
+
+          const repairedArgs = finalAgentAction.args || {};
+          finalSql = typeof repairedArgs.sql === "string" ? repairedArgs.sql.trim() : "";
+          if (finalSql) {
+            finalSql = extractSqlFromResponse(finalSql) || finalSql;
+          }
+        }
+
+        const resolvedFinalArgs = finalAgentAction.args || {};
+        const finalResponseBody =
+          typeof resolvedFinalArgs.response === "string" && resolvedFinalArgs.response.trim()
+            ? resolvedFinalArgs.response.trim()
+            : finalAgentAction.message?.trim()
+              ? finalAgentAction.message.trim()
+              : finalSql
+                ? "The agent prepared grounded SQL for your review."
+                : "The agent finished its inspection but did not produce a usable final answer.";
+
+        const finalDetail = [finalResponseBody, buildAgentTraceMarkdown(agentTraceSteps)].filter(Boolean).join("\n\n---\n\n");
+        const hasValidSql = hasSqlStartKeyword(finalSql);
+
+        return {
+          prompt: normalizedPrompt,
+          rawResponse: finalDetail,
+          sql: hasValidSql ? finalSql : null,
+          risk: hasValidSql ? analyzeGeneratedSql(finalSql) : undefined,
+          intent: assistIntent,
+        };
       }
 
       let rawResponse = await askAI(aiPrompt, context, "panel", assistIntent, requestHistory);
       if (requestId !== requestIdRef.current) {
         throw new Error("This AI request was replaced by a newer one.");
       }
+      let recoveryPasses = 0;
+      const canRunRecoveryPass = () => !fastRemoteRecovery || recoveryPasses < MAX_REMOTE_RECOVERY_PASSES;
+      const runRecoveryPass = async (
+        repairPrompt: string,
+        repairContext: string,
+        repairIntent: AssistIntent,
+        repairHistory: AIConversationMessage[]
+      ) => {
+        recoveryPasses += 1;
+        rawResponse = await askAI(repairPrompt, repairContext, "panel", repairIntent, repairHistory);
+        if (requestId !== requestIdRef.current) {
+          throw new Error("This AI request was replaced by a newer one.");
+        }
+      };
 
       if (schemaContextEnabled && (assistIntent === "sql" || assistIntent === "optimize" || assistIntent === "fix-error")) {
         let extractedSql = extractSqlFromResponse(rawResponse);
         let hasSqlConflict = extractedSql ? sqlResponseConflictsWithSchema(extractedSql, availableSchemaTables) : false;
 
-        if (!extractedSql || hasSqlConflict) {
-          rawResponse = await askAI(
+        if ((!extractedSql || hasSqlConflict) && canRunRecoveryPass()) {
+          await runRecoveryPass(
             buildSqlRegroundingPrompt(
               currentDatabase,
               availableSchemaTables,
@@ -1067,20 +2243,16 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               interactionMode
             ),
             strictRecoveryContext || context,
-            "panel",
             assistIntent,
             []
           );
-          if (requestId !== requestIdRef.current) {
-            throw new Error("This AI request was replaced by a newer one.");
-          }
 
           extractedSql = extractSqlFromResponse(rawResponse);
           hasSqlConflict = extractedSql ? sqlResponseConflictsWithSchema(extractedSql, availableSchemaTables) : false;
         }
 
-        if (extractedSql && hasSqlConflict) {
-          rawResponse = await askAI(
+        if (extractedSql && hasSqlConflict && canRunRecoveryPass()) {
+          await runRecoveryPass(
             [
               "Return SQL again using only the verified current schema.",
               `Current database: ${currentDatabase || "Default"}.`,
@@ -1091,18 +2263,19 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               normalizedPrompt,
             ].join("\n"),
             strictRecoveryContext || context,
-            "panel",
             assistIntent,
             []
           );
-          if (requestId !== requestIdRef.current) {
-            throw new Error("This AI request was replaced by a newer one.");
-          }
         }
       }
 
-      if ((assistIntent === "explain" || assistIntent === "overview") && isLikelySqlOnlyResponse(rawResponse)) {
-        rawResponse = await askAI(
+      if (
+        (assistIntent === "explain" || assistIntent === "overview") &&
+        isLikelySqlOnlyResponse(rawResponse) &&
+        !wantsVisualization &&
+        canRunRecoveryPass()
+      ) {
+        await runRecoveryPass(
           [
             assistIntent === "overview"
               ? "The previous reply returned SQL, but the user is asking for a database overview."
@@ -1115,24 +2288,21 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             normalizedPrompt,
           ].join("\n"),
           context,
-          "panel",
           assistIntent,
           requestHistory
         );
-        if (requestId !== requestIdRef.current) {
-          throw new Error("This AI request was replaced by a newer one.");
-        }
       }
 
       if (
         schemaContextEnabled &&
         assistIntent !== "sql" && assistIntent !== "optimize" && assistIntent !== "fix-error" &&
+        canRunRecoveryPass() &&
         (
           responseConflictsWithSchema(rawResponse, availableSchemaTables) ||
           (assistIntent === "overview" && isOverviewContextMissingResponse(rawResponse))
         )
       ) {
-        rawResponse = await askAI(
+        await runRecoveryPass(
           [
             "Your previous answer was not grounded in the current database context.",
             `You must stay strictly within these tables: ${availableSchemaTables.join(", ")}.`,
@@ -1150,17 +2320,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             normalizedPrompt,
           ].join("\n"),
           context,
-          "panel",
           assistIntent,
           requestHistory
         );
-        if (requestId !== requestIdRef.current) {
-          throw new Error("This AI request was replaced by a newer one.");
-        }
       }
 
-      if (schemaContextEnabled && assistIntent === "overview" && isOverviewContextMissingResponse(rawResponse)) {
-        rawResponse = await askAI(
+      if (schemaContextEnabled && assistIntent === "overview" && isOverviewContextMissingResponse(rawResponse) && canRunRecoveryPass()) {
+        await runRecoveryPass(
           [
             "The current database context is already attached below and must be used.",
             `The exact current tables are: ${availableSchemaTables.join(", ")}.`,
@@ -1175,18 +2341,21 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             normalizedPrompt,
           ].join("\n"),
           context,
-          "panel",
           assistIntent,
           []
         );
-        if (requestId !== requestIdRef.current) {
-          throw new Error("This AI request was replaced by a newer one.");
-        }
       }
 
       let hasSchemaConflict = responseConflictsWithSchema(rawResponse, availableSchemaTables);
-      if (schemaContextEnabled && assistIntent !== "sql" && assistIntent !== "optimize" && assistIntent !== "fix-error" && hasSchemaConflict) {
-        rawResponse = await askAI(
+      if (
+        schemaContextEnabled &&
+        assistIntent !== "sql" &&
+        assistIntent !== "optimize" &&
+        assistIntent !== "fix-error" &&
+        hasSchemaConflict &&
+        canRunRecoveryPass()
+      ) {
+        await runRecoveryPass(
           buildSchemaRegroundingPrompt(
             appLanguage,
             currentDatabase,
@@ -1195,18 +2364,14 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             normalizedPrompt
           ),
           strictRecoveryContext || context,
-          "panel",
           assistIntent,
           []
         );
-        if (requestId !== requestIdRef.current) {
-          throw new Error("This AI request was replaced by a newer one.");
-        }
         hasSchemaConflict = responseConflictsWithSchema(rawResponse, availableSchemaTables);
       }
 
-      if (schemaContextEnabled && assistIntent === "overview" && hasSchemaConflict) {
-        rawResponse = await askAI(
+      if (schemaContextEnabled && assistIntent === "overview" && hasSchemaConflict && canRunRecoveryPass()) {
+        await runRecoveryPass(
           [
             "Return a fresh database overview from the verified schema only.",
             `Current database: ${currentDatabase || "Default"}.`,
@@ -1222,31 +2387,33 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             normalizedPrompt,
           ].join("\n"),
           strictRecoveryContext || context,
-          "panel",
           assistIntent,
           []
         );
-        if (requestId !== requestIdRef.current) {
-          throw new Error("This AI request was replaced by a newer one.");
-        }
       }
 
       const finalResponse =
-        (assistIntent === "explain" || assistIntent === "overview") && isLikelySqlOnlyResponse(rawResponse)
+        (assistIntent === "explain" || assistIntent === "overview") && isLikelySqlOnlyResponse(rawResponse) && !wantsVisualization
           ? assistIntent === "overview"
             ? "The current model kept returning SQL instead of a database overview. Try again with more schema context or switch to a stronger model."
             : "The current model kept returning SQL instead of an explanation. Try again with more context or switch to a stronger model for schema explanations."
           : rawResponse;
 
-      const shouldExtractSql = assistIntent === "sql" || assistIntent === "optimize" || assistIntent === "fix-error";
-      const extractedSql = shouldExtractSql ? extractSqlFromResponse(finalResponse) : "";
-      const normalizedSql = extractedSql.toUpperCase().trim();
-      const hasValidSql = normalizedSql.length > 0 && SQL_START_KEYWORDS.some((statement) => normalizedSql.startsWith(statement));
+      const extractedSql = extractSqlFromResponse(finalResponse);
+      const hasValidSql = hasSqlStartKeyword(extractedSql);
+      const shouldAttachSql =
+        hasValidSql &&
+        (
+          assistIntent === "sql" ||
+          assistIntent === "optimize" ||
+          assistIntent === "fix-error" ||
+          wantsVisualization
+        );
 
       return {
         prompt: normalizedPrompt,
         rawResponse: finalResponse,
-        sql: hasValidSql ? extractedSql : null,
+        sql: shouldAttachSql ? extractedSql : null,
         risk: hasValidSql ? analyzeGeneratedSql(extractedSql) : undefined,
         intent: assistIntent,
       };
@@ -1259,7 +2426,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         setIsGenerating(false);
       }
     }
-  }, [activeProvider, askAI, connectionId, currentDatabase, fetchTables, getTableColumnsPreview, getTableStructure]);
+  }, [activeProvider, aiConfigs, askAI, connectionId, currentDatabase, fetchTables, getTableColumnsPreview, getTableStructure, isLocalProvider, saveAIConfigs]);
 
   const copyText = useCallback(async (text: string) => {
     await navigator.clipboard.writeText(text);

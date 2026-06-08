@@ -21,12 +21,15 @@ jobs:
           - platform: "macos-latest"
             args: ""
             target: "macos"
+            cxxflags: ""
           - platform: "ubuntu-22.04"
             args: ""
             target: "linux"
+            cxxflags: ""
           - platform: "windows-latest"
             args: ""
             target: "windows"
+            cxxflags: "/std:c++17"
 
     runs-on: ${{ matrix.platform }}
 
@@ -60,6 +63,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS: use "-" to skip signing when no certificate configured
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          CXXFLAGS: ${{ matrix.cxxflags }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "TableR ${{ github.ref_name }}"

@@ -18,7 +18,7 @@
   border: 1px solid transparent;
   border-radius: 6px;
   cursor: pointer;
-  color: var(--text-secondary);
+  color: #707071;
   font-size: 0.75rem;
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -27,9 +27,9 @@
 }
 
 .startup-connection-group-header:hover {
-  background: rgba(16, 185, 129, 0.06);
-  border-color: rgba(16, 185, 129, 0.1);
-  color: var(--fintech-green);
+  background: #F3F4F6;
+  border-color: #EEEEEF;
+  color: #C37D0D;
 }
 
 .startup-connection-group-chevron {
@@ -38,7 +38,7 @@
   justify-content: center;
   width: 14px;
   height: 14px;
-  color: var(--text-muted);
+  color: #707071;
   transition: transform 0.15s;
   flex-shrink: 0;
 }
@@ -64,9 +64,9 @@
 
 .startup-connection-group-count {
   font-size: 0.65rem;
-  color: var(--fintech-green);
+  color: #C37D0D;
   padding: 1px 5px;
-  background: rgba(16, 185, 129, 0.08);
+  background: rgba(195, 125, 13, 0.08);
   border-radius: 10px;
   flex-shrink: 0;
 }
@@ -74,12 +74,12 @@
 .startup-connection-group-rename-input {
   flex: 1;
   min-width: 0;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid var(--accent);
-  border-radius: 4px;
+  background: #FFFFFF;
+  border: 1px solid #EEEEEF;
+  border-radius: 0px;
   padding: 2px 6px;
   font-size: 0.75rem;
-  color: var(--text-primary);
+  color: #111827;
   outline: none;
 }
 
@@ -100,7 +100,7 @@
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  color: var(--text-muted);
+  color: #707071;
   opacity: 0;
   transition: opacity 0.15s, background 0.15s;
 }
@@ -110,8 +110,8 @@
 }
 
 .startup-connection-group-menu-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-primary);
+  background: #F3F4F6;
+  color: #111827;
 }
 
 .startup-connection-group-menu {
@@ -120,11 +120,11 @@
   right: 0;
   z-index: 50;
   min-width: 160px;
-  background: rgba(10, 14, 23, 0.98);
-  border: 1px solid rgba(16, 185, 129, 0.12);
-  border-radius: 8px;
+  background: #FFFFFF;
+  border: 1px solid #EEEEEF;
+  border-radius: 12px;
   padding: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5), 0 0 20px rgba(16, 185, 129, 0.05);
+  box-shadow: rgba(159,159,159,0.3) 0px 0px 0px 1px, rgba(0,0,0,0.05) 0px 1px 2px 0px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -138,20 +138,20 @@
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.6);
+  color: #3F3F3F;
   font-size: 0.78rem;
   text-align: left;
   transition: background 0.1s, color 0.1s;
 }
 
 .startup-connection-group-menu-item:hover {
-  background: rgba(16, 185, 129, 0.08);
-  color: var(--fintech-green);
+  background: #F3F4F6;
+  color: #111827;
 }
 
 .startup-connection-group-menu-item.danger:hover {
-  background: rgba(231, 76, 60, 0.15);
-  color: #e74c3c;
+  background: rgba(230, 72, 61, 0.08);
+  color: #E6483D;
 }
 
 /* Theme preset styling */
@@ -358,4 +358,119 @@
 
 .startup-connection-group-color-swatch.active {
   border-color: white;
+}
+
+/* ─── MiniMax Design System Overrides ────────────────────────────────────── */
+
+/* Sidebar navigation buttons/items active states */
+.explorer-db-button.active,
+.connection-card.active,
+.sidebar-rail-btn.active,
+.workspace-sidebar-rail-btn.active {
+  border-left: 3px solid #C37D0D !important;
+  background: #F3F4F6 !important;
+  color: #111827 !important;
+}
+
+/* Target specific text classes for active navigation items */
+.explorer-db-button.active span,
+.connection-card.active .connection-card-title,
+.connection-card.active .connection-card-state,
+.connection-card.active .connection-meta-inline-value,
+.connection-card.active .connection-meta-inline-label,
+.connection-card.active .connection-open-btn.full span,
+.sidebar-rail-btn.active span,
+.workspace-sidebar-rail-btn.active span {
+  color: #111827 !important;
+}
+
+/* Target icons inside active items */
+.explorer-db-button.active svg,
+.connection-card.active svg:not(.connection-card-status-dot),
+.sidebar-rail-btn.active svg,
+.workspace-sidebar-rail-btn.active svg {
+  color: #111827 !important;
+}
+
+/* Connection Form Inputs and Elements */
+.connection-form-body input[type="text"],
+.connection-form-body input[type="number"],
+.connection-form-body input[type="password"],
+.connection-form-body select,
+.connection-form-body textarea,
+.connection-form-body .input {
+  background: #FFFFFF !important;
+  border: 1px solid #EEEEEF !important;
+  border-radius: 0px !important;
+  color: #3F3F3F !important;
+  font-family: DM Sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+.connection-form-body input[type="text"]:not(textarea),
+.connection-form-body input[type="number"]:not(textarea),
+.connection-form-body input[type="password"]:not(textarea),
+.connection-form-body select:not(textarea),
+.connection-form-body .input:not(textarea) {
+  height: 40px !important;
+}
+
+/* Focus states */
+.connection-form-body input[type="text"]:focus,
+.connection-form-body input[type="number"]:focus,
+.connection-form-body input[type="password"]:focus,
+.connection-form-body select:focus,
+.connection-form-body textarea:focus,
+.connection-form-body .input:focus {
+  border: 1px solid #707071 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: #FFFFFF !important;
+}
+
+/* Placeholder styling */
+.connection-form-body input::placeholder,
+.connection-form-body textarea::placeholder,
+.connection-form-body .input::placeholder {
+  color: #9F9F9F !important;
+}
+
+/* Connection Form Buttons */
+.connection-form-footer button,
+.connection-form-footer .btn {
+  font-family: DM Sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+.connection-form-footer .btn-primary,
+.connection-form-footer-actions .btn-primary {
+  background: #111827 !important;
+  color: #FFFFFF !important;
+  border: 1px solid #111827 !important;
+  border-radius: 6px !important;
+  font-weight: 500 !important;
+  transition: background 0.15s, border-color 0.15s !important;
+}
+
+.connection-form-footer .btn-primary:hover:not(:disabled),
+.connection-form-footer-actions .btn-primary:hover:not(:disabled) {
+  background: #1F2937 !important;
+  border-color: #1F2937 !important;
+}
+
+.connection-form-footer .btn-secondary,
+.connection-form-footer-actions .btn-secondary,
+.connection-form-footer-left .btn-secondary {
+  background: #FFFFFF !important;
+  color: #111827 !important;
+  border: 1px solid #EEEEEF !important;
+  border-radius: 6px !important;
+  font-weight: 500 !important;
+  transition: background 0.15s, border-color 0.15s !important;
+}
+
+.connection-form-footer .btn-secondary:hover:not(:disabled),
+.connection-form-footer-actions .btn-secondary:hover:not(:disabled),
+.connection-form-footer-left .btn-secondary:hover:not(:disabled) {
+  background: #F9FAFB !important;
+  border-color: #EEEEEF !important;
+  color: #111827 !important;
 }

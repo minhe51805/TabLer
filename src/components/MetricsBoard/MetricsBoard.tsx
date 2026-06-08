@@ -537,6 +537,7 @@ export function MetricsBoard({
               language === "vi"
                 ? `Dashboard: ${activeBoard.name}`
                 : `Dashboard: ${activeBoard.name}`,
+            boardId: activeBoard.id,
           },
         },
       }),

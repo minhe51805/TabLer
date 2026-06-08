@@ -1,23 +1,25 @@
 /* ─── Fintech Glassmorphism Design System ──────────────────────────────── */
 :root {
-  /* Fintech/Crypto accent colors - Deep space dark theme */
-  --fintech-green: #00D4AA;
-  --fintech-green-glow: rgba(0, 212, 170, 0.3);
-  --fintech-green-dim: rgba(0, 212, 170, 0.08);
-  --fintech-blue: #6366F1;
-  --fintech-blue-glow: rgba(99, 102, 241, 0.25);
-  --fintech-cyan: #22D3EE;
-  --fintech-cyan-glow: rgba(34, 211, 238, 0.2);
-  --fintech-lime: #A3E635;
-  --fintech-lime-glow: rgba(163, 230, 53, 0.2);
-  --fintech-purple: #A78BFA;
-  --fintech-purple-glow: rgba(167, 139, 250, 0.2);
-  --fintech-orange: #F97316;
-  --fintech-bg-deep: #030712;
-  --fintech-bg-card: rgba(255, 255, 255, 0.03);
-  --fintech-border: rgba(255, 255, 255, 0.06);
-  --fintech-border-glow: rgba(0, 212, 170, 0.4);
-  --fintech-glow-ambient: rgba(0, 212, 170, 0.06);
+  /* MiniMax Design System - fintech color variables mapping */
+  --fintech-green: #16A34A;
+  --fintech-green-glow: rgba(22, 163, 74, 0.3);
+  --fintech-green-dim: rgba(22, 163, 74, 0.08);
+  --fintech-blue: #C37D0D;
+  --fintech-blue-glow: rgba(195, 125, 13, 0.25);
+  --fintech-cyan: #C37D0D;
+  --fintech-cyan-glow: rgba(195, 125, 13, 0.2);
+  --fintech-lime: #FFA500;
+  --fintech-lime-glow: rgba(255, 165, 0, 0.2);
+  --fintech-purple: #44403C;
+  --fintech-purple-glow: rgba(68, 64, 60, 0.2);
+  --fintech-orange: #E6483D;
+  --fintech-amber: #C37D0D;
+  --fintech-amber-glow: rgba(195, 125, 13, 0.3);
+  --fintech-bg-deep: #111827;
+  --fintech-bg-card: #FFFFFF;
+  --fintech-border: #EEEEEF;
+  --fintech-border-glow: rgba(75, 85, 99, 0.4);
+  --fintech-glow-ambient: rgba(195, 125, 13, 0.06);
 }
 
 /* Grid pattern overlay */
@@ -1590,8 +1592,9 @@
   max-height: 160px;
   overflow: auto;
   color: #cbd7ea;
-  font-size: 11px;
-  line-height: 1.55;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
   white-space: pre-wrap;
   word-break: break-word;
   font-family: "IBM Plex Mono", "Fira Code", monospace;

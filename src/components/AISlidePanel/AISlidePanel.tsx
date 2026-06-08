@@ -1,6 +1,7 @@
 import {
   Check,
   ChevronDown,
+  Database,
   History,
   Loader2,
   MessageSquare,
@@ -15,13 +16,13 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import { useAppStore } from "../../stores/appStore";
-import type { AIConversationMessage, AIProviderConfig, DatabaseType } from "../../types";
+import type { AIConversationMessage, AIProviderConfig, DatabaseType, MetricsWidgetType } from "../../types";
 import { invokeMutation } from "../../utils/tauri-utils";
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 import { AIBubbleDetailModal } from "./AIBubbleDetailModal";
-import { useAISlidePanel } from "./hooks/use-ai-slide-panel";
+import { AI_REQUEST_REPLACED_MESSAGE, isSupersededAIRequestError, useAISlidePanel } from "./hooks/use-ai-slide-panel";
 import {
   aiModeAllowsInsert,
   aiModeAllowsRun,
@@ -38,6 +39,7 @@ interface Props {
   initialAttachment?: {
     text: string;
     source: string;
+    boardId?: string;
   };
   initialAttachmentNonce?: number;
   onClose: () => void;
@@ -46,6 +48,7 @@ interface Props {
 interface OpenMetricsBoardResult {
   success: boolean;
   boardId?: string;
+  error?: string;
   didChange: boolean;
   addedCount: number;
   addedTitles: string[];
@@ -81,8 +84,16 @@ interface PersistedAIWorkspaceState {
 interface SelectionContextState {
   text: string;
   source: string;
+  boardId?: string;
   rect: { x: number; y: number; width: number; height: number } | null;
   updatedAt: number;
+}
+
+interface VisualizationReadConsentState {
+  title: string;
+  message: string;
+  confirmText: string;
+  cancelText: string;
 }
 
 function createId() {
@@ -449,6 +460,307 @@ function buildPromptWithSelection(prompt: string, selection: SelectionContextSta
   ].join("\n");
 }
 
+function hasMetricsDashboardAttachmentContext(prompt: string) {
+  return prompt.includes("Metrics dashboard snapshot:");
+}
+
+function isDashboardSelectionSource(source?: string | null) {
+  const normalizedSource = source?.trim().toLowerCase() || "";
+  return normalizedSource.startsWith("dashboard:");
+}
+
+type DashboardSnapshotWidget = {
+  type: MetricsWidgetType;
+  title: string;
+};
+
+type DashboardWidgetEditInstruction = {
+  boardId?: string;
+  targetTitle: string;
+  nextType: MetricsWidgetType;
+  nextQuery?: string;
+  nextTitle?: string;
+};
+
+function extractDashboardSnapshotWidgets(snapshot: string): DashboardSnapshotWidget[] {
+  return snapshot
+    .split(/\r?\n/)
+    .map((line) => line.match(/^\s*\d+\.\s+\[(table|scoreboard|bar|line|pie)\]\s+(.+?)\s*$/i))
+    .filter((match): match is RegExpMatchArray => !!match)
+    .map((match) => ({
+      type: match[1].toLowerCase() as MetricsWidgetType,
+      title: match[2].trim(),
+    }));
+}
+
+function extractDashboardWidgetTitleFromPrompt(prompt: string) {
+  const quotedMatch = prompt.match(/["“”']([^"“”']{2,120})["“”']/);
+  if (quotedMatch?.[1]?.trim()) {
+    return quotedMatch[1].trim();
+  }
+
+  const normalizedPrompt = prompt.trim();
+  const chartLeadMatch = normalizedPrompt.match(/\bchart\s+([a-z0-9 _-]{2,120})/i);
+  if (chartLeadMatch?.[1]) {
+    return chartLeadMatch[1]
+      .replace(/\b(no|not|khong|ko)\b.*$/i, "")
+      .replace(/\b(doi|change|switch)\b.*$/i, "")
+      .trim();
+  }
+
+  const widgetLeadMatch = normalizedPrompt.match(/\bwidget\s+([a-z0-9 _-]{2,120})/i);
+  if (widgetLeadMatch?.[1]) {
+    return widgetLeadMatch[1]
+      .replace(/\b(no|not|khong|ko)\b.*$/i, "")
+      .replace(/\b(doi|change|switch)\b.*$/i, "")
+      .trim();
+  }
+
+  return "";
+}
+
+function inferWidgetTypeFromPrompt(prompt: string): MetricsWidgetType | null {
+  const normalized = normalizeVisualizationText(prompt);
+  if (!normalized) return null;
+
+  if (normalized.includes("scoreboard") || normalized.includes("kpi")) return "scoreboard";
+  if (normalized.includes("line")) return "line";
+  if (normalized.includes("pie")) return "pie";
+  if (normalized.includes("bar") || normalized.includes("cot")) return "bar";
+  if (normalized.includes("table") || normalized.includes("bang")) return "table";
+  if (
+    normalized.includes("khong co value") ||
+    normalized.includes("khong co gia tri") ||
+    normalized.includes("empty") ||
+    normalized.includes("rong") ||
+    normalized.includes("chart khac") ||
+    normalized.includes("doi qua chart khac") ||
+    normalized.includes("change chart")
+  ) {
+    return "table";
+  }
+  return null;
+}
+
+function extractDashboardWidgetTitleFromConversationContext(conversationText: string) {
+  if (!conversationText.trim()) return "";
+
+  const quotedWidgetMatch = conversationText.match(/widget\s+["“”']([^"“”']{2,120})["“”']/i);
+  if (quotedWidgetMatch?.[1]?.trim()) {
+    return quotedWidgetMatch[1].trim();
+  }
+
+  const recommendationMatch = conversationText.match(/recommended change for widget(?:\s+\d+)?\s*:\s*([^\n]+)/i);
+  if (recommendationMatch?.[1]?.trim()) {
+    return recommendationMatch[1].trim();
+  }
+
+  const vietnameseMatch = conversationText.match(/doi chart cho widget\s+["“”']([^"“”']{2,120})["“”']/i);
+  if (vietnameseMatch?.[1]?.trim()) {
+    return vietnameseMatch[1].trim();
+  }
+
+  return "";
+}
+
+function extractDashboardWidgetTargetHint(prompt: string, conversationContext = "") {
+  const explicitPromptTitle = extractDashboardWidgetTitleFromPrompt(prompt);
+  if (explicitPromptTitle) {
+    return explicitPromptTitle;
+  }
+
+  const normalizedPrompt = normalizeVisualizationText(prompt);
+  const leadMatch = normalizedPrompt.match(
+    /\b(?:chart|widget)\s+(.+?)(?=\b(?:no|not|khong|ko|doi|change|switch|thanh|sang|goi y|suggestion|option|phuong an)\b|$)/i,
+  );
+  if (leadMatch?.[1]?.trim()) {
+    return leadMatch[1].trim();
+  }
+
+  return extractDashboardWidgetTitleFromConversationContext(conversationContext);
+}
+
+function isDashboardWidgetAdjustmentPrompt(prompt: string) {
+  const normalized = normalizeVisualizationText(prompt);
+  if (!normalized) return false;
+
+  return [
+    "doi chart",
+    "doi qua",
+    "chart khac",
+    "widget",
+    "khong co value",
+    "khong co gia tri",
+    "khong co du lieu",
+    "empty",
+    "rong",
+    "goi y 1",
+    "goi y 2",
+    "goi y 3",
+    "suggestion 1",
+    "suggestion 2",
+    "suggestion 3",
+    "option 1",
+    "option 2",
+    "option 3",
+    "phuong an 1",
+    "phuong an 2",
+    "phuong an 3",
+    "doi thanh",
+    "change this",
+    "switch this",
+    "fix chart",
+    "sua chart",
+  ].some((signal) => normalized.includes(signal));
+}
+
+function isDashboardAttachmentReferencePrompt(prompt: string) {
+  const normalized = normalizeVisualizationText(prompt);
+  if (!normalized) return false;
+
+  const dashboardSignals = [
+    "dashboard hien tai",
+    "board hien tai",
+    "chart o dashboard",
+    "chart ở dashboard",
+    "chart dashboard",
+    "day dashboard",
+    "dua cho ban",
+    "dang dua cho ban",
+    "xem dashboard nay",
+    "xem board nay",
+    "doc dashboard",
+    "review dashboard",
+    "this dashboard",
+    "current dashboard",
+    "current board",
+    "this board",
+    "attached dashboard",
+  ];
+
+  return dashboardSignals.some((signal) => normalized.includes(normalizeVisualizationText(signal)));
+}
+
+function inferWidgetTypeFromPromptWithContext(prompt: string, conversationContext = ""): MetricsWidgetType | null {
+  const directType = inferWidgetTypeFromPrompt(prompt);
+  if (directType) {
+    return directType;
+  }
+
+  const normalizedPrompt = normalizeVisualizationText(prompt);
+  const normalizedConversation = normalizeVisualizationText(conversationContext);
+
+  if (!normalizedPrompt) return null;
+
+  if (/(?:goi y|suggestion|option|phuong an)\s*1/.test(normalizedPrompt)) {
+    if (normalizedConversation.includes("kpi") || normalizedConversation.includes("metric")) {
+      return "scoreboard";
+    }
+    if (normalizedConversation.includes("table")) {
+      return "table";
+    }
+  }
+
+  if (/(?:goi y|suggestion|option|phuong an)\s*2/.test(normalizedPrompt) && normalizedConversation.includes("table")) {
+    return "table";
+  }
+
+  return null;
+}
+
+function buildAverageRatingTableQuery() {
+  return [
+    "SELECT",
+    `  COALESCE(NULLIF(TRIM(p."name"::text), ''), 'Product #' || COALESCE(p."id"::text, 'n/a')) AS product,`,
+    `  COUNT(r."product_id")::bigint AS review_count,`,
+    `  COALESCE(ROUND(AVG(r."rating"::numeric), 2), 0) AS avg_rating`,
+    `FROM "public"."products" p`,
+    `LEFT JOIN "public"."reviews" r ON p."id"::text = r."product_id"::text`,
+    `WHERE p."id" IS NOT NULL`,
+    "GROUP BY 1",
+    "ORDER BY avg_rating DESC, product ASC",
+    "LIMIT 10;",
+  ].join("\n");
+}
+
+function buildOAuthClientsScoreboardQuery() {
+  return [
+    "SELECT",
+    "  COUNT(*)::bigint AS total_clients,",
+    "  'oauth clients' AS label",
+    'FROM "auth"."oauth_clients";',
+  ].join("\n");
+}
+
+function summarizeAttachedDashboardSelection(selection: SelectionContextState) {
+  const boardNameMatch = selection.text.match(/^Board:\s+(.+)$/mi);
+  const widgetCountMatch = selection.text.match(/^Widget count:\s+(\d+)$/mi);
+  const hiddenWidgetCountMatch = selection.text.match(/\.\.\.\s+(\d+)\s+more widget\(s\)/i);
+  const widgets = extractDashboardSnapshotWidgets(selection.text);
+
+  return {
+    boardName: boardNameMatch?.[1]?.trim() || selection.source.replace(/^dashboard:\s*/i, "").trim() || "Current dashboard",
+    widgetCount: Number(widgetCountMatch?.[1] || widgets.length || 0),
+    hiddenWidgetCount: Number(hiddenWidgetCountMatch?.[1] || 0),
+    widgetTitles: widgets.map((widget) => widget.title),
+  };
+}
+
+function resolveDashboardWidgetEditInstruction(
+  prompt: string,
+  selection: SelectionContextState | null,
+  conversationContext = "",
+): DashboardWidgetEditInstruction | null {
+  if (!selection || !isDashboardSelectionSource(selection.source)) return null;
+
+  const normalizedPrompt = normalizeVisualizationText(prompt);
+  if (!normalizedPrompt) return null;
+
+  const nextType = inferWidgetTypeFromPromptWithContext(prompt, conversationContext);
+  if (!nextType) return null;
+
+  const widgets = extractDashboardSnapshotWidgets(selection.text);
+  const explicitTargetTitle = extractDashboardWidgetTargetHint(prompt, conversationContext);
+  const normalizedExplicitTargetTitle = normalizeVisualizationText(explicitTargetTitle);
+
+  const matchingWidget =
+    widgets.length === 0
+      ? null
+      : [...widgets]
+          .sort((left, right) => right.title.length - left.title.length)
+          .find((widget) => {
+            const normalizedWidgetTitle = normalizeVisualizationText(widget.title);
+            return (
+              normalizedPrompt.includes(normalizedWidgetTitle) ||
+              (!!normalizedExplicitTargetTitle && (
+                normalizedExplicitTargetTitle === normalizedWidgetTitle ||
+                normalizedExplicitTargetTitle.includes(normalizedWidgetTitle) ||
+                normalizedWidgetTitle.includes(normalizedExplicitTargetTitle)
+              ))
+            );
+          });
+
+  const resolvedTargetTitle = matchingWidget?.title || explicitTargetTitle;
+  if (!resolvedTargetTitle) return null;
+
+  const normalizedTitle = normalizeVisualizationText(resolvedTargetTitle);
+  const isAverageRatingWidget =
+    normalizedTitle === "average rating by product" || normalizedTitle === "reviews by product";
+  const isOAuthClientsWidget = normalizedTitle === "oauth clients";
+
+  return {
+    boardId: selection.boardId,
+    targetTitle: resolvedTargetTitle,
+    nextType,
+    nextQuery:
+      isAverageRatingWidget && nextType === "table"
+        ? buildAverageRatingTableQuery()
+        : isOAuthClientsWidget
+          ? buildOAuthClientsScoreboardQuery()
+          : undefined,
+  };
+}
+
 async function waitForUIPaint() {
   await new Promise<void>((resolve) => {
     if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
@@ -469,6 +781,9 @@ function isVisualizationPrompt(prompt: string) {
   return [
     "chart",
     "charts",
+    "visual",
+    "visual data",
+    "viz",
     "graph",
     "plot",
     "dashboard",
@@ -579,9 +894,64 @@ function isDashboardAugmentPrompt(prompt: string) {
     "day du",
     "lam day",
     "bo sung them",
+    "chi tiet",
+    "chi tiet hon",
+    "bao quat",
+    "bao quat hon",
+    "tung bang",
+    "moi bang",
+    "per table",
+    "detail visual",
+    "sua chart",
+    "refine dashboard",
   ];
 
   return augmentSignals.some((signal) => normalizedPrompt.includes(signal));
+}
+
+function isDashboardRebuildPrompt(prompt: string) {
+  const normalizedPrompt = normalizeVisualizationText(prompt);
+  if (!normalizedPrompt) return false;
+
+  const rebuildSignals = [
+    "doi lai",
+    "chua duoc",
+    "xem het",
+    "xem them",
+    "tong hop",
+    "tong quat",
+    "bao quat",
+    "bao quat hon",
+    "chi tiet",
+    "chi tiet hon",
+    "lam lai",
+    "sua lai",
+    "lam moi",
+    "chart thua",
+    "bieu do thua",
+    "qua nhieu chart",
+    "qua nhieu bieu do",
+    "xoa bot",
+    "bo chart thua",
+    "vo nghia",
+    "khong co bao cao",
+    "khong bao quat",
+    "khong co du lieu gi",
+    "khong co du lieu",
+    "table khac",
+    "tables khac",
+    "cac bang khac",
+    "other tables",
+    "all tables",
+    "look through",
+    "review all",
+    "rebuild dashboard",
+    "refresh dashboard",
+    "summarize all",
+    "cover more",
+  ];
+
+  return rebuildSignals.some((signal) => normalizedPrompt.includes(signal));
 }
 
 function buildWorkspaceOverviewChartSql(dbType?: DatabaseType) {
@@ -762,6 +1132,8 @@ export function AISlidePanel({
   const historySaveTimerRef = useRef<number | null>(null);
   const openSessionRef = useRef(0);
   const isOpenRef = useRef(isOpen);
+  const visualizationConsentResolverRef = useRef<((value: boolean) => void) | null>(null);
+  const visualizationApprovalScopeRef = useRef<string | null>(null);
   const currentWorkspaceKey = useMemo(
     () => buildAIWorkspaceKey(connectionId, currentDatabase),
     [connectionId, currentDatabase]
@@ -792,6 +1164,8 @@ export function AISlidePanel({
   const [selectionContext, setSelectionContext] = useState<SelectionContextState | null>(null);
   const [attachedSelection, setAttachedSelection] = useState<SelectionContextState | null>(null);
   const [deleteThreadPending, setDeleteThreadPending] = useState<string | null>(null);
+  const [visualizationConsentPending, setVisualizationConsentPending] = useState<VisualizationReadConsentState | null>(null);
+  const [isSessionDataReadEnabled, setIsSessionDataReadEnabled] = useState(false);
 
   const detailBubble = useMemo(
     () => bubbles.find((bubble) => bubble.id === detailBubbleId) ?? null,
@@ -841,6 +1215,21 @@ export function AISlidePanel({
   const isLongformComposer = activeInteractionMode === "agent" || activeThreadBubbles.length >= 2;
   const hasConversation = conversationBubbles.length > 0;
   const latestConversationBubbleId = conversationBubbles[conversationBubbles.length - 1]?.id ?? null;
+  const latestConversationBubbleSnapshot = useMemo(() => {
+    const latestBubble = conversationBubbles[conversationBubbles.length - 1];
+    if (!latestBubble) return null;
+    return [
+      latestBubble.id,
+      latestBubble.status,
+      latestBubble.preview.length,
+      latestBubble.detail.length,
+      latestBubble.createdAt,
+    ].join(":");
+  }, [conversationBubbles]);
+  const latestReadyAssistantBubble = useMemo(
+    () => [...conversationBubbles].reverse().find((bubble) => bubble.kind === "assistant" && bubble.status === "ready") ?? null,
+    [conversationBubbles],
+  );
   const switchableProviders = useMemo(() => {
     const normalized = normalizeAIProviderConfigs(aiConfigs);
     return [...normalized].sort((left, right) => {
@@ -868,6 +1257,27 @@ export function AISlidePanel({
       ? aiCopy.composer.inspectHint
       : "";
 
+  const sessionDataReadButtonLabel = language === "vi"
+    ? (isSessionDataReadEnabled ? "Data: Bat" : "Data: Hoi")
+    : (isSessionDataReadEnabled ? "Data: On" : "Data: Ask");
+  const sessionDataReadButtonTitle = !connectionId
+    ? (
+      language === "vi"
+        ? "Hay ket noi database truoc khi bat quyen doc live data theo session."
+        : "Connect to a database before enabling session-wide live data reads."
+    )
+    : isSessionDataReadEnabled
+      ? (
+        language === "vi"
+          ? `Dang cho phep doc live data lien tuc trong session AI nay cho ${currentDatabase || "database hien tai"}. Bam de quay lai che do hoi quyen tung lan.`
+          : `Live data reads are allowed for this AI session on ${currentDatabase || "the current database"}. Click to go back to ask-per-request mode.`
+      )
+      : (
+        language === "vi"
+          ? `Dang o che do hoi quyen tung lan cho ${currentDatabase || "database hien tai"}. Bam de cho phep doc live data lien tuc trong session AI nay.`
+          : `The AI will ask before each live data read on ${currentDatabase || "the current database"}. Click to allow session-wide live data reads.`
+      );
+
   const persistHistoryState = useCallback(async (state: PersistedAIWorkspaceState) => {
     const prunedState = prunePersistedAIWorkspaceState(state);
     await invokeMutation<void>("save_ai_workspace_history", { state: prunedState });
@@ -886,6 +1296,74 @@ export function AISlidePanel({
       });
     });
   }, []);
+
+  const getCurrentVisualizationApprovalScope = useCallback(
+    () => `${openSessionRef.current}:${connectionId || "no-connection"}:${currentDatabase || "no-database"}`,
+    [connectionId, currentDatabase]
+  );
+
+  const resolveVisualizationConsent = useCallback((approved: boolean) => {
+    const resolver = visualizationConsentResolverRef.current;
+    visualizationConsentResolverRef.current = null;
+    setVisualizationConsentPending(null);
+    if (approved) {
+      visualizationApprovalScopeRef.current = getCurrentVisualizationApprovalScope();
+      setIsSessionDataReadEnabled(true);
+    } else if (visualizationApprovalScopeRef.current === getCurrentVisualizationApprovalScope()) {
+      visualizationApprovalScopeRef.current = null;
+      setIsSessionDataReadEnabled(false);
+    }
+    resolver?.(approved);
+  }, [getCurrentVisualizationApprovalScope]);
+
+  const requestVisualizationReadConsent = useCallback(async (promptText: string) => {
+    if (!connectionId || !isVisualizationPrompt(promptText)) {
+      return true;
+    }
+
+    if (visualizationApprovalScopeRef.current === getCurrentVisualizationApprovalScope()) {
+      return true;
+    }
+
+    if (visualizationConsentResolverRef.current) {
+      visualizationConsentResolverRef.current(false);
+      visualizationConsentResolverRef.current = null;
+    }
+
+    const isVietnamese = prefersVietnameseSystemReply(promptText, language);
+    const databaseLabel = currentDatabase || "current database";
+
+    return new Promise<boolean>((resolve) => {
+      visualizationConsentResolverRef.current = resolve;
+      setVisualizationConsentPending({
+        title: isVietnamese ? "Cap quyen doc data de ve bieu do?" : "Allow AI to read data for charts?",
+        message: isVietnamese
+          ? `Model hien da co schema capsule de hieu cau truc DB. Buoc tiep theo can doc du lieu chi-doc trong ${databaseLabel} de tao chart/dashboard. TableR se chi cho phep doc du lieu trong session AI hien tai. Ban co muon tiep tuc khong?`
+          : `The model already has a schema capsule for structure. The next step needs read-only access to live data in ${databaseLabel} to build charts or dashboards. TableR will scope this to the current AI session only. Continue?`,
+        confirmText: isVietnamese ? "Cho phep doc data" : "Allow data read",
+        cancelText: isVietnamese ? "Khong cho phep" : "Deny",
+      });
+    });
+  }, [connectionId, currentDatabase, getCurrentVisualizationApprovalScope, language]);
+
+  const setSessionDataReadEnabled = useCallback((enabled: boolean) => {
+    if (enabled) {
+      visualizationApprovalScopeRef.current = getCurrentVisualizationApprovalScope();
+      setIsSessionDataReadEnabled(true);
+      if (visualizationConsentResolverRef.current) {
+        resolveVisualizationConsent(true);
+      }
+      return;
+    }
+
+    if (visualizationConsentResolverRef.current) {
+      visualizationConsentResolverRef.current(false);
+      visualizationConsentResolverRef.current = null;
+    }
+    visualizationApprovalScopeRef.current = null;
+    setVisualizationConsentPending(null);
+    setIsSessionDataReadEnabled(false);
+  }, [getCurrentVisualizationApprovalScope, resolveVisualizationConsent]);
 
   useEffect(() => {
     if (historyHydrated || !isOpen) return;
@@ -950,7 +1428,16 @@ export function AISlidePanel({
   useEffect(() => {
     if (!isOpen || !historyHydrated || !hasConversation) return;
     scrollChatToLatest();
-  }, [currentThread?.id, hasConversation, historyHydrated, isOpen, latestConversationBubbleId, scrollChatToLatest]);
+  }, [
+    currentThread?.id,
+    hasConversation,
+    historyHydrated,
+    isGenerating,
+    isOpen,
+    latestConversationBubbleId,
+    latestConversationBubbleSnapshot,
+    scrollChatToLatest,
+  ]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -962,6 +1449,15 @@ export function AISlidePanel({
     isOpenRef.current = isOpen;
     if (isOpen) {
       openSessionRef.current += 1;
+      visualizationApprovalScopeRef.current = null;
+      setIsSessionDataReadEnabled(false);
+    } else {
+      if (visualizationConsentResolverRef.current) {
+        visualizationConsentResolverRef.current(false);
+        visualizationConsentResolverRef.current = null;
+      }
+      setVisualizationConsentPending(null);
+      setIsSessionDataReadEnabled(false);
     }
   }, [isOpen]);
 
@@ -1083,6 +1579,8 @@ export function AISlidePanel({
     setDetailBubbleId(null);
     setIsInspectMode(false);
     setPromptDraft("");
+    visualizationApprovalScopeRef.current = null;
+    setIsSessionDataReadEnabled(false);
     setError(null);
   }, [currentWorkspaceKey, setError]);
 
@@ -1102,6 +1600,7 @@ export function AISlidePanel({
     setAttachedSelection({
       text: initialAttachment.text.trim(),
       source: initialAttachment.source?.trim() || "Workspace attachment",
+      boardId: initialAttachment.boardId,
       rect: null,
       updatedAt: Date.now(),
     });
@@ -1358,9 +1857,13 @@ export function AISlidePanel({
     options?: {
       title?: string;
       template?: "database-overview";
-      mode?: "create" | "augment";
+      mode?: "create" | "augment" | "rebuild" | "edit";
       boardId?: string;
       focusWorkspace?: boolean;
+      editTargetTitle?: string;
+      editTargetType?: MetricsWidgetType;
+      editQuery?: string;
+      editTitle?: string;
     }
   ) => {
     if (!connectionId) {
@@ -1385,6 +1888,9 @@ export function AISlidePanel({
         window.removeEventListener("open-ai-metrics-board-complete", handleComplete);
         resolve({
           success: false,
+          error: language === "vi"
+            ? "Thao tac dashboard AI het thoi gian cho."
+            : "The AI dashboard action timed out.",
           didChange: false,
           addedCount: 0,
           addedTitles: [],
@@ -1414,6 +1920,7 @@ export function AISlidePanel({
         resolve({
           success: Boolean(detail?.success),
           boardId: detail?.boardId,
+          error: detail?.error,
           didChange: Boolean(detail?.didChange),
           addedCount: Math.max(0, detail?.addedCount ?? 0),
           addedTitles: Array.isArray(detail?.addedTitles) ? detail.addedTitles.filter((value) => typeof value === "string") : [],
@@ -1426,12 +1933,16 @@ export function AISlidePanel({
         new CustomEvent("open-ai-metrics-board", {
           detail: {
             requestId,
-            template: options?.template ?? "database-overview",
-            mode: options?.mode ?? "create",
-            boardId: options?.boardId,
-            connectionId,
-            database: currentDatabase || undefined,
-            title: options?.title,
+          template: options?.template ?? "database-overview",
+          mode: options?.mode ?? "create",
+          boardId: options?.boardId,
+          editTargetTitle: options?.editTargetTitle,
+          editTargetType: options?.editTargetType,
+          editQuery: options?.editQuery,
+          editTitle: options?.editTitle,
+          connectionId,
+          database: currentDatabase || undefined,
+          title: options?.title,
             focusWorkspace: options?.focusWorkspace ?? false,
           },
         }),
@@ -1475,6 +1986,158 @@ export function AISlidePanel({
               status: "ready",
               title: useVietnamese ? "Dashboard chua thay doi" : "Dashboard unchanged",
               subtitle: useVietnamese ? "Khong co chart moi duoc ap dung" : "No new chart changes were applied",
+              preview,
+              detail,
+              sql: undefined,
+              risk: undefined,
+              autoDismissAt: undefined,
+            }
+          : bubble,
+      ),
+    );
+  }, [language]);
+
+  const updateBubbleForDashboardActionFailed = useCallback((
+    bubbleId: string,
+    promptText: string,
+    reason?: string,
+  ) => {
+    const useVietnamese = prefersVietnameseSystemReply(promptText, language);
+    const fallbackReason = useVietnamese
+      ? "TableR khong the hoan tat thao tac dashboard trong lan nay."
+      : "TableR could not finish the dashboard action for this request.";
+    const resolvedReason = reason?.trim() || fallbackReason;
+    const preview = useVietnamese
+      ? "Thao tac dashboard da dung lai, chat van mo de ban thu lai hoac doi yeu cau cu the hon."
+      : "The dashboard action stopped here. Chat stays open so you can retry or make the request more specific.";
+    const detail = useVietnamese
+      ? [
+          resolvedReason,
+          "",
+          "Ban co the thu lai voi cac yeu cau ro hon, vi du:",
+          "- doi OAuth Clients thanh scoreboard",
+          "- lam moi dashboard nay theo schema hien tai",
+          "- bo cac chart thua va giu lai chart co y nghia",
+        ].join("\n")
+      : [
+          resolvedReason,
+          "",
+          "Try again with a more specific request, for example:",
+          '- change "OAuth Clients" to a scoreboard',
+          "- rebuild this dashboard from the current schema",
+          "- remove redundant charts and keep only useful ones",
+        ].join("\n");
+
+    setBubbles((current) =>
+      current.map((bubble) =>
+        bubble.id === bubbleId
+          ? {
+              ...bubble,
+              kind: "assistant",
+              status: "error",
+              title: useVietnamese ? "Thao tac dashboard khong thanh cong" : "Dashboard action failed",
+              subtitle: useVietnamese ? "Khong ap dung thay doi nao" : "No dashboard change was applied",
+              preview,
+              detail,
+              sql: undefined,
+              risk: undefined,
+              autoDismissAt: undefined,
+            }
+          : bubble,
+      ),
+    );
+  }, [language]);
+
+  const updateBubbleForDashboardEditNeedsClarification = useCallback((bubbleId: string, promptText: string) => {
+    const useVietnamese = prefersVietnameseSystemReply(promptText, language);
+    const preview = useVietnamese
+      ? "MĂ¬nh giu nguyen thao tac trong dashboard, nhung chua xac dinh chinh xac widget hoac loai chart can doi."
+      : "I stayed in dashboard edit mode, but I could not identify the exact widget or replacement chart yet.";
+    const detail = useVietnamese
+      ? [
+          "TableR da giu yeu cau nay trong dashboard hien tai thay vi mo query ben ngoai.",
+          "Nhung de sua dung widget, minh can ban noi ro hon mot chut, vi du:",
+          "- doi OAuth Clients thanh scoreboard",
+          "- doi Average Rating by Product thanh table",
+          "- doi pie chart Products by Brand thanh bar chart",
+        ].join("\n")
+      : [
+          "TableR kept this request inside the current dashboard instead of opening an external query tab.",
+          "To edit the correct widget, be a bit more specific, for example:",
+          '- change "OAuth Clients" to a scoreboard',
+          '- change "Average Rating by Product" to a table',
+          '- change the pie chart "Products by Brand" to a bar chart',
+        ].join("\n");
+
+    setBubbles((current) =>
+      current.map((bubble) =>
+        bubble.id === bubbleId
+          ? {
+              ...bubble,
+              kind: "assistant",
+              status: "ready",
+              title: useVietnamese ? "Can noi ro widget can sua" : "Need a clearer widget target",
+              subtitle: useVietnamese ? "Chua sua dashboard vi chua map duoc widget" : "Dashboard edit was not applied yet",
+              preview,
+              detail,
+              sql: undefined,
+              risk: undefined,
+              autoDismissAt: undefined,
+            }
+          : bubble,
+      ),
+    );
+  }, [language]);
+
+  const updateBubbleForAttachedDashboardSummary = useCallback((
+    bubbleId: string,
+    promptText: string,
+    selection: SelectionContextState,
+  ) => {
+    const useVietnamese = prefersVietnameseSystemReply(promptText, language);
+    const summary = summarizeAttachedDashboardSelection(selection);
+    const topTitles = summary.widgetTitles.slice(0, 6);
+    const remainingCount = Math.max(0, summary.widgetCount - topTitles.length);
+
+    const preview = useVietnamese
+      ? `Minh da doc snapshot cua board "${summary.boardName}" ngay trong app, khong can goi them model hay mo query ben ngoai.`
+      : `I read the attached snapshot for "${summary.boardName}" locally, without calling the model or opening an external query.`;
+
+    const detail = useVietnamese
+      ? [
+          `Board hien tai: ${summary.boardName}`,
+          `So widget dang co: ${summary.widgetCount}`,
+          topTitles.length > 0 ? `Widget dang hien: ${topTitles.join(", ")}.` : "",
+          remainingCount > 0 ? `Con ${remainingCount} widget nua dang co tren board nay.` : "",
+          "",
+          "Ban co the noi ro tiep, vi du:",
+          "- doi OAuth Clients thanh scoreboard",
+          "- xoa cac chart thua",
+          "- sap xep lai hang dau cho gon hon",
+          "- lam moi dashboard nay theo data hien tai",
+        ].filter(Boolean).join("\n")
+      : [
+          `Current board: ${summary.boardName}`,
+          `Current widget count: ${summary.widgetCount}`,
+          topTitles.length > 0 ? `Visible widgets: ${topTitles.join(", ")}.` : "",
+          remainingCount > 0 ? `${remainingCount} more widget(s) are also present on this board.` : "",
+          "",
+          "You can be more specific next, for example:",
+          '- change "OAuth Clients" to a scoreboard',
+          "- remove redundant charts",
+          "- tighten the first row layout",
+          "- rebuild this dashboard from the current data",
+        ].filter(Boolean).join("\n");
+
+    setBubbles((current) =>
+      current.map((bubble) =>
+        bubble.id === bubbleId
+          ? {
+              ...bubble,
+              kind: "assistant",
+              status: "ready",
+              title: useVietnamese ? "Da doc snapshot dashboard" : "Dashboard snapshot loaded",
+              subtitle: useVietnamese ? "San sang sua truc tiep tren board hien tai" : "Ready to edit the current board directly",
               preview,
               detail,
               sql: undefined,
@@ -1560,6 +2223,120 @@ export function AISlidePanel({
     );
   }, [language]);
 
+  const updateBubbleForDashboardEdited = useCallback((
+    bubbleId: string,
+    promptText: string,
+    widgetTitle: string,
+    nextType: MetricsWidgetType,
+  ) => {
+    const useVietnamese = prefersVietnameseSystemReply(promptText, language);
+    const chartTypeLabel =
+      nextType === "table"
+        ? useVietnamese ? "bang du lieu" : "table"
+        : nextType === "scoreboard"
+          ? useVietnamese ? "scoreboard" : "scoreboard"
+          : nextType === "bar"
+            ? useVietnamese ? "bar chart" : "bar chart"
+            : nextType === "line"
+              ? useVietnamese ? "line chart" : "line chart"
+              : useVietnamese ? "pie chart" : "pie chart";
+
+    setBubbles((current) =>
+      current.map((bubble) =>
+        bubble.id === bubbleId
+          ? {
+              ...bubble,
+              kind: "assistant",
+              status: "ready",
+              title: useVietnamese ? "Da sua widget tren dashboard" : "Dashboard widget updated",
+              subtitle: useVietnamese
+                ? `Da doi "${widgetTitle}" sang ${chartTypeLabel}`
+                : `Changed "${widgetTitle}" to ${chartTypeLabel}`,
+              preview: useVietnamese
+                ? `MĂ¬nh da sua truc tiep widget "${widgetTitle}" tren dashboard hien tai.`
+                : `I updated "${widgetTitle}" directly on the current dashboard.`,
+              detail: useVietnamese
+                ? [
+                    `Widget "${widgetTitle}" da duoc doi sang ${chartTypeLabel} ngay tren board hien tai.`,
+                    "",
+                    "Ban co the yeu cau tiep, vi du:",
+                    "- doi tiep widget nay thanh line chart",
+                    "- sua query cua widget nay",
+                    "- xoa widget nay neu khong can nua",
+                  ].join("\n")
+                : [
+                    `The widget "${widgetTitle}" was updated to ${chartTypeLabel} on the current board.`,
+                    "",
+                    "You can keep going, for example:",
+                    "- change this widget to a line chart",
+                    "- update this widget query",
+                    "- remove this widget if it is not useful",
+                  ].join("\n"),
+              sql: undefined,
+              risk: undefined,
+              autoDismissAt: undefined,
+            }
+          : bubble,
+      ),
+    );
+  }, [language]);
+
+  const updateBubbleForDashboardRebuilt = useCallback((
+    bubbleId: string,
+    promptText: string,
+    widgetCount = 0,
+    widgetTitles: string[] = [],
+  ) => {
+    const normalizedCount = Math.max(0, widgetCount);
+    const useVietnamese = prefersVietnameseSystemReply(promptText, language);
+    const summarizedTitles = widgetTitles.slice(0, 5);
+    const title = useVietnamese ? "Da lam moi dashboard" : "Dashboard rebuilt";
+    const subtitle = useVietnamese
+      ? `Da tao lai ${normalizedCount} widget theo schema hien tai`
+      : `Rebuilt ${normalizedCount} widget${normalizedCount === 1 ? "" : "s"} from the current schema`;
+    const preview = useVietnamese
+      ? `MĂ¬nh da lam moi dashboard hien tai dua tren schema/DB dang mo va giu chat mo de ban chinh tiep.`
+      : "I rebuilt the current dashboard from the live schema and kept chat open for follow-up edits.";
+    const detail = useVietnamese
+      ? [
+          `Dashboard hien tai da duoc lam moi lai voi ${normalizedCount} widget bam sat schema hien tai.`,
+          summarizedTitles.length > 0 ? `Widget chinh: ${summarizedTitles.join(", ")}.` : "",
+          "",
+          "Ban co the yeu cau tiep, vi du:",
+          "- doi pie chart thanh bar chart",
+          "- xoa widget nao chua can",
+          "- uu tien chart ve users, orders, auth, hoac messages",
+        ].filter(Boolean).join("\n")
+      : [
+          `The current dashboard was rebuilt with ${normalizedCount} widget${normalizedCount === 1 ? "" : "s"} based on the live schema.`,
+          summarizedTitles.length > 0 ? `Main widgets: ${summarizedTitles.join(", ")}.` : "",
+          "",
+          "You can keep going, for example:",
+          "- change the pie chart to a bar chart",
+          "- remove widgets you do not need",
+          "- focus the board on users, orders, auth, or messaging",
+        ].filter(Boolean).join("\n");
+
+    setBubbles((current) =>
+      current.map((bubble) =>
+        bubble.id === bubbleId
+          ? {
+              ...bubble,
+              kind: "assistant",
+              status: "ready",
+              title,
+              subtitle,
+              preview,
+              detail,
+              sql: undefined,
+              risk: undefined,
+              autoDismissAt: undefined,
+            }
+          : bubble,
+      ),
+    );
+  }, [language]);
+
   const completeWorkspaceRedirect = useCallback((bubbleId?: string, sessionId?: number) => {
     if (!isOpenRef.current) return;
     if (typeof sessionId === "number" && sessionId !== openSessionRef.current) return;
@@ -1573,6 +2350,8 @@ export function AISlidePanel({
     prompt: string,
     options?: {
       displayPrompt?: string;
+      userPrompt?: string;
+      attachmentSource?: string;
       mode?: "compose" | "inspect";
       history?: AIConversationMessage[];
       threadId?: string;
@@ -1582,6 +2361,7 @@ export function AISlidePanel({
   ) => {
     const normalizedPrompt = prompt.trim();
     if (!normalizedPrompt) return;
+    const requestPrompt = options?.userPrompt?.trim() || normalizedPrompt;
 
     setError(null);
     const targetWorkspaceKey = options?.workspaceKey || currentWorkspaceKey;
@@ -1619,11 +2399,81 @@ export function AISlidePanel({
 
     await waitForUIPaint();
 
+    const hasAttachedDashboardSelection =
+      isDashboardSelectionSource(options?.attachmentSource) ||
+      hasMetricsDashboardAttachmentContext(normalizedPrompt);
+    const dashboardEditConversationContext =
+      latestReadyAssistantBubble?.detail ||
+      latestReadyAssistantBubble?.preview ||
+      "";
+    const directDashboardWidgetEdit =
+      hasAttachedDashboardSelection
+        ? resolveDashboardWidgetEditInstruction(requestPrompt, attachedSelection, dashboardEditConversationContext)
+        : null;
+    const shouldStayInDashboardEditContext =
+      hasAttachedDashboardSelection &&
+      !directDashboardWidgetEdit &&
+      isDashboardWidgetAdjustmentPrompt(requestPrompt);
+    const shouldHandleDashboardReferenceLocally =
+      hasAttachedDashboardSelection &&
+      !directDashboardWidgetEdit &&
+      !isDashboardRebuildPrompt(requestPrompt) &&
+      !isDashboardAugmentPrompt(requestPrompt) &&
+      isDashboardAttachmentReferencePrompt(requestPrompt);
+    const shouldRebuildDashboardDirectly =
+      supportsOverviewMetricsBoard(activeConnectionDbType) &&
+      hasAttachedDashboardSelection &&
+      isDashboardRebuildPrompt(requestPrompt);
     const shouldAugmentDashboardDirectly =
       supportsOverviewMetricsBoard(activeConnectionDbType) &&
-      isDashboardAugmentPrompt(normalizedPrompt);
+      !directDashboardWidgetEdit &&
+      isDashboardAugmentPrompt(requestPrompt);
+
+    if (shouldRebuildDashboardDirectly) {
+      const visualizationReadApproved = await requestVisualizationReadConsent(requestPrompt);
+      if (!visualizationReadApproved) {
+        setError(
+          prefersVietnameseSystemReply(requestPrompt, language)
+            ? "Ban chua cap quyen doc data trong DB cho yeu cau visualization nay."
+            : "Visualization data access was not approved for this request."
+        );
+        return { success: false, cancelled: true };
+      }
+
+      const dashboardResult = await openMetricsBoardInWorkspace({
+        template: "database-overview",
+        mode: "rebuild",
+        focusWorkspace: true,
+      });
+
+      if (dashboardResult.success && dashboardResult.didChange) {
+        updateBubbleForDashboardRebuilt(
+          loadingBubble.id,
+          requestPrompt,
+          dashboardResult.addedCount,
+          dashboardResult.addedTitles,
+        );
+        return { bubbleId: loadingBubble.id, success: true };
+      }
+      if (dashboardResult.success) {
+        updateBubbleForDashboardNoChange(loadingBubble.id, requestPrompt, dashboardResult.addedCount);
+        return { bubbleId: loadingBubble.id, success: true };
+      }
+      updateBubbleForDashboardActionFailed(loadingBubble.id, requestPrompt, dashboardResult.error);
+      return { bubbleId: loadingBubble.id, success: false };
+    }
 
     if (shouldAugmentDashboardDirectly) {
+      const visualizationReadApproved = await requestVisualizationReadConsent(requestPrompt);
+      if (!visualizationReadApproved) {
+        setError(
+          prefersVietnameseSystemReply(requestPrompt, language)
+            ? "Ban chua cap quyen doc data trong DB cho yeu cau visualization nay."
+            : "Visualization data access was not approved for this request."
+        );
+        return { success: false, cancelled: true };
+      }
+
       const dashboardResult = await openMetricsBoardInWorkspace({
         title: "DB Overview Dashboard",
         template: "database-overview",
@@ -1637,7 +2487,7 @@ export function AISlidePanel({
           } else {
             updateBubbleForDashboardApplied(
               loadingBubble.id,
-              normalizedPrompt,
+              requestPrompt,
               dashboardResult.addedCount,
               dashboardResult.addedTitles,
             );
@@ -1645,13 +2495,57 @@ export function AISlidePanel({
           return { bubbleId: loadingBubble.id, success: true };
         }
         if (dashboardResult.success) {
-        updateBubbleForDashboardNoChange(loadingBubble.id, normalizedPrompt, dashboardResult.addedCount);
+        updateBubbleForDashboardNoChange(loadingBubble.id, requestPrompt, dashboardResult.addedCount);
           return { bubbleId: loadingBubble.id, success: true };
         }
+      updateBubbleForDashboardActionFailed(loadingBubble.id, requestPrompt, dashboardResult.error);
+      return { bubbleId: loadingBubble.id, success: false };
+    }
+
+    if (directDashboardWidgetEdit) {
+      const dashboardResult = await openMetricsBoardInWorkspace({
+        mode: "edit",
+        boardId: directDashboardWidgetEdit.boardId,
+        editTargetTitle: directDashboardWidgetEdit.targetTitle,
+        editTargetType: directDashboardWidgetEdit.nextType,
+        editQuery: directDashboardWidgetEdit.nextQuery,
+        editTitle: directDashboardWidgetEdit.nextTitle,
+        focusWorkspace: true,
+      });
+
+      if (dashboardResult.success && dashboardResult.didChange) {
+        updateBubbleForDashboardEdited(
+          loadingBubble.id,
+          requestPrompt,
+          directDashboardWidgetEdit.targetTitle,
+          directDashboardWidgetEdit.nextType,
+        );
+        return { bubbleId: loadingBubble.id, success: true };
+      }
+      if (dashboardResult.success) {
+        updateBubbleForDashboardNoChange(loadingBubble.id, requestPrompt, dashboardResult.addedCount);
+        return { bubbleId: loadingBubble.id, success: true };
+      }
+      updateBubbleForDashboardActionFailed(loadingBubble.id, requestPrompt, dashboardResult.error);
+      return { bubbleId: loadingBubble.id, success: false };
+    }
+
+    if (shouldStayInDashboardEditContext) {
+      updateBubbleForDashboardEditNeedsClarification(loadingBubble.id, requestPrompt);
+      return { bubbleId: loadingBubble.id, success: true };
+    }
+
+    if (shouldHandleDashboardReferenceLocally && attachedSelection) {
+      updateBubbleForAttachedDashboardSummary(loadingBubble.id, requestPrompt, attachedSelection);
+      return { bubbleId: loadingBubble.id, success: true };
     }
 
     try {
-      const result = await generateAssist(normalizedPrompt, options?.history, { interactionMode });
+      const result = await generateAssist(normalizedPrompt, options?.history, {
+        interactionMode,
+        requestDataReadConsent: () => requestVisualizationReadConsent(requestPrompt),
+        userPrompt: requestPrompt,
+      });
       const readyTitle = options?.mode === "inspect"
         ? aiCopy.bubbleStates.readyInspectTitle
         : result.intent === "optimize"
@@ -1673,12 +2567,12 @@ export function AISlidePanel({
               ? result.risk?.level === "safe" ? aiCopy.bubbleStates.readySqlSafeSubtitle : aiCopy.bubbleStates.readySqlReviewSubtitle
               : aiCopy.bubbleStates.readyNoteSubtitle;
       const readyPreview = summarizeResponse(result.rawResponse, result.sql);
-      const wantsVisualization = isVisualizationPrompt(normalizedPrompt);
+      const wantsVisualization = isVisualizationPrompt(requestPrompt);
       const wantsMetricsDashboard =
-        isDashboardVisualizationPrompt(normalizedPrompt, result.intent) &&
+        isDashboardVisualizationPrompt(requestPrompt, result.intent) &&
         supportsOverviewMetricsBoard(activeConnectionDbType);
       const deterministicOverviewChartSql =
-        isOverviewVisualizationPrompt(normalizedPrompt, result.intent)
+        isOverviewVisualizationPrompt(requestPrompt, result.intent)
           ? buildWorkspaceOverviewChartSql(activeConnectionDbType)
           : null;
       const preferredVisualizationSql =
@@ -1686,6 +2580,16 @@ export function AISlidePanel({
         (result.sql && isSingleSqlStatement(result.sql) ? result.sql : null);
 
       if (wantsMetricsDashboard) {
+        const visualizationReadApproved = await requestVisualizationReadConsent(requestPrompt);
+        if (!visualizationReadApproved) {
+          setError(
+            prefersVietnameseSystemReply(requestPrompt, language)
+              ? "Ban chua cap quyen doc data trong DB cho yeu cau visualization nay."
+              : "Visualization data access was not approved for this request."
+          );
+          return { bubbleId: loadingBubble.id, success: false, cancelled: true };
+        }
+
         const dashboardOpened = await openMetricsBoardInWorkspace({
           title: "DB Overview Dashboard",
           template: "database-overview",
@@ -1698,7 +2602,7 @@ export function AISlidePanel({
           } else {
             updateBubbleForDashboardApplied(
               loadingBubble.id,
-              normalizedPrompt,
+              requestPrompt,
               dashboardOpened.addedCount,
               dashboardOpened.addedTitles,
             );
@@ -1706,14 +2610,27 @@ export function AISlidePanel({
           return { bubbleId: loadingBubble.id, success: true };
         }
         if (dashboardOpened.success) {
-          updateBubbleForDashboardNoChange(loadingBubble.id, normalizedPrompt, dashboardOpened.addedCount);
+          updateBubbleForDashboardNoChange(loadingBubble.id, requestPrompt, dashboardOpened.addedCount);
           return { bubbleId: loadingBubble.id, success: true };
         }
+        updateBubbleForDashboardActionFailed(loadingBubble.id, requestPrompt, dashboardOpened.error);
+        return { bubbleId: loadingBubble.id, success: false };
       }
 
       if (wantsVisualization && preferredVisualizationSql) {
         const autoRunInWorkspace =
           deterministicOverviewChartSql !== null || result.risk?.level === "safe";
+        if (autoRunInWorkspace) {
+          const visualizationReadApproved = await requestVisualizationReadConsent(requestPrompt);
+          if (!visualizationReadApproved) {
+            setError(
+              prefersVietnameseSystemReply(requestPrompt, language)
+                ? "Ban chua cap quyen doc data trong DB cho yeu cau visualization nay."
+                : "Visualization data access was not approved for this request."
+            );
+            return { bubbleId: loadingBubble.id, success: false, cancelled: true };
+          }
+        }
         const workspaceOpened = openSqlInWorkspace(preferredVisualizationSql, {
           title: deterministicOverviewChartSql ? "DB Overview Chart" : "AI Chart",
           viewMode: "chart",
@@ -1727,7 +2644,17 @@ export function AISlidePanel({
         }
       }
 
-      if (interactionMode === "agent" && result.sql && result.risk?.level === "safe") {
+      if (
+        interactionMode === "agent" &&
+        result.sql &&
+        result.risk?.level === "safe" &&
+        (
+          result.intent === "sql" ||
+          result.intent === "optimize" ||
+          result.intent === "fix-error" ||
+          wantsVisualization
+        )
+      ) {
         try {
           const runResult = await runSql(result.sql);
           setBubbles((current) =>
@@ -1796,6 +2723,11 @@ export function AISlidePanel({
       );
       return { bubbleId: loadingBubble.id, success: true };
     } catch (errorValue) {
+      if (isSupersededAIRequestError(errorValue)) {
+        setBubbles((current) => current.filter((bubble) => bubble.id !== loadingBubble.id));
+        return { bubbleId: loadingBubble.id, success: false, cancelled: true };
+      }
+
       const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
       setBubbles((current) =>
         current
@@ -1830,16 +2762,26 @@ export function AISlidePanel({
     activeConnectionDbType,
     activeInteractionMode,
     aiCopy,
+    attachedSelection,
     buildLoadingBubble,
     currentThread,
     currentWorkspaceKey,
     generateAssist,
     language,
+    latestReadyAssistantBubble,
     completeWorkspaceRedirect,
     openMetricsBoardInWorkspace,
     openSqlInWorkspace,
+    requestVisualizationReadConsent,
     runSql,
     setError,
+    updateBubbleForDashboardApplied,
+    updateBubbleForDashboardActionFailed,
+    updateBubbleForAttachedDashboardSummary,
+    updateBubbleForDashboardEditNeedsClarification,
+    updateBubbleForDashboardEdited,
+    updateBubbleForDashboardNoChange,
+    updateBubbleForDashboardRebuilt,
     workspaceThreads,
   ]);
 
@@ -1857,6 +2799,8 @@ export function AISlidePanel({
     const result = await createAssistantBubble(promptWithSelection, {
       mode: "compose",
       displayPrompt,
+      userPrompt: normalizedPrompt || displayPrompt,
+      attachmentSource: attachedSelection?.source,
       history: historyMessages,
       threadId: currentThread?.id,
       interactionMode: activeInteractionMode,
@@ -1864,7 +2808,9 @@ export function AISlidePanel({
 
     if (result?.success) {
       setPromptDraft("");
-      setAttachedSelection(null);
+      if (!isDashboardSelectionSource(attachedSelection?.source)) {
+        setAttachedSelection(null);
+      }
     }
   }, [activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, createAssistantBubble, currentThread?.id, historyMessages, promptDraft]);
 
@@ -1922,12 +2868,13 @@ export function AISlidePanel({
   const handleRunBubble = useCallback(async (bubble: AIWorkspaceBubbleData) => {
     if (!bubble.sql || !aiModeAllowsRun(bubble.interactionMode)) return;
     const sessionId = openSessionRef.current;
+    const bubbleIntentPrompt = bubble.promptSummary?.trim() || bubble.prompt;
 
-    if (isVisualizationPrompt(bubble.prompt)) {
+    if (isVisualizationPrompt(bubbleIntentPrompt)) {
       const wantsMetricsDashboard =
-        isDashboardVisualizationPrompt(bubble.prompt) &&
+        isDashboardVisualizationPrompt(bubbleIntentPrompt) &&
         supportsOverviewMetricsBoard(activeConnectionDbType);
-      const deterministicOverviewChartSql = isOverviewVisualizationPrompt(bubble.prompt)
+      const deterministicOverviewChartSql = isOverviewVisualizationPrompt(bubbleIntentPrompt)
         ? buildWorkspaceOverviewChartSql(activeConnectionDbType)
         : null;
       const preferredVisualizationSql =
@@ -1935,6 +2882,16 @@ export function AISlidePanel({
         (bubble.sql && isSingleSqlStatement(bubble.sql) ? bubble.sql : null);
 
       if (wantsMetricsDashboard) {
+        const visualizationReadApproved = await requestVisualizationReadConsent(bubbleIntentPrompt);
+        if (!visualizationReadApproved) {
+          setError(
+            prefersVietnameseSystemReply(bubbleIntentPrompt, language)
+              ? "Ban chua cap quyen doc data trong DB cho yeu cau visualization nay."
+              : "Visualization data access was not approved for this request."
+          );
+          return;
+        }
+
         const dashboardOpened = await openMetricsBoardInWorkspace({
           title: "DB Overview Dashboard",
           template: "database-overview",
@@ -1947,7 +2904,7 @@ export function AISlidePanel({
           } else {
             updateBubbleForDashboardApplied(
               bubble.id,
-              bubble.prompt,
+              bubbleIntentPrompt,
               dashboardOpened.addedCount,
               dashboardOpened.addedTitles,
             );
@@ -1955,9 +2912,11 @@ export function AISlidePanel({
           return;
         }
         if (dashboardOpened.success) {
-          updateBubbleForDashboardNoChange(bubble.id, bubble.prompt, dashboardOpened.addedCount);
+          updateBubbleForDashboardNoChange(bubble.id, bubbleIntentPrompt, dashboardOpened.addedCount);
           return;
         }
+        updateBubbleForDashboardActionFailed(bubble.id, bubbleIntentPrompt, dashboardOpened.error);
+        return;
       }
 
       if (!preferredVisualizationSql) {
@@ -1966,6 +2925,17 @@ export function AISlidePanel({
 
       const autoRunInWorkspace =
         deterministicOverviewChartSql !== null || bubble.risk?.level === "safe";
+      if (autoRunInWorkspace) {
+        const visualizationReadApproved = await requestVisualizationReadConsent(bubbleIntentPrompt);
+        if (!visualizationReadApproved) {
+          setError(
+            prefersVietnameseSystemReply(bubbleIntentPrompt, language)
+              ? "Ban chua cap quyen doc data trong DB cho yeu cau visualization nay."
+              : "Visualization data access was not approved for this request."
+          );
+          return;
+        }
+      }
       const workspaceOpened = openSqlInWorkspace(preferredVisualizationSql, {
         title: deterministicOverviewChartSql ? "DB Overview Chart" : "AI Chart",
         viewMode: "chart",
@@ -2016,7 +2986,7 @@ export function AISlidePanel({
         )
       );
     }
-  }, [activeConnectionDbType, aiCopy, language, completeWorkspaceRedirect, openMetricsBoardInWorkspace, openSqlInWorkspace, runSql, updateBubbleForDashboardApplied, updateBubbleForDashboardNoChange]);
+  }, [activeConnectionDbType, aiCopy, completeWorkspaceRedirect, language, openMetricsBoardInWorkspace, openSqlInWorkspace, requestVisualizationReadConsent, runSql, setError, updateBubbleForDashboardApplied, updateBubbleForDashboardNoChange]);
 
   const handleSelectThread = useCallback((threadId: string) => {
     setActiveThreadId(threadId);
@@ -2082,6 +3052,7 @@ export function AISlidePanel({
       threadId: bubble.threadId,
       workspaceKey: bubble.workspaceKey,
       interactionMode: bubble.interactionMode,
+      userPrompt: normalizedNote,
     });
     if (result?.success) {
       setActiveThreadId(bubble.threadId);
@@ -2161,11 +3132,13 @@ export function AISlidePanel({
 
   if (!isOpen) return null;
 
+  const visibleError = error && error !== AI_REQUEST_REPLACED_MESSAGE ? error : null;
+
   return (
     <div className="ai-workspace-overlay">
-      {error && (
+      {visibleError && (
         <div className="ai-workspace-alert">
-          <span>{error}</span>
+          <span>{visibleError}</span>
           <button type="button" className="ai-workspace-alert-dismiss" onClick={() => setError(null)}>
             {aiCopy.composer.alertDismiss}
           </button>
@@ -2629,6 +3602,18 @@ export function AISlidePanel({
 
                         <button
                           type="button"
+                          className={`ai-workspace-command-data-toggle ${isSessionDataReadEnabled ? "is-active" : ""}`}
+                          onClick={() => setSessionDataReadEnabled(!isSessionDataReadEnabled)}
+                          disabled={!connectionId}
+                          aria-pressed={isSessionDataReadEnabled}
+                          title={sessionDataReadButtonTitle}
+                        >
+                          <Database className="ai-workspace-command-data-toggle-icon w-3.5 h-3.5" />
+                          <span className="ai-workspace-command-data-toggle-copy">{sessionDataReadButtonLabel}</span>
+                        </button>
+
+                        <button
+                          type="button"
                           className="ai-workspace-command-settings-btn"
                           onClick={handleOpenAISettings}
                           title={aiCopy.composer.openSettings}
@@ -2668,6 +3653,16 @@ export function AISlidePanel({
           onRewrite={(bubble, note) => void handleRewriteBubble(bubble, note)}
         />
       )}
+
+      <ConfirmDialog
+        isOpen={visualizationConsentPending !== null}
+        title={visualizationConsentPending?.title || "Allow AI data read?"}
+        message={visualizationConsentPending?.message || ""}
+        confirmText={visualizationConsentPending?.confirmText || "Allow"}
+        cancelText={visualizationConsentPending?.cancelText || "Deny"}
+        onConfirm={() => resolveVisualizationConsent(true)}
+        onCancel={() => resolveVisualizationConsent(false)}
+      />
 
       <ConfirmDialog
         isOpen={deleteThreadPending !== null}

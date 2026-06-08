@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { getCurrentAppLanguage } from "../../../i18n";
 import { useAppStore } from "../../../stores/appStore";
-import { getActiveAIProvider, type AIConversationMessage, type AIProviderConfig, type AIResponseLanguage, type QueryResult, type TableStructure } from "../../../types";
+import { getActiveAIProvider, type AIConversationMessage, type AIProviderConfig, type AIResponseLanguage, type QueryResult, type TableInfo, type TableStructure } from "../../../types";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
 import {
   formatExecutionError,
@@ -73,6 +73,15 @@ const MAX_REMOTE_AGENT_VISIBLE_TABLES = 12;
 const MAX_REMOTE_HISTORY_MESSAGES = 4;
 const MAX_REMOTE_RECOVERY_PASSES = 1;
 const MAX_SCHEMA_CAPSULE_PREVIEW_TABLES = 4;
+export const AI_REQUEST_REPLACED_MESSAGE = "This AI request was replaced by a newer one.";
+
+export function isSupersededAIRequestError(errorValue: unknown) {
+  if (errorValue instanceof Error) {
+    return errorValue.message === AI_REQUEST_REPLACED_MESSAGE;
+  }
+
+  return String(errorValue) === AI_REQUEST_REPLACED_MESSAGE;
+}
 
 function setAiSchemaCodecCacheEntry(cache: Map<string, string>, key: string, value: string) {
   if (cache.has(key)) {
@@ -151,6 +160,90 @@ function isVisualizationRequest(prompt: string) {
   ];
 
   return visualizationSignals.some((signal) => normalizedPrompt.includes(signal));
+}
+
+function stripTableSchemaQualifier(tableName: string) {
+  return tableName
+    .replace(/["`]/g, "")
+    .split(".")
+    .filter(Boolean)
+    .pop()
+    ?.trim() || tableName.trim();
+}
+
+function buildKnownTableNameSet(availableTableNames: string[]) {
+  const knownNames = new Set<string>();
+
+  for (const tableName of availableTableNames) {
+    const normalizedFullName = normalizeIntentText(tableName);
+    if (normalizedFullName) {
+      knownNames.add(normalizedFullName);
+    }
+
+    const bareTableName = stripTableSchemaQualifier(tableName);
+    const normalizedBareName = normalizeIntentText(bareTableName);
+    if (normalizedBareName) {
+      knownNames.add(normalizedBareName);
+    }
+  }
+
+  return knownNames;
+}
+
+function buildWorkspaceTableIdentifier(
+  table: Pick<TableInfo, "name" | "schema">,
+  currentDatabase: string | null
+) {
+  const tableName = table.name.trim();
+  if (!tableName || tableName.includes(".")) {
+    return tableName;
+  }
+
+  const schemaName = table.schema?.trim();
+  if (!schemaName) {
+    return tableName;
+  }
+
+  if (currentDatabase && normalizeIntentText(schemaName) === normalizeIntentText(currentDatabase)) {
+    return tableName;
+  }
+
+  return `${schemaName}.${tableName}`;
+}
+
+function requestExplicitlyNeedsLiveData(prompt: string, intent: AssistIntent) {
+  if (isVisualizationRequest(prompt)) return true;
+  if (intent === "sql" || intent === "optimize" || intent === "fix-error") return true;
+
+  const normalizedPrompt = normalizeIntentText(prompt);
+  const liveDataSignals = [
+    "sample row",
+    "sample rows",
+    "example row",
+    "example rows",
+    "show rows",
+    "show data",
+    "read data",
+    "live data",
+    "raw data",
+    "row count",
+    "row counts",
+    "count rows",
+    "read the data",
+    "query the data",
+    "run query",
+    "bao nhieu",
+    "dem so",
+    "du lieu mau",
+    "xem du lieu",
+    "doc data",
+    "thong ke du lieu",
+    "gia tri",
+    "values",
+    "records",
+  ];
+
+  return liveDataSignals.some((signal) => normalizedPrompt.includes(signal));
 }
 
 function shouldUseLightweightAgentFlow(prompt: string, intent: AssistIntent) {
@@ -1251,7 +1344,7 @@ function extractReferencedTableNamesFromSql(sql: string) {
 function sqlResponseConflictsWithSchema(sql: string, availableTableNames: string[]) {
   if (!sql.trim() || availableTableNames.length === 0) return false;
 
-  const knownNames = new Set(availableTableNames.map((tableName) => normalizeIntentText(tableName)));
+  const knownNames = buildKnownTableNameSet(availableTableNames);
   const allowedSystemTables = new Set([
     "information_schema",
     "tables",
@@ -1299,7 +1392,7 @@ function buildSqlRegroundingPrompt(
 
 function mentionsUnknownSchemaNames(response: string, availableTableNames: string[]) {
   const normalizedResponse = normalizeIntentText(response);
-  const knownNames = new Set(availableTableNames.map((tableName) => normalizeIntentText(tableName)));
+  const knownNames = buildKnownTableNameSet(availableTableNames);
   const reserved = new Set([
     "table",
     "tables",
@@ -1582,6 +1675,10 @@ function extractSqlFromResponse(aiResponse: string) {
   return sqlResult;
 }
 
+function stripSqlCodeBlocksFromResponse(aiResponse: string) {
+  return aiResponse.replace(/```sql[\s\S]*?```/gi, "").trim();
+}
+
 function summarizeRunResult(result: QueryResult) {
   if (result.rows.length > 0) {
     return `Returned ${result.rows.length} row${result.rows.length === 1 ? "" : "s"} in ${result.execution_time_ms} ms${result.truncated ? " with a truncated preview." : "."}`;
@@ -1673,6 +1770,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     history: AIConversationMessage[] = [],
     options?: {
       interactionMode?: AIWorkspaceInteractionMode;
+      requestDataReadConsent?: () => Promise<boolean>;
+      userPrompt?: string;
     }
   ): Promise<AIGeneratedAssistResult> => {
     const normalizedPrompt = prompt.trim();
@@ -1691,8 +1790,11 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     setError(null);
     const requestId = ++requestIdRef.current;
     const requestedInteractionMode = options?.interactionMode ?? "prompt";
-    const assistIntent: AssistIntent = inferAssistIntent(normalizedPrompt, requestedInteractionMode);
-    const wantsVisualization = isVisualizationRequest(normalizedPrompt);
+    const requestDataReadConsent = options?.requestDataReadConsent;
+    const requestIntentPrompt = options?.userPrompt?.trim() || normalizedPrompt;
+    const assistIntent: AssistIntent = inferAssistIntent(requestIntentPrompt, requestedInteractionMode);
+    const wantsVisualization = isVisualizationRequest(requestIntentPrompt);
+    const explicitLiveDataRequest = requestExplicitlyNeedsLiveData(requestIntentPrompt, assistIntent);
     const interactionMode = requestedInteractionMode;
     const needsWorkspaceContext = isWorkspaceScopedIntent(assistIntent);
     const appLanguage = getCurrentAppLanguage();
@@ -1744,7 +1846,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           await fetchTables(connectionId, currentDatabase);
         }
         if (requestId !== requestIdRef.current) {
-          throw new Error("This AI request was replaced by a newer one.");
+          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
         }
         await yieldToBrowserFrame();
         latestTables = useAppStore.getState().tables ?? [];
@@ -1799,7 +1901,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       let agentPromptTableNames: string[] = [];
       let contextVisibleTableNames: string[] = [];
       if (schemaContextEnabled) {
-        availableSchemaTables = latestTables.map((table) => table.name);
+        availableSchemaTables = latestTables
+          .map((table) => buildWorkspaceTableIdentifier(table, currentDatabase))
+          .filter(Boolean);
         const tablesToFetch =
           assistIntent === "overview"
             ? latestTables.slice(0, !isLocalProvider ? MAX_REMOTE_AGENT_OVERVIEW_TABLES : MAX_OVERVIEW_SCHEMA_TABLES)
@@ -1812,14 +1916,15 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           tablesToFetch,
           schemaCodecMode === "relational" ? MAX_SCHEMA_FETCH_CONCURRENCY : tablesToFetch.length,
           async (table) => {
-            const cacheKey = `${connectionId}:${currentDatabase || "default"}:${schemaCodecMode}:${table.name}`;
+            const tableIdentifier = buildWorkspaceTableIdentifier(table, currentDatabase) || table.name;
+            const cacheKey = `${connectionId}:${currentDatabase || "default"}:${schemaCodecMode}:${tableIdentifier}`;
             const cachedSummary = aiSchemaCodecCacheRef.current.get(cacheKey);
             if (cachedSummary) {
               if (schemaCodecMode === "relational") {
-                relationalSchemaSummaryByTable.set(table.name, cachedSummary);
+                relationalSchemaSummaryByTable.set(tableIdentifier, cachedSummary);
               }
               return {
-                tableName: table.name,
+                tableName: tableIdentifier,
                 summary: cachedSummary,
               };
             }
@@ -1827,35 +1932,35 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               const structure =
                 schemaCodecMode === "core"
                   ? {
-                      columns: await getTableColumnsPreview(connectionId!, table.name, currentDatabase || undefined),
+                      columns: await getTableColumnsPreview(connectionId!, tableIdentifier, currentDatabase || undefined),
                       indexes: [],
                       foreign_keys: [],
                     }
-                  : await getTableStructure(connectionId!, table.name, currentDatabase || undefined);
-              const summary = encodeStructureForAI(table.name, structure, { mode: schemaCodecMode });
+                  : await getTableStructure(connectionId!, tableIdentifier, currentDatabase || undefined);
+              const summary = encodeStructureForAI(tableIdentifier, structure, { mode: schemaCodecMode });
               setAiSchemaCodecCacheEntry(aiSchemaCodecCacheRef.current, cacheKey, summary);
               if (schemaCodecMode === "relational") {
-                relationalSchemaSummaryByTable.set(table.name, summary);
+                relationalSchemaSummaryByTable.set(tableIdentifier, summary);
               }
               return {
-                tableName: table.name,
+                tableName: tableIdentifier,
                 summary,
               };
             } catch {
-              const fallbackSummary = `T:${table.name}|C:[]`;
+              const fallbackSummary = `T:${tableIdentifier}|C:[]`;
               setAiSchemaCodecCacheEntry(aiSchemaCodecCacheRef.current, cacheKey, fallbackSummary);
               if (schemaCodecMode === "relational") {
-                relationalSchemaSummaryByTable.set(table.name, fallbackSummary);
+                relationalSchemaSummaryByTable.set(tableIdentifier, fallbackSummary);
               }
               return {
-                tableName: table.name,
+                tableName: tableIdentifier,
                 summary: fallbackSummary,
               };
             }
           }
         );
         if (requestId !== requestIdRef.current) {
-          throw new Error("This AI request was replaced by a newer one.");
+          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
         }
         await yieldToBrowserFrame();
 
@@ -1922,6 +2027,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 ? "Schema sharing is disabled for the current provider, so workspace tools are unavailable for this turn."
                 : "No verified schema snapshot is available for tool use on this turn.";
         const sharedAgentInstruction = joinAgentInstructions(
+          !explicitLiveDataRequest
+            ? "This turn is schema-first. Use list_tables and describe_table for overview or explanation. Do not use run_readonly_sql unless the user explicitly asks for live rows, row counts, sample data, raw values, or visualization."
+            : undefined,
           !isLocalProvider
             ? "Minimize tool calls. Prefer finishing once you have enough evidence instead of exploring the whole schema."
             : undefined,
@@ -1953,7 +2061,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             includeHistory ? requestHistory : []
           );
           if (requestId !== requestIdRef.current) {
-            throw new Error("This AI request was replaced by a newer one.");
+            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
           }
 
           try {
@@ -1972,7 +2080,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               []
             );
             if (requestId !== requestIdRef.current) {
-              throw new Error("This AI request was replaced by a newer one.");
+              throw new Error(AI_REQUEST_REPLACED_MESSAGE);
             }
             return parseAgentActionResponse(rawAgentResponse);
           }
@@ -1986,6 +2094,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 tableCount: latestTables.length,
                 tables: latestTables.slice(0, MAX_TABLE_NAMES_IN_CONTEXT).map((table) => ({
                   name: table.name,
+                  schema: table.schema ?? null,
+                  identifier: buildWorkspaceTableIdentifier(table, currentDatabase),
                   type: table.table_type,
                   rowCount: table.row_count ?? null,
                 })),
@@ -2010,7 +2120,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
               const structure = await getTableStructure(connectionId!, matchedTable, currentDatabase || undefined);
               if (requestId !== requestIdRef.current) {
-                throw new Error("This AI request was replaced by a newer one.");
+                throw new Error(AI_REQUEST_REPLACED_MESSAGE);
               }
 
               return summarizeAgentStructureObservation(matchedTable, structure);
@@ -2022,10 +2132,21 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 return "Tool error: run_readonly_sql requires args.sql.";
               }
 
+              if (!explicitLiveDataRequest) {
+                return "Tool blocked: This request only needs schema-level review. Do not read live rows unless the user explicitly asks for data values, row counts, samples, or visualization.";
+              }
+
+              if (wantsVisualization && requestDataReadConsent) {
+                const approved = await requestDataReadConsent();
+                if (!approved) {
+                  return "Tool blocked: The user did not grant permission to read live database rows for this visualization request.";
+                }
+              }
+
               const statements = validateAgentReadonlySql(sql);
               const queryResult = await executeSandboxQuery(connectionId!, statements);
               if (requestId !== requestIdRef.current) {
-                throw new Error("This AI request was replaced by a newer one.");
+                throw new Error(AI_REQUEST_REPLACED_MESSAGE);
               }
 
               return summarizeAgentQueryObservation(queryResult);
@@ -2033,7 +2154,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
             return "Tool error: finish does not execute a tool observation.";
           } catch (errorValue) {
-            if (errorValue instanceof Error && errorValue.message === "This AI request was replaced by a newer one.") {
+            if (isSupersededAIRequestError(errorValue)) {
               throw errorValue;
             }
             return `Tool error: ${formatExecutionError(errorValue)}`;
@@ -2067,7 +2188,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               []
             );
             if (requestId !== requestIdRef.current) {
-              throw new Error("This AI request was replaced by a newer one.");
+              throw new Error(AI_REQUEST_REPLACED_MESSAGE);
             }
 
             const trimmedResponse = recoveredResponse.trim() || fallbackResponse;
@@ -2082,7 +2203,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               },
             };
           } catch (errorValue) {
-            if (errorValue instanceof Error && errorValue.message === "This AI request was replaced by a newer one.") {
+            if (isSupersededAIRequestError(errorValue)) {
               throw errorValue;
             }
 
@@ -2190,7 +2311,18 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         }
 
         const resolvedFinalArgs = finalAgentAction.args || {};
-        const finalResponseBody =
+        const shouldExposeAgentSql =
+          hasSqlStartKeyword(finalSql) &&
+          (
+            assistIntent === "sql" ||
+            assistIntent === "optimize" ||
+            assistIntent === "fix-error" ||
+            wantsVisualization
+          );
+        if (!shouldExposeAgentSql) {
+          finalSql = "";
+        }
+        const rawFinalResponseBody =
           typeof resolvedFinalArgs.response === "string" && resolvedFinalArgs.response.trim()
             ? resolvedFinalArgs.response.trim()
             : finalAgentAction.message?.trim()
@@ -2198,6 +2330,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               : finalSql
                 ? "The agent prepared grounded SQL for your review."
                 : "The agent finished its inspection but did not produce a usable final answer.";
+        const finalResponseBody = shouldExposeAgentSql
+          ? rawFinalResponseBody
+          : stripSqlCodeBlocksFromResponse(rawFinalResponseBody) || rawFinalResponseBody;
 
         const finalDetail = [finalResponseBody, buildAgentTraceMarkdown(agentTraceSteps)].filter(Boolean).join("\n\n---\n\n");
         const hasValidSql = hasSqlStartKeyword(finalSql);
@@ -2213,7 +2348,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
       let rawResponse = await askAI(aiPrompt, context, "panel", assistIntent, requestHistory);
       if (requestId !== requestIdRef.current) {
-        throw new Error("This AI request was replaced by a newer one.");
+        throw new Error(AI_REQUEST_REPLACED_MESSAGE);
       }
       let recoveryPasses = 0;
       const canRunRecoveryPass = () => !fastRemoteRecovery || recoveryPasses < MAX_REMOTE_RECOVERY_PASSES;
@@ -2226,7 +2361,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         recoveryPasses += 1;
         rawResponse = await askAI(repairPrompt, repairContext, "panel", repairIntent, repairHistory);
         if (requestId !== requestIdRef.current) {
-          throw new Error("This AI request was replaced by a newer one.");
+          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
         }
       };
 
@@ -2418,6 +2553,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         intent: assistIntent,
       };
     } catch (errorValue) {
+      if (isSupersededAIRequestError(errorValue)) {
+        throw (errorValue instanceof Error ? errorValue : new Error(AI_REQUEST_REPLACED_MESSAGE));
+      }
+
       const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
       setError(message);
       throw new Error(message);

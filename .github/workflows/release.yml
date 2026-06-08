@@ -35,7 +35,7 @@ jobs:
             target: "windows"
             cc: "clang-cl"
             cxx: "clang-cl"
-            cxxflags: "/std:c++17"
+            cxxflags: "/std:c++17 /EHsc"
 
     runs-on: ${{ matrix.platform }}
 

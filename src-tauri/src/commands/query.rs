@@ -206,16 +206,35 @@ pub async fn execute_query(
     sql: String,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
+    log::info!("[TableR] execute_query: connection_id={}, sql={}", connection_id, sql);
     let driver = db_manager
         .get_driver(&connection_id)
         .await
-        .map_err(format_query_connection_error)?;
+        .map_err(|e| {
+            let formatted = format_query_connection_error(e);
+            log::error!("[TableR] execute_query connection error: {}", formatted);
+            formatted
+        })?;
     let statements = split_sql_statements(&sql);
     let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
-    timeout(timeout_window, driver.execute_query(&sql))
+    let result = timeout(timeout_window, driver.execute_query(&sql))
         .await
-        .map_err(|_| format!("Query timed out after {} seconds.", timeout_window.as_secs()))?
-        .map_err(format_query_runtime_error)
+        .map_err(|_| {
+            let err_msg = format!("Query timed out after {} seconds.", timeout_window.as_secs());
+            log::error!("[TableR] execute_query timeout error: {}", err_msg);
+            err_msg
+        })?
+        .map_err(|e| {
+            let formatted = format_query_runtime_error(e);
+            log::error!("[TableR] execute_query runtime error: {}", formatted);
+            formatted
+        })?;
+    log::info!(
+        "[TableR] execute_query success: columns={}, rows={}",
+        result.columns.len(),
+        result.rows.len()
+    );
+    Ok(result)
 }
 
 #[tauri::command]
@@ -224,24 +243,50 @@ pub async fn execute_sandboxed_query(
     statements: Vec<String>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
+    log::info!(
+        "[TableR] execute_sandboxed_query: connection_id={}, statements_count={}",
+        connection_id,
+        statements.len()
+    );
     if statements.is_empty() {
+        log::error!("[TableR] execute_sandboxed_query error: Sandbox execution requires at least one SQL statement.");
         return Err("Sandbox execution requires at least one SQL statement.".to_string());
     }
 
     for statement in &statements {
-        validate_sandbox_statement(statement)?;
+        if let Err(e) = validate_sandbox_statement(statement) {
+            log::error!("[TableR] execute_sandboxed_query sandbox validation error: {}", e);
+            return Err(e);
+        }
     }
 
     let driver = db_manager
         .get_driver(&connection_id)
         .await
-        .map_err(format_query_connection_error)?;
+        .map_err(|e| {
+            let formatted = format_query_connection_error(e);
+            log::error!("[TableR] execute_sandboxed_query connection error: {}", formatted);
+            formatted
+        })?;
     let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
     let combined_query = statements.join(";\n");
     let mut result = timeout(timeout_window, driver.execute_query(&combined_query))
         .await
-        .map_err(|_| format!("Sandbox query timed out after {} seconds.", timeout_window.as_secs()))?
-        .map_err(format_query_runtime_error)?;
+        .map_err(|_| {
+            let err_msg = format!("Sandbox query timed out after {} seconds.", timeout_window.as_secs());
+            log::error!("[TableR] execute_sandboxed_query timeout error: {}", err_msg);
+            err_msg
+        })?
+        .map_err(|e| {
+            let formatted = format_query_runtime_error(e);
+            log::error!("[TableR] execute_sandboxed_query runtime error: {}", formatted);
+            formatted
+        })?;
     result.sandboxed = true;
+    log::info!(
+        "[TableR] execute_sandboxed_query success: columns={}, rows={}",
+        result.columns.len(),
+        result.rows.len()
+    );
     Ok(result)
 }

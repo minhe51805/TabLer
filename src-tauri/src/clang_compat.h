@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef __clang__
+#if defined(__clang__) && defined(__cplusplus)
 #include <iterator>
 namespace stdext {
     template <typename T>

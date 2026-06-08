@@ -35,7 +35,7 @@ jobs:
             target: "windows"
             cc: "clang-cl"
             cxx: "clang-cl"
-            cxxflags: "/std:c++17 /EHsc /DDUCKDB_STATIC_BUILD"
+            cxxflags: "/std:c++17 /EHsc /DDUCKDB_STATIC_BUILD /D_SECURE_SCL=0"
 
     runs-on: ${{ matrix.platform }}
 

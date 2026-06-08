@@ -79,6 +79,19 @@ interface OpenAIWorkspaceQueryDetail {
   focusWorkspace?: boolean;
 }
 
+function yieldToBrowserFrame() {
+  return new Promise<void>((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => {
+        window.setTimeout(resolve, 0);
+      });
+      return;
+    }
+
+    setTimeout(resolve, 0);
+  });
+}
+
 const AISlidePanel = lazy(() => import("./components/AISlidePanel/AISlidePanel").then((module) => ({ default: module.AISlidePanel })));
 const ConnectionForm = lazy(() =>
   import("./components/ConnectionForm").then((module) => ({ default: module.ConnectionForm })),
@@ -190,7 +203,7 @@ function App() {
   const [hasMountedGlobalModals, setHasMountedGlobalModals] = useState(false);
   const [isExportingDatabase, setIsExportingDatabase] = useState(false);
   const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
-  const [aiPanelAttachment, setAiPanelAttachment] = useState<{ text: string; source: string; nonce: number } | null>(null);
+  const [aiPanelAttachment, setAiPanelAttachment] = useState<{ text: string; source: string; boardId?: string; nonce: number } | null>(null);
   const [queryChromeByTab, setQueryChromeByTab] = useState<Record<string, QueryChromeState>>({});
   const [querySessionByTab, setQuerySessionByTab] = useState<Record<string, QueryEditorSessionState>>({});
   const [queryRunRequestByTab, setQueryRunRequestByTab] = useState<Record<string, number>>({});
@@ -1228,6 +1241,29 @@ function App() {
             .replace(/^_+|_+$/g, "");
 
         const businessPriority = [
+          "users",
+          "sessions",
+          "refresh_tokens",
+          "oauth_client",
+          "oauth_clients",
+          "oauth_authorizations",
+          "oauth_consents",
+          "identities",
+          "audit_log_entries",
+          "audit_logs",
+          "user_logs",
+          "smart_alerts",
+          "messages",
+          "products",
+          "categories",
+          "brands",
+          "coupons",
+          "orders",
+          "order_items",
+          "reviews",
+          "workspaces",
+          "buckets",
+          "objects",
           "job_post",
           "job_posts",
           "job_application",
@@ -1269,31 +1305,45 @@ function App() {
           .filter((table, index, collection) =>
             collection.findIndex((candidate) => normalizeTableName(candidate.name) === normalizeTableName(table.name)) === index
           )
-          .slice(0, 14);
+          .slice(0, 18);
 
-        return await Promise.all(
-          prioritizedTables.map(async (table) => {
-            try {
-              const structure = await appState.getTableStructure(targetConnectionId, table.name, targetDatabase);
-              return {
-                name: table.name,
-                schema: table.schema,
-                rowCount: table.row_count ?? null,
-                columns: structure.columns.map((column) => column.name),
-              } satisfies AIMetricsSchemaTableHint;
-            } catch {
-              return {
-                name: table.name,
-                schema: table.schema,
-                rowCount: table.row_count ?? null,
-                columns: [],
-              } satisfies AIMetricsSchemaTableHint;
-            }
-          }),
-        );
+        const schemaHints: AIMetricsSchemaTableHint[] = [];
+        const batchSize = 4;
+
+        for (let index = 0; index < prioritizedTables.length; index += batchSize) {
+          const batch = prioritizedTables.slice(index, index + batchSize);
+          const batchResults = await Promise.all(
+            batch.map(async (table) => {
+              try {
+                const structure = await appState.getTableStructure(targetConnectionId, table.name, targetDatabase);
+                return {
+                  name: table.name,
+                  schema: table.schema,
+                  rowCount: table.row_count ?? null,
+                  columns: structure.columns.map((column) => column.name),
+                } satisfies AIMetricsSchemaTableHint;
+              } catch {
+                return {
+                  name: table.name,
+                  schema: table.schema,
+                  rowCount: table.row_count ?? null,
+                  columns: [],
+                } satisfies AIMetricsSchemaTableHint;
+              }
+            }),
+          );
+
+          schemaHints.push(...batchResults);
+          await yieldToBrowserFrame();
+        }
+
+        return schemaHints;
       };
 
-      const schemaHints = await collectMetricsSchemaHints();
+      const needsSchemaHints =
+        detail.mode !== "edit" &&
+        (detail.template ?? "database-overview") === "database-overview";
+      const schemaHints = needsSchemaHints ? await collectMetricsSchemaHints() : [];
 
       const allBoards = metricsStorageModule.readStoredBoards();
       const connectionBoards = allBoards.filter((board) => board.connection_id === targetConnectionId);
@@ -1306,7 +1356,9 @@ function App() {
         ) || null;
       const targetBoardId =
         detail.boardId ||
-        (detail.mode === "augment" ? activeTab?.metricsBoardId || existingMetricsTab?.metricsBoardId : undefined);
+        ((detail.mode === "augment" || detail.mode === "rebuild" || detail.mode === "edit")
+          ? activeTab?.metricsBoardId || existingMetricsTab?.metricsBoardId
+          : undefined);
 
       const targetBoard =
         (targetBoardId && connectionBoards.find((board) => board.id === targetBoardId)) || null;
@@ -1319,26 +1371,100 @@ function App() {
       let addedTitles: string[] = [];
       let addedWidgetIds: string[] = [];
 
-      if (detail.mode === "augment" && targetBoard) {
-        const augmented = metricsTemplateModule.augmentAIMetricsBoardDefinition({
-          board: targetBoard,
-          detail: {
-            ...detail,
-            database: targetDatabase,
-          },
-          dbType: targetConnection.db_type,
-          schemaHints,
-        });
+      if (detail.mode === "edit" && targetBoard && detail.editTargetTitle) {
+        const normalizeWidgetTitle = (value: string) =>
+          value
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .trim();
 
-        if (augmented) {
-          nextBoard = augmented.board;
-          addedCount = augmented.addedCount;
-          addedTitles = augmented.addedTitles;
-          addedWidgetIds = augmented.addedWidgetIds;
-          const renamed = augmented.board.name.trim() !== targetBoard.name.trim();
-          didChange = addedCount > 0 || renamed;
+        const normalizedTargetTitle = normalizeWidgetTitle(detail.editTargetTitle);
+        const targetWidget =
+          targetBoard.widgets.find((widget) => normalizeWidgetTitle(widget.title) === normalizedTargetTitle) ||
+          targetBoard.widgets.find((widget) => normalizeWidgetTitle(widget.title).includes(normalizedTargetTitle)) ||
+          targetBoard.widgets.find((widget) => normalizedTargetTitle.includes(normalizeWidgetTitle(widget.title))) ||
+          null;
+
+        if (targetWidget) {
+          const nextType = detail.editTargetType || targetWidget.type;
+          const nextWidgetLibraryItem = metricsStorageModule.getWidgetLibraryItem(nextType);
+          const nextWidget = {
+            ...targetWidget,
+            type: nextType,
+            title: detail.editTitle?.trim() || targetWidget.title,
+            query: detail.editQuery?.trim() || targetWidget.query,
+            col_span: nextType === targetWidget.type ? targetWidget.col_span : Math.max(targetWidget.col_span, nextWidgetLibraryItem.colSpan),
+            row_span: nextType === targetWidget.type ? targetWidget.row_span : Math.max(targetWidget.row_span, nextWidgetLibraryItem.rowSpan),
+          };
+
+          const widgetChanged =
+            nextWidget.type !== targetWidget.type ||
+            nextWidget.title !== targetWidget.title ||
+            nextWidget.query !== targetWidget.query ||
+            nextWidget.col_span !== targetWidget.col_span ||
+            nextWidget.row_span !== targetWidget.row_span;
+
+          nextBoard = widgetChanged
+            ? {
+                ...targetBoard,
+                widgets: targetBoard.widgets.map((widget) => (widget.id === targetWidget.id ? nextWidget : widget)),
+                updated_at: Date.now(),
+              }
+            : targetBoard;
+          nextAllBoards = widgetChanged
+            ? allBoards.map((board) => (board.id === targetBoard.id ? nextBoard! : board))
+            : allBoards;
+          didChange = widgetChanged;
+          addedCount = widgetChanged ? 1 : 0;
+          addedTitles = [nextWidget.title];
+          addedWidgetIds = [nextWidget.id];
+        }
+      }
+
+      if (detail.mode === "edit") {
+        if (!targetBoard) {
+          dispatchMetricsBoardCompletion({
+            success: false,
+            error: "Target dashboard not found",
+          });
+          return;
+        }
+        if (!nextBoard) {
+          nextBoard = targetBoard;
+        }
+      }
+
+      if (!nextBoard && (detail.mode === "augment" || detail.mode === "rebuild") && targetBoard) {
+        const updatedBoardResult = detail.mode === "rebuild"
+          ? metricsTemplateModule.rebuildAIMetricsBoardDefinition({
+              board: targetBoard,
+              detail: {
+                ...detail,
+                database: targetDatabase,
+              },
+              dbType: targetConnection.db_type,
+              schemaHints,
+            })
+          : metricsTemplateModule.augmentAIMetricsBoardDefinition({
+              board: targetBoard,
+              detail: {
+                ...detail,
+                database: targetDatabase,
+              },
+              dbType: targetConnection.db_type,
+              schemaHints,
+            });
+
+        if (updatedBoardResult) {
+          nextBoard = updatedBoardResult.board;
+          addedCount = updatedBoardResult.addedCount;
+          addedTitles = updatedBoardResult.addedTitles;
+          addedWidgetIds = updatedBoardResult.addedWidgetIds;
+          const renamed = updatedBoardResult.board.name.trim() !== targetBoard.name.trim();
+          didChange = detail.mode === "rebuild" ? true : addedCount > 0 || renamed;
           if (didChange) {
-            nextAllBoards = allBoards.map((board) => (board.id === augmented.board.id ? augmented.board : board));
+            nextAllBoards = allBoards.map((board) => (board.id === updatedBoardResult.board.id ? updatedBoardResult.board : board));
           } else {
             nextBoard = targetBoard;
           }
@@ -1499,7 +1625,7 @@ function App() {
     [activeConn, activeConnectionId, addTab, currentDatabase, language, setError, t],
   );
 
-  const handleOpenAISlidePanel = useCallback((prompt?: string, attachment?: { text: string; source: string }) => {
+  const handleOpenAISlidePanel = useCallback((prompt?: string, attachment?: { text: string; source: string; boardId?: string }) => {
     if (typeof prompt === "string" && prompt.trim()) {
       setAiPanelDraft({
         prompt,
@@ -1510,6 +1636,7 @@ function App() {
       setAiPanelAttachment({
         text: attachment.text.trim(),
         source: attachment.source?.trim() || "Workspace attachment",
+        boardId: attachment.boardId,
         nonce: Date.now(),
       });
     }
@@ -1748,7 +1875,7 @@ function App() {
     const handleOpenAI = (event: Event) => {
       const detail = (event as CustomEvent<{
         prompt?: string;
-        attachment?: { text?: string; source?: string };
+        attachment?: { text?: string; source?: string; boardId?: string };
       }>).detail;
       handleOpenAISlidePanel(
         detail?.prompt,
@@ -1756,6 +1883,7 @@ function App() {
           ? {
               text: detail.attachment.text,
               source: detail.attachment.source || "Workspace attachment",
+              boardId: detail.attachment.boardId,
             }
           : undefined,
       );
@@ -2253,6 +2381,7 @@ function App() {
               initialAttachment={aiPanelAttachment ? {
                 text: aiPanelAttachment.text,
                 source: aiPanelAttachment.source,
+                boardId: aiPanelAttachment.boardId,
               } : undefined}
               initialAttachmentNonce={aiPanelAttachment?.nonce ?? 0}
               onClose={() => setShowAISlidePanel(false)}

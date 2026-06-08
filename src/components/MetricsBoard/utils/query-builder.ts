@@ -472,6 +472,67 @@ export function sanitizeWidgetLayouts(widgets: MetricsWidgetDefinition[]) {
 // Re-export METRICS_STORAGE_KEY so both MetricsBoard and query-builder reference the same value.
 export const METRICS_STORAGE_KEY = "tabler.metricsBoards.v1";
 
+function migrateLegacyAIMetricsWidgetQuery(widget: MetricsWidgetDefinition) {
+  const normalizedTitle = widget.title.trim().toLowerCase();
+  let nextQuery = widget.query;
+
+  if (normalizedTitle === "top users by orders") {
+    nextQuery = nextQuery.replace(
+      /u\."id"\s*=\s*o\."user_id"/gi,
+      'u."id"::text = o."user_id"::text',
+    );
+  }
+
+  if (normalizedTitle === "top products by ordered qty") {
+    nextQuery = nextQuery.replace(
+      /p\."id"\s*=\s*oi\."product_id"/gi,
+      'p."id"::text = oi."product_id"::text',
+    );
+  }
+
+  if (normalizedTitle === "products by category") {
+    nextQuery = nextQuery.replace(
+      /c\."id"\s*=\s*p\."category_id"/gi,
+      'c."id"::text = p."category_id"::text',
+    );
+  }
+
+  if (normalizedTitle === "products by brand") {
+    nextQuery = nextQuery.replace(
+      /b\."id"\s*=\s*p\."brand_id"/gi,
+      'b."id"::text = p."brand_id"::text',
+    );
+  }
+
+  if (normalizedTitle === "average rating by product" || normalizedTitle === "reviews by product") {
+    nextQuery = nextQuery.replace(
+      /FROM\s+([^\s]+)\s+r\s+LEFT\s+JOIN\s+([^\s]+)\s+p\s+ON\s+p\."id"(?:::\w+)?\s*=\s*r\."product_id"(?:::\w+)?/gi,
+      'FROM $2 p\nLEFT JOIN $1 r ON p."id"::text = r."product_id"::text',
+    );
+    nextQuery = nextQuery.replace(
+      /p\."id"\s*=\s*r\."product_id"/gi,
+      'p."id"::text = r."product_id"::text',
+    );
+    nextQuery = nextQuery.replace(
+      /COUNT\(\*\)::bigint AS value/gi,
+      'COUNT(r."product_id")::bigint AS value',
+    );
+    if (!/WHERE\s+p\."id"\s+IS\s+NOT\s+NULL/mi.test(nextQuery)) {
+      nextQuery = nextQuery.replace(
+        /\nGROUP BY 1/mi,
+        '\nWHERE p."id" IS NOT NULL\nGROUP BY 1',
+      );
+    }
+  }
+
+  return nextQuery === widget.query
+    ? widget
+    : {
+        ...widget,
+        query: nextQuery,
+      };
+}
+
 export function readStoredBoards(): MetricsBoardDefinition[] {
   if (typeof window === "undefined") return [];
 
@@ -481,7 +542,9 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
 
-    return parsed
+    let migrated = false;
+
+    const boards = parsed
       .map((board): MetricsBoardDefinition | null => {
         if (!board || typeof board !== "object") return null;
         if (typeof board.id !== "string" || typeof board.name !== "string" || typeof board.connection_id !== "string") {
@@ -534,17 +597,34 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
               .filter((widget: MetricsWidgetDefinition | null): widget is MetricsWidgetDefinition => !!widget)
           : [];
 
+        const migratedWidgets = widgets.map((widget: MetricsWidgetDefinition) => {
+          const nextWidget = migrateLegacyAIMetricsWidgetQuery(widget);
+          if (nextWidget.query !== widget.query) {
+            migrated = true;
+          }
+          return nextWidget;
+        });
+
         return {
           id: board.id,
           name: board.name,
           connection_id: board.connection_id,
           database: typeof board.database === "string" ? board.database : undefined,
-          widgets: sanitizeWidgetLayouts(widgets),
+          widgets: sanitizeWidgetLayouts(migratedWidgets),
           created_at: typeof board.created_at === "number" ? board.created_at : Date.now(),
-          updated_at: typeof board.updated_at === "number" ? board.updated_at : Date.now(),
+          updated_at:
+            migrated || typeof board.updated_at !== "number"
+              ? Date.now()
+              : board.updated_at,
         };
       })
       .filter((board): board is MetricsBoardDefinition => !!board);
+
+    if (migrated) {
+      window.localStorage.setItem(METRICS_STORAGE_KEY, JSON.stringify(boards));
+    }
+
+    return boards;
   } catch {
     return [];
   }

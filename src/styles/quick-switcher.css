@@ -24,37 +24,37 @@
   position: fixed;
   z-index: 9999;
   min-width: 180px;
-  padding: 4px;
-  border-radius: 8px;
-  background: rgba(14, 21, 27, 0.98);
-  border: 1px solid rgba(74, 88, 108, 0.6);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(8px);
+  padding: 6px;
+  border-radius: 12px;
+  background: #FFFFFF;
+  border: 1px solid #EEEEEF;
+  box-shadow: rgba(159,159,159,0.3) 0px 0px 0px 1px, rgba(0,0,0,0.05) 0px 1px 2px 0px;
 }
 
 .datagrid-context-menu-item {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 7px 12px;
+  padding: 8px 12px;
   border: none;
   background: transparent;
-  color: rgba(214, 224, 235, 0.85);
+  color: #3F3F3F;
+  font-family: 'DM Sans', sans-serif;
   font-size: 12px;
-  border-radius: 5px;
+  border-radius: 6px;
   cursor: pointer;
-  transition: background var(--transition), color var(--transition);
+  transition: background 0.15s, color 0.15s;
 }
 
 .datagrid-context-menu-item:hover {
-  background: rgba(122, 162, 255, 0.15);
-  color: rgba(214, 224, 235, 1);
+  background: #F3F4F6;
+  color: #111827;
 }
 
 .datagrid-context-menu-separator {
   height: 1px;
-  background: rgba(74, 88, 108, 0.4);
-  margin: 4px 0;
+  background: #EEEEEF;
+  margin: 6px 0;
 }
 
 .datagrid-empty {
@@ -1578,22 +1578,17 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: linear-gradient(180deg, rgba(8, 14, 18, 0.42), rgba(18, 29, 35, 0.56));
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.03);
+  background: #111827;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(117, 236, 205, 0.72), rgba(71, 186, 163, 0.82));
-  border-radius: 999px;
-  border: 2px solid rgba(7, 13, 18, 0.78);
-  box-shadow:
-    0 4px 10px rgba(0, 0, 0, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  background: #4B5563;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, rgba(139, 245, 218, 0.88), rgba(84, 202, 177, 0.94));
+  background: #374151;
 }
 
 ::-webkit-scrollbar-corner {
@@ -7097,7 +7092,42 @@
   box-shadow: 0 0 10px rgba(0, 212, 170, 0.45);
 }
 
-.sidebar-rail-btn,
+/* removed error block */
+.metrics-widget-status-error-removed {
+  border-color: rgba(255, 138, 162, 0.18);
+  background: rgba(255, 138, 162, 0.08);
+  color: #ffd0db;
+}
+
+:is(
+  .erd-toolbar-button,
+  .erd-sidepanel-action,
+  .erd-sidepanel-collapse,
+  .erd-modal-close,
+  .erd-modal-btn,
+  .erd-compact-select-trigger,
+  .erd-table-toggle,
+  .erd-quick-editor-close,
+  .metrics-board-rail-card,
+  .metrics-board-inline-action,
+  .metrics-board-list-item,
+  .metrics-board-list-child,
+  .metrics-board-btn,
+  .metrics-board-context-item,
+  .metrics-board-side-menu-item,
+  .metrics-compact-select-trigger,
+  .metrics-compact-select-option,
+  .metrics-widget-refresh-btn,
+  .metrics-board-rename-btn.secondary
+) {
+  border: 1px solid #EEEEEF;
+  background: #FFFFFF;
+  color: #707071;
+  box-shadow: none;
+  font-family: 'DM Sans', sans-serif;
+}
+
+:is(.sidebar-rail-btn,
 .workspace-sidebar-rail-btn,
 .workspace-toolbar .toolbar-btn,
 .explorer-header-btn,
@@ -7105,11 +7135,19 @@
 .tabbar-clear-btn,
 .tabbar-tab,
 .explorer-schema-picker-trigger,
-.explorer-structure-btn {
-  border: 1px solid rgba(0, 212, 170, 0.1);
-  background: rgba(0, 212, 170, 0.03);
-  color: rgba(255, 255, 255, 0.62);
+.explorer-structure-btn) {
+  border: 1px solid #EEEEEF;
+  background: #FFFFFF;
+  color: #707071;
   box-shadow: none;
+  border-radius: 12px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  font-family: 'DM Sans', sans-serif;
+  transition: all 0.15s ease;
 }
 
 .sidebar-rail-btn:hover:not(:disabled),
@@ -7122,72 +7160,113 @@
 .explorer-schema-picker-trigger:hover,
 .explorer-schema-picker-trigger.open,
 .explorer-structure-btn:hover {
-  border-color: rgba(0, 212, 170, 0.18);
-  background: rgba(0, 212, 170, 0.075);
-  color: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  border-color: #4B5563;
+  background: #F3F4F6;
+  color: #111827;
 }
 
 .sidebar-rail-btn.active,
-.workspace-sidebar-rail-btn.active,
-.tabbar-tab.active {
-  border-color: rgba(0, 212, 170, 0.24);
-  background: rgba(0, 212, 170, 0.1);
-  color: var(--fintech-green);
-  box-shadow:
-    inset 0 0 0 1px rgba(0, 212, 170, 0.18),
-    0 0 18px rgba(0, 212, 170, 0.08);
+.workspace-sidebar-rail-btn.active {
+  border-left: 3px solid #C37D0D !important;
+  background: #EEEEEF;
+  color: #111827;
 }
 
-.workspace-sidebar-rail-btn.active {
-  color: #e9fff8;
+.tabbar-tab.active {
+  border-bottom: 2px solid #C37D0D !important;
+  background: #EEEEEF;
+  color: #111827;
 }
 
 .workspace-toolbar .toolbar-btn.primary,
 .tabbar-run-btn {
   border-color: transparent;
-  background: linear-gradient(135deg, var(--fintech-green), var(--fintech-cyan));
-  color: #031018;
-  box-shadow: 0 10px 24px rgba(0, 212, 170, 0.16);
+  background: #111827;
+  color: rgba(255, 255, 255, 0.95);
+  box-shadow: none;
+  border-radius: 12px;
+  height: 36px;
 }
 
 .workspace-toolbar .toolbar-btn.primary:hover:not(:disabled),
 .tabbar-run-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, var(--fintech-cyan), var(--fintech-green));
-  color: #031018;
-  box-shadow: 0 14px 30px rgba(0, 212, 170, 0.2);
+  background: #1F2937;
+  color: #FFFFFF;
+  box-shadow: none;
 }
 
 .workspace-toolbar .toolbar-btn.subtle,
 .workspace-toolbar .toolbar-btn.icon-only {
   background: transparent;
   border-color: transparent;
-  color: rgba(255, 255, 255, 0.45);
+  color: #707071;
   box-shadow: none;
 }
 
 .workspace-toolbar .toolbar-btn.subtle:hover:not(:disabled),
 .workspace-toolbar .toolbar-btn.icon-only:hover:not(:disabled) {
+  border-color: #EEEEEF;
+  background: #F3F4F6;
+  color: #111827;
+}
+
+.workspace-toolbar .toolbar-btn.icon-only.is-active {
+  border-color: #4B5563;
+  background: #EEEEEF;
+  color: #111827;
+}
+
+.workspace-toolbar .toolbar-btn.clear-action,
+.tabbar-clear-btn {
+  border-color: #EEEEEF;
+  background: #FFFFFF;
+  color: #707071;
+}
+
+.workspace-toolbar .toolbar-btn.clear-action:hover:not(:disabled),
+.tabbar-clear-btn:hover:not(:disabled) {
+  border-color: #4B5563;
+  background: #F3F4F6;
+  color: #111827;
+}
+
+.workspace-toolbar-primary-hover-disabled-removed, /* disabled line */
+.tabbar-run-btn-hover-disabled-removed {
+  background: linear-gradient(135deg, var(--fintech-cyan), var(--fintech-green));
+  color: #031018;
+  box-shadow: 0 14px 30px rgba(0, 212, 170, 0.2);
+}
+
+.workspace-toolbar-subtle-icon-only-disabled-removed,
+.workspace-toolbar-icon-only-disabled-removed {
+  background: transparent;
+  border-color: transparent;
+  color: rgba(255, 255, 255, 0.45);
+  box-shadow: none;
+}
+
+.workspace-toolbar-subtle-hover-disabled-removed,
+.workspace-toolbar-icon-only-hover-disabled-removed {
   border-color: rgba(0, 212, 170, 0.12);
   background: rgba(0, 212, 170, 0.05);
   color: rgba(255, 255, 255, 0.82);
 }
 
-.workspace-toolbar .toolbar-btn.icon-only.is-active {
+.workspace-toolbar-icon-only-active-disabled-removed {
   border-color: rgba(0, 212, 170, 0.18);
   background: rgba(0, 212, 170, 0.09);
   color: var(--fintech-green);
 }
 
-.workspace-toolbar .toolbar-btn.clear-action,
-.tabbar-clear-btn {
+.workspace-toolbar-clear-action-disabled-removed,
+.tabbar-clear-btn-disabled-removed {
   border-color: rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.025);
   color: rgba(255, 255, 255, 0.58);
 }
 
-.workspace-toolbar .toolbar-btn.clear-action:hover:not(:disabled),
-.tabbar-clear-btn:hover:not(:disabled) {
+.workspace-toolbar-clear-action-hover-disabled-removed,
+.tabbar-clear-btn-hover-disabled-removed {
   border-color: rgba(255, 148, 170, 0.18);
   background: rgba(255, 148, 170, 0.08);
   color: #ffe6ec;
@@ -7704,84 +7783,94 @@
 }
 
 .datagrid-th {
-  background: rgba(7, 14, 21, 0.97);
-  border-bottom-color: rgba(0, 212, 170, 0.12);
-  border-right-color: rgba(0, 212, 170, 0.08);
-  color: rgba(255, 255, 255, 0.52);
-  font-size: 9px;
+  background: #FFFFFF;
+  border-bottom: 1px solid #EEEEEF;
+  border-right: 1px solid #EEEEEF;
+  color: #3F3F3F;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .datagrid-th-index {
-  background: linear-gradient(180deg, rgba(6, 12, 18, 0.98), rgba(7, 14, 21, 0.98));
-  box-shadow: 1px 0 0 rgba(0, 212, 170, 0.1), 10px 0 18px rgba(0, 0, 0, 0.14);
+  background: #FFFFFF;
+  border-right: 1px solid #EEEEEF;
+  border-bottom: 1px solid #EEEEEF;
+  box-shadow: 1px 0 0 #EEEEEF;
 }
 
 .datagrid-index-toggle,
 .datagrid-index-value {
-  color: var(--fintech-cyan);
+  color: #C37D0D;
 }
 
 .datagrid-index-toggle:hover,
 .datagrid-index-toggle.active,
 .datagrid-index-selectable:hover,
 .datagrid-index-selectable.selected {
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(0, 212, 170, 0.08);
+  color: #111827;
+  background: rgba(195, 125, 13, 0.08);
 }
 
 .datagrid-row:hover {
   background: rgba(0, 212, 170, 0.045);
+  background: #F9FAFB;
 }
 
 .datagrid-row.selected {
-  background: rgba(0, 212, 170, 0.075);
+  background: rgba(195, 125, 13, 0.08);
 }
 
 .datagrid-td {
-  border-right-color: rgba(0, 212, 170, 0.07);
-  border-bottom-color: rgba(0, 212, 170, 0.08);
+  border-right: 1px solid #EEEEEF;
+  border-bottom: 1px solid #EEEEEF;
 }
 
 .datagrid-td-index {
-  background: rgba(6, 12, 18, 0.98);
-  box-shadow: 1px 0 0 rgba(0, 212, 170, 0.1), 10px 0 16px rgba(0, 0, 0, 0.12);
+  background: #FFFFFF;
+  border-right: 1px solid #EEEEEF;
+  box-shadow: 1px 0 0 #EEEEEF;
 }
 
 .datagrid-row.alt .datagrid-td-index {
-  background: rgba(8, 14, 21, 0.98);
+  background: #EEEEEF;
 }
 
 .datagrid-row:hover .datagrid-td-index {
-  background: rgba(9, 17, 24, 0.98);
+  background: #F9FAFB;
 }
 
 .datagrid-row.selected .datagrid-td-index {
-  background: rgba(8, 20, 25, 0.98);
+  background: #EEEEEF;
 }
 
 .datagrid-cell {
   min-height: 28px;
-  padding: 5px 10px;
-  color: rgba(255, 255, 255, 0.72);
+  padding: 12px 16px;
+  color: #3F3F3F;
+  font-family: 'DM Sans', sans-serif;
+  border-bottom: 1px solid #EEEEEF;
 }
 
 .datagrid-cell.editable:hover::after {
-  border-color: rgba(0, 212, 170, 0.18);
-  background: rgba(0, 212, 170, 0.04);
+  border-color: #4B5563;
+  background: rgba(195, 125, 13, 0.04);
 }
 
 .datagrid-cell.editing {
-  background: rgba(0, 212, 170, 0.09);
+  background: rgba(195, 125, 13, 0.09);
 }
 
 .datagrid-cell-editor {
   min-height: 32px;
-  background: rgba(6, 12, 18, 0.98);
+  background: #FFFFFF;
+  border: 1px solid #EEEEEF;
+  color: #111827;
 }
 
 .datagrid-cell.selected {
-  background: rgba(0, 212, 170, 0.12);
-  outline-color: rgba(0, 212, 170, 0.46);
+  background: rgba(195, 125, 13, 0.12);
+  outline-color: #4B5563;
 }
 
 /* Light theme context menu + resize */
@@ -7798,22 +7887,22 @@
 }
 
 .datagrid-context-menu {
-  background: rgba(5, 10, 18, 0.98);
-  border-color: rgba(0, 212, 170, 0.2);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  background: #FFFFFF;
+  border-color: #EEEEEF;
+  box-shadow: rgba(159,159,159,0.3) 0px 0px 0px 1px, rgba(0,0,0,0.05) 0px 1px 2px 0px;
 }
 
 .datagrid-context-menu-item {
-  color: rgba(255, 255, 255, 0.85);
+  color: #3F3F3F;
 }
 
 .datagrid-context-menu-item:hover {
-  background: rgba(0, 212, 170, 0.15);
-  color: rgba(255, 255, 255, 1);
+  background: #F3F4F6;
+  color: #111827;
 }
 
 .datagrid-context-menu-separator {
-  background: rgba(0, 212, 170, 0.2);
+  background: #EEEEEF;
 }
 
 .datagrid-empty,
@@ -8019,26 +8108,35 @@
 .datagrid-insert-field-input {
   width: 100%;
   min-height: 38px;
+  height: 40px;
   padding: 0 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(0, 212, 170, 0.1);
-  background: rgba(3, 7, 18, 0.72);
-  color: rgba(255, 255, 255, 0.9);
+  border-radius: 0px; /* square corners! */
+  border: 1px solid #EEEEEF;
+  background: #FFFFFF;
+  color: #3F3F3F;
   font-size: 13px;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+  transition: border-color 0.16s ease;
 }
 
 .datagrid-insert-field-input:focus {
   outline: none;
-  border-color: rgba(0, 212, 170, 0.22);
-  box-shadow: 0 0 0 3px rgba(0, 212, 170, 0.08);
-  background: rgba(3, 7, 18, 0.86);
+  border: 1px solid #707071;
+  background: #FFFFFF;
 }
 
 .datagrid-insert-field-input-textarea {
   min-height: 112px;
   padding: 11px 12px;
   resize: vertical;
+  border-radius: 0px;
+  border: 1px solid #EEEEEF;
+  background: #FFFFFF;
+  color: #3F3F3F;
+}
+
+.datagrid-insert-field-input-textarea:focus {
+  outline: none;
+  border: 1px solid #707071;
 }
 
 .datagrid-insert-dialog-error {
@@ -10687,7 +10785,7 @@
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock {
   width: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: 6px;
   align-items: center;
 }
@@ -10739,13 +10837,81 @@
   border-radius: 9px;
 }
 
+.app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock .ai-workspace-command-data-toggle {
+  min-width: 78px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 9px;
+  border-radius: 9px;
+  border: 1px solid rgba(53, 230, 211, 0.18);
+  background:
+    linear-gradient(180deg, rgba(7, 15, 24, 0.98), rgba(5, 12, 20, 0.98)),
+    radial-gradient(circle at top left, rgba(45, 212, 191, 0.06), transparent 62%);
+  color: rgba(196, 244, 239, 0.84);
+  transition: border-color 140ms ease, color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock .ai-workspace-command-data-toggle:hover:not(:disabled) {
+  border-color: rgba(53, 230, 211, 0.3);
+  color: #effcff;
+  box-shadow: 0 10px 18px rgba(4, 12, 20, 0.22);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock .ai-workspace-command-data-toggle.is-active {
+  border-color: rgba(53, 230, 211, 0.34);
+  color: #d8fffb;
+  background:
+    linear-gradient(180deg, rgba(8, 21, 28, 0.98), rgba(6, 18, 24, 0.98)),
+    radial-gradient(circle at top left, rgba(45, 212, 191, 0.12), transparent 64%);
+  box-shadow: 0 12px 20px rgba(4, 18, 24, 0.24);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock .ai-workspace-command-data-toggle:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock .ai-workspace-command-data-toggle-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock .ai-workspace-command-data-toggle-copy {
+  font-size: 0.66rem;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock .ai-workspace-command-popover {
   top: auto;
   bottom: calc(100% + 8px);
+  left: 0;
+  right: auto;
+  width: min(304px, calc(var(--workspace-ai-sidebar-width) - 48px), calc(100vw - 40px));
+  max-width: calc(100vw - 40px);
+  max-height: min(320px, calc(100vh - 180px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock .ai-workspace-command-dropdown--provider .ai-workspace-command-popover {
-  width: min(320px, calc(100vw - 40px));
+  left: auto;
+  right: 0;
+  width: min(320px, calc(var(--workspace-ai-sidebar-width) - 48px), calc(100vw - 40px));
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock .ai-workspace-command-popover .ai-workspace-command-item-copy strong,
+.app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock .ai-workspace-command-popover .ai-workspace-command-item-copy span {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 560px) {
@@ -10759,7 +10925,7 @@
   }
 
   .app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock {
-    grid-template-columns: minmax(96px, auto) minmax(0, 1fr) auto;
+    grid-template-columns: minmax(96px, auto) minmax(0, 1fr) auto auto;
   }
 
   .app-root .ai-workspace-stage--sidebar .ai-workspace-generate-btn {
@@ -10880,4 +11046,101 @@
   .metrics-board-topbar-actions {
     justify-content: flex-start;
   }
+}
+
+/* ─── MiniMax Design System Overrides ────────────────────────────────────── */
+
+/* Typography */
+.structure-topbar-title {
+  font-family: DM Sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+/* Monospace / Code font rules */
+.ai-workspace-markdown-code,
+.ai-workspace-chat-code,
+.ai-workspace-bubble-code,
+.ai-workspace-modal-code {
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  line-height: 20px !important;
+}
+
+/* Datagrid tables, cells, dropdowns, input elements, scrollbars, and menus */
+
+.datagrid-cell, .datagrid-td {
+  padding: 12px 16px !important;
+  border-bottom: 1px solid #EEEEEF !important;
+}
+
+.datagrid-row:hover {
+  background: #F9FAFB !important;
+}
+
+.erd-compact-select-trigger,
+.metrics-compact-select-trigger,
+.explorer-schema-picker-trigger {
+  background: #FFFFFF !important;
+  color: #111827 !important;
+  border: 1px solid #EEEEEF !important;
+  border-radius: 6px !important;
+}
+
+.erd-compact-select-trigger-label,
+.metrics-compact-select-trigger-label {
+  color: #111827 !important;
+}
+
+/* Inputs and search inputs must have square corners, height 40px, default white bg, focus border stone gray */
+.datagrid-settings-input,
+.sidebar-search-input,
+.datagrid-insert-field-input,
+.connection-group-rename-input,
+input[type="text"],
+input[type="search"] {
+  background: #FFFFFF !important;
+  border: 1px solid #EEEEEF !important;
+  border-radius: 0px !important;
+  height: 40px !important;
+  color: #3F3F3F !important;
+}
+
+.datagrid-settings-input:focus,
+.sidebar-search-input:focus,
+.datagrid-insert-field-input:focus,
+.connection-group-rename-input:focus,
+input[type="text"]:focus,
+input[type="search"]:focus {
+  border: 1px solid #707071 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: #FFFFFF !important;
+}
+
+/* Search input icon color */
+.lucide-search,
+.search-icon,
+.datagrid-search-icon {
+  color: #9F9F9F !important;
+}
+
+/* Menus & Context Menus & Popovers */
+.datagrid-context-menu,
+.erd-compact-select-menu,
+.metrics-compact-select-menu,
+.datagrid-settings-popover {
+  background: #FFFFFF !important;
+  border: 1px solid #EEEEEF !important;
+  border-radius: 12px !important;
+  box-shadow: rgba(159,159,159,0.3) 0px 0px 0px 1px, rgba(0,0,0,0.05) 0px 1px 2px 0px !important;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar-track {
+  background: #111827 !important;
+}
+::-webkit-scrollbar-thumb {
+  background: #4B5563 !important;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #374151 !important;
 }

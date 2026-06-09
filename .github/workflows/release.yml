@@ -72,7 +72,7 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
-          CXXFLAGS: ${{ matrix.target == 'windows' && format('{0} /FI\"{1}/src-tauri/src/clang_compat.h\"', matrix.cxxflags, github.workspace) || matrix.cxxflags }}
+          CXXFLAGS: ${{ matrix.target == 'windows' && format('{0} /FI{1}/src-tauri/src/clang_compat.h', matrix.cxxflags, github.workspace) || matrix.cxxflags }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "TableR ${{ github.ref_name }}"

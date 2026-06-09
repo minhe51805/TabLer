@@ -35,7 +35,7 @@ jobs:
             target: "windows"
             cc: "clang-cl"
             cxx: "clang-cl"
-            cxxflags: "/std:c++17 /EHsc /DDUCKDB_STATIC_BUILD /FI${{ github.workspace }}/src-tauri/src/clang_compat.h"
+            cxxflags: "/std:c++17 /EHsc /DDUCKDB_STATIC_BUILD -FI${{ github.workspace }}/src-tauri/src/clang_compat.h"
 
     runs-on: ${{ matrix.platform }}
 

@@ -506,25 +506,28 @@ export function AISettingsModal({ onClose }: Props) {
                                         key={config.id}
                                         type="button"
                                         onClick={() => setEditingId(config.id)}
-                                        className={`ai-provider-card ${editingId === config.id ? "active" : ""}`}
+                                        className={`ai-provider-card ${editingId === config.id ? "active" : ""} ${config.is_enabled && config.is_primary ? "in-use" : ""}`}
                                         disabled={isSettingUpLocalOllama}
                                     >
-                                        <div className="ai-provider-card-type">
-                                            {PROVIDER_NAMES[config.provider_type]?.toUpperCase()}
+                                        <div className="ai-provider-card-avatar" aria-hidden="true">
+                                            {(PROVIDER_NAMES[config.provider_type] || "?").charAt(0).toUpperCase()}
                                         </div>
-                                        <div className="ai-provider-card-name">
-                                            {config.name || PROVIDER_NAMES[config.provider_type] || "Unnamed"}
-                                        </div>
-                                        <div className="ai-provider-card-model">
-                                            {config.model || "No model selected"}
-                                        </div>
-                                        <div className="ai-provider-card-badges">
-                                            {config.is_enabled && config.is_primary && (
-                                                <span className="ai-provider-badge ai-provider-badge-inuse">IN USE</span>
-                                            )}
-                                            <span className={`ai-provider-badge ${config.is_enabled ? "ai-provider-badge-enabled" : "ai-provider-badge-disabled"}`}>
-                                                {config.is_enabled ? "ENABLED" : "DISABLED"}
-                                            </span>
+                                        <div className="ai-provider-card-main">
+                                            <div className="ai-provider-card-name">
+                                                {config.name || PROVIDER_NAMES[config.provider_type] || "Unnamed"}
+                                            </div>
+                                            <div className="ai-provider-card-model">
+                                                {config.model || "No model selected"}
+                                            </div>
+                                            <div className="ai-provider-card-badges">
+                                                <span className={`ai-provider-dot ${config.is_enabled ? "is-on" : "is-off"}`} aria-hidden="true" />
+                                                <span className="ai-provider-card-status">
+                                                    {config.is_enabled ? "Enabled" : "Disabled"}
+                                                </span>
+                                                {config.is_enabled && config.is_primary && (
+                                                    <span className="ai-provider-badge ai-provider-badge-inuse">In use</span>
+                                                )}
+                                            </div>
                                         </div>
                                     </button>
                                 ))}

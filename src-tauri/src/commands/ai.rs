@@ -475,6 +475,47 @@ fn extract_text_from_json(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Splits a leading `<think>...</think>` reasoning block out of model content.
+/// Returns (reasoning, cleaned_text). Reasoning models like DeepSeek-R1 and some
+/// Qwen variants emit their chain-of-thought this way inside the normal content.
+fn split_think_block(text: &str) -> (Option<String>, String) {
+    let trimmed = text.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("<think>") {
+        if let Some(end) = rest.find("</think>") {
+            let reasoning = rest[..end].trim().to_string();
+            let after = rest[end + "</think>".len()..].trim_start().to_string();
+            let reasoning = if reasoning.is_empty() { None } else { Some(reasoning) };
+            return (reasoning, after);
+        }
+        // Open tag without a close: treat everything as reasoning still in progress.
+        let reasoning = rest.trim();
+        if !reasoning.is_empty() {
+            return (Some(reasoning.to_string()), String::new());
+        }
+    }
+    (None, text.to_string())
+}
+
+/// Extracts the model's real reasoning from an OpenAI-compatible payload, when the
+/// provider exposes it as a dedicated field (`reasoning_content` for DeepSeek /
+/// some Ollama builds, `reasoning` for OpenRouter). `None` when absent.
+fn extract_openai_like_reasoning(payload: &serde_json::Value) -> Option<String> {
+    for pointer in [
+        "/choices/0/message/reasoning_content",
+        "/choices/0/message/reasoning",
+        "/choices/0/delta/reasoning_content",
+        "/choices/0/delta/reasoning",
+    ] {
+        if let Some(text) = payload.pointer(pointer).and_then(extract_text_from_json) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn extract_openai_like_response_text(payload: &serde_json::Value) -> Option<String> {
     if let Some(text) = payload
         .pointer("/choices/0/message/content")
@@ -870,7 +911,10 @@ pub async fn ask_ai(
                 }
 
                 if let Some(text) = extract_openai_like_response_text(&resp_json) {
-                    return Ok(AIResponse { text, error: None });
+                    let field_reasoning = extract_openai_like_reasoning(&resp_json);
+                    let (think_reasoning, cleaned) = split_think_block(&text);
+                    let reasoning = field_reasoning.or(think_reasoning);
+                    return Ok(AIResponse { text: cleaned, reasoning, error: None });
                 }
 
                 return Err(ai_provider_response_error_with_preview(
@@ -944,7 +988,8 @@ pub async fn ask_ai(
             }
 
             if let Some(text) = extract_anthropic_response_text(&resp_json) {
-                return Ok(AIResponse { text, error: None });
+                let (reasoning, cleaned) = split_think_block(&text);
+                return Ok(AIResponse { text: cleaned, reasoning, error: None });
             }
 
             Err(ai_provider_response_error_with_preview(
@@ -1014,7 +1059,8 @@ pub async fn ask_ai(
             }
 
             if let Some(text) = extract_gemini_response_text(&resp_json) {
-                return Ok(AIResponse { text, error: None });
+                let (reasoning, cleaned) = split_think_block(&text);
+                return Ok(AIResponse { text: cleaned, reasoning, error: None });
             }
 
             Err(ai_provider_response_error_with_preview(
@@ -1040,6 +1086,52 @@ mod tests {
             allow_schema_context: true,
             allow_inline_completion: true,
         }
+    }
+
+    #[test]
+    fn split_think_block_extracts_leading_reasoning() {
+        let (reasoning, cleaned) =
+            split_think_block("<think>step one\nstep two</think>\nSELECT 1;");
+        assert_eq!(reasoning.as_deref(), Some("step one\nstep two"));
+        assert_eq!(cleaned, "SELECT 1;");
+    }
+
+    #[test]
+    fn split_think_block_without_tag_returns_text_unchanged() {
+        let (reasoning, cleaned) = split_think_block("just an answer");
+        assert!(reasoning.is_none());
+        assert_eq!(cleaned, "just an answer");
+    }
+
+    #[test]
+    fn split_think_block_handles_unclosed_tag_as_reasoning() {
+        let (reasoning, cleaned) = split_think_block("<think>still thinking");
+        assert_eq!(reasoning.as_deref(), Some("still thinking"));
+        assert_eq!(cleaned, "");
+    }
+
+    #[test]
+    fn extracts_openai_reasoning_field() {
+        let payload = json!({
+            "choices": [{
+                "message": {
+                    "content": "SELECT 1;",
+                    "reasoning_content": "The user wants a trivial query."
+                }
+            }]
+        });
+        assert_eq!(
+            extract_openai_like_reasoning(&payload).as_deref(),
+            Some("The user wants a trivial query.")
+        );
+    }
+
+    #[test]
+    fn missing_reasoning_field_returns_none() {
+        let payload = json!({
+            "choices": [{ "message": { "content": "SELECT 1;" } }]
+        });
+        assert!(extract_openai_like_reasoning(&payload).is_none());
     }
 
     #[test]

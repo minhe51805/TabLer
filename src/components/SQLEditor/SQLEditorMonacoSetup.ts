@@ -19,24 +19,31 @@ type CompletionItem = {
 };
 
 // Theme definition matching Monaco's IStandaloneThemeData shape
+// Xcode-like light SQL theme matching the MiniMax/TablePro Apple-native palette
+// (editor.syntax in MINIMAX_THEME). The id is kept as "tabler-dark" for
+// backward compatibility with callers, but the base is "vs" (light) so the
+// editor chrome matches the white #FFFFFF canvas.
 const TABLER_DARK_THEME = {
-  base: "vs-dark",
+  base: "vs",
   inherit: true,
   rules: [
-    { token: "keyword", foreground: "22D3EE", fontStyle: "bold" },
-    { token: "string", foreground: "7FE0C2" },
-    { token: "number", foreground: "7DC9D8" },
-    { token: "comment", foreground: "65789A", fontStyle: "italic" },
-    { token: "operator", foreground: "22D3EE" },
+    { token: "keyword", foreground: "0A49A5", fontStyle: "bold" },
+    { token: "string", foreground: "C41A16" },
+    { token: "number", foreground: "6C36A9" },
+    { token: "comment", foreground: "007400", fontStyle: "italic" },
+    { token: "operator", foreground: "000000" },
+    { token: "delimiter", foreground: "000000" },
+    { token: "identifier", foreground: "000000" },
+    { token: "type", foreground: "3F6E74" },
   ],
   colors: {
-    "editor.background": "#101826",
-    "editor.foreground": "#e7ecf8",
-    "editor.selectionBackground": "#22d3ee2a",
-    "editor.lineHighlightBackground": "#0b2f3c66",
-    "editorCursor.foreground": "#22d3ee",
-    "editorLineNumber.foreground": "#62779d",
-    "editorLineNumber.activeForeground": "#e7ecf8",
+    "editor.background": "#FFFFFF",
+    "editor.foreground": "#000000",
+    "editor.selectionBackground": "#B4D8FD",
+    "editor.lineHighlightBackground": "#007AFF14",
+    "editorCursor.foreground": "#007AFF",
+    "editorLineNumber.foreground": "#8E8E93",
+    "editorLineNumber.activeForeground": "#000000",
   },
 };
 

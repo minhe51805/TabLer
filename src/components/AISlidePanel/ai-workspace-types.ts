@@ -27,6 +27,39 @@ export function getDefaultAIWorkspaceInteractionMode(schemaContextAllowed?: bool
   return schemaContextAllowed ? "edit" : "prompt";
 }
 
+/**
+ * Controls how much an autonomous agent can run without asking the user first.
+ * - "review": always pause for approval before any execution.
+ * - "smart": auto-run safe read-only SQL, ask only for writes/high-risk SQL (default).
+ * - "full": run everything the agent proposes without prompting.
+ */
+export type AIWorkspaceAgentAutonomy = "review" | "smart" | "full";
+
+export const DEFAULT_AI_WORKSPACE_AGENT_AUTONOMY: AIWorkspaceAgentAutonomy = "smart";
+
+export function isAIWorkspaceAgentAutonomy(value: unknown): value is AIWorkspaceAgentAutonomy {
+  return value === "review" || value === "smart" || value === "full";
+}
+
+export type AIWorkspaceAgentActionName =
+  | "list_tables"
+  | "describe_table"
+  | "run_readonly_sql"
+  | "finish";
+
+export type AIWorkspaceAgentStepStatus = "running" | "done" | "error";
+
+export interface AIWorkspaceAgentStep {
+  /** 1-based ordinal of the step within the run. */
+  step: number;
+  action: AIWorkspaceAgentActionName;
+  /** The model's short rationale for taking this action. */
+  message: string;
+  /** Tool result; empty while the step is still running. */
+  observation?: string;
+  status: AIWorkspaceAgentStepStatus;
+}
+
 export interface AIWorkspaceBubbleData {
   id: string;
   threadId: string;
@@ -47,4 +80,8 @@ export interface AIWorkspaceBubbleData {
   pointer: AIWorkspacePointerState;
   createdAt: number;
   autoDismissAt?: number;
+  /** Real model reasoning text; undefined when the model returns none. */
+  reasoning?: string;
+  /** Live trace of autonomous agent tool steps; undefined outside agent mode. */
+  agentSteps?: AIWorkspaceAgentStep[];
 }

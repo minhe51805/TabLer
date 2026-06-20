@@ -508,15 +508,18 @@ export function Sidebar() {
 
     return (
       <div className="explorer-shell">
-      <div className="panel-header panel-header-rich explorer-header">
+      <div className="explorer-header">
         <div className="explorer-header-bar">
           <div className="explorer-header-identity">
             <div className="explorer-header-line">
+              <span className="explorer-header-icon" aria-hidden="true">
+                <Database className="w-4 h-4" />
+              </span>
               <h2 className="explorer-header-title">{t("explorer.title")}</h2>
             </div>
 
             <div className="explorer-header-context">
-              <div className="explorer-workspace-pill" title={currentDatabase || undefined}>
+              <div className="explorer-workspace-status" title={currentDatabase || undefined}>
                 <span className="explorer-workspace-dot" />
                 <span className="explorer-workspace-label">{compactDatabaseName || t("explorer.workspace")}</span>
               </div>
@@ -528,31 +531,32 @@ export function Sidebar() {
               <button
                 type="button"
                 onClick={() => setShowCreateWizard(true)}
-                className="explorer-header-btn"
+                className="explorer-header-btn explorer-header-btn--primary"
                 title={t("explorer.createTitle")}
+                aria-label={t("explorer.createTitle")}
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>{t("explorer.create")}</span>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => void handleRefresh()}
+              className="explorer-header-btn"
+              title={t("explorer.refreshTitle")}
+              aria-label={t("explorer.refreshTitle")}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
 
             <button
               type="button"
               onClick={() => void handleDisconnect()}
               className="explorer-header-btn danger"
               title={t("explorer.disconnectTitle")}
+              aria-label={t("explorer.disconnectTitle")}
             >
               <PlugZap className="w-3.5 h-3.5" />
-              <span>{t("explorer.disconnect")}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void handleRefresh()}
-              className="panel-header-action explorer-refresh-btn"
-              title={t("explorer.refreshTitle")}
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -633,7 +637,6 @@ export function Sidebar() {
           />
         )}
 
-        {!hasSearch && <div className="explorer-search-hint">{t("explorer.browseHint")}</div>}
         {autocompleteItems.length > 0 && (
           <div className="sidebar-search-autocomplete">
             {autocompleteItems.map((item) => (
@@ -729,25 +732,38 @@ export function Sidebar() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg-primary)]">
-      <div className="flex items-center gap-2 px-2 py-1.5 border-b border-[var(--border-color)]">
+    <div className="sidebar-browser">
+      <div className="sidebar-browser-tabs" role="tablist" aria-label="Sidebar views">
         <button
-          className={`flex-1 flex items-center justify-center gap-1.5 py-1 text-xs rounded transition-colors ${activeSidebarTab === 'database' ? 'bg-[var(--bg-hover)] text-[var(--accent)] font-medium' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'}`}
+          type="button"
+          role="tab"
+          aria-selected={activeSidebarTab === "database"}
+          className={`sidebar-browser-tab ${activeSidebarTab === "database" ? "active" : ""}`}
           onClick={() => setActiveSidebarTab('database')}
         >
           <Database className="w-3.5 h-3.5" />
           Databases
         </button>
         <button
-          className={`flex-1 flex items-center justify-center gap-1.5 py-1 text-xs rounded transition-colors ${activeSidebarTab === 'linked' ? 'bg-[var(--bg-hover)] text-[var(--accent)] font-medium' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'}`}
+          type="button"
+          role="tab"
+          aria-selected={activeSidebarTab === "linked"}
+          className={`sidebar-browser-tab ${activeSidebarTab === "linked" ? "active" : ""}`}
           onClick={() => setActiveSidebarTab('linked')}
         >
           <FolderSearch className="w-3.5 h-3.5" />
           Folders
         </button>
       </div>
-      <div className="flex-1 overflow-hidden relative">
-        {activeSidebarTab === "database" ? renderDatabaseExplorer() : <LinkedFoldersPanel />}
+      <div className="sidebar-browser-content">
+        {activeSidebarTab === "database" ? renderDatabaseExplorer() : (
+          <LinkedFoldersPanel
+            activeConnectionId={activeConnectionId}
+            currentDatabase={currentDatabase}
+            addTab={addTab}
+            language={language}
+          />
+        )}
       </div>
     </div>
   );

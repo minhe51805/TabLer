@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { getCurrentAppLanguage } from "../../../i18n";
 import { useAppStore } from "../../../stores/appStore";
-import { getActiveAIProvider, type AIConversationMessage, type AIProviderConfig, type AIResponseLanguage, type QueryResult, type TableInfo, type TableStructure } from "../../../types";
+import { getActiveAIProvider, type AIConversationMessage, type AIProviderConfig, type AIRequestIntent, type AIRequestMode, type AIResponseLanguage, type QueryResult, type TableInfo, type TableStructure } from "../../../types";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
 import {
   formatExecutionError,
@@ -23,7 +23,7 @@ import {
   MAX_TABLE_NAMES_IN_CONTEXT,
   MAX_AI_SCHEMA_CODEC_CACHE_ENTRIES,
 } from "../AISlidePanelUtils";
-import { aiModeUsesSchemaContext, type AIWorkspaceInteractionMode } from "../ai-workspace-types";
+import { aiModeUsesSchemaContext, type AIWorkspaceAgentStep, type AIWorkspaceInteractionMode } from "../ai-workspace-types";
 
 export interface AIGeneratedAssistResult {
   prompt: string;
@@ -31,6 +31,8 @@ export interface AIGeneratedAssistResult {
   sql: string | null;
   risk?: SqlRiskAnalysis;
   intent: AssistIntent;
+  reasoning?: string;
+  agentSteps?: AIWorkspaceAgentStep[];
 }
 
 export interface AIExecutedSqlResult {
@@ -1691,7 +1693,7 @@ function summarizeRunResult(result: QueryResult) {
 
 export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
   const {
-    askAI,
+    askAIWithReasoning,
     aiConfigs,
     saveAIConfigs,
     tables,
@@ -1704,7 +1706,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     currentDatabase,
   } = useAppStore(
     useShallow((state) => ({
-      askAI: state.askAI,
+      askAIWithReasoning: state.askAIWithReasoning,
       aiConfigs: state.aiConfigs,
       saveAIConfigs: state.saveAIConfigs,
       tables: state.tables,
@@ -1724,6 +1726,26 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
   const aiSchemaCodecCacheRef = useRef(new Map<string, string>());
   const requestIdRef = useRef(0);
+  // Captures the model's real reasoning from the most recent askAI call so the
+  // final assistant bubble can show genuine thinking instead of fabricated steps.
+  const lastReasoningRef = useRef<string | undefined>(undefined);
+
+  const askAI = useCallback(
+    async (
+      prompt: string,
+      context: string,
+      mode: AIRequestMode = "panel",
+      intent: AIRequestIntent = "sql",
+      history: AIConversationMessage[] = [],
+    ): Promise<string> => {
+      const { text, reasoning } = await askAIWithReasoning(prompt, context, mode, intent, history);
+      if (reasoning && reasoning.trim()) {
+        lastReasoningRef.current = reasoning.trim();
+      }
+      return text;
+    },
+    [askAIWithReasoning],
+  );
 
   const activeProvider = getActiveAIProvider(aiConfigs);
   const isLocalProvider = isLocalAIProvider(activeProvider);
@@ -1772,6 +1794,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       interactionMode?: AIWorkspaceInteractionMode;
       requestDataReadConsent?: () => Promise<boolean>;
       userPrompt?: string;
+      onAgentProgress?: (steps: AIWorkspaceAgentStep[]) => void;
     }
   ): Promise<AIGeneratedAssistResult> => {
     const normalizedPrompt = prompt.trim();
@@ -1789,8 +1812,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     setIsGenerating(true);
     setError(null);
     const requestId = ++requestIdRef.current;
+    lastReasoningRef.current = undefined;
     const requestedInteractionMode = options?.interactionMode ?? "prompt";
     const requestDataReadConsent = options?.requestDataReadConsent;
+    const onAgentProgress = options?.onAgentProgress;
     const requestIntentPrompt = options?.userPrompt?.trim() || normalizedPrompt;
     const assistIntent: AssistIntent = inferAssistIntent(requestIntentPrompt, requestedInteractionMode);
     const wantsVisualization = isVisualizationRequest(requestIntentPrompt);
@@ -2009,6 +2034,29 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
       if (interactionMode === "agent") {
         const agentTraceSteps: AgentTraceStep[] = [];
+        // Snapshot completed steps plus an optional in-flight step, then stream
+        // them to the UI so the bubble can show the agent working live.
+        const publishAgentProgress = (pending?: { action: AgentToolName; message: string }) => {
+          if (!onAgentProgress) return;
+          const completed: AIWorkspaceAgentStep[] = agentTraceSteps.map((step) => ({
+            step: step.step,
+            action: step.action,
+            message: step.message,
+            observation: step.observation,
+            status: step.observation.startsWith("Tool error") || step.observation.startsWith("Tool blocked")
+              ? "error"
+              : "done",
+          }));
+          if (pending) {
+            completed.push({
+              step: agentTraceSteps.length + 1,
+              action: pending.action,
+              message: pending.message,
+              status: "running",
+            });
+          }
+          onAgentProgress(completed);
+        };
         const needsExtendedAgentBudget = wantsVisualization || assistIntent === "overview";
         const agentStepBudget = isLocalProvider
           ? (needsExtendedAgentBudget ? MAX_LOCAL_COMPLEX_AGENT_STEPS : MAX_AGENT_STEPS)
@@ -2027,8 +2075,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 ? "Schema sharing is disabled for the current provider, so workspace tools are unavailable for this turn."
                 : "No verified schema snapshot is available for tool use on this turn.";
         const sharedAgentInstruction = joinAgentInstructions(
+          "You are an autonomous agent. Decide your own steps: inspect the schema with list_tables/describe_table, then use run_readonly_sql whenever live rows, counts, samples, or aggregates would make your answer accurate. You do not need the user to ask explicitly before reading data with read-only SQL.",
           !explicitLiveDataRequest
-            ? "This turn is schema-first. Use list_tables and describe_table for overview or explanation. Do not use run_readonly_sql unless the user explicitly asks for live rows, row counts, sample data, raw values, or visualization."
+            ? "Prefer the lightest path: only run read-only SQL when schema alone cannot answer the question, and never run more queries than you need."
             : undefined,
           !isLocalProvider
             ? "Minimize tool calls. Prefer finishing once you have enough evidence instead of exploring the whole schema."
@@ -2130,10 +2179,6 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
               if (!sql) {
                 return "Tool error: run_readonly_sql requires args.sql.";
-              }
-
-              if (!explicitLiveDataRequest) {
-                return "Tool blocked: This request only needs schema-level review. Do not read live rows unless the user explicitly asks for data values, row counts, samples, or visualization.";
               }
 
               if (wantsVisualization && requestDataReadConsent) {
@@ -2243,6 +2288,11 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               break;
             }
 
+            publishAgentProgress({
+              action: action.action,
+              message: action.message || "No message provided.",
+            });
+
             const observation = await runAgentTool(action);
             agentTraceSteps.push({
               step: agentTraceSteps.length + 1,
@@ -2250,6 +2300,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               message: action.message || "No message provided.",
               observation,
             });
+            publishAgentProgress();
           }
 
           if (!finalAgentAction) {
@@ -2336,6 +2387,15 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
         const finalDetail = [finalResponseBody, buildAgentTraceMarkdown(agentTraceSteps)].filter(Boolean).join("\n\n---\n\n");
         const hasValidSql = hasSqlStartKeyword(finalSql);
+        const finalAgentSteps: AIWorkspaceAgentStep[] = agentTraceSteps.map((step) => ({
+          step: step.step,
+          action: step.action,
+          message: step.message,
+          observation: step.observation,
+          status: step.observation.startsWith("Tool error") || step.observation.startsWith("Tool blocked")
+            ? "error"
+            : "done",
+        }));
 
         return {
           prompt: normalizedPrompt,
@@ -2343,6 +2403,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           sql: hasValidSql ? finalSql : null,
           risk: hasValidSql ? analyzeGeneratedSql(finalSql) : undefined,
           intent: assistIntent,
+          reasoning: lastReasoningRef.current,
+          agentSteps: finalAgentSteps.length > 0 ? finalAgentSteps : undefined,
         };
       }
 
@@ -2551,6 +2613,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         sql: shouldAttachSql ? extractedSql : null,
         risk: hasValidSql ? analyzeGeneratedSql(extractedSql) : undefined,
         intent: assistIntent,
+        reasoning: lastReasoningRef.current,
       };
     } catch (errorValue) {
       if (isSupersededAIRequestError(errorValue)) {
@@ -2582,7 +2645,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     return true;
   }, []);
 
-  const runSql = useCallback(async (sql: string): Promise<AIExecutedSqlResult> => {
+  const runSql = useCallback(async (
+    sql: string,
+    options?: { skipMutationConfirm?: boolean; skipHighRiskConfirm?: boolean },
+  ): Promise<AIExecutedSqlResult> => {
     if (!connectionId) {
       const message = "Please connect to a database before running SQL from AI.";
       setError(message);
@@ -2642,14 +2708,14 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         await switchDatabase(connectionId, targetDatabaseFromUse);
       }
 
-      if (hasHighRiskStatements) {
+      if (hasHighRiskStatements && !options?.skipHighRiskConfirm) {
         const confirmed = window.confirm(
           "The AI agent wants to run a high-risk SQL statement through the protected sandbox. It can apply real database changes. Approve this run?"
         );
         if (!confirmed) {
           throw new Error("Execution cancelled.");
         }
-      } else if (hasMutatingStatements) {
+      } else if (hasMutatingStatements && !options?.skipMutationConfirm) {
         const confirmed = window.confirm(
           "The AI agent wants to run a write or schema-changing SQL statement through the sandbox. Approve this run?"
         );

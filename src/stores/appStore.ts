@@ -109,6 +109,22 @@ function invokeMutation<T>(command: string, args: Record<string, unknown>) {
   return invoke<T>(command, args);
 }
 
+/**
+ * In-flight metadata fetches, keyed by `${connectionId}:${database}`.
+ *
+ * Multiple sources can request the same table/schema listing at once (connect, the
+ * sidebar load effect, manual refresh, database switch). A boolean `isLoading` guard
+ * would let a concurrent caller return early without data, so instead we share the
+ * pending promise: concurrent callers await the same fetch rather than firing duplicate
+ * `list_tables` / `list_schema_objects` queries.
+ */
+const inFlightTableFetches = new Map<string, Promise<void>>();
+const inFlightSchemaObjectFetches = new Map<string, Promise<void>>();
+
+function metadataFetchKey(connectionId: string, database?: string): string {
+  return `${connectionId}:${database ?? ""}`;
+}
+
 function getAIRequestTimeout(config: AIProviderConfig, mode: AIRequestMode, intent: AIRequestIntent) {
   if (config.provider_type === "ollama") {
     return mode === "inline"
@@ -312,6 +328,13 @@ interface AppState {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[]
   ) => Promise<string>;
+  askAIWithReasoning: (
+    prompt: string,
+    context: string,
+    mode?: AIRequestMode,
+    intent?: AIRequestIntent,
+    history?: AIConversationMessage[]
+  ) => Promise<{ text: string; reasoning?: string }>;
 
   setError: (error: string | null) => void;
   clearError: () => void;
@@ -412,12 +435,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  askAI: async (prompt: string, context: string, mode = "panel", intent = "sql", history = []) => {
+  askAIWithReasoning: async (prompt: string, context: string, mode = "panel", intent = "sql", history = []) => {
     const config = getActiveAIProvider(get().aiConfigs);
     if (!config) throw new Error("AI Provider not found");
     const timeoutMs = getAIRequestTimeout(config, mode, intent);
 
-    const resp = await invokeWithTimeout<{ text: string; error?: string }>(
+    const resp = await invokeWithTimeout<{ text: string; reasoning?: string; error?: string }>(
       "ask_ai",
       {
         request: { prompt, context, mode, intent, language: getCurrentAppLanguage(), history },
@@ -426,7 +449,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       "AI request"
     );
     if (resp.error) throw new Error(resp.error);
-    return resp.text;
+    return { text: resp.text, reasoning: resp.reasoning };
+  },
+
+  askAI: async (prompt: string, context: string, mode = "panel", intent = "sql", history = []) => {
+    const { text } = await get().askAIWithReasoning(prompt, context, mode, intent, history);
+    return text;
   },
 
   connectToDatabase: async (config: ConnectionConfig) => {
@@ -684,56 +712,82 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   fetchTables: async (connectionId: string, database?: string) => {
-    set({ isLoadingTables: true });
-    try {
-      const tables = await invokeWithTimeout<TableInfo[]>(
-        "list_tables",
-        {
-          connectionId,
-          database: database || null,
-        },
-        FRONTEND_TIMEOUTS.metadata,
-        "Listing tables"
-      );
-      set({ tables, isLoadingTables: false });
-    } catch (e) {
-      const errorMessage = `Failed to list tables: ${e}`;
-      if (isMissingConnectionError(e)) {
-        set({
-          isLoadingTables: false,
-          error: errorMessage,
-          ...buildDisconnectedConnectionPatch(get(), connectionId),
-        });
-        return;
+    const key = metadataFetchKey(connectionId, database);
+    const existing = inFlightTableFetches.get(key);
+    if (existing) return existing;
+
+    const run = (async () => {
+      set({ isLoadingTables: true });
+      try {
+        const tables = await invokeWithTimeout<TableInfo[]>(
+          "list_tables",
+          {
+            connectionId,
+            database: database || null,
+          },
+          FRONTEND_TIMEOUTS.metadata,
+          "Listing tables"
+        );
+        set({ tables, isLoadingTables: false });
+      } catch (e) {
+        const errorMessage = `Failed to list tables: ${e}`;
+        if (isMissingConnectionError(e)) {
+          set({
+            isLoadingTables: false,
+            error: errorMessage,
+            ...buildDisconnectedConnectionPatch(get(), connectionId),
+          });
+          return;
+        }
+        set({ isLoadingTables: false, error: errorMessage });
       }
-      set({ isLoadingTables: false, error: errorMessage });
+    })();
+
+    inFlightTableFetches.set(key, run);
+    try {
+      await run;
+    } finally {
+      inFlightTableFetches.delete(key);
     }
   },
 
   fetchSchemaObjects: async (connectionId: string, database?: string) => {
-    set({ isLoadingSchemaObjects: true });
-    try {
-      const schemaObjects = await invokeWithTimeout<SchemaObjectInfo[]>(
-        "list_schema_objects",
-        {
-          connectionId,
-          database: database || null,
-        },
-        FRONTEND_TIMEOUTS.metadata,
-        "Listing schema objects"
-      );
-      set({ schemaObjects, isLoadingSchemaObjects: false });
-    } catch (e) {
-      const errorMessage = `Failed to list schema objects: ${e}`;
-      if (isMissingConnectionError(e)) {
-        set({
-          isLoadingSchemaObjects: false,
-          error: errorMessage,
-          ...buildDisconnectedConnectionPatch(get(), connectionId),
-        });
-        return;
+    const key = metadataFetchKey(connectionId, database);
+    const existing = inFlightSchemaObjectFetches.get(key);
+    if (existing) return existing;
+
+    const run = (async () => {
+      set({ isLoadingSchemaObjects: true });
+      try {
+        const schemaObjects = await invokeWithTimeout<SchemaObjectInfo[]>(
+          "list_schema_objects",
+          {
+            connectionId,
+            database: database || null,
+          },
+          FRONTEND_TIMEOUTS.metadata,
+          "Listing schema objects"
+        );
+        set({ schemaObjects, isLoadingSchemaObjects: false });
+      } catch (e) {
+        const errorMessage = `Failed to list schema objects: ${e}`;
+        if (isMissingConnectionError(e)) {
+          set({
+            isLoadingSchemaObjects: false,
+            error: errorMessage,
+            ...buildDisconnectedConnectionPatch(get(), connectionId),
+          });
+          return;
+        }
+        set({ isLoadingSchemaObjects: false, error: errorMessage });
       }
-      set({ isLoadingSchemaObjects: false, error: errorMessage });
+    })();
+
+    inFlightSchemaObjectFetches.set(key, run);
+    try {
+      await run;
+    } finally {
+      inFlightSchemaObjectFetches.delete(key);
     }
   },
 

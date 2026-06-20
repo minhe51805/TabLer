@@ -133,5 +133,10 @@ impl AIRequest {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AIResponse {
     pub text: String,
+    /// The model's real reasoning / chain-of-thought, when the provider exposes it
+    /// (e.g. OpenAI-compatible `reasoning_content`, or a leading <think>...</think>
+    /// block in the content). `None` when the model returns no reasoning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     pub error: Option<String>,
 }

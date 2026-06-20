@@ -71,10 +71,11 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
   const { t, language } = useI18n();
   const vimModeEnabled = useEditorPreferencesStore((s) => s.vimModeEnabled);
   const { theme: activeTheme } = useTheme();
+  // Option A: MiniMax is the single global look. The theme menu simply lists
+  // whatever ThemeEngine exposes (MiniMax + any user-imported themes); the old
+  // dark-preset allow-list was removed since those presets were retired.
   const themeMenuOptions = useMemo(
-    () => ThemeEngine.getAvailableThemes().filter((option) =>
-      ["tabler.dark", "tabler.midnight", "tabler.graphite", "tabler.forest"].includes(option.id)
-    ),
+    () => ThemeEngine.getAvailableThemes(),
     []
   );
 

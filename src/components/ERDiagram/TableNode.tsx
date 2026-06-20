@@ -1,6 +1,6 @@
 import { memo, type CSSProperties, type MouseEvent } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, KeyRound } from "lucide-react";
 import type { ColumnDetail } from "../../types/database";
 import { DIAGRAM_VISIBLE_COLUMN_COUNT, getVisibleDiagramColumns } from "./layout";
 
@@ -64,26 +64,26 @@ export const TableNode = memo(function TableNode({ data }: NodeProps<TableNodeTy
         <div className="erd-node-header-row">
           <span className="erd-node-accent-dot" />
           <div className="erd-node-title-copy">
-            <span className="erd-node-kicker">Table</span>
             <span className="erd-node-title">{label}</span>
+            <span className="erd-node-schema">{schemaName || "public"}</span>
           </div>
         </div>
 
         <div className="erd-node-meta">
-          <span className="erd-node-pill">{columns.length} cols</span>
+          <span className="erd-node-pill">{columns.length} columns</span>
           {hasRowCount ? <span className="erd-node-pill">{formatCompactCount(rowCount)} rows</span> : null}
         </div>
       </div>
 
-        <div className="erd-node-column-list">
+      <div className="erd-node-column-list">
         {visibleColumns.map((column: ColumnDetail) => (
           <div
             key={column.name}
             className={`erd-node-column ${column.is_primary_key ? "is-primary" : ""}`}
             onContextMenu={(event) => handleColumnContextMenu(event, column.name)}
           >
-            <span className={`erd-node-column-pill ${column.is_primary_key ? "is-primary" : ""}`}>
-              {column.is_primary_key ? "PK" : "COL"}
+            <span className={`erd-node-column-pill ${column.is_primary_key ? "is-primary" : ""}`} title={column.is_primary_key ? "Primary key" : "Column"}>
+              {column.is_primary_key ? <KeyRound className="erd-node-column-key" /> : <span className="erd-node-column-dot" />}
             </span>
 
             <div className="erd-node-column-copy">

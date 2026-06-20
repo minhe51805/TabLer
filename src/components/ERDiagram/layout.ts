@@ -1,12 +1,12 @@
 import type { ColumnDetail } from "../../types/database";
 
-export const DIAGRAM_NODE_WIDTH = 208;
-export const DIAGRAM_VISIBLE_COLUMN_COUNT = 6;
-export const DIAGRAM_NODE_HEADER_HEIGHT = 52;
-export const DIAGRAM_NODE_LIST_INSET = 8;
+export const DIAGRAM_NODE_WIDTH = 232;
+export const DIAGRAM_VISIBLE_COLUMN_COUNT = 5;
+export const DIAGRAM_NODE_HEADER_HEIGHT = 64;
+export const DIAGRAM_NODE_LIST_INSET = 6;
 export const DIAGRAM_NODE_ROW_HEIGHT = 30;
-export const DIAGRAM_NODE_ROW_GAP = 4;
-export const DIAGRAM_NODE_MORE_HEIGHT = 18;
+export const DIAGRAM_NODE_ROW_GAP = 0;
+export const DIAGRAM_NODE_MORE_HEIGHT = 28;
 export const DIAGRAM_HANDLE_OFFSET = 5;
 
 export interface DiagramPoint {

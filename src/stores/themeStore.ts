@@ -32,155 +32,32 @@ export interface TablerTheme {
   };
 }
 
-const TABLER_DARK_PRESET: TablerTheme = {
-  id: "tabler-dark",
-  name: "Tabler Dark",
-  type: "dark",
-  editor: {
-    background: "#101826",
-    foreground: "#e7ecf8",
-    selection: "#22d3ee2a",
-    cursor: "#22d3ee",
-    lineHighlight: "#0b2f3c66",
-    lineNumber: "#62779d",
-    lineNumberActive: "#e7ecf8",
-    keyword: "#22D3EE",
-    string: "#7FE0C2",
-    number: "#7DC9D8",
-    comment: "#65789A",
-    operator: "#22D3EE",
-  },
-  font: {
-    family: "JetBrains Mono, Fira Code, Consolas, monospace",
-    size: 13,
-    ligatures: true,
-    lineHeight: 1.6,
-  },
-  layout: {
-    tabHeight: 40,
-    sidebarWidth: 320,
-    panelSpacing: 8,
-    borderRadius: 8,
-  },
-};
-
-const TABLER_MIDNIGHT_PRESET: TablerTheme = {
-  id: "tabler-midnight",
-  name: "Tabler Midnight",
-  type: "dark",
-  editor: {
-    background: "#0d1117",
-    foreground: "#c9d1d9",
-    selection: "#388bfd26",
-    cursor: "#58a6ff",
-    lineHighlight: "#161b2280",
-    lineNumber: "#484f58",
-    lineNumberActive: "#c9d1d9",
-    keyword: "#ff7b72",
-    string: "#a5d6ff",
-    number: "#79c0ff",
-    comment: "#8b949e",
-    operator: "#ff7b72",
-  },
-  font: {
-    family: "JetBrains Mono, Fira Code, Consolas, monospace",
-    size: 13,
-    ligatures: true,
-    lineHeight: 1.6,
-  },
-  layout: {
-    tabHeight: 40,
-    sidebarWidth: 320,
-    panelSpacing: 8,
-    borderRadius: 8,
-  },
-};
-
-const TABLER_GRAPHITE_PRESET: TablerTheme = {
-  id: "tabler-graphite",
-  name: "Tabler Graphite",
-  type: "dark",
-  editor: {
-    background: "#1a1a2e",
-    foreground: "#eaeaea",
-    selection: "#b4a7d6cc",
-    cursor: "#b4a7d6",
-    lineHighlight: "#16213e80",
-    lineNumber: "#6e6e8a",
-    lineNumberActive: "#eaeaea",
-    keyword: "#b4a7d6",
-    string: "#85e89d",
-    number: "#f8c555",
-    comment: "#6e6e8a",
-    operator: "#b4a7d6",
-  },
-  font: {
-    family: "JetBrains Mono, Fira Code, Consolas, monospace",
-    size: 13,
-    ligatures: true,
-    lineHeight: 1.6,
-  },
-  layout: {
-    tabHeight: 40,
-    sidebarWidth: 320,
-    panelSpacing: 8,
-    borderRadius: 8,
-  },
-};
-
-const TABLER_FOREST_PRESET: TablerTheme = {
-  id: "tabler-forest",
-  name: "Tabler Forest",
-  type: "dark",
-  editor: {
-    background: "#1b2b1f",
-    foreground: "#d4e3c7",
-    selection: "#2ea04366",
-    cursor: "#3fb950",
-    lineHighlight: "#2ea04333",
-    lineNumber: "#4a6b3f",
-    lineNumberActive: "#d4e3c7",
-    keyword: "#3fb950",
-    string: "#a5d6ff",
-    number: "#79c0ff",
-    comment: "#4a6b3f",
-    operator: "#3fb950",
-  },
-  font: {
-    family: "JetBrains Mono, Fira Code, Consolas, monospace",
-    size: 13,
-    ligatures: true,
-    lineHeight: 1.6,
-  },
-  layout: {
-    tabHeight: 40,
-    sidebarWidth: 320,
-    panelSpacing: 8,
-    borderRadius: 8,
-  },
-};
-
-const TABLER_LIGHT_PRESET: TablerTheme = {
-  id: "tabler-light",
-  name: "Tabler Light",
+// Option A: the dark Tabler presets (Dark / Midnight / Graphite / Forest) and
+// the old generic Tabler Light were retired. MiniMax is now the single global
+// look, so the editor-color layer exposes exactly one preset whose surface,
+// syntax, and chrome match the MiniMax Design System (white canvas #FFFFFF,
+// charcoal text #111827, amber accent #C37D0D, success green #16A34A).
+const TABLER_MINIMAX_PRESET: TablerTheme = {
+  id: "tabler-minimax",
+  name: "MiniMax",
   type: "light",
   editor: {
-    background: "#ffffff",
-    foreground: "#1f2328",
-    selection: "#0969da26",
-    cursor: "#0969da",
-    lineHighlight: "#f6f8fa",
-    lineNumber: "#6e7781",
-    lineNumberActive: "#1f2328",
-    keyword: "#0550ae",
-    string: "#0a3069",
-    number: "#0550ae",
-    comment: "#6e7781",
-    operator: "#0550ae",
+    background: "#FFFFFF",
+    foreground: "#111827",
+    selection: "#C37D0D26",
+    cursor: "#C37D0D",
+    lineHighlight: "#F9FAFB",
+    lineNumber: "#9CA3AF",
+    lineNumberActive: "#111827",
+    keyword: "#C37D0D",
+    string: "#16A34A",
+    number: "#C37D0D",
+    comment: "#9CA3AF",
+    operator: "#111827",
   },
   font: {
-    family: "JetBrains Mono, Fira Code, Consolas, monospace",
-    size: 13,
+    family: "DM Mono, JetBrains Mono, Consolas, monospace",
+    size: 14,
     ligatures: true,
     lineHeight: 1.6,
   },
@@ -188,17 +65,11 @@ const TABLER_LIGHT_PRESET: TablerTheme = {
     tabHeight: 40,
     sidebarWidth: 320,
     panelSpacing: 8,
-    borderRadius: 8,
+    borderRadius: 6,
   },
 };
 
-export const PRESET_THEMES: TablerTheme[] = [
-  TABLER_DARK_PRESET,
-  TABLER_MIDNIGHT_PRESET,
-  TABLER_GRAPHITE_PRESET,
-  TABLER_FOREST_PRESET,
-  TABLER_LIGHT_PRESET,
-];
+export const PRESET_THEMES: TablerTheme[] = [TABLER_MINIMAX_PRESET];
 
 const CUSTOM_THEME_STORAGE_KEY = "tabler.customTheme";
 
@@ -222,7 +93,7 @@ function saveCustomTheme(theme: TablerTheme) {
 
 function defaultCustomTheme(): TablerTheme {
   return {
-    ...TABLER_DARK_PRESET,
+    ...TABLER_MINIMAX_PRESET,
     id: "tabler-custom",
     name: "Custom",
   };
@@ -245,7 +116,7 @@ interface ThemeStoreState {
 }
 
 export const useThemeStore = create<ThemeStoreState>((set, get) => ({
-  activeThemeId: "tabler-dark",
+  activeThemeId: "tabler-minimax",
   customTheme: loadCustomTheme() ?? defaultCustomTheme(),
   availableThemes: PRESET_THEMES,
 

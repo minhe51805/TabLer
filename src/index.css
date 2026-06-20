@@ -1,15 +1,8 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 
-/* ─── Component styles - imported after tailwindcss to override defaults */
-@import "./styles/fintech-glassmorphism-design-system.css";
-@import "./styles/connection-group-headers.css";
-@import "./styles/environment-badges.css";
-@import "./styles/tag-pills.css";
-@import "./styles/title-row-layout-tweak-for-badges.css";
-@import "./styles/mixed-state-checkboxes.css";
-@import "./styles/custom-date-cell.css";
-@import "./styles/env-badge.css";
-@import "./styles/explain-diagram.css";
-@import "./styles/ai-settings-modal.css";
-@import "./styles/quick-switcher.css";
-@import "./styles/filter-presets-operators.css";
+/* Token source-of-truth (must load before component styles) */
+@import "./styles/minimax-design-system.css";
+
+/* Merged component styles - imported after tailwindcss to override defaults.
+ * Cascade order preserved from the original individual files. */
+@import "./styles/app-components.css";

@@ -1,5 +1,5 @@
-import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X, FileCode, ClipboardPaste, List, BarChart3 } from "lucide-react";
-import { useState, useRef, useMemo } from "react";
+import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X, FileCode, ClipboardPaste, List, BarChart3, Download, ChevronDown } from "lucide-react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { exportToCSV, exportToJSON } from "../../utils/export-utils";
 import { exportXLSX } from "../../utils/export-xlsx";
@@ -15,6 +15,7 @@ interface DataGridToolbarProps {
   externalResult?: import("../../types").QueryResult;
   columnCount: number;
   visibleRowCount: number;
+  executionTimeMs?: number;
   sortColumn: string | null;
   sortDir: "ASC" | "DESC";
   selectedRowCount: number;
@@ -66,6 +67,7 @@ export function DataGridToolbar({
   externalResult,
   columnCount,
   visibleRowCount,
+  executionTimeMs = 0,
   sortColumn,
   sortDir,
   selectedRowCount,
@@ -91,8 +93,25 @@ export function DataGridToolbar({
   onDiscardChanges,
 }: DataGridToolbarProps) {
   const [showSettings, setShowSettings] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const settingsBtnRef = useRef<HTMLSpanElement>(null);
+  const exportBtnRef = useRef<HTMLSpanElement>(null);
   const { settings, updateSettings } = useDataGridSettings();
+
+  useEffect(() => {
+    if (!showExportMenu && !showSettings) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (target && exportBtnRef.current?.contains(target)) return;
+      if (target && settingsBtnRef.current?.contains(target)) return;
+      const inPopover = target instanceof Element && target.closest(".datagrid-export-menu, .datagrid-settings-popover");
+      if (inPopover) return;
+      setShowExportMenu(false);
+      setShowSettings(false);
+    };
+    window.addEventListener("mousedown", handlePointerDown, true);
+    return () => window.removeEventListener("mousedown", handlePointerDown, true);
+  }, [showExportMenu, showSettings]);
   const compactQuery = externalResult?.query?.replace(/\s+/g, " ").trim() ?? "";
   const dataViewTitle = tableName ? tableName.split(".").pop() || tableName : "Result set";
   const dataViewSubtitle = tableName
@@ -172,6 +191,9 @@ export function DataGridToolbar({
         <div className="datagrid-topbar-stats">
           <span className="datagrid-stat-pill">{columnCount} columns</span>
           <span className="datagrid-stat-pill">{visibleRowCount} loaded</span>
+          {executionTimeMs > 0 && (
+            <span className="datagrid-stat-pill">{executionTimeMs}ms</span>
+          )}
           <span className={`datagrid-stat-pill ${sortColumn || multiSort.length > 0 ? "active" : ""}`}>
             {activeSortLabel}
           </span>
@@ -376,69 +398,57 @@ export function DataGridToolbar({
             </span>
           )}
 
-          <span
-            className="popover-container"
-            data-popover={canExport ? "Export data as CSV" : "No data to export"}
-          >
+          <span ref={exportBtnRef} className="popover-container" data-popover={canExport ? "Export data" : "No data to export"}>
             <button
               type="button"
-              className="datagrid-footer-action"
-              onClick={handleExportCSV}
+              className={`datagrid-footer-action ${showExportMenu ? "active" : ""}`}
+              onClick={() => setShowExportMenu((v) => !v)}
               disabled={!canExport}
-              title="Export to CSV"
+              title="Export data"
             >
-              <FileSpreadsheet className="!w-3.5 !h-3.5" />
-              <span>CSV</span>
+              <Download className="!w-3.5 !h-3.5" />
+              <span>Export</span>
+              <ChevronDown className="!w-3 !h-3" />
             </button>
           </span>
 
-          <span
-            className="popover-container"
-            data-popover={canExport ? "Export data as JSON" : "No data to export"}
-          >
-            <button
-              type="button"
-              className="datagrid-footer-action"
-              onClick={handleExportJSON}
-              disabled={!canExport}
-              title="Export to JSON"
-            >
-              <FileJson className="!w-3.5 !h-3.5" />
-              <span>JSON</span>
-            </button>
-          </span>
-
-          <span
-            className="popover-container"
-            data-popover={canExport ? "Export data as XLSX (Excel)" : "No data to export"}
-          >
-            <button
-              type="button"
-              className="datagrid-footer-action"
-              onClick={handleExportXLSX}
-              disabled={!canExport}
-              title="Export to XLSX (Excel)"
-            >
-              <FileSpreadsheet className="!w-3.5 !h-3.5" />
-              <span>XLSX</span>
-            </button>
-          </span>
-
-          <span
-            className="popover-container"
-            data-popover={canExport ? "Export data as MongoDB shell script" : "No data to export"}
-          >
-            <button
-              type="button"
-              className="datagrid-footer-action"
-              onClick={() => void handleExportMQL()}
-              disabled={!canExport}
-              title="Export to MQL (MongoDB Shell)"
-            >
-              <FileCode className="!w-3.5 !h-3.5" />
-              <span>MQL</span>
-            </button>
-          </span>
+          {useMemo(() => {
+            if (!showExportMenu || !exportBtnRef.current) return null;
+            const rect = exportBtnRef.current.getBoundingClientRect();
+            const top = rect.bottom + 6;
+            const right = window.innerWidth - rect.right;
+            const exportOptions: Array<{ label: string; hint: string; icon: typeof FileSpreadsheet; run: () => void }> = [
+              { label: "CSV", hint: "Comma-separated values", icon: FileSpreadsheet, run: handleExportCSV },
+              { label: "JSON", hint: "Structured JSON array", icon: FileJson, run: handleExportJSON },
+              { label: "XLSX", hint: "Excel workbook", icon: FileSpreadsheet, run: handleExportXLSX },
+              { label: "MQL", hint: "MongoDB shell script", icon: FileCode, run: () => void handleExportMQL() },
+            ];
+            const menu = (
+              <div className="datagrid-export-menu" style={{ position: "fixed", top, right, zIndex: 9999 }}>
+                {exportOptions.map((opt) => {
+                  const OptIcon = opt.icon;
+                  return (
+                    <button
+                      key={opt.label}
+                      type="button"
+                      className="datagrid-export-menu-item"
+                      onClick={() => {
+                        opt.run();
+                        setShowExportMenu(false);
+                      }}
+                    >
+                      <OptIcon className="!w-4 !h-4" />
+                      <span className="datagrid-export-menu-copy">
+                        <strong>{opt.label}</strong>
+                        <span>{opt.hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+            return createPortal(menu, document.body);
+          }, [showExportMenu])}
 
           {selectedRowCount > 0 && tableName && (
             <span

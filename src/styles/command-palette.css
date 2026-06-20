@@ -2,7 +2,7 @@
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.32);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -16,7 +16,7 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 16px 64px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--mm-shadow-3);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -42,7 +42,7 @@
   background: transparent;
   border: none;
   outline: none;
-  font-size: 14px;
+  font-size: var(--mm-fs-body);
   color: var(--text-primary);
   padding: 14px 0;
   font-family: inherit;
@@ -92,7 +92,7 @@
   padding: 24px;
   text-align: center;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--mm-fs-small);
 }
 
 .command-palette-group {
@@ -113,14 +113,14 @@
   width: 16px;
   height: 16px;
   border-radius: 3px;
-  font-size: 9px;
+  font-size: var(--mm-fs-micro);
   font-weight: 700;
   color: white;
   flex-shrink: 0;
 }
 
 .command-palette-group-label {
-  font-size: 11px;
+  font-size: var(--mm-fs-micro);
   font-weight: 600;
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -144,12 +144,12 @@
 
 .command-palette-item-label {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--mm-fs-small);
   color: var(--text-primary);
 }
 
 .command-palette-item-shortcut {
-  font-size: 11px;
+  font-size: var(--mm-fs-micro);
   color: var(--text-secondary);
   background: var(--bg-primary);
   border: 1px solid var(--border);
@@ -166,7 +166,7 @@
   padding: 8px 12px;
   border-top: 1px solid var(--border);
   background: var(--bg-tertiary);
-  font-size: 11px;
+  font-size: var(--mm-fs-micro);
   color: var(--text-secondary);
 }
 
@@ -177,6 +177,6 @@
   border-radius: 3px;
   padding: 0 4px;
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--mm-fs-micro);
   margin-right: 3px;
 }

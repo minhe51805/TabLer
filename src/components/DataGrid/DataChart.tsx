@@ -6,11 +6,19 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
   Pie,
   PieChart,
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
+  RadialBar,
+  RadialBarChart,
   ResponsiveContainer,
   Scatter,
   ScatterChart,
@@ -18,11 +26,40 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { AlertCircle, BarChart3, List } from "lucide-react";
+import {
+  Activity,
+  AlertCircle,
+  BarChart3,
+  ChartArea,
+  ChartColumnStacked,
+  ChartLine,
+  ChartScatter,
+  Donut,
+  Gauge,
+  Layers,
+  List,
+  PieChart as PieIcon,
+  Radar as RadarIcon,
+  Spline,
+  type LucideIcon,
+} from "lucide-react";
 import type { ResolvedColumn } from "./hooks/useDataGrid";
 import type { QueryResult } from "../../types";
 
-export type ChartType = "bar" | "line" | "area" | "scatter" | "pie";
+export type ChartType =
+  | "bar"
+  | "bar-horizontal"
+  | "bar-stacked"
+  | "line"
+  | "line-smooth"
+  | "area"
+  | "area-stacked"
+  | "composed"
+  | "scatter"
+  | "pie"
+  | "donut"
+  | "radar"
+  | "radial";
 
 interface DataChartProps {
   resolvedColumns: ResolvedColumn[];
@@ -34,26 +71,48 @@ interface ScatterSeries {
   data: Array<{ x: number; y: number; label: string }>;
 }
 
-const CHART_LABELS: Record<ChartType, string> = {
-  bar: "Bar",
-  line: "Line",
-  area: "Area",
-  scatter: "Scatter",
-  pie: "Pie",
-};
+interface ChartTypeMeta {
+  type: ChartType;
+  label: string;
+  icon: LucideIcon;
+  /** Charts that compare categories against a single aggregated value. */
+  singleValue?: boolean;
+}
+
+const CHART_TYPES: ChartTypeMeta[] = [
+  { type: "bar", label: "Bar", icon: BarChart3 },
+  { type: "bar-horizontal", label: "Horizontal", icon: ChartColumnStacked },
+  { type: "bar-stacked", label: "Stacked", icon: Layers },
+  { type: "line", label: "Line", icon: ChartLine },
+  { type: "line-smooth", label: "Smooth", icon: Spline },
+  { type: "area", label: "Area", icon: ChartArea },
+  { type: "area-stacked", label: "Stacked area", icon: Activity },
+  { type: "composed", label: "Bar + line", icon: Activity },
+  { type: "scatter", label: "Scatter", icon: ChartScatter },
+  { type: "pie", label: "Pie", icon: PieIcon, singleValue: true },
+  { type: "donut", label: "Donut", icon: Donut, singleValue: true },
+  { type: "radar", label: "Radar", icon: RadarIcon },
+  { type: "radial", label: "Radial", icon: Gauge, singleValue: true },
+];
 
 const SERIES_COLORS = [
   "var(--accent)",
-  "var(--fintech-green)",
-  "var(--fintech-cyan)",
+  "#22c55e",
+  "#06b6d4",
   "#f59e0b",
   "#8b5cf6",
   "#10b981",
   "#ef4444",
-  "#06b6d4",
+  "#3b82f6",
   "#84cc16",
   "#f97316",
+  "#ec4899",
+  "#14b8a6",
 ];
+
+function colorAt(index: number) {
+  return SERIES_COLORS[index % SERIES_COLORS.length];
+}
 
 function isNumericByType(column: ResolvedColumn) {
   const type = (column.column_type || column.data_type || "").toLowerCase();
@@ -115,6 +174,16 @@ function formatAxisTick(value: unknown) {
   return text.length > 18 ? `${text.slice(0, 15)}...` : text;
 }
 
+function formatNumberTick(value: unknown) {
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return String(value ?? "");
+  const abs = Math.abs(num);
+  if (abs >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+  return String(num);
+}
+
 function cleanSeries(keys: string[], data: Record<string, unknown>[]) {
   return keys.filter((key) =>
     data.some((row) => typeof row[key] === "number" && Number.isFinite(row[key] as number))
@@ -138,8 +207,12 @@ function BaseTooltip({
         <p className="datachart-tooltip-label">{String(label)}</p>
       )}
       {payload.map((item, index) => (
-        <p key={`${item.name || "value"}-${index}`} style={{ color: item.color || "var(--text-primary)" }}>
-          {item.name || "Value"}: {item.value === null || item.value === undefined ? "NULL" : String(item.value)}
+        <p key={`${item.name || "value"}-${index}`} className="datachart-tooltip-row">
+          <span className="datachart-tooltip-dot" style={{ background: item.color || "var(--text-primary)" }} />
+          <span className="datachart-tooltip-name">{item.name || "Value"}</span>
+          <span className="datachart-tooltip-value">
+            {item.value === null || item.value === undefined ? "NULL" : String(item.value)}
+          </span>
         </p>
       ))}
     </div>
@@ -166,6 +239,9 @@ function EmptyState({
   );
 }
 
+const AXIS_TICK = { fill: "var(--text-secondary)", fontSize: 11 };
+const GRID_STROKE = "var(--border-subtle)";
+
 export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
   const rows = queryResult?.rows ?? [];
 
@@ -183,6 +259,14 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
   const [chartType, setChartType] = useState<ChartType>("bar");
   const [selectedX, setSelectedX] = useState(defaultXColumnName);
   const [selectedY, setSelectedY] = useState<string[]>(() => (numericColumns[0] ? [numericColumns[0].name] : []));
+
+  const chartMeta = useMemo(
+    () => CHART_TYPES.find((meta) => meta.type === chartType) ?? CHART_TYPES[0],
+    [chartType],
+  );
+  const isSingleValueChart = Boolean(chartMeta.singleValue);
+  const hasMultipleXAxisChoices = resolvedColumns.length > 1;
+  const hasMultipleNumericChoices = numericColumns.length > 1;
 
   useEffect(() => {
     setSelectedX((current) =>
@@ -245,7 +329,7 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
     [chartData, selectedYColumns],
   );
 
-  const pieData = useMemo(() => {
+  const categoryData = useMemo(() => {
     if (!selectedXColumn || selectedYColumns.length === 0) return [];
 
     const labelKey = selectedXColumn.name;
@@ -263,6 +347,19 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
       .map(([name, value]) => ({ name, value }))
       .filter((item) => item.value !== 0);
   }, [chartData, selectedXColumn, selectedYColumns]);
+
+  const radarData = useMemo(() => {
+    if (!selectedXColumn || cleanYKeys.length === 0) return [];
+    return chartData.map((row, rowIndex) => {
+      const entry: Record<string, unknown> = {
+        __axis: formatCategoryValue(row[selectedXColumn.name], rowIndex),
+      };
+      cleanYKeys.forEach((key) => {
+        entry[key] = tryParseNumeric(row[key]) ?? 0;
+      });
+      return entry;
+    });
+  }, [chartData, cleanYKeys, selectedXColumn]);
 
   const scatterBaseXKey = useMemo(() => {
     if (!selectedXColumn) return "__rowIndex";
@@ -321,25 +418,32 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
   return (
     <div className="datachart-container">
       <div className="datachart-toolbar">
-        <div className="datachart-group">
+        <div className="datachart-group datachart-group--types">
           <label className="datachart-label">Chart</label>
           <div className="datachart-toggle-group">
-            {(Object.keys(CHART_LABELS) as ChartType[]).map((type) => (
+            {CHART_TYPES.map(({ type, label, icon: Icon }) => (
               <button
                 key={type}
                 type="button"
                 className={`datachart-toggle-btn${chartType === type ? " active" : ""}`}
                 onClick={() => setChartType(type)}
+                title={label}
               >
-                {CHART_LABELS[type]}
+                <Icon className="w-3.5 h-3.5" />
+                <span className="datachart-toggle-text">{label}</span>
               </button>
             ))}
           </div>
         </div>
 
-        {chartType !== "pie" && (
-          <div className="datachart-group">
-            <label className="datachart-label" htmlFor="datachart-x-select">X-Axis</label>
+        {chartType !== "pie" &&
+          chartType !== "donut" &&
+          chartType !== "radial" &&
+          hasMultipleXAxisChoices && (
+          <div className="datachart-group datachart-group--select-right">
+            <label className="datachart-label" htmlFor="datachart-x-select">
+              {chartType === "radar" ? "Axis" : "X-Axis"}
+            </label>
             <select
               id="datachart-x-select"
               className="datachart-select"
@@ -360,9 +464,9 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
           </div>
         )}
 
-        {chartType !== "pie" && (
+        {!isSingleValueChart && hasMultipleNumericChoices && (
           <div className="datachart-group">
-            <label className="datachart-label">Y-Axis</label>
+            <label className="datachart-label">{chartType === "radar" ? "Series" : "Y-Axis"}</label>
             <div className="datachart-y-pills">
               {numericColumns.map((column) => (
                 <button
@@ -379,11 +483,11 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
           </div>
         )}
 
-        {chartType === "pie" && (
-          <div className="datachart-group">
-            <label className="datachart-label" htmlFor="datachart-pie-select">Value</label>
+        {isSingleValueChart && hasMultipleNumericChoices && (
+          <div className="datachart-group datachart-group--single-value">
+            <label className="datachart-label" htmlFor="datachart-value-select">Value</label>
             <select
-              id="datachart-pie-select"
+              id="datachart-value-select"
               className="datachart-select"
               value={selectedY[0] ?? ""}
               onChange={(event) => setSelectedY([event.target.value])}
@@ -399,110 +503,228 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
       </div>
 
       <div className="datachart-body">
-        {chartType === "pie" ? (
-          pieData.length > 0 ? (
-            <PieChartView data={pieData} />
-          ) : (
-            <EmptyState
-              icon="chart"
-              title="Pie chart needs one label column and one numeric value column."
-            />
-          )
-        ) : chartType === "scatter" ? (
-          scatterSeries.length > 0 ? (
-            <ScatterChartView
-              series={scatterSeries}
-              xLabel={scatterUsesRowIndex ? "Row" : (selectedXColumn?.name ?? "X")}
-            />
-          ) : (
-            <EmptyState
-              icon="chart"
-              title="Scatter chart needs numeric values on both axes."
-              detail="Pick a numeric X-axis column or keep the row-order fallback and at least one numeric Y-axis."
-            />
-          )
-        ) : cleanYKeys.length === 0 ? (
-          <EmptyState
-            icon="chart"
-            title="The selected series does not contain numeric values to render."
-          />
-        ) : chartType === "bar" ? (
-          <CartesianSeriesChart type="bar" data={chartData} xKey={xKey} yKeys={cleanYKeys} />
-        ) : chartType === "line" ? (
-          <CartesianSeriesChart type="line" data={chartData} xKey={xKey} yKeys={cleanYKeys} />
-        ) : (
-          <CartesianSeriesChart type="area" data={chartData} xKey={xKey} yKeys={cleanYKeys} />
-        )}
+        <ChartCanvas
+          chartType={chartType}
+          chartData={chartData}
+          xKey={xKey}
+          cleanYKeys={cleanYKeys}
+          categoryData={categoryData}
+          radarData={radarData}
+          scatterSeries={scatterSeries}
+          scatterUsesRowIndex={scatterUsesRowIndex}
+          selectedXName={selectedXColumn?.name ?? "X"}
+        />
       </div>
     </div>
   );
 }
 
-function CartesianSeriesChart({
-  type,
-  data,
+function ChartCanvas({
+  chartType,
+  chartData,
   xKey,
-  yKeys,
+  cleanYKeys,
+  categoryData,
+  radarData,
+  scatterSeries,
+  scatterUsesRowIndex,
+  selectedXName,
 }: {
-  type: "bar" | "line" | "area";
-  data: Record<string, unknown>[];
+  chartType: ChartType;
+  chartData: Record<string, unknown>[];
   xKey: string;
-  yKeys: string[];
+  cleanYKeys: string[];
+  categoryData: Array<{ name: string; value: number }>;
+  radarData: Record<string, unknown>[];
+  scatterSeries: ScatterSeries[];
+  scatterUsesRowIndex: boolean;
+  selectedXName: string;
 }) {
-  const chartMargin = { top: 8, right: 24, bottom: 8, left: 8 };
-
-  if (type === "bar") {
-    return (
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={chartMargin}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" />
-          <XAxis dataKey={xKey} tick={{ fill: "var(--text-secondary)", fontSize: 11 }} tickFormatter={formatAxisTick} minTickGap={24} />
-          <YAxis tick={{ fill: "var(--text-secondary)", fontSize: 11 }} />
-          <Tooltip content={<BaseTooltip />} />
-          <Legend />
-          {yKeys.map((key, index) => (
-            <Bar
-              key={key}
-              dataKey={key}
-              fill={SERIES_COLORS[index % SERIES_COLORS.length]}
-              isAnimationActive
-            />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
+  if (chartType === "pie" || chartType === "donut") {
+    return categoryData.length > 0 ? (
+      <PieChartView data={categoryData} donut={chartType === "donut"} />
+    ) : (
+      <EmptyState icon="chart" title="This chart needs one label column and one numeric value column." />
     );
   }
 
-  if (type === "line") {
-    return (
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={chartMargin}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" />
-          <XAxis dataKey={xKey} tick={{ fill: "var(--text-secondary)", fontSize: 11 }} tickFormatter={formatAxisTick} minTickGap={24} />
-          <YAxis tick={{ fill: "var(--text-secondary)", fontSize: 11 }} />
-          <Tooltip content={<BaseTooltip />} />
-          <Legend />
-          {yKeys.map((key, index) => (
-            <Line
-              key={key}
-              type="monotone"
-              dataKey={key}
-              stroke={SERIES_COLORS[index % SERIES_COLORS.length]}
-              dot={false}
-              isAnimationActive
-            />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
+  if (chartType === "radial") {
+    return categoryData.length > 0 ? (
+      <RadialChartView data={categoryData} />
+    ) : (
+      <EmptyState icon="chart" title="Radial chart needs one label column and one numeric value column." />
     );
+  }
+
+  if (chartType === "radar") {
+    return cleanYKeys.length > 0 && radarData.length > 0 ? (
+      <RadarChartView data={radarData} yKeys={cleanYKeys} />
+    ) : (
+      <EmptyState icon="chart" title="Radar chart needs a category axis and at least one numeric series." />
+    );
+  }
+
+  if (chartType === "scatter") {
+    return scatterSeries.length > 0 ? (
+      <ScatterChartView series={scatterSeries} xLabel={scatterUsesRowIndex ? "Row" : selectedXName} />
+    ) : (
+      <EmptyState
+        icon="chart"
+        title="Scatter chart needs numeric values on both axes."
+        detail="Pick a numeric X-axis column or keep the row-order fallback and at least one numeric Y-axis."
+      />
+    );
+  }
+
+  if (cleanYKeys.length === 0) {
+    return <EmptyState icon="chart" title="The selected series does not contain numeric values to render." />;
+  }
+
+  if (chartType === "composed") {
+    return <ComposedSeriesChart data={chartData} xKey={xKey} yKeys={cleanYKeys} />;
+  }
+
+  if (chartType === "bar" || chartType === "bar-horizontal" || chartType === "bar-stacked") {
+    return (
+      <BarSeriesChart
+        data={chartData}
+        xKey={xKey}
+        yKeys={cleanYKeys}
+        horizontal={chartType === "bar-horizontal"}
+        stacked={chartType === "bar-stacked"}
+      />
+    );
+  }
+
+  if (chartType === "line" || chartType === "line-smooth") {
+    return <LineSeriesChart data={chartData} xKey={xKey} yKeys={cleanYKeys} smooth={chartType === "line-smooth"} />;
   }
 
   return (
+    <AreaSeriesChart data={chartData} xKey={xKey} yKeys={cleanYKeys} stacked={chartType === "area-stacked"} />
+  );
+}
+
+function ChartGradients({ yKeys }: { yKeys: string[] }) {
+  return (
+    <defs>
+      {yKeys.map((key, index) => (
+        <linearGradient key={key} id={`datachart-grad-${index}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={colorAt(index)} stopOpacity={0.85} />
+          <stop offset="100%" stopColor={colorAt(index)} stopOpacity={0.12} />
+        </linearGradient>
+      ))}
+    </defs>
+  );
+}
+
+function BarSeriesChart({
+  data,
+  xKey,
+  yKeys,
+  horizontal,
+  stacked,
+}: {
+  data: Record<string, unknown>[];
+  xKey: string;
+  yKeys: string[];
+  horizontal: boolean;
+  stacked: boolean;
+}) {
+  return (
     <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={data} margin={chartMargin}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" />
-        <XAxis dataKey={xKey} tick={{ fill: "var(--text-secondary)", fontSize: 11 }} tickFormatter={formatAxisTick} minTickGap={24} />
-        <YAxis tick={{ fill: "var(--text-secondary)", fontSize: 11 }} />
+      <BarChart
+        data={data}
+        layout={horizontal ? "vertical" : "horizontal"}
+        margin={{ top: 8, right: 24, bottom: 8, left: horizontal ? 24 : 8 }}
+        barCategoryGap={stacked ? "20%" : "12%"}
+      >
+        <ChartGradients yKeys={yKeys} />
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+        {horizontal ? (
+          <>
+            <XAxis type="number" tick={AXIS_TICK} tickFormatter={formatNumberTick} />
+            <YAxis type="category" dataKey={xKey} tick={AXIS_TICK} tickFormatter={formatAxisTick} width={110} />
+          </>
+        ) : (
+          <>
+            <XAxis dataKey={xKey} tick={AXIS_TICK} tickFormatter={formatAxisTick} minTickGap={24} />
+            <YAxis tick={AXIS_TICK} tickFormatter={formatNumberTick} />
+          </>
+        )}
+        <Tooltip content={<BaseTooltip />} cursor={{ fill: "var(--bg-hover)", opacity: 0.4 }} />
+        <Legend />
+        {yKeys.map((key, index) => (
+          <Bar
+            key={key}
+            dataKey={key}
+            stackId={stacked ? "stack" : undefined}
+            fill={`url(#datachart-grad-${index})`}
+            stroke={colorAt(index)}
+            strokeWidth={1}
+            radius={stacked ? [0, 0, 0, 0] : horizontal ? [0, 6, 6, 0] : [6, 6, 0, 0]}
+            isAnimationActive
+          />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function LineSeriesChart({
+  data,
+  xKey,
+  yKeys,
+  smooth,
+}: {
+  data: Record<string, unknown>[];
+  xKey: string;
+  yKeys: string[];
+  smooth: boolean;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={data} margin={{ top: 8, right: 24, bottom: 8, left: 8 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+        <XAxis dataKey={xKey} tick={AXIS_TICK} tickFormatter={formatAxisTick} minTickGap={24} />
+        <YAxis tick={AXIS_TICK} tickFormatter={formatNumberTick} />
+        <Tooltip content={<BaseTooltip />} />
+        <Legend />
+        {yKeys.map((key, index) => (
+          <Line
+            key={key}
+            type={smooth ? "monotone" : "linear"}
+            dataKey={key}
+            stroke={colorAt(index)}
+            strokeWidth={2.4}
+            dot={{ r: 2.5, strokeWidth: 0, fill: colorAt(index) }}
+            activeDot={{ r: 5 }}
+            isAnimationActive
+          />
+        ))}
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+function AreaSeriesChart({
+  data,
+  xKey,
+  yKeys,
+  stacked,
+}: {
+  data: Record<string, unknown>[];
+  xKey: string;
+  yKeys: string[];
+  stacked: boolean;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={data} margin={{ top: 8, right: 24, bottom: 8, left: 8 }}>
+        <ChartGradients yKeys={yKeys} />
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+        <XAxis dataKey={xKey} tick={AXIS_TICK} tickFormatter={formatAxisTick} minTickGap={24} />
+        <YAxis tick={AXIS_TICK} tickFormatter={formatNumberTick} />
         <Tooltip content={<BaseTooltip />} />
         <Legend />
         {yKeys.map((key, index) => (
@@ -510,13 +732,62 @@ function CartesianSeriesChart({
             key={key}
             type="monotone"
             dataKey={key}
-            fill={SERIES_COLORS[index % SERIES_COLORS.length]}
-            fillOpacity={0.2}
-            stroke={SERIES_COLORS[index % SERIES_COLORS.length]}
+            stackId={stacked ? "stack" : undefined}
+            stroke={colorAt(index)}
+            strokeWidth={2}
+            fill={`url(#datachart-grad-${index})`}
+            fillOpacity={1}
             isAnimationActive
           />
         ))}
       </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function ComposedSeriesChart({
+  data,
+  xKey,
+  yKeys,
+}: {
+  data: Record<string, unknown>[];
+  xKey: string;
+  yKeys: string[];
+}) {
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={data} margin={{ top: 8, right: 24, bottom: 8, left: 8 }}>
+        <ChartGradients yKeys={yKeys} />
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+        <XAxis dataKey={xKey} tick={AXIS_TICK} tickFormatter={formatAxisTick} minTickGap={24} />
+        <YAxis tick={AXIS_TICK} tickFormatter={formatNumberTick} />
+        <Tooltip content={<BaseTooltip />} cursor={{ fill: "var(--bg-hover)", opacity: 0.4 }} />
+        <Legend />
+        {yKeys.map((key, index) =>
+          index === 0 ? (
+            <Bar
+              key={key}
+              dataKey={key}
+              fill={`url(#datachart-grad-${index})`}
+              stroke={colorAt(index)}
+              strokeWidth={1}
+              radius={[6, 6, 0, 0]}
+              isAnimationActive
+            />
+          ) : (
+            <Line
+              key={key}
+              type="monotone"
+              dataKey={key}
+              stroke={colorAt(index)}
+              strokeWidth={2.4}
+              dot={{ r: 2.5, strokeWidth: 0, fill: colorAt(index) }}
+              activeDot={{ r: 5 }}
+              isAnimationActive
+            />
+          )
+        )}
+      </ComposedChart>
     </ResponsiveContainer>
   );
 }
@@ -531,19 +802,9 @@ function ScatterChartView({
   return (
     <ResponsiveContainer width="100%" height="100%">
       <ScatterChart margin={{ top: 8, right: 24, bottom: 8, left: 8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" />
-        <XAxis
-          type="number"
-          dataKey="x"
-          name={xLabel}
-          tick={{ fill: "var(--text-secondary)", fontSize: 11 }}
-        />
-        <YAxis
-          type="number"
-          dataKey="y"
-          name="Value"
-          tick={{ fill: "var(--text-secondary)", fontSize: 11 }}
-        />
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
+        <XAxis type="number" dataKey="x" name={xLabel} tick={AXIS_TICK} tickFormatter={formatNumberTick} />
+        <YAxis type="number" dataKey="y" name="Value" tick={AXIS_TICK} tickFormatter={formatNumberTick} />
         <Tooltip
           cursor={{ strokeDasharray: "3 3" }}
           content={<BaseTooltip />}
@@ -555,7 +816,8 @@ function ScatterChartView({
             key={item.name}
             name={item.name}
             data={item.data}
-            fill={SERIES_COLORS[index % SERIES_COLORS.length]}
+            fill={colorAt(index)}
+            fillOpacity={0.75}
             isAnimationActive
           />
         ))}
@@ -564,29 +826,90 @@ function ScatterChartView({
   );
 }
 
-function PieChartView({ data }: { data: Array<{ name: string; value: number }> }) {
+function RadarChartView({
+  data,
+  yKeys,
+}: {
+  data: Record<string, unknown>[];
+  yKeys: string[];
+}) {
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <PieChart>
+      <RadarChart data={data} outerRadius="72%">
+        <PolarGrid stroke={GRID_STROKE} />
+        <PolarAngleAxis dataKey="__axis" tick={AXIS_TICK} />
+        <PolarRadiusAxis tick={AXIS_TICK} tickFormatter={formatNumberTick} />
+        <Tooltip content={<BaseTooltip />} />
+        <Legend />
+        {yKeys.map((key, index) => (
+          <Radar
+            key={key}
+            name={key}
+            dataKey={key}
+            stroke={colorAt(index)}
+            fill={colorAt(index)}
+            fillOpacity={0.18}
+            isAnimationActive
+          />
+        ))}
+      </RadarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function RadialChartView({ data }: { data: Array<{ name: string; value: number }> }) {
+  const enriched = data.map((item, index) => ({ ...item, fill: colorAt(index) }));
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <RadialBarChart
+        data={enriched}
+        innerRadius="20%"
+        outerRadius="100%"
+        startAngle={90}
+        endAngle={-270}
+      >
+        <RadialBar background dataKey="value" cornerRadius={6} isAnimationActive />
+        <Legend iconSize={10} layout="vertical" verticalAlign="middle" align="right" />
+        <Tooltip content={<BaseTooltip />} />
+      </RadialBarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function PieChartView({ data, donut }: { data: Array<{ name: string; value: number }>; donut: boolean }) {
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <PieChart margin={{ top: 22, right: 12, bottom: 16, left: 48 }}>
         <Pie
           data={data}
           dataKey="value"
           nameKey="name"
-          cx="50%"
-          cy="50%"
-          outerRadius="60%"
+          cx="38%"
+          cy="46%"
+          innerRadius={donut ? "45%" : 0}
+          outerRadius="58%"
+          paddingAngle={donut ? 2 : 0}
           label={({ name, percent }) => `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`}
           isAnimationActive
         >
           {data.map((item, index) => (
-            <Cell
-              key={`${item.name}-${index}`}
-              fill={SERIES_COLORS[index % SERIES_COLORS.length]}
-            />
+            <Cell key={`${item.name}-${index}`} fill={colorAt(index)} stroke="var(--bg-secondary)" strokeWidth={2} />
           ))}
         </Pie>
         <Tooltip formatter={(value) => (value === null || value === undefined ? "NULL" : String(value))} />
-        <Legend />
+        <Legend
+          layout="vertical"
+          verticalAlign="top"
+          align="right"
+          iconType="square"
+          iconSize={10}
+          wrapperStyle={{
+            top: 12,
+            right: 12,
+            width: "26%",
+            lineHeight: "22px",
+          }}
+        />
       </PieChart>
     </ResponsiveContainer>
   );

@@ -1,9 +1,10 @@
-import { AlertTriangle, Copy, GripHorizontal, Play, Send, Sparkles, Target, Wand2, X } from "lucide-react";
+import { AlertTriangle, BrainCircuit, Copy, GripHorizontal, Play, Send, Sparkles, Target, Wand2, X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, Ref } from "react";
 import { useI18n } from "../../i18n";
 import { aiModeAllowsInsert, aiModeAllowsRun, type AIWorkspaceBubbleData } from "./ai-workspace-types";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
+import { AIAgentSteps } from "./AIAgentSteps";
 
 interface AIWorkspaceBubbleProps {
   bubble: AIWorkspaceBubbleData;
@@ -71,6 +72,10 @@ export function AIWorkspaceBubble({
   const showMutationActions = bubble.kind === "assistant" && bubble.status === "ready";
   const showInsert = showMutationActions && Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
   const showRun = showMutationActions && Boolean(bubble.sql) && aiModeAllowsRun(bubble.interactionMode);
+  const reasoningText = bubble.reasoning?.trim();
+  const showReasoning = bubble.status === "ready" && Boolean(reasoningText);
+  const agentSteps = bubble.agentSteps ?? [];
+  const showAgentSteps = bubble.interactionMode === "agent" && agentSteps.length > 0;
 
   return (
     <div
@@ -127,8 +132,18 @@ export function AIWorkspaceBubble({
 
       {!compact && (
         <div className="ai-workspace-bubble-body">
+          {showAgentSteps && <AIAgentSteps steps={agentSteps} compact />}
           <AIWorkspaceMarkdown className="ai-workspace-bubble-preview" compact text={bubble.preview} />
           {codePreview && <pre className="ai-workspace-bubble-code">{codePreview}</pre>}
+          {showReasoning && (
+            <details className="ai-workspace-bubble-reasoning">
+              <summary className="ai-workspace-bubble-reasoning-summary">
+                <BrainCircuit className="w-3.5 h-3.5" />
+                <span>{copy.modal.reasoningLabel}</span>
+              </summary>
+              <AIWorkspaceMarkdown className="ai-workspace-bubble-reasoning-body" compact text={reasoningText ?? ""} />
+            </details>
+          )}
           {bubble.risk?.reason && bubble.status !== "loading" && (
             <div className={`ai-workspace-bubble-risk ai-workspace-bubble-risk--${bubble.risk.level}`}>
               {bubble.risk.reason}

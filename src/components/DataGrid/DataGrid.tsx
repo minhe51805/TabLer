@@ -1972,6 +1972,7 @@ export function DataGrid({
         externalResult={externalResult}
         columnCount={columnCount}
         visibleRowCount={visibleRowCount}
+        executionTimeMs={data?.execution_time_ms ?? 0}
         sortColumn={sortColumn}
         sortDir={sortDir}
         selectedRowCount={selectedRowCount}
@@ -2287,52 +2288,49 @@ export function DataGrid({
         </div>
       )}
 
-      <div className="datagrid-footer">
-        <div className="datagrid-footer-meta">
-          {data && (
-            <>
-              <span className="datagrid-footer-pill strong">
-                {visibleRowCount} row{visibleRowCount !== 1 ? "s" : ""}
-              </span>
-              {isQueryResultTruncated && (
-                <span className="datagrid-footer-pill warning">
-                  truncated at {visibleRowCount.toLocaleString()} rows
+      {!externalResult && (
+        <div className="datagrid-footer">
+          <div className="datagrid-footer-meta">
+            {data && (
+              <>
+                <span className="datagrid-footer-pill strong">
+                  {visibleRowCount} row{visibleRowCount !== 1 ? "s" : ""}
                 </span>
-              )}
-              {totalRows > 0 && (
-                <span className="datagrid-footer-pill">of {totalRows.toLocaleString()} total</span>
-              )}
-              {data.execution_time_ms > 0 && (
-                <span className="datagrid-footer-pill success">{data.execution_time_ms}ms</span>
-              )}
-              {tableName && !externalResult && (
-                <span className={`datagrid-footer-pill ${isTableEditable ? "info" : ""}`}>
-                  {isTableEditable
-                    ? "Inline edit ready"
-                    : structureStatus === "loading"
-                      ? "Loading edit metadata..."
-                      : structureStatus === "idle"
-                        ? "Edit on demand"
-                        : "Retry edit load"}
-                </span>
-              )}
-              {selectedRowCount > 0 && (
-                <span className="datagrid-footer-pill warning">
-                  {selectedRowCount} selected
-                </span>
-              )}
-            </>
+                {totalRows > 0 && (
+                  <span className="datagrid-footer-pill">of {totalRows.toLocaleString()} total</span>
+                )}
+                {data.execution_time_ms > 0 && (
+                  <span className="datagrid-footer-pill success">{data.execution_time_ms}ms</span>
+                )}
+                {tableName && (
+                  <span className={`datagrid-footer-pill ${isTableEditable ? "info" : ""}`}>
+                    {isTableEditable
+                      ? "Inline edit ready"
+                      : structureStatus === "loading"
+                        ? "Loading edit metadata..."
+                        : structureStatus === "idle"
+                          ? "Edit on demand"
+                          : "Retry edit load"}
+                  </span>
+                )}
+                {selectedRowCount > 0 && (
+                  <span className="datagrid-footer-pill warning">
+                    {selectedRowCount} selected
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+
+          {tableName && totalPages > 1 && (
+            <DataGridPagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={setCurrentPage}
+            />
           )}
         </div>
-
-        {!externalResult && tableName && totalPages > 1 && (
-          <DataGridPagination
-            currentPage={currentPage}
-            totalPages={totalPages}
-            onPageChange={setCurrentPage}
-          />
-        )}
-      </div>
+      )}
     </div>
     {insertDialogModal}
 

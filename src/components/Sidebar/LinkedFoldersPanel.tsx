@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
-import { Folder, FileCode, Plus, X, RefreshCw, FolderSearch } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Folder, FolderOpen, FileCode, FileJson, Plus, X, RefreshCw, FolderSearch, ChevronRight } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useLinkedFolders } from "../../hooks/useLinkedFolders";
 import { invoke } from "@tauri-apps/api/core";
+import { useLinkedFolders } from "../../hooks/useLinkedFolders";
+import { emitAppToast } from "../../utils/app-toast";
+import type { Tab } from "../../types/database";
 
 export interface LinkedFileInfo {
   path: string;
@@ -11,118 +13,232 @@ export interface LinkedFileInfo {
   extension: string;
 }
 
-export function LinkedFoldersPanel() {
-  const { folders, addFolder, removeFolder, lastEvent } = useLinkedFolders();
-  const [folderContents, setFolderContents] = useState<Record<string, LinkedFileInfo[]>>({});
-  const [isLoading, setIsLoading] = useState<Record<string, boolean>>({});
+interface LinkedFoldersPanelProps {
+  activeConnectionId?: string | null;
+  currentDatabase?: string | null;
+  addTab?: (tab: Tab) => void;
+  language?: string;
+}
 
-  const loadContents = async (path: string) => {
-    setIsLoading(prev => ({ ...prev, [path]: true }));
+export function LinkedFoldersPanel({
+  activeConnectionId,
+  currentDatabase,
+  addTab,
+  language = "en",
+}: LinkedFoldersPanelProps) {
+  const { folders, addFolder, removeFolder, lastEvent } = useLinkedFolders();
+  // Contents keyed by directory path so both top-level folders and drilled-in
+  // subdirectories share the same cache.
+  const [contents, setContents] = useState<Record<string, LinkedFileInfo[]>>({});
+  const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
+  const [expandedDirs, setExpandedDirs] = useState<Record<string, boolean>>({});
+  const isVietnamese = language === "vi";
+
+  const loadContents = useCallback(async (path: string) => {
+    setLoadingPaths((prev) => ({ ...prev, [path]: true }));
     try {
       const files = await invoke<LinkedFileInfo[]>("scan_linked_folder", { folderPath: path });
-      setFolderContents((prev) => ({ ...prev, [path]: files }));
+      setContents((prev) => ({ ...prev, [path]: files }));
     } catch (e) {
       console.error("Failed to scan folder", path, e);
+      emitAppToast({
+        tone: "error",
+        title: isVietnamese ? "Khong doc duoc thu muc" : "Could not read folder",
+        description: path,
+      });
     } finally {
-      setIsLoading(prev => ({ ...prev, [path]: false }));
+      setLoadingPaths((prev) => ({ ...prev, [path]: false }));
     }
-  };
+  }, [isVietnamese]);
 
   useEffect(() => {
     folders.forEach((folder) => {
-      loadContents(folder);
+      void loadContents(folder);
     });
-  }, [folders, lastEvent]);
+  }, [folders, lastEvent, loadContents]);
 
-  const handleAddFolder = async () => {
-    const selected = await openDialog({
-      directory: true,
-      multiple: false,
-    });
+  const handleAddFolder = useCallback(async () => {
+    const selected = await openDialog({ directory: true, multiple: false });
     if (selected && typeof selected === "string") {
       await addFolder(selected);
     }
-  };
+  }, [addFolder]);
 
-  const handleFileClick = (file: LinkedFileInfo) => {
-    if (file.extension === "sql") {
-      // Fire generic event to open file tab
-      window.dispatchEvent(new CustomEvent("open-sql-file-palette", { detail: { path: file.path } }));
+  const handleToggleDir = useCallback((dirPath: string) => {
+    setExpandedDirs((prev) => {
+      const next = { ...prev, [dirPath]: !prev[dirPath] };
+      if (next[dirPath] && !contents[dirPath]) {
+        void loadContents(dirPath);
+      }
+      return next;
+    });
+  }, [contents, loadContents]);
+
+  const handleOpenFile = useCallback(async (file: LinkedFileInfo) => {
+    if (!activeConnectionId) {
+      emitAppToast({
+        tone: "info",
+        title: isVietnamese ? "Chua mo workspace" : "Open a workspace first",
+        description: isVietnamese
+          ? "Hay mo mot ket noi truoc khi mo tep."
+          : "Open a connection before opening a file.",
+      });
+      return;
     }
-  };
+    if (!addTab) return;
+
+    try {
+      const result = await invoke<{ fileName?: string; file_name?: string; content: string }>(
+        "read_sql_file_from_path",
+        { path: file.path },
+      );
+      const fileName = result?.fileName || result?.file_name || file.name;
+      addTab({
+        id: `query-${crypto.randomUUID()}`,
+        type: "query",
+        title: fileName,
+        connectionId: activeConnectionId,
+        database: currentDatabase || undefined,
+        filePath: file.path,
+        content: result?.content ?? "",
+      });
+      emitAppToast({
+        tone: "success",
+        title: isVietnamese ? "Da mo tep" : "File opened",
+        description: isVietnamese
+          ? `${fileName} da duoc mo trong mot tab moi.`
+          : `${fileName} opened in a new tab.`,
+      });
+    } catch (e) {
+      console.error("Failed to open linked file", file.path, e);
+      emitAppToast({
+        tone: "error",
+        title: isVietnamese ? "Khong mo duoc tep" : "Could not open file",
+        description: file.name,
+      });
+    }
+  }, [activeConnectionId, addTab, currentDatabase, isVietnamese]);
+
+  const handleEntryClick = useCallback((entry: LinkedFileInfo) => {
+    if (entry.is_dir) {
+      handleToggleDir(entry.path);
+    } else {
+      void handleOpenFile(entry);
+    }
+  }, [handleToggleDir, handleOpenFile]);
+
+  const renderEntries = useCallback((dirPath: string, depth: number) => {
+    const entries = contents[dirPath];
+    const loading = loadingPaths[dirPath];
+
+    if (loading && !entries) {
+      return <div className="linked-folder-file-empty">{isVietnamese ? "Dang doc..." : "Loading..."}</div>;
+    }
+    if (entries && entries.length === 0) {
+      return <div className="linked-folder-file-empty">{isVietnamese ? "Trong" : "Empty"}</div>;
+    }
+    if (!entries) return null;
+
+    return entries.map((entry) => {
+      const isOpen = expandedDirs[entry.path];
+      return (
+        <div key={entry.path} className="linked-folder-entry">
+          <button
+            type="button"
+            onClick={() => handleEntryClick(entry)}
+            className={`linked-folder-file ${entry.is_dir ? "is-dir" : ""}`}
+            style={{ paddingLeft: `${8 + depth * 12}px` }}
+            title={entry.path}
+          >
+            {entry.is_dir ? (
+              <>
+                <ChevronRight className={`linked-folder-chevron ${isOpen ? "is-open" : ""}`} />
+                {isOpen ? (
+                  <FolderOpen className="linked-folder-file-icon is-dir" />
+                ) : (
+                  <Folder className="linked-folder-file-icon is-dir" />
+                )}
+              </>
+            ) : entry.extension === "json" ? (
+              <FileJson className="linked-folder-file-icon is-json" />
+            ) : (
+              <FileCode className="linked-folder-file-icon is-sql" />
+            )}
+            <span className="linked-folder-file-name">{entry.name}</span>
+            {!entry.is_dir && <span className="linked-folder-file-ext">{entry.extension}</span>}
+          </button>
+
+          {entry.is_dir && isOpen && (
+            <div className="linked-folder-children">{renderEntries(entry.path, depth + 1)}</div>
+          )}
+        </div>
+      );
+    });
+  }, [contents, loadingPaths, expandedDirs, handleEntryClick, isVietnamese]);
+
+  const hasFolders = useMemo(() => folders.length > 0, [folders]);
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg-primary)] overflow-hidden text-sm">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border-color)]">
-        <div className="font-semibold text-[var(--accent)] flex items-center justify-center gap-2">
-          <FolderSearch className="w-4 h-4" />
-          Linked Folders
+    <div className="linked-folders-panel">
+      <div className="linked-folders-header">
+        <div className="linked-folders-title">
+          <span className="linked-folders-title-icon" aria-hidden="true">
+            <FolderSearch className="w-4 h-4" />
+          </span>
+          {isVietnamese ? "Thu muc da lien ket" : "Linked Folders"}
         </div>
         <button
-          onClick={handleAddFolder}
-          className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-          title="Watch local directory"
+          type="button"
+          onClick={() => void handleAddFolder()}
+          className="linked-folders-add"
+          title={isVietnamese ? "Theo doi thu muc" : "Watch local directory"}
+          aria-label={isVietnamese ? "Theo doi thu muc" : "Watch local directory"}
         >
           <Plus className="w-4 h-4" />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3">
-        {folders.length === 0 ? (
-          <div className="text-[var(--text-secondary)] text-center mt-6 px-4">
-            <FolderSearch className="w-8 h-8 opacity-50 mx-auto mb-2" />
-            <p>No directories linked.</p>
+      <div className="linked-folders-body">
+        {!hasFolders ? (
+          <div className="linked-folders-empty">
+            <FolderSearch className="w-7 h-7" />
+            <p>{isVietnamese ? "Chua lien ket thu muc nao." : "No directories linked."}</p>
+            <button type="button" className="linked-folders-empty-action" onClick={() => void handleAddFolder()}>
+              <Plus className="w-3.5 h-3.5" />
+              {isVietnamese ? "Them thu muc" : "Add folder"}
+            </button>
           </div>
         ) : (
-          <div className="flex flex-col gap-4">
+          <div className="linked-folders-list">
             {folders.map((folder) => (
-              <div key={folder} className="flex flex-col">
-                <div className="group flex items-center justify-between rounded p-1 hover:bg-[var(--bg-hover)]">
-                  <div className="flex items-center gap-1.5 flex-1 overflow-hidden" title={folder}>
+              <div key={folder} className="linked-folder-group">
+                <div className="linked-folder-row group">
+                  <div className="linked-folder-copy" title={folder}>
                     <Folder className="w-4 h-4 text-[var(--accent)] flex-shrink-0" />
-                    <span className="truncate text-xs font-medium text-[var(--text-primary)]">
-                      {folder.split(/[/\\]/).pop() || folder}
-                    </span>
+                    <span>{folder.split(/[/\\]/).pop() || folder}</span>
                   </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="linked-folder-actions">
                     <button
-                      onClick={() => loadContents(folder)}
-                      className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] p-0.5"
-                      title="Refresh"
+                      type="button"
+                      onClick={() => void loadContents(folder)}
+                      title={isVietnamese ? "Lam moi" : "Refresh"}
+                      aria-label={isVietnamese ? "Lam moi" : "Refresh folder"}
                     >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isLoading[folder] ? 'animate-spin' : ''}`} />
+                      <RefreshCw className={`w-3.5 h-3.5 ${loadingPaths[folder] ? "animate-spin" : ""}`} />
                     </button>
                     <button
-                      onClick={() => removeFolder(folder)}
-                      className="text-[var(--text-secondary)] hover:text-red-400 p-0.5"
-                      title="Unlink"
+                      type="button"
+                      onClick={() => void removeFolder(folder)}
+                      className="danger"
+                      title={isVietnamese ? "Bo lien ket" : "Unlink"}
+                      aria-label={isVietnamese ? "Bo lien ket" : "Unlink folder"}
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
 
-                <div className="pl-4 py-1 flex flex-col gap-[2px]">
-                  {folderContents[folder]?.length === 0 && !isLoading[folder] && (
-                    <div className="text-[11px] text-[var(--text-muted)] italic px-2">No .sql or .json files</div>
-                  )}
-                  {folderContents[folder]?.map((file) => (
-                    <div
-                      key={file.path}
-                      onClick={() => handleFileClick(file)}
-                      className="flex items-center gap-1.5 px-2 py-1 rounded cursor-pointer hover:bg-[var(--bg-hover)] group/file"
-                    >
-                      {file.is_dir ? (
-                        <Folder className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
-                      ) : (
-                        <FileCode className="w-3.5 h-3.5 text-[var(--text-secondary)] group-hover/file:text-[var(--accent)] transition-colors" />
-                      )}
-                      <span className="truncate text-xs text-[var(--text-secondary)] group-hover/file:text-[var(--text-primary)]">
-                        {file.name}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                <div className="linked-folder-files">{renderEntries(folder, 0)}</div>
               </div>
             ))}
           </div>

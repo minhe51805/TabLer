@@ -1,9 +1,10 @@
-import { Copy, Play, Send, Sparkles, Wand2, X } from "lucide-react";
+import { BrainCircuit, Copy, Play, Send, Sparkles, Wand2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import { aiModeAllowsInsert, aiModeAllowsRun, type AIWorkspaceBubbleData } from "./ai-workspace-types";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
+import { AIAgentSteps } from "./AIAgentSteps";
 
 interface AIBubbleDetailModalProps {
   bubble: AIWorkspaceBubbleData;
@@ -50,6 +51,10 @@ export function AIBubbleDetailModal({
   const canRewrite = bubble.kind !== "result" && bubble.status !== "loading";
   const canInsert = Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
   const canApproveRun = Boolean(bubble.sql) && aiModeAllowsRun(bubble.interactionMode);
+  const reasoningText = bubble.reasoning?.trim();
+  const showReasoning = bubble.status !== "loading" && Boolean(reasoningText);
+  const agentSteps = bubble.agentSteps ?? [];
+  const showAgentSteps = bubble.interactionMode === "agent" && agentSteps.length > 0;
 
   return (
     <div className="ai-workspace-modal-layer">
@@ -84,6 +89,22 @@ export function AIBubbleDetailModal({
               text={bubble.status === "loading" ? copy.modal.loadingExplanation : bubble.detail || bubble.preview}
             />
           </section>
+
+          {showAgentSteps && (
+            <section className="ai-workspace-modal-section">
+              <AIAgentSteps steps={agentSteps} />
+            </section>
+          )}
+
+          {showReasoning && (
+            <section className="ai-workspace-modal-section">
+              <span className="ai-workspace-modal-label">
+                <BrainCircuit className="w-4 h-4" />
+                {copy.modal.reasoningLabel}
+              </span>
+              <AIWorkspaceMarkdown className="ai-workspace-modal-textblock ai-workspace-modal-reasoning" text={reasoningText ?? ""} />
+            </section>
+          )}
 
           {bubble.sql && (
             <section className="ai-workspace-modal-section">

@@ -6,13 +6,13 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
-  Panel,
   type Node,
   type Edge,
   type Connection,
   type EdgeTypes,
   type NodeTypes,
   type OnConnect,
+  type ReactFlowInstance,
   BackgroundVariant,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -23,14 +23,17 @@ import {
   RefreshCw,
   Download,
   FileText,
-  Maximize2,
-  Settings,
   CheckCheck,
   Square,
   GitBranch,
   Link2,
   PanelLeftClose,
   PanelLeftOpen,
+  LayoutGrid,
+  ScanSearch,
+  Map as MapIcon,
+  SlidersHorizontal,
+  Sparkles,
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -92,16 +95,17 @@ interface QuickColumnEditorState {
 }
 
 const TABLE_COLORS = ["#6366F1", "#8B5CF6", "#EC4899", "#F59E0B", "#10B981", "#3B82F6", "#EF4444", "#14B8A6"];
-const DIAGRAM_LEFT_OFFSET = 244;
-const DIAGRAM_TOP_OFFSET = 64;
-const DIAGRAM_HORIZONTAL_GAP = 24;
-const DIAGRAM_VERTICAL_GAP = 30;
-const DIAGRAM_INITIAL_FIT_PADDING = 0.2;
-const DIAGRAM_INITIAL_FIT_MAX_ZOOM = 0.68;
-const DIAGRAM_MIN_ZOOM = 0.18;
+const DIAGRAM_LEFT_OFFSET = 48;
+const DIAGRAM_TOP_OFFSET = 48;
+const DIAGRAM_HORIZONTAL_GAP = 42;
+const DIAGRAM_VERTICAL_GAP = 42;
+const DIAGRAM_INITIAL_FIT_PADDING = 0.14;
+const DIAGRAM_INITIAL_FIT_MAX_ZOOM = 0.86;
+const DIAGRAM_MIN_ZOOM = 0.1;
 const DIAGRAM_MAX_ZOOM = 1.5;
 const DIAGRAM_COLLISION_PADDING = 14;
 const DIAGRAM_POSITION_SEARCH_RADIUS = 18;
+const DIAGRAM_RECOMMENDED_TABLE_COUNT = 12;
 const DIAGRAM_EXPORT_PADDING = 40;
 const DIAGRAM_EXPORT_SCALE = 2;
 const CUSTOM_ER_RELATIONSHIPS_STORAGE_KEY = "tabler.erd.customRelationships.v1";
@@ -119,6 +123,36 @@ const erDiagramSchemaRequests = new Map<string, Promise<ERDiagramSchema>>();
 
 function getTableColor(index: number): string {
   return TABLE_COLORS[index % TABLE_COLORS.length];
+}
+
+function getTableRelationshipDegree(relationships: ERRelationship[]) {
+  const degree = new Map<string, number>();
+
+  relationships.forEach((relationship) => {
+    degree.set(relationship.fromTable, (degree.get(relationship.fromTable) || 0) + 1);
+    degree.set(relationship.toTable, (degree.get(relationship.toTable) || 0) + 1);
+  });
+
+  return degree;
+}
+
+function getRecommendedTableSelection(schema: ERDiagramSchema) {
+  const degree = getTableRelationshipDegree(schema.relationships);
+  const rankedTables = [...schema.tables].sort((left, right) => {
+    const degreeDifference = (degree.get(right.name) || 0) - (degree.get(left.name) || 0);
+    if (degreeDifference !== 0) return degreeDifference;
+
+    const rowDifference = (right.rowCount || 0) - (left.rowCount || 0);
+    if (rowDifference !== 0) return rowDifference;
+
+    return left.name.localeCompare(right.name);
+  });
+
+  return new Set(
+    rankedTables
+      .slice(0, Math.min(DIAGRAM_RECOMMENDED_TABLE_COUNT, rankedTables.length))
+      .map((table) => table.name)
+  );
 }
 
 function getRelationshipSignature(relationship: Pick<ERRelationship, "fromTable" | "fromColumn" | "toTable" | "toColumn">) {
@@ -867,6 +901,7 @@ function findAvailableDiagramPosition(
 
 function buildNodes(
   tables: TableSchema[],
+  relationships: ERRelationship[],
   selectedTableNames: Set<string>,
   expandedTableNames: Set<string>,
   existingNodes: Node[],
@@ -874,7 +909,15 @@ function buildNodes(
   onToggleTableExpanded: (tableName: string) => void,
   onOpenContextMenu: (event: ReactMouseEvent<HTMLElement>, payload: ERDNodeContextPayload) => void
 ): TableNodeType[] {
-  const filtered = tables.filter((table) => selectedTableNames.has(table.name));
+  const relationshipDegree = getTableRelationshipDegree(relationships);
+  const filtered = tables
+    .filter((table) => selectedTableNames.has(table.name))
+    .sort((left, right) => {
+      const degreeDifference =
+        (relationshipDegree.get(right.name) || 0) - (relationshipDegree.get(left.name) || 0);
+      if (degreeDifference !== 0) return degreeDifference;
+      return left.name.localeCompare(right.name);
+    });
   if (filtered.length === 0) return [];
 
   const existingPositions = new Map(existingNodes.map((node) => [node.id, node.position]));
@@ -886,7 +929,10 @@ function buildNodes(
   );
   const slotWidth = DIAGRAM_NODE_WIDTH + DIAGRAM_HORIZONTAL_GAP;
   const slotHeight = maxNodeHeight + DIAGRAM_VERTICAL_GAP;
-  const colsCount = Math.max(1, Math.min(3, Math.ceil(Math.sqrt(filtered.length))));
+  const colsCount = Math.max(
+    1,
+    Math.min(10, Math.ceil(Math.sqrt(filtered.length * 1.35)))
+  );
 
   return filtered.map((table, index) => {
     const col = index % colsCount;
@@ -1052,6 +1098,7 @@ async function fetchSchema(
 
 export function ERDiagram({ connectionId, database }: Props) {
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const reactFlowInstanceRef = useRef<ReactFlowInstance | null>(null);
   const hasInitializedSelectionRef = useRef(false);
   const rememberedNodePositionsRef = useRef<Map<string, DiagramPoint>>(new Map());
   const rememberedEdgeBendsRef = useRef<Map<string, DiagramPoint>>(new Map());
@@ -1070,7 +1117,7 @@ export function ERDiagram({ connectionId, database }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
-  const [showMinimap, setShowMinimap] = useState(true);
+  const [showMinimap, setShowMinimap] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false);
   const [exportFormat, setExportFormat] = useState<"png" | "drawio" | null>(null);
@@ -1129,7 +1176,7 @@ export function ERDiagram({ connectionId, database }: Props) {
         const allTableNames = data.tables.map((table) => table.name);
         if (!hasInitializedSelectionRef.current) {
           hasInitializedSelectionRef.current = true;
-          return new Set(allTableNames);
+          return getRecommendedTableSelection(data);
         }
 
         if (current.size === 0) return current;
@@ -1417,6 +1464,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
       return buildNodes(
         schema.tables,
+        allRelationships,
         selectedTables,
         expandedTables,
         existing,
@@ -1567,14 +1615,66 @@ export function ERDiagram({ connectionId, database }: Props) {
     });
   };
 
+  const fitDiagram = useCallback((maxZoom = 0.92) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        void reactFlowInstanceRef.current?.fitView({
+          padding: 0.14,
+          maxZoom,
+          duration: 260,
+        });
+      });
+    });
+  }, []);
+
+  const handleRecommendedSelection = useCallback(() => {
+    if (!schema) return;
+    setSelectedTables(getRecommendedTableSelection(schema));
+    fitDiagram();
+  }, [fitDiagram, schema]);
+
   const handleSelectAll = () => {
     if (!schema) return;
     setSelectedTables(new Set(schema.tables.map((table) => table.name)));
+    fitDiagram(0.48);
   };
 
   const handleClearAll = () => {
     setSelectedTables(new Set());
   };
+
+  const handleAutoLayout = useCallback(() => {
+    if (!schema || selectedTables.size === 0) return;
+
+    rememberedNodePositionsRef.current.clear();
+    rememberedEdgeBendsRef.current.clear();
+    setNodes(
+      buildNodes(
+        schema.tables,
+        allRelationships,
+        selectedTables,
+        expandedTables,
+        [],
+        new Map(),
+        handleTableExpandToggle,
+        handleNodeContextMenu
+      )
+    );
+    setEdges((existing) =>
+      buildEdges(schema.tables, allRelationships, selectedTables, existing, new Map())
+    );
+    fitDiagram(selectedTables.size > DIAGRAM_RECOMMENDED_TABLE_COUNT ? 0.62 : 0.92);
+  }, [
+    allRelationships,
+    expandedTables,
+    fitDiagram,
+    handleNodeContextMenu,
+    handleTableExpandToggle,
+    schema,
+    selectedTables,
+    setEdges,
+    setNodes,
+  ]);
 
   const handleExportPNG = useCallback(async () => {
     if (nodes.length === 0) {
@@ -1750,13 +1850,31 @@ export function ERDiagram({ connectionId, database }: Props) {
 
   return (
     <div ref={shellRef} className="erd-shell">
-      <div className="erd-topbar">
+      <header className="erd-topbar">
         <div className="erd-topbar-heading">
-          <span className="erd-topbar-kicker">Entity Relationship View</span>
-          <strong className="erd-topbar-title">{activeDatabaseLabel}</strong>
+          <span className="erd-topbar-mark">
+            <GitBranch className="erd-topbar-mark-icon" />
+          </span>
+          <div className="erd-topbar-copy">
+            <strong className="erd-topbar-title">ER Diagram</strong>
+            <span className="erd-topbar-database">{activeDatabaseLabel}</span>
+          </div>
         </div>
 
-        <div className="erd-toolbar-group">
+        <div className="erd-toolbar-stats" aria-label="Diagram summary">
+          <span className="erd-toolbar-stat">
+            <Database className="erd-toolbar-icon" />
+            {schema ? `${selectedTables.size} of ${schema.tables.length}` : "Loading"}
+          </span>
+          <span className="erd-toolbar-stat">
+            <GitBranch className="erd-toolbar-icon" />
+            {schema ? visibleRelationshipCount : 0}
+          </span>
+        </div>
+
+        <div className="erd-toolbar-spacer" />
+
+        <div className="erd-toolbar-group" role="group" aria-label="Diagram layout">
           <button
             type="button"
             onClick={() => {
@@ -1764,64 +1882,102 @@ export function ERDiagram({ connectionId, database }: Props) {
               void loadSchema({ force: true });
             }}
             disabled={loading}
-            className="erd-toolbar-button"
+            className="erd-toolbar-button is-icon-only"
+            title={loading ? "Refreshing schema" : "Refresh schema"}
+            aria-label={loading ? "Refreshing schema" : "Refresh schema"}
           >
             <RefreshCw className={`erd-toolbar-icon ${loading ? "is-spinning" : ""}`} />
-            {loading ? "Refreshing" : "Refresh"}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleAutoLayout}
+            disabled={selectedTables.size === 0}
+            className="erd-toolbar-button"
+            title="Arrange selected tables"
+          >
+            <LayoutGrid className="erd-toolbar-icon" />
+            Auto layout
+          </button>
+
+          <button
+            type="button"
+            onClick={() => fitDiagram()}
+            disabled={selectedTables.size === 0}
+            className="erd-toolbar-button"
+            title="Fit selected tables in view"
+          >
+            <ScanSearch className="erd-toolbar-icon" />
+            Fit
+          </button>
+        </div>
+
+        <div className="erd-toolbar-divider" />
+
+        <div className="erd-toolbar-group" role="group" aria-label="Diagram view">
+          <button
+            type="button"
+            onClick={() => setIsSidePanelCollapsed((value) => !value)}
+            className={`erd-toolbar-button is-icon-only ${!isSidePanelCollapsed ? "is-active" : ""}`}
+            title={isSidePanelCollapsed ? "Show table browser" : "Hide table browser"}
+            aria-label={isSidePanelCollapsed ? "Show table browser" : "Hide table browser"}
+            aria-pressed={!isSidePanelCollapsed}
+          >
+            {isSidePanelCollapsed ? (
+              <PanelLeftOpen className="erd-toolbar-icon" />
+            ) : (
+              <PanelLeftClose className="erd-toolbar-icon" />
+            )}
           </button>
 
           <button
             type="button"
             onClick={() => setShowMinimap((value) => !value)}
-            className={`erd-toolbar-button ${showMinimap ? "is-active" : ""}`}
+            className={`erd-toolbar-button is-icon-only ${showMinimap ? "is-active" : ""}`}
+            title={showMinimap ? "Hide minimap" : "Show minimap"}
+            aria-label={showMinimap ? "Hide minimap" : "Show minimap"}
+            aria-pressed={showMinimap}
           >
-            <Maximize2 className="erd-toolbar-icon" />
-            Minimap
+            <MapIcon className="erd-toolbar-icon" />
           </button>
 
           <button
             type="button"
             onClick={() => setShowControls((value) => !value)}
-            className={`erd-toolbar-button ${showControls ? "is-active" : ""}`}
+            className={`erd-toolbar-button is-icon-only ${showControls ? "is-active" : ""}`}
+            title={showControls ? "Hide zoom controls" : "Show zoom controls"}
+            aria-label={showControls ? "Hide zoom controls" : "Show zoom controls"}
+            aria-pressed={showControls}
           >
-            <Settings className="erd-toolbar-icon" />
-            Controls
+            <SlidersHorizontal className="erd-toolbar-icon" />
           </button>
         </div>
 
-        <div className="erd-toolbar-spacer" />
+        <div className="erd-toolbar-divider" />
 
-        <div className="erd-toolbar-stats">
-          <span className="erd-toolbar-stat">
-            <Database className="erd-toolbar-icon" />
-            {schema ? `${selectedTables.size} / ${schema.tables.length} tables` : "Preparing schema"}
-          </span>
-          <span className="erd-toolbar-stat">
-            <GitBranch className="erd-toolbar-icon" />
-            {schema ? `${visibleRelationshipCount} links` : "Checking links"}
-          </span>
+        <div className="erd-toolbar-group" role="group" aria-label="Export diagram">
+          <button
+            type="button"
+            onClick={handleExportPNG}
+            disabled={exportFormat !== null || nodes.length === 0}
+            className="erd-toolbar-button is-primary"
+          >
+            <Download className="erd-toolbar-icon" />
+            {exportFormat === "png" ? "Exporting" : "PNG"}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportDrawio}
+            disabled={exportFormat !== null || nodes.length === 0}
+            className="erd-toolbar-button is-icon-only"
+            title={exportFormat === "drawio" ? "Exporting Draw.io" : "Export Draw.io"}
+            aria-label={exportFormat === "drawio" ? "Exporting Draw.io" : "Export Draw.io"}
+          >
+            <FileText className="erd-toolbar-icon" />
+          </button>
         </div>
-
-        <button
-          type="button"
-          onClick={handleExportPNG}
-          disabled={exportFormat !== null || nodes.length === 0}
-          className="erd-toolbar-button is-primary"
-        >
-          <Download className="erd-toolbar-icon" />
-          {exportFormat === "png" ? "Exporting" : "Export PNG"}
-        </button>
-
-        <button
-          type="button"
-          onClick={handleExportDrawio}
-          disabled={exportFormat !== null || nodes.length === 0}
-          className="erd-toolbar-button"
-        >
-          <FileText className="erd-toolbar-icon" />
-          {exportFormat === "drawio" ? "Exporting" : "Export Draw.io"}
-        </button>
-      </div>
+      </header>
 
       {bannerError && <div className="erd-error-banner">{bannerError}</div>}
 
@@ -1836,133 +1992,159 @@ export function ERDiagram({ connectionId, database }: Props) {
       )}
 
       {!loading && schema && (
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          fitView
-          fitViewOptions={{ padding: DIAGRAM_INITIAL_FIT_PADDING, maxZoom: DIAGRAM_INITIAL_FIT_MAX_ZOOM }}
-          minZoom={DIAGRAM_MIN_ZOOM}
-          maxZoom={DIAGRAM_MAX_ZOOM}
-          className="erd-flow"
-          proOptions={{ hideAttribution: true }}
-        >
-          {showMinimap && (
-            <MiniMap
-              className="erd-minimap"
-              nodeColor={(node) => (node.data as { color?: string }).color || "#60A5FA"}
-              maskColor="rgba(9, 12, 18, 0.76)"
-            />
-          )}
-
-          {showControls && <Controls className="erd-controls" showInteractive={false} />}
-
-          <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} color="#1C2433" />
-
-          <Panel position="top-left">
-            <div className={`erd-sidepanel ${isSidePanelCollapsed ? "is-collapsed" : ""}`}>
-              <div className="erd-sidepanel-header">
-                <div className="erd-sidepanel-copy">
-                  <strong className="erd-sidepanel-title">Tables</strong>
-                  <span className="erd-sidepanel-meta">{activeDatabaseLabel}</span>
-                </div>
-
-                <div className="erd-sidepanel-header-actions">
-                  <span className="erd-sidepanel-pill">{isSidePanelCollapsed ? selectedTables.size : `${selectedTables.size} shown`}</span>
-                  <button
-                    type="button"
-                    className="erd-sidepanel-collapse"
-                    aria-label={isSidePanelCollapsed ? "Expand tables panel" : "Collapse tables panel"}
-                    onClick={() => setIsSidePanelCollapsed((value) => !value)}
-                  >
-                    {isSidePanelCollapsed ? (
-                      <PanelLeftOpen className="erd-sidepanel-collapse-icon" />
-                    ) : (
-                      <PanelLeftClose className="erd-sidepanel-collapse-icon" />
-                    )}
-                  </button>
-                </div>
+        <div className={`erd-workspace ${isSidePanelCollapsed ? "is-sidebar-collapsed" : ""}`}>
+          <aside className={`erd-sidepanel ${isSidePanelCollapsed ? "is-collapsed" : ""}`}>
+            <div className="erd-sidepanel-header">
+              <div className="erd-sidepanel-copy">
+                <strong className="erd-sidepanel-title">Tables</strong>
+                <span className="erd-sidepanel-meta">
+                  {selectedTables.size} selected
+                </span>
               </div>
 
-              <div className="erd-sidepanel-actions">
-                <button type="button" onClick={handleSelectAll} className="erd-sidepanel-action">
-                  <CheckCheck className="erd-sidepanel-action-icon" />
-                  All
-                </button>
-                <button type="button" onClick={handleClearAll} className="erd-sidepanel-action">
-                  <Square className="erd-sidepanel-action-icon" />
-                  None
-                </button>
-              </div>
-
-              <label className="erd-filter">
-                <Search className="erd-filter-icon" />
-                <input
-                  type="text"
-                  value={tableFilter}
-                  onChange={(event) => setTableFilter(event.target.value)}
-                  placeholder="Filter tables"
-                  className="erd-filter-input"
-                />
-              </label>
-
-              <div className="erd-table-list custom-scrollbar">
-                {filteredTables.length === 0 ? (
-                  <div className="erd-empty-list">
-                    <Search className="erd-empty-list-icon" />
-                    {!isSidePanelCollapsed && (
-                      <>
-                        <strong>No matching tables</strong>
-                        <span>Try a shorter name or clear the filter.</span>
-                      </>
-                    )}
-                  </div>
+              <button
+                type="button"
+                className="erd-sidepanel-collapse"
+                aria-label={isSidePanelCollapsed ? "Expand tables panel" : "Collapse tables panel"}
+                onClick={() => setIsSidePanelCollapsed((value) => !value)}
+              >
+                {isSidePanelCollapsed ? (
+                  <PanelLeftOpen className="erd-sidepanel-collapse-icon" />
                 ) : (
-                  filteredTables.map((table) => {
-                    const checked = selectedTables.has(table.name);
-                    const accent = tableColorMap.get(table.name) || TABLE_COLORS[0];
-
-                    return (
-                      <button
-                        key={table.name}
-                        type="button"
-                        onClick={() => handleTableToggle(table.name)}
-                        aria-pressed={checked}
-                        aria-label={table.name}
-                        title={table.name}
-                        className={`erd-table-toggle ${checked ? "is-active" : ""}`}
-                        style={{ "--erd-table-accent": accent } as CSSProperties}
-                      >
-                        <span className="erd-table-toggle-check" />
-                        <span className="erd-table-toggle-dot" />
-                        {!isSidePanelCollapsed && (
-                          <>
-                            <div className="erd-table-toggle-copy">
-                              <span className="erd-table-toggle-name">{table.name}</span>
-                              <span className="erd-table-toggle-meta">{table.schema || "Table"}</span>
-                            </div>
-                            <span className="erd-table-toggle-count">{table.columns.length}</span>
-                          </>
-                        )}
-                      </button>
-                    );
-                  })
+                  <PanelLeftClose className="erd-sidepanel-collapse-icon" />
                 )}
-              </div>
+              </button>
             </div>
-          </Panel>
-        </ReactFlow>
-      )}
 
-      {!loading && schema && selectedTables.size === 0 && (
-        <div className="erd-canvas-empty">
-          <Database className="erd-canvas-empty-icon" />
-          <strong>Select tables to build the diagram</strong>
-          <span>Use the schema list on the left to add tables back onto the canvas.</span>
+            <div className="erd-sidepanel-actions">
+              <button
+                type="button"
+                onClick={handleRecommendedSelection}
+                className="erd-sidepanel-action is-recommended"
+                title="Show the most connected tables"
+              >
+                <Sparkles className="erd-sidepanel-action-icon" />
+                Overview
+              </button>
+              <button type="button" onClick={handleSelectAll} className="erd-sidepanel-action">
+                <CheckCheck className="erd-sidepanel-action-icon" />
+                All
+              </button>
+              <button type="button" onClick={handleClearAll} className="erd-sidepanel-action">
+                <Square className="erd-sidepanel-action-icon" />
+                None
+              </button>
+            </div>
+
+            <label className="erd-filter">
+              <Search className="erd-filter-icon" />
+              <input
+                type="text"
+                value={tableFilter}
+                onChange={(event) => setTableFilter(event.target.value)}
+                placeholder="Find a table"
+                className="erd-filter-input"
+              />
+            </label>
+
+            <div className="erd-table-list custom-scrollbar">
+              {filteredTables.length === 0 ? (
+                <div className="erd-empty-list">
+                  <Search className="erd-empty-list-icon" />
+                  {!isSidePanelCollapsed && (
+                    <>
+                      <strong>No matching tables</strong>
+                      <span>Clear the search and try again.</span>
+                    </>
+                  )}
+                </div>
+              ) : (
+                filteredTables.map((table) => {
+                  const checked = selectedTables.has(table.name);
+                  const accent = tableColorMap.get(table.name) || TABLE_COLORS[0];
+
+                  return (
+                    <button
+                      key={table.name}
+                      type="button"
+                      onClick={() => handleTableToggle(table.name)}
+                      aria-pressed={checked}
+                      aria-label={table.name}
+                      title={table.name}
+                      className={`erd-table-toggle ${checked ? "is-active" : ""}`}
+                      style={{ "--erd-table-accent": accent } as CSSProperties}
+                    >
+                      <span className="erd-table-toggle-check" />
+                      {!isSidePanelCollapsed && (
+                        <>
+                          <div className="erd-table-toggle-copy">
+                            <span className="erd-table-toggle-name">{table.name}</span>
+                            <span className="erd-table-toggle-meta">{table.schema || "Table"}</span>
+                          </div>
+                          <span className="erd-table-toggle-count" title={`${table.columns.length} columns`}>
+                            {table.columns.length}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </aside>
+
+          <main className="erd-canvas">
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onInit={(instance) => {
+                reactFlowInstanceRef.current = instance;
+              }}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              fitView
+              fitViewOptions={{ padding: DIAGRAM_INITIAL_FIT_PADDING, maxZoom: DIAGRAM_INITIAL_FIT_MAX_ZOOM }}
+              minZoom={DIAGRAM_MIN_ZOOM}
+              maxZoom={DIAGRAM_MAX_ZOOM}
+              className="erd-flow"
+              proOptions={{ hideAttribution: true }}
+              onlyRenderVisibleElements
+              selectionOnDrag
+            >
+              {showMinimap && (
+                <MiniMap
+                  className="erd-minimap"
+                  nodeColor={(node) => (node.data as { color?: string }).color || "#60A5FA"}
+                  maskColor="rgba(248, 250, 252, 0.74)"
+                  pannable
+                  zoomable
+                />
+              )}
+
+              {showControls && <Controls className="erd-controls" showInteractive={false} />}
+
+              <Background variant={BackgroundVariant.Dots} gap={22} size={1.15} color="var(--mm-border)" />
+            </ReactFlow>
+
+            {selectedTables.size === 0 && (
+              <div className="erd-canvas-empty">
+                <Database className="erd-canvas-empty-icon" />
+                <strong>No tables on the canvas</strong>
+                <span>Select tables from the browser or restore the recommended overview.</span>
+                <button
+                  type="button"
+                  className="erd-canvas-empty-action"
+                  onClick={handleRecommendedSelection}
+                >
+                  <Sparkles className="erd-toolbar-icon" />
+                  Restore overview
+                </button>
+              </div>
+            )}
+          </main>
         </div>
       )}
 

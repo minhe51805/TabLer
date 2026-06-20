@@ -600,7 +600,117 @@ const FOREST_THEME: ThemeDefinition = {
   animations: DEFAULT_DARK_THEME.animations,
 };
 
+// ---------------------------------------------------------------------------
+// MiniMax Theme — Apple-native Light (TablePro palette, Apple blue #007AFF)
+// ---------------------------------------------------------------------------
+
+const MINIMAX_THEME: ThemeDefinition = {
+  id: "tabler.minimax",
+  name: "MiniMax",
+  appearance: "light",
+  colors: {
+    ui: {
+      windowBackground: "#FFFFFF",
+      controlBackground: "#F7F7F8",
+      cardBackground: "#FFFFFF",
+      border: "#D8D8DC",
+      borderLight: "#E5E5EA",
+      primaryText: "#000000",
+      secondaryText: "#3C3C43",
+      tertiaryText: "#8E8E93",
+      accent: "#007AFF",
+      accentHover: "#0A6CFF",
+      accentDim: "rgba(0, 122, 255, 0.10)",
+      selectionBackground: "#B4D8FD",
+      hoverBackground: "#F0F0F2",
+      status: {
+        success: "#248A3D",
+        warning: "#C55B00",
+        error: "#D70015",
+        info: "#007AFF",
+      },
+      badges: {
+        background: "#E5E5EA",
+        primaryKey: "rgba(0, 122, 255, 0.15)",
+        autoIncrement: "rgba(175, 82, 222, 0.15)",
+      },
+    },
+    editor: {
+      background: "#FFFFFF",
+      text: "#000000",
+      cursor: "#007AFF",
+      currentLineHighlight: "rgba(0, 122, 255, 0.08)",
+      selection: "#B4D8FD",
+      lineNumber: "#8E8E93",
+      invisibles: "#C7C7CC",
+      syntax: {
+        keyword: "#0A49A5",
+        string: "#C41A16",
+        number: "#6C36A9",
+        comment: "#007400",
+        operator: "#000000",
+        function: "#326D74",
+        type: "#3F6E74",
+      },
+    },
+    dataGrid: {
+      background: "#FFFFFF",
+      text: "#000000",
+      alternateRow: "#F5F5F5",
+      nullValue: "#8E8E93",
+      boolTrue: "#248A3D",
+      boolFalse: "#D70015",
+      rowNumber: "#8E8E93",
+      modified: "rgba(255, 214, 10, 0.30)",
+      inserted: "rgba(52, 199, 89, 0.30)",
+      deleted: "rgba(255, 59, 48, 0.30)",
+      deletedText: "#8E8E93",
+      focusBorder: "#007AFF",
+    },
+    sidebar: {
+      background: "#FFFFFF",
+      text: "#8E8E93",
+      selectedItem: "#007AFF",
+      hover: "#F0F0F2",
+      sectionHeader: "#8E8E93",
+    },
+  },
+  spacing: {
+    xxxs: 2,
+    xxs: 4,
+    xs: 8,
+    sm: 12,
+    md: 16,
+    lg: 20,
+    xl: 24,
+  },
+  typography: {
+    tiny: 10,
+    caption: 12,
+    small: 12,
+    medium: 13,
+    body: 14,
+    title3: 16,
+    title2: 24,
+  },
+  fonts: {
+    editorFontFamily:
+      "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace",
+    editorFontSize: 13,
+    dataGridFontFamily:
+      "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace",
+    dataGridFontSize: 13,
+  },
+  animations: {
+    fast: 0.1,
+    normal: 0.2,
+    smooth: 0.3,
+    slow: 0.5,
+  },
+};
+
 const BUILT_IN_THEMES: ThemeDefinition[] = [
+  MINIMAX_THEME,
   DEFAULT_DARK_THEME,
   MIDNIGHT_BLUE_THEME,
   GRAPHITE_THEME,
@@ -615,6 +725,17 @@ const BUILT_IN_THEMES: ThemeDefinition[] = [
 const THEME_STORAGE_KEY = "tabler.activeTheme";
 const THEMES_STORAGE_KEY = "tabler.themes";
 const BUILT_IN_THEME_IDS = new Set(BUILT_IN_THEMES.map((theme) => theme.id));
+
+// Option A: these legacy dark presets are retired in favour of the single
+// MiniMax look. Any persisted active theme pointing at one of them is migrated
+// to MiniMax on load so existing users land on the new global design.
+const RETIRED_THEME_IDS = new Set<string>([
+  "tabler.dark",
+  "tabler.midnight",
+  "tabler.graphite",
+  "tabler.forest",
+  "tabler.light",
+]);
 
 function isThemeDefinitionCandidate(value: unknown): value is ThemeDefinition {
   if (!value || typeof value !== "object") return false;
@@ -642,6 +763,12 @@ function getAllThemes(): ThemeDefinition[] {
 
 function getThemeShapeTokens(themeId: string) {
   switch (themeId) {
+    case "tabler.minimax":
+      return {
+        buttonRadius: "8px",
+        cardRadius: "8px",
+        panelRadius: "8px",
+      };
     case "tabler.midnight":
       return {
         buttonRadius: "10px",
@@ -670,11 +797,15 @@ function getThemeShapeTokens(themeId: string) {
 }
 
 export const ThemeEngine = {
-  default: DEFAULT_DARK_THEME,
+  default: MINIMAX_THEME,
   light: DEFAULT_LIGHT_THEME,
+  minimax: MINIMAX_THEME,
 
   getAvailableThemes(): ThemeDefinition[] {
-    return getAllThemes();
+    // Option A: MiniMax is the single, global look. Only MiniMax (plus any
+    // user-created themes) is offered in the theme menu; the legacy dark
+    // presets are retired.
+    return [MINIMAX_THEME, ...loadStoredUserThemes()];
   },
 
   getAppearance(): ThemeAppearance {
@@ -687,11 +818,11 @@ export const ThemeEngine = {
         // ignore
       }
     }
-    return "dark";
+    return "light";
   },
 
   applyAppearance(appearance: ThemeAppearance): void {
-    const resolved = appearance === "auto" ? "dark" : appearance;
+    const resolved = appearance === "auto" ? "light" : appearance;
     const root = document.documentElement;
     root.setAttribute("data-theme", resolved);
     root.style.colorScheme = resolved;
@@ -702,6 +833,12 @@ export const ThemeEngine = {
       const stored = localStorage.getItem(THEME_STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as Partial<ThemeDefinition>;
+        // Option A: the legacy dark presets are retired. If a previously
+        // persisted theme points at one of them (or the old default), migrate
+        // it to MiniMax so existing users land on the single global look.
+        if (parsed.id && RETIRED_THEME_IDS.has(parsed.id)) {
+          return MINIMAX_THEME;
+        }
         if (parsed.id) {
           const matchedTheme = getAllThemes().find((theme) => theme.id === parsed.id);
           if (matchedTheme) {
@@ -709,13 +846,13 @@ export const ThemeEngine = {
           }
         }
         if (parsed.id && parsed.colors) {
-          return { ...DEFAULT_DARK_THEME, ...parsed };
+          return { ...MINIMAX_THEME, ...parsed };
         }
       }
     } catch {
       // ignore
     }
-    return DEFAULT_DARK_THEME;
+    return MINIMAX_THEME;
   },
 
   saveActive(theme: ThemeDefinition): void {
@@ -744,7 +881,8 @@ export const ThemeEngine = {
 // ---------------------------------------------------------------------------
 
 function injectThemeAsCSSVars(theme: ThemeDefinition): void {
-  ThemeEngine.applyAppearance(theme.appearance === "auto" ? "dark" : theme.appearance);
+  // applyAppearance already resolves "auto" → "light" (Option A is light-only).
+  ThemeEngine.applyAppearance(theme.appearance);
   const root = document.documentElement;
   const c = theme.colors;
   const s = theme.spacing;
@@ -818,6 +956,32 @@ function injectThemeAsCSSVars(theme: ThemeDefinition): void {
   root.style.setProperty("--theme-button-radius", shape.buttonRadius);
   root.style.setProperty("--theme-card-radius", shape.cardRadius);
   root.style.setProperty("--theme-panel-radius", shape.panelRadius);
+
+  // MiniMax-style elevation tokens (consumed by minimax-design-system.css)
+  if (theme.id === "tabler.minimax") {
+    root.style.setProperty(
+      "--mmx-shadow-flat",
+      "none",
+    );
+    root.style.setProperty(
+      "--mmx-shadow-raised",
+      "rgb(255, 255, 255) 0px 0px 0px 0px, rgba(159, 159, 159, 0.30) 0px 0px 0px 1px, rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",
+    );
+    root.style.setProperty(
+      "--mmx-shadow-elevated",
+      "rgb(255, 255, 255) 0px 0px 0px 0px, rgba(159, 159, 159, 0.30) 0px 0px 0px 1px, rgba(0, 0, 0, 0.08) 0px 4px 6px 0px",
+    );
+    root.style.setProperty(
+      "--mmx-shadow-floating",
+      "rgb(255, 255, 255) 0px 0px 0px 0px, rgba(159, 159, 159, 0.30) 0px 0px 0px 1px, rgba(0, 0, 0, 0.12) 0px 8px 16px 0px",
+    );
+    root.style.setProperty(
+      "--mmx-focus-ring",
+      "rgba(0, 0, 0, 0.05) 0px 0px 0px 3px",
+    );
+    root.style.setProperty("--mmx-font-sans", "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif");
+    root.style.setProperty("--mmx-font-mono", "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -876,8 +1040,11 @@ export function registerMonacoTheme(monaco: unknown): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const m = monaco as any;
 
+  // MiniMax uses a light editor surface (#FFFFFF). The theme id is kept as
+  // "tabler-dark" for backward compatibility with callers, but the Monaco base
+  // is "vs" (light) so the editor chrome matches the MiniMax white canvas.
   m.editor.defineTheme("tabler-dark", {
-    base: "vs-dark",
+    base: "vs",
     inherit: true,
     rules: [
       { token: "keyword", foreground: editor.syntax.keyword, fontStyle: "bold" },

@@ -167,7 +167,6 @@ export function DatabaseTree({
               <div className="explorer-db-copy">
                 <div className="explorer-db-title-row">
                   <span className="explorer-db-name" title={db.name}>{displayDatabaseName}</span>
-                  {isCurrent && <span className="explorer-db-pill active">Active</span>}
                 </div>
                   <span className="explorer-db-meta">
                     {isCurrent
@@ -186,11 +185,6 @@ export function DatabaseTree({
                 <div className="explorer-table-panel-head">
                   <div className="explorer-table-panel-copy">
                     <span>{t("explorer.databaseObjects")}</span>
-                    <span className="explorer-table-panel-caption">
-                      {activeSchemaFilter === "all"
-                        ? t("explorer.groupedBySchema")
-                        : t("explorer.showingSchemaByDefault", { schema: activeSchemaFilter })}
-                    </span>
                   </div>
                   <span className="explorer-table-panel-total">
                     {hasSearch
@@ -339,11 +333,11 @@ export function DatabaseTree({
                                   </button>
                                   <button
                                     onClick={(e) => onStructureClick(e, table)}
-                                    className="explorer-structure-btn"
+                                    className="explorer-structure-btn explorer-structure-btn--icon"
                                     title={t("explorer.viewStructure")}
+                                    aria-label={t("explorer.viewStructure")}
                                   >
                                     <Columns className="w-3.5 h-3.5" />
-                                    <span>{t("explorer.structure")}</span>
                                   </button>
                                 </div>
                               );
@@ -384,11 +378,11 @@ export function DatabaseTree({
                                     onClick={(e) =>
                                       onStructureClick(e, { name: view.name, schema: view.schema })
                                     }
-                                    className="explorer-structure-btn"
+                                    className="explorer-structure-btn explorer-structure-btn--icon"
                                     title={t("explorer.viewStructure")}
+                                    aria-label={t("explorer.viewStructure")}
                                   >
                                     <Columns className="w-3.5 h-3.5" />
-                                    <span>{t("explorer.structure")}</span>
                                   </button>
                                 </div>
                               );

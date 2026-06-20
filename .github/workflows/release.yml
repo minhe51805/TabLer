@@ -11,6 +11,7 @@ permissions:
 
 env:
   NODE_VERSION: "20"
+  MSYS_NO_PATHCONV: "1"
 
 jobs:
   build:
@@ -21,12 +22,21 @@ jobs:
           - platform: "macos-latest"
             args: ""
             target: "macos"
+            cc: "clang"
+            cxx: "clang++"
+            cxxflags: ""
           - platform: "ubuntu-22.04"
             args: ""
             target: "linux"
+            cc: "gcc"
+            cxx: "g++"
+            cxxflags: ""
           - platform: "windows-latest"
             args: ""
             target: "windows"
+            cc: "clang-cl"
+            cxx: "clang-cl"
+            cxxflags: "/std:c++17 /EHsc /DDUCKDB_STATIC_BUILD"
 
     runs-on: ${{ matrix.platform }}
 
@@ -60,6 +70,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # macOS: use "-" to skip signing when no certificate configured
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          CXXFLAGS: ${{ matrix.target == 'windows' && format('{0} /FI{1}/src-tauri/src/clang_compat.h', matrix.cxxflags, github.workspace) || matrix.cxxflags }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "TableR ${{ github.ref_name }}"

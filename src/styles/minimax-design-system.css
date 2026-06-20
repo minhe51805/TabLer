@@ -1,0 +1,1027 @@
+/* ─────────────────────────────────────────────────────────────────────────
+ * MiniMax Design System — Inspired by MiniMax / TableR
+ *
+ * Source-of-truth for tokens, typography, spacing, depth and component
+ * primitives. MiniMax is the single global look (Option A): the token layer
+ * is defined unconditionally on :root so it applies before the theme engine
+ * runs (no flash of unstyled content) and the higher-specificity
+ * [data-theme-preset="tabler.minimax"] variant guarantees it wins over any
+ * legacy :root blocks declared later in the cascade. Token names are kept
+ * compatible with the existing
+ * `--bg-*`, `--text-*`, `--accent`, `--border-color` etc. variables so all
+ * existing components inherit the new look without touching markup.
+ *
+ * Hierarchy:
+ *   1. DM Sans font import
+ *   2. Token layer (colors, typography, spacing, radii, shadows)
+ *   3. Base reset & body typography
+ *   4. Component primitives (buttons, inputs, cards, badges, links)
+ *   5. Utility classes
+ *   6. Responsive adjustments
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/* ─── 1. Fonts ────────────────────────────────────────────────────────────
+ * DM Sans + DM Mono are loaded from index.html via <link rel="stylesheet">
+ * to avoid the CSS @import-after-rules warning during production builds.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/* ─── 2. Token Layer (MiniMax Spec) ──────────────────────────────────────── */
+
+:root,
+:root[data-theme-preset="tabler.minimax"] {
+  /* Brand color reference (TablePro Apple-native palette) */
+  --mm-charcoal: #000000;
+  --mm-jet: #000000;
+  --mm-amber: #007AFF;
+  --mm-amber-hover: #0A6CFF;
+  --mm-stone: #3C3C43;
+  --mm-slate: #3C3C43;
+  --mm-stone-gray: #8E8E93;
+
+  /* Neutrals */
+  --mm-off-white: #F0F0F2;
+  --mm-dark-gray: #3C3C43;
+  --mm-medium-gray: #8E8E93;
+  --mm-light-gray: #8E8E93;
+  --mm-smoke: #636366;
+  --mm-pure-white: #FFFFFF;
+  --mm-canvas: #171717;
+  --mm-night: #1C1917;
+  --mm-dim: #181E25;
+
+  /* Semantic */
+  --mm-success: #248A3D;
+  --mm-warning: #C55B00;
+  --mm-error: #D70015;
+  --mm-success-soft: rgba(36, 138, 61, 0.10);
+  --mm-warning-soft: rgba(197, 91, 0, 0.10);
+  --mm-error-soft: rgba(215, 0, 21, 0.08);
+
+  /* Surface */
+  --mm-surface-0: #FFFFFF;
+  --mm-surface-1: #F7F7F8;
+  --mm-surface-2: #F0F0F2;
+  --mm-surface-3: #E5E5EA;
+
+  /* Borders */
+  --mm-border: #D8D8DC;
+  --mm-border-strong: #C7C7CC;
+  --mm-border-focus: #007AFF;
+
+  /* Typography scale (system / Apple-native stack) */
+  --mm-font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
+    "Segoe UI", system-ui, sans-serif;
+  --mm-font-mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --mm-fs-micro: 11px;
+  --mm-fs-caption: 12px;
+  --mm-fs-small: 13px;
+  --mm-fs-body: 14px;
+  --mm-fs-subheading: 16px;
+  --mm-fs-heading: 24px;
+  --mm-fs-display: 30px;
+  --mm-fs-code: 13px;
+
+  --mm-lh-caption: 18px;
+  --mm-lh-body: 24px;
+  --mm-lh-button: 20px;
+  --mm-lh-subheading: 24px;
+  --mm-lh-heading: 32px;
+  --mm-lh-display: 36px;
+
+  --mm-fw-regular: 400;
+  --mm-fw-medium: 500;
+  --mm-fw-semibold: 600;
+  --mm-fw-bold: 700;
+
+  /* Spacing (4px base) */
+  --mm-space-1: 4px;
+  --mm-space-2: 8px;
+  --mm-space-3: 12px;
+  --mm-space-4: 16px;
+  --mm-space-5: 20px;
+  --mm-space-6: 24px;
+  --mm-space-8: 32px;
+  --mm-space-10: 40px;
+  --mm-space-12: 48px;
+  --mm-space-14: 56px;
+  --mm-space-24: 96px;
+  --mm-space-28: 112px;
+
+  /* Radius scale */
+  --mm-radius-square: 0px;
+  --mm-radius-xs: 4px;
+  --mm-radius-sm: 6px;
+  --mm-radius-md: 8px;
+  --mm-radius-lg: 12px;
+  --mm-radius-pill: 9999px;
+
+  /* Elevation */
+  --mm-shadow-flat: none;
+  --mm-shadow-1:
+    rgba(159, 159, 159, 0.30) 0 0 0 1px,
+    rgba(0, 0, 0, 0.05) 0 1px 2px 0;
+  --mm-shadow-2:
+    rgba(159, 159, 159, 0.30) 0 0 0 1px,
+    rgba(0, 0, 0, 0.08) 0 4px 6px 0;
+  --mm-shadow-3:
+    rgba(159, 159, 159, 0.30) 0 0 0 1px,
+    rgba(0, 0, 0, 0.12) 0 8px 16px 0;
+  --mm-shadow-focus: rgba(0, 0, 0, 0.05) 0 0 0 3px;
+
+  /* Map MiniMax tokens to existing TableR CSS variables so all components
+   * inherit MiniMax styling automatically. */
+  --bg-primary: var(--mm-surface-0);
+  --bg-secondary: var(--mm-surface-0);
+  --bg-tertiary: var(--mm-surface-1);
+  --bg-surface: var(--mm-surface-0);
+  --bg-elevated: var(--mm-surface-0);
+  --bg-hover: var(--mm-surface-2);
+  --bg-active: var(--mm-surface-3);
+  --bg-disabled: var(--mm-surface-1);
+
+  --text-primary: var(--mm-charcoal);
+  --text-secondary: var(--mm-dark-gray);
+  --text-muted: var(--mm-medium-gray);
+  --text-subtle: var(--mm-light-gray);
+  --text-disabled: var(--mm-light-gray);
+  --text-inverse: var(--mm-pure-white);
+
+  --border-color: var(--mm-border);
+  --border-light: var(--mm-border);
+  --border-strong: var(--mm-border-strong);
+  --border: var(--mm-border);
+
+  --accent: #007AFF;
+  --accent-hover: #0A6CFF;
+  --accent-active: #0051D5;
+  --accent-amber: var(--mm-amber);
+  --accent-amber-hover: var(--mm-amber-hover);
+  --accent-dim: rgba(0, 122, 255, 0.10);
+
+  --success: var(--mm-success);
+  --warning: var(--mm-warning);
+  --error: var(--mm-error);
+  --info: #007AFF;
+
+  /* Match the existing DataGrid token names */
+  --datagrid-bg: var(--mm-surface-0);
+  --datagrid-text: var(--mm-charcoal);
+  --datagrid-alt-row: var(--mm-surface-1);
+  --datagrid-null: var(--mm-light-gray);
+  --datagrid-bool-true: var(--mm-success);
+  --datagrid-bool-false: var(--mm-error);
+  --datagrid-row-num: var(--mm-light-gray);
+  --datagrid-modified: var(--mm-amber);
+  --datagrid-inserted: var(--mm-success);
+  --datagrid-deleted: var(--mm-error);
+  --datagrid-focus-border: #007AFF;
+
+  /* Theme shape tokens (already injected by ThemeEngine, but pinned here for
+   * components that load the CSS first) */
+  --theme-button-radius: var(--mm-radius-lg);
+  --theme-card-radius: var(--mm-radius-lg);
+  --theme-panel-radius: var(--mm-radius-lg);
+}
+
+/* ─── 3. Base Reset & Body Typography ────────────────────────────────────── */
+
+:root[data-theme-preset="tabler.minimax"] {
+  font-family: var(--mm-font-sans);
+  font-size: var(--mm-fs-body);
+  line-height: var(--mm-lh-body);
+  font-weight: var(--mm-fw-regular);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+:root[data-theme-preset="tabler.minimax"] body {
+  font-family: var(--mm-font-sans);
+  font-size: var(--mm-fs-body);
+  line-height: var(--mm-lh-body);
+  font-weight: var(--mm-fw-regular);
+  color: var(--mm-charcoal);
+  background: var(--mm-surface-0);
+}
+
+:root[data-theme-preset="tabler.minimax"] code,
+:root[data-theme-preset="tabler.minimax"] kbd,
+:root[data-theme-preset="tabler.minimax"] pre,
+:root[data-theme-preset="tabler.minimax"] samp {
+  font-family: var(--mm-font-mono);
+}
+
+/* Heading hierarchy */
+:root[data-theme-preset="tabler.minimax"] h1 {
+  font-size: var(--mm-fs-display);
+  line-height: var(--mm-lh-display);
+  font-weight: var(--mm-fw-bold);
+  letter-spacing: 0;
+  color: var(--mm-charcoal);
+}
+
+:root[data-theme-preset="tabler.minimax"] h2 {
+  font-size: var(--mm-fs-heading);
+  line-height: var(--mm-lh-heading);
+  font-weight: var(--mm-fw-semibold);
+  color: var(--mm-charcoal);
+}
+
+:root[data-theme-preset="tabler.minimax"] h3,
+:root[data-theme-preset="tabler.minimax"] h4 {
+  font-size: var(--mm-fs-subheading);
+  line-height: var(--mm-lh-subheading);
+  font-weight: var(--mm-fw-semibold);
+  color: var(--mm-charcoal);
+}
+
+:root[data-theme-preset="tabler.minimax"] h5,
+:root[data-theme-preset="tabler.minimax"] h6 {
+  font-size: var(--mm-fs-body);
+  line-height: var(--mm-lh-body);
+  font-weight: var(--mm-fw-semibold);
+  color: var(--mm-charcoal);
+}
+
+:root[data-theme-preset="tabler.minimax"] p {
+  font-size: var(--mm-fs-body);
+  line-height: var(--mm-lh-body);
+  color: var(--mm-dark-gray);
+}
+
+:root[data-theme-preset="tabler.minimax"] small {
+  font-size: var(--mm-fs-caption);
+  line-height: var(--mm-lh-caption);
+  color: var(--mm-medium-gray);
+}
+
+/* ─── 4. Component Primitives ─────────────────────────────────────────────── */
+
+/* Class-based primitives — opt-in. Existing components keep their styles
+ * but inherit the token layer. New screens can use these classes directly. */
+
+/* 4.1 Buttons */
+:root[data-theme-preset="tabler.minimax"] .mm-btn,
+:root[data-theme-preset="tabler.minimax"] .mm-btn-primary,
+:root[data-theme-preset="tabler.minimax"] .mm-btn-secondary,
+:root[data-theme-preset="tabler.minimax"] .mm-btn-ghost,
+:root[data-theme-preset="tabler.minimax"] .mm-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mm-space-2);
+  font-family: var(--mm-font-sans);
+  font-size: var(--mm-fs-body);
+  line-height: var(--mm-lh-button);
+  font-weight: var(--mm-fw-medium);
+  letter-spacing: 0;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: background-color 150ms ease, color 150ms ease,
+    border-color 150ms ease, box-shadow 150ms ease;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-primary {
+  background: var(--mm-charcoal);
+  color: rgba(255, 255, 255, 0.95);
+  padding: var(--mm-space-3) var(--mm-space-5);
+  border: none;
+  border-radius: var(--mm-radius-lg);
+  height: 36px;
+  box-shadow: var(--mm-shadow-1);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-primary:hover {
+  background: #1F2937;
+  box-shadow: var(--mm-shadow-2);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-primary:active {
+  background: #0F1419;
+  box-shadow: var(--mm-shadow-3);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-primary:disabled,
+:root[data-theme-preset="tabler.minimax"] .mm-btn-primary[aria-disabled="true"] {
+  background: var(--mm-surface-3);
+  color: var(--mm-light-gray);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-secondary {
+  background: var(--mm-pure-white);
+  color: var(--mm-medium-gray);
+  font-weight: var(--mm-fw-regular);
+  padding: var(--mm-space-3) 14px;
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-lg);
+  height: 36px;
+  box-shadow: var(--mm-shadow-1);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-secondary:hover {
+  background: var(--mm-surface-2);
+  border-color: var(--mm-border-strong);
+  color: var(--mm-slate);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-secondary:active {
+  background: var(--mm-surface-3);
+  color: var(--mm-slate);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-secondary:disabled {
+  background: var(--mm-surface-1);
+  color: var(--mm-border-strong);
+  border-color: var(--mm-surface-3);
+  cursor: not-allowed;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-ghost {
+  background: transparent;
+  color: var(--mm-medium-gray);
+  font-size: var(--mm-fs-subheading);
+  font-weight: var(--mm-fw-regular);
+  line-height: var(--mm-lh-subheading);
+  padding: 0;
+  border: none;
+  height: auto;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-ghost:hover {
+  color: var(--mm-slate);
+  text-decoration: underline;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-ghost:active {
+  color: var(--mm-charcoal);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-icon {
+  background: transparent;
+  color: var(--mm-medium-gray);
+  padding: var(--mm-space-2);
+  border: none;
+  border-radius: var(--mm-radius-sm);
+  height: auto;
+  width: auto;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-icon:hover {
+  background: var(--mm-surface-2);
+  color: var(--mm-slate);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-btn-icon:active {
+  background: var(--mm-surface-3);
+  color: var(--mm-charcoal);
+}
+
+/* 4.2 Cards */
+:root[data-theme-preset="tabler.minimax"] .mm-card {
+  background: var(--mm-pure-white);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-lg);
+  padding: var(--mm-space-5);
+  box-shadow: var(--mm-shadow-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mm-space-4);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-card-elevated {
+  box-shadow: var(--mm-shadow-2);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-card:hover {
+  box-shadow: var(--mm-shadow-2);
+}
+
+/* 4.3 Inputs */
+:root[data-theme-preset="tabler.minimax"] .mm-input,
+:root[data-theme-preset="tabler.minimax"] .mm-textarea,
+:root[data-theme-preset="tabler.minimax"] .mm-select {
+  font-family: var(--mm-font-sans);
+  font-size: var(--mm-fs-body);
+  line-height: var(--mm-lh-button);
+  font-weight: var(--mm-fw-regular);
+  color: var(--mm-jet);
+  background: var(--mm-pure-white);
+  padding: 10px 14px;
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-square);
+  outline: none;
+  width: 100%;
+  height: 40px;
+  transition: border-color 150ms ease, background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-input::placeholder,
+:root[data-theme-preset="tabler.minimax"] .mm-textarea::placeholder {
+  color: var(--mm-light-gray);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-input:focus,
+:root[data-theme-preset="tabler.minimax"] .mm-textarea:focus,
+:root[data-theme-preset="tabler.minimax"] .mm-select:focus {
+  border-color: var(--mm-medium-gray);
+  box-shadow: var(--mm-shadow-focus);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-input[aria-invalid="true"],
+:root[data-theme-preset="tabler.minimax"] .mm-input.mm-input-error {
+  border-color: var(--mm-error);
+  background: var(--mm-error-soft);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-input:disabled,
+:root[data-theme-preset="tabler.minimax"] .mm-textarea:disabled {
+  background: var(--mm-surface-1);
+  color: var(--mm-border-strong);
+  cursor: not-allowed;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-textarea {
+  height: auto;
+  min-height: 96px;
+  padding: 12px 14px;
+  resize: vertical;
+  line-height: var(--mm-lh-body);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 36px;
+  border-radius: var(--mm-radius-sm);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23707071' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='4 6 8 10 12 6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  cursor: pointer;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-select:hover {
+  border-color: var(--mm-border-strong);
+}
+
+/* Search input variant */
+:root[data-theme-preset="tabler.minimax"] .mm-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 100%;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-search > input {
+  padding-right: 40px;
+  background: transparent;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-search:focus-within > input {
+  background: var(--mm-pure-white);
+  border-color: var(--mm-stone-gray);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-search > svg,
+:root[data-theme-preset="tabler.minimax"] .mm-search > .mm-search-icon {
+  position: absolute;
+  right: 14px;
+  width: 16px;
+  height: 16px;
+  color: var(--mm-light-gray);
+  pointer-events: none;
+}
+
+/* Field label + helper text */
+:root[data-theme-preset="tabler.minimax"] .mm-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mm-space-2);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-field-label {
+  font-size: var(--mm-fs-body);
+  font-weight: var(--mm-fw-regular);
+  line-height: var(--mm-lh-body);
+  color: var(--mm-charcoal);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-field-help {
+  font-size: var(--mm-fs-caption);
+  line-height: var(--mm-lh-caption);
+  color: var(--mm-medium-gray);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-field-error {
+  font-size: var(--mm-fs-caption);
+  line-height: var(--mm-lh-caption);
+  color: var(--mm-error);
+}
+
+/* 4.4 Badges */
+:root[data-theme-preset="tabler.minimax"] .mm-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mm-space-1);
+  padding: 4px var(--mm-space-2);
+  font-family: var(--mm-font-sans);
+  font-size: var(--mm-fs-caption);
+  font-weight: var(--mm-fw-medium);
+  line-height: 1;
+  border-radius: var(--mm-radius-xs);
+  border: none;
+  background: var(--mm-surface-2);
+  color: var(--mm-slate);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-badge-success {
+  background: var(--mm-success-soft);
+  color: var(--mm-success);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-badge-warning {
+  background: var(--mm-warning-soft);
+  color: var(--mm-warning);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-badge-error {
+  background: var(--mm-error-soft);
+  color: var(--mm-error);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-badge-accent {
+  background: rgba(195, 125, 13, 0.10);
+  color: var(--mm-amber);
+}
+
+/* 4.5 Links */
+:root[data-theme-preset="tabler.minimax"] .mm-link {
+  font-family: var(--mm-font-sans);
+  font-size: var(--mm-fs-body);
+  line-height: var(--mm-lh-button);
+  color: var(--mm-jet);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-link:hover {
+  color: var(--mm-slate);
+  text-decoration: underline;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-link:active {
+  color: var(--mm-charcoal);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-link:visited {
+  color: #6B7280;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-link-muted {
+  color: var(--mm-medium-gray);
+}
+
+/* 4.6 Tables */
+:root[data-theme-preset="tabler.minimax"] .mm-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mm-font-sans);
+  font-size: var(--mm-fs-body);
+  color: var(--mm-charcoal);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-table th {
+  text-align: left;
+  font-weight: var(--mm-fw-semibold);
+  padding: 12px 16px;
+  background: var(--mm-pure-white);
+  border-bottom: 1px solid var(--mm-border);
+  color: var(--mm-charcoal);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-table td {
+  padding: 12px 16px;
+  font-weight: var(--mm-fw-regular);
+  line-height: var(--mm-lh-button);
+  border-bottom: 1px solid var(--mm-border);
+  background: var(--mm-pure-white);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-table tr:hover td {
+  background: var(--mm-surface-1);
+}
+
+/* 4.7 Navigation */
+:root[data-theme-preset="tabler.minimax"] .mm-nav {
+  display: flex;
+  align-items: stretch;
+  background: transparent;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-nav-item {
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 var(--mm-space-4);
+  font-family: var(--mm-font-sans);
+  font-size: var(--mm-fs-body);
+  font-weight: var(--mm-fw-regular);
+  line-height: var(--mm-lh-button);
+  color: var(--mm-medium-gray);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 150ms ease, border-color 150ms ease;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-nav-item:hover {
+  color: var(--mm-slate);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-nav-item.is-active,
+:root[data-theme-preset="tabler.minimax"] .mm-nav-item[aria-current="page"] {
+  color: var(--mm-charcoal);
+  border-bottom-color: var(--mm-amber);
+}
+
+/* Sidebar variant (vertical) */
+:root[data-theme-preset="tabler.minimax"] .mm-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  background: var(--mm-pure-white);
+  gap: var(--mm-space-1);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: var(--mm-space-2);
+  padding: var(--mm-space-3) var(--mm-space-4);
+  font-family: var(--mm-font-sans);
+  font-size: var(--mm-fs-body);
+  font-weight: var(--mm-fw-regular);
+  color: var(--mm-medium-gray);
+  border-left: 3px solid transparent;
+  border-radius: var(--mm-radius-sm);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-sidebar-item:hover {
+  background: var(--mm-surface-1);
+  color: var(--mm-slate);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-sidebar-item.is-active {
+  background: var(--mm-surface-2);
+  color: var(--mm-charcoal);
+  border-left-color: var(--mm-amber);
+}
+
+/* Breadcrumb */
+:root[data-theme-preset="tabler.minimax"] .mm-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--mm-space-1);
+  font-size: var(--mm-fs-caption);
+  color: var(--mm-medium-gray);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-breadcrumb-separator {
+  color: var(--mm-border-strong);
+  margin: 0 var(--mm-space-1);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-breadcrumb-item.is-current {
+  color: var(--mm-charcoal);
+  font-weight: var(--mm-fw-semibold);
+}
+
+/* 4.8 Collapsible Section */
+:root[data-theme-preset="tabler.minimax"] .mm-collapsible {
+  border-bottom: 1px solid var(--mm-border);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-collapsible-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--mm-space-4);
+  font-weight: var(--mm-fw-semibold);
+  color: var(--mm-charcoal);
+  background: transparent;
+  cursor: pointer;
+  border: none;
+  width: 100%;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-collapsible-arrow {
+  color: var(--mm-medium-gray);
+  transition: transform 200ms ease;
+}
+
+:root[data-theme-preset="tabler.minimax"]
+  .mm-collapsible.is-open
+  .mm-collapsible-arrow {
+  transform: rotate(180deg);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-collapsible-body {
+  padding: 0 var(--mm-space-4) var(--mm-space-4) var(--mm-space-4);
+}
+
+/* 4.9 Code blocks */
+:root[data-theme-preset="tabler.minimax"] .mm-code {
+  font-family: var(--mm-font-mono);
+  font-size: var(--mm-fs-code);
+  line-height: var(--mm-lh-button);
+  color: var(--mm-charcoal);
+  background: var(--mm-surface-2);
+  padding: var(--mm-space-3);
+  border-radius: var(--mm-radius-sm);
+  border: 1px solid var(--mm-border);
+  overflow-x: auto;
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-code-inline {
+  font-family: var(--mm-font-mono);
+  font-size: var(--mm-fs-code);
+  background: var(--mm-surface-2);
+  padding: 2px 6px;
+  border-radius: var(--mm-radius-xs);
+  color: var(--mm-charcoal);
+}
+
+/* ─── 5. Surface-aware overrides on existing TableR primitives ─────────── */
+
+/* These selectors target the existing TableR class names so the legacy
+ * components inherit MiniMax surfaces without a refactor. */
+
+:root[data-theme-preset="tabler.minimax"] body,
+:root[data-theme-preset="tabler.minimax"] #root {
+  background: var(--mm-surface-0);
+  color: var(--mm-charcoal);
+  font-family: var(--mm-font-sans);
+}
+
+/* App title bar (frameless window chrome) */
+:root[data-theme-preset="tabler.minimax"] .app-title-bar,
+:root[data-theme-preset="tabler.minimax"] .titlebar {
+  background: var(--mm-pure-white);
+  border-bottom: 1px solid var(--mm-border);
+  color: var(--mm-charcoal);
+}
+
+/* Generic glass surfaces become flat MiniMax cards */
+:root[data-theme-preset="tabler.minimax"] .glass-card,
+:root[data-theme-preset="tabler.minimax"] .glass-panel,
+:root[data-theme-preset="tabler.minimax"] .fintech-card {
+  background: var(--mm-pure-white);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-lg);
+  box-shadow: var(--mm-shadow-1);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Tables (legacy class) — pad and clean up borders */
+:root[data-theme-preset="tabler.minimax"] table th,
+:root[data-theme-preset="tabler.minimax"] table td {
+  border-bottom: 1px solid var(--mm-border);
+}
+
+/* Inputs without explicit MiniMax class — keep them readable */
+:root[data-theme-preset="tabler.minimax"] input:not([type="checkbox"]):not([type="radio"]):not(.no-mm),
+:root[data-theme-preset="tabler.minimax"] textarea:not(.no-mm),
+:root[data-theme-preset="tabler.minimax"] select:not(.no-mm) {
+  font-family: var(--mm-font-sans);
+}
+
+/* Scrollbars — light MiniMax */
+:root[data-theme-preset="tabler.minimax"] ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+:root[data-theme-preset="tabler.minimax"] ::-webkit-scrollbar-track {
+  background: var(--mm-surface-1);
+}
+
+:root[data-theme-preset="tabler.minimax"] ::-webkit-scrollbar-thumb {
+  background: var(--mm-border-strong);
+  border-radius: var(--mm-radius-pill);
+  border: 2px solid var(--mm-surface-1);
+}
+
+:root[data-theme-preset="tabler.minimax"] ::-webkit-scrollbar-thumb:hover {
+  background: var(--mm-medium-gray);
+}
+
+/* Text selection */
+:root[data-theme-preset="tabler.minimax"] ::selection {
+  background: rgba(195, 125, 13, 0.18);
+  color: var(--mm-charcoal);
+}
+
+/* ─── 6. Utility Classes ─────────────────────────────────────────────────── */
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-display {
+  font-size: var(--mm-fs-display);
+  line-height: var(--mm-lh-display);
+  font-weight: var(--mm-fw-bold);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-heading {
+  font-size: var(--mm-fs-heading);
+  line-height: var(--mm-lh-heading);
+  font-weight: var(--mm-fw-semibold);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-subheading {
+  font-size: var(--mm-fs-subheading);
+  line-height: var(--mm-lh-subheading);
+  font-weight: var(--mm-fw-semibold);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-body {
+  font-size: var(--mm-fs-body);
+  line-height: var(--mm-lh-body);
+  font-weight: var(--mm-fw-regular);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-body-strong {
+  font-size: var(--mm-fs-body);
+  line-height: var(--mm-lh-body);
+  font-weight: var(--mm-fw-semibold);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-caption {
+  font-size: var(--mm-fs-caption);
+  line-height: var(--mm-lh-caption);
+  font-weight: var(--mm-fw-regular);
+  color: var(--mm-medium-gray);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-muted {
+  color: var(--mm-medium-gray);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-subtle {
+  color: var(--mm-light-gray);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-accent {
+  color: var(--mm-amber);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-success {
+  color: var(--mm-success);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-warning {
+  color: var(--mm-warning);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-text-error {
+  color: var(--mm-error);
+}
+
+/* Surface utilities */
+:root[data-theme-preset="tabler.minimax"] .mm-surface {
+  background: var(--mm-pure-white);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-lg);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-surface-flat {
+  background: var(--mm-pure-white);
+  border: 1px solid var(--mm-border);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-surface-raised {
+  background: var(--mm-pure-white);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-lg);
+  box-shadow: var(--mm-shadow-1);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-surface-elevated {
+  background: var(--mm-pure-white);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-lg);
+  box-shadow: var(--mm-shadow-2);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-surface-floating {
+  background: var(--mm-pure-white);
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-lg);
+  box-shadow: var(--mm-shadow-3);
+}
+
+/* Layout utilities */
+:root[data-theme-preset="tabler.minimax"] .mm-container {
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--mm-space-12);
+  padding-right: var(--mm-space-12);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mm-space-4);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-stack-tight {
+  gap: var(--mm-space-2);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-stack-loose {
+  gap: var(--mm-space-6);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-row {
+  display: flex;
+  align-items: center;
+  gap: var(--mm-space-2);
+}
+
+:root[data-theme-preset="tabler.minimax"] .mm-row-spread {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mm-space-2);
+}
+
+/* Divider */
+:root[data-theme-preset="tabler.minimax"] .mm-divider {
+  height: 1px;
+  background: var(--mm-border);
+  border: none;
+  margin: 0;
+}
+
+/* Focus ring (consistent with WCAG keyboard navigation) */
+:root[data-theme-preset="tabler.minimax"] .mm-focus-ring:focus-visible,
+:root[data-theme-preset="tabler.minimax"] .mm-btn:focus-visible,
+:root[data-theme-preset="tabler.minimax"] .mm-btn-primary:focus-visible,
+:root[data-theme-preset="tabler.minimax"] .mm-btn-secondary:focus-visible,
+:root[data-theme-preset="tabler.minimax"] .mm-btn-icon:focus-visible {
+  outline: none;
+  box-shadow: var(--mm-shadow-1), rgba(195, 125, 13, 0.40) 0 0 0 3px;
+}
+
+/* ─── 7. Responsive Behavior ─────────────────────────────────────────────── */
+
+@media (max-width: 1023px) {
+  :root[data-theme-preset="tabler.minimax"] .mm-container {
+    padding-left: var(--mm-space-6);
+    padding-right: var(--mm-space-6);
+  }
+}
+
+@media (max-width: 639px) {
+  :root[data-theme-preset="tabler.minimax"] {
+    --mm-fs-heading: 20px;
+    --mm-fs-display: 24px;
+    --mm-lh-heading: 28px;
+    --mm-lh-display: 32px;
+  }
+
+  :root[data-theme-preset="tabler.minimax"] .mm-container {
+    padding-left: var(--mm-space-4);
+    padding-right: var(--mm-space-4);
+  }
+
+  :root[data-theme-preset="tabler.minimax"] .mm-btn-primary,
+  :root[data-theme-preset="tabler.minimax"] .mm-btn-secondary {
+    height: 44px;
+  }
+
+  :root[data-theme-preset="tabler.minimax"] .mm-input,
+  :root[data-theme-preset="tabler.minimax"] .mm-select {
+    height: 44px;
+  }
+}
+
+/* ─── 8. Reduce motion ───────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme-preset="tabler.minimax"] *,
+  :root[data-theme-preset="tabler.minimax"] *::before,
+  :root[data-theme-preset="tabler.minimax"] *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

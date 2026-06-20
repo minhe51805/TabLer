@@ -39,6 +39,17 @@ export interface AIWorkspaceCopy {
     rewriteBubble: string;
     running: string;
     approveAgenticRun: string;
+    reasoningLabel: string;
+    reasoningShow: string;
+    reasoningHide: string;
+    agentStepsLabel: string;
+    agentActionListTables: string;
+    agentActionDescribeTable: string;
+    agentActionRunSql: string;
+    agentActionFinish: string;
+    agentStatusRunning: string;
+    agentStatusDone: string;
+    agentStatusError: string;
   };
   composer: {
     alertDismiss: string;
@@ -61,6 +72,13 @@ export interface AIWorkspaceCopy {
     modePromptHint: string;
     modeEditHint: string;
     modeAgentHint: string;
+    agentAutonomyLabel: string;
+    agentAutonomyReview: string;
+    agentAutonomyReviewHint: string;
+    agentAutonomySmart: string;
+    agentAutonomySmartHint: string;
+    agentAutonomyFull: string;
+    agentAutonomyFullHint: string;
     modeNeedsSchemaHint: string;
     openSettings: string;
     switchToPrompt: string;
@@ -101,6 +119,9 @@ export interface AIWorkspaceCopy {
     runSuccessDirectSubtitle: string;
     runFailedTitle: string;
     runFailedSubtitle: string;
+    openedInWorkspaceTitle: string;
+    openedInWorkspaceSubtitle: string;
+    openedInWorkspacePreview: string;
   };
 }
 
@@ -139,6 +160,17 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       rewriteBubble: "Rewrite Bubble",
       running: "Running...",
       approveAgenticRun: "Approve Agentic Run",
+      reasoningLabel: "Model reasoning",
+      reasoningShow: "Show reasoning",
+      reasoningHide: "Hide reasoning",
+      agentStepsLabel: "Agent steps",
+      agentActionListTables: "Listing tables",
+      agentActionDescribeTable: "Inspecting schema",
+      agentActionRunSql: "Reading data",
+      agentActionFinish: "Composing answer",
+      agentStatusRunning: "Running",
+      agentStatusDone: "Done",
+      agentStatusError: "Issue",
     },
     composer: {
       alertDismiss: "Dismiss",
@@ -161,6 +193,13 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       modePromptHint: "Ask directly with no schema context. Good for general help, writing, and quick questions.",
       modeEditHint: "Read the current DB schema and suggest reviewable SQL or changes before anything runs.",
       modeAgentHint: "Act like a general agent. It can answer directly, and when schema sharing is enabled it can inspect the current DB and prepare SQL for your approval.",
+      agentAutonomyLabel: "Run access",
+      agentAutonomyReview: "Always review",
+      agentAutonomyReviewHint: "Ask me before running any SQL.",
+      agentAutonomySmart: "Smart",
+      agentAutonomySmartHint: "Auto-run safe read queries, ask before writes.",
+      agentAutonomyFull: "Full access",
+      agentAutonomyFullHint: "Run everything automatically without asking.",
       modeNeedsSchemaHint: "This mode needs schema sharing enabled in AI Provider Settings.",
       openSettings: "Open settings",
       switchToPrompt: "Use prompt mode",
@@ -222,6 +261,9 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       runSuccessDirectSubtitle: "Executed directly",
       runFailedTitle: "Run failed",
       runFailedSubtitle: "Sandbox execution stopped",
+      openedInWorkspaceTitle: "Opened in workspace",
+      openedInWorkspaceSubtitle: "Sent to a workspace tab",
+      openedInWorkspacePreview: "I opened this in a workspace tab so you can explore the result there. This conversation stays here for follow-up questions.",
     },
   },
   vi: {
@@ -258,6 +300,17 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       rewriteBubble: "Viết lại bong bóng",
       running: "Đang chạy...",
       approveAgenticRun: "Duyệt chạy agentic",
+      reasoningLabel: "Suy luận của mô hình",
+      reasoningShow: "Hiện suy luận",
+      reasoningHide: "Ẩn suy luận",
+      agentStepsLabel: "Các bước của agent",
+      agentActionListTables: "Liệt kê bảng",
+      agentActionDescribeTable: "Xem cấu trúc",
+      agentActionRunSql: "Đọc dữ liệu",
+      agentActionFinish: "Tổng hợp câu trả lời",
+      agentStatusRunning: "Đang chạy",
+      agentStatusDone: "Xong",
+      agentStatusError: "Cần xem lại",
     },
     composer: {
       alertDismiss: "Đóng",
@@ -280,6 +333,13 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       modePromptHint: "Chỉ hỏi bằng prompt. Schema sẽ không được gửi.",
       modeEditHint: "Đọc schema DB hiện tại để gợi ý SQL hoặc chỉnh sửa cho bạn review.",
       modeAgentHint: "Đọc schema DB hiện tại và chuẩn bị SQL có thể chạy sau khi bạn duyệt.",
+      agentAutonomyLabel: "Quyền chạy",
+      agentAutonomyReview: "Luôn duyệt",
+      agentAutonomyReviewHint: "Hỏi trước khi chạy bất kỳ câu SQL nào.",
+      agentAutonomySmart: "Thông minh",
+      agentAutonomySmartHint: "Tự chạy câu đọc an toàn, hỏi trước khi ghi.",
+      agentAutonomyFull: "Toàn quyền",
+      agentAutonomyFullHint: "Tự chạy mọi thứ mà không hỏi.",
       modeNeedsSchemaHint: "Chế độ này cần bật chia sẻ schema trong AI Provider Settings.",
       openSettings: "Mở settings",
       switchToPrompt: "Dùng chỉ prompt",
@@ -339,6 +399,9 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       runSuccessDirectSubtitle: "Đã thực thi trực tiếp",
       runFailedTitle: "Chạy thất bại",
       runFailedSubtitle: "Sandbox đã dừng thực thi",
+      openedInWorkspaceTitle: "Đã mở trong workspace",
+      openedInWorkspaceSubtitle: "Đã gửi sang tab workspace",
+      openedInWorkspacePreview: "Mình đã mở cái này trong một tab workspace để bạn xem kết quả ở đó. Đoạn chat này vẫn ở đây để bạn hỏi tiếp.",
     },
   },
   zh: {
@@ -375,6 +438,17 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       rewriteBubble: "重写气泡",
       running: "运行中...",
       approveAgenticRun: "批准 agentic 运行",
+      reasoningLabel: "模型推理",
+      reasoningShow: "显示推理",
+      reasoningHide: "隐藏推理",
+      agentStepsLabel: "Agent 步骤",
+      agentActionListTables: "列出表",
+      agentActionDescribeTable: "查看结构",
+      agentActionRunSql: "读取数据",
+      agentActionFinish: "整理答复",
+      agentStatusRunning: "运行中",
+      agentStatusDone: "完成",
+      agentStatusError: "需检查",
     },
     composer: {
       alertDismiss: "关闭",
@@ -397,6 +471,13 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       modePromptHint: "仅使用你的 prompt，不发送 schema 上下文。",
       modeEditHint: "读取当前 DB schema，给出 SQL 或修改建议，先由你审核。",
       modeAgentHint: "读取当前 DB schema，准备可执行 SQL，但仍需要你明确批准。",
+      agentAutonomyLabel: "执行权限",
+      agentAutonomyReview: "总是审阅",
+      agentAutonomyReviewHint: "运行任何 SQL 前先问我。",
+      agentAutonomySmart: "智能",
+      agentAutonomySmartHint: "自动运行安全的读取查询，写入前询问。",
+      agentAutonomyFull: "完全权限",
+      agentAutonomyFullHint: "不询问，自动运行一切。",
       modeNeedsSchemaHint: "这个模式需要在 AI Provider Settings 中开启 schema sharing。",
       openSettings: "打开设置",
       switchToPrompt: "改用提示词模式",
@@ -456,6 +537,9 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       runSuccessDirectSubtitle: "已直接执行",
       runFailedTitle: "运行失败",
       runFailedSubtitle: "沙箱执行已停止",
+      openedInWorkspaceTitle: "已在工作区打开",
+      openedInWorkspaceSubtitle: "已发送到工作区标签页",
+      openedInWorkspacePreview: "我已在工作区标签页中打开它，你可以在那里查看结果。此对话会保留以便继续提问。",
     },
   },
   tr: {
@@ -492,6 +576,17 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       rewriteBubble: "Balonu Yeniden Yaz",
       running: "Çalışıyor...",
       approveAgenticRun: "Agentic Çalıştırmayı Onayla",
+      reasoningLabel: "Model muhakemesi",
+      reasoningShow: "Muhakemeyi göster",
+      reasoningHide: "Muhakemeyi gizle",
+      agentStepsLabel: "Agent adımları",
+      agentActionListTables: "Tablolar listeleniyor",
+      agentActionDescribeTable: "Şema inceleniyor",
+      agentActionRunSql: "Veri okunuyor",
+      agentActionFinish: "Yanıt hazırlanıyor",
+      agentStatusRunning: "Çalışıyor",
+      agentStatusDone: "Bitti",
+      agentStatusError: "Sorun",
     },
     composer: {
       alertDismiss: "Kapat",
@@ -514,6 +609,13 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       modePromptHint: "Yalnızca prompt ile sorun. Şema bağlamı gönderilmeyecek.",
       modeEditHint: "Mevcut DB şemasını okuyun ve SQL veya değişiklik önerin.",
       modeAgentHint: "Mevcut DB şemasını okuyun ve sizin onayınız gerektiren çalıştırılabilir SQL hazırlayın.",
+      agentAutonomyLabel: "Çalıştırma izni",
+      agentAutonomyReview: "Her zaman incele",
+      agentAutonomyReviewHint: "Herhangi bir SQL çalıştırmadan önce bana sor.",
+      agentAutonomySmart: "Akıllı",
+      agentAutonomySmartHint: "Güvenli okuma sorgularını otomatik çalıştır, yazmadan önce sor.",
+      agentAutonomyFull: "Tam erişim",
+      agentAutonomyFullHint: "Sormadan her şeyi otomatik çalıştır.",
       modeNeedsSchemaHint: "Bu mod, AI Sağlayıcı Ayarlarında şema paylaşımının etkinleştirilmesini gerektirir.",
       openSettings: "Ayarları aç",
       switchToPrompt: "Prompt moduna geç",
@@ -558,6 +660,9 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       runSuccessDirectSubtitle: "Doğrudan çalıştırıldı",
       runFailedTitle: "Çalıştırma başarısız",
       runFailedSubtitle: "Sandbox çalıştırmayı durdurdu",
+      openedInWorkspaceTitle: "Çalışma alanında açıldı",
+      openedInWorkspaceSubtitle: "Bir çalışma alanı sekmesine gönderildi",
+      openedInWorkspacePreview: "Bunu bir çalışma alanı sekmesinde açtım, sonucu orada inceleyebilirsin. Bu sohbet, takip soruları için burada kalıyor.",
     },
   },
   ko: {
@@ -594,6 +699,17 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       rewriteBubble: "버블 다시 쓰기",
       running: "실행 중...",
       approveAgenticRun: "Agentic 실행 승인",
+      reasoningLabel: "모델 추론",
+      reasoningShow: "추론 보기",
+      reasoningHide: "추론 숨기기",
+      agentStepsLabel: "에이전트 단계",
+      agentActionListTables: "테이블 목록",
+      agentActionDescribeTable: "스키마 확인",
+      agentActionRunSql: "데이터 읽기",
+      agentActionFinish: "답변 작성",
+      agentStatusRunning: "실행 중",
+      agentStatusDone: "완료",
+      agentStatusError: "확인 필요",
     },
     composer: {
       alertDismiss: "닫기",
@@ -616,6 +732,13 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       modePromptHint: "프롬프트만으로 질문하세요. 스키마 컨텍스트가 전송되지 않습니다.",
       modeEditHint: "현재 DB 스키마를 읽고 SQL 또는 변경 사항을 제안하여 먼저 검토하세요.",
       modeAgentHint: "현재 DB 스키마를 읽고 실행 가능한 SQL을 준비하되 여전히 승인이 필요합니다.",
+      agentAutonomyLabel: "실행 권한",
+      agentAutonomyReview: "항상 검토",
+      agentAutonomyReviewHint: "SQL을 실행하기 전에 항상 물어보세요.",
+      agentAutonomySmart: "스마트",
+      agentAutonomySmartHint: "안전한 읽기 쿼리는 자동 실행하고 쓰기 전에 물어봅니다.",
+      agentAutonomyFull: "전체 권한",
+      agentAutonomyFullHint: "물어보지 않고 모든 것을 자동 실행합니다.",
       modeNeedsSchemaHint: "이 모드에는 AI 프로바이더 설정에서 스키마 공유를 활성화해야 합니다.",
       openSettings: "설정 열기",
       switchToPrompt: "프롬프트 모드로 전환",
@@ -660,6 +783,9 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       runSuccessDirectSubtitle: "직접 실행됨",
       runFailedTitle: "실행 실패",
       runFailedSubtitle: "샌드박스 실행 중지됨",
+      openedInWorkspaceTitle: "워크스페이스에서 열림",
+      openedInWorkspaceSubtitle: "워크스페이스 탭으로 전송됨",
+      openedInWorkspacePreview: "이것을 워크스페이스 탭에서 열어 결과를 거기서 확인할 수 있습니다. 이 대화는 후속 질문을 위해 여기에 유지됩니다.",
     },
   },
 };

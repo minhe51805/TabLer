@@ -7,17 +7,18 @@
     <title>TabLeR - Database Client</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
       html,
       body {
         margin: 0;
         min-height: 100%;
-        background: #090d14;
+        background: #ffffff;
       }
 
       body {
-        font-family: "Segoe UI", Inter, system-ui, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+          "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
       }
 
       #boot-screen {
@@ -27,9 +28,9 @@
         align-items: center;
         justify-content: center;
         background:
-          radial-gradient(circle at top, rgba(0, 212, 170, 0.08), transparent 28%),
-          #090d14;
-        color: #e7edf7;
+          radial-gradient(circle at top, rgba(0, 122, 255, 0.06), transparent 28%),
+          #ffffff;
+        color: #000000;
         z-index: 9999;
       }
 
@@ -39,10 +40,10 @@
 
       .boot-card {
         width: min(520px, calc(100% - 32px));
-        border-radius: 18px;
-        border: 1px solid rgba(0, 212, 170, 0.18);
-        background: rgba(10, 16, 26, 0.96);
-        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.38);
+        border-radius: 8px;
+        border: 1px solid #d8d8dc;
+        background: #ffffff;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
         padding: 22px 24px;
         box-sizing: border-box;
       }
@@ -51,7 +52,7 @@
         font-size: 12px;
         letter-spacing: 0.12em;
         text-transform: uppercase;
-        color: #00d4aa;
+        color: #007aff;
       }
 
       .boot-title {
@@ -62,7 +63,7 @@
 
       .boot-copy {
         margin: 0;
-        color: #9fb0c8;
+        color: #3c3c43;
         line-height: 1.6;
         font-size: 14px;
       }
@@ -70,19 +71,19 @@
       .boot-status {
         margin-top: 18px;
         padding: 14px 16px;
-        border-radius: 14px;
-        background: rgba(9, 13, 20, 0.92);
-        border: 1px solid rgba(111, 147, 190, 0.18);
-        color: #bcd0eb;
+        border-radius: 8px;
+        background: #f7f7f8;
+        border: 1px solid #d8d8dc;
+        color: #3c3c43;
         font-size: 13px;
         line-height: 1.6;
         word-break: break-word;
       }
 
       .boot-status.is-warning {
-        border-color: rgba(255, 196, 107, 0.22);
-        background: rgba(40, 28, 7, 0.55);
-        color: #ffe3b0;
+        border-color: rgba(197, 91, 0, 0.3);
+        background: rgba(197, 91, 0, 0.08);
+        color: #c55b00;
       }
 
       .boot-meta {
@@ -91,7 +92,7 @@
         gap: 12px;
         flex-wrap: wrap;
         font-size: 12px;
-        color: #7f93ad;
+        color: #8e8e93;
       }
     </style>
   </head>

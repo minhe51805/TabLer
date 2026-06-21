@@ -3,10 +3,11 @@ import type * as Monaco from "monaco-editor";
 import { Trash2 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useAppStore } from "../../../stores/appStore";
-import type { MetricsWidgetDefinition } from "../../../types";
+import type { MetricsWidgetDefinition, MetricsWidgetType } from "../../../types";
 import {
   getMetricsRefreshSelectOptions,
   getMetricsSizeSelectOptions,
+  getWidgetLibrary,
 } from "../utils/query-builder";
 import { MetricsCompactSelect } from "./MetricsCompactSelect";
 import { useI18n } from "../../../i18n";
@@ -149,6 +150,24 @@ export function MetricsEditor({
           onChange={(event) => onUpdateWidget({ title: event.target.value })}
         />
       </label>
+
+      <div className="metrics-board-field">
+        <span>{t("metrics.editor.widgetType")}</span>
+        <div className="metrics-widget-type-grid">
+          {getWidgetLibrary().map((item) => (
+            <button
+              key={item.type}
+              type="button"
+              className={`metrics-widget-type-option ${editingWidget.type === item.type ? "is-active" : ""}`}
+              onClick={() => onUpdateWidget({ type: item.type as MetricsWidgetType })}
+              title={item.label}
+            >
+              <item.icon className="w-3.5 h-3.5" />
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="metrics-board-field">
         <span>{t("common.query")}</span>

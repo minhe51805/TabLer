@@ -1,15 +1,22 @@
 import {
+  Brain,
   Check,
   ChevronDown,
+  CornerDownLeft,
   Database,
+  Eye,
   History,
   Loader2,
   MessageSquare,
+  MoreHorizontal,
   PencilLine,
+  Play,
+  Plus,
   RotateCcw,
   Settings2,
   Shield,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Target,
   Trash2,
@@ -20,6 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import { useAppStore } from "../../stores/appStore";
 import type { AIConversationMessage, AIProviderConfig, DatabaseType, MetricsWidgetType } from "../../types";
+import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import { invokeMutation } from "../../utils/tauri-utils";
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -67,6 +75,7 @@ const MAX_HISTORY_BUBBLES = 4;
 const MAX_HISTORY_MESSAGE_CHARS = 1000;
 const AI_WORKSPACE_HISTORY_LEGACY_STORAGE_KEY = "tabler.ai.workspace.history.v1";
 const AI_WORKSPACE_AGENT_AUTONOMY_STORAGE_KEY = "tabler.ai.workspace.agentAutonomy.v1";
+const AI_WORKSPACE_THINKING_STORAGE_KEY = "tabler.ai.workspace.showThinking.v1";
 
 /**
  * Decides whether an agent may run generated SQL without asking, given the
@@ -575,8 +584,19 @@ function inferWidgetTypeFromPrompt(prompt: string): MetricsWidgetType | null {
   if (!normalized) return null;
 
   if (normalized.includes("scoreboard") || normalized.includes("kpi")) return "scoreboard";
-  if (normalized.includes("line")) return "line";
-  if (normalized.includes("pie")) return "pie";
+  if (normalized.includes("radial") || normalized.includes("gauge") || normalized.includes("thanh tron")) return "radial";
+  if (normalized.includes("donut") || normalized.includes("doughnut") || normalized.includes("vanh khuyen")) return "donut";
+  if (normalized.includes("area") || normalized.includes("vung")) return "area";
+  if (
+    normalized.includes("horizontal") ||
+    normalized.includes("cot ngang") ||
+    normalized.includes("thanh ngang") ||
+    normalized.includes("bar ngang")
+  ) {
+    return "horizontal-bar";
+  }
+  if (normalized.includes("line") || normalized.includes("duong")) return "line";
+  if (normalized.includes("pie") || normalized.includes("tron")) return "pie";
   if (normalized.includes("bar") || normalized.includes("cot")) return "bar";
   if (normalized.includes("table") || normalized.includes("bang")) return "table";
   if (
@@ -910,6 +930,12 @@ function isDashboardVisualizationPrompt(prompt: string, intent?: string) {
     "nhieu chart",
     "nhiều chart",
     "metrics board",
+    "metrics",
+    "metric board",
+    "bang metric",
+    "bảng metric",
+    "o metric",
+    "ở metric",
   ];
 
   return (
@@ -1180,6 +1206,7 @@ export function AISlidePanel({
   const modeMenuRef = useRef<HTMLDivElement>(null);
   const autonomyMenuRef = useRef<HTMLDivElement>(null);
   const providerMenuRef = useRef<HTMLDivElement>(null);
+  const utilityMenuRef = useRef<HTMLDivElement>(null);
   const bubbleDismissTimersRef = useRef(new Map<string, number>());
   const historySaveTimerRef = useRef<number | null>(null);
   const openSessionRef = useRef(0);
@@ -1219,6 +1246,15 @@ export function AISlidePanel({
     }
   });
   const [isAutonomyMenuOpen, setIsAutonomyMenuOpen] = useState(false);
+  const [showThinking, setShowThinking] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      const raw = window.localStorage.getItem(AI_WORKSPACE_THINKING_STORAGE_KEY);
+      return raw === null ? true : raw === "true";
+    } catch {
+      return true;
+    }
+  });
   const [activeThreadIdsByWorkspace, setActiveThreadIdsByWorkspace] = useState<Record<string, string>>(
     {}
   );
@@ -1229,6 +1265,8 @@ export function AISlidePanel({
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isModeMenuOpen, setIsModeMenuOpen] = useState(false);
   const [isProviderMenuOpen, setIsProviderMenuOpen] = useState(false);
+  const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false);
+  const [openBubbleActionMenuId, setOpenBubbleActionMenuId] = useState<string | null>(null);
   const [isSwitchingProvider, setIsSwitchingProvider] = useState(false);
   const [selectionContext, setSelectionContext] = useState<SelectionContextState | null>(null);
   const [attachedSelection, setAttachedSelection] = useState<SelectionContextState | null>(null);
@@ -1296,6 +1334,8 @@ export function AISlidePanel({
       latestBubble.status,
       latestBubble.preview.length,
       latestBubble.detail.length,
+      latestBubble.sql?.length ?? 0,
+      latestBubble.agentSteps?.length ?? 0,
       latestBubble.createdAt,
     ].join(":");
   }, [conversationBubbles]);
@@ -1369,18 +1409,30 @@ export function AISlidePanel({
     }
   }, [workspaceAgentAutonomy]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(AI_WORKSPACE_THINKING_STORAGE_KEY, String(showThinking));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [showThinking]);
+
   const scrollChatToLatest = useCallback(() => {
-    window.requestAnimationFrame(() => {
+    const jump = () => {
       const thread = chatThreadRef.current;
       if (!thread) return;
       thread.scrollTop = thread.scrollHeight;
-
-      window.requestAnimationFrame(() => {
-        const currentThreadElement = chatThreadRef.current;
-        if (!currentThreadElement) return;
-        currentThreadElement.scrollTop = currentThreadElement.scrollHeight;
-      });
+    };
+    // Run across several frames + a short timeout so the scroll lands after
+    // markdown, code blocks, and agent steps finish laying out (their height
+    // is not known on the first frame, which left the view stuck up top).
+    window.requestAnimationFrame(() => {
+      jump();
+      window.requestAnimationFrame(jump);
     });
+    window.setTimeout(jump, 60);
+    window.setTimeout(jump, 180);
   }, []);
 
   const getCurrentVisualizationApprovalScope = useCallback(
@@ -1525,9 +1577,32 @@ export function AISlidePanel({
     scrollChatToLatest,
   ]);
 
+  // Keep the view pinned to the newest message while content grows (markdown,
+  // code, agent steps streaming in) ? but only when the user is already near the
+  // bottom, so scrolling up to read old messages is never interrupted.
+  useEffect(() => {
+    if (!isOpen || !hasConversation) return;
+    const thread = chatThreadRef.current;
+    if (!thread || typeof ResizeObserver === "undefined") return;
+
+    const NEAR_BOTTOM_PX = 120;
+    const observer = new ResizeObserver(() => {
+      const el = chatThreadRef.current;
+      if (!el) return;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distanceFromBottom <= NEAR_BOTTOM_PX) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    observer.observe(thread);
+    return () => observer.disconnect();
+  }, [isOpen, hasConversation, currentThread?.id]);
+
   useEffect(() => {
     if (!isOpen) {
       setIsHistoryOpen(false);
+      setIsUtilityMenuOpen(false);
+      setOpenBubbleActionMenuId(null);
     }
   }, [isOpen]);
 
@@ -1585,20 +1660,26 @@ export function AISlidePanel({
   }, [aiConfigs.length, isOpen, loadAIConfigs]);
 
   useEffect(() => {
-    if (!isModeMenuOpen && !isProviderMenuOpen) return;
+    if (!isModeMenuOpen && !isProviderMenuOpen && !isAutonomyMenuOpen && !isUtilityMenuOpen) return;
 
     const handlePointerDown = (event: MouseEvent | TouchEvent) => {
       const target = event.target as Node | null;
       if (target && modeMenuRef.current?.contains(target)) return;
+      if (target && autonomyMenuRef.current?.contains(target)) return;
       if (target && providerMenuRef.current?.contains(target)) return;
+      if (target && utilityMenuRef.current?.contains(target)) return;
       setIsModeMenuOpen(false);
       setIsProviderMenuOpen(false);
+      setIsAutonomyMenuOpen(false);
+      setIsUtilityMenuOpen(false);
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setIsModeMenuOpen(false);
         setIsProviderMenuOpen(false);
+        setIsAutonomyMenuOpen(false);
+        setIsUtilityMenuOpen(false);
       }
     };
 
@@ -1611,16 +1692,31 @@ export function AISlidePanel({
       window.removeEventListener("touchstart", handlePointerDown, true);
       window.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [isModeMenuOpen, isProviderMenuOpen]);
+  }, [isAutonomyMenuOpen, isModeMenuOpen, isProviderMenuOpen, isUtilityMenuOpen]);
 
   useEffect(() => {
-    if (!isAutonomyMenuOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setIsAutonomyMenuOpen(false);
+    if (!openBubbleActionMenuId) return;
+
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Element | null;
+      if (target?.closest(".ai-workspace-chat-action-menu")) return;
+      setOpenBubbleActionMenuId(null);
     };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenBubbleActionMenuId(null);
+    };
+
+    window.addEventListener("mousedown", handlePointerDown, true);
+    window.addEventListener("touchstart", handlePointerDown, true);
     window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [isAutonomyMenuOpen]);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown, true);
+      window.removeEventListener("touchstart", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [openBubbleActionMenuId]);
 
   useEffect(() => {
     if (!historyHydrated) return;
@@ -1959,6 +2055,7 @@ export function AISlidePanel({
       editTargetType?: MetricsWidgetType;
       editQuery?: string;
       editTitle?: string;
+      aiWidgets?: AIMetricsWidgetSpec[];
     }
   ) => {
     if (!connectionId) {
@@ -2035,6 +2132,7 @@ export function AISlidePanel({
           editTargetType: options?.editTargetType,
           editQuery: options?.editQuery,
           editTitle: options?.editTitle,
+          aiWidgets: options?.aiWidgets,
           connectionId,
           database: currentDatabase || undefined,
           title: options?.title,
@@ -2687,9 +2785,12 @@ export function AISlidePanel({
               : aiCopy.bubbleStates.readyNoteSubtitle;
       const readyPreview = summarizeResponse(result.rawResponse, result.sql);
       const wantsVisualization = isVisualizationPrompt(requestPrompt);
+      const agentWidgets = result.agentWidgets ?? [];
+      const hasAgentWidgets = agentWidgets.length > 0;
       const wantsMetricsDashboard =
-        isDashboardVisualizationPrompt(requestPrompt, result.intent) &&
-        supportsOverviewMetricsBoard(activeConnectionDbType);
+        hasAgentWidgets ||
+        (isDashboardVisualizationPrompt(requestPrompt, result.intent) &&
+          supportsOverviewMetricsBoard(activeConnectionDbType));
       const deterministicOverviewChartSql =
         isOverviewVisualizationPrompt(requestPrompt, result.intent)
           ? buildWorkspaceOverviewChartSql(activeConnectionDbType)
@@ -2710,8 +2811,9 @@ export function AISlidePanel({
         }
 
         const dashboardOpened = await openMetricsBoardInWorkspace({
-          title: "DB Overview Dashboard",
+          title: hasAgentWidgets ? "AI Metrics Summary" : "DB Overview Dashboard",
           template: "database-overview",
+          aiWidgets: hasAgentWidgets ? agentWidgets : undefined,
           focusWorkspace: true,
         });
 
@@ -2763,15 +2865,11 @@ export function AISlidePanel({
         }
       }
 
+      // In agent mode, any grounded SQL the agent produced is eligible to auto-run;
+      // the autonomy level + risk classification decide whether it actually runs.
       const agentCanAutoRun =
         interactionMode === "agent" &&
         Boolean(result.sql) &&
-        (
-          result.intent === "sql" ||
-          result.intent === "optimize" ||
-          result.intent === "fix-error" ||
-          wantsVisualization
-        ) &&
         shouldAgentAutoRunSql(activeAgentAutonomy, result.risk?.level);
       if (agentCanAutoRun && result.sql) {
         try {
@@ -3396,9 +3494,10 @@ export function AISlidePanel({
                           aria-haspopup="dialog"
                           onClick={() => setIsHistoryOpen((current) => !current)}
                           title={aiCopy.composer.historyTitle}
+                          aria-label={aiCopy.composer.historyTitle}
                         >
                           <History className="w-3.5 h-3.5" />
-                          <span>{aiCopy.composer.historyTitle}</span>
+                          <span className="ai-workspace-history-toggle-label">{aiCopy.composer.historyTitle}</span>
                           <span className="ai-workspace-history-toggle-count">{recentWorkspaceThreads.length}</span>
                         </button>
 
@@ -3411,18 +3510,22 @@ export function AISlidePanel({
                             <div className="ai-workspace-history-list">
                               {recentWorkspaceThreads.length > 0 ? (
                                 recentWorkspaceThreads.map((thread) => (
-                                  <button
+                                  <div
                                     key={`history-${thread.id}`}
-                                    type="button"
                                     className={`ai-workspace-history-item ${thread.id === currentThread?.id ? "is-active" : ""}`}
-                                    onClick={() => handleSelectThread(thread.id)}
                                   >
-                                    <span className="ai-workspace-history-item-copy">
-                                      <strong className="ai-workspace-history-item-title">{thread.label}</strong>
-                                      <span className="ai-workspace-history-item-meta">
-                                        {formatThreadTimestamp(thread.updatedAt || thread.createdAt, language)}
+                                    <button
+                                      type="button"
+                                      className="ai-workspace-history-item-select"
+                                      onClick={() => handleSelectThread(thread.id)}
+                                    >
+                                      <span className="ai-workspace-history-item-copy">
+                                        <strong className="ai-workspace-history-item-title">{thread.label}</strong>
+                                        <span className="ai-workspace-history-item-meta">
+                                          {formatThreadTimestamp(thread.updatedAt || thread.createdAt, language)}
+                                        </span>
                                       </span>
-                                    </span>
+                                    </button>
                                     <span className="ai-workspace-history-item-actions">
                                       <button
                                         type="button"
@@ -3436,7 +3539,7 @@ export function AISlidePanel({
                                         {bubbleCountByThread.get(thread.id) || 0}
                                       </span>
                                     </span>
-                                  </button>
+                                  </div>
                                 ))
                               ) : (
                                 <div className="ai-workspace-history-empty">{aiCopy.composer.historyEmpty}</div>
@@ -3446,8 +3549,14 @@ export function AISlidePanel({
                         )}
                       </div>
 
-                      <button type="button" className="ai-workspace-chat-tab-add" onClick={handleCreateChatThread}>
-                        +
+                      <button
+                        type="button"
+                        className="ai-workspace-chat-tab-add"
+                        onClick={handleCreateChatThread}
+                        title="New chat"
+                        aria-label="New chat"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -3479,53 +3588,107 @@ export function AISlidePanel({
                             </div>
                             <div className="ai-workspace-chat-turn-header ai-workspace-chat-turn-header--assistant">
                               <strong className="ai-workspace-chat-turn-label">{aiCopy.modal.assistantExplanation}</strong>
-                              <span className="ai-workspace-chat-state">
-                                {bubble.status === "loading"
-                                  ? aiCopy.bubbleMeta.thinking
-                                  : bubble.sql
-                                    ? aiCopy.modal.sql
-                                    : aiCopy.bubbleMeta.ready}
+                              <span className={`ai-workspace-chat-state ${bubble.status === "loading" ? "is-thinking" : ""}`}>
+                                {bubble.status === "loading" ? (
+                                  <>
+                                    <span className="ai-workspace-thinking-dots" aria-hidden="true">
+                                      <span />
+                                      <span />
+                                      <span />
+                                    </span>
+                                    {aiCopy.bubbleMeta.thinking}
+                                  </>
+                                ) : bubble.sql ? (
+                                  aiCopy.modal.sql
+                                ) : (
+                                  aiCopy.bubbleMeta.ready
+                                )}
                               </span>
                             </div>
                             <div className="ai-workspace-chat-message ai-workspace-chat-message--assistant">
                               {bubble.subtitle && bubble.subtitle !== bubble.title && (
                                 <p className="ai-workspace-chat-subtitle">{bubble.subtitle}</p>
                               )}
-                              {bubble.interactionMode === "agent" && (bubble.agentSteps?.length ?? 0) > 0 && (
+                              {showThinking && bubble.interactionMode === "agent" && (bubble.agentSteps?.length ?? 0) > 0 && (
                                 <AIAgentSteps steps={bubble.agentSteps ?? []} compact />
                               )}
-                              {conversationText && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={conversationText} />}
+                              {bubble.status === "loading" ? (
+                                <div className="ai-workspace-thinking-line">
+                                  <span className="ai-workspace-thinking-orb" aria-hidden="true" />
+                                  <span className="ai-workspace-thinking-shimmer">
+                                    {conversationText || aiCopy.bubbleMeta.thinking}
+                                  </span>
+                                </div>
+                              ) : (
+                                conversationText && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={conversationText} />
+                              )}
                               {bubble.sql && bubble.status !== "error" && (
                                 <pre className="ai-workspace-chat-code">{bubble.sql}</pre>
                               )}
                               {hasBubbleActions && (
                                 <div className="ai-workspace-chat-actions">
-                                  {canShowDetail && (
-                                    <button
-                                      type="button"
-                                      className="ai-workspace-mode-action-btn"
-                                      onClick={() => setDetailBubbleId(bubble.id)}
-                                    >
-                                      {aiCopy.bubbleActions.detail}
-                                    </button>
-                                  )}
-                                  {canInsertBubbleSql && (
-                                    <button
-                                      type="button"
-                                      className="ai-workspace-mode-action-btn"
-                                      onClick={() => handleInsertBubble(bubble)}
-                                    >
-                                      {aiCopy.bubbleActions.insert}
-                                    </button>
-                                  )}
                                   {canRunBubbleSql && (
                                     <button
                                       type="button"
                                       className="ai-workspace-mode-action-btn primary"
                                       onClick={() => void handleRunBubble(bubble)}
                                     >
-                                      {aiCopy.bubbleActions.approveRun}
+                                      <Play className="w-3.5 h-3.5" />
+                                      <span>{aiCopy.bubbleActions.approveRun}</span>
                                     </button>
+                                  )}
+                                  {(canShowDetail || canInsertBubbleSql) && (
+                                    <div
+                                      className={`ai-workspace-chat-action-menu ${
+                                        openBubbleActionMenuId === bubble.id ? "is-open" : ""
+                                      }`}
+                                    >
+                                      <button
+                                        type="button"
+                                        className="ai-workspace-chat-action-menu-trigger"
+                                        aria-expanded={openBubbleActionMenuId === bubble.id}
+                                        aria-haspopup="menu"
+                                        title="More actions"
+                                        aria-label="More actions"
+                                        onClick={() => {
+                                          setOpenBubbleActionMenuId((current) => current === bubble.id ? null : bubble.id);
+                                        }}
+                                      >
+                                        <MoreHorizontal className="w-3.5 h-3.5" />
+                                      </button>
+                                      {openBubbleActionMenuId === bubble.id && (
+                                        <div className="ai-workspace-chat-action-popover" role="menu">
+                                          {canShowDetail && (
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="ai-workspace-chat-action-item"
+                                              onClick={() => {
+                                                setOpenBubbleActionMenuId(null);
+                                                setDetailBubbleId(bubble.id);
+                                              }}
+                                            >
+                                              <Eye className="w-3.5 h-3.5" />
+                                              <span>{aiCopy.bubbleActions.detail}</span>
+                                            </button>
+                                          )}
+                                          {canInsertBubbleSql && (
+                                            <button
+                                              type="button"
+                                              role="menuitem"
+                                              className="ai-workspace-chat-action-item"
+                                              onClick={() => {
+                                                setOpenBubbleActionMenuId(null);
+                                                handleInsertBubble(bubble);
+                                              }}
+                                            >
+                                              <CornerDownLeft className="w-3.5 h-3.5" />
+                                              <span>{aiCopy.bubbleActions.insert}</span>
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                               )}
@@ -3594,7 +3757,11 @@ export function AISlidePanel({
                         <div className="ai-workspace-composer-note-spacer" aria-hidden="true" />
                       )}
 
-                      <div className="ai-workspace-commandbar ai-workspace-commandbar--dock">
+                      <div
+                        className={`ai-workspace-commandbar ai-workspace-commandbar--dock ${
+                          activeInteractionMode === "agent" ? "is-agent" : ""
+                        }`}
+                      >
                         <div
                           ref={modeMenuRef}
                           className={`ai-workspace-command-dropdown ${isModeMenuOpen ? "is-open" : ""}`}
@@ -3606,6 +3773,7 @@ export function AISlidePanel({
                             aria-haspopup="menu"
                             onClick={() => {
                               setIsHistoryOpen(false);
+                              setIsUtilityMenuOpen(false);
                               setIsProviderMenuOpen(false);
                               setIsModeMenuOpen((current) => !current);
                             }}
@@ -3653,6 +3821,7 @@ export function AISlidePanel({
 
                         {activeInteractionMode === "agent" && (
                           <div
+                            ref={autonomyMenuRef}
                             className={`ai-workspace-command-dropdown ai-workspace-command-dropdown--autonomy ${isAutonomyMenuOpen ? "is-open" : ""}`}
                           >
                             <button
@@ -3664,6 +3833,7 @@ export function AISlidePanel({
                                 setIsHistoryOpen(false);
                                 setIsModeMenuOpen(false);
                                 setIsProviderMenuOpen(false);
+                                setIsUtilityMenuOpen(false);
                                 setIsAutonomyMenuOpen((current) => !current);
                               }}
                               title={getAgentAutonomyLabel(activeAgentAutonomy, aiCopy)}
@@ -3680,6 +3850,32 @@ export function AISlidePanel({
                               <ChevronDown className="w-3.5 h-3.5 ai-workspace-command-trigger-caret" />
                             </button>
 
+                            {isAutonomyMenuOpen && (
+                              <div className="ai-workspace-command-popover" role="menu" aria-label={aiCopy.composer.agentAutonomyLabel}>
+                                {AGENT_AUTONOMY_OPTIONS.map((autonomy) => {
+                                  const AutonomyIcon = getAgentAutonomyIcon(autonomy);
+                                  return (
+                                    <button
+                                      key={autonomy}
+                                      type="button"
+                                      role="menuitemradio"
+                                      aria-checked={autonomy === activeAgentAutonomy}
+                                      className={`ai-workspace-command-item ${autonomy === activeAgentAutonomy ? "is-active" : ""}`}
+                                      onClick={() => handleSelectAgentAutonomy(autonomy)}
+                                    >
+                                      <span className="ai-workspace-command-item-icon">
+                                        <AutonomyIcon className="w-3.5 h-3.5" />
+                                      </span>
+                                      <span className="ai-workspace-command-item-copy">
+                                        <strong>{getAgentAutonomyLabel(autonomy, aiCopy)}</strong>
+                                        <span>{getAgentAutonomyHint(autonomy, aiCopy)}</span>
+                                      </span>
+                                      {autonomy === activeAgentAutonomy && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -3696,6 +3892,8 @@ export function AISlidePanel({
                             onClick={() => {
                               setIsHistoryOpen(false);
                               setIsModeMenuOpen(false);
+                              setIsAutonomyMenuOpen(false);
+                              setIsUtilityMenuOpen(false);
                               setIsProviderMenuOpen((current) => !current);
                             }}
                             title={activeProviderValue}
@@ -3775,27 +3973,96 @@ export function AISlidePanel({
                           )}
                         </div>
 
-                        <button
-                          type="button"
-                          className={`ai-workspace-command-data-toggle ${isSessionDataReadEnabled ? "is-active" : ""}`}
-                          onClick={() => setSessionDataReadEnabled(!isSessionDataReadEnabled)}
-                          disabled={!connectionId}
-                          aria-pressed={isSessionDataReadEnabled}
-                          title={sessionDataReadButtonTitle}
+                        <div
+                          ref={utilityMenuRef}
+                          className={`ai-workspace-command-dropdown ai-workspace-command-dropdown--utility ${
+                            isUtilityMenuOpen ? "is-open" : ""
+                          }`}
                         >
-                          <Database className="ai-workspace-command-data-toggle-icon w-3.5 h-3.5" />
-                          <span className="ai-workspace-command-data-toggle-copy">{sessionDataReadButtonLabel}</span>
-                        </button>
+                          <button
+                            type="button"
+                            className={`ai-workspace-command-settings-btn ${isUtilityMenuOpen ? "is-active" : ""}`}
+                            aria-expanded={isUtilityMenuOpen}
+                            aria-haspopup="menu"
+                            onClick={() => {
+                              setIsHistoryOpen(false);
+                              setIsModeMenuOpen(false);
+                              setIsAutonomyMenuOpen(false);
+                              setIsProviderMenuOpen(false);
+                              setIsUtilityMenuOpen((current) => !current);
+                            }}
+                            title="Chat tools"
+                            aria-label="Chat tools"
+                          >
+                            <SlidersHorizontal className="w-3.5 h-3.5" />
+                          </button>
 
-                        <button
-                          type="button"
-                          className="ai-workspace-command-settings-btn"
-                          onClick={handleOpenAISettings}
-                          title={aiCopy.composer.openSettings}
-                          aria-label={aiCopy.composer.openSettings}
-                        >
-                          <Settings2 className="w-3.5 h-3.5" />
-                        </button>
+                          {isUtilityMenuOpen && (
+                            <div
+                              className="ai-workspace-command-popover ai-workspace-command-popover--utility"
+                              role="menu"
+                              aria-label="Chat tools"
+                            >
+                              <button
+                                type="button"
+                                role="menuitemcheckbox"
+                                aria-checked={isSessionDataReadEnabled}
+                                className={`ai-workspace-command-utility-item ${
+                                  isSessionDataReadEnabled ? "is-active" : ""
+                                }`}
+                                onClick={() => setSessionDataReadEnabled(!isSessionDataReadEnabled)}
+                                disabled={!connectionId}
+                              >
+                                <span className="ai-workspace-command-utility-icon">
+                                  <Database className="w-3.5 h-3.5" />
+                                </span>
+                                <span className="ai-workspace-command-utility-copy">
+                                  <strong>{sessionDataReadButtonLabel}</strong>
+                                  <span>{sessionDataReadButtonTitle}</span>
+                                </span>
+                                {isSessionDataReadEnabled && <Check className="w-3.5 h-3.5" />}
+                              </button>
+
+                              {activeInteractionMode === "agent" && (
+                                <button
+                                  type="button"
+                                  role="menuitemcheckbox"
+                                  aria-checked={showThinking}
+                                  className={`ai-workspace-command-utility-item ${showThinking ? "is-active" : ""}`}
+                                  onClick={() => setShowThinking((value) => !value)}
+                                >
+                                  <span className="ai-workspace-command-utility-icon">
+                                    <Brain className="w-3.5 h-3.5" />
+                                  </span>
+                                  <span className="ai-workspace-command-utility-copy">
+                                    <strong>{aiCopy.composer.thinkingToggleLabel}</strong>
+                                    <span>
+                                      {showThinking ? aiCopy.composer.thinkingOn : aiCopy.composer.thinkingOff}
+                                    </span>
+                                  </span>
+                                  {showThinking && <Check className="w-3.5 h-3.5" />}
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="ai-workspace-command-utility-item"
+                                onClick={() => {
+                                  setIsUtilityMenuOpen(false);
+                                  handleOpenAISettings();
+                                }}
+                              >
+                                <span className="ai-workspace-command-utility-icon">
+                                  <Settings2 className="w-3.5 h-3.5" />
+                                </span>
+                                <span className="ai-workspace-command-utility-copy">
+                                  <strong>{aiCopy.composer.openSettings}</strong>
+                                </span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -3827,65 +4094,6 @@ export function AISlidePanel({
           onRun={(bubble) => void handleRunBubble(bubble)}
           onRewrite={(bubble, note) => void handleRewriteBubble(bubble, note)}
         />
-      )}
-
-      {isAutonomyMenuOpen && (
-        <div
-          className="ai-autonomy-modal-overlay"
-          role="presentation"
-          onClick={() => setIsAutonomyMenuOpen(false)}
-        >
-          <div
-            ref={autonomyMenuRef}
-            className="ai-autonomy-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={aiCopy.composer.agentAutonomyLabel}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="ai-autonomy-modal-header">
-              <div className="ai-autonomy-modal-heading">
-                <span className="ai-autonomy-modal-icon">
-                  <ActiveAgentAutonomyIcon className="w-4 h-4" />
-                </span>
-                <strong className="ai-autonomy-modal-title">{aiCopy.composer.agentAutonomyLabel}</strong>
-              </div>
-              <button
-                type="button"
-                className="ai-autonomy-modal-close"
-                onClick={() => setIsAutonomyMenuOpen(false)}
-                aria-label={aiCopy.composer.alertDismiss}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="ai-autonomy-modal-options" role="radiogroup" aria-label={aiCopy.composer.agentAutonomyLabel}>
-              {AGENT_AUTONOMY_OPTIONS.map((autonomy) => {
-                const AutonomyIcon = getAgentAutonomyIcon(autonomy);
-                const isActive = autonomy === activeAgentAutonomy;
-                return (
-                  <button
-                    key={autonomy}
-                    type="button"
-                    role="radio"
-                    aria-checked={isActive}
-                    className={`ai-autonomy-option${isActive ? " is-active" : ""}`}
-                    onClick={() => handleSelectAgentAutonomy(autonomy)}
-                  >
-                    <span className="ai-autonomy-option-icon">
-                      <AutonomyIcon className="w-4 h-4" />
-                    </span>
-                    <span className="ai-autonomy-option-copy">
-                      <strong>{getAgentAutonomyLabel(autonomy, aiCopy)}</strong>
-                      <span>{getAgentAutonomyHint(autonomy, aiCopy)}</span>
-                    </span>
-                    {isActive && <Check className="w-4 h-4 ai-autonomy-option-check" />}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
       )}
 
       <ConfirmDialog

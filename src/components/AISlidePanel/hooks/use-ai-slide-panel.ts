@@ -24,6 +24,7 @@ import {
   MAX_AI_SCHEMA_CODEC_CACHE_ENTRIES,
 } from "../AISlidePanelUtils";
 import { aiModeUsesSchemaContext, type AIWorkspaceAgentStep, type AIWorkspaceInteractionMode } from "../ai-workspace-types";
+import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates";
 
 export interface AIGeneratedAssistResult {
   prompt: string;
@@ -33,6 +34,8 @@ export interface AIGeneratedAssistResult {
   intent: AssistIntent;
   reasoning?: string;
   agentSteps?: AIWorkspaceAgentStep[];
+  /** Metrics widgets the agent designed for a dashboard request. */
+  agentWidgets?: AIMetricsWidgetSpec[];
 }
 
 export interface AIExecutedSqlResult {
@@ -41,7 +44,7 @@ export interface AIExecutedSqlResult {
 }
 
 type AssistIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error" | "general";
-type AgentToolName = "list_tables" | "describe_table" | "run_readonly_sql" | "finish";
+type AgentToolName = "plan" | "list_tables" | "describe_table" | "run_readonly_sql" | "finish";
 
 interface AgentToolAction {
   action: AgentToolName;
@@ -61,10 +64,10 @@ const AI_SCHEMA_CODEC_LEGEND =
   "Legend T=table C=col:type!flags I=index F=fk flags=pk|nn|df|ai";
 const MAX_OVERVIEW_SCHEMA_TABLES = 12;
 const MAX_SCHEMA_FETCH_CONCURRENCY = 2;
-const MAX_AGENT_STEPS = 6;
-const MAX_REMOTE_AGENT_STEPS = 3;
-const MAX_LOCAL_COMPLEX_AGENT_STEPS = 7;
-const MAX_REMOTE_COMPLEX_AGENT_STEPS = 4;
+const MAX_AGENT_STEPS = 10;
+const MAX_REMOTE_AGENT_STEPS = 6;
+const MAX_LOCAL_COMPLEX_AGENT_STEPS = 14;
+const MAX_REMOTE_COMPLEX_AGENT_STEPS = 8;
 const MAX_AGENT_QUERY_PREVIEW_ROWS = 5;
 const MAX_AGENT_QUERY_PREVIEW_COLUMNS = 8;
 const MAX_AGENT_TRACE_OBSERVATION_CHARS = 1400;
@@ -164,6 +167,24 @@ function isVisualizationRequest(prompt: string) {
   return visualizationSignals.some((signal) => normalizedPrompt.includes(signal));
 }
 
+function isMetricsBoardRequest(prompt: string) {
+  const normalizedPrompt = normalizeIntentText(prompt);
+  const boardSignals = [
+    "metric",
+    "metrics",
+    "dashboard",
+    "board",
+    "scoreboard",
+    "widget",
+    "tong hop",
+    "bang tong hop",
+    "bao cao",
+    "overview",
+    "tong quan",
+  ];
+  return boardSignals.some((signal) => normalizedPrompt.includes(signal));
+}
+
 function stripTableSchemaQualifier(tableName: string) {
   return tableName
     .replace(/["`]/g, "")
@@ -213,40 +234,6 @@ function buildWorkspaceTableIdentifier(
   return `${schemaName}.${tableName}`;
 }
 
-function requestExplicitlyNeedsLiveData(prompt: string, intent: AssistIntent) {
-  if (isVisualizationRequest(prompt)) return true;
-  if (intent === "sql" || intent === "optimize" || intent === "fix-error") return true;
-
-  const normalizedPrompt = normalizeIntentText(prompt);
-  const liveDataSignals = [
-    "sample row",
-    "sample rows",
-    "example row",
-    "example rows",
-    "show rows",
-    "show data",
-    "read data",
-    "live data",
-    "raw data",
-    "row count",
-    "row counts",
-    "count rows",
-    "read the data",
-    "query the data",
-    "run query",
-    "bao nhieu",
-    "dem so",
-    "du lieu mau",
-    "xem du lieu",
-    "doc data",
-    "thong ke du lieu",
-    "gia tri",
-    "values",
-    "records",
-  ];
-
-  return liveDataSignals.some((signal) => normalizedPrompt.includes(signal));
-}
 
 function shouldUseLightweightAgentFlow(prompt: string, intent: AssistIntent) {
   if (intent !== "explain") return false;
@@ -951,6 +938,45 @@ function buildAssistPrompt(prompt: string, intent: AssistIntent, interactionMode
   ].join("\n");
 }
 
+function buildAgentPlanPrompt(params: {
+  userPrompt: string;
+  assistIntent: AssistIntent;
+  currentDatabase: string | null;
+  availableTableNames: string[];
+  appLanguage: string;
+}) {
+  const { userPrompt, assistIntent, currentDatabase, availableTableNames, appLanguage } = params;
+  const visibleTables = availableTableNames.slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
+  const languageRule = appLanguage === "vi"
+    ? "Reply in Vietnamese."
+    : appLanguage === "zh"
+      ? "Reply in Chinese."
+      : appLanguage === "ko"
+        ? "Reply in Korean."
+        : appLanguage === "tr"
+          ? "Reply in Turkish."
+          : "Reply in English.";
+  return [
+    "You are an autonomous database agent about to work on a request.",
+    "Briefly acknowledge what the user wants and state the plan you will execute now.",
+    "Speak in the first person, warm and concise, like a senior engineer thinking out loud (max 3 short sentences).",
+    "You will inspect the schema and run read-only queries yourself in the next steps, so commit to a concrete plan.",
+    "Do NOT ask the user for clarification, do NOT ask which metrics/tables they want, and do NOT offer to help ? you already have the schema and must proceed. If the request is broad, pick the most relevant tables yourself and say which ones you will start with.",
+    "Mention which tables you expect to inspect, but do NOT write SQL in this step.",
+    "Do not use bullet lists or headings; write 2-3 natural sentences.",
+    languageRule,
+    "",
+    `Goal type: ${assistIntent}.`,
+    `Current database: ${currentDatabase || "Default"}.`,
+    visibleTables.length > 0 ? `Known tables: ${visibleTables.join(", ")}${availableTableNames.length > visibleTables.length ? ", ..." : ""}` : "No table list available yet.",
+    "",
+    "User request:",
+    userPrompt,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function buildAgentControllerPrompt(params: {
   userPrompt: string;
   assistIntent: AssistIntent;
@@ -974,27 +1000,40 @@ function buildAgentControllerPrompt(params: {
     extraInstruction,
   } = params;
   const visibleTables = availableTableNames.slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
-  const priorSteps = steps.length === 0
+  // Bound the trace embedded in each controller prompt so it never exceeds the
+  // backend prompt cap. The "plan" step is narration for the user and is not
+  // needed as controller context, and only the most recent tool observations
+  // are kept in full while older ones are reduced to their action + reason.
+  const toolSteps = steps.filter((step) => step.action !== "plan");
+  const RECENT_FULL_OBSERVATIONS = 4;
+  const priorSteps = toolSteps.length === 0
     ? "No tool actions have run yet."
-    : steps.map((step) => [
-      `Step ${step.step}`,
-      `Action: ${step.action}`,
-      `Message: ${step.message || "No message provided."}`,
-      "Observation:",
-      step.observation,
-    ].join("\n")).join("\n\n");
+    : toolSteps.map((step, index) => {
+        const isRecent = index >= toolSteps.length - RECENT_FULL_OBSERVATIONS;
+        const lines = [
+          `Step ${step.step}`,
+          `Action: ${step.action}`,
+          `Message: ${step.message || "No message provided."}`,
+        ];
+        if (isRecent) {
+          lines.push("Observation:", step.observation);
+        } else {
+          lines.push("Observation: (older step, omitted to save space)");
+        }
+        return lines.join("\n");
+      }).join("\n\n");
   const availableActions = workspaceToolsEnabled
     ? [
         '1. {"action":"list_tables","message":"short reason","args":{}}',
         '2. {"action":"describe_table","message":"short reason","args":{"table":"exact_table_name"}}',
         '3. {"action":"run_readonly_sql","message":"short reason","args":{"sql":"SELECT ..."}}',
-        '4. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval"}}',
+        '4. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval","metricsWidgets":[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ..."}]}}',
       ]
     : [
         '1. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval"}}',
       ];
 
-  return [
+  const assembled = [
     "Work as an autonomous workspace agent.",
     `Goal type: ${assistIntent}.`,
     `Current database: ${currentDatabase || "Default"}.`,
@@ -1008,6 +1047,7 @@ function buildAgentControllerPrompt(params: {
     "",
     "Rules:",
     "- Return exactly one JSON object and nothing else.",
+    "- Write the \"message\" field as a short first-person thought that narrates your reasoning, e.g. \"Let me check which tables hold order data first\" or \"I have the schema, now I'll count rows per status\". Keep it natural and conversational like you are thinking out loud.",
     "- Use only the action names above.",
     "- If the request is general conversation, writing, planning, coding advice, translation, brainstorming, or reasoning, answer directly with action=finish.",
     "- Never claim that you are limited to database-only tasks.",
@@ -1020,8 +1060,14 @@ function buildAgentControllerPrompt(params: {
     workspaceToolsEnabled
       ? "- Never use tool calls for INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, TRUNCATE, USE, ATTACH, DETACH, SET search_path, GRANT, or REVOKE."
       : "",
-    "- If you include final SQL in finish.args.sql, it must be grounded in verified context and ready for a human to review.",
-    "- If the user asks for a chart or visualization, finish with a chart recommendation and chart-friendly SQL instead of asking the UI to draw the chart for you.",
+    "- If you include final SQL in finish.args.sql, it must be grounded in verified context and ready to execute.",
+    workspaceToolsEnabled
+      ? "- Do NOT finish by only listing query ideas or asking the user which one to run. If data would answer the request, run run_readonly_sql first, then finish with that query in finish.args.sql."
+      : "",
+    workspaceToolsEnabled
+      ? "- Never finish by asking the user for clarification, scope, or which tables/metrics they want. You already have the schema ? choose the most relevant tables yourself, inspect them, run the query, and deliver a concrete result."
+      : "",
+    "- If the user asks for a chart or visualization, run a chart-friendly aggregate query and return that exact SQL in finish.args.sql; do not ask the UI to draw the chart for you.",
     forceFinish
       ? "- You must finish now. Return action=finish."
       : workspaceToolsEnabled
@@ -1037,6 +1083,18 @@ function buildAgentControllerPrompt(params: {
   ]
     .filter(Boolean)
     .join("\n");
+
+  return clampAgentPrompt(assembled);
+}
+
+// Hard safety cap so the controller prompt never trips the backend prompt limit
+// even if schema/observations are unusually large. Keeps the head (instructions
+// + request) and trims the trailing trace, which is the least critical part.
+const MAX_AGENT_PROMPT_CHARS = 48_000;
+function clampAgentPrompt(prompt: string): string {
+  if (prompt.length <= MAX_AGENT_PROMPT_CHARS) return prompt;
+  const head = prompt.slice(0, MAX_AGENT_PROMPT_CHARS - 400);
+  return `${head}\n\n[Trace truncated to fit the prompt budget. Finish using the evidence gathered so far.]`;
 }
 
 function stripOptionalCodeFence(text: string) {
@@ -1157,6 +1215,52 @@ function isAgentToolName(value: unknown): value is AgentToolName {
   return value === "list_tables" || value === "describe_table" || value === "run_readonly_sql" || value === "finish";
 }
 
+// Repairs a JSON object string that was cut off mid-output (e.g. the model hit
+// its token limit). Closes an unterminated string literal, drops a dangling
+// trailing comma/escape, and appends the missing closing brackets so the
+// already-produced fields (action/message/partial args) can still be parsed.
+function repairTruncatedJson(candidate: string): string {
+  let inString = false;
+  let escaping = false;
+  const stack: string[] = [];
+
+  for (let index = 0; index < candidate.length; index += 1) {
+    const char = candidate[index];
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+      } else if (char === "\\") {
+        escaping = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+    } else if (char === "{" || char === "[") {
+      stack.push(char);
+    } else if (char === "}" || char === "]") {
+      stack.pop();
+    }
+  }
+
+  let repaired = candidate;
+  // A trailing lone backslash would invalidate the closing quote we add.
+  if (inString && escaping) {
+    repaired += "\\";
+  }
+  if (inString) {
+    repaired += "\"";
+  }
+  // Remove a dangling comma before closing (",}" / ",]" are invalid).
+  repaired = repaired.replace(/,\s*$/, "");
+  for (let index = stack.length - 1; index >= 0; index -= 1) {
+    repaired += stack[index] === "{" ? "}" : "]";
+  }
+  return repaired;
+}
+
 function parseAgentActionResponse(rawResponse: string): AgentToolAction {
   const candidate = extractJsonObjectCandidate(rawResponse);
   let parsed: {
@@ -1166,7 +1270,11 @@ function parseAgentActionResponse(rawResponse: string): AgentToolAction {
   } | null = null;
   let parseError: unknown = null;
 
-  for (const parseCandidate of [candidate, sanitizeJsonStringLiterals(candidate)]) {
+  for (const parseCandidate of [
+    candidate,
+    sanitizeJsonStringLiterals(candidate),
+    repairTruncatedJson(sanitizeJsonStringLiterals(candidate)),
+  ]) {
     try {
       parsed = JSON.parse(parseCandidate) as {
         action?: unknown;
@@ -1819,9 +1927,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     const requestIntentPrompt = options?.userPrompt?.trim() || normalizedPrompt;
     const assistIntent: AssistIntent = inferAssistIntent(requestIntentPrompt, requestedInteractionMode);
     const wantsVisualization = isVisualizationRequest(requestIntentPrompt);
-    const explicitLiveDataRequest = requestExplicitlyNeedsLiveData(requestIntentPrompt, assistIntent);
+    const wantsMetricsBoard = isMetricsBoardRequest(requestIntentPrompt);
     const interactionMode = requestedInteractionMode;
-    const needsWorkspaceContext = isWorkspaceScopedIntent(assistIntent);
+    // In agent mode, as long as there is a live connection we let the agent reach
+    // for workspace tools even when the intent looks general ? that is what makes
+    // it behave like a real autonomous agent instead of a plain chat reply.
+    const agentCanUseWorkspace = requestedInteractionMode === "agent" && Boolean(connectionId);
+    const needsWorkspaceContext = isWorkspaceScopedIntent(assistIntent) || agentCanUseWorkspace;
     const appLanguage = getCurrentAppLanguage();
     const modeUsesSchemaContext = aiModeUsesSchemaContext(interactionMode);
     const aiPrompt = buildAssistPrompt(normalizedPrompt, assistIntent, interactionMode);
@@ -2075,15 +2187,17 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 ? "Schema sharing is disabled for the current provider, so workspace tools are unavailable for this turn."
                 : "No verified schema snapshot is available for tool use on this turn.";
         const sharedAgentInstruction = joinAgentInstructions(
-          "You are an autonomous agent. Decide your own steps: inspect the schema with list_tables/describe_table, then use run_readonly_sql whenever live rows, counts, samples, or aggregates would make your answer accurate. You do not need the user to ask explicitly before reading data with read-only SQL.",
-          !explicitLiveDataRequest
-            ? "Prefer the lightest path: only run read-only SQL when schema alone cannot answer the question, and never run more queries than you need."
-            : undefined,
+          "You are an autonomous agent that takes action, not a consultant. Decide your own steps: inspect the schema with list_tables/describe_table, then ACTUALLY run run_readonly_sql to gather the data needed to answer. Do not just suggest queries and do not ask the user which query to run first ? pick the most relevant one and run it yourself.",
+          "When the user asks to see data, charts, counts, samples, distributions, or 'show me' anything, you MUST run at least one run_readonly_sql before finishing. Finishing with only suggestions and no executed query is a failure.",
+          "When you finish, put the single best runnable query in finish.args.sql (a real SELECT grounded in the verified schema) so it can be executed and shown to the user automatically.",
           !isLocalProvider
-            ? "Minimize tool calls. Prefer finishing once you have enough evidence instead of exploring the whole schema."
+            ? "Be efficient: a few targeted tool calls are better than exploring every table, but never skip running the query that produces the answer."
             : undefined,
           wantsVisualization
-            ? "If the user wants a chart or visualization, prefer a chart-friendly SQL result plus a chart recommendation once you have enough evidence."
+            ? "For a chart or visualization request, run a chart-friendly aggregate query (e.g. GROUP BY ... COUNT(*)) and return that exact SQL in finish.args.sql plus a short chart recommendation."
+            : undefined,
+          wantsMetricsBoard
+            ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
             : undefined
         );
         const buildControllerPrompt = (forceFinish: boolean, extraInstruction?: string) =>
@@ -2262,6 +2376,46 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           }
         };
 
+        // Opening acknowledgement: let the model restate what it understood and
+        // sketch a short plan before any tool runs, so the user sees it "get it"
+        // the way Claude's agent does, instead of silently working.
+        if (workspaceToolsEnabled) {
+          publishAgentProgress({ action: "plan", message: "" });
+          try {
+            const planText = await askAI(
+              buildAgentPlanPrompt({
+                userPrompt: normalizedPrompt,
+                assistIntent,
+                currentDatabase,
+                availableTableNames: agentPromptTableNames.length > 0 ? agentPromptTableNames : availableSchemaTables,
+                appLanguage,
+              }),
+              strictRecoveryContext || context,
+              "panel",
+              "explain",
+              []
+            );
+            if (requestId !== requestIdRef.current) {
+              throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+            }
+            const cleanedPlan = stripSqlCodeBlocksFromResponse(planText).trim() || planText.trim();
+            if (cleanedPlan) {
+              agentTraceSteps.push({
+                step: agentTraceSteps.length + 1,
+                action: "plan",
+                message: cleanedPlan,
+                observation: "",
+              });
+              publishAgentProgress();
+            }
+          } catch (planError) {
+            if (isSupersededAIRequestError(planError)) {
+              throw planError;
+            }
+            // A failed plan turn is non-fatal; carry on with the tool loop.
+          }
+        }
+
         let finalAgentAction: AgentToolAction | null = null;
 
         if (!workspaceToolsEnabled) {
@@ -2362,14 +2516,18 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         }
 
         const resolvedFinalArgs = finalAgentAction.args || {};
-        const shouldExposeAgentSql =
-          hasSqlStartKeyword(finalSql) &&
-          (
-            assistIntent === "sql" ||
-            assistIntent === "optimize" ||
-            assistIntent === "fix-error" ||
-            wantsVisualization
-          );
+        // If the agent didn't put SQL in args.sql but embedded a runnable query in
+        // its response markdown, lift the first statement out so it can auto-run.
+        if (!finalSql && typeof resolvedFinalArgs.response === "string") {
+          const sqlFromBody = extractSqlFromResponse(resolvedFinalArgs.response);
+          if (sqlFromBody && hasSqlStartKeyword(sqlFromBody) &&
+              !(availableSchemaTables.length > 0 && sqlResponseConflictsWithSchema(sqlFromBody, availableSchemaTables))) {
+            finalSql = sqlFromBody;
+          }
+        }
+        // In agent mode any grounded, schema-valid SQL is worth surfacing/running ?
+        // the autonomy level + risk gate decide whether it actually executes.
+        const shouldExposeAgentSql = hasSqlStartKeyword(finalSql);
         if (!shouldExposeAgentSql) {
           finalSql = "";
         }
@@ -2397,6 +2555,24 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             : "done",
         }));
 
+        // Lift any AI-designed metrics widgets out of the finish action so the
+        // dashboard path can build a custom board from them.
+        const rawAgentWidgets = Array.isArray((resolvedFinalArgs as { metricsWidgets?: unknown }).metricsWidgets)
+          ? ((resolvedFinalArgs as { metricsWidgets?: unknown[] }).metricsWidgets ?? [])
+          : [];
+        const agentWidgets: AIMetricsWidgetSpec[] = rawAgentWidgets
+          .map((widget) => {
+            const record = (widget && typeof widget === "object") ? widget as Record<string, unknown> : {};
+            const title = typeof record.title === "string" ? record.title.trim() : "";
+            const query = typeof record.query === "string" ? record.query.trim()
+              : typeof record.sql === "string" ? record.sql.trim() : "";
+            const typeValue = typeof record.type === "string" ? record.type.trim().toLowerCase() : "table";
+            const type = (["table", "scoreboard", "bar", "horizontal-bar", "line", "area", "pie", "donut", "radial"].includes(typeValue) ? typeValue : "table") as AIMetricsWidgetSpec["type"];
+            return { title, type, query };
+          })
+          .filter((widget) => widget.title.length > 0 && widget.query.length > 0)
+          .slice(0, 12);
+
         return {
           prompt: normalizedPrompt,
           rawResponse: finalDetail,
@@ -2405,6 +2581,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           intent: assistIntent,
           reasoning: lastReasoningRef.current,
           agentSteps: finalAgentSteps.length > 0 ? finalAgentSteps : undefined,
+          agentWidgets: agentWidgets.length > 0 ? agentWidgets : undefined,
         };
       }
 

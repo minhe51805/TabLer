@@ -103,9 +103,10 @@ impl AIRequest {
             return Err("Prompt cannot be empty".to_string());
         }
 
-        // Limit prompt size to prevent abuse (max 10KB)
-        if self.prompt.len() > 10_000 {
-            return Err("Prompt is too long (max 10,000 characters)".to_string());
+        // Limit prompt size to prevent abuse. Agent controller prompts embed the
+        // running tool trace + schema, so they legitimately need more headroom.
+        if self.prompt.len() > 80_000 {
+            return Err("Prompt is too long (max 80,000 characters)".to_string());
         }
 
         // Limit context size

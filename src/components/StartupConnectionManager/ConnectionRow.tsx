@@ -1,4 +1,4 @@
-import { Trash2 } from "lucide-react";
+import { ChevronRight, LoaderCircle, Trash2 } from "lucide-react";
 import type { ConnectionRowProps } from "./types";
 
 interface Props extends ConnectionRowProps {
@@ -20,7 +20,19 @@ export function ConnectionRow({
   tagColor,
   envBadge,
 }: Props) {
-  const { connection, isSelected, isConnected, isActive, isBusy, isGridLayout, statusLabel, dbInfo, endpointLabel, databaseLabel, secondaryBadgeLabel } = data;
+  const {
+    connection,
+    isSelected,
+    isConnected,
+    isActive,
+    isBusy,
+    isGridLayout,
+    statusLabel,
+    dbInfo,
+    endpointLabel,
+    databaseLabel,
+    secondaryBadgeLabel,
+  } = data;
 
   return (
     <div
@@ -72,40 +84,22 @@ export function ConnectionRow({
                 style={{ color: envBadge.color, borderColor: envBadge.color }}
                 title={`Environment: ${envBadge.label}`}
               >
-                ({envBadge.label})
+                {envBadge.label}
               </span>
             ) : null}
 
             {tagName ? (
               <span
                 className="startup-connection-tag-pill"
-                style={{ color: tagColor || "var(--text-secondary)", borderColor: tagColor || "var(--text-muted)" }}
+                style={{
+                  color: tagColor || "var(--text-secondary)",
+                  borderColor: tagColor || "var(--text-muted)",
+                }}
                 title={`Tag: ${tagName}`}
               >
                 {tagName}
               </span>
             ) : null}
-
-            <span
-              className={`startup-connection-status ${
-                isActive ? "active" : isConnected ? "connected" : ""
-              }`}
-            >
-              {statusLabel}
-            </span>
-
-            <button
-              type="button"
-              className="startup-connection-delete"
-              onClick={(event) => {
-                event.stopPropagation();
-                onDelete();
-              }}
-              title={deleteLabel}
-              aria-label={deleteLabel}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
           </div>
         </div>
 
@@ -114,10 +108,10 @@ export function ConnectionRow({
           title={
             isGridLayout
               ? `${endpointLabel}\n${databaseLabel}`
-              : `${endpointLabel} • ${databaseLabel}`
+              : `${endpointLabel} - ${databaseLabel}`
           }
         >
-          {isGridLayout ? endpointLabel : `${endpointLabel} • ${databaseLabel}`}
+          {isGridLayout ? endpointLabel : `${endpointLabel} - ${databaseLabel}`}
         </span>
 
         {isGridLayout ? (
@@ -125,6 +119,35 @@ export function ConnectionRow({
             {databaseLabel}
           </span>
         ) : null}
+      </div>
+
+      <div className="startup-connection-trailing">
+        {isBusy ? (
+          <LoaderCircle className="startup-connection-loading w-3.5 h-3.5" />
+        ) : isActive || isConnected ? (
+          <span
+            className={`startup-connection-status ${
+              isActive ? "active" : isConnected ? "connected" : ""
+            }`}
+          >
+            {statusLabel}
+          </span>
+        ) : null}
+
+        <button
+          type="button"
+          className="startup-connection-delete"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          title={deleteLabel}
+          aria-label={deleteLabel}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+
+        <ChevronRight className="startup-connection-open-icon w-4 h-4" />
       </div>
     </div>
   );

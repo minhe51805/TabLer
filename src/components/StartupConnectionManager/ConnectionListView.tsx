@@ -96,8 +96,10 @@ export function ConnectionListView({
     <section className="startup-manager-browser">
       <div className="startup-manager-browser-head">
         <div className="startup-manager-browser-copy">
-          <span className="startup-manager-kicker">{t("common.connections")}</span>
           <h3>{t("startup.manager.pickWorkspace")}</h3>
+          <span className="startup-manager-browser-meta">
+            {filteredConnections.length} {t("common.connections").toLocaleLowerCase()}
+          </span>
         </div>
 
         <div className="startup-manager-action-group" role="group" aria-label={t("common.connections")}>
@@ -109,6 +111,7 @@ export function ConnectionListView({
             title={t("startup.manager.createConnection")}
           >
             <Plus className="w-4 h-4" />
+            <span>{t("startup.manager.createConnection")}</span>
           </button>
 
           <button
@@ -223,11 +226,8 @@ export function ConnectionListView({
                     secondaryBadgeLabel: buildSecondaryBadgeLabel(conn.db_type, !!conn.use_ssl),
                   }}
                   onClick={() => {
-                    if (selectedConnectionId === conn.id) {
-                      void onConnect(conn);
-                      return;
-                    }
                     onSelectConnection(conn.id);
+                    void onConnect(conn);
                   }}
                   onDelete={() => onDeleteConnection(conn)}
                   deleteLabel={t("connections.delete")}

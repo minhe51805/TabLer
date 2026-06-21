@@ -21,6 +21,8 @@ export interface OpenAIMetricsBoardDetail {
   editTargetType?: MetricsWidgetType;
   editQuery?: string;
   editTitle?: string;
+  /** When set, build the board directly from these AI-designed widgets. */
+  aiWidgets?: AIMetricsWidgetSpec[];
 }
 
 export interface OpenAIMetricsBoardCompletionDetail {
@@ -1653,6 +1655,80 @@ function resolveBoardTitle(
     return fallbackTitle ?? templateTitle;
   }
   return normalizedRequestedTitle;
+}
+
+export interface AIMetricsWidgetSpec {
+  title: string;
+  type: MetricsWidgetType;
+  query: string;
+}
+
+const VALID_METRICS_WIDGET_TYPES: MetricsWidgetType[] = ["table", "scoreboard", "bar", "horizontal-bar", "line", "area", "pie", "donut", "radial"];
+
+function normalizeAIWidgetType(value: unknown): MetricsWidgetType {
+  return typeof value === "string" && (VALID_METRICS_WIDGET_TYPES as string[]).includes(value)
+    ? (value as MetricsWidgetType)
+    : "table";
+}
+
+/**
+ * Builds a metrics board directly from widgets the AI agent designed, laying
+ * them out in a responsive 2-column grid. Used when the agent returns concrete
+ * widget specs (title + chart type + SQL) instead of relying on a fixed template.
+ */
+export function createAIMetricsBoardFromWidgets(args: {
+  widgets: AIMetricsWidgetSpec[];
+  title?: string;
+  database?: string;
+  connectionId: string;
+  existingBoards: MetricsBoardDefinition[];
+}): MetricsBoardDefinition | null {
+  const cleaned = args.widgets
+    .map((widget) => ({
+      title: (widget.title || "").trim(),
+      type: normalizeAIWidgetType(widget.type),
+      query: (widget.query || "").trim(),
+    }))
+    .filter((widget) => widget.title.length > 0 && widget.query.length > 0)
+    .slice(0, 12);
+
+  if (cleaned.length === 0) {
+    return null;
+  }
+
+  const COLUMNS = 2;
+  const now = Date.now();
+  const widgets: MetricsWidgetDefinition[] = cleaned.map((widget, index) => {
+    // Scoreboards are compact; charts/tables take a full column row.
+    const isCompact = widget.type === "scoreboard";
+    const colSpan = isCompact ? 1 : 1;
+    const rowSpan = widget.type === "table" ? 2 : 1;
+    return {
+      id: `widget-${crypto.randomUUID()}`,
+      type: widget.type,
+      title: widget.title,
+      query: widget.query,
+      refresh_seconds: 0,
+      col_span: colSpan,
+      row_span: rowSpan,
+      grid_x: index % COLUMNS,
+      grid_y: Math.floor(index / COLUMNS),
+    };
+  });
+
+  const requestedTitle = args.title?.trim() && args.title.trim() !== "DB Overview Dashboard"
+    ? args.title.trim()
+    : "AI Metrics Summary";
+
+  return {
+    id: `metrics-${crypto.randomUUID()}`,
+    name: createUniqueBoardName(requestedTitle, args.existingBoards),
+    connection_id: args.connectionId,
+    database: args.database,
+    widgets,
+    created_at: now,
+    updated_at: now,
+  } satisfies MetricsBoardDefinition;
 }
 
 export function createAIMetricsBoardDefinition(args: {

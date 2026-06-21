@@ -25,13 +25,13 @@ import { getTags, type ConnectionTag } from "../../stores/connection-tag-store";
 import type { ConnectionConfig } from "./types";
 import type { ConnectionLayoutMode, HoverPreviewState } from "./types";
 import {
+  APP_VERSION,
   STARTUP_CONNECTION_LAYOUT_STORAGE_KEY,
   buildDatabaseLabel,
   buildEndpointLabel,
 } from "./types";
 import { ConnectionListView } from "./ConnectionListView";
 import { HoverPopover } from "./HoverPopover";
-import { StartupBrandingPanel } from "./StartupBrandingPanel";
 
 interface Props {
   onNewConnection: () => void;
@@ -375,15 +375,19 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
           }}
         >
           <div className="startup-manager-topbar-brand">
-            <Database className="startup-manager-topbar-icon w-4 h-4" />
-            <span>TabLer</span>
+            <span className="startup-manager-topbar-logo">
+              <Database className="startup-manager-topbar-icon w-4 h-4" />
+            </span>
+            <span className="startup-manager-topbar-copy">
+              <strong>TabLer</strong>
+              <span>Connection launcher</span>
+            </span>
+            <span className="startup-manager-topbar-version">v{APP_VERSION}</span>
           </div>
           {windowControls ? <div className="startup-manager-controls">{windowControls}</div> : null}
         </div>
 
         <div className="startup-manager-body">
-          <StartupBrandingPanel />
-
           <ConnectionListView
             search={search}
             onSearchChange={setSearch}

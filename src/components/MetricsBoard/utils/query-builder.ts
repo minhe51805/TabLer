@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
+  Activity,
   BarChart3,
+  ChartColumnStacked,
+  Donut,
+  Gauge,
   Hash,
   LineChart,
   PieChart,
@@ -123,6 +127,50 @@ const WIDGET_LIBRARY: WidgetLibraryBlueprint[] = [
     titleKey: "metrics.widget.untitledPie",
     defaultQuery:
       "SELECT 'Done' AS label, 72 AS value UNION ALL SELECT 'Pending', 18 UNION ALL SELECT 'Blocked', 10",
+    colSpan: 4,
+    rowSpan: 4,
+  },
+  {
+    type: "horizontal-bar",
+    labelKey: "metrics.widget.horizontalBar",
+    description: "Compare category totals as horizontal bars.",
+    icon: ChartColumnStacked,
+    titleKey: "metrics.widget.untitledHorizontalBar",
+    defaultQuery:
+      "SELECT 'Alpha' AS label, 32 AS value UNION ALL SELECT 'Beta', 21 UNION ALL SELECT 'Gamma', 14",
+    colSpan: 4,
+    rowSpan: 4,
+  },
+  {
+    type: "area",
+    labelKey: "metrics.widget.area",
+    description: "Show a filled trend across two columns.",
+    icon: Activity,
+    titleKey: "metrics.widget.untitledArea",
+    defaultQuery:
+      "SELECT 'Jan' AS label, 11 AS value UNION ALL SELECT 'Feb', 18 UNION ALL SELECT 'Mar', 15 UNION ALL SELECT 'Apr', 23",
+    colSpan: 4,
+    rowSpan: 4,
+  },
+  {
+    type: "donut",
+    labelKey: "metrics.widget.donut",
+    description: "Ring chart of category share from two columns.",
+    icon: Donut,
+    titleKey: "metrics.widget.untitledDonut",
+    defaultQuery:
+      "SELECT 'Done' AS label, 72 AS value UNION ALL SELECT 'Pending', 18 UNION ALL SELECT 'Blocked', 10",
+    colSpan: 4,
+    rowSpan: 4,
+  },
+  {
+    type: "radial",
+    labelKey: "metrics.widget.radial",
+    description: "Concentric progress rings from two columns.",
+    icon: Gauge,
+    titleKey: "metrics.widget.untitledRadial",
+    defaultQuery:
+      "SELECT 'Target A' AS label, 80 AS value UNION ALL SELECT 'Target B', 55 UNION ALL SELECT 'Target C', 30",
     colSpan: 4,
     rowSpan: 4,
   },

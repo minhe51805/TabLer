@@ -43,6 +43,7 @@ export interface AIWorkspaceCopy {
     reasoningShow: string;
     reasoningHide: string;
     agentStepsLabel: string;
+    agentActionPlan: string;
     agentActionListTables: string;
     agentActionDescribeTable: string;
     agentActionRunSql: string;
@@ -79,6 +80,10 @@ export interface AIWorkspaceCopy {
     agentAutonomySmartHint: string;
     agentAutonomyFull: string;
     agentAutonomyFullHint: string;
+    thinkingToggleLabel: string;
+    thinkingToggleHint: string;
+    thinkingOn: string;
+    thinkingOff: string;
     modeNeedsSchemaHint: string;
     openSettings: string;
     switchToPrompt: string;
@@ -164,6 +169,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       reasoningShow: "Show reasoning",
       reasoningHide: "Hide reasoning",
       agentStepsLabel: "Agent steps",
+      agentActionPlan: "Understanding the request",
       agentActionListTables: "Listing tables",
       agentActionDescribeTable: "Inspecting schema",
       agentActionRunSql: "Reading data",
@@ -200,6 +206,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       agentAutonomySmartHint: "Auto-run safe read queries, ask before writes.",
       agentAutonomyFull: "Full access",
       agentAutonomyFullHint: "Run everything automatically without asking.",
+      thinkingToggleLabel: "Thinking",
+      thinkingToggleHint: "Show or hide the agent's live reasoning",
+      thinkingOn: "On",
+      thinkingOff: "Off",
       modeNeedsSchemaHint: "This mode needs schema sharing enabled in AI Provider Settings.",
       openSettings: "Open settings",
       switchToPrompt: "Use prompt mode",
@@ -304,6 +314,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       reasoningShow: "Hiện suy luận",
       reasoningHide: "Ẩn suy luận",
       agentStepsLabel: "Các bước của agent",
+      agentActionPlan: "Hi?u y?u c?u",
       agentActionListTables: "Liệt kê bảng",
       agentActionDescribeTable: "Xem cấu trúc",
       agentActionRunSql: "Đọc dữ liệu",
@@ -340,6 +351,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       agentAutonomySmartHint: "Tự chạy câu đọc an toàn, hỏi trước khi ghi.",
       agentAutonomyFull: "Toàn quyền",
       agentAutonomyFullHint: "Tự chạy mọi thứ mà không hỏi.",
+      thinkingToggleLabel: "Suy lu?n",
+      thinkingToggleHint: "Hi?n ho?c ?n suy lu?n tr?c ti?p c?a agent",
+      thinkingOn: "B?t",
+      thinkingOff: "T?t",
       modeNeedsSchemaHint: "Chế độ này cần bật chia sẻ schema trong AI Provider Settings.",
       openSettings: "Mở settings",
       switchToPrompt: "Dùng chỉ prompt",
@@ -442,6 +457,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       reasoningShow: "显示推理",
       reasoningHide: "隐藏推理",
       agentStepsLabel: "Agent 步骤",
+      agentActionPlan: "????",
       agentActionListTables: "列出表",
       agentActionDescribeTable: "查看结构",
       agentActionRunSql: "读取数据",
@@ -478,6 +494,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       agentAutonomySmartHint: "自动运行安全的读取查询，写入前询问。",
       agentAutonomyFull: "完全权限",
       agentAutonomyFullHint: "不询问，自动运行一切。",
+      thinkingToggleLabel: "??",
+      thinkingToggleHint: "????? agent ?????",
+      thinkingOn: "?",
+      thinkingOff: "?",
       modeNeedsSchemaHint: "这个模式需要在 AI Provider Settings 中开启 schema sharing。",
       openSettings: "打开设置",
       switchToPrompt: "改用提示词模式",
@@ -580,6 +600,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       reasoningShow: "Muhakemeyi göster",
       reasoningHide: "Muhakemeyi gizle",
       agentStepsLabel: "Agent adımları",
+      agentActionPlan: "?ste?i anl?yor",
       agentActionListTables: "Tablolar listeleniyor",
       agentActionDescribeTable: "Şema inceleniyor",
       agentActionRunSql: "Veri okunuyor",
@@ -616,6 +637,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       agentAutonomySmartHint: "Güvenli okuma sorgularını otomatik çalıştır, yazmadan önce sor.",
       agentAutonomyFull: "Tam erişim",
       agentAutonomyFullHint: "Sormadan her şeyi otomatik çalıştır.",
+      thinkingToggleLabel: "D???nme",
+      thinkingToggleHint: "Ajan?n canl? muhakemesini g?ster veya gizle",
+      thinkingOn: "A??k",
+      thinkingOff: "Kapal?",
       modeNeedsSchemaHint: "Bu mod, AI Sağlayıcı Ayarlarında şema paylaşımının etkinleştirilmesini gerektirir.",
       openSettings: "Ayarları aç",
       switchToPrompt: "Prompt moduna geç",
@@ -703,6 +728,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       reasoningShow: "추론 보기",
       reasoningHide: "추론 숨기기",
       agentStepsLabel: "에이전트 단계",
+      agentActionPlan: "?? ??",
       agentActionListTables: "테이블 목록",
       agentActionDescribeTable: "스키마 확인",
       agentActionRunSql: "데이터 읽기",
@@ -739,6 +765,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       agentAutonomySmartHint: "안전한 읽기 쿼리는 자동 실행하고 쓰기 전에 물어봅니다.",
       agentAutonomyFull: "전체 권한",
       agentAutonomyFullHint: "물어보지 않고 모든 것을 자동 실행합니다.",
+      thinkingToggleLabel: "??",
+      thinkingToggleHint: "????? ??? ?? ??/??",
+      thinkingOn: "??",
+      thinkingOff: "??",
       modeNeedsSchemaHint: "이 모드에는 AI 프로바이더 설정에서 스키마 공유를 활성화해야 합니다.",
       openSettings: "설정 열기",
       switchToPrompt: "프롬프트 모드로 전환",

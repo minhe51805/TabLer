@@ -11,7 +11,7 @@ import {
   METRICS_DRAG_HOLD_MS,
   validateMetricsQuery,
 } from "../utils/query-builder";
-import { ChartBars, ChartLine, ChartPie } from "../utils/chart-renderer";
+import { ChartBars, ChartLine, ChartPie, ChartRadial } from "../utils/chart-renderer";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 
 // ---------------------------------------------------------------------------
@@ -198,8 +198,24 @@ export function MetricsWidgetCard({
       return <ChartBars series={series} />;
     }
 
+    if (widget.type === "horizontal-bar") {
+      return <ChartBars series={series} horizontal />;
+    }
+
     if (widget.type === "line") {
       return <ChartLine series={series} />;
+    }
+
+    if (widget.type === "area") {
+      return <ChartLine series={series} area />;
+    }
+
+    if (widget.type === "donut") {
+      return <ChartPie series={series} donut />;
+    }
+
+    if (widget.type === "radial") {
+      return <ChartRadial series={series} />;
     }
 
     return <ChartPie series={series} />;

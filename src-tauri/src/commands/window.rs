@@ -1,8 +1,8 @@
 use serde::Deserialize;
 use tauri::{AppHandle, LogicalSize, Manager, Size};
 
-const LAUNCHER_WIDTH: f64 = 520.0;
-const LAUNCHER_HEIGHT: f64 = 420.0;
+const LAUNCHER_WIDTH: f64 = 720.0;
+const LAUNCHER_HEIGHT: f64 = 520.0;
 const FORM_WIDTH: f64 = 1160.0;
 const FORM_HEIGHT: f64 = 760.0;
 const FORM_MIN_WIDTH: f64 = 980.0;

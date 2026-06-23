@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">TableR logo mark</title>
+  <desc id="desc">A table-shaped letter T above a database cylinder.</desc>
+  <rect x="32" y="32" width="448" height="448" rx="104" fill="#121c26"/>
+
+  <rect x="92" y="92" width="96" height="96" rx="21" fill="#168cff"/>
+  <rect x="208" y="92" width="96" height="96" rx="21" fill="#18b985"/>
+  <rect x="324" y="92" width="96" height="96" rx="21" fill="#ff6b7a"/>
+  <rect x="208" y="208" width="96" height="96" rx="21" fill="#168cff"/>
+
+  <path
+    fill="#f7fbff"
+    d="M152 349c0-26.5 46.6-48 104-48s104 21.5 104 48v78c0 26.5-46.6 48-104 48s-104-21.5-104-48v-78Z"
+  />
+  <ellipse cx="256" cy="349" rx="104" ry="48" fill="#dceeff"/>
+  <ellipse cx="256" cy="349" rx="76" ry="27" fill="#121c26"/>
+  <path
+    fill="none"
+    stroke="#168cff"
+    stroke-linecap="round"
+    stroke-width="14"
+    d="M166 386c15 20 50 33 90 33s75-13 90-33"
+  />
+</svg>

@@ -1,4 +1,4 @@
-import { Database, Shield, Zap, Globe } from "lucide-react";
+import { Shield, Zap, Globe } from "lucide-react";
 import { APP_DEVELOPER, APP_VERSION } from "./types";
 
 export function StartupBrandingPanel() {
@@ -10,7 +10,7 @@ export function StartupBrandingPanel() {
       {/* Brand Icon */}
       <div className="startup-manager-hero-main">
         <div className="startup-manager-brand-icon">
-          <Database className="w-6 h-6 text-[var(--fintech-green)]" />
+          <img src="/table-r-mark.png" alt="" aria-hidden="true" />
         </div>
 
         <div className="startup-manager-brand-copy">

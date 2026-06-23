@@ -17,9 +17,12 @@ import {
   Workflow,
   Zap,
 } from "lucide-react";
+import { getTableRReleases } from "@/lib/github-releases";
 
-const releaseUrl = "https://github.com/minhe51805/TabLer/releases";
+const downloadUrl = "/download";
 const repositoryUrl = "https://github.com/minhe51805/TabLer";
+
+export const revalidate = 300;
 
 const featureItems = [
   {
@@ -110,7 +113,10 @@ const architectureItems = [
   { icon: Zap, label: "Local-first workflow" },
 ];
 
-export default function Home() {
+export default async function Home() {
+  const releases = await getTableRReleases();
+  const latestVersion = releases[0]?.tag ?? "latest";
+
   return (
     <main>
       <header className="site-header">
@@ -135,9 +141,7 @@ export default function Home() {
 
           <a
             className="button button-small button-primary"
-            href={releaseUrl}
-            target="_blank"
-            rel="noreferrer"
+            href={downloadUrl}
           >
             <Download size={16} aria-hidden="true" />
             Download
@@ -159,12 +163,10 @@ export default function Home() {
           <div className="hero-actions">
             <a
               className="button button-primary"
-              href={releaseUrl}
-              target="_blank"
-              rel="noreferrer"
+              href={downloadUrl}
             >
               <Download size={18} aria-hidden="true" />
-              Download v0.1.4
+              Download {latestVersion}
             </a>
             <a
               className="button button-secondary"
@@ -419,9 +421,7 @@ export default function Home() {
           </div>
           <a
             className="button button-primary"
-            href={releaseUrl}
-            target="_blank"
-            rel="noreferrer"
+            href={downloadUrl}
           >
             <Download size={18} aria-hidden="true" />
             Download TableR
@@ -445,9 +445,7 @@ export default function Home() {
             <a href={repositoryUrl} target="_blank" rel="noreferrer">
               GitHub
             </a>
-            <a href={releaseUrl} target="_blank" rel="noreferrer">
-              Releases
-            </a>
+            <a href={downloadUrl}>Download</a>
             <a
               href="https://buymeacoffee.com/minjev"
               target="_blank"

@@ -26,7 +26,8 @@ dist-ssr
 xemreponay
 .claude
 .fatory
-docs
+docs/*
+!docs/screenshots/
 plans
 CLAUDE.md
 

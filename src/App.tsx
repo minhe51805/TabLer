@@ -1471,6 +1471,27 @@ function App() {
         }
       }
 
+      // Agent-designed widgets take priority: build the board straight from the
+      // concrete chart/table specs the AI produced instead of a fixed template.
+      if (!nextBoard && Array.isArray(detail.aiWidgets) && detail.aiWidgets.length > 0) {
+        const aiBoard = metricsTemplateModule.createAIMetricsBoardFromWidgets({
+          widgets: detail.aiWidgets,
+          title: detail.title,
+          database: targetDatabase,
+          connectionId: targetConnectionId,
+          existingBoards: connectionBoards,
+        });
+        if (aiBoard) {
+          nextBoard = aiBoard;
+          nextAllBoards = [...allBoards, aiBoard];
+          didChange = true;
+          created = true;
+          addedCount = aiBoard.widgets.length;
+          addedTitles = aiBoard.widgets.map((widget) => widget.title);
+          addedWidgetIds = aiBoard.widgets.map((widget) => widget.id);
+        }
+      }
+
       if (!nextBoard) {
         nextBoard = metricsTemplateModule.createAIMetricsBoardDefinition({
           detail: {

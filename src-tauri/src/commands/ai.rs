@@ -695,7 +695,10 @@ fn should_retry_openai_like_status(status: StatusCode) -> bool {
 fn default_max_output_tokens(mode: &AIRequestMode) -> u32 {
     match mode {
         AIRequestMode::Inline => 256,
-        AIRequestMode::Panel => 1024,
+        // Panel covers the chat + the agent controller. Agent finish turns embed
+        // SQL plus a markdown explanation, so 1024 tokens often truncated the
+        // JSON action mid-string; give it enough room to close the object.
+        AIRequestMode::Panel => 4096,
     }
 }
 
@@ -928,7 +931,7 @@ pub async fn ask_ai(
             let body = json!({
                 "system": system_prompt,
                 "model": config.model,
-                "max_tokens": 1024,
+                "max_tokens": default_max_output_tokens(&request.mode),
                 "messages": [
                     { "role": "user", "content": prompt }
                 ]
@@ -1176,7 +1179,7 @@ mod tests {
         );
 
         assert_eq!(body.get("stream").and_then(|value| value.as_bool()), Some(false));
-        assert_eq!(body.get("max_tokens").and_then(|value| value.as_u64()), Some(1024));
+        assert_eq!(body.get("max_tokens").and_then(|value| value.as_u64()), Some(4096));
         assert_eq!(
             body.pointer("/chat_template_kwargs/enable_thinking")
                 .and_then(|value| value.as_bool()),

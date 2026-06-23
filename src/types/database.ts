@@ -170,7 +170,16 @@ export interface TriggerInfo {
   definition?: string;
 }
 
-export type MetricsWidgetType = "table" | "scoreboard" | "bar" | "line" | "pie";
+export type MetricsWidgetType =
+  | "table"
+  | "scoreboard"
+  | "bar"
+  | "horizontal-bar"
+  | "line"
+  | "area"
+  | "pie"
+  | "donut"
+  | "radial";
 
 export interface MetricsWidgetDefinition {
   id: string;

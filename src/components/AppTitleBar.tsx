@@ -1,5 +1,4 @@
 import {
-  Database,
   Menu,
   Minus,
   Plus,
@@ -379,7 +378,12 @@ export function AppTitleBar({
         onDoubleClick={onToggleMaximizeWindow}
       >
         <div className="titlebar-brand">
-          <Database className="titlebar-brand-icon w-4 h-4" />
+          <img
+            className="titlebar-brand-icon"
+            src="/table-r-mark.png"
+            alt=""
+            aria-hidden="true"
+          />
           <span className="titlebar-name">TableR</span>
         </div>
 

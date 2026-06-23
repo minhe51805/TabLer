@@ -1,4 +1,4 @@
-import { Database, TriangleAlert, X } from "lucide-react";
+import { TriangleAlert, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   useEffect,
@@ -376,7 +376,12 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
         >
           <div className="startup-manager-topbar-brand">
             <span className="startup-manager-topbar-logo">
-              <Database className="startup-manager-topbar-icon w-4 h-4" />
+              <img
+                className="startup-manager-topbar-icon"
+                src="/table-r-mark.png"
+                alt=""
+                aria-hidden="true"
+              />
             </span>
             <span className="startup-manager-topbar-copy">
               <strong>TabLer</strong>

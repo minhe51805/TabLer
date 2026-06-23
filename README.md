@@ -151,8 +151,11 @@ the desktop application with hot reload.
 | `npm run test:run` | Run the Vitest suite once |
 | `npm run build` | Type-check and build the frontend |
 | `npm run tauri -- build` | Create platform-specific desktop bundles |
+| `cd website && npm run dev` | Start the public product website |
 
 Production bundles are written below `src-tauri/target/release/bundle/`.
+The standalone Next.js website can be deployed from the `website` root
+directory on Vercel.
 
 ## Keyboard Shortcuts
 
@@ -187,6 +190,7 @@ TableR/
 |       |-- database/     Database integrations
 |       `-- storage/      Local persistence
 |-- docs/screenshots/     README product screenshots
+|-- website/              Vercel-ready Next.js product website
 |-- fixtures/             Test fixtures
 `-- package.json          Frontend scripts and dependencies
 ```

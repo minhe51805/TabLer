@@ -1753,6 +1753,8 @@
 .startup-manager-topbar-icon {
   width: 16px !important;
   height: 16px !important;
+  border-radius: 4px;
+  object-fit: contain;
 }
 
 .startup-manager-controls {
@@ -2131,6 +2133,13 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
   animation: fintech-float 4s ease-in-out infinite;
   position: relative;
+}
+
+.startup-manager-brand-icon > img {
+  width: 48px;
+  height: 48px;
+  display: block;
+  border-radius: 13px;
 }
 
 /* Pulse ring effect */
@@ -3659,6 +3668,8 @@ body {
 .titlebar-brand-icon {
   width: 16px !important;
   height: 16px !important;
+  border-radius: 4px;
+  object-fit: contain;
 }
 
 .titlebar-divider {
@@ -7224,8 +7235,6 @@ body {
 
 .workspace-ready-glyph,
 .workspace-empty-glyph,
-.titlebar-brand-icon,
-.startup-manager-topbar-icon,
 .explorer-db-glyph {
   display: block;
   flex-shrink: 0;
@@ -7239,8 +7248,6 @@ body {
 }
 
 .workspace-empty-glyph,
-.titlebar-brand-icon,
-.startup-manager-topbar-icon,
 .explorer-db-glyph {
   color: var(--fintech-green);
   transform: translateY(0.5px);

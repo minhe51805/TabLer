@@ -1,3 +1,4 @@
+use crate::mcp_security::ExternalAccessPolicy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -25,6 +26,7 @@ pub enum DatabaseType {
     BigQuery,
     LibSQL,
     CloudflareD1,
+    OpenSearch,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +101,37 @@ impl Default for ConnectionConfig {
 }
 
 impl ConnectionConfig {
+    /// External integrations are denied until the connection owner explicitly opts in.
+    /// This is kept in `additional_fields` for backward-compatible saved profiles.
+    pub fn external_access_policy(&self) -> ExternalAccessPolicy {
+        match self
+            .additional_fields
+            .get("external_access")
+            .or_else(|| self.additional_fields.get("externalAccess"))
+            .map(String::as_str)
+        {
+            Some("readOnly") | Some("readonly") | Some("read_only") => {
+                ExternalAccessPolicy::ReadOnly
+            }
+            Some("readWrite") | Some("readwrite") | Some("read_write") => {
+                ExternalAccessPolicy::ReadWrite
+            }
+            _ => ExternalAccessPolicy::Blocked,
+        }
+    }
+
+    pub fn set_external_access_policy(&mut self, policy: ExternalAccessPolicy) {
+        self.additional_fields.insert(
+            "external_access".to_string(),
+            match policy {
+                ExternalAccessPolicy::Blocked => "blocked",
+                ExternalAccessPolicy::ReadOnly => "readOnly",
+                ExternalAccessPolicy::ReadWrite => "readWrite",
+            }
+            .to_string(),
+        );
+    }
+
     /// Resolve effective SSL mode: explicit `ssl_mode` takes precedence, else falls back to `use_ssl`.
     pub fn effective_ssl_mode(&self) -> SslMode {
         match self.ssl_mode {
@@ -194,7 +227,10 @@ fn resolve_env_in_string(s: &str) -> String {
             // %VAR% — Windows-style
             let start = i + 1;
             let mut end = start;
-            while end < len && chars[end] != '%' && (chars[end].is_ascii_alphanumeric() || chars[end] == '_') {
+            while end < len
+                && chars[end] != '%'
+                && (chars[end].is_ascii_alphanumeric() || chars[end] == '_')
+            {
                 end += 1;
             }
             if end < len && chars[end] == '%' && end > start {
@@ -241,7 +277,8 @@ impl ParsedConnectionUrl {
         }
 
         // Extract scheme
-        let (scheme, rest) = url.split_once("://")
+        let (scheme, rest) = url
+            .split_once("://")
             .ok_or_else(|| "Invalid URL: missing scheme (e.g., postgresql://)".to_string())?;
 
         // Strip SQLAlchemy driver suffix (e.g., "postgresql+psycopg2" -> "postgresql")
@@ -267,6 +304,7 @@ impl ParsedConnectionUrl {
             "sqlite" => DatabaseType::SQLite,
             "redis" | "rediss" => DatabaseType::Redis,
             "mongodb" => DatabaseType::MongoDB,
+            "opensearch" | "elasticsearch" => DatabaseType::OpenSearch,
             _ => return Err(format!("Unsupported database scheme: {}", scheme)),
         };
 
@@ -287,7 +325,8 @@ impl ParsedConnectionUrl {
             let (host_port, path_query) = rest.split_once('/').unwrap_or((rest, ""));
             let (host, port) = parse_host_and_port(host_port)?;
             let (database, query) = path_query.split_once('?').unwrap_or((path_query, ""));
-            let auth_token = extract_query_param(query, &["authToken", "auth_token"]).unwrap_or_default();
+            let auth_token =
+                extract_query_param(query, &["authToken", "auth_token"]).unwrap_or_default();
 
             return Ok(Self {
                 db_type,
@@ -367,29 +406,28 @@ impl ParsedConnectionUrl {
         }
 
         // Parse <user>:<credential>@host:port/database?params
-        let (auth_part, rest) = rest.split_once('@')
+        let (auth_part, rest) = rest
+            .split_once('@')
             .ok_or_else(|| "Invalid URL: missing credentials or host".to_string())?;
 
         // Parse username:password
         let (username, password) = if let Some((u, p)) = auth_part.split_once(':') {
-            (
-                url_decode(u),
-                url_decode(p),
-            )
+            (url_decode(u), url_decode(p))
         } else {
             (url_decode(auth_part), String::new())
         };
 
         // Parse host:port/database?params
-        let (host_port, path_query) = rest.split_once('/')
-            .unwrap_or((rest, ""));
+        let (host_port, path_query) = rest.split_once('/').unwrap_or((rest, ""));
 
         // Parse host and port
         let (host, port) = parse_host_and_port(host_port)?;
 
         // Parse database and query params
         let (database, use_ssl) = if let Some((db, query)) = path_query.split_once('?') {
-            let ssl = query.contains("sslmode=require") || query.contains("ssl=true") || query.contains("sslmode=verify-full");
+            let ssl = query.contains("sslmode=require")
+                || query.contains("ssl=true")
+                || query.contains("sslmode=verify-full");
             (db.to_string(), ssl)
         } else {
             (path_query.to_string(), false)
@@ -415,6 +453,7 @@ impl ParsedConnectionUrl {
             DatabaseType::BigQuery => Some(443),
             DatabaseType::LibSQL => Some(8080),
             DatabaseType::CloudflareD1 => None,
+            DatabaseType::OpenSearch => Some(9200),
         });
 
         Ok(Self {
@@ -438,8 +477,7 @@ fn url_decode(s: &str) -> String {
             let d1 = chars.next();
             let d2 = chars.next();
             match (d1, d2) {
-                (Some(h1), Some(h2))
-                if h1.is_ascii_hexdigit() && h2.is_ascii_hexdigit() => {
+                (Some(h1), Some(h2)) if h1.is_ascii_hexdigit() && h2.is_ascii_hexdigit() => {
                     let hex_str = format!("{}{}", h1, h2);
                     if let Ok(byte) = u8::from_str_radix(&hex_str, 16) {
                         result.push(byte as char);
@@ -451,8 +489,12 @@ fn url_decode(s: &str) -> String {
                 }
                 _ => {
                     result.push('%');
-                    if let Some(d) = d1 { result.push(d); }
-                    if let Some(d) = d2 { result.push(d); }
+                    if let Some(d) = d1 {
+                        result.push(d);
+                    }
+                    if let Some(d) = d2 {
+                        result.push(d);
+                    }
                 }
             }
         } else if c == '+' {
@@ -547,8 +589,16 @@ impl ConnectionConfig {
             port: parsed.port,
             username: Some(parsed.username),
             password: Some(parsed.password),
-            database: if database.is_empty() { None } else { Some(database) },
-            file_path: if parsed.db_type == DatabaseType::SQLite { Some(parsed.database) } else { None },
+            database: if database.is_empty() {
+                None
+            } else {
+                Some(database)
+            },
+            file_path: if parsed.db_type == DatabaseType::SQLite {
+                Some(parsed.database)
+            } else {
+                None
+            },
             use_ssl,
             ssl_mode: None,
             ssl_ca_cert_path: None,
@@ -583,6 +633,7 @@ impl ConnectionConfig {
             DatabaseType::BigQuery => 443,
             DatabaseType::LibSQL => 8080,
             DatabaseType::CloudflareD1 => 0,
+            DatabaseType::OpenSearch => 9200,
         }
     }
 
@@ -750,7 +801,12 @@ impl ConnectionConfig {
                     return Err("Cloudflare API token is too long".to_string());
                 }
 
-                if let Some(host) = self.host.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+                if let Some(host) = self
+                    .host
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
                     validate_network_host(host)?;
                 }
             }
@@ -960,14 +1016,21 @@ fn validate_local_file_path(
         .chars()
         .any(|ch| matches!(ch, '\0' | '\r' | '\n' | '\t'))
     {
-        return Err(format!("{engine_label} file path contains invalid control characters"));
+        return Err(format!(
+            "{engine_label} file path contains invalid control characters"
+        ));
     }
 
     if trimmed.starts_with("\\\\") {
-        return Err(format!("{engine_label} file paths cannot use remote UNC locations"));
+        return Err(format!(
+            "{engine_label} file paths cannot use remote UNC locations"
+        ));
     }
 
-    let colon_positions = trimmed.match_indices(':').map(|(index, _)| index).collect::<Vec<_>>();
+    let colon_positions = trimmed
+        .match_indices(':')
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
     if colon_positions.len() > 1 || colon_positions.iter().any(|index| *index > 1) {
         return Err(format!(
             "{engine_label} file paths cannot use URI-style or alternate data stream suffixes"
@@ -979,9 +1042,9 @@ fn validate_local_file_path(
         .components()
         .any(|component| matches!(component, Component::ParentDir))
     {
-        return Err(
-            format!("{engine_label} file path cannot contain parent directory traversal segments"),
-        );
+        return Err(format!(
+            "{engine_label} file path cannot contain parent directory traversal segments"
+        ));
     }
 
     let extension = local_path
@@ -989,7 +1052,8 @@ fn validate_local_file_path(
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase());
 
-    if !matches!(extension.as_deref(), Some(ext) if allowed_extensions.iter().any(|candidate| ext == *candidate)) {
+    if !matches!(extension.as_deref(), Some(ext) if allowed_extensions.iter().any(|candidate| ext == *candidate))
+    {
         let formatted_extensions = allowed_extensions
             .iter()
             .map(|ext| format!(".{ext}"))
@@ -1031,13 +1095,17 @@ fn validate_local_file_path(
         }
 
         if metadata.is_dir() {
-            return Err(format!("{engine_label} file path must point to a file, not a directory"));
+            return Err(format!(
+                "{engine_label} file path must point to a file, not a directory"
+            ));
         }
     }
 
     if let Some(parent_dir) = resolved_path.parent() {
         if parent_dir.exists() && !parent_dir.is_dir() {
-            return Err(format!("{engine_label} file path must use a valid parent directory"));
+            return Err(format!(
+                "{engine_label} file path must use a valid parent directory"
+            ));
         }
     }
 
@@ -1053,6 +1121,32 @@ pub struct QueryResult {
     pub query: String,
     pub sandboxed: bool,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum QueryParameterType {
+    Text,
+    Integer,
+    Decimal,
+    Boolean,
+    Json,
+    Null,
+}
+
+impl Default for QueryParameterType {
+    fn default() -> Self {
+        Self::Text
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryParameter {
+    pub name: String,
+    pub value: serde_json::Value,
+    #[serde(default)]
+    pub data_type: QueryParameterType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1178,14 +1272,35 @@ pub struct LookupValue {
 #[cfg(test)]
 mod tests {
     use super::{ConnectionConfig, DatabaseType, ParsedConnectionUrl};
+    use crate::mcp_security::ExternalAccessPolicy;
     use std::collections::HashMap;
+
+    #[test]
+    fn external_access_is_blocked_until_a_connection_opts_in() {
+        let mut config = ConnectionConfig::default();
+        assert_eq!(
+            config.external_access_policy(),
+            ExternalAccessPolicy::Blocked
+        );
+        config.set_external_access_policy(ExternalAccessPolicy::ReadOnly);
+        assert_eq!(
+            config.external_access_policy(),
+            ExternalAccessPolicy::ReadOnly
+        );
+        config.set_external_access_policy(ExternalAccessPolicy::ReadWrite);
+        assert_eq!(
+            config.external_access_policy(),
+            ExternalAccessPolicy::ReadWrite
+        );
+    }
 
     #[test]
     fn parses_redis_url_with_password_only() {
         let placeholder_credential = "example-pass";
-        let parsed = ParsedConnectionUrl::parse(
-            &format!("redis://:{}@127.0.0.1:6379/2", placeholder_credential),
-        )
+        let parsed = ParsedConnectionUrl::parse(&format!(
+            "redis://:{}@127.0.0.1:6379/2",
+            placeholder_credential
+        ))
         .unwrap();
         assert_eq!(parsed.db_type, DatabaseType::Redis);
         assert_eq!(parsed.host, "127.0.0.1");
@@ -1227,12 +1342,10 @@ mod tests {
     #[test]
     fn parses_mongodb_url_with_auth_source() {
         let placeholder_credential = "example-pass";
-        let parsed = ParsedConnectionUrl::parse(
-            &format!(
-                "mongodb://app_user:{}@127.0.0.1:27017/appdb?authSource=admin&tls=true",
-                placeholder_credential
-            ),
-        )
+        let parsed = ParsedConnectionUrl::parse(&format!(
+            "mongodb://app_user:{}@127.0.0.1:27017/appdb?authSource=admin&tls=true",
+            placeholder_credential
+        ))
         .unwrap();
         assert_eq!(parsed.db_type, DatabaseType::MongoDB);
         assert_eq!(parsed.host, "127.0.0.1");
@@ -1245,8 +1358,8 @@ mod tests {
 
     #[test]
     fn parses_mongodb_srv_url() {
-        let parsed = ParsedConnectionUrl::parse("mongodb+srv://cluster.example.mongodb.net/admin")
-            .unwrap();
+        let parsed =
+            ParsedConnectionUrl::parse("mongodb+srv://cluster.example.mongodb.net/admin").unwrap();
         assert_eq!(parsed.db_type, DatabaseType::MongoDB);
         assert_eq!(parsed.host, "cluster.example.mongodb.net");
         assert_eq!(parsed.port, Some(27017));
@@ -1257,9 +1370,10 @@ mod tests {
     #[test]
     fn parses_cassandra_url() {
         let placeholder_credential = "example-pass";
-        let parsed = ParsedConnectionUrl::parse(
-            &format!("cassandra://cassandra:{}@127.0.0.1:9042/appks", placeholder_credential),
-        )
+        let parsed = ParsedConnectionUrl::parse(&format!(
+            "cassandra://cassandra:{}@127.0.0.1:9042/appks",
+            placeholder_credential
+        ))
         .unwrap();
         assert_eq!(parsed.db_type, DatabaseType::Cassandra);
         assert_eq!(parsed.host, "127.0.0.1");
@@ -1273,8 +1387,9 @@ mod tests {
     #[test]
     fn parses_sqlalchemy_style_urls() {
         // postgresql+driver:// scheme should strip +driver suffix
-        let parsed = ParsedConnectionUrl::parse("postgresql+psycopg2://user:pass@localhost:5432/mydb")
-            .unwrap();
+        let parsed =
+            ParsedConnectionUrl::parse("postgresql+psycopg2://user:pass@localhost:5432/mydb")
+                .unwrap();
         assert_eq!(parsed.db_type, DatabaseType::PostgreSQL);
         assert_eq!(parsed.host, "localhost");
         assert_eq!(parsed.port, Some(5432));
@@ -1283,8 +1398,8 @@ mod tests {
         assert_eq!(parsed.database, "mydb");
 
         // mysql+aiomysql://
-        let parsed = ParsedConnectionUrl::parse("mysql+aiomysql://root:secret@db.example.com/mydb")
-            .unwrap();
+        let parsed =
+            ParsedConnectionUrl::parse("mysql+aiomysql://root:secret@db.example.com/mydb").unwrap();
         assert_eq!(parsed.db_type, DatabaseType::MySQL);
         assert_eq!(parsed.host, "db.example.com");
         assert_eq!(parsed.port, Some(3306));
@@ -1293,8 +1408,10 @@ mod tests {
         assert_eq!(parsed.database, "mydb");
 
         // mssql+pymssql://
-        let parsed = ParsedConnectionUrl::parse("mssql+pymssql://sa:Password123@192.168.1.100:1433/TablerDB")
-            .unwrap();
+        let parsed = ParsedConnectionUrl::parse(
+            "mssql+pymssql://sa:Password123@192.168.1.100:1433/TablerDB",
+        )
+        .unwrap();
         assert_eq!(parsed.db_type, DatabaseType::MSSQL);
         assert_eq!(parsed.host, "192.168.1.100");
         assert_eq!(parsed.port, Some(1433));
@@ -1306,12 +1423,10 @@ mod tests {
     #[test]
     fn parses_snowflake_url() {
         let placeholder_credential = "example-snowflake-credential";
-        let parsed = ParsedConnectionUrl::parse(
-            &format!(
-                "snowflake://token_user:{}@acme.us-east-1.snowflakecomputing.com:443/analytics",
-                placeholder_credential
-            ),
-        )
+        let parsed = ParsedConnectionUrl::parse(&format!(
+            "snowflake://token_user:{}@acme.us-east-1.snowflakecomputing.com:443/analytics",
+            placeholder_credential
+        ))
         .unwrap();
         assert_eq!(parsed.db_type, DatabaseType::Snowflake);
         assert_eq!(parsed.host, "acme.us-east-1.snowflakecomputing.com");

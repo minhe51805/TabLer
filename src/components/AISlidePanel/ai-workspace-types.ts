@@ -1,8 +1,9 @@
 import type { SqlRiskAnalysis } from "./AISlidePanelUtils";
+import type { AIRequestErrorCode } from "../../utils/ai-request-errors";
 
 export type AIWorkspaceBubbleKind = "assistant" | "result" | "error";
 
-export type AIWorkspaceBubbleStatus = "loading" | "ready" | "error";
+export type AIWorkspaceBubbleStatus = "loading" | "ready" | "partial" | "cancelled" | "error";
 export type AIWorkspaceInteractionMode = "prompt" | "edit" | "agent";
 
 export interface AIWorkspacePointerState {
@@ -28,10 +29,10 @@ export function getDefaultAIWorkspaceInteractionMode(schemaContextAllowed?: bool
 }
 
 /**
- * Controls how much an autonomous agent can run without asking the user first.
+ * Controls how eagerly an autonomous agent starts generated SQL.
  * - "review": always pause for approval before any execution.
  * - "smart": auto-run safe read-only SQL, ask only for writes/high-risk SQL (default).
- * - "full": run everything the agent proposes without prompting.
+ * - "full": auto-start every proposal, but writes and schema changes still require confirmation.
  */
 export type AIWorkspaceAgentAutonomy = "review" | "smart" | "full";
 
@@ -85,4 +86,7 @@ export interface AIWorkspaceBubbleData {
   reasoning?: string;
   /** Live trace of autonomous agent tool steps; undefined outside agent mode. */
   agentSteps?: AIWorkspaceAgentStep[];
+  /** Stable request failure category used for retry and status presentation. */
+  requestErrorCode?: AIRequestErrorCode;
+  retryable?: boolean;
 }

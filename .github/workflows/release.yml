@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build and publish (for example v0.1.5)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,27 +17,104 @@ permissions:
 env:
   NODE_VERSION: "20"
   MSYS_NO_PATHCONV: "1"
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
+  verify:
+    name: Verify release source
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Require release credentials
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          test -n "$APPLE_CERTIFICATE"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_SIGNING_IDENTITY"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_PASSWORD"
+          test -n "$APPLE_TEAM_ID"
+          test -n "$WINDOWS_CERTIFICATE_BASE64"
+          test -n "$WINDOWS_CERTIFICATE_PASSWORD"
+          test -n "$WINDOWS_CERTIFICATE_THUMBPRINT"
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          test -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Linux test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils libfuse2 file
+
+      - name: Install dependencies from lockfile
+        run: npm ci --legacy-peer-deps
+
+      - name: Validate release contract and plugin registry
+        run: |
+          node scripts/check-release-contract.mjs --tag "$RELEASE_TAG"
+          node scripts/build-plugin-registry.mjs
+          git diff --exit-code -- plugins plugin-registry.json
+
+      - name: Validate frontend and Rust
+        run: |
+          npm run check:frontend
+          npm run check:tauri-target
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo fmt --manifest-path src-tauri/mcp-stdio/Cargo.toml --check
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+          cargo check --locked --manifest-path src-tauri/mcp-stdio/Cargo.toml
+
   build:
+    needs: verify
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: "macos-latest"
-            args: ""
+            args: "--config src-tauri/tauri.release.conf.json"
             target: "macos"
             cc: "clang"
             cxx: "clang++"
             cxxflags: ""
           - platform: "ubuntu-22.04"
-            args: ""
+            args: "--config src-tauri/tauri.release.conf.json"
             target: "linux"
             cc: "gcc"
             cxx: "g++"
             cxxflags: ""
           - platform: "windows-latest"
-            args: ""
+            args: "--config src-tauri/tauri.release.conf.json --config src-tauri/tauri.release.windows.conf.json"
             target: "windows"
             cc: "clang-cl"
             cxx: "clang-cl"
@@ -41,8 +123,10 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -55,28 +139,200 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install Linux dependencies
         if: matrix.target == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils libfuse2 file
 
       - name: Install npm dependencies
         run: npm ci --legacy-peer-deps
 
+      - name: Require macOS signing and notarization credentials
+        if: matrix.target == 'macos'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          test -n "$APPLE_CERTIFICATE"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_SIGNING_IDENTITY"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_PASSWORD"
+          test -n "$APPLE_TEAM_ID"
+
+      - name: Require Windows signing credentials
+        if: matrix.target == 'windows'
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD) -or [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_THUMBPRINT)) { throw "Windows signing secrets are required for releases." }
+
+      - name: Require updater signing credentials
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          test -n "$TAURI_SIGNING_PRIVATE_KEY"
+          test -n "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+
+      - name: Import Windows signing certificate
+        if: matrix.target == 'windows'
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        shell: pwsh
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP "tabler-release-signing.pfx"
+          $encodedCertificate = $env:WINDOWS_CERTIFICATE_BASE64 -replace '-----BEGIN [^-]+-----', '' -replace '-----END [^-]+-----', '' -replace '\s', ''
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($encodedCertificate))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          if ($certificate.Thumbprint -ne $env:WINDOWS_CERTIFICATE_THUMBPRINT.Replace(" ", "")) { throw "Imported certificate does not match WINDOWS_CERTIFICATE_THUMBPRINT." }
+          @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $certificate.Thumbprint
+                digestAlgorithm = "sha256"
+                timestampUrl = "http://timestamp.digicert.com"
+              }
+            }
+          } | ConvertTo-Json -Depth 5 | Set-Content -Path src-tauri/tauri.release.windows.conf.json -Encoding utf8
+
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS: use "-" to skip signing when no certificate configured
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
           CXXFLAGS: ${{ matrix.target == 'windows' && format('{0} /FI{1}/src-tauri/src/clang_compat.h', matrix.cxxflags, github.workspace) || matrix.cxxflags }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "TableR ${{ github.ref_name }}"
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: "TableR ${{ env.RELEASE_TAG }}"
           releaseBody: "See the assets to download this version of TableR."
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: true
+
+      - name: Smoke check Linux bundles
+        if: matrix.target == 'linux'
+        run: |
+          appimage="$(find src-tauri/target/release/bundle -type f -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          test -s "$appimage"
+          test -s "$appimage.sig"
+          chmod +x "$appimage"
+          "$appimage" --appimage-extract >/dev/null
+          test -x squashfs-root/AppRun
+          test -n "$(find src-tauri/target/release/bundle -type f -name '*.deb' -print -quit)"
+          test -n "$(find src-tauri/target/release/bundle -type f -name '*.rpm' -print -quit)"
+
+      - name: Smoke check Windows bundles
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          $bundles = Get-ChildItem -Path src-tauri/target/release/bundle -Recurse -File -Include *.msi,*.exe
+          if ($bundles.Count -eq 0) { throw "No Windows installer bundle was produced." }
+          foreach ($bundle in $bundles) {
+            $signature = Get-AuthenticodeSignature -FilePath $bundle.FullName
+            if ($signature.Status -ne "Valid") { throw "Unsigned or invalid Windows bundle: $($bundle.FullName) ($($signature.Status))" }
+            if (-not (Test-Path -LiteralPath "$($bundle.FullName).sig" -PathType Leaf)) { throw "Missing updater signature: $($bundle.FullName).sig" }
+          }
+
+      - name: Smoke check notarized macOS bundles
+        if: matrix.target == 'macos'
+        run: |
+          app="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          dmg="$(find src-tauri/target/release/bundle -type f -name '*.dmg' -print -quit)"
+          archive="$(find src-tauri/target/release/bundle -type f -name '*.app.tar.gz' -print -quit)"
+          test -n "$app"
+          test -n "$dmg"
+          test -n "$archive"
+          test -s "$archive.sig"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+          xcrun stapler validate "$app"
+          xcrun stapler validate "$dmg"
+
+      - name: Remove Windows signing material
+        if: always() && matrix.target == 'windows'
+        env:
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        shell: pwsh
+        run: |
+          $thumbprint = $env:WINDOWS_CERTIFICATE_THUMBPRINT.Replace(" ", "")
+          if (-not [string]::IsNullOrWhiteSpace($thumbprint)) {
+            $storePath = "Cert:\CurrentUser\My\$thumbprint"
+            if (Test-Path -LiteralPath $storePath) { Remove-Item -LiteralPath $storePath -Force }
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP "tabler-release-signing.pfx"
+          Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+
+  publish:
+    name: Publish verified release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Build plugin registry
+        run: node scripts/build-plugin-registry.mjs
+
+      - name: Upload plugin registry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$RELEASE_TAG" plugin-registry.json --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Validate updater metadata from draft assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir release-assets
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets
+          node scripts/validate-updater-manifest.mjs --file release-assets/latest.json --tag "$RELEASE_TAG" --assets release-assets
+
+      - name: Publish release checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd release-assets
+          checksum_file="$(mktemp)"
+          find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > "$checksum_file"
+          mv "$checksum_file" SHA256SUMS.txt
+          test -s SHA256SUMS.txt
+          gh release upload "$RELEASE_TAG" SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Publish the verified draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

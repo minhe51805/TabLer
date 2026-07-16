@@ -5,9 +5,7 @@ use keyring::Error as KeyringError;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{
-    Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
-};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Cross-platform connection storage using JSON files with in-memory caching.
 /// Replaces macOS Keychain — works on Windows, macOS, and Linux.
@@ -95,7 +93,7 @@ impl ConnectionStorage {
             entry
                 .set_password(password)
                 .context("Failed to store the connection password in secure storage")?;
-            
+
             // Update password cache
             let mut pw_cache = self.password_cache_write()?;
             pw_cache.insert(config.id.clone(), password.clone());

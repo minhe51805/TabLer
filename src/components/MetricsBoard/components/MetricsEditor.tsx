@@ -2,7 +2,7 @@ import Editor, { type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { Trash2 } from "lucide-react";
 import { useEffect, useRef } from "react";
-import { useAppStore } from "../../../stores/appStore";
+import { useConnectionStore } from "../../../stores/connectionStore";
 import type { MetricsWidgetDefinition, MetricsWidgetType } from "../../../types";
 import {
   getMetricsRefreshSelectOptions,
@@ -45,7 +45,7 @@ export function MetricsEditor({
 }: MetricsEditorProps) {
   const { t } = useI18n();
   const metricsEditorCompletionRef = useRef<{ dispose: () => void } | null>(null);
-  const tables = useAppStore((state) => state.tables);
+  const tables = useConnectionStore((state) => state.tables);
   const metricsRefreshOptions = getMetricsRefreshSelectOptions();
   const metricsSizeOptions = getMetricsSizeSelectOptions();
 

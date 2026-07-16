@@ -13,7 +13,7 @@ export const STARTUP_CONNECTION_LAYOUT_STORAGE_KEY =
 
 // ─── App Info ─────────────────────────────────────────────────────────────────
 
-export const APP_VERSION = "0.1.4";
+export const APP_VERSION = "0.1.4b";
 export const APP_DEVELOPER = "TabLer Team";
 
 // ─── Environment Badge ───────────────────────────────────────────────────────

@@ -68,6 +68,7 @@ export const en = {
   "menu.item.focusExplorerSearch": "Focus Explorer Search",
   "menu.item.openExplorer": "Open Explorer",
   "menu.item.pluginManager": "Plugin Manager",
+  "menu.item.externalIntegrations": "External integrations",
   "menu.item.metrics": "Metrics",
   "menu.item.queryHistory": "Query History",
   "menu.item.aboutTableR": "About TableR",
@@ -271,7 +272,8 @@ export const en = {
   "metrics.widget.loading": "Loading...",
   "metrics.widget.noData": "No data",
   "metrics.widget.queryNeedsSeries": "Query needs a label and a numeric value.",
-  "metrics.validation.addQuery": "Add a read-only SQL query to load this widget.",
+  "metrics.validation.addQuery":
+    "Add a read-only SQL query to load this widget.",
   "metrics.validation.singleStatement":
     "Metrics widgets only support a single read-only statement.",
   "metrics.validation.readOnlyOnly":
@@ -282,6 +284,10 @@ export const en = {
   "metrics.widget.issue": "Issue",
   "metrics.widget.refreshing": "Refreshing",
   "metrics.widget.live": "Live",
+  "metrics.widget.openResult": "Open result in workspace",
+  "metrics.widget.openSourceSql": "Open source SQL",
+  "workspace.bundle.export": "Export workspace bundle",
+  "workspace.bundle.import": "Import workspace bundle",
   "metrics.context.add": "Add",
   "metrics.editor.kicker": "Widget",
   "metrics.editor.refreshRate": "Refresh rate",
@@ -296,6 +302,6 @@ export const en = {
   "tabs.hideResults": "Hide results",
   "tabs.showResults": "Show results",
   "tabs.readyToExecute": "Press Ctrl+Enter to run",
-  "tabs.noSqlToExecute": "Nothing to run yet. Type a query or command first, then press Ctrl+Enter.",
+  "tabs.noSqlToExecute":
+    "Nothing to run yet. Type a query or command first, then press Ctrl+Enter.",
 } as const;
-

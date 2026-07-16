@@ -6,8 +6,8 @@ use crate::database::sqlite::SqliteDriver;
 use crate::storage::connection_storage::ConnectionStorage;
 use crate::utils::rate_limiter::ConnectionAttemptLimiter;
 use rfd::FileDialog;
-use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use sqlx::mysql::{MySqlConnectOptions, MySqlConnection, MySqlSslMode};
+use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use sqlx::{ConnectOptions, Connection, Executor};
 use std::path::PathBuf;
 use tauri::{AppHandle, State};
@@ -31,9 +31,24 @@ where
 }
 
 fn connection_rate_limit_key(config: &ConnectionConfig) -> String {
-    let host = config.host.as_deref().unwrap_or("").trim().to_ascii_lowercase();
-    let user = config.username.as_deref().unwrap_or("").trim().to_ascii_lowercase();
-    let database = config.database.as_deref().unwrap_or("").trim().to_ascii_lowercase();
+    let host = config
+        .host
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let user = config
+        .username
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let database = config
+        .database
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     format!("{:?}|{}|{}|{}", config.db_type, host, user, database)
 }
 
@@ -57,10 +72,14 @@ fn connection_engine_label(db_type: DatabaseType) -> &'static str {
         DatabaseType::BigQuery => "BigQuery",
         DatabaseType::LibSQL => "LibSQL",
         DatabaseType::CloudflareD1 => "Cloudflare D1",
+        DatabaseType::OpenSearch => "OpenSearch",
     }
 }
 
-fn format_connection_runtime_error(config: &ConnectionConfig, error: impl std::fmt::Display) -> String {
+fn format_connection_runtime_error(
+    config: &ConnectionConfig,
+    error: impl std::fmt::Display,
+) -> String {
     let engine = connection_engine_label(config.db_type);
     let raw = error.to_string();
     let normalized = raw.to_ascii_lowercase();
@@ -167,7 +186,8 @@ fn format_connection_lookup_error(error: impl std::fmt::Display) -> String {
     if normalized.contains("not found") || normalized.contains("connect first") {
         "The selected connection is not active. Please reconnect and try again.".to_string()
     } else {
-        "The requested connection is not available right now. Please reconnect and try again.".to_string()
+        "The requested connection is not available right now. Please reconnect and try again."
+            .to_string()
     }
 }
 
@@ -230,12 +250,14 @@ fn sanitize_sqlite_file_stem(name: &str) -> String {
 fn default_sqlite_database_path(database_name: &str) -> Result<PathBuf, String> {
     let base_dir = dirs::data_local_dir()
         .or_else(dirs::data_dir)
-        .ok_or_else(|| "Could not locate a local application data directory for SQLite.".to_string())?;
+        .ok_or_else(|| {
+            "Could not locate a local application data directory for SQLite.".to_string()
+        })?;
 
-    Ok(base_dir
-        .join("TableR")
-        .join("databases")
-        .join(format!("{}.sqlite", sanitize_sqlite_file_stem(database_name))))
+    Ok(base_dir.join("TableR").join("databases").join(format!(
+        "{}.sqlite",
+        sanitize_sqlite_file_stem(database_name)
+    )))
 }
 
 async fn create_local_sqlite_database(
@@ -255,11 +277,12 @@ async fn create_local_sqlite_database(
                 .unwrap_or_else(|_| "local-database.sqlite".to_string())
         });
 
-    let existed_before = if resolved_file_path == ":memory:" || resolved_file_path.starts_with("sqlite:") {
-        false
-    } else {
-        PathBuf::from(&resolved_file_path).exists()
-    };
+    let existed_before =
+        if resolved_file_path == ":memory:" || resolved_file_path.starts_with("sqlite:") {
+            false
+        } else {
+            PathBuf::from(&resolved_file_path).exists()
+        };
 
     let driver = SqliteDriver::connect(&resolved_file_path)
         .await
@@ -272,10 +295,9 @@ async fn create_local_sqlite_database(
             .map_err(|_| format_local_bootstrap_error("SQLite", "applying bootstrap SQL"))?;
     }
 
-    driver
-        .disconnect()
-        .await
-        .map_err(|_| "SQLite local bootstrap finished, but the database file did not close cleanly.".to_string())?;
+    driver.disconnect().await.map_err(|_| {
+        "SQLite local bootstrap finished, but the database file did not close cleanly.".to_string()
+    })?;
 
     Ok(if existed_before {
         if bootstrap_statements.is_empty() {
@@ -338,7 +360,12 @@ async fn create_local_postgres_database(
         .bind(database_name)
         .fetch_optional(&pool)
         .await
-        .map_err(|_| format_local_bootstrap_error("PostgreSQL", "checking whether the database already exists"))?
+        .map_err(|_| {
+            format_local_bootstrap_error(
+                "PostgreSQL",
+                "checking whether the database already exists",
+            )
+        })?
         .is_some();
 
     if !exists {
@@ -372,17 +399,18 @@ async fn create_local_postgres_database(
             .acquire_timeout(CONNECTION_TIMEOUT)
             .connect_with(bootstrap_options)
             .await
-            .map_err(|_| format_local_bootstrap_error("PostgreSQL", "opening the new database for bootstrap"))?;
+            .map_err(|_| {
+                format_local_bootstrap_error("PostgreSQL", "opening the new database for bootstrap")
+            })?;
 
-        let mut tx = bootstrap_pool
-            .begin()
-            .await
-            .map_err(|_| format_local_bootstrap_error("PostgreSQL", "starting the bootstrap transaction"))?;
+        let mut tx = bootstrap_pool.begin().await.map_err(|_| {
+            format_local_bootstrap_error("PostgreSQL", "starting the bootstrap transaction")
+        })?;
 
         for statement in bootstrap_statements {
-            tx.execute(statement.as_str())
-                .await
-                .map_err(|_| format_local_bootstrap_error("PostgreSQL", "applying bootstrap SQL"))?;
+            tx.execute(statement.as_str()).await.map_err(|_| {
+                format_local_bootstrap_error("PostgreSQL", "applying bootstrap SQL")
+            })?;
         }
 
         tx.commit()
@@ -447,7 +475,9 @@ async fn create_local_mysql_database(
     .bind(database_name)
     .fetch_optional(&mut admin_connection)
     .await
-    .map_err(|_| format_local_bootstrap_error("MySQL", "checking whether the database already exists"))?
+    .map_err(|_| {
+        format_local_bootstrap_error("MySQL", "checking whether the database already exists")
+    })?
     .is_some();
 
     if !exists {
@@ -460,10 +490,10 @@ async fn create_local_mysql_database(
             .await
             .map_err(|_| format_local_bootstrap_error("MySQL", "creating the new database"))?;
     }
-    admin_connection
-        .close()
-        .await
-        .map_err(|_| "MySQL local bootstrap finished, but the admin connection did not close cleanly.".to_string())?;
+    admin_connection.close().await.map_err(|_| {
+        "MySQL local bootstrap finished, but the admin connection did not close cleanly."
+            .to_string()
+    })?;
 
     if !bootstrap_statements.is_empty() {
         let mut bootstrap_options = MySqlConnectOptions::new()
@@ -482,12 +512,13 @@ async fn create_local_mysql_database(
 
         let mut bootstrap_connection = MySqlConnection::connect_with(&bootstrap_options)
             .await
-            .map_err(|_| format_local_bootstrap_error("MySQL", "opening the new database for bootstrap"))?;
+            .map_err(|_| {
+                format_local_bootstrap_error("MySQL", "opening the new database for bootstrap")
+            })?;
 
-        let mut tx = bootstrap_connection
-            .begin()
-            .await
-            .map_err(|_| format_local_bootstrap_error("MySQL", "starting the bootstrap transaction"))?;
+        let mut tx = bootstrap_connection.begin().await.map_err(|_| {
+            format_local_bootstrap_error("MySQL", "starting the bootstrap transaction")
+        })?;
 
         for statement in bootstrap_statements {
             tx.execute(statement.as_str())
@@ -527,8 +558,12 @@ pub async fn connect_database(
     config.resolve_env_vars();
     config.fill_generated_name();
     // Validate connection config before attempting to connect
-    config.validate().map_err(|e| format!("Invalid connection config: {}", e))?;
-    connection_rate_limiter.check(&connection_rate_limit_key(&config)).await?;
+    config
+        .validate()
+        .map_err(|e| format!("Invalid connection config: {}", e))?;
+    connection_rate_limiter
+        .check(&connection_rate_limit_key(&config))
+        .await?;
 
     timeout(CONNECTION_TIMEOUT, db_manager.connect(&config))
         .await
@@ -545,11 +580,12 @@ pub async fn connect_database(
     })
     .await
     {
-        let disconnect_message = match timeout(DISCONNECT_TIMEOUT, db_manager.disconnect(&config.id)).await {
-            Ok(Ok(())) => String::new(),
-            Ok(Err(_)) => " Cleanup failed while rolling back the live connection.".to_string(),
-            Err(_) => " Cleanup timed out.".to_string(),
-        };
+        let disconnect_message =
+            match timeout(DISCONNECT_TIMEOUT, db_manager.disconnect(&config.id)).await {
+                Ok(Ok(())) => String::new(),
+                Ok(Err(_)) => " Cleanup failed while rolling back the live connection.".to_string(),
+                Err(_) => " Cleanup timed out.".to_string(),
+            };
 
         return Err(format!(
             "Failed to save the connection profile. The live connection was rolled back.{}",
@@ -579,8 +615,12 @@ pub async fn test_connection(
     config.resolve_env_vars();
     config.fill_generated_name();
     // Validate connection config before testing
-    config.validate().map_err(|e| format!("Invalid connection config: {}", e))?;
-    connection_rate_limiter.check(&format!("test|{}", connection_rate_limit_key(&config))).await?;
+    config
+        .validate()
+        .map_err(|e| format!("Invalid connection config: {}", e))?;
+    connection_rate_limiter
+        .check(&format!("test|{}", connection_rate_limit_key(&config)))
+        .await?;
 
     let temp_manager = DatabaseManager::new();
     timeout(CONNECTION_TIMEOUT, temp_manager.connect(&config))
@@ -637,7 +677,9 @@ pub async fn create_local_database(
     config
         .validate()
         .map_err(|e| format!("Invalid connection config: {e}"))?;
-    connection_rate_limiter.check(&format!("bootstrap|{}", connection_rate_limit_key(&config))).await?;
+    connection_rate_limiter
+        .check(&format!("bootstrap|{}", connection_rate_limit_key(&config)))
+        .await?;
 
     let requested_database = database_name.trim();
     if requested_database.is_empty() {
@@ -661,7 +703,9 @@ pub async fn create_local_database(
         .ok_or_else(|| "Host is required for local database creation.".to_string())?;
 
     if !is_local_host(host) {
-        return Err("Local database creation is only enabled for localhost or 127.0.0.1.".to_string());
+        return Err(
+            "Local database creation is only enabled for localhost or 127.0.0.1.".to_string(),
+        );
     }
 
     match config.db_type {
@@ -671,14 +715,12 @@ pub async fn create_local_database(
         )
         .await
         .map_err(|_| "Local PostgreSQL bootstrap timed out after 60 seconds.".to_string())?,
-        DatabaseType::MySQL | DatabaseType::MariaDB => {
-            timeout(
-                BOOTSTRAP_TIMEOUT,
-                create_local_mysql_database(&config, requested_database, &bootstrap_statements),
-            )
-            .await
-            .map_err(|_| "Local MySQL bootstrap timed out after 60 seconds.".to_string())?
-        }
+        DatabaseType::MySQL | DatabaseType::MariaDB => timeout(
+            BOOTSTRAP_TIMEOUT,
+            create_local_mysql_database(&config, requested_database, &bootstrap_statements),
+        )
+        .await
+        .map_err(|_| "Local MySQL bootstrap timed out after 60 seconds.".to_string())?,
         _ => Err(format!(
             "{:?} local database bootstrap is not wired into this build yet.",
             config.db_type
@@ -711,7 +753,9 @@ pub async fn pick_sqlite_database_path(database_name: String) -> Result<Option<S
         .map(|value| value.to_path_buf())
         .or_else(dirs::document_dir)
         .or_else(dirs::home_dir)
-        .ok_or_else(|| "Could not locate a starting directory for the SQLite save dialog.".to_string())?;
+        .ok_or_else(|| {
+            "Could not locate a starting directory for the SQLite save dialog.".to_string()
+        })?;
 
     let selected = FileDialog::new()
         .set_directory(directory)
@@ -760,7 +804,9 @@ pub async fn connect_saved_connection(
     })
     .await?;
     config.resolve_env_vars();
-    connection_rate_limiter.check(&format!("saved|{}", connection_rate_limit_key(&config))).await?;
+    connection_rate_limiter
+        .check(&format!("saved|{}", connection_rate_limit_key(&config)))
+        .await?;
 
     timeout(CONNECTION_TIMEOUT, db_manager.connect(&config))
         .await

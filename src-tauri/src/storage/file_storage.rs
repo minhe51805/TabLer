@@ -41,11 +41,17 @@ impl StorageFileLock {
 
         if exclusive {
             file.lock_exclusive().with_context(|| {
-                format!("Failed to acquire exclusive storage lock '{}'", lock_path.display())
+                format!(
+                    "Failed to acquire exclusive storage lock '{}'",
+                    lock_path.display()
+                )
             })?;
         } else {
             file.lock_shared().with_context(|| {
-                format!("Failed to acquire shared storage lock '{}'", lock_path.display())
+                format!(
+                    "Failed to acquire shared storage lock '{}'",
+                    lock_path.display()
+                )
             })?;
         }
 
@@ -71,9 +77,7 @@ where
             Ok(items) => return Ok(items),
             Err(primary_error) if backup_path.exists() => {
                 return read_json_vec::<T>(&backup_path, parse_context).with_context(|| {
-                    format!(
-                        "{parse_context} (primary file was unreadable: {primary_error})"
-                    )
+                    format!("{parse_context} (primary file was unreadable: {primary_error})")
                 });
             }
             Err(primary_error) => return Err(primary_error),
@@ -92,17 +96,13 @@ fn read_json_vec<T>(path: &Path, parse_context: &str) -> Result<Vec<T>>
 where
     T: DeserializeOwned,
 {
-    let content = fs::read_to_string(path).with_context(|| {
-        format!("Failed to read storage file '{}'", path.display())
-    })?;
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read storage file '{}'", path.display()))?;
 
     serde_json::from_str(&content).with_context(|| parse_context.to_string())
 }
 
-pub fn read_json_map_with_backup<K, V>(
-    path: &Path,
-    parse_context: &str,
-) -> Result<HashMap<K, V>>
+pub fn read_json_map_with_backup<K, V>(path: &Path, parse_context: &str) -> Result<HashMap<K, V>>
 where
     K: DeserializeOwned + std::hash::Hash + Eq,
     V: DeserializeOwned,
@@ -115,9 +115,7 @@ where
             Ok(items) => return Ok(items),
             Err(primary_error) if backup_path.exists() => {
                 return read_json_map::<K, V>(&backup_path, parse_context).with_context(|| {
-                    format!(
-                        "{parse_context} (primary file was unreadable: {primary_error})"
-                    )
+                    format!("{parse_context} (primary file was unreadable: {primary_error})")
                 });
             }
             Err(primary_error) => return Err(primary_error),
@@ -137,9 +135,8 @@ where
     K: DeserializeOwned + std::hash::Hash + Eq,
     V: DeserializeOwned,
 {
-    let content = fs::read_to_string(path).with_context(|| {
-        format!("Failed to read storage file '{}'", path.display())
-    })?;
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read storage file '{}'", path.display()))?;
 
     serde_json::from_str(&content).with_context(|| parse_context.to_string())
 }

@@ -1,4 +1,5 @@
 import type { ColumnDraft } from "../ColumnEditor";
+import type { DatabaseType } from "../../../types";
 
 export type WizardDialect = "postgres" | "mysql" | "sqlite";
 
@@ -148,26 +149,6 @@ export function buildViewSql(
     error: "",
   };
 }
-
-export type DatabaseType =
-  | "mysql"
-  | "mariadb"
-  | "sqlite"
-  | "duckdb"
-  | "cassandra"
-  | "cockroachdb"
-  | "snowflake"
-  | "postgresql"
-  | "greenplum"
-  | "redshift"
-  | "mssql"
-  | "redis"
-  | "mongodb"
-  | "vertica"
-  | "clickhouse"
-  | "bigquery"
-  | "libsql"
-  | "cloudflare_d1";
 
 export function buildTriggerSql(
   dialect: WizardDialect,

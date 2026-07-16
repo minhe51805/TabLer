@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SafeModeLevel, SafeModeSettings } from "../types/safe-mode";
+import type { ConnectionEnvironment, SafeModeLevel, SafeModeSettings } from "../types/safe-mode";
 import { isBlockedAtLevel, requiresConfirmationAtLevel } from "../types/safe-mode";
 
 const STORAGE_KEY = "tabler.safe-mode.v1";
@@ -7,6 +7,7 @@ const STORAGE_KEY = "tabler.safe-mode.v1";
 const DEFAULT_SETTINGS: SafeModeSettings = {
   globalLevel: 1,
   connectionOverrides: [],
+  connectionEnvironments: {},
 };
 
 function loadSettings(): SafeModeSettings {
@@ -51,6 +52,8 @@ interface SafeModeState {
   isBlocked: (sql: string, connectionId?: string) => boolean;
   needsConfirmation: (sql: string, connectionId?: string) => boolean;
   getEffectiveLevelForConnection: (connectionId: string) => SafeModeLevel;
+  getConnectionEnvironment: (connectionId: string) => ConnectionEnvironment;
+  setConnectionEnvironment: (connectionId: string, environment: ConnectionEnvironment) => void;
 
   setAdminPassword: (password: string) => void;
   clearAdminPassword: () => void;
@@ -77,7 +80,8 @@ export const useSafeModeStore = create<SafeModeState>((set, get) => {
       const { settings } = get();
       if (!connectionId) return settings.globalLevel;
       const override = settings.connectionOverrides.find((o) => o.connectionId === connectionId);
-      return override?.level ?? settings.globalLevel;
+      if (override) return override.level;
+      return settings.connectionEnvironments?.[connectionId] === "production" ? 4 : settings.globalLevel;
     },
 
     setGlobalLevel: (level: SafeModeLevel) => {
@@ -133,6 +137,23 @@ export const useSafeModeStore = create<SafeModeState>((set, get) => {
 
     getEffectiveLevelForConnection: (connectionId: string) => {
       return get().getEffectiveLevel(connectionId);
+    },
+
+    getConnectionEnvironment: (connectionId: string) =>
+      get().settings.connectionEnvironments?.[connectionId] ?? "unknown",
+
+    setConnectionEnvironment: (connectionId: string, environment: ConnectionEnvironment) => {
+      set((state) => {
+        const next = {
+          ...state.settings,
+          connectionEnvironments: {
+            ...state.settings.connectionEnvironments,
+            [connectionId]: environment,
+          },
+        };
+        saveSettings(next);
+        return { settings: next };
+      });
     },
 
     setAdminPassword: (password: string) => {

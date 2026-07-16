@@ -44,11 +44,6 @@ export interface LocalOllamaSetupProgressEvent {
     isEstimated: boolean;
 }
 
-export function getActiveAIProvider(configs: AIProviderConfig[]) {
-    return configs.find((config) => config.is_enabled && config.is_primary)
-        ?? configs.find((config) => config.is_enabled);
-}
-
 export type AIRequestMode = "panel" | "inline";
 export type AIRequestIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error" | "general" | "agent";
 
@@ -58,6 +53,7 @@ export interface AIConversationMessage {
 }
 
 export interface AIRequest {
+    request_id?: string;
     prompt: string;
     context: string;
     mode: AIRequestMode;

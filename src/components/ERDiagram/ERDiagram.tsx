@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import {
   ReactFlow,
   Background,
@@ -37,13 +45,43 @@ import {
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { useAppStore } from "../../stores/appStore";
-import type { ColumnDetail, DatabaseType, TableInfo, TableStructure, ERDiagramSchema, TableSchema, ERRelationship } from "../../types/database";
+import { useConnectionStore } from "../../stores/connectionStore";
+import { useUIStore } from "../../stores/uiStore";
+import { useQueryStore } from "../../stores/queryStore";
+import {
+  getOrLoadSchemaTables,
+  getOrLoadTableStructure,
+  invalidateSchemaCache,
+} from "../../utils/schema-cache";
+import type {
+  ColumnDetail,
+  DatabaseType,
+  TableInfo,
+  TableStructure,
+  ERDiagramSchema,
+  TableSchema,
+  ERRelationship,
+} from "../../types/database";
 import { ERDCompactSelect, type ERDSelectOption } from "./ERDCompactSelect";
-import { ERDContextMenu, type ERDContextMenuState, type ERDContextMenuItem } from "./ERDContextMenu";
+import {
+  ERDContextMenu,
+  type ERDContextMenuState,
+  type ERDContextMenuItem,
+} from "./ERDContextMenu";
 import { ERDQuickColumnModal } from "./ERDQuickColumnModal";
+import { buildERDiagramSqlExport } from "./erd-sql-export";
+import {
+  getERDRelationshipScopeKey,
+  readCustomERDRelationships,
+  writeCustomERDRelationships,
+} from "../../utils/erd-custom-relationships";
 import { EditableRelationEdge } from "./EditableRelationEdge";
-import { TableNode, type ERDNodeContextPayload, type TableNodeData, type TableNodeType } from "./TableNode";
+import {
+  TableNode,
+  type ERDNodeContextPayload,
+  type TableNodeData,
+  type TableNodeType,
+} from "./TableNode";
 import {
   DIAGRAM_NODE_HEADER_HEIGHT,
   DIAGRAM_NODE_ROW_GAP,
@@ -94,7 +132,16 @@ interface QuickColumnEditorState {
   editor: ColumnEditorState;
 }
 
-const TABLE_COLORS = ["#6366F1", "#8B5CF6", "#EC4899", "#F59E0B", "#10B981", "#3B82F6", "#EF4444", "#14B8A6"];
+const TABLE_COLORS = [
+  "#6366F1",
+  "#8B5CF6",
+  "#EC4899",
+  "#F59E0B",
+  "#10B981",
+  "#3B82F6",
+  "#EF4444",
+  "#14B8A6",
+];
 const DIAGRAM_LEFT_OFFSET = 48;
 const DIAGRAM_TOP_OFFSET = 48;
 const DIAGRAM_HORIZONTAL_GAP = 42;
@@ -108,7 +155,6 @@ const DIAGRAM_POSITION_SEARCH_RADIUS = 18;
 const DIAGRAM_RECOMMENDED_TABLE_COUNT = 12;
 const DIAGRAM_EXPORT_PADDING = 40;
 const DIAGRAM_EXPORT_SCALE = 2;
-const CUSTOM_ER_RELATIONSHIPS_STORAGE_KEY = "tabler.erd.customRelationships.v1";
 const ER_DIAGRAM_CACHE_TTL_MS = 30 * 60 * 1000;
 const ER_DIAGRAM_STRUCTURE_BATCH_SIZE = 10;
 
@@ -129,8 +175,14 @@ function getTableRelationshipDegree(relationships: ERRelationship[]) {
   const degree = new Map<string, number>();
 
   relationships.forEach((relationship) => {
-    degree.set(relationship.fromTable, (degree.get(relationship.fromTable) || 0) + 1);
-    degree.set(relationship.toTable, (degree.get(relationship.toTable) || 0) + 1);
+    degree.set(
+      relationship.fromTable,
+      (degree.get(relationship.fromTable) || 0) + 1,
+    );
+    degree.set(
+      relationship.toTable,
+      (degree.get(relationship.toTable) || 0) + 1,
+    );
   });
 
   return degree;
@@ -139,7 +191,8 @@ function getTableRelationshipDegree(relationships: ERRelationship[]) {
 function getRecommendedTableSelection(schema: ERDiagramSchema) {
   const degree = getTableRelationshipDegree(schema.relationships);
   const rankedTables = [...schema.tables].sort((left, right) => {
-    const degreeDifference = (degree.get(right.name) || 0) - (degree.get(left.name) || 0);
+    const degreeDifference =
+      (degree.get(right.name) || 0) - (degree.get(left.name) || 0);
     if (degreeDifference !== 0) return degreeDifference;
 
     const rowDifference = (right.rowCount || 0) - (left.rowCount || 0);
@@ -151,19 +204,31 @@ function getRecommendedTableSelection(schema: ERDiagramSchema) {
   return new Set(
     rankedTables
       .slice(0, Math.min(DIAGRAM_RECOMMENDED_TABLE_COUNT, rankedTables.length))
-      .map((table) => table.name)
+      .map((table) => table.name),
   );
 }
 
-function getRelationshipSignature(relationship: Pick<ERRelationship, "fromTable" | "fromColumn" | "toTable" | "toColumn">) {
+function getRelationshipSignature(
+  relationship: Pick<
+    ERRelationship,
+    "fromTable" | "fromColumn" | "toTable" | "toColumn"
+  >,
+) {
   return `${relationship.fromTable}|${relationship.fromColumn}|${relationship.toTable}|${relationship.toColumn}`;
 }
 
-function getRelationshipId(relationship: Pick<ERRelationship, "fromTable" | "fromColumn" | "toTable" | "toColumn">) {
+function getRelationshipId(
+  relationship: Pick<
+    ERRelationship,
+    "fromTable" | "fromColumn" | "toTable" | "toColumn"
+  >,
+) {
   return `custom-er-${getRelationshipSignature(relationship)}`;
 }
 
-function getRelationshipDisplayLabel(relationship: Pick<ERRelationship, "fromColumn" | "toColumn" | "label">) {
+function getRelationshipDisplayLabel(
+  relationship: Pick<ERRelationship, "fromColumn" | "toColumn" | "label">,
+) {
   const legacyArrowLabel = `${relationship.fromColumn} -> ${relationship.toColumn}`;
   if (relationship.label && relationship.label !== legacyArrowLabel) {
     return relationship.label;
@@ -177,7 +242,7 @@ function getQualifiedTableName(table: Pick<TableSchema, "name" | "schema">) {
 }
 
 function getERDiagramScopeKey(connectionId: string, database?: string) {
-  return `${connectionId}|${database || ""}`;
+  return getERDRelationshipScopeKey(connectionId, database);
 }
 
 function getCachedERDiagramSchema(connectionId: string, database?: string) {
@@ -195,7 +260,11 @@ function getCachedERDiagramSchema(connectionId: string, database?: string) {
   return cached.schema;
 }
 
-function setCachedERDiagramSchema(connectionId: string, database: string | undefined, schema: ERDiagramSchema) {
+function setCachedERDiagramSchema(
+  connectionId: string,
+  database: string | undefined,
+  schema: ERDiagramSchema,
+) {
   const scopeKey = getERDiagramScopeKey(connectionId, database);
   erDiagramSchemaCache.set(scopeKey, {
     schema,
@@ -204,35 +273,27 @@ function setCachedERDiagramSchema(connectionId: string, database: string | undef
   });
 }
 
-function invalidateCachedERDiagramSchema(connectionId: string, database?: string) {
+function invalidateCachedERDiagramSchema(
+  connectionId: string,
+  database?: string,
+) {
   const scopeKey = getERDiagramScopeKey(connectionId, database);
   erDiagramSchemaCache.delete(scopeKey);
 }
 
-function readCustomRelationships(connectionId: string, database?: string): ERRelationship[] {
-  try {
-    const raw = window.localStorage.getItem(CUSTOM_ER_RELATIONSHIPS_STORAGE_KEY);
-    if (!raw) return [];
-
-    const parsed = JSON.parse(raw) as Record<string, ERRelationship[]>;
-    const scopeKey = getERDiagramScopeKey(connectionId, database);
-    return Array.isArray(parsed?.[scopeKey]) ? parsed[scopeKey] : [];
-  } catch {
-    return [];
-  }
+function readCustomRelationships(
+  connectionId: string,
+  database?: string,
+): ERRelationship[] {
+  return readCustomERDRelationships(connectionId, database);
 }
 
-function persistCustomRelationships(connectionId: string, database: string | undefined, relationships: ERRelationship[]) {
-  try {
-    const raw = window.localStorage.getItem(CUSTOM_ER_RELATIONSHIPS_STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as Record<string, ERRelationship[]>) : {};
-    const scopeKey = getERDiagramScopeKey(connectionId, database);
-
-    parsed[scopeKey] = relationships;
-    window.localStorage.setItem(CUSTOM_ER_RELATIONSHIPS_STORAGE_KEY, JSON.stringify(parsed));
-  } catch {
-    // Ignore storage failures and keep the in-memory graph responsive.
-  }
+function persistCustomRelationships(
+  connectionId: string,
+  database: string | undefined,
+  relationships: ERRelationship[],
+) {
+  writeCustomERDRelationships(connectionId, database, relationships);
 }
 
 function dedupeRelationships(relationships: ERRelationship[]) {
@@ -245,8 +306,13 @@ function dedupeRelationships(relationships: ERRelationship[]) {
   return [...unique.values()];
 }
 
-function getPreferredRelationshipDraft(sourceTable: TableSchema, targetTable: TableSchema): Pick<PendingRelationshipDraft, "sourceColumn" | "targetColumn"> {
-  const preferredSource = sourceTable.columns.find((column) => column.is_primary_key) || sourceTable.columns[0];
+function getPreferredRelationshipDraft(
+  sourceTable: TableSchema,
+  targetTable: TableSchema,
+): Pick<PendingRelationshipDraft, "sourceColumn" | "targetColumn"> {
+  const preferredSource =
+    sourceTable.columns.find((column) => column.is_primary_key) ||
+    sourceTable.columns[0];
   const preferredNames = new Set(
     [
       preferredSource?.name,
@@ -254,11 +320,13 @@ function getPreferredRelationshipDraft(sourceTable: TableSchema, targetTable: Ta
       `${sourceTable.name.replace(/\s+/g, "_")}_id`,
     ]
       .filter(Boolean)
-      .map((value) => value.toLowerCase())
+      .map((value) => value.toLowerCase()),
   );
 
   const preferredTarget =
-    targetTable.columns.find((column) => preferredNames.has(column.name.toLowerCase())) ||
+    targetTable.columns.find((column) =>
+      preferredNames.has(column.name.toLowerCase()),
+    ) ||
     targetTable.columns.find((column) => !column.is_primary_key) ||
     targetTable.columns[0];
 
@@ -304,13 +372,20 @@ function sanitizeFileName(value: string) {
     .replace(/^-|-$/g, "");
 }
 
-function truncateCanvasText(context: CanvasRenderingContext2D, value: string, maxWidth: number) {
+function truncateCanvasText(
+  context: CanvasRenderingContext2D,
+  value: string,
+  maxWidth: number,
+) {
   if (context.measureText(value).width <= maxWidth) return value;
 
   const ellipsis = "...";
   let next = value;
 
-  while (next.length > 0 && context.measureText(`${next}${ellipsis}`).width > maxWidth) {
+  while (
+    next.length > 0 &&
+    context.measureText(`${next}${ellipsis}`).width > maxWidth
+  ) {
     next = next.slice(0, -1);
   }
 
@@ -326,7 +401,7 @@ function drawRoundedRect(
   radius: number,
   fillStyle: string,
   strokeStyle?: string,
-  lineWidth = 1
+  lineWidth = 1,
 ) {
   context.beginPath();
   context.roundRect(x, y, width, height, radius);
@@ -369,7 +444,10 @@ interface ExportDiagramSnapshot {
   offsetY: number;
 }
 
-function buildExportEdgeLayout(edge: Edge, nodeMap: Map<string, ExportNodeLayout>): ExportEdgeLayout | null {
+function buildExportEdgeLayout(
+  edge: Edge,
+  nodeMap: Map<string, ExportNodeLayout>,
+): ExportEdgeLayout | null {
   const sourceNode = nodeMap.get(edge.source);
   const targetNode = nodeMap.get(edge.target);
   if (!sourceNode || !targetNode) return null;
@@ -396,13 +474,16 @@ function buildExportEdgeLayout(edge: Edge, nodeMap: Map<string, ExportNodeLayout
     x: (sourceCenter.x + targetCenter.x) / 2,
     y: (sourceCenter.y + targetCenter.y) / 2,
   };
-  const edgeData = (edge.data as {
-    bendOffset?: DiagramPoint;
-    sourceColumn?: string;
-    targetColumn?: string;
-    sourceCardinality?: ERCardinalityEndpoint;
-    targetCardinality?: ERCardinalityEndpoint;
-  } | undefined) || {};
+  const edgeData =
+    (edge.data as
+      | {
+          bendOffset?: DiagramPoint;
+          sourceColumn?: string;
+          targetColumn?: string;
+          sourceCardinality?: ERCardinalityEndpoint;
+          targetCardinality?: ERCardinalityEndpoint;
+        }
+      | undefined) || {};
   const bendOffset = edgeData.bendOffset || { x: 0, y: 0 };
   const bendPoint = {
     x: midpoint.x + bendOffset.x,
@@ -410,9 +491,23 @@ function buildExportEdgeLayout(edge: Edge, nodeMap: Map<string, ExportNodeLayout
   };
   const sourceSide = pickDiagramAnchorSide(sourceCenter, bendPoint);
   const targetSide = pickDiagramAnchorSide(targetCenter, bendPoint);
-  const sourcePoint = getDiagramNodeAnchorPoint(sourceFrame, sourceSide, edgeData.sourceColumn);
-  const targetPoint = getDiagramNodeAnchorPoint(targetFrame, targetSide, edgeData.targetColumn);
-  const points = buildDiagramEdgePoints(sourcePoint, sourceSide, targetPoint, targetSide, bendPoint);
+  const sourcePoint = getDiagramNodeAnchorPoint(
+    sourceFrame,
+    sourceSide,
+    edgeData.sourceColumn,
+  );
+  const targetPoint = getDiagramNodeAnchorPoint(
+    targetFrame,
+    targetSide,
+    edgeData.targetColumn,
+  );
+  const points = buildDiagramEdgePoints(
+    sourcePoint,
+    sourceSide,
+    targetPoint,
+    targetSide,
+    bendPoint,
+  );
 
   return {
     id: edge.id,
@@ -426,7 +521,10 @@ function buildExportEdgeLayout(edge: Edge, nodeMap: Map<string, ExportNodeLayout
   };
 }
 
-function buildERDiagramExportSnapshot(nodes: Node[], edges: Edge[]): ExportDiagramSnapshot | null {
+function buildERDiagramExportSnapshot(
+  nodes: Node[],
+  edges: Edge[],
+): ExportDiagramSnapshot | null {
   const exportNodes = nodes.map((node) => {
     const data = node.data as TableNodeData;
 
@@ -435,7 +533,10 @@ function buildERDiagramExportSnapshot(nodes: Node[], edges: Edge[]): ExportDiagr
       x: node.position.x,
       y: node.position.y,
       width: DIAGRAM_NODE_WIDTH,
-      height: estimateDiagramNodeHeight(data.columns.length, Boolean(data.isExpanded)),
+      height: estimateDiagramNodeHeight(
+        data.columns.length,
+        Boolean(data.isExpanded),
+      ),
       data,
     } satisfies ExportNodeLayout;
   });
@@ -447,13 +548,34 @@ function buildERDiagramExportSnapshot(nodes: Node[], edges: Edge[]): ExportDiagr
     .map((edge) => buildExportEdgeLayout(edge, nodeMap))
     .filter((edge): edge is ExportEdgeLayout => Boolean(edge));
 
-  const edgePoints = exportEdges.flatMap((edge) => [...edge.points, edge.bendPoint]);
-  const minX = Math.min(...exportNodes.map((node) => node.x), ...edgePoints.map((point) => point.x));
-  const minY = Math.min(...exportNodes.map((node) => node.y), ...edgePoints.map((point) => point.y));
-  const maxX = Math.max(...exportNodes.map((node) => node.x + node.width), ...edgePoints.map((point) => point.x));
-  const maxY = Math.max(...exportNodes.map((node) => node.y + node.height), ...edgePoints.map((point) => point.y));
-  const exportWidth = Math.max(320, Math.ceil(maxX - minX + DIAGRAM_EXPORT_PADDING * 2));
-  const exportHeight = Math.max(220, Math.ceil(maxY - minY + DIAGRAM_EXPORT_PADDING * 2));
+  const edgePoints = exportEdges.flatMap((edge) => [
+    ...edge.points,
+    edge.bendPoint,
+  ]);
+  const minX = Math.min(
+    ...exportNodes.map((node) => node.x),
+    ...edgePoints.map((point) => point.x),
+  );
+  const minY = Math.min(
+    ...exportNodes.map((node) => node.y),
+    ...edgePoints.map((point) => point.y),
+  );
+  const maxX = Math.max(
+    ...exportNodes.map((node) => node.x + node.width),
+    ...edgePoints.map((point) => point.x),
+  );
+  const maxY = Math.max(
+    ...exportNodes.map((node) => node.y + node.height),
+    ...edgePoints.map((point) => point.y),
+  );
+  const exportWidth = Math.max(
+    320,
+    Math.ceil(maxX - minX + DIAGRAM_EXPORT_PADDING * 2),
+  );
+  const exportHeight = Math.max(
+    220,
+    Math.ceil(maxY - minY + DIAGRAM_EXPORT_PADDING * 2),
+  );
   const offsetX = DIAGRAM_EXPORT_PADDING - minX;
   const offsetY = DIAGRAM_EXPORT_PADDING - minY;
 
@@ -478,8 +600,14 @@ function escapeXml(value: string) {
 
 function formatDrawioNodeValue(node: ExportNodeLayout) {
   const isExpanded = Boolean(node.data.isExpanded);
-  const visibleColumns = getVisibleDiagramColumns(node.data.columns, isExpanded);
-  const hiddenCount = Math.max(0, node.data.columns.length - visibleColumns.length);
+  const visibleColumns = getVisibleDiagramColumns(
+    node.data.columns,
+    isExpanded,
+  );
+  const hiddenCount = Math.max(
+    0,
+    node.data.columns.length - visibleColumns.length,
+  );
   const lines = [
     node.data.label,
     ...visibleColumns.map((column) => {
@@ -532,7 +660,7 @@ function buildDrawioDiagramXml(snapshot: ExportDiagramSnapshot) {
         .slice(1, -1)
         .map(
           (point) =>
-            `<mxPoint x="${Math.round(point.x + snapshot.offsetX)}" y="${Math.round(point.y + snapshot.offsetY)}" />`
+            `<mxPoint x="${Math.round(point.x + snapshot.offsetX)}" y="${Math.round(point.y + snapshot.offsetY)}" />`,
         )
         .join("");
       const sourceVertexId = vertexIdMap.get(edge.source);
@@ -566,7 +694,7 @@ function drawCardinalityMarkerOnCanvas(
   anchor: DiagramPoint,
   awayPoint: DiagramPoint,
   cardinality: ERCardinalityEndpoint | undefined,
-  strokeColor: string
+  strokeColor: string,
 ) {
   const marker = buildERCardinalityMarker(cardinality, anchor, awayPoint);
   if (!marker) return;
@@ -586,7 +714,13 @@ function drawCardinalityMarkerOnCanvas(
   marker.circles.forEach((circle) => {
     context.beginPath();
     context.fillStyle = "#060810";
-    context.arc(circle.center.x, circle.center.y, circle.radius, 0, Math.PI * 2);
+    context.arc(
+      circle.center.x,
+      circle.center.y,
+      circle.radius,
+      0,
+      Math.PI * 2,
+    );
     context.fill();
     context.stroke();
   });
@@ -607,19 +741,38 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
 
   context.scale(DIAGRAM_EXPORT_SCALE, DIAGRAM_EXPORT_SCALE);
 
-  const backgroundGradient = context.createLinearGradient(0, 0, 0, snapshot.height);
+  const backgroundGradient = context.createLinearGradient(
+    0,
+    0,
+    0,
+    snapshot.height,
+  );
   backgroundGradient.addColorStop(0, "#080b10");
   backgroundGradient.addColorStop(1, "#060810");
   context.fillStyle = backgroundGradient;
   context.fillRect(0, 0, snapshot.width, snapshot.height);
 
-  const topGlow = context.createRadialGradient(snapshot.width * 0.2, snapshot.height * 0.12, 0, snapshot.width * 0.2, snapshot.height * 0.12, snapshot.width * 0.34);
+  const topGlow = context.createRadialGradient(
+    snapshot.width * 0.2,
+    snapshot.height * 0.12,
+    0,
+    snapshot.width * 0.2,
+    snapshot.height * 0.12,
+    snapshot.width * 0.34,
+  );
   topGlow.addColorStop(0, "rgba(34, 211, 238, 0.12)");
   topGlow.addColorStop(1, "rgba(34, 211, 238, 0)");
   context.fillStyle = topGlow;
   context.fillRect(0, 0, snapshot.width, snapshot.height);
 
-  const bottomGlow = context.createRadialGradient(snapshot.width * 0.82, snapshot.height * 0.84, 0, snapshot.width * 0.82, snapshot.height * 0.84, snapshot.width * 0.28);
+  const bottomGlow = context.createRadialGradient(
+    snapshot.width * 0.82,
+    snapshot.height * 0.84,
+    0,
+    snapshot.width * 0.82,
+    snapshot.height * 0.84,
+    snapshot.width * 0.28,
+  );
   bottomGlow.addColorStop(0, "rgba(16, 185, 129, 0.1)");
   bottomGlow.addColorStop(1, "rgba(16, 185, 129, 0)");
   context.fillStyle = bottomGlow;
@@ -662,7 +815,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
           y: edge.points[1].y + snapshot.offsetY,
         },
         edge.sourceCardinality,
-        strokeColor
+        strokeColor,
       );
       drawCardinalityMarkerOnCanvas(
         context,
@@ -675,7 +828,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
           y: edge.points[edge.points.length - 2].y + snapshot.offsetY,
         },
         edge.targetCardinality,
-        strokeColor
+        strokeColor,
       );
     }
 
@@ -686,18 +839,37 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
     const labelHeight = 18;
     const labelX = edge.bendPoint.x + snapshot.offsetX - labelWidth / 2;
     const labelY = edge.bendPoint.y + snapshot.offsetY - labelHeight / 2;
-    drawRoundedRect(context, labelX, labelY, labelWidth, labelHeight, 9, "rgba(8, 11, 16, 0.94)", "rgba(34, 211, 238, 0.18)");
+    drawRoundedRect(
+      context,
+      labelX,
+      labelY,
+      labelWidth,
+      labelHeight,
+      9,
+      "rgba(8, 11, 16, 0.94)",
+      "rgba(34, 211, 238, 0.18)",
+    );
     context.fillStyle = "#d8e2f1";
     context.textAlign = "center";
     context.textBaseline = "middle";
-    context.fillText(label, labelX + labelWidth / 2, labelY + labelHeight / 2 + 0.5);
+    context.fillText(
+      label,
+      labelX + labelWidth / 2,
+      labelY + labelHeight / 2 + 0.5,
+    );
     context.restore();
   });
 
   snapshot.nodes.forEach((node) => {
     const isExpanded = Boolean(node.data.isExpanded);
-    const visibleColumns = getVisibleDiagramColumns(node.data.columns, isExpanded);
-    const hiddenCount = Math.max(0, node.data.columns.length - visibleColumns.length);
+    const visibleColumns = getVisibleDiagramColumns(
+      node.data.columns,
+      isExpanded,
+    );
+    const hiddenCount = Math.max(
+      0,
+      node.data.columns.length - visibleColumns.length,
+    );
     const x = node.x + snapshot.offsetX;
     const y = node.y + snapshot.offsetY;
     const width = node.width;
@@ -708,7 +880,16 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
     context.save();
     context.shadowColor = "rgba(0, 0, 0, 0.28)";
     context.shadowBlur = 18;
-    drawRoundedRect(context, x, y, width, height, 12, "rgba(12, 16, 24, 0.98)", "rgba(122, 147, 198, 0.16)");
+    drawRoundedRect(
+      context,
+      x,
+      y,
+      width,
+      height,
+      12,
+      "rgba(12, 16, 24, 0.98)",
+      "rgba(122, 147, 198, 0.16)",
+    );
     context.restore();
 
     context.save();
@@ -719,7 +900,14 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
     context.fillRect(x, y, width, headerHeight);
     context.fillStyle = accent;
     context.fillRect(x, y, width, 3);
-    const accentGlow = context.createRadialGradient(x + width - 30, y + 14, 0, x + width - 30, y + 14, 54);
+    const accentGlow = context.createRadialGradient(
+      x + width - 30,
+      y + 14,
+      0,
+      x + width - 30,
+      y + 14,
+      54,
+    );
     accentGlow.addColorStop(0, `${accent}30`);
     accentGlow.addColorStop(1, `${accent}00`);
     context.fillStyle = accentGlow;
@@ -745,7 +933,11 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
 
     context.fillStyle = "#eef3fb";
     context.font = '700 11px "Segoe UI", sans-serif';
-    context.fillText(truncateCanvasText(context, node.data.label, width - 42), x + 22, y + 18);
+    context.fillText(
+      truncateCanvasText(context, node.data.label, width - 42),
+      x + 22,
+      y + 18,
+    );
 
     const pills = [`${node.data.columns.length} cols`];
     if (hasFiniteRowCount(node.data.rowCount)) {
@@ -756,7 +948,16 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
     let pillX = x + 10;
     pills.forEach((pill) => {
       const pillWidth = context.measureText(pill).width + 12;
-      drawRoundedRect(context, pillX, y + 31, pillWidth, 14, 999, "rgba(255, 255, 255, 0.04)", "rgba(122, 147, 198, 0.14)");
+      drawRoundedRect(
+        context,
+        pillX,
+        y + 31,
+        pillWidth,
+        14,
+        999,
+        "rgba(255, 255, 255, 0.04)",
+        "rgba(122, 147, 198, 0.14)",
+      );
       context.fillStyle = "#c3cede";
       context.textBaseline = "middle";
       context.fillText(pill, pillX + 6, y + 38);
@@ -774,7 +975,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
         22,
         8,
         isPrimary ? "rgba(34, 211, 238, 0.08)" : "rgba(255, 255, 255, 0.03)",
-        isPrimary ? "rgba(34, 211, 238, 0.16)" : undefined
+        isPrimary ? "rgba(34, 211, 238, 0.16)" : undefined,
       );
 
       drawRoundedRect(
@@ -785,7 +986,7 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
         12,
         999,
         isPrimary ? "rgba(34, 211, 238, 0.1)" : "rgba(255, 255, 255, 0.04)",
-        isPrimary ? "rgba(34, 211, 238, 0.22)" : "rgba(122, 147, 198, 0.14)"
+        isPrimary ? "rgba(34, 211, 238, 0.22)" : "rgba(122, 147, 198, 0.14)",
       );
       context.fillStyle = isPrimary ? "#22d3ee" : "#8f99ab";
       context.font = '800 6px "Segoe UI", sans-serif';
@@ -794,12 +995,20 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
 
       context.fillStyle = "#eef3fb";
       context.font = '600 8px "Segoe UI", sans-serif';
-      context.fillText(truncateCanvasText(context, column.name, width - 78), x + 46, rowY + 8);
+      context.fillText(
+        truncateCanvasText(context, column.name, width - 78),
+        x + 46,
+        rowY + 8,
+      );
 
       context.fillStyle = "#c3cede";
       context.font = '400 7px "Segoe UI", sans-serif';
       const detail = `${column.data_type}${column.is_nullable ? " / nullable" : ""}`;
-      context.fillText(truncateCanvasText(context, detail, width - 78), x + 46, rowY + 15);
+      context.fillText(
+        truncateCanvasText(context, detail, width - 78),
+        x + 46,
+        rowY + 15,
+      );
 
       rowY += DIAGRAM_NODE_ROW_HEIGHT + DIAGRAM_NODE_ROW_GAP;
     });
@@ -812,7 +1021,16 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
       context.stroke();
 
       if (isExpanded) {
-        drawRoundedRect(context, x + width / 2 - 34, rowY + 6, 28, 14, 999, "rgba(34, 211, 238, 0.08)", "rgba(34, 211, 238, 0.16)");
+        drawRoundedRect(
+          context,
+          x + width / 2 - 34,
+          rowY + 6,
+          28,
+          14,
+          999,
+          "rgba(34, 211, 238, 0.08)",
+          "rgba(34, 211, 238, 0.16)",
+        );
         context.fillStyle = "#c3cede";
         context.font = '700 7px "Segoe UI", sans-serif';
         context.textAlign = "center";
@@ -824,7 +1042,16 @@ function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
         context.textAlign = "left";
         context.fillText("show less", x + width / 2 - 2, rowY + 13);
       } else {
-        drawRoundedRect(context, x + width / 2 - 34, rowY + 6, 28, 14, 999, "rgba(255, 255, 255, 0.04)", "rgba(122, 147, 198, 0.14)");
+        drawRoundedRect(
+          context,
+          x + width / 2 - 34,
+          rowY + 6,
+          28,
+          14,
+          999,
+          "rgba(255, 255, 255, 0.04)",
+          "rgba(122, 147, 198, 0.14)",
+        );
         context.fillStyle = "#c3cede";
         context.font = '700 8px "Segoe UI", sans-serif';
         context.textAlign = "center";
@@ -846,7 +1073,7 @@ function isDiagramPositionOverlapping(
   candidate: DiagramPoint,
   occupiedPositions: DiagramPoint[],
   nodeWidth: number,
-  nodeHeight: number
+  nodeHeight: number,
 ) {
   return occupiedPositions.some((occupied) => {
     const separatedHorizontally =
@@ -866,19 +1093,31 @@ function findAvailableDiagramPosition(
   nodeWidth: number,
   nodeHeight: number,
   slotWidth: number,
-  slotHeight: number
+  slotHeight: number,
 ) {
-  if (!isDiagramPositionOverlapping(preferredPosition, occupiedPositions, nodeWidth, nodeHeight)) {
+  if (
+    !isDiagramPositionOverlapping(
+      preferredPosition,
+      occupiedPositions,
+      nodeWidth,
+      nodeHeight,
+    )
+  ) {
     return preferredPosition;
   }
 
-  const baseCol = Math.round((preferredPosition.x - DIAGRAM_LEFT_OFFSET) / slotWidth);
-  const baseRow = Math.round((preferredPosition.y - DIAGRAM_TOP_OFFSET) / slotHeight);
+  const baseCol = Math.round(
+    (preferredPosition.x - DIAGRAM_LEFT_OFFSET) / slotWidth,
+  );
+  const baseRow = Math.round(
+    (preferredPosition.y - DIAGRAM_TOP_OFFSET) / slotHeight,
+  );
 
   for (let radius = 0; radius <= DIAGRAM_POSITION_SEARCH_RADIUS; radius += 1) {
     for (let rowOffset = -radius; rowOffset <= radius; rowOffset += 1) {
       for (let colOffset = -radius; colOffset <= radius; colOffset += 1) {
-        const isPerimeter = Math.abs(rowOffset) === radius || Math.abs(colOffset) === radius;
+        const isPerimeter =
+          Math.abs(rowOffset) === radius || Math.abs(colOffset) === radius;
         if (!isPerimeter) continue;
 
         const candidate = {
@@ -886,7 +1125,14 @@ function findAvailableDiagramPosition(
           y: DIAGRAM_TOP_OFFSET + (baseRow + rowOffset) * slotHeight,
         };
 
-        if (!isDiagramPositionOverlapping(candidate, occupiedPositions, nodeWidth, nodeHeight)) {
+        if (
+          !isDiagramPositionOverlapping(
+            candidate,
+            occupiedPositions,
+            nodeWidth,
+            nodeHeight,
+          )
+        ) {
           return candidate;
         }
       }
@@ -907,39 +1153,49 @@ function buildNodes(
   existingNodes: Node[],
   rememberedPositions: Map<string, DiagramPoint>,
   onToggleTableExpanded: (tableName: string) => void,
-  onOpenContextMenu: (event: ReactMouseEvent<HTMLElement>, payload: ERDNodeContextPayload) => void
+  onOpenContextMenu: (
+    event: ReactMouseEvent<HTMLElement>,
+    payload: ERDNodeContextPayload,
+  ) => void,
 ): TableNodeType[] {
   const relationshipDegree = getTableRelationshipDegree(relationships);
   const filtered = tables
     .filter((table) => selectedTableNames.has(table.name))
     .sort((left, right) => {
       const degreeDifference =
-        (relationshipDegree.get(right.name) || 0) - (relationshipDegree.get(left.name) || 0);
+        (relationshipDegree.get(right.name) || 0) -
+        (relationshipDegree.get(left.name) || 0);
       if (degreeDifference !== 0) return degreeDifference;
       return left.name.localeCompare(right.name);
     });
   if (filtered.length === 0) return [];
 
-  const existingPositions = new Map(existingNodes.map((node) => [node.id, node.position]));
+  const existingPositions = new Map(
+    existingNodes.map((node) => [node.id, node.position]),
+  );
   const tableOrder = new Map(tables.map((table, index) => [table.name, index]));
   const occupiedPositions: DiagramPoint[] = [];
   const maxNodeHeight = Math.max(
-    ...filtered.map((table) => estimateDiagramNodeHeight(table.columns.length, expandedTableNames.has(table.name))),
-    138
+    ...filtered.map((table) =>
+      estimateDiagramNodeHeight(
+        table.columns.length,
+        expandedTableNames.has(table.name),
+      ),
+    ),
+    138,
   );
   const slotWidth = DIAGRAM_NODE_WIDTH + DIAGRAM_HORIZONTAL_GAP;
   const slotHeight = maxNodeHeight + DIAGRAM_VERTICAL_GAP;
   const colsCount = Math.max(
     1,
-    Math.min(10, Math.ceil(Math.sqrt(filtered.length * 1.35)))
+    Math.min(10, Math.ceil(Math.sqrt(filtered.length * 1.35))),
   );
 
   return filtered.map((table, index) => {
     const col = index % colsCount;
     const row = Math.floor(index / colsCount);
     const isExpanded = expandedTableNames.has(table.name);
-    const preferredPosition =
-      existingPositions.get(table.name) ||
+    const preferredPosition = existingPositions.get(table.name) ||
       rememberedPositions.get(table.name) || {
         x: DIAGRAM_LEFT_OFFSET + col * slotWidth,
         y: DIAGRAM_TOP_OFFSET + row * slotHeight,
@@ -950,7 +1206,7 @@ function buildNodes(
       DIAGRAM_NODE_WIDTH,
       maxNodeHeight,
       slotWidth,
-      slotHeight
+      slotHeight,
     );
     occupiedPositions.push(resolvedPosition);
 
@@ -977,22 +1233,32 @@ function buildEdges(
   relationships: ERRelationship[],
   selectedTableNames: Set<string>,
   existingEdges: Edge[],
-  rememberedBends: Map<string, DiagramPoint>
+  rememberedBends: Map<string, DiagramPoint>,
 ): Edge[] {
   const existingBends = new Map(
-    existingEdges.map((edge) => [edge.id, ((edge.data as { bendOffset?: DiagramPoint } | undefined)?.bendOffset || { x: 0, y: 0 })])
+    existingEdges.map((edge) => [
+      edge.id,
+      (edge.data as { bendOffset?: DiagramPoint } | undefined)?.bendOffset || {
+        x: 0,
+        y: 0,
+      },
+    ]),
   );
   const tableMap = new Map(tables.map((table) => [table.name, table]));
 
   return relationships
-    .filter((relationship) => selectedTableNames.has(relationship.fromTable) && selectedTableNames.has(relationship.toTable))
+    .filter(
+      (relationship) =>
+        selectedTableNames.has(relationship.fromTable) &&
+        selectedTableNames.has(relationship.toTable),
+    )
     .map((relationship) => {
       const notation = inferERRelationshipNotation(
         tableMap.get(relationship.fromTable),
         relationship.fromColumn,
         tableMap.get(relationship.toTable),
         relationship.toColumn,
-        { enforceReferenceConstraint: !relationship.isCustom }
+        { enforceReferenceConstraint: !relationship.isCustom },
       );
 
       return {
@@ -1003,7 +1269,8 @@ function buildEdges(
         type: "editableRelationEdge",
         animated: false,
         data: {
-          bendOffset: existingBends.get(relationship.id) || rememberedBends.get(relationship.id) || { x: 0, y: 0 },
+          bendOffset: existingBends.get(relationship.id) ||
+            rememberedBends.get(relationship.id) || { x: 0, y: 0 },
           sourceColumn: relationship.fromColumn,
           targetColumn: relationship.toColumn,
           sourceCardinality: notation.source,
@@ -1038,47 +1305,62 @@ async function fetchSchema(
 
   if (options?.force) {
     invalidateCachedERDiagramSchema(connectionId, database);
+    invalidateSchemaCache(connectionId, database);
   }
 
   const request = (async () => {
-  const tables = await invoke<TableInfo[]>("list_tables", { connectionId, database: database || null });
-
-  const tableSchemas: TableSchema[] = [];
-  const allRelationships: ERRelationship[] = [];
-
-  for (let index = 0; index < tables.length; index += ER_DIAGRAM_STRUCTURE_BATCH_SIZE) {
-    const batch = tables.slice(index, index + ER_DIAGRAM_STRUCTURE_BATCH_SIZE);
-    const structures = await Promise.all(
-      batch.map((table) =>
-        invoke<TableStructure>("get_table_structure", {
-          connectionId,
-          table: table.name,
-          database: database || null,
-        })
-      )
+    const tables = await getOrLoadSchemaTables({ connectionId, database }, () =>
+      invoke<TableInfo[]>("list_tables", {
+        connectionId,
+        database: database || null,
+      }),
     );
 
-    batch.forEach((table, batchIndex) => {
-      const structure = structures[batchIndex];
-      tableSchemas.push({
-        name: table.name,
-        schema: table.schema,
-        columns: structure.columns,
-        indexes: structure.indexes,
-        rowCount: table.row_count,
-      });
+    const tableSchemas: TableSchema[] = [];
+    const allRelationships: ERRelationship[] = [];
 
-      structure.foreign_keys.forEach((foreignKey, foreignKeyIndex) => {
-        allRelationships.push({
-          id: `fk-${table.name}-${foreignKey.column}-${foreignKeyIndex}`,
-          fromTable: table.name,
-          fromColumn: foreignKey.column,
-          toTable: foreignKey.referenced_table,
-          toColumn: foreignKey.referenced_column,
+    for (
+      let index = 0;
+      index < tables.length;
+      index += ER_DIAGRAM_STRUCTURE_BATCH_SIZE
+    ) {
+      const batch = tables.slice(
+        index,
+        index + ER_DIAGRAM_STRUCTURE_BATCH_SIZE,
+      );
+      const structures = await Promise.all(
+        batch.map((table) =>
+          getOrLoadTableStructure({ connectionId, database }, table.name, () =>
+            invoke<TableStructure>("get_table_structure", {
+              connectionId,
+              table: table.name,
+              database: database || null,
+            }),
+          ),
+        ),
+      );
+
+      batch.forEach((table, batchIndex) => {
+        const structure = structures[batchIndex];
+        tableSchemas.push({
+          name: table.name,
+          schema: table.schema,
+          columns: structure.columns,
+          indexes: structure.indexes,
+          rowCount: table.row_count,
+        });
+
+        structure.foreign_keys.forEach((foreignKey, foreignKeyIndex) => {
+          allRelationships.push({
+            id: `fk-${table.name}-${foreignKey.column}-${foreignKeyIndex}`,
+            fromTable: table.name,
+            fromColumn: foreignKey.column,
+            toTable: foreignKey.referenced_table,
+            toColumn: foreignKey.referenced_column,
+          });
         });
       });
-    });
-  }
+    }
 
     const schema = { tables: tableSchemas, relationships: allRelationships };
     setCachedERDiagramSchema(connectionId, database, schema);
@@ -1100,19 +1382,27 @@ export function ERDiagram({ connectionId, database }: Props) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const reactFlowInstanceRef = useRef<ReactFlowInstance | null>(null);
   const hasInitializedSelectionRef = useRef(false);
-  const rememberedNodePositionsRef = useRef<Map<string, DiagramPoint>>(new Map());
+  const rememberedNodePositionsRef = useRef<Map<string, DiagramPoint>>(
+    new Map(),
+  );
   const rememberedEdgeBendsRef = useRef<Map<string, DiagramPoint>>(new Map());
   const loadRequestIdRef = useRef(0);
-  const addTab = useAppStore((state) => state.addTab);
-  const setActiveTab = useAppStore((state) => state.setActiveTab);
-  const updateTab = useAppStore((state) => state.updateTab);
-  const connections = useAppStore((state) => state.connections);
-  const countTableNullValues = useAppStore((state) => state.countTableNullValues);
-  const executeStructureStatements = useAppStore((state) => state.executeStructureStatements);
+  const addTab = useUIStore((state) => state.addTab);
+  const setActiveTab = useUIStore((state) => state.setActiveTab);
+  const updateTab = useUIStore((state) => state.updateTab);
+  const connections = useConnectionStore((state) => state.connections);
+  const countTableNullValues = useQueryStore(
+    (state) => state.countTableNullValues,
+  );
+  const executeStructureStatements = useQueryStore(
+    (state) => state.executeStructureStatements,
+  );
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [schema, setSchema] = useState<ERDiagramSchema | null>(null);
-  const [customRelationships, setCustomRelationships] = useState<ERRelationship[]>([]);
+  const [customRelationships, setCustomRelationships] = useState<
+    ERRelationship[]
+  >([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
@@ -1120,25 +1410,48 @@ export function ERDiagram({ connectionId, database }: Props) {
   const [showMinimap, setShowMinimap] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false);
-  const [exportFormat, setExportFormat] = useState<"png" | "drawio" | null>(null);
+  const [exportFormat, setExportFormat] = useState<"png" | "drawio" | null>(
+    null,
+  );
   const [tableFilter, setTableFilter] = useState("");
-  const [pendingRelationship, setPendingRelationship] = useState<PendingRelationshipDraft | null>(null);
-  const [relationshipModalError, setRelationshipModalError] = useState<string | null>(null);
+  const [pendingRelationship, setPendingRelationship] =
+    useState<PendingRelationshipDraft | null>(null);
+  const [relationshipModalError, setRelationshipModalError] = useState<
+    string | null
+  >(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<ERDContextMenuState | null>(null);
-  const [quickColumnEditor, setQuickColumnEditor] = useState<QuickColumnEditorState | null>(null);
-  const [quickColumnEditorError, setQuickColumnEditorError] = useState<string | null>(null);
-  const [isApplyingQuickColumnEdit, setIsApplyingQuickColumnEdit] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ERDContextMenuState | null>(
+    null,
+  );
+  const [quickColumnEditor, setQuickColumnEditor] =
+    useState<QuickColumnEditorState | null>(null);
+  const [quickColumnEditorError, setQuickColumnEditorError] = useState<
+    string | null
+  >(null);
+  const [isApplyingQuickColumnEdit, setIsApplyingQuickColumnEdit] =
+    useState(false);
 
   const nodeTypes = useMemo<NodeTypes>(() => ({ tableNode: TableNode }), []);
-  const edgeTypes = useMemo<EdgeTypes>(() => ({ editableRelationEdge: EditableRelationEdge }), []);
-  const allRelationships = useMemo(
-    () => dedupeRelationships([...(schema?.relationships || []), ...customRelationships]),
-    [customRelationships, schema]
+  const edgeTypes = useMemo<EdgeTypes>(
+    () => ({ editableRelationEdge: EditableRelationEdge }),
+    [],
   );
-  const activeConnection = useMemo(() => connections.find((item) => item.id === connectionId), [connectionId, connections]);
-  const activeDbType = (activeConnection?.db_type || "postgresql") as DatabaseType;
-  const activeDatabaseLabel = database || schema?.tables[0]?.schema || "Current database";
+  const allRelationships = useMemo(
+    () =>
+      dedupeRelationships([
+        ...(schema?.relationships || []),
+        ...customRelationships,
+      ]),
+    [customRelationships, schema],
+  );
+  const activeConnection = useMemo(
+    () => connections.find((item) => item.id === connectionId),
+    [connectionId, connections],
+  );
+  const activeDbType = (activeConnection?.db_type ||
+    "postgresql") as DatabaseType;
+  const activeDatabaseLabel =
+    database || schema?.tables[0]?.schema || "Current database";
 
   useEffect(() => {
     hasInitializedSelectionRef.current = false;
@@ -1155,49 +1468,80 @@ export function ERDiagram({ connectionId, database }: Props) {
     setExpandedTables(new Set());
   }, [connectionId, database]);
 
-  const loadSchema = useCallback(async (options?: { force?: boolean }) => {
-    const cachedSchema = !options?.force ? getCachedERDiagramSchema(connectionId, database) : null;
-    if (cachedSchema) {
-      setSchema(cachedSchema);
-      setError(null);
-      setLoading(false);
-      return;
-    }
-
-    const requestId = ++loadRequestIdRef.current;
-    setLoading(true);
-    setError(null);
-
-    try {
-      const data = await fetchSchema(connectionId, database, options);
-      if (requestId !== loadRequestIdRef.current) return;
-      setSchema(data);
-      setSelectedTables((current) => {
-        const allTableNames = data.tables.map((table) => table.name);
-        if (!hasInitializedSelectionRef.current) {
-          hasInitializedSelectionRef.current = true;
-          return getRecommendedTableSelection(data);
-        }
-
-        if (current.size === 0) return current;
-
-        const availableNames = new Set(allTableNames);
-        const preservedNames = [...current].filter((tableName) => availableNames.has(tableName));
-        return preservedNames.length > 0 ? new Set(preservedNames) : new Set(allTableNames);
-      });
-    } catch (reason) {
-      if (requestId !== loadRequestIdRef.current) return;
-      setError(String(reason));
-    } finally {
-      if (requestId === loadRequestIdRef.current) {
+  const loadSchema = useCallback(
+    async (options?: { force?: boolean }) => {
+      const cachedSchema = !options?.force
+        ? getCachedERDiagramSchema(connectionId, database)
+        : null;
+      if (cachedSchema) {
+        setSchema(cachedSchema);
+        setError(null);
         setLoading(false);
+        return;
       }
-    }
-  }, [connectionId, database]);
+
+      const requestId = ++loadRequestIdRef.current;
+      setLoading(true);
+      setError(null);
+
+      try {
+        const data = await fetchSchema(connectionId, database, options);
+        if (requestId !== loadRequestIdRef.current) return;
+        setSchema(data);
+        setSelectedTables((current) => {
+          const allTableNames = data.tables.map((table) => table.name);
+          if (!hasInitializedSelectionRef.current) {
+            hasInitializedSelectionRef.current = true;
+            return getRecommendedTableSelection(data);
+          }
+
+          if (current.size === 0) return current;
+
+          const availableNames = new Set(allTableNames);
+          const preservedNames = [...current].filter((tableName) =>
+            availableNames.has(tableName),
+          );
+          return preservedNames.length > 0
+            ? new Set(preservedNames)
+            : new Set(allTableNames);
+        });
+      } catch (reason) {
+        if (requestId !== loadRequestIdRef.current) return;
+        setError(String(reason));
+      } finally {
+        if (requestId === loadRequestIdRef.current) {
+          setLoading(false);
+        }
+      }
+    },
+    [connectionId, database],
+  );
 
   useEffect(() => {
     loadSchema();
   }, [loadSchema]);
+
+  useEffect(() => {
+    const handleSchemaInvalidation = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ connectionId?: string; database?: string }>
+      ).detail;
+      if (detail?.connectionId !== connectionId) return;
+      if (detail.database !== undefined && detail.database !== database) return;
+      invalidateCachedERDiagramSchema(connectionId, database);
+      void loadSchema();
+    };
+
+    window.addEventListener(
+      "schema-cache-invalidated",
+      handleSchemaInvalidation,
+    );
+    return () =>
+      window.removeEventListener(
+        "schema-cache-invalidated",
+        handleSchemaInvalidation,
+      );
+  }, [connectionId, database, loadSchema]);
 
   const handleTableExpandToggle = useCallback((tableName: string) => {
     setExpandedTables((current) => {
@@ -1235,11 +1579,16 @@ export function ERDiagram({ connectionId, database }: Props) {
       });
       setActiveTab(tabId);
     },
-    [addTab, connectionId, database, setActiveTab, tableMap]
+    [addTab, connectionId, database, setActiveTab, tableMap],
   );
 
   const openStructureEditor = useCallback(
-    (tableName: string, section: "columns" | "indexes" | "foreign_keys" | "triggers" | "view_definition", columnName?: string) => {
+    (
+      tableName: string,
+      section:
+        "columns" | "indexes" | "foreign_keys" | "triggers" | "view_definition",
+      columnName?: string,
+    ) => {
       const table = tableMap.get(tableName);
       if (!table) return;
 
@@ -1251,7 +1600,9 @@ export function ERDiagram({ connectionId, database }: Props) {
         structureFocusColumn: columnName,
         structureFocusToken: focusToken,
       } as const;
-      const existingTab = useAppStore.getState().tabs.find((tab) => tab.id === tabId);
+      const existingTab = useUIStore
+        .getState()
+        .tabs.find((tab) => tab.id === tabId);
 
       if (existingTab) {
         updateTab(tabId, focusState);
@@ -1270,7 +1621,7 @@ export function ERDiagram({ connectionId, database }: Props) {
       });
       setActiveTab(tabId);
     },
-    [addTab, connectionId, database, setActiveTab, tableMap, updateTab]
+    [addTab, connectionId, database, setActiveTab, tableMap, updateTab],
   );
 
   const handleNodeContextMenu = useCallback(
@@ -1283,13 +1634,15 @@ export function ERDiagram({ connectionId, database }: Props) {
         columnName: payload.columnName,
       });
     },
-    []
+    [],
   );
 
   const openQuickColumnEditor = useCallback(
     (tableName: string, columnName: string) => {
       const table = tableMap.get(tableName);
-      const column = table?.columns.find((item) => item.name.toLowerCase() === columnName.toLowerCase());
+      const column = table?.columns.find(
+        (item) => item.name.toLowerCase() === columnName.toLowerCase(),
+      );
       if (!table || !column) return;
 
       setQuickColumnEditor({
@@ -1301,7 +1654,7 @@ export function ERDiagram({ connectionId, database }: Props) {
       setQuickColumnEditorError(null);
       setIsApplyingQuickColumnEdit(false);
     },
-    [tableMap]
+    [tableMap],
   );
 
   const closeQuickColumnEditor = useCallback(() => {
@@ -1310,20 +1663,23 @@ export function ERDiagram({ connectionId, database }: Props) {
     setQuickColumnEditorError(null);
   }, [isApplyingQuickColumnEdit]);
 
-  const updateQuickColumnEditor = useCallback((updates: Partial<ColumnEditorState>) => {
-    setQuickColumnEditorError(null);
-    setQuickColumnEditor((current) =>
-      current
-        ? {
-            ...current,
-            editor: {
-              ...current.editor,
-              ...updates,
-            },
-          }
-        : current
-    );
-  }, []);
+  const updateQuickColumnEditor = useCallback(
+    (updates: Partial<ColumnEditorState>) => {
+      setQuickColumnEditorError(null);
+      setQuickColumnEditor((current) =>
+        current
+          ? {
+              ...current,
+              editor: {
+                ...current.editor,
+                ...updates,
+              },
+            }
+          : current,
+      );
+    },
+    [],
+  );
 
   const quickColumnSqlPreview = useMemo(() => {
     if (!quickColumnEditor) {
@@ -1338,7 +1694,7 @@ export function ERDiagram({ connectionId, database }: Props) {
       }),
       database || undefined,
       quickColumnEditor.originalColumn,
-      quickColumnEditor.editor
+      quickColumnEditor.editor,
     );
   }, [activeDbType, database, quickColumnEditor]);
 
@@ -1374,29 +1730,41 @@ export function ERDiagram({ connectionId, database }: Props) {
           connectionId,
           qualifiedTableName,
           quickColumnEditor.originalColumn.name,
-          database || undefined
+          database || undefined,
         );
 
         if (nullCount > 0) {
-          const defaultValue = getDefaultValueForType(quickColumnEditor.editor.dataType);
+          const defaultValue = getDefaultValueForType(
+            quickColumnEditor.editor.dataType,
+          );
           const confirmed = window.confirm(
             `Column "${quickColumnEditor.originalColumn.name}" has ${nullCount} NULL value(s).\n\n` +
               `To set NOT NULL, TableR can update them to ${defaultValue} first.\n\n` +
-              `Click OK to continue, or Cancel to stop.`
+              `Click OK to continue, or Cancel to stop.`,
           );
 
           if (!confirmed) {
             throw new Error("Apply cancelled.");
           }
 
-          const tableRef = qualifyTableName(activeDbType, qualifiedTableName, database || undefined);
-          const columnRef = quoteIdentifier(activeDbType, quickColumnEditor.originalColumn.name);
+          const tableRef = qualifyTableName(
+            activeDbType,
+            qualifiedTableName,
+            database || undefined,
+          );
+          const columnRef = quoteIdentifier(
+            activeDbType,
+            quickColumnEditor.originalColumn.name,
+          );
           const fixSql = `UPDATE ${tableRef} SET ${columnRef} = ${defaultValue} WHERE ${columnRef} IS NULL`;
           await executeStructureStatements(connectionId, [fixSql]);
         }
       }
 
-      await executeStructureStatements(connectionId, quickColumnSqlPreview.statements);
+      await executeStructureStatements(
+        connectionId,
+        quickColumnSqlPreview.statements,
+      );
       invalidateCachedERDiagramSchema(connectionId, database);
       await loadSchema({ force: true });
       window.dispatchEvent(
@@ -1406,7 +1774,7 @@ export function ERDiagram({ connectionId, database }: Props) {
             tableName: qualifiedTableName,
             database: database || undefined,
           },
-        })
+        }),
       );
       setQuickColumnEditor(null);
       setQuickColumnEditorError(null);
@@ -1470,21 +1838,38 @@ export function ERDiagram({ connectionId, database }: Props) {
         existing,
         rememberedNodePositionsRef.current,
         handleTableExpandToggle,
-        handleNodeContextMenu
+        handleNodeContextMenu,
       );
     });
 
     setEdges((existing) => {
       existing.forEach((edge) => {
-        const bendOffset = (edge.data as { bendOffset?: DiagramPoint } | undefined)?.bendOffset;
+        const bendOffset = (
+          edge.data as { bendOffset?: DiagramPoint } | undefined
+        )?.bendOffset;
         if (bendOffset) {
           rememberedEdgeBendsRef.current.set(edge.id, { ...bendOffset });
         }
       });
 
-      return buildEdges(schema.tables, allRelationships, selectedTables, existing, rememberedEdgeBendsRef.current);
+      return buildEdges(
+        schema.tables,
+        allRelationships,
+        selectedTables,
+        existing,
+        rememberedEdgeBendsRef.current,
+      );
     });
-  }, [allRelationships, expandedTables, handleNodeContextMenu, handleTableExpandToggle, schema, selectedTables, setNodes, setEdges]);
+  }, [
+    allRelationships,
+    expandedTables,
+    handleNodeContextMenu,
+    handleTableExpandToggle,
+    schema,
+    selectedTables,
+    setNodes,
+    setEdges,
+  ]);
 
   useEffect(() => {
     nodes.forEach((node) => {
@@ -1494,7 +1879,9 @@ export function ERDiagram({ connectionId, database }: Props) {
 
   useEffect(() => {
     edges.forEach((edge) => {
-      const bendOffset = (edge.data as { bendOffset?: DiagramPoint } | undefined)?.bendOffset;
+      const bendOffset = (
+        edge.data as { bendOffset?: DiagramPoint } | undefined
+      )?.bendOffset;
       if (bendOffset) {
         rememberedEdgeBendsRef.current.set(edge.id, { ...bendOffset });
       }
@@ -1505,8 +1892,12 @@ export function ERDiagram({ connectionId, database }: Props) {
     (connection: Connection) => {
       if (!schema || !connection.source || !connection.target) return;
 
-      const sourceTable = schema.tables.find((table) => table.name === connection.source);
-      const targetTable = schema.tables.find((table) => table.name === connection.target);
+      const sourceTable = schema.tables.find(
+        (table) => table.name === connection.source,
+      );
+      const targetTable = schema.tables.find(
+        (table) => table.name === connection.target,
+      );
       if (!sourceTable || !targetTable) return;
 
       const defaults = getPreferredRelationshipDraft(sourceTable, targetTable);
@@ -1519,7 +1910,7 @@ export function ERDiagram({ connectionId, database }: Props) {
         step: "select",
       });
     },
-    [schema]
+    [schema],
   );
 
   const closeRelationshipModal = useCallback(() => {
@@ -1528,36 +1919,42 @@ export function ERDiagram({ connectionId, database }: Props) {
   }, []);
 
   const sourceTableForDraft = pendingRelationship
-    ? schema?.tables.find((table) => table.name === pendingRelationship.sourceTable) || null
+    ? schema?.tables.find(
+        (table) => table.name === pendingRelationship.sourceTable,
+      ) || null
     : null;
   const targetTableForDraft = pendingRelationship
-    ? schema?.tables.find((table) => table.name === pendingRelationship.targetTable) || null
+    ? schema?.tables.find(
+        (table) => table.name === pendingRelationship.targetTable,
+      ) || null
     : null;
   const sourceColumnOptions = useMemo(
     () => sourceTableForDraft?.columns.map(getColumnSelectOption) || [],
-    [sourceTableForDraft]
+    [sourceTableForDraft],
   );
   const targetColumnOptions = useMemo(
     () => targetTableForDraft?.columns.map(getColumnSelectOption) || [],
-    [targetTableForDraft]
+    [targetTableForDraft],
   );
   const pendingRelationshipNotation = useMemo(() => {
-    if (!pendingRelationship || !sourceTableForDraft || !targetTableForDraft) return null;
-    if (!pendingRelationship.sourceColumn || !pendingRelationship.targetColumn) return null;
+    if (!pendingRelationship || !sourceTableForDraft || !targetTableForDraft)
+      return null;
+    if (!pendingRelationship.sourceColumn || !pendingRelationship.targetColumn)
+      return null;
 
     return inferERRelationshipNotation(
       sourceTableForDraft,
       pendingRelationship.sourceColumn,
       targetTableForDraft,
       pendingRelationship.targetColumn,
-      { enforceReferenceConstraint: false }
+      { enforceReferenceConstraint: false },
     );
   }, [pendingRelationship, sourceTableForDraft, targetTableForDraft]);
   const canAdvanceRelationshipDraft = Boolean(
     pendingRelationship?.sourceColumn &&
-      pendingRelationship?.targetColumn &&
-      sourceTableForDraft &&
-      targetTableForDraft
+    pendingRelationship?.targetColumn &&
+    sourceTableForDraft &&
+    targetTableForDraft,
   );
 
   const confirmRelationshipDraft = useCallback(() => {
@@ -1579,20 +1976,33 @@ export function ERDiagram({ connectionId, database }: Props) {
     };
 
     const signature = getRelationshipSignature(relationship);
-    const alreadyExists = allRelationships.some((item) => getRelationshipSignature(item) === signature);
+    const alreadyExists = allRelationships.some(
+      (item) => getRelationshipSignature(item) === signature,
+    );
 
     if (alreadyExists) {
-      setRelationshipModalError("This relationship already exists in the diagram.");
+      setRelationshipModalError(
+        "This relationship already exists in the diagram.",
+      );
       return;
     }
 
-    const nextRelationships = dedupeRelationships([...customRelationships, relationship]);
+    const nextRelationships = dedupeRelationships([
+      ...customRelationships,
+      relationship,
+    ]);
     setCustomRelationships(nextRelationships);
     persistCustomRelationships(connectionId, database, nextRelationships);
     rememberedEdgeBendsRef.current.set(relationship.id, { x: 0, y: 0 });
     setPendingRelationship(null);
     setRelationshipModalError(null);
-  }, [allRelationships, connectionId, customRelationships, database, pendingRelationship]);
+  }, [
+    allRelationships,
+    connectionId,
+    customRelationships,
+    database,
+    pendingRelationship,
+  ]);
 
   const openRelationshipConfirmation = useCallback(() => {
     if (!canAdvanceRelationshipDraft || !pendingRelationship) {
@@ -1601,7 +2011,9 @@ export function ERDiagram({ connectionId, database }: Props) {
     }
 
     setRelationshipModalError(null);
-    setPendingRelationship((current) => (current ? { ...current, step: "confirm" } : current));
+    setPendingRelationship((current) =>
+      current ? { ...current, step: "confirm" } : current,
+    );
   }, [canAdvanceRelationshipDraft, pendingRelationship]);
 
   const handleTableToggle = (tableName: string) => {
@@ -1657,13 +2069,21 @@ export function ERDiagram({ connectionId, database }: Props) {
         [],
         new Map(),
         handleTableExpandToggle,
-        handleNodeContextMenu
-      )
+        handleNodeContextMenu,
+      ),
     );
     setEdges((existing) =>
-      buildEdges(schema.tables, allRelationships, selectedTables, existing, new Map())
+      buildEdges(
+        schema.tables,
+        allRelationships,
+        selectedTables,
+        existing,
+        new Map(),
+      ),
     );
-    fitDiagram(selectedTables.size > DIAGRAM_RECOMMENDED_TABLE_COUNT ? 0.62 : 0.92);
+    fitDiagram(
+      selectedTables.size > DIAGRAM_RECOMMENDED_TABLE_COUNT ? 0.62 : 0.92,
+    );
   }, [
     allRelationships,
     expandedTables,
@@ -1713,7 +2133,11 @@ export function ERDiagram({ connectionId, database }: Props) {
         downloadLink.remove();
       }
     } catch (reason) {
-      setExportError(reason instanceof Error ? reason.message : "Could not export the ER diagram PNG.");
+      setExportError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not export the ER diagram PNG.",
+      );
     } finally {
       setExportFormat(null);
     }
@@ -1736,7 +2160,9 @@ export function ERDiagram({ connectionId, database }: Props) {
 
       const xml = buildDrawioDiagramXml(snapshot);
       const fileName = `${sanitizeFileName(activeDatabaseLabel || "er-diagram") || "er-diagram"}.drawio`;
-      const blob = new Blob([xml], { type: "application/vnd.jgraph.mxfile+xml;charset=utf-8" });
+      const blob = new Blob([xml], {
+        type: "application/vnd.jgraph.mxfile+xml;charset=utf-8",
+      });
       const objectUrl = URL.createObjectURL(blob);
       const downloadLink = document.createElement("a");
 
@@ -1748,11 +2174,123 @@ export function ERDiagram({ connectionId, database }: Props) {
       downloadLink.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } catch (reason) {
-      setExportError(reason instanceof Error ? reason.message : "Could not export the ER diagram draw.io file.");
+      setExportError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not export the ER diagram draw.io file.",
+      );
     } finally {
       setExportFormat(null);
     }
   }, [activeDatabaseLabel, edges, nodes]);
+
+  const handleOpenRelationshipSql = useCallback(() => {
+    const sql = buildERDiagramSqlExport(
+      activeDbType,
+      allRelationships,
+      database,
+    );
+    const tabId = `query-${crypto.randomUUID()}`;
+    addTab({
+      id: tabId,
+      type: "query",
+      title: "ER relationship review",
+      connectionId,
+      database: database || undefined,
+      content: sql,
+    });
+    setActiveTab(tabId);
+  }, [
+    activeDbType,
+    addTab,
+    allRelationships,
+    connectionId,
+    database,
+    setActiveTab,
+  ]);
+
+  const buildSelectionQuery = useCallback(
+    (tableName: string, columnName?: string) => {
+      const table = tableMap.get(tableName);
+      if (!table) return null;
+
+      const qualifiedTable = qualifyTableName(
+        activeDbType,
+        getQualifiedTableName(table),
+        database,
+      );
+      const selectedColumns = columnName
+        ? quoteIdentifier(activeDbType, columnName)
+        : "*";
+      return `SELECT ${selectedColumns}\nFROM ${qualifiedTable}\nLIMIT 100;`;
+    },
+    [activeDbType, database, tableMap],
+  );
+
+  const openSelectionQuery = useCallback(
+    (tableName: string, columnName?: string, explain = false) => {
+      const query = buildSelectionQuery(tableName, columnName);
+      if (!query) return;
+
+      const content = explain
+        ? activeDbType === "mssql"
+          ? `SET SHOWPLAN_XML ON;\n${query}\nSET SHOWPLAN_XML OFF;`
+          : `EXPLAIN\n${query}`
+        : query;
+      const tabId = `erd-${explain ? "explain" : "query"}-${crypto.randomUUID()}`;
+      const scope = columnName ? `${tableName}.${columnName}` : tableName;
+
+      addTab({
+        id: tabId,
+        type: "query",
+        title: explain ? `Explain ${scope}` : `Query ${scope}`,
+        connectionId,
+        database: database || undefined,
+        content,
+      });
+      setActiveTab(tabId);
+    },
+    [
+      activeDbType,
+      addTab,
+      buildSelectionQuery,
+      connectionId,
+      database,
+      setActiveTab,
+    ],
+  );
+
+  const attachSelectionToAI = useCallback(
+    (tableName: string, columnName?: string) => {
+      const query = buildSelectionQuery(tableName, columnName);
+      if (!query) return;
+
+      const selectionLabel = columnName
+        ? `${tableName}.${columnName}`
+        : tableName;
+      window.dispatchEvent(
+        new CustomEvent("open-ai-slide-panel", {
+          detail: {
+            prompt: `Review the ER diagram selection ${selectionLabel}.`,
+            attachment: {
+              source: `ER Diagram: ${selectionLabel}`,
+              text: [
+                "ER diagram selection:",
+                `Database: ${database || "current database"}`,
+                `Table: ${tableName}`,
+                columnName ? `Column: ${columnName}` : "",
+                "Suggested read-only query:",
+                query,
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            },
+          },
+        }),
+      );
+    },
+    [buildSelectionQuery, database],
+  );
 
   const contextMenuItems = useMemo<ERDContextMenuItem[]>(() => {
     if (!contextMenu) return [];
@@ -1762,7 +2300,11 @@ export function ERDiagram({ connectionId, database }: Props) {
         {
           key: "edit-column",
           label: `Edit column ${contextMenu.columnName}`,
-          action: () => openQuickColumnEditor(contextMenu.tableName, contextMenu.columnName || ""),
+          action: () =>
+            openQuickColumnEditor(
+              contextMenu.tableName,
+              contextMenu.columnName || "",
+            ),
         },
         {
           key: "edit-columns",
@@ -1777,13 +2319,36 @@ export function ERDiagram({ connectionId, database }: Props) {
         {
           key: "edit-foreign-keys",
           label: "Edit foreign keys",
-          action: () => openStructureEditor(contextMenu.tableName, "foreign_keys"),
+          action: () =>
+            openStructureEditor(contextMenu.tableName, "foreign_keys"),
         },
         { key: "divider-open", divider: true },
         {
           key: "open-data",
           label: "Open table data",
           action: () => openTableDataTab(contextMenu.tableName),
+        },
+        {
+          key: "seed-query",
+          label: "Open SELECT query",
+          action: () =>
+            openSelectionQuery(contextMenu.tableName, contextMenu.columnName),
+        },
+        {
+          key: "seed-explain",
+          label: "Open explain plan",
+          action: () =>
+            openSelectionQuery(
+              contextMenu.tableName,
+              contextMenu.columnName,
+              true,
+            ),
+        },
+        {
+          key: "ask-ai",
+          label: "Ask AI about selection",
+          action: () =>
+            attachSelectionToAI(contextMenu.tableName, contextMenu.columnName),
         },
       ];
     }
@@ -1802,7 +2367,8 @@ export function ERDiagram({ connectionId, database }: Props) {
       {
         key: "edit-foreign-keys",
         label: "Edit foreign keys",
-        action: () => openStructureEditor(contextMenu.tableName, "foreign_keys"),
+        action: () =>
+          openStructureEditor(contextMenu.tableName, "foreign_keys"),
       },
       {
         key: "inspect-triggers",
@@ -1815,13 +2381,40 @@ export function ERDiagram({ connectionId, database }: Props) {
         label: "Open table data",
         action: () => openTableDataTab(contextMenu.tableName),
       },
+      {
+        key: "seed-query",
+        label: "Open SELECT query",
+        action: () => openSelectionQuery(contextMenu.tableName),
+      },
+      {
+        key: "seed-explain",
+        label: "Open explain plan",
+        action: () =>
+          openSelectionQuery(contextMenu.tableName, undefined, true),
+      },
+      {
+        key: "ask-ai",
+        label: "Ask AI about selection",
+        action: () => attachSelectionToAI(contextMenu.tableName),
+      },
     ];
-  }, [contextMenu, openQuickColumnEditor, openStructureEditor, openTableDataTab]);
+  }, [
+    attachSelectionToAI,
+    contextMenu,
+    openQuickColumnEditor,
+    openSelectionQuery,
+    openStructureEditor,
+    openTableDataTab,
+  ]);
 
   const handleOpenFullEditorFromQuickModal = useCallback(() => {
     if (!quickColumnEditor) return;
 
-    openStructureEditor(quickColumnEditor.tableName, "columns", quickColumnEditor.originalColumn.name);
+    openStructureEditor(
+      quickColumnEditor.tableName,
+      "columns",
+      quickColumnEditor.originalColumn.name,
+    );
     setQuickColumnEditor(null);
     setQuickColumnEditorError(null);
   }, [openStructureEditor, quickColumnEditor]);
@@ -1832,18 +2425,27 @@ export function ERDiagram({ connectionId, database }: Props) {
     const keyword = tableFilter.trim().toLowerCase();
     if (!keyword) return schema.tables;
 
-    return schema.tables.filter((table) => table.name.toLowerCase().includes(keyword));
+    return schema.tables.filter((table) =>
+      table.name.toLowerCase().includes(keyword),
+    );
   }, [schema, tableFilter]);
 
   const tableColorMap = useMemo(() => {
-    return new Map((schema?.tables || []).map((table, index) => [table.name, getTableColor(index)]));
+    return new Map(
+      (schema?.tables || []).map((table, index) => [
+        table.name,
+        getTableColor(index),
+      ]),
+    );
   }, [schema]);
 
   const visibleRelationshipCount = useMemo(() => {
     if (!schema) return 0;
 
     return allRelationships.filter(
-      (relationship) => selectedTables.has(relationship.fromTable) && selectedTables.has(relationship.toTable)
+      (relationship) =>
+        selectedTables.has(relationship.fromTable) &&
+        selectedTables.has(relationship.toTable),
     ).length;
   }, [allRelationships, schema, selectedTables]);
   const bannerError = error || exportError;
@@ -1864,7 +2466,9 @@ export function ERDiagram({ connectionId, database }: Props) {
         <div className="erd-toolbar-stats" aria-label="Diagram summary">
           <span className="erd-toolbar-stat">
             <Database className="erd-toolbar-icon" />
-            {schema ? `${selectedTables.size} of ${schema.tables.length}` : "Loading"}
+            {schema
+              ? `${selectedTables.size} of ${schema.tables.length}`
+              : "Loading"}
           </span>
           <span className="erd-toolbar-stat">
             <GitBranch className="erd-toolbar-icon" />
@@ -1874,7 +2478,11 @@ export function ERDiagram({ connectionId, database }: Props) {
 
         <div className="erd-toolbar-spacer" />
 
-        <div className="erd-toolbar-group" role="group" aria-label="Diagram layout">
+        <div
+          className="erd-toolbar-group"
+          role="group"
+          aria-label="Diagram layout"
+        >
           <button
             type="button"
             onClick={() => {
@@ -1886,7 +2494,9 @@ export function ERDiagram({ connectionId, database }: Props) {
             title={loading ? "Refreshing schema" : "Refresh schema"}
             aria-label={loading ? "Refreshing schema" : "Refresh schema"}
           >
-            <RefreshCw className={`erd-toolbar-icon ${loading ? "is-spinning" : ""}`} />
+            <RefreshCw
+              className={`erd-toolbar-icon ${loading ? "is-spinning" : ""}`}
+            />
           </button>
 
           <button
@@ -1914,13 +2524,21 @@ export function ERDiagram({ connectionId, database }: Props) {
 
         <div className="erd-toolbar-divider" />
 
-        <div className="erd-toolbar-group" role="group" aria-label="Diagram view">
+        <div
+          className="erd-toolbar-group"
+          role="group"
+          aria-label="Diagram view"
+        >
           <button
             type="button"
             onClick={() => setIsSidePanelCollapsed((value) => !value)}
             className={`erd-toolbar-button is-icon-only ${!isSidePanelCollapsed ? "is-active" : ""}`}
-            title={isSidePanelCollapsed ? "Show table browser" : "Hide table browser"}
-            aria-label={isSidePanelCollapsed ? "Show table browser" : "Hide table browser"}
+            title={
+              isSidePanelCollapsed ? "Show table browser" : "Hide table browser"
+            }
+            aria-label={
+              isSidePanelCollapsed ? "Show table browser" : "Hide table browser"
+            }
             aria-pressed={!isSidePanelCollapsed}
           >
             {isSidePanelCollapsed ? (
@@ -1946,7 +2564,9 @@ export function ERDiagram({ connectionId, database }: Props) {
             onClick={() => setShowControls((value) => !value)}
             className={`erd-toolbar-button is-icon-only ${showControls ? "is-active" : ""}`}
             title={showControls ? "Hide zoom controls" : "Show zoom controls"}
-            aria-label={showControls ? "Hide zoom controls" : "Show zoom controls"}
+            aria-label={
+              showControls ? "Hide zoom controls" : "Show zoom controls"
+            }
             aria-pressed={showControls}
           >
             <SlidersHorizontal className="erd-toolbar-icon" />
@@ -1955,7 +2575,11 @@ export function ERDiagram({ connectionId, database }: Props) {
 
         <div className="erd-toolbar-divider" />
 
-        <div className="erd-toolbar-group" role="group" aria-label="Export diagram">
+        <div
+          className="erd-toolbar-group"
+          role="group"
+          aria-label="Export diagram"
+        >
           <button
             type="button"
             onClick={handleExportPNG}
@@ -1971,10 +2595,24 @@ export function ERDiagram({ connectionId, database }: Props) {
             onClick={handleExportDrawio}
             disabled={exportFormat !== null || nodes.length === 0}
             className="erd-toolbar-button is-icon-only"
-            title={exportFormat === "drawio" ? "Exporting Draw.io" : "Export Draw.io"}
-            aria-label={exportFormat === "drawio" ? "Exporting Draw.io" : "Export Draw.io"}
+            title={
+              exportFormat === "drawio" ? "Exporting Draw.io" : "Export Draw.io"
+            }
+            aria-label={
+              exportFormat === "drawio" ? "Exporting Draw.io" : "Export Draw.io"
+            }
           >
             <FileText className="erd-toolbar-icon" />
+          </button>
+          <button
+            type="button"
+            onClick={handleOpenRelationshipSql}
+            disabled={allRelationships.length === 0}
+            className="erd-toolbar-button"
+            title="Open relationship SQL review"
+          >
+            <FileText className="erd-toolbar-icon" />
+            SQL
           </button>
         </div>
       </header>
@@ -1986,14 +2624,21 @@ export function ERDiagram({ connectionId, database }: Props) {
           <RefreshCw className="erd-loading-icon" />
           <div className="erd-loading-copy">
             <strong>Loading diagram data</strong>
-            <span>Reading tables, columns, and relationships from the current database.</span>
+            <span>
+              Reading tables, columns, and relationships from the current
+              database.
+            </span>
           </div>
         </div>
       )}
 
       {!loading && schema && (
-        <div className={`erd-workspace ${isSidePanelCollapsed ? "is-sidebar-collapsed" : ""}`}>
-          <aside className={`erd-sidepanel ${isSidePanelCollapsed ? "is-collapsed" : ""}`}>
+        <div
+          className={`erd-workspace ${isSidePanelCollapsed ? "is-sidebar-collapsed" : ""}`}
+        >
+          <aside
+            className={`erd-sidepanel ${isSidePanelCollapsed ? "is-collapsed" : ""}`}
+          >
             <div className="erd-sidepanel-header">
               <div className="erd-sidepanel-copy">
                 <strong className="erd-sidepanel-title">Tables</strong>
@@ -2005,7 +2650,11 @@ export function ERDiagram({ connectionId, database }: Props) {
               <button
                 type="button"
                 className="erd-sidepanel-collapse"
-                aria-label={isSidePanelCollapsed ? "Expand tables panel" : "Collapse tables panel"}
+                aria-label={
+                  isSidePanelCollapsed
+                    ? "Expand tables panel"
+                    : "Collapse tables panel"
+                }
                 onClick={() => setIsSidePanelCollapsed((value) => !value)}
               >
                 {isSidePanelCollapsed ? (
@@ -2026,11 +2675,19 @@ export function ERDiagram({ connectionId, database }: Props) {
                 <Sparkles className="erd-sidepanel-action-icon" />
                 Overview
               </button>
-              <button type="button" onClick={handleSelectAll} className="erd-sidepanel-action">
+              <button
+                type="button"
+                onClick={handleSelectAll}
+                className="erd-sidepanel-action"
+              >
                 <CheckCheck className="erd-sidepanel-action-icon" />
                 All
               </button>
-              <button type="button" onClick={handleClearAll} className="erd-sidepanel-action">
+              <button
+                type="button"
+                onClick={handleClearAll}
+                className="erd-sidepanel-action"
+              >
                 <Square className="erd-sidepanel-action-icon" />
                 None
               </button>
@@ -2061,7 +2718,8 @@ export function ERDiagram({ connectionId, database }: Props) {
               ) : (
                 filteredTables.map((table) => {
                   const checked = selectedTables.has(table.name);
-                  const accent = tableColorMap.get(table.name) || TABLE_COLORS[0];
+                  const accent =
+                    tableColorMap.get(table.name) || TABLE_COLORS[0];
 
                   return (
                     <button
@@ -2078,10 +2736,17 @@ export function ERDiagram({ connectionId, database }: Props) {
                       {!isSidePanelCollapsed && (
                         <>
                           <div className="erd-table-toggle-copy">
-                            <span className="erd-table-toggle-name">{table.name}</span>
-                            <span className="erd-table-toggle-meta">{table.schema || "Table"}</span>
+                            <span className="erd-table-toggle-name">
+                              {table.name}
+                            </span>
+                            <span className="erd-table-toggle-meta">
+                              {table.schema || "Table"}
+                            </span>
                           </div>
-                          <span className="erd-table-toggle-count" title={`${table.columns.length} columns`}>
+                          <span
+                            className="erd-table-toggle-count"
+                            title={`${table.columns.length} columns`}
+                          >
                             {table.columns.length}
                           </span>
                         </>
@@ -2106,7 +2771,10 @@ export function ERDiagram({ connectionId, database }: Props) {
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               fitView
-              fitViewOptions={{ padding: DIAGRAM_INITIAL_FIT_PADDING, maxZoom: DIAGRAM_INITIAL_FIT_MAX_ZOOM }}
+              fitViewOptions={{
+                padding: DIAGRAM_INITIAL_FIT_PADDING,
+                maxZoom: DIAGRAM_INITIAL_FIT_MAX_ZOOM,
+              }}
               minZoom={DIAGRAM_MIN_ZOOM}
               maxZoom={DIAGRAM_MAX_ZOOM}
               className="erd-flow"
@@ -2117,23 +2785,35 @@ export function ERDiagram({ connectionId, database }: Props) {
               {showMinimap && (
                 <MiniMap
                   className="erd-minimap"
-                  nodeColor={(node) => (node.data as { color?: string }).color || "#60A5FA"}
+                  nodeColor={(node) =>
+                    (node.data as { color?: string }).color || "#60A5FA"
+                  }
                   maskColor="rgba(248, 250, 252, 0.74)"
                   pannable
                   zoomable
                 />
               )}
 
-              {showControls && <Controls className="erd-controls" showInteractive={false} />}
+              {showControls && (
+                <Controls className="erd-controls" showInteractive={false} />
+              )}
 
-              <Background variant={BackgroundVariant.Dots} gap={22} size={1.15} color="var(--mm-border)" />
+              <Background
+                variant={BackgroundVariant.Dots}
+                gap={22}
+                size={1.15}
+                color="var(--mm-border)"
+              />
             </ReactFlow>
 
             {selectedTables.size === 0 && (
               <div className="erd-canvas-empty">
                 <Database className="erd-canvas-empty-icon" />
                 <strong>No tables on the canvas</strong>
-                <span>Select tables from the browser or restore the recommended overview.</span>
+                <span>
+                  Select tables from the browser or restore the recommended
+                  overview.
+                </span>
                 <button
                   type="button"
                   className="erd-canvas-empty-action"
@@ -2148,7 +2828,11 @@ export function ERDiagram({ connectionId, database }: Props) {
         </div>
       )}
 
-      <ERDContextMenu contextMenu={contextMenu} items={contextMenuItems} onClose={closeContextMenu} />
+      <ERDContextMenu
+        contextMenu={contextMenu}
+        items={contextMenuItems}
+        onClose={closeContextMenu}
+      />
 
       {quickColumnEditor && (
         <ERDQuickColumnModal
@@ -2168,18 +2852,29 @@ export function ERDiagram({ connectionId, database }: Props) {
 
       {pendingRelationship && sourceTableForDraft && targetTableForDraft && (
         <div className="erd-modal-backdrop" onClick={closeRelationshipModal}>
-          <div className="erd-modal-shell" onClick={(event) => event.stopPropagation()}>
+          <div
+            className="erd-modal-shell"
+            onClick={(event) => event.stopPropagation()}
+          >
             <div className="erd-modal-header">
               <div className="erd-modal-header-copy">
                 <span className="erd-modal-kicker">
-                  {pendingRelationship.step === "select" ? "Step 1 of 2" : "Step 2 of 2"}
+                  {pendingRelationship.step === "select"
+                    ? "Step 1 of 2"
+                    : "Step 2 of 2"}
                 </span>
                 <strong className="erd-modal-title">
-                  {pendingRelationship.step === "select" ? "Create custom relationship" : "Confirm relationship"}
+                  {pendingRelationship.step === "select"
+                    ? "Create custom relationship"
+                    : "Confirm relationship"}
                 </strong>
               </div>
 
-              <button type="button" className="erd-modal-close" onClick={closeRelationshipModal}>
+              <button
+                type="button"
+                className="erd-modal-close"
+                onClick={closeRelationshipModal}
+              >
                 <X className="erd-modal-close-icon" />
               </button>
             </div>
@@ -2187,9 +2882,13 @@ export function ERDiagram({ connectionId, database }: Props) {
             {pendingRelationship.step === "select" ? (
               <div className="erd-modal-body">
                 <div className="erd-modal-summary">
-                  <span className="erd-modal-chip">{sourceTableForDraft.name}</span>
+                  <span className="erd-modal-chip">
+                    {sourceTableForDraft.name}
+                  </span>
                   <Link2 className="erd-modal-link-icon" />
-                  <span className="erd-modal-chip">{targetTableForDraft.name}</span>
+                  <span className="erd-modal-chip">
+                    {targetTableForDraft.name}
+                  </span>
                 </div>
 
                 <div className="erd-modal-grid">
@@ -2202,7 +2901,9 @@ export function ERDiagram({ connectionId, database }: Props) {
                       onChange={(value) => {
                         setRelationshipModalError(null);
                         setPendingRelationship((current) =>
-                          current ? { ...current, sourceColumn: value } : current
+                          current
+                            ? { ...current, sourceColumn: value }
+                            : current,
                         );
                       }}
                     />
@@ -2217,7 +2918,9 @@ export function ERDiagram({ connectionId, database }: Props) {
                       onChange={(value) => {
                         setRelationshipModalError(null);
                         setPendingRelationship((current) =>
-                          current ? { ...current, targetColumn: value } : current
+                          current
+                            ? { ...current, targetColumn: value }
+                            : current,
                         );
                       }}
                     />
@@ -2230,13 +2933,25 @@ export function ERDiagram({ connectionId, database }: Props) {
                     : "This saves a persistent custom relationship for the current connection and database."}
                 </p>
 
-                {relationshipModalError && <div className="erd-modal-error">{relationshipModalError}</div>}
+                {relationshipModalError && (
+                  <div className="erd-modal-error">
+                    {relationshipModalError}
+                  </div>
+                )}
 
                 <div className="erd-modal-actions">
-                  <button type="button" className="erd-modal-btn" onClick={closeRelationshipModal}>
+                  <button
+                    type="button"
+                    className="erd-modal-btn"
+                    onClick={closeRelationshipModal}
+                  >
                     Cancel
                   </button>
-                  <button type="button" className="erd-modal-btn is-primary" onClick={openRelationshipConfirmation}>
+                  <button
+                    type="button"
+                    className="erd-modal-btn is-primary"
+                    onClick={openRelationshipConfirmation}
+                  >
                     Continue
                   </button>
                 </div>
@@ -2246,14 +2961,16 @@ export function ERDiagram({ connectionId, database }: Props) {
                 <div className="erd-modal-confirm-card">
                   <span className="erd-modal-confirm-label">Source</span>
                   <strong className="erd-modal-confirm-value">
-                    {pendingRelationship.sourceTable}.{pendingRelationship.sourceColumn}
+                    {pendingRelationship.sourceTable}.
+                    {pendingRelationship.sourceColumn}
                   </strong>
                 </div>
 
                 <div className="erd-modal-confirm-card">
                   <span className="erd-modal-confirm-label">Target</span>
                   <strong className="erd-modal-confirm-value">
-                    {pendingRelationship.targetTable}.{pendingRelationship.targetColumn}
+                    {pendingRelationship.targetTable}.
+                    {pendingRelationship.targetColumn}
                   </strong>
                 </div>
 
@@ -2263,22 +2980,36 @@ export function ERDiagram({ connectionId, database }: Props) {
                     : "Confirm to save this relationship into TableR for this connection. This does not alter the database schema itself."}
                 </p>
 
-                {relationshipModalError && <div className="erd-modal-error">{relationshipModalError}</div>}
+                {relationshipModalError && (
+                  <div className="erd-modal-error">
+                    {relationshipModalError}
+                  </div>
+                )}
 
                 <div className="erd-modal-actions">
                   <button
                     type="button"
                     className="erd-modal-btn"
                     onClick={() =>
-                      setPendingRelationship((current) => (current ? { ...current, step: "select" } : current))
+                      setPendingRelationship((current) =>
+                        current ? { ...current, step: "select" } : current,
+                      )
                     }
                   >
                     Back
                   </button>
-                  <button type="button" className="erd-modal-btn" onClick={closeRelationshipModal}>
+                  <button
+                    type="button"
+                    className="erd-modal-btn"
+                    onClick={closeRelationshipModal}
+                  >
                     Cancel
                   </button>
-                  <button type="button" className="erd-modal-btn is-primary" onClick={confirmRelationshipDraft}>
+                  <button
+                    type="button"
+                    className="erd-modal-btn is-primary"
+                    onClick={confirmRelationshipDraft}
+                  >
                     Save relationship
                   </button>
                 </div>

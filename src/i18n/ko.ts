@@ -69,6 +69,7 @@ export const ko: Record<keyof typeof en, string> = {
   "menu.item.focusExplorerSearch": "탐색기 검색에 포커스",
   "menu.item.openExplorer": "탐색기 열기",
   "menu.item.pluginManager": "플러그인 관리자",
+  "menu.item.externalIntegrations": "외부 통합",
   "menu.item.metrics": "메트릭",
   "menu.item.queryHistory": "쿼리 기록",
   "menu.item.aboutTableR": "TableR 정보",
@@ -272,7 +273,8 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.widget.loading": "로딩 중...",
   "metrics.widget.noData": "데이터 없음",
   "metrics.widget.queryNeedsSeries": "쿼리에 라벨과 숫자 값이 필요합니다.",
-  "metrics.validation.addQuery": "이 위젯을 로드하려면 읽기 전용 SQL 쿼리를 추가하세요.",
+  "metrics.validation.addQuery":
+    "이 위젯을 로드하려면 읽기 전용 SQL 쿼리를 추가하세요.",
   "metrics.validation.singleStatement":
     "메트릭 위젯은 단일 읽기 전용 문만 지원합니다.",
   "metrics.validation.readOnlyOnly":
@@ -297,6 +299,10 @@ export const ko: Record<keyof typeof en, string> = {
   "tabs.hideResults": "결과 숨기기",
   "tabs.showResults": "결과 표시",
   "tabs.readyToExecute": "실행하려면 Ctrl+Enter을 누르세요",
-  "tabs.noSqlToExecute": "아직 실행할 항목이 없습니다. 먼저 쿼리나 명령을 입력한 다음 Ctrl+Enter을 누르세요.",
+  "tabs.noSqlToExecute":
+    "아직 실행할 항목이 없습니다. 먼저 쿼리나 명령을 입력한 다음 Ctrl+Enter을 누르세요.",
+  "metrics.widget.openResult": "Open result in workspace",
+  "metrics.widget.openSourceSql": "Open source SQL",
+  "workspace.bundle.export": "Export workspace bundle",
+  "workspace.bundle.import": "Import workspace bundle",
 };
-

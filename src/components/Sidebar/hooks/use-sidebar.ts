@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { invoke } from "@tauri-apps/api/core";
 
-import { useAppStore } from "../../../stores/appStore";
+import { useConnectionStore } from "../../../stores/connectionStore";
+import { useUIStore } from "../../../stores/uiStore";
 import { useI18n } from "../../../i18n";
 import { useEvent, EventCenter } from "../../../stores/event-center";
 import {
@@ -265,8 +266,7 @@ export function useSidebar() {
     fetchTables,
     fetchSchemaObjects,
     switchDatabase,
-    addTab,
-  } = useAppStore(
+  } = useConnectionStore(
     useShallow((state) => ({
       activeConnectionId: state.activeConnectionId,
       connectedIds: state.connectedIds,
@@ -282,9 +282,9 @@ export function useSidebar() {
       fetchTables: state.fetchTables,
       fetchSchemaObjects: state.fetchSchemaObjects,
       switchDatabase: state.switchDatabase,
-      addTab: state.addTab,
     }))
   );
+  const addTab = useUIStore((state) => state.addTab);
 
   // --- Local state ---
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
@@ -356,7 +356,7 @@ export function useSidebar() {
     if (!activeConnectionId || !currentDatabase) return;
     if (schemaObjects.length > 0 || isLoadingSchemaObjects) return;
     
-    const isConnected = useAppStore.getState().connectedIds.has(activeConnectionId);
+    const isConnected = useConnectionStore.getState().connectedIds.has(activeConnectionId);
     if (!isConnected) return;
 
     const delayMs = search.trim() ? 0 : 900;
@@ -414,7 +414,7 @@ export function useSidebar() {
       if (!activeConnectionId) return;
       const qualifiedName = table.schema ? `${table.schema}.${table.name}` : table.name;
       const tabId = `table-${activeConnectionId}-${currentDatabase}-${qualifiedName}`;
-      useAppStore.getState().pinTab(tabId);
+      useUIStore.getState().pinTab(tabId);
     },
     [activeConnectionId, currentDatabase],
   );
@@ -654,6 +654,16 @@ export function useSidebar() {
   const runMaintenanceCommand = useCallback(async (command: string, tableName: string) => {
     if (!activeConnectionId) return;
     try {
+      const preview = await invoke<{ sql: string; requiresConfirmation: boolean }>("preview_maintenance_command", {
+        connectionId: activeConnectionId,
+        command,
+        table: tableName,
+        database: currentDatabase || undefined,
+      });
+      const approved = window.confirm(
+        `Review maintenance command before execution:\n\n${preview.sql}\n\nRun this command on ${tableName}?`,
+      );
+      if (!approved) return;
       await invoke("run_maintenance_command", {
         connectionId: activeConnectionId,
         command,

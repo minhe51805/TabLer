@@ -7,7 +7,10 @@ import {
   FileText,
   Table2,
   Bookmark,
+  Columns3,
   Database,
+  FileSearch,
+  History,
   X,
   Hash,
   Clock,
@@ -16,19 +19,28 @@ import { useQuickSwitcherStore, fuzzySearch, type SwitcherItem, type SwitcherIte
 import { useUIStore } from "../../stores/uiStore";
 import { useSqlFavoritesStore } from "../../stores/sql-favorites-store";
 import { useConnectionStore } from "../../stores/connectionStore";
+import { useQueryStore } from "../../stores/queryStore";
+import { useQueryHistoryStore } from "../../stores/queryHistoryStore";
+import type { ColumnDetail } from "../../types";
 import "../../styles/lazy-overlays.css";
 
 const ITEM_ICONS: Record<SwitcherItemKind, React.ReactNode> = {
   tab: <FileText size={14} />,
   table: <Table2 size={14} />,
+  column: <Columns3 size={14} />,
+  "schema-object": <FileSearch size={14} />,
   "saved-query": <Bookmark size={14} />,
+  history: <History size={14} />,
   connection: <Database size={14} />,
 };
 
 const KIND_LABELS: Record<SwitcherItemKind, string> = {
   tab: "Tab",
   table: "Table",
+  column: "Column",
+  "schema-object": "Schema object",
   "saved-query": "Saved Query",
+  history: "History",
   connection: "Connection",
 };
 
@@ -55,13 +67,87 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
   } = useQuickSwitcherStore();
 
   const tabs = useUIStore((s) => s.tabs);
+  const addTab = useUIStore((s) => s.addTab);
   const setActiveTab = useUIStore((s) => s.setActiveTab);
   const favorites = useSqlFavoritesStore((s) => s.favorites);
-  const connections = useConnectionStore((s) => s.connections);
+  const loadFavorites = useSqlFavoritesStore((s) => s.loadFavorites);
+  const { connections, activeConnectionId, currentDatabase, tables, schemaObjects } = useConnectionStore((s) => s);
+  const getTableColumnsPreview = useQueryStore((s) => s.getTableColumnsPreview);
+  const { entries: historyEntries, loadHistory } = useQueryHistoryStore((s) => s);
 
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [columnItems, setColumnItems] = useState<SwitcherItem[]>([]);
+  const columnScopeRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const shouldSearchColumns = isOpen && searchQuery.trim().length >= 2;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (favorites.length === 0) void loadFavorites();
+    if (activeConnectionId && historyEntries.length === 0) void loadHistory(activeConnectionId);
+  }, [activeConnectionId, favorites.length, historyEntries.length, isOpen, loadFavorites, loadHistory]);
+
+  useEffect(() => {
+    if (!shouldSearchColumns || !activeConnectionId) return;
+    const scope = `${activeConnectionId}|${currentDatabase || ""}`;
+    if (columnScopeRef.current === scope) return;
+    let cancelled = false;
+    columnScopeRef.current = scope;
+
+    const loadColumns = async () => {
+      const nextItems: SwitcherItem[] = [];
+      const visibleTables = tables.slice(0, 160);
+      for (let start = 0; start < visibleTables.length; start += 4) {
+        const batch = visibleTables.slice(start, start + 4);
+        const results = await Promise.allSettled(
+          batch.map((table) => getTableColumnsPreview(activeConnectionId, table.name, currentDatabase || undefined)),
+        );
+        results.forEach((result, index) => {
+          if (result.status !== "fulfilled") return;
+          const table = batch[index];
+          for (const column of result.value as ColumnDetail[]) {
+            nextItems.push({
+              id: `column:${table.name}:${column.name}`,
+              kind: "column",
+              label: column.name,
+              description: `${table.name} - ${column.column_type || column.data_type}`,
+              meta: table.schema,
+              action: () => {
+                addTab({
+                  id: `structure-${activeConnectionId}-${currentDatabase || ""}-${table.name}`,
+                  type: "structure",
+                  title: `${table.name} structure`,
+                  connectionId: activeConnectionId,
+                  database: currentDatabase || undefined,
+                  tableName: table.name,
+                  structureFocusSection: "columns",
+                  structureFocusColumn: column.name,
+                  structureFocusToken: crypto.randomUUID(),
+                });
+                addRecentItem(`column:${table.name}:${column.name}`);
+                close();
+              },
+            });
+          }
+        });
+        if (cancelled) return;
+      }
+      if (!cancelled) setColumnItems(nextItems);
+    };
+
+    void loadColumns();
+    return () => { cancelled = true; };
+  }, [activeConnectionId, addRecentItem, addTab, close, currentDatabase, getTableColumnsPreview, shouldSearchColumns, tables]);
+
+  useEffect(() => {
+    const handleSchemaInvalidation = () => {
+      columnScopeRef.current = null;
+      setColumnItems([]);
+    };
+    window.addEventListener("schema-cache-invalidated", handleSchemaInvalidation);
+    return () => window.removeEventListener("schema-cache-invalidated", handleSchemaInvalidation);
+  }, []);
 
   // Build searchable items from current app state
   const allItems = useMemo<SwitcherItem[]>(() => {
@@ -86,6 +172,54 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
       });
     }
 
+    if (activeConnectionId) {
+      for (const table of tables) {
+        items.push({
+          id: `table:${table.name}`,
+          kind: "table",
+          label: table.name,
+          description: table.table_type || "Table",
+          meta: table.schema,
+          action: () => {
+            addTab({
+              id: `table-${activeConnectionId}-${currentDatabase || ""}-${table.name}`,
+              type: "table",
+              title: table.name,
+              connectionId: activeConnectionId,
+              database: currentDatabase || undefined,
+              tableName: table.name,
+            });
+            addRecentItem(`table:${table.name}`);
+            close();
+          },
+        });
+      }
+
+      for (const object of schemaObjects) {
+        items.push({
+          id: `object:${object.object_type}:${object.name}`,
+          kind: "schema-object",
+          label: object.name,
+          description: object.object_type,
+          meta: object.schema,
+          action: () => {
+            addTab({
+              id: `query-${crypto.randomUUID()}`,
+              type: "query",
+              title: object.name,
+              connectionId: activeConnectionId,
+              database: currentDatabase || undefined,
+              content: object.definition || `-- ${object.object_type} ${object.name}`,
+            });
+            addRecentItem(`object:${object.object_type}:${object.name}`);
+            close();
+          },
+        });
+      }
+    }
+
+    items.push(...columnItems);
+
     // Saved queries
     for (const fav of favorites) {
       items.push({
@@ -97,6 +231,28 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
         action: () => {
           onOpenSavedQuery?.(fav.id);
           addRecentItem(`query:${fav.id}`);
+          close();
+        },
+      });
+    }
+
+    for (const entry of historyEntries) {
+      items.push({
+        id: `history:${entry.id ?? entry.executed_at}`,
+        kind: "history",
+        label: entry.query_text.replace(/\s+/g, " ").trim().slice(0, 72) || "SQL query",
+        description: entry.error || `${entry.duration_ms} ms - ${entry.executed_at}`,
+        meta: entry.database,
+        action: () => {
+          addTab({
+            id: `query-${crypto.randomUUID()}`,
+            type: "query",
+            title: "History query",
+            connectionId: entry.connection_id,
+            database: entry.database,
+            content: entry.query_text,
+          });
+          addRecentItem(`history:${entry.id ?? entry.executed_at}`);
           close();
         },
       });
@@ -118,7 +274,7 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
     }
 
     return items;
-  }, [tabs, favorites, connections, setActiveTab, onOpenSavedQuery, onConnect, addRecentItem, close]);
+  }, [activeConnectionId, addRecentItem, addTab, close, columnItems, connections, currentDatabase, favorites, historyEntries, onConnect, onOpenSavedQuery, schemaObjects, setActiveTab, tabs, tables]);
 
   // Filter with fuzzy search
   const filteredItems = useMemo(
@@ -193,7 +349,7 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
             ref={inputRef}
             type="text"
             className="qs-input"
-            placeholder="Search tabs, tables, queries, connections..."
+            placeholder="Search tabs, objects, columns, saved SQL, history..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             autoComplete="off"

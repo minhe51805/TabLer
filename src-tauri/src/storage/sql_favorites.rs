@@ -44,8 +44,8 @@ impl SqlFavoritesStorage {
     }
 
     fn load_from_file(path: &PathBuf) -> Result<HashMap<String, SqlFavorite>, String> {
-        let file = File::open(path)
-            .map_err(|e| format!("Failed to open sql_favorites file: {e}"))?;
+        let file =
+            File::open(path).map_err(|e| format!("Failed to open sql_favorites file: {e}"))?;
         let reader = BufReader::new(file);
         let items: Vec<SqlFavorite> = serde_json::from_reader(reader)
             .map_err(|e| format!("Failed to parse sql_favorites: {e}"))?;

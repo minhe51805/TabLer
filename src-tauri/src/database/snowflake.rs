@@ -222,7 +222,10 @@ impl SnowflakeDriver {
     }
 
     fn current_database_name(&self) -> Option<String> {
-        self.current_db.try_read().ok().and_then(|guard| guard.clone())
+        self.current_db
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     fn current_schema_name(&self) -> Option<String> {
@@ -241,7 +244,10 @@ impl SnowflakeDriver {
             .ok_or_else(|| anyhow!("A Snowflake database must be selected first"))
     }
 
-    fn build_statement_context(&self, database_override: Option<&str>) -> SnowflakeStatementContext {
+    fn build_statement_context(
+        &self,
+        database_override: Option<&str>,
+    ) -> SnowflakeStatementContext {
         SnowflakeStatementContext {
             database: database_override
                 .map(str::trim)
@@ -315,16 +321,18 @@ impl SnowflakeDriver {
             return None;
         }
 
-        Some(match (code.is_empty(), sql_state.is_empty(), message.is_empty()) {
-            (false, false, false) => format!("{code} ({sql_state}): {message}"),
-            (false, true, false) => format!("{code}: {message}"),
-            (true, false, false) => format!("{sql_state}: {message}"),
-            (_, _, false) => message.to_string(),
-            (false, false, true) => format!("{code} ({sql_state})"),
-            (false, true, true) => code.to_string(),
-            (true, false, true) => sql_state.to_string(),
-            (true, true, true) => String::new(),
-        })
+        Some(
+            match (code.is_empty(), sql_state.is_empty(), message.is_empty()) {
+                (false, false, false) => format!("{code} ({sql_state}): {message}"),
+                (false, true, false) => format!("{code}: {message}"),
+                (true, false, false) => format!("{sql_state}: {message}"),
+                (_, _, false) => message.to_string(),
+                (false, false, true) => format!("{code} ({sql_state})"),
+                (false, true, true) => code.to_string(),
+                (true, false, true) => sql_state.to_string(),
+                (true, true, true) => String::new(),
+            },
+        )
     }
 
     fn format_api_error(status: u16, body: &str) -> String {
@@ -355,18 +363,16 @@ impl SnowflakeDriver {
         }
     }
 
-    async fn parse_api_response(
-        status: StatusCode,
-        body: String,
-    ) -> Result<SnowflakeApiResponse> {
+    async fn parse_api_response(status: StatusCode, body: String) -> Result<SnowflakeApiResponse> {
         match status {
             StatusCode::OK => {
-                let parsed = serde_json::from_str::<SnowflakeResultSet>(&body).with_context(|| {
-                    format!(
-                        "Failed to parse Snowflake response payload: {}",
-                        body.chars().take(240).collect::<String>()
-                    )
-                })?;
+                let parsed =
+                    serde_json::from_str::<SnowflakeResultSet>(&body).with_context(|| {
+                        format!(
+                            "Failed to parse Snowflake response payload: {}",
+                            body.chars().take(240).collect::<String>()
+                        )
+                    })?;
                 Ok(SnowflakeApiResponse::Ready(parsed))
             }
             StatusCode::ACCEPTED | StatusCode::TOO_MANY_REQUESTS => {
@@ -414,10 +420,9 @@ impl SnowflakeDriver {
             request = request.query(&[("partition", partition.to_string())]);
         }
 
-        let response = request
-            .send()
-            .await
-            .with_context(|| format!("Failed to reach Snowflake statement status endpoint {url}"))?;
+        let response = request.send().await.with_context(|| {
+            format!("Failed to reach Snowflake statement status endpoint {url}")
+        })?;
         let status = response.status();
         let body = response
             .text()
@@ -463,14 +468,13 @@ impl SnowflakeDriver {
         }
     }
 
-    async fn fetch_partition(
-        &self,
-        handle: &str,
-        partition: usize,
-    ) -> Result<SnowflakeResultSet> {
+    async fn fetch_partition(&self, handle: &str, partition: usize) -> Result<SnowflakeResultSet> {
         let status_url = self.build_status_url_from_handle(handle);
-        self.await_result_set(self.get_statement_status(&status_url, Some(partition)).await?)
-            .await
+        self.await_result_set(
+            self.get_statement_status(&status_url, Some(partition))
+                .await?,
+        )
+        .await
     }
 
     fn affected_rows(stats: Option<&SnowflakeStatementStats>) -> u64 {
@@ -580,7 +584,10 @@ impl SnowflakeDriver {
         }
     }
 
-    fn rows_to_json(rows: Vec<Vec<JsonValue>>, row_types: &[SnowflakeRowType]) -> Vec<Vec<JsonValue>> {
+    fn rows_to_json(
+        rows: Vec<Vec<JsonValue>>,
+        row_types: &[SnowflakeRowType],
+    ) -> Vec<Vec<JsonValue>> {
         rows.into_iter()
             .map(|row| {
                 if row_types.is_empty() {
@@ -612,9 +619,9 @@ impl SnowflakeDriver {
         }
 
         let started_at = Instant::now();
-        let result_set =
-            self.await_result_set(self.post_statement(trimmed_sql, database_override).await?)
-                .await?;
+        let result_set = self
+            .await_result_set(self.post_statement(trimmed_sql, database_override).await?)
+            .await?;
         let row_types = Self::row_types_from_result_set(&result_set);
         let mut raw_rows = result_set.data.clone();
         let mut truncated = Self::total_rows_hint(&result_set)
@@ -703,7 +710,10 @@ impl SnowflakeDriver {
             JsonValue::Array(_) | JsonValue::Object(_) => {
                 let serialized =
                     serde_json::to_string(value).context("Failed to serialize JSON value")?;
-                Ok(format!("PARSE_JSON({})", Self::sql_string_literal(&serialized)))
+                Ok(format!(
+                    "PARSE_JSON({})",
+                    Self::sql_string_literal(&serialized)
+                ))
             }
         }
     }
@@ -726,7 +736,9 @@ impl SnowflakeDriver {
             .filter(|value| !value.is_empty())
             .map(str::to_string)
             .or_else(|| self.current_database_name());
-        let default_schema = self.current_schema_name().or_else(|| Some("PUBLIC".to_string()));
+        let default_schema = self
+            .current_schema_name()
+            .or_else(|| Some("PUBLIC".to_string()));
 
         match parts.as_slice() {
             [table_name] => Ok(SnowflakeTableReference {
@@ -812,11 +824,7 @@ impl SnowflakeDriver {
         })
     }
 
-    fn cell_as_string(
-        row: &[JsonValue],
-        columns: &[ColumnInfo],
-        names: &[&str],
-    ) -> Option<String> {
+    fn cell_as_string(row: &[JsonValue], columns: &[ColumnInfo], names: &[&str]) -> Option<String> {
         let index = Self::column_index(columns, names)?;
         let value = row.get(index)?;
         match value {
@@ -838,7 +846,8 @@ impl SnowflakeDriver {
     }
 
     async fn refresh_session_namespace(&self) -> Result<()> {
-        let sql = "SELECT CURRENT_DATABASE() AS current_database, CURRENT_SCHEMA() AS current_schema";
+        let sql =
+            "SELECT CURRENT_DATABASE() AS current_database, CURRENT_SCHEMA() AS current_schema";
         let result = self.execute_single_query(sql, None, sql).await?;
         let Some(row) = result.rows.first() else {
             return Ok(());
@@ -867,7 +876,12 @@ impl SnowflakeDriver {
             .rows
             .iter()
             .find_map(|row| Self::cell_as_string(row, &result.columns, &["name"]))
-            .ok_or_else(|| anyhow!("Snowflake database '{}' was not found or is not accessible", database))
+            .ok_or_else(|| {
+                anyhow!(
+                    "Snowflake database '{}' was not found or is not accessible",
+                    database
+                )
+            })
     }
 
     async fn first_schema_in_database(&self, database: &str) -> Result<Option<String>> {
@@ -879,14 +893,19 @@ impl SnowflakeDriver {
              LIMIT 1",
             Self::info_schema_relation(database, "SCHEMATA")?,
         );
-        let result = self.execute_single_query(&sql, Some(database), &sql).await?;
+        let result = self
+            .execute_single_query(&sql, Some(database), &sql)
+            .await?;
         Ok(result
             .rows
             .iter()
             .find_map(|row| Self::cell_as_string(row, &result.columns, &["schema_name"])))
     }
 
-    fn lookup_label_expression(display_columns: &[&str], referenced_column: &str) -> Result<String> {
+    fn lookup_label_expression(
+        display_columns: &[&str],
+        referenced_column: &str,
+    ) -> Result<String> {
         let expression_parts = if display_columns.is_empty() {
             vec![format!(
                 "COALESCE(TO_VARCHAR({}), '')",
@@ -1002,15 +1021,21 @@ impl DatabaseDriver for SnowflakeDriver {
         let materialized_result = self
             .execute_single_query(&materialized_sql, Some(&database_name), &materialized_sql)
             .await?;
-        objects.extend(materialized_result.rows.iter().map(|row| SchemaObjectInfo {
-            name: Self::cell_as_string(row, &materialized_result.columns, &["object_name"])
-                .unwrap_or_else(|| "materialized_view".to_string()),
-            schema: Self::cell_as_string(row, &materialized_result.columns, &["schema_name"]),
-            object_type: Self::cell_as_string(row, &materialized_result.columns, &["object_type"])
+        objects.extend(materialized_result.rows.iter().map(|row| {
+            SchemaObjectInfo {
+                name: Self::cell_as_string(row, &materialized_result.columns, &["object_name"])
+                    .unwrap_or_else(|| "materialized_view".to_string()),
+                schema: Self::cell_as_string(row, &materialized_result.columns, &["schema_name"]),
+                object_type: Self::cell_as_string(
+                    row,
+                    &materialized_result.columns,
+                    &["object_type"],
+                )
                 .map(|value| value.to_ascii_uppercase())
                 .unwrap_or_else(|| "MATERIALIZED VIEW".to_string()),
-            related_table: None,
-            definition: None,
+                related_table: None,
+                definition: None,
+            }
         }));
 
         let routines_sql = format!(
@@ -1024,19 +1049,25 @@ impl DatabaseDriver for SnowflakeDriver {
             .execute_single_query(&routines_sql, Some(&database_name), &routines_sql)
             .await
         {
-            objects.extend(routines_result.rows.iter().map(|row| SchemaObjectInfo {
-                name: Self::cell_as_string(row, &routines_result.columns, &["object_name"])
-                    .unwrap_or_else(|| "routine".to_string()),
-                schema: Self::cell_as_string(row, &routines_result.columns, &["schema_name"]),
-                object_type: Self::cell_as_string(
-                    row,
-                    &routines_result.columns,
-                    &["object_type"],
-                )
-                .map(|value| value.to_ascii_uppercase())
-                .unwrap_or_else(|| "ROUTINE".to_string()),
-                related_table: None,
-                definition: Self::cell_as_string(row, &routines_result.columns, &["definition"]),
+            objects.extend(routines_result.rows.iter().map(|row| {
+                SchemaObjectInfo {
+                    name: Self::cell_as_string(row, &routines_result.columns, &["object_name"])
+                        .unwrap_or_else(|| "routine".to_string()),
+                    schema: Self::cell_as_string(row, &routines_result.columns, &["schema_name"]),
+                    object_type: Self::cell_as_string(
+                        row,
+                        &routines_result.columns,
+                        &["object_type"],
+                    )
+                    .map(|value| value.to_ascii_uppercase())
+                    .unwrap_or_else(|| "ROUTINE".to_string()),
+                    related_table: None,
+                    definition: Self::cell_as_string(
+                        row,
+                        &routines_result.columns,
+                        &["definition"],
+                    ),
+                }
             }));
         }
 
@@ -1105,13 +1136,10 @@ impl DatabaseDriver for SnowflakeDriver {
                 let column_name =
                     Self::cell_as_string(row, &columns_result.columns, &["column_name"])
                         .unwrap_or_else(|| "column".to_string());
-                let is_nullable = Self::cell_as_string(
-                    row,
-                    &columns_result.columns,
-                    &["is_nullable"],
-                )
-                .map(|value| value.eq_ignore_ascii_case("YES"))
-                .unwrap_or(true);
+                let is_nullable =
+                    Self::cell_as_string(row, &columns_result.columns, &["is_nullable"])
+                        .map(|value| value.eq_ignore_ascii_case("YES"))
+                        .unwrap_or(true);
                 let data_type = Self::cell_as_string(row, &columns_result.columns, &["data_type"])
                     .unwrap_or_else(|| "TEXT".to_string());
 
@@ -1176,12 +1204,9 @@ impl DatabaseDriver for SnowflakeDriver {
                 .map(|row| {
                     let referenced_schema =
                         Self::cell_as_string(row, &result.columns, &["referenced_schema"]);
-                    let referenced_table = Self::cell_as_string(
-                        row,
-                        &result.columns,
-                        &["referenced_table"],
-                    )
-                    .unwrap_or_default();
+                    let referenced_table =
+                        Self::cell_as_string(row, &result.columns, &["referenced_table"])
+                            .unwrap_or_default();
                     ForeignKeyInfo {
                         name: Self::cell_as_string(row, &result.columns, &["constraint_name"])
                             .unwrap_or_else(|| "fk".to_string()),
@@ -1237,9 +1262,10 @@ impl DatabaseDriver for SnowflakeDriver {
                 .await
                 .ok()
                 .and_then(|result| {
-                    result.rows.first().and_then(|row| {
-                        Self::cell_as_string(row, &result.columns, &["definition"])
-                    })
+                    result
+                        .rows
+                        .first()
+                        .and_then(|row| Self::cell_as_string(row, &result.columns, &["definition"]))
                 })
         } else {
             None
@@ -1266,7 +1292,10 @@ impl DatabaseDriver for SnowflakeDriver {
         let mut total_affected = 0u64;
         let mut last_result = None;
 
-        for statement in statements.iter().filter(|statement| !statement.trim().is_empty()) {
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
             let result = self.execute_single_query(statement, None, sql).await?;
             total_affected += result.affected_rows;
 
@@ -1304,7 +1333,10 @@ impl DatabaseDriver for SnowflakeDriver {
     ) -> Result<QueryResult> {
         let table_reference = self.parse_table_reference(table, database)?;
         let database_name = table_reference.database.clone();
-        let mut sql = format!("SELECT * FROM {}", Self::qualify_table_name(&table_reference)?);
+        let mut sql = format!(
+            "SELECT * FROM {}",
+            Self::qualify_table_name(&table_reference)?
+        );
 
         if let Some(filter_clause) = sanitize_snowflake_filter_clause(filter)? {
             sql.push_str(&format!(" WHERE {filter_clause}"));
@@ -1320,7 +1352,8 @@ impl DatabaseDriver for SnowflakeDriver {
         }
 
         sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-        self.execute_single_query(&sql, Some(&database_name), &sql).await
+        self.execute_single_query(&sql, Some(&database_name), &sql)
+            .await
     }
 
     async fn count_rows(&self, table: &str, database: Option<&str>) -> Result<i64> {
@@ -1449,7 +1482,11 @@ impl DatabaseDriver for SnowflakeDriver {
         }
 
         let resolved_database = self.find_database_name(trimmed).await?;
-        let default_schema = self.first_schema_in_database(&resolved_database).await.ok().flatten();
+        let default_schema = self
+            .first_schema_in_database(&resolved_database)
+            .await
+            .ok()
+            .flatten();
 
         let mut current_db = self.current_db.write().await;
         *current_db = Some(resolved_database);
@@ -1522,8 +1559,14 @@ mod tests {
 
     #[test]
     fn serializes_variant_values_for_sql_literals() {
-        assert_eq!(SnowflakeDriver::quote_sql_literal(&json!(null)).unwrap(), "NULL");
-        assert_eq!(SnowflakeDriver::quote_sql_literal(&json!(true)).unwrap(), "TRUE");
+        assert_eq!(
+            SnowflakeDriver::quote_sql_literal(&json!(null)).unwrap(),
+            "NULL"
+        );
+        assert_eq!(
+            SnowflakeDriver::quote_sql_literal(&json!(true)).unwrap(),
+            "TRUE"
+        );
         assert_eq!(
             SnowflakeDriver::quote_sql_literal(&json!("O'Reilly")).unwrap(),
             "'O''Reilly'"

@@ -6,6 +6,10 @@ export interface DatabaseFileSelection {
   file_path: string;
 }
 
+export function normalizeDatabaseFilePath(filePath: string): string {
+  return filePath.replace(/\\/g, "/").toLowerCase();
+}
+
 type LocalFileDatabaseType = Extract<DatabaseType, "sqlite" | "duckdb">;
 
 const SQLITE_EXTENSIONS = new Set(["db", "db3", "sqlite", "sqlite3"]);

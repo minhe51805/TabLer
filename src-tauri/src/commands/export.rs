@@ -160,9 +160,10 @@ pub async fn export_database(
 
 fn preferred_export_format(db_type: DatabaseType) -> DatabaseExportFormat {
     match db_type {
-        DatabaseType::Redis | DatabaseType::MongoDB | DatabaseType::Cassandra => {
-            DatabaseExportFormat::JsonSnapshot
-        }
+        DatabaseType::Redis
+        | DatabaseType::MongoDB
+        | DatabaseType::Cassandra
+        | DatabaseType::OpenSearch => DatabaseExportFormat::JsonSnapshot,
         _ => DatabaseExportFormat::Sql,
     }
 }
@@ -197,7 +198,9 @@ fn build_export_filename(
     export_format: DatabaseExportFormat,
 ) -> String {
     let base = database
-        .and_then(|value| sanitized_filename_segment(value).filter(|candidate| !candidate.is_empty()))
+        .and_then(|value| {
+            sanitized_filename_segment(value).filter(|candidate| !candidate.is_empty())
+        })
         .or_else(|| {
             connection_name
                 .and_then(sanitized_filename_segment)
@@ -241,9 +244,12 @@ async fn build_sql_export(
 ) -> Result<SqlExportPayload> {
     let table_bundles = collect_export_tables(driver, database).await?;
     let ordered_tables = order_tables_for_export(&table_bundles);
-    let schema_objects = timeout(EXPORT_METADATA_TIMEOUT, driver.list_schema_objects(database))
-        .await
-        .context("Listing schema objects timed out during export")??;
+    let schema_objects = timeout(
+        EXPORT_METADATA_TIMEOUT,
+        driver.list_schema_objects(database),
+    )
+    .await
+    .context("Listing schema objects timed out during export")??;
 
     let mut output = String::new();
     output.push_str("-- TableR database export\n");
@@ -310,7 +316,8 @@ async fn build_sql_export(
     }
 
     for bundle in &ordered_tables {
-        for statement in build_index_statements(db_type, &bundle.info, &bundle.structure, database)? {
+        for statement in build_index_statements(db_type, &bundle.info, &bundle.structure, database)?
+        {
             output.push_str(&statement);
             output.push('\n');
         }
@@ -349,9 +356,12 @@ async fn build_json_snapshot(
     database: Option<&str>,
 ) -> Result<DatabaseExportSnapshot> {
     let table_bundles = collect_export_tables(driver, database).await?;
-    let schema_objects = timeout(EXPORT_METADATA_TIMEOUT, driver.list_schema_objects(database))
-        .await
-        .context("Listing schema objects timed out during export")??;
+    let schema_objects = timeout(
+        EXPORT_METADATA_TIMEOUT,
+        driver.list_schema_objects(database),
+    )
+    .await
+    .context("Listing schema objects timed out during export")??;
     let engine = driver.driver_name().to_string();
 
     let mut snapshot_tables = Vec::with_capacity(table_bundles.len());
@@ -379,7 +389,12 @@ async fn build_json_snapshot(
                 break;
             }
 
-            rows.extend(batch.rows.iter().map(|row| row_to_object(&batch.columns, row)));
+            rows.extend(
+                batch
+                    .rows
+                    .iter()
+                    .map(|row| row_to_object(&batch.columns, row)),
+            );
             offset += batch.rows.len() as u64;
 
             if (batch.rows.len() as u64) < EXPORT_BATCH_SIZE {
@@ -480,12 +495,17 @@ fn order_tables_for_export<'a>(tables: &'a [ExportTableBundle]) -> Vec<&'a Expor
                 .foreign_keys
                 .iter()
                 .map(|foreign_key| normalize_referenced_table_name(&bundle.info, foreign_key))
-                .filter(|dependency| dependency != &bundle.identifier && table_names.contains(dependency))
+                .filter(|dependency| {
+                    dependency != &bundle.identifier && table_names.contains(dependency)
+                })
                 .collect::<BTreeSet<_>>()
         })
         .collect::<Vec<_>>();
 
-    let mut in_degree = dependency_graph.iter().map(BTreeSet::len).collect::<Vec<_>>();
+    let mut in_degree = dependency_graph
+        .iter()
+        .map(BTreeSet::len)
+        .collect::<Vec<_>>();
     let mut dependents = vec![Vec::<usize>::new(); tables.len()];
 
     for (table_index, dependencies) in dependency_graph.iter().enumerate() {
@@ -578,7 +598,12 @@ fn build_create_table_statement(
 
     if should_inline_foreign_keys(db_type) {
         for foreign_key in &structure.foreign_keys {
-            definitions.push(build_inline_foreign_key_clause(db_type, table, foreign_key, database)?);
+            definitions.push(build_inline_foreign_key_clause(
+                db_type,
+                table,
+                foreign_key,
+                database,
+            )?);
         }
     }
 
@@ -814,7 +839,11 @@ fn normalize_schema_object_sql(
         None => object.name.trim().to_string(),
     };
     let object_ref = qualify_name(db_type, &qualified_name, database)?;
-    let raw_definition = object.definition.as_deref().map(str::trim).unwrap_or_default();
+    let raw_definition = object
+        .definition
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default();
 
     if raw_definition.is_empty() {
         return Ok(Some(format!("-- {} {}", object.object_type, object_ref)));
@@ -887,7 +916,11 @@ fn build_insert_statement_batch(
     ))
 }
 
-fn render_sql_value(value: Option<&JsonValue>, db_type: DatabaseType, column: &ColumnInfo) -> String {
+fn render_sql_value(
+    value: Option<&JsonValue>,
+    db_type: DatabaseType,
+    column: &ColumnInfo,
+) -> String {
     match value.unwrap_or(&JsonValue::Null) {
         JsonValue::Null => "NULL".to_string(),
         JsonValue::Bool(value) => match db_type {
@@ -929,7 +962,11 @@ fn row_to_object(columns: &[ColumnInfo], row: &[JsonValue]) -> JsonMap<String, J
     object
 }
 
-fn qualify_name(db_type: DatabaseType, raw_identifier: &str, database: Option<&str>) -> Result<String> {
+fn qualify_name(
+    db_type: DatabaseType,
+    raw_identifier: &str,
+    database: Option<&str>,
+) -> Result<String> {
     let mut parts = raw_identifier
         .split('.')
         .map(str::trim)
@@ -996,7 +1033,7 @@ fn database_export_postamble(db_type: DatabaseType) -> String {
 mod tests {
     use super::{
         build_create_table_statement, build_export_filename, build_insert_statement_batch,
-        ensure_trailing_semicolon, DatabaseExportFormat,
+        ensure_trailing_semicolon, preferred_export_format, DatabaseExportFormat,
     };
     use crate::database::models::{
         ColumnDetail, ColumnInfo, DatabaseType, ForeignKeyInfo, IndexInfo, TableInfo,
@@ -1057,13 +1094,9 @@ mod tests {
             row_count: None,
             engine: None,
         };
-        let sql = build_create_table_statement(
-            DatabaseType::SQLite,
-            &table,
-            &sample_structure(),
-            None,
-        )
-        .unwrap();
+        let sql =
+            build_create_table_statement(DatabaseType::SQLite, &table, &sample_structure(), None)
+                .unwrap();
 
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS"));
         assert!(sql.contains("PRIMARY KEY"));
@@ -1103,8 +1136,14 @@ mod tests {
 
     #[test]
     fn ensures_trailing_semicolon_when_missing() {
-        assert_eq!(ensure_trailing_semicolon("CREATE VIEW demo"), "CREATE VIEW demo;");
-        assert_eq!(ensure_trailing_semicolon("CREATE VIEW demo;"), "CREATE VIEW demo;");
+        assert_eq!(
+            ensure_trailing_semicolon("CREATE VIEW demo"),
+            "CREATE VIEW demo;"
+        );
+        assert_eq!(
+            ensure_trailing_semicolon("CREATE VIEW demo;"),
+            "CREATE VIEW demo;"
+        );
     }
 
     #[test]
@@ -1118,5 +1157,13 @@ mod tests {
 
         assert!(filename.starts_with("identity-service_"));
         assert!(filename.ends_with(".sql"));
+    }
+
+    #[test]
+    fn opensearch_exports_a_json_snapshot_instead_of_sql() {
+        assert_eq!(
+            preferred_export_format(DatabaseType::OpenSearch),
+            DatabaseExportFormat::JsonSnapshot
+        );
     }
 }

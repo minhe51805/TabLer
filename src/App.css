@@ -775,6 +775,40 @@
   border-bottom: 1px solid var(--border);
 }
 
+.explain-hotspots {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+}
+
+.explain-hotspots-label {
+  color: var(--text-primary);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: var(--mm-fs-micro);
+}
+
+.explain-hotspot-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+
+.explain-hotspot-item strong {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
 .explain-plan-body {
   flex: 1;
   overflow: auto;

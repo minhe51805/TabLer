@@ -10,10 +10,45 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::OnceLock;
 use tauri::State;
+use tokio::sync::Mutex;
 use tokio::task;
 use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
 
 static AI_HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+const AI_REQUEST_CANCELLED_ERROR: &str = "AI request cancelled.";
+
+#[derive(Default)]
+pub struct AIRequestCancellationState {
+    active: Mutex<HashMap<String, CancellationToken>>,
+}
+
+impl AIRequestCancellationState {
+    async fn register(&self, request_id: &str, token: CancellationToken) {
+        if let Some(previous) = self
+            .active
+            .lock()
+            .await
+            .insert(request_id.to_string(), token)
+        {
+            previous.cancel();
+        }
+    }
+
+    async fn finish(&self, request_id: &str) {
+        self.active.lock().await.remove(request_id);
+    }
+
+    async fn cancel(&self, request_id: &str) -> bool {
+        let token = self.active.lock().await.get(request_id).cloned();
+        if let Some(token) = token {
+            token.cancel();
+            true
+        } else {
+            false
+        }
+    }
+}
 
 fn ai_http_client() -> &'static Client {
     AI_HTTP_CLIENT.get_or_init(|| {
@@ -54,7 +89,10 @@ fn ai_provider_request_error(
         .ok()
         .and_then(|url| {
             let host = url.host_str()?.to_string();
-            let port = url.port().map(|value| format!(":{value}")).unwrap_or_default();
+            let port = url
+                .port()
+                .map(|value| format!(":{value}"))
+                .unwrap_or_default();
             Some(format!("{host}{port}"))
         })
         .unwrap_or_else(|| endpoint.to_string());
@@ -89,7 +127,9 @@ fn ai_provider_request_error(
         || normalized_error.contains("tls")
         || normalized_error.contains("ssl")
     {
-        format!("The connection to {endpoint_label} failed because of an SSL/TLS certificate problem.")
+        format!(
+            "The connection to {endpoint_label} failed because of an SSL/TLS certificate problem."
+        )
     } else if normalized_error.contains("dns")
         || normalized_error.contains("name or service not known")
         || normalized_error.contains("failed to lookup address information")
@@ -100,7 +140,7 @@ fn ai_provider_request_error(
     {
         format!("The AI provider at {endpoint_label} refused the connection.")
     } else {
-        format!("Could not reach {endpoint_label}. {raw_error}")
+        format!("Could not reach {endpoint_label}. Check the endpoint and network connection.")
     };
 
     format!("The AI request to \"{provider_label}\" could not be completed. {detail}")
@@ -110,13 +150,86 @@ fn ai_provider_response_error() -> String {
     "The AI provider returned an invalid or unsupported response.".to_string()
 }
 
-fn compact_response_preview(body: &str) -> String {
-    let compact = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    if compact.len() > 320 {
-        format!("{}...", &compact[..317])
-    } else {
-        compact
+fn is_sensitive_response_key(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+
+    [
+        "apikey",
+        "authorization",
+        "credential",
+        "password",
+        "secret",
+        "token",
+    ]
+    .iter()
+    .any(|sensitive| normalized.contains(sensitive))
+}
+
+fn redact_sensitive_json(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(entries) => {
+            for (key, value) in entries {
+                if is_sensitive_response_key(key) {
+                    *value = serde_json::Value::String("[REDACTED]".to_string());
+                } else {
+                    redact_sensitive_json(value);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                redact_sensitive_json(item);
+            }
+        }
+        _ => {}
     }
+}
+
+fn redact_known_secrets(value: &str, api_key: Option<&str>) -> String {
+    let mut redacted = value.to_string();
+    if let Some(secret) = api_key.map(str::trim).filter(|secret| secret.len() >= 4) {
+        redacted = redacted.replace(secret, "[REDACTED]");
+    }
+    redacted
+}
+
+fn truncate_preview(value: &str) -> String {
+    const PREVIEW_LIMIT: usize = 320;
+    let mut characters = value.chars();
+    let preview = characters.by_ref().take(PREVIEW_LIMIT).collect::<String>();
+    if characters.next().is_some() {
+        format!(
+            "{}...",
+            preview.chars().take(PREVIEW_LIMIT - 3).collect::<String>()
+        )
+    } else {
+        preview
+    }
+}
+
+fn compact_response_preview(body: &str, api_key: Option<&str>) -> String {
+    let redacted = if let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(body) {
+        redact_sensitive_json(&mut payload);
+        payload.to_string()
+    } else {
+        body.to_string()
+    };
+    let compact = redact_known_secrets(&redacted, api_key)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    truncate_preview(&compact)
+}
+
+fn ai_provider_api_error(message: &str, api_key: Option<&str>) -> String {
+    format!(
+        "AI API error: {}",
+        compact_response_preview(message, api_key)
+    )
 }
 
 fn ai_provider_http_status_error(
@@ -124,6 +237,7 @@ fn ai_provider_http_status_error(
     endpoint: &str,
     status: StatusCode,
     body: &str,
+    api_key: Option<&str>,
 ) -> String {
     let provider_label = if config.name.trim().is_empty() {
         format!("{:?}", config.provider_type)
@@ -134,7 +248,10 @@ fn ai_provider_http_status_error(
         .ok()
         .and_then(|url| {
             let host = url.host_str()?.to_string();
-            let port = url.port().map(|value| format!(":{value}")).unwrap_or_default();
+            let port = url
+                .port()
+                .map(|value| format!(":{value}"))
+                .unwrap_or_default();
             Some(format!("{host}{port}"))
         })
         .unwrap_or_else(|| endpoint.to_string());
@@ -142,7 +259,7 @@ fn ai_provider_http_status_error(
         .canonical_reason()
         .map(|reason| format!("{} {}", status.as_u16(), reason))
         .unwrap_or_else(|| status.as_u16().to_string());
-    let preview = compact_response_preview(body);
+    let preview = compact_response_preview(body, api_key);
     let retry_note = if matches!(
         status,
         StatusCode::BAD_GATEWAY
@@ -170,6 +287,7 @@ fn ai_provider_non_json_response_error(
     config: &AIProviderConfig,
     endpoint: &str,
     body: &str,
+    api_key: Option<&str>,
 ) -> String {
     let provider_label = if config.name.trim().is_empty() {
         format!("{:?}", config.provider_type)
@@ -180,11 +298,14 @@ fn ai_provider_non_json_response_error(
         .ok()
         .and_then(|url| {
             let host = url.host_str()?.to_string();
-            let port = url.port().map(|value| format!(":{value}")).unwrap_or_default();
+            let port = url
+                .port()
+                .map(|value| format!(":{value}"))
+                .unwrap_or_default();
             Some(format!("{host}{port}"))
         })
         .unwrap_or_else(|| endpoint.to_string());
-    let preview = compact_response_preview(body);
+    let preview = compact_response_preview(body, api_key);
 
     format!(
         "The AI provider \"{provider_label}\" at {endpoint_label} returned a non-JSON response. Response preview: {preview}"
@@ -195,6 +316,7 @@ fn ai_provider_response_error_with_preview(
     config: &AIProviderConfig,
     endpoint: &str,
     payload: &serde_json::Value,
+    api_key: Option<&str>,
 ) -> String {
     let provider_label = if config.name.trim().is_empty() {
         format!("{:?}", config.provider_type)
@@ -205,17 +327,15 @@ fn ai_provider_response_error_with_preview(
         .ok()
         .and_then(|url| {
             let host = url.host_str()?.to_string();
-            let port = url.port().map(|value| format!(":{value}")).unwrap_or_default();
+            let port = url
+                .port()
+                .map(|value| format!(":{value}"))
+                .unwrap_or_default();
             Some(format!("{host}{port}"))
         })
         .unwrap_or_else(|| endpoint.to_string());
 
-    let preview = payload.to_string();
-    let compact_preview = if preview.len() > 320 {
-        format!("{}...", &preview[..317])
-    } else {
-        preview
-    };
+    let compact_preview = compact_response_preview(&payload.to_string(), api_key);
 
     format!(
         "The AI provider \"{provider_label}\" at {endpoint_label} returned an unsupported response shape. Response preview: {compact_preview}"
@@ -360,11 +480,17 @@ fn build_ai_prompt(
 }
 
 fn provider_requires_api_key(provider_type: &AIProviderType) -> bool {
-    !matches!(provider_type, AIProviderType::Ollama | AIProviderType::Custom)
+    !matches!(
+        provider_type,
+        AIProviderType::Ollama | AIProviderType::Custom
+    )
 }
 
 fn provider_allows_local_endpoint(provider_type: &AIProviderType) -> bool {
-    matches!(provider_type, AIProviderType::Ollama | AIProviderType::Custom)
+    matches!(
+        provider_type,
+        AIProviderType::Ollama | AIProviderType::Custom
+    )
 }
 
 fn is_local_domain(host: &str) -> bool {
@@ -376,10 +502,7 @@ fn is_local_domain(host: &str) -> bool {
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => {
-            ipv4.is_private()
-                || ipv4.is_loopback()
-                || ipv4.is_link_local()
-                || ipv4.is_broadcast()
+            ipv4.is_private() || ipv4.is_loopback() || ipv4.is_link_local() || ipv4.is_broadcast()
         }
         IpAddr::V6(ipv6) => {
             ipv6.is_loopback() || ipv6.is_unique_local() || ipv6.is_unicast_link_local()
@@ -414,7 +537,9 @@ fn validate_ai_endpoint(config: &AIProviderConfig, endpoint: &str) -> Result<(),
             );
         }
     } else if !provider_allows_local_endpoint(&config.provider_type) && is_local_domain(host) {
-        return Err("Local AI endpoints are only allowed for Ollama or Custom providers.".to_string());
+        return Err(
+            "Local AI endpoints are only allowed for Ollama or Custom providers.".to_string(),
+        );
     }
 
     Ok(())
@@ -453,7 +578,14 @@ fn extract_text_from_json(value: &serde_json::Value) -> Option<String> {
             }
         }
         serde_json::Value::Object(map) => {
-            for key in ["text", "content", "parts", "response", "output_text", "value"] {
+            for key in [
+                "text",
+                "content",
+                "parts",
+                "response",
+                "output_text",
+                "value",
+            ] {
                 if let Some(candidate) = map.get(key) {
                     if let Some(text) = extract_text_from_json(candidate) {
                         return Some(text);
@@ -484,7 +616,11 @@ fn split_think_block(text: &str) -> (Option<String>, String) {
         if let Some(end) = rest.find("</think>") {
             let reasoning = rest[..end].trim().to_string();
             let after = rest[end + "</think>".len()..].trim_start().to_string();
-            let reasoning = if reasoning.is_empty() { None } else { Some(reasoning) };
+            let reasoning = if reasoning.is_empty() {
+                None
+            } else {
+                Some(reasoning)
+            };
             return (reasoning, after);
         }
         // Open tag without a close: treat everything as reasoning still in progress.
@@ -553,7 +689,10 @@ fn extract_openai_like_response_text(payload: &serde_json::Value) -> Option<Stri
         return Some(text);
     }
 
-    if let Some(text) = payload.pointer("/output/0/content").and_then(extract_text_from_json) {
+    if let Some(text) = payload
+        .pointer("/output/0/content")
+        .and_then(extract_text_from_json)
+    {
         return Some(text);
     }
 
@@ -726,6 +865,33 @@ fn build_openai_like_body(
     body
 }
 
+fn build_anthropic_body(
+    model: &str,
+    system_prompt: &str,
+    prompt: &str,
+    mode: &AIRequestMode,
+) -> serde_json::Value {
+    json!({
+        "system": system_prompt,
+        "model": model,
+        "max_tokens": default_max_output_tokens(mode),
+        "messages": [
+            { "role": "user", "content": prompt }
+        ]
+    })
+}
+
+fn build_gemini_body(system_prompt: &str, prompt: &str) -> serde_json::Value {
+    json!({
+        "systemInstruction": {
+            "parts": [{ "text": system_prompt }]
+        },
+        "contents": [
+            { "role": "user", "parts": [{ "text": prompt }] }
+        ]
+    })
+}
+
 fn build_provider_request_body(
     config: &AIProviderConfig,
     endpoint: &str,
@@ -733,29 +899,38 @@ fn build_provider_request_body(
     prompt: &str,
     mode: &AIRequestMode,
 ) -> serde_json::Value {
-    if matches!(config.provider_type, AIProviderType::Ollama | AIProviderType::Custom) {
-        if is_ollama_native_chat_endpoint(endpoint) {
-            return json!({
-                "model": config.model,
-                "messages": [
-                    { "role": "system", "content": system_prompt },
-                    { "role": "user", "content": prompt }
-                ],
-                "stream": false
-            });
-        }
+    match config.provider_type {
+        AIProviderType::Ollama | AIProviderType::Custom => {
+            if is_ollama_native_chat_endpoint(endpoint) {
+                return json!({
+                    "model": config.model,
+                    "messages": [
+                        { "role": "system", "content": system_prompt },
+                        { "role": "user", "content": prompt }
+                    ],
+                    "stream": false
+                });
+            }
 
-        if is_ollama_native_generate_endpoint(endpoint) {
-            return json!({
-                "model": config.model,
-                "system": system_prompt,
-                "prompt": prompt,
-                "stream": false
-            });
+            if is_ollama_native_generate_endpoint(endpoint) {
+                return json!({
+                    "model": config.model,
+                    "system": system_prompt,
+                    "prompt": prompt,
+                    "stream": false
+                });
+            }
+
+            build_openai_like_body(&config.model, system_prompt, prompt, mode, endpoint)
+        }
+        AIProviderType::Anthropic => {
+            build_anthropic_body(&config.model, system_prompt, prompt, mode)
+        }
+        AIProviderType::Gemini => build_gemini_body(system_prompt, prompt),
+        AIProviderType::OpenAI | AIProviderType::OpenRouter => {
+            build_openai_like_body(&config.model, system_prompt, prompt, mode, endpoint)
         }
     }
-
-    build_openai_like_body(&config.model, system_prompt, prompt, mode, endpoint)
 }
 
 #[tauri::command]
@@ -763,8 +938,12 @@ pub async fn get_ai_configs(
     storage: State<'_, AIStorage>,
 ) -> Result<(Vec<AIProviderConfig>, HashMap<String, bool>), String> {
     let storage = storage.inner().clone();
-    run_blocking_storage_task(move || storage.load_providers().map_err(|_| ai_storage_load_error()))
-        .await
+    run_blocking_storage_task(move || {
+        storage
+            .load_providers()
+            .map_err(|_| ai_storage_load_error())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -779,7 +958,9 @@ pub async fn save_ai_configs(
         storage
             .save_providers(&providers, &api_key_updates, &cleared_provider_ids)
             .map_err(|_| ai_storage_save_error())?;
-        storage.load_providers().map_err(|_| ai_storage_load_error())
+        storage
+            .load_providers()
+            .map_err(|_| ai_storage_load_error())
     })
     .await
 }
@@ -789,13 +970,61 @@ pub async fn ask_ai(
     request: AIRequest,
     storage: State<'_, AIStorage>,
     ai_rate_limiter: State<'_, AIRequestLimiter>,
+    cancellation_state: State<'_, AIRequestCancellationState>,
+) -> Result<AIResponse, String> {
+    request
+        .validate()
+        .map_err(|e| format!("Invalid request: {}", e))?;
+
+    let request_id = request
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let cancellation_token = CancellationToken::new();
+
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state
+            .register(request_id, cancellation_token.clone())
+            .await;
+    }
+
+    let result = tokio::select! {
+        _ = cancellation_token.cancelled() => Err(AI_REQUEST_CANCELLED_ERROR.to_string()),
+        result = execute_ai_request(request, storage.inner(), ai_rate_limiter.inner()) => result,
+    };
+
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.finish(request_id).await;
+    }
+
+    result
+}
+
+#[tauri::command]
+pub async fn cancel_ai_request(
+    request_id: String,
+    cancellation_state: State<'_, AIRequestCancellationState>,
+) -> Result<bool, String> {
+    let request_id = request_id.trim();
+    if request_id.is_empty() {
+        return Err("Request ID cannot be empty.".to_string());
+    }
+    Ok(cancellation_state.cancel(request_id).await)
+}
+
+async fn execute_ai_request(
+    request: AIRequest,
+    storage: &AIStorage,
+    ai_rate_limiter: &AIRequestLimiter,
 ) -> Result<AIResponse, String> {
     request
         .validate()
         .map_err(|e| format!("Invalid request: {}", e))?;
 
     let client = ai_http_client();
-    let storage = storage.inner().clone();
+    let storage = storage.clone();
     let (config, api_key) = run_blocking_storage_task(move || {
         let config = storage
             .get_active_provider_config()
@@ -848,9 +1077,18 @@ pub async fn ask_ai(
         | AIProviderType::Custom => {
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
-            let body =
-                build_provider_request_body(&config, &endpoint, &system_prompt, &prompt, &request.mode);
-            let max_attempts = if is_nvidia_integrate_endpoint(&endpoint) { 3 } else { 2 };
+            let body = build_provider_request_body(
+                &config,
+                &endpoint,
+                &system_prompt,
+                &prompt,
+                &request.mode,
+            );
+            let max_attempts = if is_nvidia_integrate_endpoint(&endpoint) {
+                3
+            } else {
+                2
+            };
 
             for attempt in 0..max_attempts {
                 let mut req = client.post(&endpoint);
@@ -878,29 +1116,42 @@ pub async fn ask_ai(
 
                     if let Ok(resp_json) = serde_json::from_str::<serde_json::Value>(&raw_body) {
                         if let Some(err) = resp_json.get("error") {
-                            let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str())
-                            {
+                            let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
                                 m.to_string()
                             } else if let Some(m) = err.as_str() {
                                 m.to_string()
                             } else {
                                 err.to_string()
                             };
-                            return Err(format!("AI API error: {}", msg));
+                            return Err(ai_provider_api_error(&msg, api_key.as_deref()));
                         }
 
                         return Err(ai_provider_response_error_with_preview(
-                            &config, &endpoint, &resp_json,
+                            &config,
+                            &endpoint,
+                            &resp_json,
+                            api_key.as_deref(),
                         ));
                     }
 
                     return Err(ai_provider_http_status_error(
-                        &config, &endpoint, status, &raw_body,
+                        &config,
+                        &endpoint,
+                        status,
+                        &raw_body,
+                        api_key.as_deref(),
                     ));
                 }
 
-                let resp_json: serde_json::Value = serde_json::from_str(&raw_body)
-                    .map_err(|_| ai_provider_non_json_response_error(&config, &endpoint, &raw_body))?;
+                let resp_json: serde_json::Value =
+                    serde_json::from_str(&raw_body).map_err(|_| {
+                        ai_provider_non_json_response_error(
+                            &config,
+                            &endpoint,
+                            &raw_body,
+                            api_key.as_deref(),
+                        )
+                    })?;
 
                 if let Some(err) = resp_json.get("error") {
                     let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
@@ -910,34 +1161,40 @@ pub async fn ask_ai(
                     } else {
                         err.to_string()
                     };
-                    return Err(format!("AI API error: {}", msg));
+                    return Err(ai_provider_api_error(&msg, api_key.as_deref()));
                 }
 
                 if let Some(text) = extract_openai_like_response_text(&resp_json) {
                     let field_reasoning = extract_openai_like_reasoning(&resp_json);
                     let (think_reasoning, cleaned) = split_think_block(&text);
                     let reasoning = field_reasoning.or(think_reasoning);
-                    return Ok(AIResponse { text: cleaned, reasoning, error: None });
+                    return Ok(AIResponse {
+                        text: cleaned,
+                        reasoning,
+                        error: None,
+                    });
                 }
 
                 return Err(ai_provider_response_error_with_preview(
-                    &config, &endpoint, &resp_json,
+                    &config,
+                    &endpoint,
+                    &resp_json,
+                    api_key.as_deref(),
                 ));
             }
 
             Err(ai_provider_response_error())
         }
         AIProviderType::Anthropic => {
-            let body = json!({
-                "system": system_prompt,
-                "model": config.model,
-                "max_tokens": default_max_output_tokens(&request.mode),
-                "messages": [
-                    { "role": "user", "content": prompt }
-                ]
-            });
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
+            let body = build_provider_request_body(
+                &config,
+                &endpoint,
+                &system_prompt,
+                &prompt,
+                &request.mode,
+            );
 
             let response = client
                 .post(&endpoint)
@@ -964,21 +1221,34 @@ pub async fn ask_ai(
                         } else {
                             err.to_string()
                         };
-                        return Err(format!("AI API error: {}", msg));
+                        return Err(ai_provider_api_error(&msg, api_key.as_deref()));
                     }
 
                     return Err(ai_provider_response_error_with_preview(
-                        &config, &endpoint, &resp_json,
+                        &config,
+                        &endpoint,
+                        &resp_json,
+                        api_key.as_deref(),
                     ));
                 }
 
                 return Err(ai_provider_http_status_error(
-                    &config, &endpoint, status, &raw_body,
+                    &config,
+                    &endpoint,
+                    status,
+                    &raw_body,
+                    api_key.as_deref(),
                 ));
             }
 
-            let resp_json: serde_json::Value = serde_json::from_str(&raw_body)
-                .map_err(|_| ai_provider_non_json_response_error(&config, &endpoint, &raw_body))?;
+            let resp_json: serde_json::Value = serde_json::from_str(&raw_body).map_err(|_| {
+                ai_provider_non_json_response_error(
+                    &config,
+                    &endpoint,
+                    &raw_body,
+                    api_key.as_deref(),
+                )
+            })?;
             if let Some(err) = resp_json.get("error") {
                 let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
                     m.to_string()
@@ -987,29 +1257,35 @@ pub async fn ask_ai(
                 } else {
                     err.to_string()
                 };
-                return Err(format!("AI API error: {}", msg));
+                return Err(ai_provider_api_error(&msg, api_key.as_deref()));
             }
 
             if let Some(text) = extract_anthropic_response_text(&resp_json) {
                 let (reasoning, cleaned) = split_think_block(&text);
-                return Ok(AIResponse { text: cleaned, reasoning, error: None });
+                return Ok(AIResponse {
+                    text: cleaned,
+                    reasoning,
+                    error: None,
+                });
             }
 
             Err(ai_provider_response_error_with_preview(
-                &config, &endpoint, &resp_json,
+                &config,
+                &endpoint,
+                &resp_json,
+                api_key.as_deref(),
             ))
         }
         AIProviderType::Gemini => {
-            let body = json!({
-                "systemInstruction": {
-                    "parts": [{ "text": system_prompt }]
-                },
-                "contents": [
-                    { "role": "user", "parts": [{ "text": prompt }] }
-                ]
-            });
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
+            let body = build_provider_request_body(
+                &config,
+                &endpoint,
+                &system_prompt,
+                &prompt,
+                &request.mode,
+            );
 
             let response = client
                 .post(&endpoint)
@@ -1035,21 +1311,34 @@ pub async fn ask_ai(
                         } else {
                             err.to_string()
                         };
-                        return Err(format!("AI API error: {}", msg));
+                        return Err(ai_provider_api_error(&msg, api_key.as_deref()));
                     }
 
                     return Err(ai_provider_response_error_with_preview(
-                        &config, &endpoint, &resp_json,
+                        &config,
+                        &endpoint,
+                        &resp_json,
+                        api_key.as_deref(),
                     ));
                 }
 
                 return Err(ai_provider_http_status_error(
-                    &config, &endpoint, status, &raw_body,
+                    &config,
+                    &endpoint,
+                    status,
+                    &raw_body,
+                    api_key.as_deref(),
                 ));
             }
 
-            let resp_json: serde_json::Value = serde_json::from_str(&raw_body)
-                .map_err(|_| ai_provider_non_json_response_error(&config, &endpoint, &raw_body))?;
+            let resp_json: serde_json::Value = serde_json::from_str(&raw_body).map_err(|_| {
+                ai_provider_non_json_response_error(
+                    &config,
+                    &endpoint,
+                    &raw_body,
+                    api_key.as_deref(),
+                )
+            })?;
             if let Some(err) = resp_json.get("error") {
                 let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
                     m.to_string()
@@ -1058,16 +1347,23 @@ pub async fn ask_ai(
                 } else {
                     err.to_string()
                 };
-                return Err(format!("AI API error: {}", msg));
+                return Err(ai_provider_api_error(&msg, api_key.as_deref()));
             }
 
             if let Some(text) = extract_gemini_response_text(&resp_json) {
                 let (reasoning, cleaned) = split_think_block(&text);
-                return Ok(AIResponse { text: cleaned, reasoning, error: None });
+                return Ok(AIResponse {
+                    text: cleaned,
+                    reasoning,
+                    error: None,
+                });
             }
 
             Err(ai_provider_response_error_with_preview(
-                &config, &endpoint, &resp_json,
+                &config,
+                &endpoint,
+                &resp_json,
+                api_key.as_deref(),
             ))
         }
     }
@@ -1178,12 +1474,182 @@ mod tests {
             &AIRequestMode::Panel,
         );
 
-        assert_eq!(body.get("stream").and_then(|value| value.as_bool()), Some(false));
-        assert_eq!(body.get("max_tokens").and_then(|value| value.as_u64()), Some(4096));
+        assert_eq!(
+            body.get("stream").and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            body.get("max_tokens").and_then(|value| value.as_u64()),
+            Some(4096)
+        );
         assert_eq!(
             body.pointer("/chat_template_kwargs/enable_thinking")
                 .and_then(|value| value.as_bool()),
             Some(false)
         );
+    }
+
+    #[test]
+    fn provider_endpoints_match_supported_api_contracts() {
+        let cases = [
+            (
+                AIProviderType::OpenAI,
+                "https://api.openai.com/v1/chat/completions",
+            ),
+            (
+                AIProviderType::OpenRouter,
+                "https://openrouter.ai/api/v1/chat/completions",
+            ),
+            (
+                AIProviderType::Ollama,
+                "http://localhost:11434/v1/chat/completions",
+            ),
+            (
+                AIProviderType::Anthropic,
+                "https://api.anthropic.com/v1/messages",
+            ),
+            (
+                AIProviderType::Gemini,
+                "https://generativelanguage.googleapis.com/v1beta/models/demo-model:generateContent",
+            ),
+        ];
+
+        for (provider_type, expected_endpoint) in cases {
+            assert_eq!(
+                resolve_provider_endpoint(&sample_provider(provider_type)),
+                expected_endpoint
+            );
+        }
+
+        let mut custom = sample_provider(AIProviderType::Custom);
+        custom.endpoint = "https://example.com/v1".to_string();
+        assert_eq!(
+            resolve_provider_endpoint(&custom),
+            "https://example.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn provider_request_bodies_match_supported_api_contracts() {
+        let anthropic = sample_provider(AIProviderType::Anthropic);
+        let anthropic_body = build_provider_request_body(
+            &anthropic,
+            &resolve_provider_endpoint(&anthropic),
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(anthropic_body["model"], "demo-model");
+        assert_eq!(anthropic_body["system"], "system prompt");
+        assert_eq!(anthropic_body["max_tokens"], 4096);
+        assert_eq!(anthropic_body["messages"][0]["content"], "user prompt");
+        assert!(anthropic_body.get("stream").is_none());
+
+        let gemini = sample_provider(AIProviderType::Gemini);
+        let gemini_body = build_provider_request_body(
+            &gemini,
+            &resolve_provider_endpoint(&gemini),
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(
+            gemini_body["systemInstruction"]["parts"][0]["text"],
+            "system prompt"
+        );
+        assert_eq!(gemini_body["contents"][0]["role"], "user");
+        assert_eq!(
+            gemini_body["contents"][0]["parts"][0]["text"],
+            "user prompt"
+        );
+
+        let mut ollama = sample_provider(AIProviderType::Ollama);
+        ollama.endpoint = "http://localhost:11434/api/generate".to_string();
+        let ollama_body = build_provider_request_body(
+            &ollama,
+            &resolve_provider_endpoint(&ollama),
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(ollama_body["system"], "system prompt");
+        assert_eq!(ollama_body["prompt"], "user prompt");
+        assert_eq!(ollama_body["stream"], false);
+        assert!(ollama_body.get("messages").is_none());
+    }
+
+    #[test]
+    fn provider_response_extractors_match_fixture_contracts() {
+        let openai = json!({
+            "choices": [{ "message": { "content": "openai answer" } }]
+        });
+        let anthropic = json!({
+            "content": [{ "type": "text", "text": "anthropic answer" }]
+        });
+        let gemini = json!({
+            "candidates": [{
+                "content": { "parts": [{ "text": "gemini answer" }] }
+            }]
+        });
+
+        assert_eq!(
+            extract_openai_like_response_text(&openai).as_deref(),
+            Some("openai answer")
+        );
+        assert_eq!(
+            extract_anthropic_response_text(&anthropic).as_deref(),
+            Some("anthropic answer")
+        );
+        assert_eq!(
+            extract_gemini_response_text(&gemini).as_deref(),
+            Some("gemini answer")
+        );
+    }
+
+    #[test]
+    fn response_previews_redact_nested_credentials_and_known_secrets() {
+        let secret = "sk-super-secret-1234";
+        let body = json!({
+            "error": {
+                "message": format!("Rejected credential {secret}"),
+                "api_key": secret,
+                "details": [{ "refreshToken": secret }, { "password": "hunter2" }]
+            }
+        })
+        .to_string();
+
+        let preview = compact_response_preview(&body, Some(secret));
+        assert!(!preview.contains(secret));
+        assert!(!preview.contains("hunter2"));
+        assert!(preview.matches("[REDACTED]").count() >= 4);
+    }
+
+    #[test]
+    fn api_errors_redact_echoed_keys_and_unicode_previews_are_safe() {
+        let secret = "secret-token-value";
+        let error = ai_provider_api_error(
+            &format!("Provider echoed {secret} while rejecting the request"),
+            Some(secret),
+        );
+        assert!(!error.contains(secret));
+        assert!(error.contains("[REDACTED]"));
+
+        let unicode_body = "database error ".to_string() + &"界".repeat(400);
+        let preview = compact_response_preview(&unicode_body, None);
+        assert!(preview.chars().count() <= 320);
+        assert!(preview.ends_with("..."));
+    }
+
+    #[tokio::test]
+    async fn cancels_and_cleans_up_registered_ai_requests() {
+        let state = AIRequestCancellationState::default();
+        let token = CancellationToken::new();
+
+        state.register("request-1", token.clone()).await;
+        assert!(state.cancel("request-1").await);
+        assert!(token.is_cancelled());
+
+        state.finish("request-1").await;
+        assert!(!state.cancel("request-1").await);
     }
 }

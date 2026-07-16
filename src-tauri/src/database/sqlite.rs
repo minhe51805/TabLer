@@ -9,15 +9,139 @@ use crate::utils::sql::split_sql_statements;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqliteRow, SqliteSynchronous};
+use sqlx::query::Query;
+use sqlx::sqlite::{
+    SqliteArguments, SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqliteRow,
+    SqliteSynchronous,
+};
 use sqlx::{Column, ConnectOptions, Executor, QueryBuilder, Row, Sqlite, TypeInfo};
 use std::fs;
 use std::path::Path;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Instant;
 
 pub struct SqliteDriver {
     pool: SqlitePool,
     file_path: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn atomic_update_queue_rolls_back_when_a_later_selector_does_not_match() {
+        let driver = SqliteDriver::connect("sqlite::memory:?cache=shared")
+            .await
+            .unwrap();
+        driver
+            .execute_query("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
+            .await
+            .unwrap();
+        driver
+            .execute_query("INSERT INTO items (id, value) VALUES (1, 'before')")
+            .await
+            .unwrap();
+        let updates = vec![
+            TableCellUpdateRequest {
+                table: "items".into(),
+                database: None,
+                target_column: "value".into(),
+                value: serde_json::Value::String("after".into()),
+                primary_keys: vec![RowKeyValue {
+                    column: "id".into(),
+                    value: serde_json::Value::from(1),
+                }],
+            },
+            TableCellUpdateRequest {
+                table: "items".into(),
+                database: None,
+                target_column: "value".into(),
+                value: serde_json::Value::String("should-not-commit".into()),
+                primary_keys: vec![RowKeyValue {
+                    column: "id".into(),
+                    value: serde_json::Value::from(999),
+                }],
+            },
+        ];
+        assert!(driver
+            .apply_table_updates_atomically(&updates)
+            .await
+            .is_err());
+        let result = driver
+            .execute_query("SELECT value FROM items WHERE id = 1")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            serde_json::Value::String("before".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn atomic_csv_import_rolls_back_when_a_later_row_violates_a_constraint() {
+        let driver = SqliteDriver::connect("sqlite::memory:?cache=shared")
+            .await
+            .unwrap();
+        driver
+            .execute_query("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
+            .await
+            .unwrap();
+        let rows = vec![
+            TableRowInsertRequest {
+                table: "items".into(),
+                database: None,
+                values: vec![
+                    ("id".into(), serde_json::json!(1)),
+                    ("value".into(), serde_json::json!("first")),
+                ],
+            },
+            TableRowInsertRequest {
+                table: "items".into(),
+                database: None,
+                values: vec![
+                    ("id".into(), serde_json::json!(1)),
+                    ("value".into(), serde_json::json!("duplicate")),
+                ],
+            },
+        ];
+
+        assert!(driver
+            .insert_table_rows_atomically(&rows, Arc::new(AtomicBool::new(false)))
+            .await
+            .is_err());
+        let result = driver.execute_query("SELECT * FROM items").await.unwrap();
+        assert!(result.rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelled_csv_import_does_not_write_any_rows() {
+        let driver = SqliteDriver::connect("sqlite::memory:?cache=shared")
+            .await
+            .unwrap();
+        driver
+            .execute_query("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
+            .await
+            .unwrap();
+        let rows = vec![TableRowInsertRequest {
+            table: "items".into(),
+            database: None,
+            values: vec![
+                ("id".into(), serde_json::json!(1)),
+                ("value".into(), serde_json::json!("first")),
+            ],
+        }];
+
+        assert!(driver
+            .insert_table_rows_atomically(&rows, Arc::new(AtomicBool::new(true)))
+            .await
+            .is_err());
+        let result = driver.execute_query("SELECT * FROM items").await.unwrap();
+        assert!(result.rows.is_empty());
+    }
 }
 
 impl SqliteDriver {
@@ -26,7 +150,8 @@ impl SqliteDriver {
             let path = Path::new(file_path);
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
-                    fs::create_dir_all(parent).context("Failed to create SQLite parent directory")?;
+                    fs::create_dir_all(parent)
+                        .context("Failed to create SQLite parent directory")?;
                 }
             }
         }
@@ -72,7 +197,8 @@ impl SqliteDriver {
         truncated: bool,
     ) -> QueryResult {
         let columns = if let Some(first) = rows.first() {
-            first.columns()
+            first
+                .columns()
                 .iter()
                 .map(|c| ColumnInfo {
                     name: c.name().to_string(),
@@ -135,6 +261,60 @@ impl SqliteDriver {
             rows.push(row);
         }
 
+        Ok((rows, false))
+    }
+
+    fn bind_parameterized_query<'q>(
+        mut query: Query<'q, Sqlite, SqliteArguments<'q>>,
+        parameters: &[QueryParameter],
+    ) -> Result<Query<'q, Sqlite, SqliteArguments<'q>>> {
+        for parameter in parameters {
+            query = match parameter.data_type {
+                QueryParameterType::Text => query.bind(
+                    parameter
+                        .value
+                        .as_str()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Parameter '{}' must be text.", parameter.name)
+                        })?
+                        .to_string(),
+                ),
+                QueryParameterType::Integer => {
+                    query.bind(parameter.value.as_i64().ok_or_else(|| {
+                        anyhow::anyhow!("Parameter '{}' must be an integer.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Decimal => {
+                    query.bind(parameter.value.as_f64().ok_or_else(|| {
+                        anyhow::anyhow!("Parameter '{}' must be a number.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Boolean => {
+                    query.bind(parameter.value.as_bool().ok_or_else(|| {
+                        anyhow::anyhow!("Parameter '{}' must be boolean.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Json => query.bind(parameter.value.to_string()),
+                QueryParameterType::Null => query.bind(Option::<String>::None),
+            };
+        }
+        Ok(query)
+    }
+
+    async fn fetch_parameterized_rows(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<(Vec<SqliteRow>, bool)> {
+        let mut stream =
+            Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&self.pool);
+        let mut rows = Vec::new();
+        while let Some(row) = stream.try_next().await? {
+            if rows.len() == MAX_QUERY_RESULT_ROWS {
+                return Ok((rows, true));
+            }
+            rows.push(row);
+        }
         Ok((rows, false))
     }
 
@@ -277,23 +457,21 @@ impl DatabaseDriver for SqliteDriver {
             .collect();
 
         // Indexes
-        let idx_rows: Vec<SqliteRow> =
-            sqlx::query(&format!("PRAGMA index_list({})", quoted_table))
-                .fetch_all(&self.pool)
-                .await?;
+        let idx_rows: Vec<SqliteRow> = sqlx::query(&format!("PRAGMA index_list({})", quoted_table))
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut indexes = Vec::new();
         for row in &idx_rows {
             let name: String = row.get(1);
             let is_unique: i32 = row.get(2);
 
-            let info_rows: Vec<SqliteRow> =
-                sqlx::query(&format!(
-                    "PRAGMA index_info({})",
-                    quote_sqlite_identifier(&name)?
-                ))
-                    .fetch_all(&self.pool)
-                    .await?;
+            let info_rows: Vec<SqliteRow> = sqlx::query(&format!(
+                "PRAGMA index_info({})",
+                quote_sqlite_identifier(&name)?
+            ))
+            .fetch_all(&self.pool)
+            .await?;
 
             let cols: Vec<String> = info_rows.iter().map(|r| r.get(2)).collect();
 
@@ -332,13 +510,12 @@ impl DatabaseDriver for SqliteDriver {
         .and_then(|row| row.try_get::<String, _>(0).ok())
         .map(|value| value.to_ascii_uppercase());
 
-        let view_definition = sqlx::query(
-            "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ? LIMIT 1",
-        )
-        .bind(table)
-        .fetch_optional(&self.pool)
-        .await?
-        .and_then(|row| row.try_get::<String, _>(0).ok());
+        let view_definition =
+            sqlx::query("SELECT sql FROM sqlite_master WHERE type = 'view' AND name = ? LIMIT 1")
+                .bind(table)
+                .fetch_optional(&self.pool)
+                .await?
+                .and_then(|row| row.try_get::<String, _>(0).ok());
 
         let trigger_rows: Vec<SqliteRow> = sqlx::query(
             "SELECT name, tbl_name, sql \
@@ -377,14 +554,8 @@ impl DatabaseDriver for SqliteDriver {
 
         if statements.len() <= 1 && Self::query_returns_rows(sql) {
             let (rows, truncated) = Self::fetch_rows_limited(&self.pool, sql).await?;
-            let mut result = Self::build_result_from_rows(
-                &rows,
-                0,
-                sql.to_string(),
-                0,
-                false,
-                truncated,
-            );
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
             result.execution_time_ms = start.elapsed().as_millis();
             Ok(result)
         } else {
@@ -394,7 +565,8 @@ impl DatabaseDriver for SqliteDriver {
             if statements.len() > 1 {
                 for statement in &statements {
                     if Self::query_returns_rows(statement) {
-                        let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
+                        let (rows, truncated) =
+                            Self::fetch_rows_limited(&self.pool, statement).await?;
                         last_result = Some(Self::build_result_from_rows(
                             &rows,
                             0,
@@ -442,6 +614,33 @@ impl DatabaseDriver for SqliteDriver {
                 truncated: false,
             })
         }
+    }
+
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        if Self::query_returns_rows(sql) {
+            let (rows, truncated) = self.fetch_parameterized_rows(sql, parameters).await?;
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            result.execution_time_ms = start.elapsed().as_millis();
+            return Ok(result);
+        }
+        let outcome = Self::bind_parameterized_query(sqlx::query(sql), parameters)?
+            .execute(&self.pool)
+            .await?;
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: outcome.rows_affected(),
+            execution_time_ms: start.elapsed().as_millis(),
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
     }
 
     async fn get_table_data(
@@ -520,6 +719,62 @@ impl DatabaseDriver for SqliteDriver {
 
         let result = builder.build().execute(&self.pool).await?;
         Ok(result.rows_affected())
+    }
+
+    async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        let mut transaction = self.pool.begin().await?;
+        let mut total_affected = 0;
+        for statement in statements {
+            total_affected += sqlx::query(statement)
+                .execute(&mut *transaction)
+                .await?
+                .rows_affected();
+        }
+        transaction.commit().await?;
+        Ok(total_affected)
+    }
+
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        let mut transaction = self.pool.begin().await?;
+        let mut affected_rows = 0;
+        for request in updates {
+            if request.primary_keys.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Inline update requires at least one primary key column"
+                ));
+            }
+            let mut builder = QueryBuilder::<Sqlite>::new("UPDATE ");
+            builder.push(quote_sqlite_identifier(&request.table)?);
+            builder.push(" SET ");
+            builder.push(quote_sqlite_order_by(&request.target_column)?);
+            builder.push(" = ");
+            Self::push_bound_value(&mut builder, &request.value)?;
+            builder.push(" WHERE ");
+            for (index, primary_key) in request.primary_keys.iter().enumerate() {
+                if index > 0 {
+                    builder.push(" AND ");
+                }
+                builder.push(quote_sqlite_order_by(&primary_key.column)?);
+                if primary_key.value.is_null() {
+                    builder.push(" IS NULL");
+                } else {
+                    builder.push(" = ");
+                    Self::push_bound_value(&mut builder, &primary_key.value)?;
+                }
+            }
+            let result = builder.build().execute(&mut *transaction).await?;
+            if result.rows_affected() == 0 {
+                return Err(anyhow::anyhow!(
+                    "An edit queue row no longer matches its primary-key selector"
+                ));
+            }
+            affected_rows += result.rows_affected();
+        }
+        transaction.commit().await?;
+        Ok(affected_rows)
     }
 
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
@@ -609,6 +864,57 @@ impl DatabaseDriver for SqliteDriver {
         Ok(result.rows_affected())
     }
 
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow::anyhow!("CSV import requires at least one row"));
+        }
+
+        let mut transaction = self.pool.begin().await?;
+        let mut affected_rows = 0;
+        for request in requests {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!(
+                    "CSV import cancelled; all rows were rolled back"
+                ));
+            }
+            if request.values.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Each CSV row requires at least one column value"
+                ));
+            }
+
+            let mut builder = QueryBuilder::<Sqlite>::new("INSERT INTO ");
+            builder.push(quote_sqlite_identifier(&request.table)?);
+            builder.push(" (");
+            for (index, (column, _)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                builder.push(quote_sqlite_identifier(column)?);
+            }
+            builder.push(") VALUES (");
+            for (index, (_, value)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                Self::push_bound_value(&mut builder, value)?;
+            }
+            builder.push(")");
+            affected_rows += builder
+                .build()
+                .execute(&mut *transaction)
+                .await?
+                .rows_affected();
+        }
+
+        transaction.commit().await?;
+        Ok(affected_rows)
+    }
+
     fn driver_name(&self) -> &str {
         "SQLite"
     }
@@ -664,15 +970,9 @@ impl DatabaseDriver for SqliteDriver {
              FROM \"{}\" \
              ORDER BY \"{}\" \
              LIMIT {}",
-            referenced_column,
-            label_expr,
-            referenced_table,
-            referenced_column,
-            limit
+            referenced_column, label_expr, referenced_table, referenced_column, limit
         );
-        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql)
-            .fetch_all(pool)
-            .await?;
+        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql).fetch_all(pool).await?;
         Ok(rows
             .into_iter()
             .map(|(value, label)| LookupValue { value, label })

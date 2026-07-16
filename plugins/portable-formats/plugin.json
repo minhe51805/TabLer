@@ -1,0 +1,61 @@
+{
+  "apiVersion": 1,
+  "id": "portable-formats",
+  "name": "Portable text formats",
+  "version": "1.0.0",
+  "publishedAt": "2026-07-16T00:00:00.000Z",
+  "kind": "export",
+  "description": "Adds TSV, pipe-delimited, and JSON Lines exports to the data grid.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": [
+    "export"
+  ],
+  "permissions": [],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "fc9447c4917ba2e3c0bac2e034d5d77d6bbf76812f819a22f6f666a2a43d80e7"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [
+      {
+        "id": "tsv",
+        "label": "TSV",
+        "description": "Tab-separated values for spreadsheets and data tools.",
+        "extension": "tsv",
+        "mimeType": "text/tab-separated-values",
+        "mode": "delimited",
+        "delimiter": "\t",
+        "includeHeader": true
+      },
+      {
+        "id": "psv",
+        "label": "Pipe-separated",
+        "description": "Pipe-delimited text for logs and command-line workflows.",
+        "extension": "psv",
+        "mimeType": "text/plain",
+        "mode": "delimited",
+        "delimiter": "|",
+        "includeHeader": true
+      },
+      {
+        "id": "jsonl",
+        "label": "JSON Lines",
+        "description": "One JSON object per line for streaming pipelines.",
+        "extension": "jsonl",
+        "mimeType": "application/x-ndjson",
+        "mode": "json-lines",
+        "delimiter": null,
+        "includeHeader": false
+      }
+    ],
+    "drivers": []
+  }
+}

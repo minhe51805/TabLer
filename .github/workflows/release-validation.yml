@@ -1,0 +1,141 @@
+name: Clean Machine Release Validation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/release*.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "src/**"
+      - "src-tauri/**"
+      - "plugins/**"
+      - "scripts/build-plugin-registry.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  CARGO_TERM_COLOR: always
+  MSYS_NO_PATHCONV: "1"
+
+jobs:
+  package:
+    name: ${{ matrix.target }} clean build
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: macos
+            cc: clang
+            cxx: clang++
+            cxxflags: ""
+          - platform: ubuntu-22.04
+            target: linux
+            cc: gcc
+            cxx: g++
+            cxxflags: ""
+          - platform: windows-latest
+            target: windows
+            cc: clang-cl
+            cxx: clang-cl
+            cxxflags: "/std:c++17 /EHsc /DDUCKDB_STATIC_BUILD"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Linux bundle dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils libfuse2 file
+
+      - name: Install dependencies from lockfile
+        run: npm ci --legacy-peer-deps
+
+      - name: Validate plugin registry determinism
+        run: |
+          node scripts/build-plugin-registry.mjs
+          git diff --exit-code -- plugins plugin-registry.json
+
+      - name: Validate frontend
+        run: npm run check:frontend
+
+      - name: Validate Rust
+        run: |
+          npm run check:release-contract
+          npm run check:tauri-target
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo fmt --manifest-path src-tauri/mcp-stdio/Cargo.toml --check
+          cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+          cargo check --locked --manifest-path src-tauri/mcp-stdio/Cargo.toml
+
+      - name: Build unsigned clean-machine bundles
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          CXXFLAGS: ${{ matrix.target == 'windows' && format('{0} /FI{1}/src-tauri/src/clang_compat.h', matrix.cxxflags, github.workspace) || matrix.cxxflags }}
+        run: npm run tauri build
+
+      - name: Validate Linux bundles
+        if: matrix.target == 'linux'
+        run: |
+          appimage="$(find src-tauri/target/release/bundle -type f -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          test -s "$appimage"
+          chmod +x "$appimage"
+          "$appimage" --appimage-extract >/dev/null
+          test -x squashfs-root/AppRun
+
+      - name: Validate macOS bundles
+        if: matrix.target == 'macos'
+        run: |
+          app="$(find src-tauri/target/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
+          dmg="$(find src-tauri/target/release/bundle -type f -name '*.dmg' -print -quit)"
+          test -n "$app"
+          test -n "$dmg"
+          test -s "$dmg"
+          test -x "$app/Contents/MacOS/tabler"
+
+      - name: Validate Windows bundles
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          $bundles = Get-ChildItem -Path src-tauri/target/release/bundle -Recurse -File -Include *.msi,*.exe
+          if ($bundles.Count -eq 0) { throw "No Windows installer was produced." }
+          foreach ($bundle in $bundles) {
+            if ($bundle.Length -le 0) { throw "Empty Windows bundle: $($bundle.FullName)" }
+          }
+
+      - name: Upload validation bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabler-${{ matrix.target }}-clean-machine
+          path: src-tauri/target/release/bundle
+          if-no-files-found: error
+          retention-days: 7

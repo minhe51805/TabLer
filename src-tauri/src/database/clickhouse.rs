@@ -119,7 +119,8 @@ impl ClickHouseDriver {
                 quote_clickhouse_identifier(name)?,
             )),
             [name] => {
-                if let Some(database_name) = database.map(str::trim).filter(|value| !value.is_empty())
+                if let Some(database_name) =
+                    database.map(str::trim).filter(|value| !value.is_empty())
                 {
                     Ok(format!(
                         "{}.{}",
@@ -130,7 +131,9 @@ impl ClickHouseDriver {
                     quote_clickhouse_identifier(name)
                 }
             }
-            _ => Err(anyhow!("Only database.table names are supported for ClickHouse")),
+            _ => Err(anyhow!(
+                "Only database.table names are supported for ClickHouse"
+            )),
         }
     }
 
@@ -236,7 +239,11 @@ impl ClickHouseDriver {
                 result
                     .meta
                     .iter()
-                    .map(|column| row.get(&column.name).cloned().unwrap_or(serde_json::Value::Null))
+                    .map(|column| {
+                        row.get(&column.name)
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null)
+                    })
                     .collect::<Vec<_>>(),
             );
         }
@@ -326,10 +333,7 @@ impl DatabaseDriver for ClickHouseDriver {
             .collect())
     }
 
-    async fn list_schema_objects(
-        &self,
-        database: Option<&str>,
-    ) -> Result<Vec<SchemaObjectInfo>> {
+    async fn list_schema_objects(&self, database: Option<&str>) -> Result<Vec<SchemaObjectInfo>> {
         let db = self.current_database_name(database);
         let sql = format!(
             "SELECT name, engine, create_table_query \
@@ -477,7 +481,10 @@ impl DatabaseDriver for ClickHouseDriver {
         let total_affected = 0u64;
         let mut last_result = None;
 
-        for statement in statements.iter().filter(|statement| !statement.trim().is_empty()) {
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
             if Self::query_returns_rows(statement) {
                 let result = self.query_json(statement, Some(&database)).await?;
                 last_result = Some(Self::build_result_from_json(
@@ -616,9 +623,7 @@ impl DatabaseDriver for ClickHouseDriver {
 
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
         if request.rows.is_empty() {
-            return Err(anyhow!(
-                "Deleting rows requires at least one selected row"
-            ));
+            return Err(anyhow!("Deleting rows requires at least one selected row"));
         }
 
         let db = self.current_database_name(request.database.as_deref());
@@ -749,11 +754,7 @@ impl DatabaseDriver for ClickHouseDriver {
                  FROM {} \
                  ORDER BY {} \
                  LIMIT {}",
-                col_quoted,
-                label_expr,
-                table_qualified,
-                col_quoted,
-                limit
+                col_quoted, label_expr, table_qualified, col_quoted, limit
             )
         };
 

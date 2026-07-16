@@ -39,6 +39,7 @@ export function buildTableCacheKey(
   page?: number,
   sortColumn?: string | null,
   sortDir?: "ASC" | "DESC",
+  filter?: string,
 ) {
   return [
     connectionId,
@@ -47,6 +48,7 @@ export function buildTableCacheKey(
     page ?? 0,
     sortColumn || "",
     sortDir || "",
+    filter || "",
   ].join("|");
 }
 

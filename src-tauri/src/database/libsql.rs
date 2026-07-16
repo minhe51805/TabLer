@@ -275,10 +275,7 @@ impl DatabaseDriver for LibSqlDriver {
         Ok(tables)
     }
 
-    async fn list_schema_objects(
-        &self,
-        _database: Option<&str>,
-    ) -> Result<Vec<SchemaObjectInfo>> {
+    async fn list_schema_objects(&self, _database: Option<&str>) -> Result<Vec<SchemaObjectInfo>> {
         let mut rows = self
             .connection
             .query(
@@ -476,11 +473,13 @@ impl DatabaseDriver for LibSqlDriver {
                         truncated,
                     ));
                 } else {
-                    total_affected += self
-                        .connection
-                        .execute(statement, ())
-                        .await
-                        .with_context(|| format!("Failed to execute LibSQL statement: {statement}"))?;
+                    total_affected +=
+                        self.connection
+                            .execute(statement, ())
+                            .await
+                            .with_context(|| {
+                                format!("Failed to execute LibSQL statement: {statement}")
+                            })?;
                 }
             }
         } else if let Some(statement) = statements.first() {
@@ -613,9 +612,7 @@ impl DatabaseDriver for LibSqlDriver {
 
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
         if request.rows.is_empty() {
-            return Err(anyhow!(
-                "Deleting rows requires at least one selected row"
-            ));
+            return Err(anyhow!("Deleting rows requires at least one selected row"));
         }
 
         let tx = self
@@ -721,7 +718,10 @@ impl DatabaseDriver for LibSqlDriver {
 
         sql.push(')');
 
-        let rows_affected = self.connection.execute(&sql, params).await
+        let rows_affected = self
+            .connection
+            .execute(&sql, params)
+            .await
             .with_context(|| format!("Failed to insert row into LibSQL table {}", request.table))?;
         Ok(rows_affected as u64)
     }
@@ -750,7 +750,10 @@ impl DatabaseDriver for LibSqlDriver {
         };
 
         let where_clause = if let Some(search_term) = search {
-            format!(" WHERE CAST(\"{}\" AS TEXT) LIKE '%{}%'", referenced_column, search_term)
+            format!(
+                " WHERE CAST(\"{}\" AS TEXT) LIKE '%{}%'",
+                referenced_column, search_term
+            )
         } else {
             String::new()
         };
@@ -761,12 +764,7 @@ impl DatabaseDriver for LibSqlDriver {
              {} \
              ORDER BY \"{}\" \
              LIMIT {}",
-            referenced_column,
-            label_expr,
-            referenced_table,
-            where_clause,
-            referenced_column,
-            limit
+            referenced_column, label_expr, referenced_table, where_clause, referenced_column, limit
         );
 
         let result = self.execute_query(&sql).await?;

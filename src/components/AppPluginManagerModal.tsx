@@ -5,6 +5,9 @@ import {
   LoaderCircle,
   Puzzle,
   RefreshCw,
+  RotateCcw,
+  ShieldAlert,
+  ShieldCheck,
   ToggleLeft,
   ToggleRight,
   Trash2,
@@ -14,9 +17,10 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../i18n";
 import { emitAppToast } from "../utils/app-toast";
+import { findStableOpenSearchDriver } from "../utils/plugin-driver-runtime";
 import { ALL_DATABASES } from "./ConnectionForm/engine-registry";
 import { usePluginStore } from "../stores/pluginStore";
-import type { InstalledPluginRecord } from "../types/plugin";
+import type { InstalledPluginRecord, PluginRegistryPackage } from "../types/plugin";
 
 interface AppPluginManagerModalProps {
   onClose: () => void;
@@ -29,7 +33,20 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
   const installedPlugins = usePluginStore((s) => s.plugins);
   const isLoading = usePluginStore((s) => s.isLoading);
   const error = usePluginStore((s) => s.error);
-  const { loadPlugins, reloadPlugins, installPlugin, setPluginEnabled, uninstallPlugin } = usePluginStore();
+  const registryPackages = usePluginStore((s) => s.registryPackages);
+  const updates = usePluginStore((s) => s.updates);
+  const isRegistryLoading = usePluginStore((s) => s.isRegistryLoading);
+  const {
+    loadPlugins,
+    reloadPlugins,
+    loadRegistry,
+    checkUpdates,
+    installRegistryPlugin,
+    installPlugin,
+    setPluginEnabled,
+    rollbackPlugin,
+    uninstallPlugin,
+  } = usePluginStore();
   const [isInstalling, setIsInstalling] = useState(false);
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
 
@@ -58,9 +75,21 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
         disable: "Tắt plugin",
         kind: "Loại",
         capabilities: "Khả năng",
+        permissions: "Quyền truy cập",
+        verified: "Đã xác minh",
+        unverified: "Không an toàn",
+        rollback: "Quay lại bản trước",
+        rollbackSuccess: "Đã khôi phục plugin",
+        registry: "Registry chính thức",
+        browseRegistry: "Mở registry",
+        registryEmpty: "Registry chưa có package tương thích cho nền tảng này.",
+        updateAvailable: "Có bản cập nhật",
+        installFromRegistry: "Cài đặt",
+        updateFromRegistry: "Cập nhật",
+        registryInstalled: "Đã cài từ registry",
         noPlugins: "Chưa có plugin local nào được cài.",
         note:
-          "Plugin bundle hiện đã quản lý được theo manifest local. Bước tiếp theo là nạp adapter/runtime theo nhu cầu ngay từ bundle.",
+          "Format plugin và driver OpenSearch chỉ đọc chạy qua runtime khai báo, không thực thi mã native. Driver WASM khác vẫn ở trạng thái thử nghiệm và chưa được kích hoạt.",
         close: "Đóng",
         installSuccess: "Đã cài plugin",
         pluginUpdated: "Đã cập nhật trạng thái plugin",
@@ -91,9 +120,21 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
       disable: "Disable plugin",
       kind: "Kind",
       capabilities: "Capabilities",
+      permissions: "Permissions",
+      verified: "Verified",
+      unverified: "Unsafe",
+      rollback: "Roll back",
+      rollbackSuccess: "Plugin rolled back",
+      registry: "Official registry",
+      browseRegistry: "Browse registry",
+      registryEmpty: "No compatible packages are published for this platform yet.",
+      updateAvailable: "Update available",
+      installFromRegistry: "Install",
+      updateFromRegistry: "Update",
+      registryInstalled: "Installed from registry",
       noPlugins: "No local plugin bundles installed yet.",
       note:
-        "Local plugin bundles are now tracked through manifests. The next step is loading runtime adapters and tools directly from those bundles.",
+        "Format plugins and the read-only OpenSearch driver run through declarative runtimes without native code execution. Other WASM drivers remain experimental and disabled.",
       close: "Close",
       installSuccess: "Plugin installed",
       pluginUpdated: "Plugin state updated",
@@ -101,8 +142,33 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
     };
   }, [language]);
 
-  const readyAdapters = ALL_DATABASES.filter((db) => db.supported);
-  const roadmapAdapters = ALL_DATABASES.filter((db) => !db.supported);
+  const openSearchDriver = findStableOpenSearchDriver(installedPlugins);
+  const databaseAdapters = ALL_DATABASES.map((database) =>
+    database.key === "opensearch"
+      ? { ...database, supported: Boolean(openSearchDriver) }
+      : database,
+  );
+  const readyAdapters = databaseAdapters.filter((db) => db.supported);
+  const roadmapAdapters = databaseAdapters.filter((db) => !db.supported);
+  const latestRegistryPackages = useMemo(() => {
+    const latest = new Map<string, PluginRegistryPackage>();
+    for (const item of registryPackages) {
+      const current = latest.get(item.manifest.id);
+      if (
+        !current ||
+        item.manifest.version.localeCompare(current.manifest.version, undefined, {
+          numeric: true,
+        }) > 0
+      ) {
+        latest.set(item.manifest.id, item);
+      }
+    }
+    return [...latest.values()];
+  }, [registryPackages]);
+  const installedPluginIds = useMemo(
+    () => new Set(installedPlugins.map((plugin) => plugin.manifest.id)),
+    [installedPlugins],
+  );
 
   useEffect(() => {
     void loadPlugins();
@@ -111,6 +177,29 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
   const handleReload = useCallback(async () => {
     await reloadPlugins();
   }, [reloadPlugins]);
+
+  const handleBrowseRegistry = useCallback(async () => {
+    await Promise.all([loadRegistry(), checkUpdates()]);
+  }, [checkUpdates, loadRegistry]);
+
+  const handleRegistryInstall = useCallback(
+    async (plugin: PluginRegistryPackage) => {
+      setBusyPluginId(plugin.manifest.id);
+      try {
+        const installed = await installRegistryPlugin(plugin.manifest.id);
+        emitAppToast({
+          tone: "success",
+          title: copy.registryInstalled,
+          description: `${installed.manifest.name} v${installed.manifest.version}`,
+        });
+      } catch {
+        // The store exposes the backend validation error inside the modal.
+      } finally {
+        setBusyPluginId(null);
+      }
+    },
+    [copy.registryInstalled, installRegistryPlugin],
+  );
 
   const handleInstallPlugin = useCallback(async () => {
     setIsInstalling(true);
@@ -132,7 +221,8 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
     async (plugin: InstalledPluginRecord) => {
       setBusyPluginId(plugin.manifest.id);
       try {
-        await setPluginEnabled(plugin.manifest.id, !plugin.enabled);
+        const updated = await setPluginEnabled(plugin.manifest.id, !plugin.enabled);
+        if (!updated) return;
         emitAppToast({
           tone: "success",
           title: copy.pluginUpdated,
@@ -156,7 +246,8 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
 
       setBusyPluginId(plugin.manifest.id);
       try {
-        await uninstallPlugin(plugin.manifest.id);
+        const removed = await uninstallPlugin(plugin.manifest.id);
+        if (!removed) return;
         emitAppToast({
           tone: "success",
           title: copy.pluginRemoved,
@@ -167,6 +258,32 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
       }
     },
     [copy.pluginRemoved, language, uninstallPlugin],
+  );
+
+  const handleRollbackPlugin = useCallback(
+    async (plugin: InstalledPluginRecord) => {
+      const confirmed = window.confirm(
+        language === "vi"
+          ? `Khôi phục "${plugin.manifest.name}" về phiên bản ${plugin.previousVersion ?? "trước"}?`
+          : `Roll "${plugin.manifest.name}" back to ${plugin.previousVersion ?? "the previous version"}?`,
+      );
+      if (!confirmed) return;
+
+      setBusyPluginId(plugin.manifest.id);
+      try {
+        const restored = await rollbackPlugin(plugin.manifest.id);
+        emitAppToast({
+          tone: "success",
+          title: copy.rollbackSuccess,
+          description: `${restored.manifest.name} v${restored.manifest.version}`,
+        });
+      } catch {
+        // The store exposes the backend validation error inside the modal.
+      } finally {
+        setBusyPluginId(null);
+      }
+    },
+    [copy.rollbackSuccess, language, rollbackPlugin],
   );
 
   return (
@@ -203,6 +320,15 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
           <button
             type="button"
             className="btn btn-secondary app-plugin-manager-toolbar-btn"
+            onClick={() => void handleBrowseRegistry()}
+            disabled={isRegistryLoading}
+          >
+            {isRegistryLoading ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            <span>{copy.browseRegistry}</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary app-plugin-manager-toolbar-btn"
             onClick={handleReload}
             disabled={isLoading}
           >
@@ -221,6 +347,46 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
         </div>
 
         {error ? <div className="app-plugin-manager-error">{error}</div> : null}
+
+        {(latestRegistryPackages.length > 0 || isRegistryLoading) ? (
+          <div className="app-plugin-manager-section">
+            <div className="app-plugin-manager-section-head">
+              <span className="app-help-modal-section-label">{copy.registry}</span>
+              <span className="app-plugin-manager-badge accent">
+                <Download className="w-3.5 h-3.5" />
+                {latestRegistryPackages.length}
+              </span>
+            </div>
+            {isRegistryLoading && latestRegistryPackages.length === 0 ? (
+              <div className="app-plugin-manager-empty"><LoaderCircle className="w-4 h-4 animate-spin" /></div>
+            ) : latestRegistryPackages.length === 0 ? (
+              <div className="app-plugin-manager-empty">{copy.registryEmpty}</div>
+            ) : (
+              <div className="app-plugin-manager-list">
+                {latestRegistryPackages.map((plugin) => {
+                  const update = updates.find((candidate) => candidate.pluginId === plugin.manifest.id);
+                  const installed = installedPluginIds.has(plugin.manifest.id);
+                  return (
+                    <div key={plugin.manifest.id} className="app-plugin-manager-row">
+                      <span className="app-plugin-manager-row-title">
+                        {plugin.manifest.name} <small>v{plugin.manifest.version}</small>
+                      </span>
+                      <button
+                        type="button"
+                        className="app-plugin-manager-action-btn"
+                        onClick={() => void handleRegistryInstall(plugin)}
+                        disabled={busyPluginId === plugin.manifest.id || (installed && !update)}
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>{update ? copy.updateFromRegistry : copy.installFromRegistry}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : null}
 
         <div className="app-plugin-manager-section">
           <div className="app-plugin-manager-section-head">
@@ -251,13 +417,20 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
                           {plugin.manifest.author ? <span>{plugin.manifest.author}</span> : null}
                         </div>
                       </div>
-                      <span
-                        className={`app-plugin-manager-row-state ${
-                          plugin.enabled ? "ready" : "roadmap"
-                        }`}
-                      >
-                        {plugin.enabled ? copy.enabled : copy.disabled}
-                      </span>
+                      <div className="app-plugin-manager-bundle-statuses">
+                        <span
+                          className={`app-plugin-manager-row-state ${plugin.verified ? "ready" : "danger"}`}
+                          title={plugin.validationError ?? undefined}
+                        >
+                          {plugin.verified ? <ShieldCheck className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}
+                          {plugin.verified ? copy.verified : copy.unverified}
+                        </span>
+                        <span
+                          className={`app-plugin-manager-row-state ${plugin.enabled ? "ready" : "roadmap"}`}
+                        >
+                          {plugin.enabled ? copy.enabled : copy.disabled}
+                        </span>
+                      </div>
                     </div>
 
                     {plugin.manifest.description ? (
@@ -276,6 +449,26 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
                       </div>
                     ) : null}
 
+                    {plugin.manifest.permissions.length > 0 ? (
+                      <div className="app-plugin-manager-permissions">
+                        <span>{copy.permissions}</span>
+                        <div className="app-plugin-manager-bundle-tags">
+                          {plugin.manifest.permissions.map((permission) => (
+                            <span key={permission} className="app-help-modal-tag permission">
+                              {permission}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {plugin.validationError ? (
+                      <div className="app-plugin-manager-validation-error">
+                        <ShieldAlert className="w-4 h-4" />
+                        <span>{plugin.validationError}</span>
+                      </div>
+                    ) : null}
+
                     <code className="app-plugin-manager-bundle-path" title={plugin.bundlePath}>
                       {plugin.bundlePath}
                     </code>
@@ -286,11 +479,23 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
                       type="button"
                       className="app-plugin-manager-action-btn"
                       onClick={() => handleTogglePlugin(plugin)}
-                      disabled={busyPluginId === plugin.manifest.id}
+                      disabled={busyPluginId === plugin.manifest.id || (!plugin.enabled && !plugin.verified)}
                     >
                       {plugin.enabled ? <ToggleLeft className="w-4 h-4" /> : <ToggleRight className="w-4 h-4" />}
                       <span>{plugin.enabled ? copy.disable : copy.enable}</span>
                     </button>
+                    {plugin.rollbackAvailable ? (
+                      <button
+                        type="button"
+                        className="app-plugin-manager-action-btn"
+                        onClick={() => void handleRollbackPlugin(plugin)}
+                        disabled={busyPluginId === plugin.manifest.id}
+                        title={plugin.previousVersion ? `v${plugin.previousVersion}` : undefined}
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        <span>{copy.rollback}</span>
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="app-plugin-manager-action-btn danger"

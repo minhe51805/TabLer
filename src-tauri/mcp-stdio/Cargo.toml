@@ -1,0 +1,11 @@
+[package]
+name = "tabler-mcp"
+version = "0.1.4"
+description = "TableR local stdio MCP server"
+authors = ["TableR Team"]
+edition = "2021"
+publish = false
+
+[dependencies]
+tabler_lib = { package = "tabler", path = ".." }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

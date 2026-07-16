@@ -812,6 +812,7 @@ export function AppWorkspacePanel({
                 tableName={tab.tableName}
                 database={tab.database}
                 queryResult={tab.queryResult}
+                rowFocus={tab.rowFocus}
                 isActive={isActive}
               />
             </Suspense>

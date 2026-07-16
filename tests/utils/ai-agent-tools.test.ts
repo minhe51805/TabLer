@@ -4,11 +4,13 @@ import {
   parseAIAgentToolAction,
   validateAIAgentReadonlySql,
 } from "@/components/AISlidePanel/ai-agent-tools";
+import { getAgentSqlSchemaRequirements } from "@/components/AISlidePanel/ai-agent-grounding";
 
 describe("AI agent tool contract", () => {
   it("exposes only executable controller actions", () => {
     expect(AI_AGENT_TOOL_NAMES).toEqual([
       "list_tables",
+      "search_schema",
       "describe_table",
       "run_readonly_sql",
       "finish",
@@ -58,6 +60,13 @@ line two","args":{"response":"done"}}\nThanks`;
 
   it("validates and normalizes action-specific arguments", () => {
     expect(parseAIAgentToolAction(
+      '{"action":"search_schema","args":{"query":"  email  "}}',
+    )).toEqual({
+      action: "search_schema",
+      args: { query: "email" },
+      message: "",
+    });
+    expect(parseAIAgentToolAction(
       '{"action":"describe_table","args":{"table":"  public.users  "}}',
     )).toEqual({
       action: "describe_table",
@@ -74,6 +83,8 @@ line two","args":{"response":"done"}}\nThanks`;
 
     expect(() => parseAIAgentToolAction('{"action":"describe_table","args":{}}'))
       .toThrow("args.table");
+    expect(() => parseAIAgentToolAction('{"action":"search_schema","args":{"query":" "}}'))
+      .toThrow("args.query");
     expect(() => parseAIAgentToolAction('{"action":"run_readonly_sql","args":{"sql":" "}}'))
       .toThrow("args.sql");
   });
@@ -86,6 +97,20 @@ line two","args":{"response":"done"}}\nThanks`;
       "EXPLAIN SELECT * FROM users",
       "PRAGMA table_info(users)",
     ]);
+  });
+
+  it("requires an inspected schema before reading a referenced table", () => {
+    expect(getAgentSqlSchemaRequirements(
+      "SELECT * FROM public.app_settings WHERE value ILIKE '%vibe%'",
+      ["app_settings", "bots"],
+      ["bots"],
+    )).toEqual({ unknown: [], uninspected: ["app_settings"] });
+
+    expect(getAgentSqlSchemaRequirements(
+      "SELECT * FROM missing_table",
+      ["app_settings"],
+      ["app_settings"],
+    )).toEqual({ unknown: ["missing_table"], uninspected: [] });
   });
 
   it.each([

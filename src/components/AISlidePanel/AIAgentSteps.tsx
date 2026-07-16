@@ -17,6 +17,7 @@ function getActionIcon(action: AIWorkspaceAgentActionName): ReactNode {
       return <Brain className="w-3.5 h-3.5" />;
     case "list_tables":
       return <ListTree className="w-3.5 h-3.5" />;
+    case "search_schema":
     case "describe_table":
       return <Search className="w-3.5 h-3.5" />;
     case "run_readonly_sql":
@@ -36,6 +37,7 @@ function getActionLabel(
       return copy.modal.agentActionPlan;
     case "list_tables":
       return copy.modal.agentActionListTables;
+    case "search_schema":
     case "describe_table":
       return copy.modal.agentActionDescribeTable;
     case "run_readonly_sql":
@@ -98,6 +100,13 @@ export function AIAgentSteps({ steps, compact = false }: AIAgentStepsProps) {
                     </span>
                   )}
                 </div>
+
+                {isPlan && step.status === "running" && (
+                  <div className="ai-agent-step-live-activity" aria-live="polite">
+                    <span className="ai-agent-step-live-dots" aria-hidden="true"><span /><span /><span /></span>
+                    <span>{copy.modal.agentStatusRunning}</span>
+                  </div>
+                )}
 
                 {step.message && (
                   isPlan ? (

@@ -1,4 +1,4 @@
-import { CornerDownLeft, Eye, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
+import { CornerDownLeft, ExternalLink, Eye, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
 import { useEffect, useState, type RefObject } from "react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
@@ -11,6 +11,7 @@ import {
   summarizePromptForDisplay,
 } from "./ai-conversation-state";
 import { AIAgentSteps } from "./AIAgentSteps";
+import { extractAgentRecordLinks, type AIAgentRecordLink } from "./ai-agent-record-links";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 
 interface AIConversationViewProps {
@@ -22,6 +23,7 @@ interface AIConversationViewProps {
   onInsert: (bubble: AIWorkspaceBubbleData) => void;
   onRun: (bubble: AIWorkspaceBubbleData) => void;
   onRetry: (bubble: AIWorkspaceBubbleData) => void;
+  onOpenRecord: (link: AIAgentRecordLink) => void;
   onUseSuggestion: (prompt: string) => void;
 }
 
@@ -34,6 +36,7 @@ export function AIConversationView({
   onInsert,
   onRun,
   onRetry,
+  onOpenRecord,
   onUseSuggestion,
 }: AIConversationViewProps) {
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
@@ -68,11 +71,19 @@ export function AIConversationView({
           <div ref={threadRef} className="ai-workspace-chat-thread">
             {bubbles.map((bubble) => {
               const conversationText = getBubbleConversationText(bubble);
-              const canShowDetail = bubble.status !== "loading"
+              const hasVisibleAgentProgress = showThinking
+                && bubble.interactionMode === "agent"
+                && (bubble.agentSteps?.length ?? 0) > 0;
+              const recordLinks = extractAgentRecordLinks(bubble.agentSteps);
+              const agentReadLiveData = bubble.interactionMode === "agent"
+                && bubble.agentSteps?.some((step) => step.action === "run_readonly_sql" && step.status === "done") === true;
+              const canShowDetail = !agentReadLiveData
+                && bubble.status !== "loading"
                 && Boolean(bubble.detail || bubble.preview || bubble.sql);
-              const canInsert = Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
+              const canInsert = !agentReadLiveData && Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
               const canRun = Boolean(bubble.sql)
                 && bubble.kind !== "result"
+                && !agentReadLiveData
                 && aiModeAllowsRun(bubble.interactionMode);
               const canRetry = bubble.retryable !== false
                 && (bubble.status === "error" || bubble.status === "partial" || bubble.status === "cancelled");
@@ -103,29 +114,42 @@ export function AIConversationView({
                         ? copy.bubbleStates.partialTitle
                         : bubble.status === "cancelled"
                           ? copy.bubbleStates.cancelledTitle
-                          : bubble.sql ? copy.modal.sql : copy.bubbleMeta.ready}
+                          : bubble.sql && !agentReadLiveData ? copy.modal.sql : copy.bubbleMeta.ready}
                     </span>
                   </div>
                   <div className="ai-workspace-chat-message ai-workspace-chat-message--assistant">
                     {bubble.subtitle && bubble.subtitle !== bubble.title && (
                       <p className="ai-workspace-chat-subtitle">{bubble.subtitle}</p>
                     )}
-                    {showThinking
-                      && bubble.interactionMode === "agent"
-                      && (bubble.agentSteps?.length ?? 0) > 0
+                    {hasVisibleAgentProgress
                       && <AIAgentSteps steps={bubble.agentSteps ?? []} compact />}
-                    {bubble.status === "loading" ? (
+                    {bubble.status === "loading" && !hasVisibleAgentProgress ? (
                       <div className="ai-workspace-thinking-line">
                         <span className="ai-workspace-thinking-orb" aria-hidden="true" />
                         <span className="ai-workspace-thinking-shimmer">
                           {conversationText || copy.bubbleMeta.thinking}
                         </span>
                       </div>
-                    ) : (
+                    ) : bubble.status !== "loading" ? (
                       conversationText
                         && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={conversationText} />
+                    ) : null}
+                    {recordLinks.length > 0 && (
+                      <div className="ai-workspace-agent-record-links">
+                        {recordLinks.map((link) => (
+                          <button
+                            key={`${link.tableName}-${JSON.stringify(link.rowKey)}`}
+                            type="button"
+                            className="ai-workspace-agent-record-link"
+                            onClick={() => onOpenRecord(link)}
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>{link.label}</span>
+                          </button>
+                        ))}
+                      </div>
                     )}
-                    {bubble.sql && bubble.status !== "error" && (
+                    {bubble.sql && bubble.status !== "error" && !agentReadLiveData && (
                       <pre className="ai-workspace-chat-code">{bubble.sql}</pre>
                     )}
                     {(canShowDetail || canInsert || canRun || canRetry) && (

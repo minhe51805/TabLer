@@ -239,6 +239,11 @@ export interface ERRelationship {
 export type StructureFocusSection =
   "columns" | "indexes" | "foreign_keys" | "triggers" | "view_definition";
 
+export interface TableRowFocus {
+  token: string;
+  values: Record<string, string | number | boolean | null>;
+}
+
 // UI State types
 export interface Tab {
   id: string;
@@ -259,6 +264,7 @@ export interface Tab {
   structureFocusColumn?: string;
   isPreview?: boolean;
   structureFocusToken?: string;
+  rowFocus?: TableRowFocus;
   workspaceEntityId?: string;
   workspaceEntityRevision?: string;
   workspaceEntityUpdatedAt?: string;

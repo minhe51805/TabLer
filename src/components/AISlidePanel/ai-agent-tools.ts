@@ -8,6 +8,7 @@ import {
 
 export const AI_AGENT_TOOL_NAMES = [
   "list_tables",
+  "search_schema",
   "describe_table",
   "run_readonly_sql",
   "finish",
@@ -24,6 +25,11 @@ interface AIAgentToolActionBase<TAction extends AIAgentToolName, TArgs> {
 export type AIAgentListTablesAction = AIAgentToolActionBase<
   "list_tables",
   Record<string, unknown>
+>;
+
+export type AIAgentSearchSchemaAction = AIAgentToolActionBase<
+  "search_schema",
+  { query: string }
 >;
 
 export type AIAgentDescribeTableAction = AIAgentToolActionBase<
@@ -46,6 +52,7 @@ export type AIAgentFinishAction = AIAgentToolActionBase<"finish", AIAgentFinishA
 
 export type AIAgentToolAction =
   | AIAgentListTablesAction
+  | AIAgentSearchSchemaAction
   | AIAgentDescribeTableAction
   | AIAgentRunReadonlySqlAction
   | AIAgentFinishAction;
@@ -225,6 +232,14 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
 
   const args = (parsed.args as Record<string, unknown> | undefined) || {};
   const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+
+  if (parsed.action === "search_schema") {
+    const query = typeof args.query === "string" ? args.query.trim() : "";
+    if (!query) {
+      throw new Error("The search_schema action requires a non-empty args.query.");
+    }
+    return { action: parsed.action, args: { query }, message };
+  }
 
   if (parsed.action === "describe_table") {
     const table = typeof args.table === "string" ? args.table.trim() : "";

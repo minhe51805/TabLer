@@ -75,6 +75,26 @@ describe("AI agent grounding", () => {
     expect(observation).toContain("[REDACTED]");
   });
 
+  it("keeps a stable row key in the preview even when it appears after wide columns", () => {
+    const columns = [
+      ...Array.from({ length: 8 }, (_, index) => ({
+        name: `field_${index + 1}`,
+        data_type: "text",
+        is_nullable: true,
+        is_primary_key: false,
+      })),
+      { name: "record_id", data_type: "uuid", is_nullable: false, is_primary_key: true },
+    ];
+    const observation = summarizeAgentQueryObservation(makeQueryResult({
+      columns,
+      rows: [["a", "b", "c", "d", "e", "f", "g", "h", "row-42"]],
+    }));
+
+    expect(observation).toContain("record_id:uuid");
+    expect(observation).toContain('"record_id": "row-42"');
+    expect(observation).not.toContain("field_8:text");
+  });
+
   it("extracts referenced tables across SQL statement types", () => {
     const sql = [
       'SELECT * FROM "public"."Users" u JOIN analytics.daily_orders d ON d.user_id = u.id;',

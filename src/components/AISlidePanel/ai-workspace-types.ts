@@ -45,6 +45,7 @@ export function isAIWorkspaceAgentAutonomy(value: unknown): value is AIWorkspace
 export type AIWorkspaceAgentActionName =
   | "plan"
   | "list_tables"
+  | "search_schema"
   | "describe_table"
   | "run_readonly_sql"
   | "finish";

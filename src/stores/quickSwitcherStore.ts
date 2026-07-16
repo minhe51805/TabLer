@@ -6,7 +6,10 @@ const MAX_RECENT = 20;
 export type SwitcherItemKind =
   | "tab"
   | "table"
+  | "column"
+  | "schema-object"
   | "saved-query"
+  | "history"
   | "connection";
 
 export interface SwitcherItem {

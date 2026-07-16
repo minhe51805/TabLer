@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCcw } from "lucide-react";
+import { Code2, RefreshCcw, Table2 } from "lucide-react";
 import { useI18n } from "../../../i18n";
 import type { MetricsWidgetDefinition, QueryResult } from "../../../types";
 import {
@@ -11,7 +11,12 @@ import {
   METRICS_DRAG_HOLD_MS,
   validateMetricsQuery,
 } from "../utils/query-builder";
-import { ChartBars, ChartLine, ChartPie, ChartRadial } from "../utils/chart-renderer";
+import {
+  ChartBars,
+  ChartLine,
+  ChartPie,
+  ChartRadial,
+} from "../utils/chart-renderer";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +37,8 @@ interface WidgetRunState {
 interface MetricsWidgetCardProps {
   widget: MetricsWidgetDefinition;
   connectionId: string;
+  onOpenResult: (widget: MetricsWidgetDefinition, result: QueryResult) => void;
+  onOpenQuery: (widget: MetricsWidgetDefinition) => void;
   selected: boolean;
   onSelect: () => void;
   layoutStyle: CSSProperties;
@@ -44,6 +51,8 @@ interface MetricsWidgetCardProps {
 export function MetricsWidgetCard({
   widget,
   connectionId,
+  onOpenResult,
+  onOpenQuery,
   selected,
   onSelect,
   layoutStyle,
@@ -88,7 +97,10 @@ export function MetricsWidgetCard({
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
-      const result = await executeMetricsQuery(connectionId, validation.statement);
+      const result = await executeMetricsQuery(
+        connectionId,
+        validation.statement,
+      );
 
       if (requestIdRef.current !== requestId) return;
       setState({
@@ -136,16 +148,25 @@ export function MetricsWidgetCard({
 
   const series = useMemo(() => getSeries(state.result), [state.result]);
   const metric = useMemo(() => getMetricValue(state.result), [state.result]);
-  const validation = useMemo(() => validateMetricsQuery(widget.query), [language, widget.query]);
+  const validation = useMemo(
+    () => validateMetricsQuery(widget.query),
+    [language, widget.query],
+  );
   const widgetLibraryItem = getWidgetLibraryItem(widget.type);
 
   const content = (() => {
     if (state.loading && !state.result) {
-      return <div className="metrics-widget-empty">{t("metrics.widget.loading")}</div>;
+      return (
+        <div className="metrics-widget-empty">
+          {t("metrics.widget.loading")}
+        </div>
+      );
     }
 
     if (!validation.ok) {
-      return <div className="metrics-widget-empty error">{validation.error}</div>;
+      return (
+        <div className="metrics-widget-empty error">{validation.error}</div>
+      );
     }
 
     if (state.error) {
@@ -153,7 +174,9 @@ export function MetricsWidgetCard({
     }
 
     if (!state.result || state.result.rows.length === 0) {
-      return <div className="metrics-widget-empty">{t("metrics.widget.noData")}</div>;
+      return (
+        <div className="metrics-widget-empty">{t("metrics.widget.noData")}</div>
+      );
     }
 
     if (widget.type === "scoreboard") {
@@ -180,7 +203,9 @@ export function MetricsWidgetCard({
               {state.result.rows.slice(0, 5).map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {row.slice(0, 4).map((cell, cellIndex) => (
-                    <td key={cellIndex}>{cell === null ? "NULL" : String(cell)}</td>
+                    <td key={cellIndex}>
+                      {cell === null ? "NULL" : String(cell)}
+                    </td>
                   ))}
                 </tr>
               ))}
@@ -191,7 +216,11 @@ export function MetricsWidgetCard({
     }
 
     if (series.length === 0) {
-      return <div className="metrics-widget-empty">{t("metrics.widget.queryNeedsSeries")}</div>;
+      return (
+        <div className="metrics-widget-empty">
+          {t("metrics.widget.queryNeedsSeries")}
+        </div>
+      );
     }
 
     if (widget.type === "bar") {
@@ -294,8 +323,12 @@ export function MetricsWidgetCard({
       <div className="metrics-widget-card-head">
         <div className="metrics-widget-card-head-main">
           <div className="metrics-widget-card-title-wrap">
-            <span className="metrics-widget-card-type">{widgetLibraryItem.label}</span>
-            <strong className="metrics-widget-card-title">{widget.title}</strong>
+            <span className="metrics-widget-card-type">
+              {widgetLibraryItem.label}
+            </span>
+            <strong className="metrics-widget-card-title">
+              {widget.title}
+            </strong>
           </div>
         </div>
         <button
@@ -308,7 +341,9 @@ export function MetricsWidgetCard({
           }}
           title={t("metrics.widget.refresh")}
         >
-          <RefreshCcw className={`w-3.5 h-3.5 ${state.loading ? "animate-spin" : ""}`} />
+          <RefreshCcw
+            className={`w-3.5 h-3.5 ${state.loading ? "animate-spin" : ""}`}
+          />
         </button>
       </div>
 
@@ -322,13 +357,43 @@ export function MetricsWidgetCard({
               ? t("metrics.widget.refreshing")
               : t("metrics.widget.live")}
         </span>
-        <span className="metrics-widget-foot-meta">
-          {state.result
-            ? `${state.result.execution_time_ms}ms`
-            : widget.refresh_seconds > 0
-              ? t("metrics.everySeconds", { seconds: widget.refresh_seconds })
-              : t("metrics.manual")}
-        </span>
+        <div className="metrics-widget-foot-actions">
+          {state.result && !state.error && (
+            <button
+              type="button"
+              className="metrics-widget-workspace-btn"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenResult(widget, state.result as QueryResult);
+              }}
+              title={t("metrics.widget.openResult")}
+              aria-label={t("metrics.widget.openResult")}
+            >
+              <Table2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            className="metrics-widget-workspace-btn"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenQuery(widget);
+            }}
+            title={t("metrics.widget.openSourceSql")}
+            aria-label={t("metrics.widget.openSourceSql")}
+          >
+            <Code2 className="w-3.5 h-3.5" />
+          </button>
+          <span className="metrics-widget-foot-meta">
+            {state.result
+              ? `${state.result.execution_time_ms}ms`
+              : widget.refresh_seconds > 0
+                ? t("metrics.everySeconds", { seconds: widget.refresh_seconds })
+                : t("metrics.manual")}
+          </span>
+        </div>
       </div>
 
       <button

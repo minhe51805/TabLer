@@ -1,10 +1,16 @@
-import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X, FileCode, ClipboardPaste, List, BarChart3, Download, ChevronDown } from "lucide-react";
-import { useState, useRef, useMemo, useEffect } from "react";
+import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { exportToCSV, exportToJSON } from "../../utils/export-utils";
 import { exportXLSX } from "../../utils/export-xlsx";
 import { exportToMQL } from "../../utils/export-mql";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
+import { usePluginStore } from "../../stores/pluginStore";
+import {
+  downloadPluginFormat,
+  getEnabledPluginFormats,
+  type RuntimePluginFormat,
+} from "../../utils/plugin-format-runtime";
 import type { ResolvedColumn } from "./hooks/useDataGrid";
 
 interface DataGridToolbarProps {
@@ -43,12 +49,15 @@ interface DataGridToolbarProps {
   onClearMultiSort?: () => void;
   /** Trigger paste rows from clipboard */
   onPasteRows?: () => void;
+  onImportCsv?: () => void;
   /** Number of pending staged changes in the change tracking queue */
   stagedChangeCount?: number;
   /** Apply all staged changes to the database */
   onApplyChanges?: () => void;
   /** Discard all staged changes */
   onDiscardChanges?: () => void;
+  filterValue?: string;
+  onFilterChange?: (value: string) => void;
 }
 
 function buildExportFilename(tableName: string | undefined, extension: string): string {
@@ -74,6 +83,7 @@ export function DataGridToolbar({
   multiSort = [],
   onClearMultiSort,
   onPasteRows,
+  onImportCsv,
   isDeletingRows,
   handleDeleteSelectedRows,
   handleInsertRow,
@@ -91,12 +101,25 @@ export function DataGridToolbar({
   stagedChangeCount = 0,
   onApplyChanges,
   onDiscardChanges,
+  filterValue = "",
+  onFilterChange,
 }: DataGridToolbarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const settingsBtnRef = useRef<HTMLSpanElement>(null);
   const exportBtnRef = useRef<HTMLSpanElement>(null);
   const { settings, updateSettings } = useDataGridSettings();
+  const installedPlugins = usePluginStore((state) => state.plugins);
+  const pluginsHaveLoaded = usePluginStore((state) => state.hasLoaded);
+  const loadPlugins = usePluginStore((state) => state.loadPlugins);
+  const pluginFormats = useMemo(
+    () => getEnabledPluginFormats(installedPlugins),
+    [installedPlugins],
+  );
+
+  useEffect(() => {
+    if (!pluginsHaveLoaded) void loadPlugins();
+  }, [loadPlugins, pluginsHaveLoaded]);
 
   useEffect(() => {
     if (!showExportMenu && !showSettings) return;
@@ -138,28 +161,28 @@ export function DataGridToolbar({
     ? tableName.replace(/[^a-zA-Z0-9_.-]/g, "_").split(".").pop() || tableName
     : "table_export";
 
-  const handleExportCSV = () => {
+  const handleExportCSV = useCallback(() => {
     if (!canExport) return;
     const cols = resolvedColumns.map((c) => c.name);
     exportToCSV(cols, dataRows, buildExportFilename(exportFilenameBase, "csv"));
-  };
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns]);
 
-  const handleExportJSON = () => {
+  const handleExportJSON = useCallback(() => {
     if (!canExport) return;
     const cols = resolvedColumns.map((c) => c.name);
     exportToJSON(cols, dataRows, buildExportFilename(exportFilenameBase, "json"));
-  };
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns]);
 
-  const handleExportXLSX = () => {
+  const handleExportXLSX = useCallback(async () => {
     if (!canExport) return;
     const cols = resolvedColumns.map((c) => ({ name: c.name, data_type: c.data_type || "" }));
-    exportXLSX(
+    await exportXLSX(
       [{ name: tableName || "Result", columns: cols, rows: dataRows }],
       buildExportFilename(exportFilenameBase, "xlsx"),
     );
-  };
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, tableName]);
 
-  const handleExportMQL = async () => {
+  const handleExportMQL = useCallback(async () => {
     if (!canExport) return;
     const cols = resolvedColumns.map((c) => c.name);
     await exportToMQL({
@@ -168,7 +191,17 @@ export function DataGridToolbar({
       columns: cols,
       rows: dataRows,
     });
-  };
+  }, [canExport, dataRows, database, resolvedColumns, tableName]);
+
+  const handlePluginExport = useCallback((format: RuntimePluginFormat) => {
+    if (!canExport) return;
+    downloadPluginFormat(
+      format,
+      resolvedColumns.map((column) => column.name),
+      dataRows,
+      buildExportFilename(exportFilenameBase, format.extension),
+    );
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns]);
 
   return (
     <div className="datagrid-topbar">
@@ -213,6 +246,23 @@ export function DataGridToolbar({
             </span>
           )}
         </div>
+
+        {(tableName || externalResult) && onFilterChange && (
+          <label className="datagrid-filter-control">
+            <Search className="w-3.5 h-3.5" aria-hidden="true" />
+            <input
+              value={filterValue}
+              onChange={(event) => onFilterChange(event.target.value)}
+              placeholder="Filter rows"
+              aria-label="Filter loaded rows"
+            />
+            {filterValue && (
+              <button type="button" onClick={() => onFilterChange("")} aria-label="Clear table filter" title="Clear filter">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </label>
+        )}
 
         {/* View mode toggle: Table / Chart */}
         <div className="datachart-toggle-group datagrid-view-toggle">
@@ -269,6 +319,12 @@ export function DataGridToolbar({
                 <span>Paste Rows</span>
               </button>
             </span>
+          )}
+          {isTableEditable && tableName && (
+            <button type="button" className="datagrid-footer-action" onClick={() => void onImportCsv?.()} title="Import CSV file">
+              <FileUp className="!w-3.5 !h-3.5" />
+              <span>Import CSV</span>
+            </button>
           )}
 
           {selectedRowCount > 0 && tableName && (
@@ -422,6 +478,12 @@ export function DataGridToolbar({
               { label: "JSON", hint: "Structured JSON array", icon: FileJson, run: handleExportJSON },
               { label: "XLSX", hint: "Excel workbook", icon: FileSpreadsheet, run: handleExportXLSX },
               { label: "MQL", hint: "MongoDB shell script", icon: FileCode, run: () => void handleExportMQL() },
+              ...pluginFormats.map((format) => ({
+                label: format.label,
+                hint: format.description || `${format.pluginName} plugin`,
+                icon: FileCode,
+                run: () => handlePluginExport(format),
+              })),
             ];
             const menu = (
               <div className="datagrid-export-menu" style={{ position: "fixed", top, right, zIndex: 9999 }}>
@@ -448,7 +510,15 @@ export function DataGridToolbar({
               </div>
             );
             return createPortal(menu, document.body);
-          }, [showExportMenu])}
+          }, [
+            showExportMenu,
+            pluginFormats,
+            handleExportCSV,
+            handleExportJSON,
+            handleExportXLSX,
+            handleExportMQL,
+            handlePluginExport,
+          ])}
 
           {selectedRowCount > 0 && tableName && (
             <span

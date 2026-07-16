@@ -2,8 +2,9 @@ import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { Bot, Code2, Copy, Loader2, Send, Sparkles, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useAppStore } from "../../stores/appStore";
-import { getActiveAIProvider } from "../../types";
+import { useAIStore } from "../../stores/aiStore";
+import { useConnectionStore } from "../../stores/connectionStore";
+import { getActiveAIProvider } from "../../utils/ai-provider-registry";
 import type { DatabaseType, TableInfo } from "../../types";
 import {
   resolveWizardDialect,
@@ -71,12 +72,14 @@ export function CreateSchemaObjectModal({
   const {
     askAI,
     aiConfigs,
-    activeConnectionId,
-    currentDatabase,
-  } = useAppStore(
+  } = useAIStore(
     useShallow((state) => ({
       askAI: state.askAI,
       aiConfigs: state.aiConfigs,
+    })),
+  );
+  const { activeConnectionId, currentDatabase } = useConnectionStore(
+    useShallow((state) => ({
       activeConnectionId: state.activeConnectionId,
       currentDatabase: state.currentDatabase,
     })),

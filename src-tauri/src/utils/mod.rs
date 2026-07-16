@@ -1,3 +1,3 @@
-pub mod sql;
-pub mod rate_limiter;
 pub mod paths;
+pub mod rate_limiter;
+pub mod sql;

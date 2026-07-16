@@ -1,10 +1,10 @@
+use log::error;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
-use log::error;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FileEventPayload {
@@ -79,10 +79,7 @@ fn handle_event(app: &AppHandle, event: Event) {
 }
 
 #[tauri::command]
-pub fn add_linked_folder(
-    path: String,
-    state: State<'_, LinkedFoldersState>,
-) -> Result<(), String> {
+pub fn add_linked_folder(path: String, state: State<'_, LinkedFoldersState>) -> Result<(), String> {
     let folders = match state.folders.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
@@ -146,8 +143,12 @@ pub fn scan_linked_folder(folder_path: String) -> Result<Vec<LinkedFileInfo>, St
         for entry in entries.flatten() {
             let path = entry.path();
             let is_dir = path.is_dir();
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
             if is_dir {
                 files.push(LinkedFileInfo {
                     path: path.to_string_lossy().to_string(),

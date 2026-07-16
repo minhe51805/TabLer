@@ -1,6 +1,11 @@
 import { ChevronRight } from "lucide-react";
 import type { CSSProperties } from "react";
-import type { MetricsBoardDefinition, MetricsWidgetDefinition, MetricsWidgetType } from "../../../types";
+import type {
+  MetricsBoardDefinition,
+  MetricsWidgetDefinition,
+  MetricsWidgetType,
+  QueryResult,
+} from "../../../types";
 import { useI18n } from "../../../i18n";
 import { getWidgetLibrary } from "../utils/query-builder";
 import { MetricsWidgetCard } from "./MetricsWidget";
@@ -48,6 +53,8 @@ interface WidgetEditorLayout {
 
 interface Props {
   connectionId: string;
+  onOpenResult: (widget: MetricsWidgetDefinition, result: QueryResult) => void;
+  onOpenQuery: (widget: MetricsWidgetDefinition) => void;
   activeBoard: MetricsBoardDefinition | null;
   activeWidgetId: string | null;
   editingWidget: MetricsWidgetDefinition | null;
@@ -61,19 +68,39 @@ interface Props {
   canvasRef: React.RefObject<HTMLDivElement | null>;
   getWidgetLayoutStyle: (widget: MetricsWidgetDefinition) => CSSProperties;
   handleWidgetSelection: (widgetId: string) => void;
-  handleWidgetDragStart: (widget: MetricsWidgetDefinition, clientX: number, clientY: number) => void;
-  handleWidgetResizeStart: (widget: MetricsWidgetDefinition, clientX: number, clientY: number) => void;
+  handleWidgetDragStart: (
+    widget: MetricsWidgetDefinition,
+    clientX: number,
+    clientY: number,
+  ) => void;
+  handleWidgetResizeStart: (
+    widget: MetricsWidgetDefinition,
+    clientX: number,
+    clientY: number,
+  ) => void;
   openCanvasContextMenu: (event: React.MouseEvent<HTMLDivElement>) => void;
-  addWidget: (type: MetricsWidgetType, preferredPosition?: { grid_x: number; grid_y: number }) => void;
+  addWidget: (
+    type: MetricsWidgetType,
+    preferredPosition?: { grid_x: number; grid_y: number },
+  ) => void;
   updateSelectedWidget: (updates: Partial<MetricsWidgetDefinition>) => void;
   clearWidgetSelection: () => void;
   deleteSelectedWidget: () => void;
   widgetEditorLayout: WidgetEditorLayout | null;
-  setCanvasContextMenu: (state: CanvasContextMenuState | null | ((prev: CanvasContextMenuState | null) => CanvasContextMenuState | null)) => void;
+  setCanvasContextMenu: (
+    state:
+      | CanvasContextMenuState
+      | null
+      | ((
+          prev: CanvasContextMenuState | null,
+        ) => CanvasContextMenuState | null),
+  ) => void;
 }
 
 export function MetricsBoardCanvas({
   connectionId,
+  onOpenResult,
+  onOpenQuery,
   activeBoard,
   activeWidgetId,
   editingWidget,
@@ -103,7 +130,10 @@ export function MetricsBoardCanvas({
     <div className="metrics-board-canvas" ref={canvasRef}>
       <div
         className={`metrics-board-surface ${dragState ? "dragging" : ""}`}
-        style={{ width: `${surfaceWidth}px`, minHeight: `${surfaceContentHeight}px` }}
+        style={{
+          width: `${surfaceWidth}px`,
+          minHeight: `${surfaceContentHeight}px`,
+        }}
         onContextMenu={openCanvasContextMenu}
       >
         <div className="metrics-board-grid">
@@ -112,13 +142,19 @@ export function MetricsBoardCanvas({
               key={widget.id}
               widget={widget}
               connectionId={connectionId}
+              onOpenResult={onOpenResult}
+              onOpenQuery={onOpenQuery}
               selected={activeWidgetId === widget.id}
               dragging={dragState?.widgetId === widget.id}
               resizing={resizeState?.widgetId === widget.id}
               layoutStyle={getWidgetLayoutStyle(widget)}
               onSelect={() => handleWidgetSelection(widget.id)}
-              onDragStart={(clientX, clientY) => handleWidgetDragStart(widget, clientX, clientY)}
-              onResizeStart={(clientX, clientY) => handleWidgetResizeStart(widget, clientX, clientY)}
+              onDragStart={(clientX, clientY) =>
+                handleWidgetDragStart(widget, clientX, clientY)
+              }
+              onResizeStart={(clientX, clientY) =>
+                handleWidgetResizeStart(widget, clientX, clientY)
+              }
             />
           ))}
         </div>
@@ -150,7 +186,9 @@ export function MetricsBoardCanvas({
                 className="metrics-board-context-button"
                 onClick={() =>
                   setCanvasContextMenu((current) =>
-                    current ? { ...current, submenuOpen: !current.submenuOpen } : current,
+                    current
+                      ? { ...current, submenuOpen: !current.submenuOpen }
+                      : current,
                   )
                 }
               >

@@ -65,7 +65,8 @@ impl TabPersistence {
 
         let trimmed: Vec<PersistedTab> = sorted.into_iter().take(MAX_TABS_PER_CONNECTION).collect();
 
-        let mut cache = self.cache
+        let mut cache = self
+            .cache
             .write()
             .map_err(|_| anyhow::anyhow!("Tab persistence cache lock poisoned"))?;
 
@@ -84,7 +85,8 @@ impl TabPersistence {
     pub fn load_tabs(&self, connection_id: &str) -> Result<Vec<PersistedTab>> {
         // Check cache first
         {
-            let cache = self.cache
+            let cache = self
+                .cache
                 .read()
                 .map_err(|_| anyhow::anyhow!("Tab persistence cache lock poisoned"))?;
             if let Some(tabs) = cache.get(connection_id) {
@@ -104,7 +106,8 @@ impl TabPersistence {
         let tabs = all_data.get(connection_id).cloned().unwrap_or_default();
 
         // Populate cache
-        let mut cache = self.cache
+        let mut cache = self
+            .cache
             .write()
             .map_err(|_| anyhow::anyhow!("Tab persistence cache lock poisoned"))?;
         for (conn_id, conn_tabs) in all_data {
@@ -116,7 +119,8 @@ impl TabPersistence {
 
     /// Delete all persisted tabs for a connection.
     pub fn delete_tabs(&self, connection_id: &str) -> Result<()> {
-        let mut cache = self.cache
+        let mut cache = self
+            .cache
             .write()
             .map_err(|_| anyhow::anyhow!("Tab persistence cache lock poisoned"))?;
 

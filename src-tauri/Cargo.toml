@@ -5,9 +5,18 @@ description = "TableR - Cross-platform database client"
 authors = ["TableR Team"]
 edition = "2021"
 
+[workspace]
+members = ["mcp-stdio"]
+default-members = ["."]
+resolver = "2"
+
 [lib]
 name = "tabler_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "tabler"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -37,7 +46,7 @@ futures-util = "0.3"
 fs2 = "0.4"
 libsql = { version = "0.9.30", default-features = false, features = ["remote", "tls"] }
 tiberius = { version = "0.12.3", default-features = false, features = ["rustls", "tds73", "chrono"] }
-tokio-util = { version = "0.7", features = ["compat"] }
+tokio-util = { version = "0.7", features = ["compat", "rt"] }
 duckdb = { version = "1.1.1", features = ["bundled"] }
 redis = "1.1.0"
 shlex = "1"
@@ -50,6 +59,8 @@ pbkdf2 = "0.12"
 rand = "0.8"
 base64 = "0.22"
 sha2 = "0.10"
+semver = "1"
 ssh2 = "0.9.5"
 tokio-ssh2 = "0.0.1"
 notify = "8.2.0"
+axum = "0.7"

@@ -1,7 +1,9 @@
 import { useRef, useCallback, useEffect, useState, type RefObject } from "react";
 import type { OnMount } from "@monaco-editor/react";
 import { initVimMode, type VimAdapterInstance } from "monaco-vim";
-import { useAppStore } from "../../../stores/appStore";
+import { useConnectionStore } from "../../../stores/connectionStore";
+import { useUIStore } from "../../../stores/uiStore";
+import { useQueryStore } from "../../../stores/queryStore";
 import { useEditorPreferencesStore } from "../../../stores/editorPreferencesStore";
 import { useQueryHistoryStore } from "../../../stores/queryHistoryStore";
 import type { QueryResult } from "../../../types";
@@ -20,6 +22,7 @@ import { registerInlineAICompletionProvider } from "../SQLEditorAICompletion";
 import { registerSchemaCompletionProvider, defineTableRTheme } from "../SQLEditorMonacoSetup";
 import { formatSql } from "../../../utils/sql-formatter";
 import { parseExplainOutput, buildExplainQuery, type ParsedExplainPlan } from "../../../utils/explain-parser";
+import { extractNamedSqlParameters, toQueryParameters, type SqlParameterDraft } from "../../../utils/sql-parameters";
 
 export interface QueryChromeState {
   isRunning: boolean;
@@ -49,6 +52,7 @@ export interface UseSQLEditorOptions {
   runRequestNonce: number;
   onChromeChange?: (state: QueryChromeState) => void;
   onStateChange?: (state: QueryEditorSessionState) => void;
+  parameterDrafts?: Record<string, SqlParameterDraft>;
 }
 
 export function useSQLEditor({
@@ -60,12 +64,14 @@ export function useSQLEditor({
   runRequestNonce,
   onChromeChange,
   onStateChange,
+  parameterDrafts = {},
 }: UseSQLEditorOptions) {
-  const connections = useAppStore((state) => state.connections);
-  const executeQuery = useAppStore((state) => state.executeQuery);
-  const executeSandboxQuery = useAppStore((state) => state.executeSandboxQuery);
-  const switchDatabase = useAppStore((state) => state.switchDatabase);
-  const updateTab = useAppStore((state) => state.updateTab);
+  const connections = useConnectionStore((state) => state.connections);
+  const executeQuery = useQueryStore((state) => state.executeQuery);
+  const executeParameterizedQuery = useQueryStore((state) => state.executeParameterizedQuery);
+  const executeSandboxQuery = useQueryStore((state) => state.executeSandboxQuery);
+  const switchDatabase = useConnectionStore((state) => state.switchDatabase);
+  const updateTab = useUIStore((state) => state.updateTab);
   const saveQueryEntry = useQueryHistoryStore((state) => state.saveEntry);
   const isVimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
   const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
@@ -88,6 +94,7 @@ export function useSQLEditor({
   const dailyInlineCompletionRef = useRef({ count: 0, date: new Date().toDateString() });
   const lastRunRequestNonceRef = useRef(0);
   const pendingRunRequestNonceRef = useRef<number | null>(null);
+  const parameterDraftsRef = useRef(parameterDrafts);
 
   const [result, setResult] = useState<QueryResult | null>(() => initialState?.result ?? null);
   const [error, setError] = useState<string | null>(() => initialState?.error ?? null);
@@ -141,6 +148,10 @@ export function useSQLEditor({
     onStateChangeRef.current = onStateChange;
   }, [onStateChange]);
 
+  useEffect(() => {
+    parameterDraftsRef.current = parameterDrafts;
+  }, [parameterDrafts]);
+
   const handleExecute = useCallback(async () => {
     const editor = editorRef.current;
     if (!editor || isBatchExecuting) return;
@@ -157,6 +168,32 @@ export function useSQLEditor({
       setResult(null);
       setNotice(translateCurrent("tabs.noSqlToExecute"));
       editor.focus();
+      return;
+    }
+
+    const parameterNames = extractNamedSqlParameters(sql);
+    if (parameterNames.length > 0) {
+      const commandText = sql.trim();
+      setNotice(null);
+      setError(null);
+      setIsExecutingCurrent(true);
+      setIsBatchExecuting(true);
+      try {
+        const parameters = toQueryParameters(parameterNames, parameterDraftsRef.current);
+        const queryResult = await executeParameterizedQuery(connectionId, commandText, parameters);
+        setResult(queryResult);
+        if (queryResult.rows.length > 0) setShowResultsPane(true);
+        setQueryCount((count) => count + 1);
+        void saveQueryEntry(commandText, connectionId, Number(queryResult.execution_time_ms), queryResult.rows.length || undefined, undefined, useConnectionStore.getState().currentDatabase || undefined);
+      } catch (error) {
+        const errorMessage = formatExecutionError(error);
+        setError(errorMessage);
+        setResult(null);
+        void saveQueryEntry(commandText, connectionId, 0, undefined, errorMessage, useConnectionStore.getState().currentDatabase || undefined);
+      } finally {
+        setIsExecutingCurrent(false);
+        setIsBatchExecuting(false);
+      }
       return;
     }
 
@@ -181,7 +218,7 @@ export function useSQLEditor({
           Number(queryResult.execution_time_ms),
           queryResult.rows.length || undefined,
           undefined,
-          useAppStore.getState().currentDatabase || undefined
+          useConnectionStore.getState().currentDatabase || undefined
         );
       } catch (e) {
         const errorMessage = formatExecutionError(e);
@@ -195,7 +232,7 @@ export function useSQLEditor({
           0,
           undefined,
           errorMessage,
-          useAppStore.getState().currentDatabase || undefined
+          useConnectionStore.getState().currentDatabase || undefined
         );
       } finally {
         setIsExecutingCurrent(false);
@@ -224,7 +261,7 @@ export function useSQLEditor({
     if (statements.length === 0) {
       if (targetDatabaseFromUse) {
         try {
-          const activeDatabase = useAppStore.getState().currentDatabase;
+          const activeDatabase = useConnectionStore.getState().currentDatabase;
           if (activeDatabase !== targetDatabaseFromUse) {
             await switchDatabase(connectionId, targetDatabaseFromUse);
           }
@@ -255,7 +292,7 @@ export function useSQLEditor({
     setIsExecutingCurrent(true);
     setIsBatchExecuting(true);
     try {
-      const activeDatabase = useAppStore.getState().currentDatabase;
+      const activeDatabase = useConnectionStore.getState().currentDatabase;
       if (targetDatabaseFromUse && activeDatabase !== targetDatabaseFromUse) {
         await switchDatabase(connectionId, targetDatabaseFromUse);
       }
@@ -302,7 +339,7 @@ export function useSQLEditor({
         });
         window.dispatchEvent(
           new CustomEvent("table-data-updated", {
-            detail: { connectionId, database: useAppStore.getState().currentDatabase || undefined, invalidateStructure },
+            detail: { connectionId, database: useConnectionStore.getState().currentDatabase || undefined, invalidateStructure },
           })
         );
       }
@@ -319,13 +356,13 @@ export function useSQLEditor({
         0,
         undefined,
         errorMessage,
-        useAppStore.getState().currentDatabase || undefined
+        useConnectionStore.getState().currentDatabase || undefined
       );
     } finally {
       setIsExecutingCurrent(false);
       setIsBatchExecuting(false);
     }
-  }, [connectionId, executeQuery, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase, usesDirectExecution]);
+  }, [connectionId, executeParameterizedQuery, executeQuery, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase, usesDirectExecution]);
 
   /** Formats the selected text (or entire editor content) using the connection's SQL dialect. */
   const handleFormatSql = useCallback(() => {
@@ -343,7 +380,7 @@ export function useSQLEditor({
     }
     if (!sql.trim()) return;
 
-    const dbType = useAppStore.getState().connections.find((c) => c.id === connectionId)?.db_type;
+    const dbType = useConnectionStore.getState().connections.find((c) => c.id === connectionId)?.db_type;
     const formatted = formatSql(sql, dbType);
 
     if (selection && !selection.isEmpty()) {
@@ -371,7 +408,7 @@ export function useSQLEditor({
       return;
     }
 
-    const conn = useAppStore.getState().connections.find((c) => c.id === connectionId);
+    const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
     const dbType = conn?.db_type ?? "sqlite";
 
     setIsRunningExplain(true);
@@ -463,12 +500,12 @@ export function useSQLEditor({
     completionDisposableRef.current?.dispose();
     completionDisposableRef.current = queryProfile.surface === "sql"
       ? registerSchemaCompletionProvider(monaco, {
-          getTables: () => useAppStore.getState().tables,
+          getTables: () => useConnectionStore.getState().tables,
           getTableStructure: (tableName: string) =>
-            useAppStore.getState().getTableStructure(
+            useQueryStore.getState().getTableStructure(
               connectionId,
               tableName,
-              useAppStore.getState().currentDatabase ?? undefined
+              useConnectionStore.getState().currentDatabase ?? undefined
             ),
           dbType,
         })

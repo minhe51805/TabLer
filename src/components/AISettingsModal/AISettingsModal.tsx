@@ -1,19 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Plus, Trash2, Brain, Sparkles, Loader2, Check, Download } from "lucide-react";
-import { useAppStore } from "../../stores/appStore";
+import { useAIStore } from "../../stores/aiStore";
 import { invokeWithTimeout } from "../../utils/tauri-utils";
 import { getCurrentAppLanguage } from "../../i18n";
 import type { AIProviderConfig, LocalOllamaSetupProgressEvent, LocalOllamaStatus } from "../../types";
-
-const PROVIDER_NAMES: Record<string, string> = {
-    openai: "OpenAI",
-    anthropic: "Claude",
-    gemini: "Gemini",
-    openrouter: "OpenRouter",
-    ollama: "Ollama",
-    custom: "Custom",
-};
+import {
+    AI_PROVIDER_TYPES,
+    formatAIProviderTypeLabel,
+    getAIProviderEndpointFieldCopy,
+    normalizeAIProviderConfigs,
+} from "../../utils/ai-provider-registry";
 
 const LOCAL_OLLAMA_EVENT = "ollama-setup-progress";
 
@@ -21,72 +18,11 @@ interface Props {
     onClose: () => void;
 }
 
-function normalizeProviderDrafts(drafts: AIProviderConfig[]) {
-    const normalized = drafts.map((config) => ({
-        ...config,
-        is_primary: config.is_primary ?? false,
-        allow_schema_context: config.allow_schema_context ?? false,
-        allow_inline_completion: config.allow_inline_completion ?? false,
-    }));
-
-    const primaryIndex = normalized.findIndex((config) => config.is_enabled && config.is_primary);
-    const enabledIndex = normalized.findIndex((config) => config.is_enabled);
-    const activeIndex = primaryIndex >= 0 ? primaryIndex : enabledIndex;
-
-    return normalized.map((config, index) => ({
-        ...config,
-        is_primary: activeIndex >= 0 ? index === activeIndex : false,
-    }));
-}
-
-function getProviderDefaultEndpoint(config: Pick<AIProviderConfig, "provider_type" | "model">) {
-    switch (config.provider_type) {
-        case "openai":
-            return "https://api.openai.com/v1/chat/completions";
-        case "anthropic":
-            return "https://api.anthropic.com/v1/messages";
-        case "gemini":
-            return `https://generativelanguage.googleapis.com/v1beta/models/${config.model.trim() || "{model}"}:generateContent`;
-        case "openrouter":
-            return "https://openrouter.ai/api/v1/chat/completions";
-        case "ollama":
-            return "http://localhost:11434/v1/chat/completions";
-        case "custom":
-            return "https://api.yourdomain.com/v1/chat/completions";
-        default:
-            return "";
-    }
-}
-
-function getEndpointFieldCopy(config: Pick<AIProviderConfig, "provider_type" | "model">) {
-    if (config.provider_type === "custom") {
-        return {
-            label: "Custom URL",
-            hint: "Required for custom providers. TableR will send an OpenAI-compatible chat request to this URL.",
-            placeholder: getProviderDefaultEndpoint(config),
-        };
-    }
-
-    if (config.provider_type === "ollama") {
-        return {
-            label: "Custom URL",
-            hint: "Optional. Leave blank to use the local Ollama default endpoint.",
-            placeholder: getProviderDefaultEndpoint(config),
-        };
-    }
-
-    return {
-        label: "Custom URL",
-        hint: "Optional. Leave blank to use the provider's default endpoint.",
-        placeholder: getProviderDefaultEndpoint(config),
-    };
-}
-
 export function AISettingsModal({ onClose }: Props) {
-    const saveAIConfigs = useAppStore((state) => state.saveAIConfigs);
-    const loadAIConfigs = useAppStore((state) => state.loadAIConfigs);
-    const getLocalOllamaStatus = useAppStore((state) => state.getLocalOllamaStatus);
-    const setupLocalOllama = useAppStore((state) => state.setupLocalOllama);
+    const saveAIConfigs = useAIStore((state) => state.saveAIConfigs);
+    const loadAIConfigs = useAIStore((state) => state.loadAIConfigs);
+    const getLocalOllamaStatus = useAIStore((state) => state.getLocalOllamaStatus);
+    const setupLocalOllama = useAIStore((state) => state.setupLocalOllama);
 
     const [configs, setConfigs] = useState<AIProviderConfig[]>([]);
     const [storedKeyStatus, setStoredKeyStatus] = useState<Record<string, boolean>>({});
@@ -120,7 +56,7 @@ export function AISettingsModal({ onClose }: Props) {
             .then(({ aiConfigs, aiKeyStatus }) => {
                 if (!isMounted) return;
 
-                setConfigs(normalizeProviderDrafts(aiConfigs));
+                setConfigs(normalizeAIProviderConfigs(aiConfigs));
                 setStoredKeyStatus(aiKeyStatus);
                 setKeyDrafts({});
                 setClearedKeyIds([]);
@@ -205,7 +141,7 @@ export function AISettingsModal({ onClose }: Props) {
     const handleAdd = () => {
         setSaveError(null);
         const newId = crypto.randomUUID();
-        setConfigs((current) => normalizeProviderDrafts([...current, {
+        setConfigs((current) => normalizeAIProviderConfigs([...current, {
             id: newId,
             name: "New Provider",
             provider_type: "openai",
@@ -221,7 +157,7 @@ export function AISettingsModal({ onClose }: Props) {
 
     const handleDelete = (id: string) => {
         setSaveError(null);
-        const remainingConfigs = normalizeProviderDrafts(configs.filter((c) => c.id !== id));
+        const remainingConfigs = normalizeAIProviderConfigs(configs.filter((c) => c.id !== id));
         setConfigs(remainingConfigs);
         const nextDrafts = { ...keyDrafts };
         delete nextDrafts[id];
@@ -245,7 +181,7 @@ export function AISettingsModal({ onClose }: Props) {
         setSaveError(null);
         try {
             const { aiConfigs, aiKeyStatus } = await saveAIConfigs(configs, apiKeyUpdates, clearedKeyIds);
-            setConfigs(normalizeProviderDrafts(aiConfigs));
+            setConfigs(normalizeAIProviderConfigs(aiConfigs));
             setStoredKeyStatus(aiKeyStatus);
             onClose();
         } catch (error) {
@@ -275,7 +211,7 @@ export function AISettingsModal({ onClose }: Props) {
         setSaveError(null);
         try {
             const { aiConfigs, aiKeyStatus } = await saveAIConfigs(configs, apiKeyUpdates, clearedKeyIds);
-            setConfigs(normalizeProviderDrafts(aiConfigs));
+            setConfigs(normalizeAIProviderConfigs(aiConfigs));
             setStoredKeyStatus(aiKeyStatus);
             const connectionTimeoutMs = activeConfig.provider_type === "ollama" ? 180_000 : 20_000;
             const resp = await invokeWithTimeout<{ text: string; error?: string }>(
@@ -299,7 +235,7 @@ export function AISettingsModal({ onClose }: Props) {
 
     const updateConfig = (id: string, updates: Partial<AIProviderConfig>) => {
         setSaveError(null);
-        setConfigs((current) => normalizeProviderDrafts(current.map((config) => {
+        setConfigs((current) => normalizeAIProviderConfigs(current.map((config) => {
             if (config.id !== id) return config;
             return {
                 ...config,
@@ -311,7 +247,7 @@ export function AISettingsModal({ onClose }: Props) {
 
     const setPrimaryProvider = (id: string) => {
         setSaveError(null);
-        setConfigs((current) => normalizeProviderDrafts(current.map((config) => (
+        setConfigs((current) => normalizeAIProviderConfigs(current.map((config) => (
             config.id === id
                 ? { ...config, is_enabled: true, is_primary: true }
                 : { ...config, is_primary: false }
@@ -319,7 +255,7 @@ export function AISettingsModal({ onClose }: Props) {
     };
 
     const activeConfig = configs.find(c => c.id === editingId);
-    const endpointFieldCopy = activeConfig ? getEndpointFieldCopy(activeConfig) : null;
+    const endpointFieldCopy = activeConfig ? getAIProviderEndpointFieldCopy(activeConfig) : null;
     const enabledCount = configs.filter((config) => config.is_enabled).length;
     const inUseCount = configs.filter((config) => config.is_enabled && config.is_primary).length;
     const hasStoredKey = activeConfig ? storedKeyStatus[activeConfig.id] && !clearedKeyIds.includes(activeConfig.id) : false;
@@ -386,7 +322,7 @@ export function AISettingsModal({ onClose }: Props) {
         setLocalOllamaConsentTone("info");
         try {
             const result = await setupLocalOllama();
-            setConfigs(normalizeProviderDrafts(result.aiConfigs));
+            setConfigs(normalizeAIProviderConfigs(result.aiConfigs));
             setStoredKeyStatus(result.aiKeyStatus);
             setKeyDrafts({});
             setClearedKeyIds([]);
@@ -510,11 +446,11 @@ export function AISettingsModal({ onClose }: Props) {
                                         disabled={isSettingUpLocalOllama}
                                     >
                                         <div className="ai-provider-card-avatar" aria-hidden="true">
-                                            {(PROVIDER_NAMES[config.provider_type] || "?").charAt(0).toUpperCase()}
+                                            {formatAIProviderTypeLabel(config.provider_type).charAt(0).toUpperCase()}
                                         </div>
                                         <div className="ai-provider-card-main">
                                             <div className="ai-provider-card-name">
-                                                {config.name || PROVIDER_NAMES[config.provider_type] || "Unnamed"}
+                                                {config.name || formatAIProviderTypeLabel(config.provider_type) || "Unnamed"}
                                             </div>
                                             <div className="ai-provider-card-model">
                                                 {config.model || "No model selected"}
@@ -620,14 +556,14 @@ export function AISettingsModal({ onClose }: Props) {
                                     </div>
                                     <div className="ai-settings-workspace-text">
                                         <span className="ai-settings-workspace-label">WORKSPACE AI</span>
-                                        <strong>{activeConfig.name || PROVIDER_NAMES[activeConfig.provider_type]}</strong>
+                                        <strong>{activeConfig.name || formatAIProviderTypeLabel(activeConfig.provider_type)}</strong>
                                         <p className="ai-settings-workspace-desc">
-                                            {PROVIDER_NAMES[activeConfig.provider_type]} {activeConfig.model && `| ${activeConfig.model}`}
+                                            {formatAIProviderTypeLabel(activeConfig.provider_type)} {activeConfig.model && `| ${activeConfig.model}`}
                                         </p>
                                     </div>
                                 </div>
                                 <div className="ai-settings-workspace-chips">
-                                    <span className="ai-settings-chip">{PROVIDER_NAMES[activeConfig.provider_type]}</span>
+                                    <span className="ai-settings-chip">{formatAIProviderTypeLabel(activeConfig.provider_type)}</span>
                                     <span className="ai-settings-chip">{activeConfig.model || "No model"}</span>
                                     {activeConfig.allow_schema_context && (
                                         <span className="ai-settings-chip">Schema sharing on</span>
@@ -679,12 +615,12 @@ export function AISettingsModal({ onClose }: Props) {
                                                     onClick={() => setIsProviderMenuOpen((prev) => !prev)}
                                                     disabled={isSettingUpLocalOllama}
                                                 >
-                                                    <span>{PROVIDER_NAMES[activeConfig.provider_type] || "Select provider"}</span>
+                                                    <span>{formatAIProviderTypeLabel(activeConfig.provider_type) || "Select provider"}</span>
                                                     <span className="ai-settings-select-caret" />
                                                 </button>
                                                 {isProviderMenuOpen && (
                                                     <div className="ai-settings-select-menu">
-                                                        {Object.entries(PROVIDER_NAMES).map(([value, label]) => (
+                                                        {AI_PROVIDER_TYPES.map((value) => (
                                                             <button
                                                                 key={value}
                                                                 type="button"
@@ -694,7 +630,7 @@ export function AISettingsModal({ onClose }: Props) {
                                                                     setIsProviderMenuOpen(false);
                                                                 }}
                                                             >
-                                                                {label}
+                                                                {formatAIProviderTypeLabel(value)}
                                                             </button>
                                                         ))}
                                                     </div>

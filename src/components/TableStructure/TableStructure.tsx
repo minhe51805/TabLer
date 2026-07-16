@@ -3,12 +3,16 @@ import {
   AlertCircle,
   Check,
   Columns3,
+  GitCompareArrows,
   Link2,
   ListTree,
   Loader2,
+  Save,
   X,
 } from "lucide-react";
-import { useAppStore } from "../../stores/appStore";
+import { useConnectionStore } from "../../stores/connectionStore";
+import { useUIStore } from "../../stores/uiStore";
+import { useQueryStore } from "../../stores/queryStore";
 import type {
   ColumnDetail,
   ForeignKeyInfo,
@@ -36,6 +40,9 @@ import { AlterColumnModal } from "./components/AlterColumnModal";
 import { ColumnList } from "./components/ColumnList";
 import { FKList, IndexList, TriggerList, ViewDefinitionSection } from "./components/StructureList";
 import { ReviewPanel } from "./components/ReviewPanel";
+import { SchemaDiffReviewPanel } from "./components/SchemaDiffReviewPanel";
+import { buildSchemaMigrationReview, diffTableStructure, type SchemaMigrationReview, type TableSchemaDiff } from "../../utils/schema-diff";
+import { invalidateSchemaCache } from "../../utils/schema-cache";
 
 interface Props {
   connectionId: string;
@@ -62,6 +69,7 @@ const METADATA_LOAD_TIMEOUT_MS = 8000;
 
 const columnCache = new Map<string, ColumnDetail[]>();
 const fullStructureCache = new Map<string, TableStructureType>();
+const schemaSnapshotPrefix = "tabler.schema-snapshot.v1";
 
 export function TableStructure({
   connectionId,
@@ -72,16 +80,17 @@ export function TableStructure({
   structureFocusColumn,
   structureFocusToken,
 }: Props) {
-  const getTableStructure = useAppStore((state) => state.getTableStructure);
-  const getTableColumnsPreview = useAppStore((state) => state.getTableColumnsPreview);
-  const countTableNullValues = useAppStore((state) => state.countTableNullValues);
-  const executeStructureStatements = useAppStore((state) => state.executeStructureStatements);
-  const addTab = useAppStore((state) => state.addTab);
-  const connections = useAppStore((state) => state.connections);
+  const getTableStructure = useQueryStore((state) => state.getTableStructure);
+  const getTableColumnsPreview = useQueryStore((state) => state.getTableColumnsPreview);
+  const countTableNullValues = useQueryStore((state) => state.countTableNullValues);
+  const executeStructureStatements = useQueryStore((state) => state.executeStructureStatements);
+  const addTab = useUIStore((state) => state.addTab);
+  const connections = useConnectionStore((state) => state.connections);
 
   const activeConnection = connections.find((connection) => connection.id === connectionId);
   const dbType = activeConnection?.db_type || "postgresql";
   const structureKey = `${connectionId}|${database || ""}|${tableName}`;
+  const schemaSnapshotKey = `${schemaSnapshotPrefix}:${structureKey}`;
   const displayTableName = tableName.split(".").pop() || tableName;
   const { schema: tableSchema } = splitQualifiedTableName(tableName);
 
@@ -107,6 +116,9 @@ export function TableStructure({
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [isApplyingChanges, setIsApplyingChanges] = useState(false);
+  const [isComparingSchema, setIsComparingSchema] = useState(false);
+  const [schemaDiff, setSchemaDiff] = useState<TableSchemaDiff | null>(null);
+  const [schemaMigrationReview, setSchemaMigrationReview] = useState<SchemaMigrationReview | null>(null);
   const [isTopbarCondensed, setIsTopbarCondensed] = useState(false);
   const [toast, setToast] = useState<StructureToast | null>(null);
   const metadataStatusCopy = hasLoadedMetadata
@@ -312,10 +324,8 @@ export function TableStructure({
     ]
   );
 
-  // Inline timeout wrapper (localStorage-based structure loading doesn't need appStore timeout)
-  const withTimeout = useAppStore((_state) => {
-    // Access it from the store's closure - we use the function defined there
-    return (promise: Promise<TableStructureType>, ms: number, label: string) =>
+  const withTimeout = useCallback(
+    (promise: Promise<TableStructureType>, ms: number, label: string) =>
       new Promise<TableStructureType>((resolve, reject) => {
         const timer = window.setTimeout(() => {
           reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
@@ -324,8 +334,9 @@ export function TableStructure({
           (value) => { window.clearTimeout(timer); resolve(value); },
           (error) => { window.clearTimeout(timer); reject(error); }
         );
-      });
-  });
+      }),
+    [],
+  );
 
   const loadMetadata = useCallback(
     async (options: { force?: boolean } = {}) => {
@@ -585,6 +596,45 @@ export function TableStructure({
     });
   };
 
+  const saveSchemaSnapshot = useCallback(async () => {
+    try {
+      const structure = hasLoadedMetadata
+        ? { columns, indexes, foreign_keys: foreignKeys, triggers, view_definition: viewDefinition || undefined, object_type: objectType || undefined }
+        : await getTableStructure(connectionId, tableName, database);
+      window.localStorage.setItem(schemaSnapshotKey, JSON.stringify({ savedAt: Date.now(), structure }));
+      showToast("success", "Schema snapshot saved", `Baseline saved for ${displayTableName}.`);
+    } catch (error) {
+      showToast("error", "Could not save snapshot", summarizeToastMessage(formatDbError(error, tableName)));
+    }
+  }, [columns, connectionId, database, displayTableName, foreignKeys, getTableStructure, hasLoadedMetadata, indexes, objectType, schemaSnapshotKey, showToast, tableName, triggers, viewDefinition]);
+
+  const compareSchemaSnapshot = useCallback(async () => {
+    const rawSnapshot = window.localStorage.getItem(schemaSnapshotKey);
+    if (!rawSnapshot) {
+      showToast("info", "No schema snapshot", "Save a snapshot first, then compare it with the current table.");
+      return;
+    }
+    try {
+      const snapshot = JSON.parse(rawSnapshot) as { structure?: TableStructureType };
+      if (!snapshot.structure?.columns) throw new Error("The saved snapshot is invalid.");
+      setIsComparingSchema(true);
+      invalidateSchemaCache(connectionId, database);
+      const current = await getTableStructure(connectionId, tableName, database);
+      const nextDiff = diffTableStructure(tableName, snapshot.structure, current);
+      setSchemaDiff(nextDiff);
+      setSchemaMigrationReview(buildSchemaMigrationReview(dbType, nextDiff, database));
+    } catch (error) {
+      showToast("error", "Could not compare schema", summarizeToastMessage(formatDbError(error, tableName)));
+    } finally {
+      setIsComparingSchema(false);
+    }
+  }, [connectionId, database, dbType, getTableStructure, schemaSnapshotKey, showToast, tableName]);
+
+  const openSchemaDiffSqlDraft = useCallback(() => {
+    if (!schemaMigrationReview?.statements.length) return;
+    addTab({ id: `query-${crypto.randomUUID()}`, type: "query", title: `Migration review ${displayTableName}`, connectionId, database, content: `${schemaMigrationReview.statements.join(";\n")};` });
+  }, [addTab, connectionId, database, displayTableName, schemaMigrationReview]);
+
   const applyStagedChanges = async () => {
     if (pendingChangeCount === 0) {
       showToast("info", "Nothing to apply", "There are no staged structure changes yet.");
@@ -729,6 +779,8 @@ export function TableStructure({
     setStagedColumnChanges({});
     setIsReviewOpen(false);
     setReviewError(null);
+    setSchemaDiff(null);
+    setSchemaMigrationReview(null);
     setIsTopbarCondensed(false);
     pendingExternalFocusRef.current = null;
   }, [setFromColumns, setFromFullStructure, structureKey]);
@@ -929,6 +981,14 @@ export function TableStructure({
               </>
             ) : (
               <>
+                <button type="button" className="btn btn-secondary" onClick={() => void saveSchemaSnapshot()}>
+                  <Save className="w-4 h-4" />
+                  <span>Snapshot</span>
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => void compareSchemaSnapshot()} disabled={isComparingSchema}>
+                  {isComparingSchema ? <Loader2 className="w-4 h-4 animate-spin" /> : <GitCompareArrows className="w-4 h-4" />}
+                  <span>Compare</span>
+                </button>
                 <button type="button" className="btn btn-secondary" onClick={() => focusSection("columns")}>
                   Edit
                 </button>
@@ -1068,6 +1128,14 @@ export function TableStructure({
                   </>
                 ) : (
                   <>
+                    <button type="button" className="btn btn-secondary" onClick={() => void saveSchemaSnapshot()}>
+                      <Save className="w-4 h-4" />
+                      <span>Snapshot</span>
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={() => void compareSchemaSnapshot()} disabled={isComparingSchema}>
+                      {isComparingSchema ? <Loader2 className="w-4 h-4 animate-spin" /> : <GitCompareArrows className="w-4 h-4" />}
+                      <span>Compare</span>
+                    </button>
                     <button type="button" className="btn btn-secondary" onClick={() => focusSection("columns")}>
                       Edit Columns
                     </button>
@@ -1178,6 +1246,15 @@ export function TableStructure({
           onApply={applyStagedChanges}
           onOpenSql={openReviewSqlDraft}
           onClose={() => setIsReviewOpen(false)}
+        />
+      )}
+
+      {schemaDiff && schemaMigrationReview && (
+        <SchemaDiffReviewPanel
+          diff={schemaDiff}
+          review={schemaMigrationReview}
+          onOpenSql={openSchemaDiffSqlDraft}
+          onClose={() => { setSchemaDiff(null); setSchemaMigrationReview(null); }}
         />
       )}
 

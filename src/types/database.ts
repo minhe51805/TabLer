@@ -17,7 +17,8 @@ export type DatabaseType =
   | "clickhouse"
   | "bigquery"
   | "libsql"
-  | "cloudflare_d1";
+  | "cloudflare_d1"
+  | "opensearch";
 
 export interface ConnectionConfig {
   id: string;
@@ -75,6 +76,14 @@ export interface QueryResult {
   query: string;
   sandboxed: boolean;
   truncated: boolean;
+}
+
+export type QueryParameterType = "text" | "integer" | "decimal" | "boolean" | "json" | "null";
+
+export interface QueryParameter {
+  name: string;
+  value: unknown;
+  dataType: QueryParameterType;
 }
 
 export interface ColumnInfo {
@@ -228,11 +237,7 @@ export interface ERRelationship {
 }
 
 export type StructureFocusSection =
-  | "columns"
-  | "indexes"
-  | "foreign_keys"
-  | "triggers"
-  | "view_definition";
+  "columns" | "indexes" | "foreign_keys" | "triggers" | "view_definition";
 
 // UI State types
 export interface Tab {
@@ -244,9 +249,17 @@ export interface Tab {
   filePath?: string;
   database?: string;
   content?: string;
+  /**
+   * Ephemeral result data opened from a safe workspace action (for example a
+   * Metrics widget). It is intentionally excluded from tab persistence.
+   */
+  queryResult?: QueryResult;
   metricsBoardId?: string;
   structureFocusSection?: StructureFocusSection;
   structureFocusColumn?: string;
   isPreview?: boolean;
   structureFocusToken?: string;
+  workspaceEntityId?: string;
+  workspaceEntityRevision?: string;
+  workspaceEntityUpdatedAt?: string;
 }

@@ -2,7 +2,7 @@ import { createPortal } from "react-dom";
 import { BarChart3, ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { useAppStore } from "../../stores/appStore";
+import { useUIStore } from "../../stores/uiStore";
 import type { MetricsBoardDefinition, MetricsWidgetDefinition, Tab } from "../../types";
 import { formatCountLabel, useI18n } from "../../i18n";
 import {
@@ -18,7 +18,7 @@ interface Props {
 
 export function MetricsSidebar({ connectionId, database }: Props) {
   const { language, t } = useI18n();
-  const { tabs, activeTabId, addTab, setActiveTab, updateTab, removeTab } = useAppStore(
+  const { tabs, activeTabId, addTab, setActiveTab, updateTab, removeTab } = useUIStore(
     useShallow((state) => ({
       tabs: state.tabs,
       activeTabId: state.activeTabId,

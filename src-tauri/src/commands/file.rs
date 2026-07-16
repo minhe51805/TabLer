@@ -2,6 +2,8 @@ use rfd::FileDialog;
 use std::fs;
 use std::path::PathBuf;
 
+const MAX_CSV_IMPORT_BYTES: u64 = 50 * 1024 * 1024;
+
 /// Opens a file picker dialog filtered to SQL/text files and returns the file contents.
 /// Returns the full file path and content on success, or an error message.
 #[tauri::command]
@@ -17,8 +19,8 @@ pub async fn read_sql_file() -> Result<SqlFileContent, String> {
 }
 
 fn read_file_from_path(file_path: PathBuf) -> Result<SqlFileContent, String> {
-    let content = fs::read_to_string(&file_path)
-        .map_err(|e| format!("Failed to read file: {e}"))?;
+    let content =
+        fs::read_to_string(&file_path).map_err(|e| format!("Failed to read file: {e}"))?;
 
     let file_name = file_path
         .file_name()
@@ -26,10 +28,7 @@ fn read_file_from_path(file_path: PathBuf) -> Result<SqlFileContent, String> {
         .unwrap_or("unknown")
         .to_string();
 
-    Ok(SqlFileContent {
-        file_name,
-        content,
-    })
+    Ok(SqlFileContent { file_name, content })
 }
 
 /// Reads a SQL file from an explicit path (used for drag-and-drop or recent files).
@@ -40,6 +39,38 @@ pub async fn read_sql_file_from_path(path: String) -> Result<SqlFileContent, Str
         return Err(format!("File not found: {path}"));
     }
     read_file_from_path(file_path)
+}
+
+/// Opens a CSV/TSV file for preview. The import pipeline validates and maps its
+/// contents in the frontend before a transaction is requested from the backend.
+#[tauri::command]
+pub async fn read_csv_file() -> Result<CsvFileContent, String> {
+    let file_path = FileDialog::new()
+        .add_filter("CSV files", &["csv"])
+        .add_filter("Delimited text", &["tsv", "txt"])
+        .pick_file()
+        .ok_or_else(|| "No file selected.".to_string())?;
+    read_csv_file_from_path(file_path)
+}
+
+fn read_csv_file_from_path(file_path: PathBuf) -> Result<CsvFileContent, String> {
+    let metadata = fs::metadata(&file_path).map_err(|e| format!("Failed to inspect file: {e}"))?;
+    if metadata.len() > MAX_CSV_IMPORT_BYTES {
+        return Err(
+            "CSV import preview is limited to 50 MB. Split the file before importing.".to_string(),
+        );
+    }
+    let content =
+        fs::read_to_string(&file_path).map_err(|e| format!("Failed to read file: {e}"))?;
+    Ok(CsvFileContent {
+        file_name: file_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        content,
+        byte_size: metadata.len(),
+    })
 }
 
 #[tauri::command]
@@ -71,6 +102,14 @@ pub async fn pick_database_file() -> Result<DatabaseFileSelection, String> {
 pub struct SqlFileContent {
     pub file_name: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CsvFileContent {
+    pub file_name: String,
+    pub content: String,
+    pub byte_size: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

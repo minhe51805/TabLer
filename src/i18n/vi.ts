@@ -69,6 +69,7 @@ export const vi: Record<keyof typeof en, string> = {
   "menu.item.focusExplorerSearch": "Tập trung ô tìm Explorer",
   "menu.item.openExplorer": "Mở Explorer",
   "menu.item.pluginManager": "Quản lý plugin",
+  "menu.item.externalIntegrations": "Tích hợp bên ngoài",
   "menu.item.metrics": "Metrics",
   "menu.item.queryHistory": "Lịch sử truy vấn",
   "menu.item.aboutTableR": "Giới thiệu TableR",
@@ -161,7 +162,8 @@ export const vi: Record<keyof typeof en, string> = {
   "connections.compactGrid": "Lưới gọn",
   "connections.sortConnected": "Hoạt động trước",
   "connections.sortAlpha": "A-Z",
-  "connections.sortTitleConnected": "Đang sắp: đang hoạt động và đã kết nối lên trước",
+  "connections.sortTitleConnected":
+    "Đang sắp: đang hoạt động và đã kết nối lên trước",
   "connections.sortTitleAlpha": "Đang sắp: A-Z",
   "connections.newConnection": "Kết nối mới",
   "connections.new": "Mới",
@@ -272,7 +274,8 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.widget.loading": "Đang tải...",
   "metrics.widget.noData": "Không có dữ liệu",
   "metrics.widget.queryNeedsSeries": "Query cần một nhãn và một giá trị số.",
-  "metrics.validation.addQuery": "Hãy thêm một câu SQL chỉ đọc để nạp dữ liệu cho widget này.",
+  "metrics.validation.addQuery":
+    "Hãy thêm một câu SQL chỉ đọc để nạp dữ liệu cho widget này.",
   "metrics.validation.singleStatement":
     "Widget metrics chỉ hỗ trợ một câu lệnh chỉ đọc duy nhất.",
   "metrics.validation.readOnlyOnly":
@@ -297,6 +300,10 @@ export const vi: Record<keyof typeof en, string> = {
   "tabs.hideResults": "Ẩn kết quả",
   "tabs.showResults": "Hiện kết quả",
   "tabs.readyToExecute": "Nhấn Ctrl+Enter để chạy",
-  "tabs.noSqlToExecute": "Chưa có gì để chạy. Hãy nhập query hoặc command trước rồi nhấn Ctrl+Enter.",
+  "tabs.noSqlToExecute":
+    "Chưa có gì để chạy. Hãy nhập query hoặc command trước rồi nhấn Ctrl+Enter.",
+  "metrics.widget.openResult": "Open result in workspace",
+  "metrics.widget.openSourceSql": "Open source SQL",
+  "workspace.bundle.export": "Export workspace bundle",
+  "workspace.bundle.import": "Import workspace bundle",
 };
-

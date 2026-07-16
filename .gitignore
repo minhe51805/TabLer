@@ -28,6 +28,15 @@ xemreponay
 .fatory
 docs/*
 !docs/screenshots/
+!docs/DEEP_LINKS.md
+!docs/MCP.md
+!docs/PLUGIN_COMPATIBILITY.md
+!docs/PLUGINS.md
+!docs/RELEASE_SIGNING.md
+!docs/SMOKE_TEST_CHECKLIST.md
+!docs/UPGRADE_ROADMAP.md
+!docs/STORE_OWNERSHIP.md
+!docs/WORKSPACE_SYNC.md
 plans
 CLAUDE.md
 

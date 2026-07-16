@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 use tiberius::{
-    AuthMethod, Client, ColumnData, Config, EncryptionLevel, Row,
+    AuthMethod, Client, ColumnData, Config, EncryptionLevel, Query as TiberiusQuery, Row,
 };
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, RwLock};
@@ -42,7 +42,10 @@ impl MssqlDriver {
         tds.host(host);
         tds.port(port);
         tds.database(database);
-        tds.authentication(AuthMethod::sql_server(user.to_string(), password.to_string()));
+        tds.authentication(AuthMethod::sql_server(
+            user.to_string(),
+            password.to_string(),
+        ));
         tds.trust_cert();
         tds.encryption(if config.use_ssl {
             EncryptionLevel::Required
@@ -70,10 +73,7 @@ impl MssqlDriver {
 
     fn qualify_table_name(table: &str, database: Option<&str>) -> Result<String> {
         let (schema, name) = Self::split_schema_table(table);
-        if let Some(database) = database
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(database) = database.map(str::trim).filter(|value| !value.is_empty()) {
             return Ok(format!(
                 "{}.{}.{}",
                 quote_mssql_identifier(database)?,
@@ -110,7 +110,9 @@ impl MssqlDriver {
             ColumnData::Guid(Some(v)) => serde_json::Value::String(v.to_string()),
             ColumnData::String(Some(v)) => serde_json::Value::String(v.to_string()),
             ColumnData::Binary(Some(v)) => serde_json::Value::String(
-                v.iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
+                v.iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>(),
             ),
             ColumnData::Numeric(Some(v)) => serde_json::Value::String(v.to_string()),
             ColumnData::DateTime(Some(v)) => serde_json::Value::String(format!("{v:?}")),
@@ -148,34 +150,30 @@ impl MssqlDriver {
     }
 
     fn row_value_string(row: &Row, index: usize) -> Option<String> {
-        row.cells()
-            .nth(index)
-            .and_then(|(_, value)| match value {
-                ColumnData::String(Some(v)) => Some(v.to_string()),
-                ColumnData::Guid(Some(v)) => Some(v.to_string()),
-                ColumnData::Numeric(Some(v)) => Some(v.to_string()),
-                ColumnData::I16(Some(v)) => Some(v.to_string()),
-                ColumnData::I32(Some(v)) => Some(v.to_string()),
-                ColumnData::I64(Some(v)) => Some(v.to_string()),
-                ColumnData::U8(Some(v)) => Some(v.to_string()),
-                ColumnData::F32(Some(v)) => Some(v.to_string()),
-                ColumnData::F64(Some(v)) => Some(v.to_string()),
-                ColumnData::Bit(Some(v)) => Some(v.to_string()),
-                _ => None,
-            })
+        row.cells().nth(index).and_then(|(_, value)| match value {
+            ColumnData::String(Some(v)) => Some(v.to_string()),
+            ColumnData::Guid(Some(v)) => Some(v.to_string()),
+            ColumnData::Numeric(Some(v)) => Some(v.to_string()),
+            ColumnData::I16(Some(v)) => Some(v.to_string()),
+            ColumnData::I32(Some(v)) => Some(v.to_string()),
+            ColumnData::I64(Some(v)) => Some(v.to_string()),
+            ColumnData::U8(Some(v)) => Some(v.to_string()),
+            ColumnData::F32(Some(v)) => Some(v.to_string()),
+            ColumnData::F64(Some(v)) => Some(v.to_string()),
+            ColumnData::Bit(Some(v)) => Some(v.to_string()),
+            _ => None,
+        })
     }
 
     fn row_value_i64(row: &Row, index: usize) -> Option<i64> {
-        row.cells()
-            .nth(index)
-            .and_then(|(_, value)| match value {
-                ColumnData::I16(Some(v)) => Some((*v).into()),
-                ColumnData::I32(Some(v)) => Some((*v).into()),
-                ColumnData::I64(Some(v)) => Some(*v),
-                ColumnData::U8(Some(v)) => Some((*v).into()),
-                ColumnData::String(Some(v)) => v.parse::<i64>().ok(),
-                _ => None,
-            })
+        row.cells().nth(index).and_then(|(_, value)| match value {
+            ColumnData::I16(Some(v)) => Some((*v).into()),
+            ColumnData::I32(Some(v)) => Some((*v).into()),
+            ColumnData::I64(Some(v)) => Some(*v),
+            ColumnData::U8(Some(v)) => Some((*v).into()),
+            ColumnData::String(Some(v)) => v.parse::<i64>().ok(),
+            _ => None,
+        })
     }
 
     fn build_result_from_rows(
@@ -228,7 +226,9 @@ impl MssqlDriver {
         let rows = client.simple_query(sql).await?.into_first_result().await?;
         let truncated = rows.len() > MAX_QUERY_RESULT_ROWS;
         Ok((
-            rows.into_iter().take(MAX_QUERY_RESULT_ROWS).collect::<Vec<_>>(),
+            rows.into_iter()
+                .take(MAX_QUERY_RESULT_ROWS)
+                .collect::<Vec<_>>(),
             truncated,
         ))
     }
@@ -239,11 +239,96 @@ impl MssqlDriver {
         Ok(result.total())
     }
 
+    async fn query_parameterized_rows(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<(Vec<Row>, bool)> {
+        let mut client = self.client.lock().await;
+        let mut query = TiberiusQuery::new(sql);
+        for parameter in parameters {
+            match parameter.data_type {
+                QueryParameterType::Text => query.bind(
+                    parameter
+                        .value
+                        .as_str()
+                        .ok_or_else(|| anyhow!("Parameter '{}' must be text.", parameter.name))?
+                        .to_string(),
+                ),
+                QueryParameterType::Integer => {
+                    query.bind(parameter.value.as_i64().ok_or_else(|| {
+                        anyhow!("Parameter '{}' must be an integer.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Decimal => {
+                    query.bind(parameter.value.as_f64().ok_or_else(|| {
+                        anyhow!("Parameter '{}' must be a number.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Boolean => {
+                    query.bind(parameter.value.as_bool().ok_or_else(|| {
+                        anyhow!("Parameter '{}' must be boolean.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Json => query.bind(parameter.value.to_string()),
+                QueryParameterType::Null => query.bind(Option::<String>::None),
+            }
+        }
+        let rows = query.query(&mut *client).await?.into_first_result().await?;
+        let truncated = rows.len() > MAX_QUERY_RESULT_ROWS;
+        Ok((
+            rows.into_iter().take(MAX_QUERY_RESULT_ROWS).collect(),
+            truncated,
+        ))
+    }
+
+    async fn execute_parameterized_statement(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<u64> {
+        let mut client = self.client.lock().await;
+        let mut query = TiberiusQuery::new(sql);
+        for parameter in parameters {
+            match parameter.data_type {
+                QueryParameterType::Text => query.bind(
+                    parameter
+                        .value
+                        .as_str()
+                        .ok_or_else(|| anyhow!("Parameter '{}' must be text.", parameter.name))?
+                        .to_string(),
+                ),
+                QueryParameterType::Integer => {
+                    query.bind(parameter.value.as_i64().ok_or_else(|| {
+                        anyhow!("Parameter '{}' must be an integer.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Decimal => {
+                    query.bind(parameter.value.as_f64().ok_or_else(|| {
+                        anyhow!("Parameter '{}' must be a number.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Boolean => {
+                    query.bind(parameter.value.as_bool().ok_or_else(|| {
+                        anyhow!("Parameter '{}' must be boolean.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Json => query.bind(parameter.value.to_string()),
+                QueryParameterType::Null => query.bind(Option::<String>::None),
+            }
+        }
+        Ok(query.execute(&mut *client).await?.total())
+    }
+
     fn quote_literal(value: &serde_json::Value) -> Result<String> {
         Ok(match value {
             serde_json::Value::Null => "NULL".to_string(),
             serde_json::Value::Bool(v) => {
-                if *v { "1".to_string() } else { "0".to_string() }
+                if *v {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                }
             }
             serde_json::Value::Number(v) => v.to_string(),
             serde_json::Value::String(v) => format!("N'{}'", v.replace('\'', "''")),
@@ -369,7 +454,8 @@ impl DatabaseDriver for MssqlDriver {
 
                 ColumnDetail {
                     name: column_name.clone(),
-                    data_type: Self::row_value_string(row, 1).unwrap_or_else(|| "nvarchar".to_string()),
+                    data_type: Self::row_value_string(row, 1)
+                        .unwrap_or_else(|| "nvarchar".to_string()),
                     is_nullable: nullable,
                     is_primary_key: primary_keys.contains(&column_name),
                     default_value: Self::row_value_string(row, 3),
@@ -396,7 +482,10 @@ impl DatabaseDriver for MssqlDriver {
         let mut total_affected = 0u64;
         let mut last_result = None;
 
-        for statement in statements.iter().filter(|statement| !statement.trim().is_empty()) {
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
             if Self::query_returns_rows(statement) {
                 let (rows, truncated) = self.query_rows(statement).await?;
                 last_result = Some(Self::build_result_from_rows(
@@ -424,6 +513,33 @@ impl DatabaseDriver for MssqlDriver {
             rows: Vec::new(),
             affected_rows: total_affected,
             execution_time_ms: elapsed,
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
+    }
+
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        if Self::query_returns_rows(sql) {
+            let (rows, truncated) = self.query_parameterized_rows(sql, parameters).await?;
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            result.execution_time_ms = start.elapsed().as_millis();
+            return Ok(result);
+        }
+        let affected_rows = self
+            .execute_parameterized_statement(sql, parameters)
+            .await?;
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows,
+            execution_time_ms: start.elapsed().as_millis(),
             query: sql.to_string(),
             sandboxed: false,
             truncated: false,
@@ -464,7 +580,10 @@ impl DatabaseDriver for MssqlDriver {
     }
 
     async fn count_rows(&self, table: &str, _database: Option<&str>) -> Result<i64> {
-        let sql = format!("SELECT COUNT(*) AS count FROM {}", Self::qualify_table_name(table, _database)?);
+        let sql = format!(
+            "SELECT COUNT(*) AS count FROM {}",
+            Self::qualify_table_name(table, _database)?
+        );
         let (rows, _) = self.query_rows(&sql).await?;
         rows.first()
             .and_then(|row| Self::row_value_i64(row, 0))
@@ -490,7 +609,9 @@ impl DatabaseDriver for MssqlDriver {
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
         if request.primary_keys.is_empty() {
-            return Err(anyhow!("Inline update requires at least one primary key column"));
+            return Err(anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
         }
 
         let mut where_clause = String::new();
@@ -549,7 +670,9 @@ impl DatabaseDriver for MssqlDriver {
         }
 
         if predicates.is_empty() {
-            return Err(anyhow!("Deleting rows requires at least one valid row predicate"));
+            return Err(anyhow!(
+                "Deleting rows requires at least one valid row predicate"
+            ));
         }
 
         let sql = format!(
@@ -639,11 +762,7 @@ impl DatabaseDriver for MssqlDriver {
                 "SELECT TOP {} {} AS value, {} AS label \
                  FROM {} \
                  ORDER BY {}",
-                limit,
-                col_quoted,
-                label_expr,
-                table_quoted,
-                col_quoted
+                limit, col_quoted, label_expr, table_quoted, col_quoted
             )
         };
 
@@ -654,8 +773,14 @@ impl DatabaseDriver for MssqlDriver {
             if cells.len() >= 2 {
                 let json_value = Self::ms_cell_to_json(&cells[0]);
                 let json_label = Self::ms_cell_to_json(&cells[1]);
-                let label_str = json_label.as_str().map(String::from).unwrap_or_else(|| json_label.to_string());
-                values.push(LookupValue { value: json_value, label: label_str });
+                let label_str = json_label
+                    .as_str()
+                    .map(String::from)
+                    .unwrap_or_else(|| json_label.to_string());
+                values.push(LookupValue {
+                    value: json_value,
+                    label: label_str,
+                });
             }
         }
         Ok(values)

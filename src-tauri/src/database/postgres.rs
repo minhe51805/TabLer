@@ -10,10 +10,12 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use log::warn;
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
+use sqlx::postgres::{PgArguments, PgConnectOptions, PgPool, PgPoolOptions, PgRow};
+use sqlx::query::Query;
 use sqlx::types::Json;
 use sqlx::{Column, ConnectOptions, Executor, Postgres, QueryBuilder, Row, TypeInfo, ValueRef};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -228,7 +230,7 @@ impl PostgresDriver {
                 }
             }
         }
-        
+
         let error = last_error
             .map(|err| err.to_string())
             .unwrap_or_else(|| "unknown connection error".to_string());
@@ -259,7 +261,8 @@ impl PostgresDriver {
         truncated: bool,
     ) -> QueryResult {
         let columns = if let Some(first) = rows.first() {
-            first.columns()
+            first
+                .columns()
                 .iter()
                 .map(|c| ColumnInfo {
                     name: c.name().to_string(),
@@ -291,7 +294,9 @@ impl PostgresDriver {
                 row.columns()
                     .iter()
                     .enumerate()
-                    .map(|(i, _)| Self::pg_cell_to_json(row, i, column_types.get(i).map(String::as_str)))
+                    .map(|(i, _)| {
+                        Self::pg_cell_to_json(row, i, column_types.get(i).map(String::as_str))
+                    })
                     .collect()
             })
             .collect();
@@ -321,6 +326,60 @@ impl PostgresDriver {
             rows.push(row);
         }
 
+        Ok((rows, false))
+    }
+
+    fn bind_parameterized_query<'q>(
+        mut query: Query<'q, Postgres, PgArguments>,
+        parameters: &[QueryParameter],
+    ) -> Result<Query<'q, Postgres, PgArguments>> {
+        for parameter in parameters {
+            query = match parameter.data_type {
+                QueryParameterType::Text => query.bind(
+                    parameter
+                        .value
+                        .as_str()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Parameter '{}' must be text.", parameter.name)
+                        })?
+                        .to_string(),
+                ),
+                QueryParameterType::Integer => {
+                    query.bind(parameter.value.as_i64().ok_or_else(|| {
+                        anyhow::anyhow!("Parameter '{}' must be an integer.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Decimal => {
+                    query.bind(parameter.value.as_f64().ok_or_else(|| {
+                        anyhow::anyhow!("Parameter '{}' must be a number.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Boolean => {
+                    query.bind(parameter.value.as_bool().ok_or_else(|| {
+                        anyhow::anyhow!("Parameter '{}' must be boolean.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Json => query.bind(Json(parameter.value.clone())),
+                QueryParameterType::Null => query.bind(Option::<String>::None),
+            };
+        }
+        Ok(query)
+    }
+
+    async fn fetch_parameterized_rows(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<(Vec<PgRow>, bool)> {
+        let mut stream =
+            Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&self.pool);
+        let mut rows = Vec::new();
+        while let Some(row) = stream.try_next().await? {
+            if rows.len() == MAX_QUERY_RESULT_ROWS {
+                return Ok((rows, true));
+            }
+            rows.push(row);
+        }
         Ok((rows, false))
     }
 
@@ -873,14 +932,8 @@ impl DatabaseDriver for PostgresDriver {
 
         if statements.len() <= 1 && Self::query_returns_rows(sql) {
             let (rows, truncated) = Self::fetch_rows_limited(&self.pool, sql).await?;
-            let mut result = Self::build_result_from_rows(
-                &rows,
-                0,
-                sql.to_string(),
-                0,
-                false,
-                truncated,
-            );
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
             result.execution_time_ms = start.elapsed().as_millis();
             Ok(result)
         } else {
@@ -890,7 +943,8 @@ impl DatabaseDriver for PostgresDriver {
             if statements.len() > 1 {
                 for statement in &statements {
                     if Self::query_returns_rows(statement) {
-                        let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
+                        let (rows, truncated) =
+                            Self::fetch_rows_limited(&self.pool, statement).await?;
                         last_result = Some(Self::build_result_from_rows(
                             &rows,
                             0,
@@ -940,6 +994,33 @@ impl DatabaseDriver for PostgresDriver {
         }
     }
 
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        if Self::query_returns_rows(sql) {
+            let (rows, truncated) = self.fetch_parameterized_rows(sql, parameters).await?;
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            result.execution_time_ms = start.elapsed().as_millis();
+            return Ok(result);
+        }
+        let outcome = Self::bind_parameterized_query(sqlx::query(sql), parameters)?
+            .execute(&self.pool)
+            .await?;
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: outcome.rows_affected(),
+            execution_time_ms: start.elapsed().as_millis(),
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -960,7 +1041,11 @@ impl DatabaseDriver for PostgresDriver {
         }
         if let Some(ob) = order_by {
             let dir = normalize_order_dir(order_dir)?;
-            sql.push_str(&format!(" ORDER BY {} {}", quote_postgres_order_by(ob)?, dir));
+            sql.push_str(&format!(
+                " ORDER BY {} {}",
+                quote_postgres_order_by(ob)?,
+                dir
+            ));
         }
         sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
 
@@ -1024,6 +1109,62 @@ impl DatabaseDriver for PostgresDriver {
         Ok(result.rows_affected())
     }
 
+    async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        let mut transaction = self.pool.begin().await?;
+        let mut total_affected = 0;
+        for statement in statements {
+            total_affected += sqlx::query(statement)
+                .execute(&mut *transaction)
+                .await?
+                .rows_affected();
+        }
+        transaction.commit().await?;
+        Ok(total_affected)
+    }
+
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        let mut transaction = self.pool.begin().await?;
+        let mut affected_rows = 0;
+        for request in updates {
+            if request.primary_keys.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Inline update requires at least one primary key column"
+                ));
+            }
+            let mut builder = QueryBuilder::<Postgres>::new("UPDATE ");
+            builder.push(qualify_postgres_table_name(&request.table, "public")?);
+            builder.push(" SET ");
+            builder.push(quote_postgres_order_by(&request.target_column)?);
+            builder.push(" = ");
+            Self::push_bound_value(&mut builder, &request.value)?;
+            builder.push(" WHERE ");
+            for (index, primary_key) in request.primary_keys.iter().enumerate() {
+                if index > 0 {
+                    builder.push(" AND ");
+                }
+                builder.push(quote_postgres_order_by(&primary_key.column)?);
+                if primary_key.value.is_null() {
+                    builder.push(" IS NULL");
+                } else {
+                    builder.push(" = ");
+                    Self::push_bound_value(&mut builder, &primary_key.value)?;
+                }
+            }
+            let result = builder.build().execute(&mut *transaction).await?;
+            if result.rows_affected() == 0 {
+                return Err(anyhow::anyhow!(
+                    "An edit queue row no longer matches its primary-key selector"
+                ));
+            }
+            affected_rows += result.rows_affected();
+        }
+        transaction.commit().await?;
+        Ok(affected_rows)
+    }
+
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
         if request.rows.is_empty() {
             return Err(anyhow::anyhow!(
@@ -1074,7 +1215,10 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     fn current_database(&self) -> Option<String> {
-        self.current_db.try_read().ok().and_then(|guard| guard.clone())
+        self.current_db
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
@@ -1115,6 +1259,57 @@ impl DatabaseDriver for PostgresDriver {
 
         let result = builder.build().execute(&self.pool).await?;
         Ok(result.rows_affected())
+    }
+
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow::anyhow!("CSV import requires at least one row"));
+        }
+
+        let mut transaction = self.pool.begin().await?;
+        let mut affected_rows = 0;
+        for request in requests {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!(
+                    "CSV import cancelled; all rows were rolled back"
+                ));
+            }
+            if request.values.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Each CSV row requires at least one column value"
+                ));
+            }
+
+            let mut builder = QueryBuilder::<Postgres>::new("INSERT INTO ");
+            builder.push(qualify_postgres_table_name(&request.table, "public")?);
+            builder.push(" (");
+            for (index, (column, _)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                builder.push(quote_postgres_identifier(column)?);
+            }
+            builder.push(") VALUES (");
+            for (index, (_, value)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                Self::push_bound_value(&mut builder, value)?;
+            }
+            builder.push(")");
+            affected_rows += builder
+                .build()
+                .execute(&mut *transaction)
+                .await?
+                .rows_affected();
+        }
+
+        transaction.commit().await?;
+        Ok(affected_rows)
     }
 
     fn driver_name(&self) -> &str {
@@ -1177,16 +1372,9 @@ impl DatabaseDriver for PostgresDriver {
              FROM {}.\"{}\" \
              ORDER BY \"{}\" \
              LIMIT {}",
-            referenced_column,
-            label_expr,
-            schema,
-            table_name,
-            referenced_column,
-            limit
+            referenced_column, label_expr, schema, table_name, referenced_column, limit
         );
-        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql)
-            .fetch_all(pool)
-            .await?;
+        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql).fetch_all(pool).await?;
         Ok(rows
             .into_iter()
             .map(|(value, label)| LookupValue { value, label })

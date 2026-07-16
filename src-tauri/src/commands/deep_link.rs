@@ -1,32 +1,49 @@
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+const MAX_DEEP_LINK_LENGTH: usize = 8 * 1024;
+const MAX_SQL_LENGTH: usize = 6 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DeepLinkConnect {
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub database: Option<String>,
-    pub db_type: Option<String>,
-    pub user: Option<String>,
-    pub password: Option<String>,
+    pub connection: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DeepLinkQuery {
-    pub connection: Option<String>,
+    pub connection: String,
+    pub database: Option<String>,
     pub sql: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DeepLinkTable {
-    pub connection: Option<String>,
+    pub connection: String,
     pub database: Option<String>,
-    pub table: Option<String>,
+    pub schema: Option<String>,
+    pub table: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeepLinkMetrics {
+    pub connection: String,
+    pub database: Option<String>,
+    pub board: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeepLinkErd {
+    pub connection: String,
+    pub database: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "action")]
 pub enum DeepLinkRequest {
     #[serde(rename = "connect")]
@@ -35,93 +52,183 @@ pub enum DeepLinkRequest {
     Query(DeepLinkQuery),
     #[serde(rename = "table")]
     Table(DeepLinkTable),
+    #[serde(rename = "metrics")]
+    Metrics(DeepLinkMetrics),
+    #[serde(rename = "erd")]
+    Erd(DeepLinkErd),
+}
+
+fn take_required(params: &mut HashMap<String, String>, key: &str) -> Result<String, String> {
+    params
+        .remove(key)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("Deep link requires a non-empty '{key}' parameter."))
+}
+
+fn take_optional(params: &mut HashMap<String, String>, key: &str) -> Option<String> {
+    params
+        .remove(key)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn ensure_no_unknown_params(params: HashMap<String, String>) -> Result<(), String> {
+    if params.is_empty() {
+        return Ok(());
+    }
+    let mut keys = params.into_keys().collect::<Vec<_>>();
+    keys.sort();
+    Err(format!(
+        "Deep link contains unsupported parameter(s): {}.",
+        keys.join(", ")
+    ))
 }
 
 impl DeepLinkRequest {
-    pub fn parse(url: &str) -> Option<Self> {
-        let url = url.trim();
-        if !url.starts_with("tabler://") {
-            return None;
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        let raw = raw.trim();
+        if raw.len() > MAX_DEEP_LINK_LENGTH {
+            return Err("Deep link exceeds the maximum allowed length.".to_string());
+        }
+        let url = Url::parse(raw).map_err(|_| "Deep link URL is malformed.".to_string())?;
+        if url.scheme() != "tabler" {
+            return Err("Deep link must use the tabler:// scheme.".to_string());
+        }
+        if !url.username().is_empty() || url.password().is_some() || url.port().is_some() {
+            return Err("Deep links cannot contain credentials or a port.".to_string());
+        }
+        if url.fragment().is_some() {
+            return Err("Deep links cannot contain a fragment.".to_string());
+        }
+        if !url.path().is_empty() && url.path() != "/" {
+            return Err("Deep link actions cannot contain nested paths.".to_string());
+        }
+        let action = url
+            .host_str()
+            .ok_or_else(|| "Deep link action is missing.".to_string())?;
+
+        let mut seen = HashSet::new();
+        let mut params = HashMap::new();
+        for (key, value) in url.query_pairs() {
+            let key = key.into_owned();
+            if !seen.insert(key.clone()) {
+                return Err(format!("Deep link parameter '{key}' is duplicated."));
+            }
+            params.insert(key, value.into_owned());
         }
 
-        let path = url.strip_prefix("tabler://")?;
-        let (action, query) = if let Some(idx) = path.find('?') {
-            (&path[..idx], Some(&path[idx + 1..]))
-        } else {
-            (path, None)
-        };
-
-        let params = query.and_then(|q| {
-            let mut map = std::collections::HashMap::new();
-            for pair in q.split('&') {
-                let mut parts = pair.splitn(2, '=');
-                if let (Some(key), Some(val)) = (parts.next(), parts.next()) {
-                    map.insert(
-                        key.to_string(),
-                        urlencoding_decode(val).unwrap_or_else(|| val.to_string()),
-                    );
-                }
-            }
-            if map.is_empty() { None } else { Some(map) }
-        });
-
-        match action {
+        let request = match action {
             "connect" => {
-                let p = params?;
-                Some(DeepLinkRequest::Connect(DeepLinkConnect {
-                    host: p.get("host").cloned(),
-                    port: p.get("port").and_then(|v| v.parse().ok()),
-                    database: p.get("database").cloned(),
-                    db_type: p.get("db_type").cloned(),
-                    user: p.get("user").cloned(),
-                    password: p.get("password").cloned(),
-                }))
+                let connection = take_required(&mut params, "connection")?;
+                DeepLinkRequest::Connect(DeepLinkConnect { connection })
             }
             "query" => {
-                let p = params?;
-                Some(DeepLinkRequest::Query(DeepLinkQuery {
-                    connection: p.get("connection").cloned(),
-                    sql: p.get("sql").cloned(),
-                }))
+                let connection = take_required(&mut params, "connection")?;
+                let database = take_optional(&mut params, "database");
+                let sql = take_optional(&mut params, "sql");
+                if sql
+                    .as_ref()
+                    .is_some_and(|value| value.len() > MAX_SQL_LENGTH)
+                {
+                    return Err("Deep link SQL exceeds the maximum allowed length.".to_string());
+                }
+                DeepLinkRequest::Query(DeepLinkQuery {
+                    connection,
+                    database,
+                    sql,
+                })
             }
             "table" => {
-                let p = params?;
-                Some(DeepLinkRequest::Table(DeepLinkTable {
-                    connection: p.get("connection").cloned(),
-                    database: p.get("database").cloned(),
-                    table: p.get("table").cloned(),
-                }))
+                let connection = take_required(&mut params, "connection")?;
+                let database = take_optional(&mut params, "database");
+                let schema = take_optional(&mut params, "schema");
+                let table = take_required(&mut params, "table")?;
+                DeepLinkRequest::Table(DeepLinkTable {
+                    connection,
+                    database,
+                    schema,
+                    table,
+                })
             }
-            _ => None,
-        }
-    }
-}
-
-fn urlencoding_decode(input: &str) -> Option<String> {
-    let mut output = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '%' {
-            let hex: String = chars.by_ref().take(2).collect();
-            if hex.len() == 2 {
-                let byte = u8::from_str_radix(&hex, 16).ok()?;
-                output.push(byte as char);
-            } else {
-                output.push('%');
-                output.extend(hex.chars());
+            "metrics" => {
+                let connection = take_required(&mut params, "connection")?;
+                let database = take_optional(&mut params, "database");
+                let board = take_optional(&mut params, "board");
+                DeepLinkRequest::Metrics(DeepLinkMetrics {
+                    connection,
+                    database,
+                    board,
+                })
             }
-        } else if ch == '+' {
-            output.push(' ');
-        } else {
-            output.push(ch);
-        }
+            "erd" => {
+                let connection = take_required(&mut params, "connection")?;
+                let database = take_optional(&mut params, "database");
+                DeepLinkRequest::Erd(DeepLinkErd {
+                    connection,
+                    database,
+                })
+            }
+            _ => return Err(format!("Unknown deep link action '{action}'.")),
+        };
+        ensure_no_unknown_params(params)?;
+        Ok(request)
     }
-
-    Some(output)
 }
 
 #[tauri::command]
 pub fn parse_deep_link(url: String) -> Result<DeepLinkRequest, String> {
-    DeepLinkRequest::parse(&url).ok_or_else(|| format!("Unknown or malformed deep link URL: {}", url))
+    DeepLinkRequest::parse(&url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_every_supported_workspace_target() {
+        assert!(matches!(
+            DeepLinkRequest::parse("tabler://connect?connection=local-pg").unwrap(),
+            DeepLinkRequest::Connect(_)
+        ));
+        assert!(matches!(
+            DeepLinkRequest::parse("tabler://query?connection=local-pg&sql=SELECT%201").unwrap(),
+            DeepLinkRequest::Query(_)
+        ));
+        assert!(matches!(
+            DeepLinkRequest::parse("tabler://table?connection=local-pg&schema=public&table=users")
+                .unwrap(),
+            DeepLinkRequest::Table(_)
+        ));
+        assert!(matches!(
+            DeepLinkRequest::parse("tabler://metrics?connection=local-pg&board=health").unwrap(),
+            DeepLinkRequest::Metrics(_)
+        ));
+        assert!(matches!(
+            DeepLinkRequest::parse("tabler://erd?connection=local-pg&database=app").unwrap(),
+            DeepLinkRequest::Erd(_)
+        ));
+    }
+
+    #[test]
+    fn rejects_credentials_unknown_fields_and_duplicates() {
+        assert!(DeepLinkRequest::parse("tabler://user:secret@query?connection=x").is_err());
+        assert!(DeepLinkRequest::parse("tabler://query?connection=x&password=secret").is_err());
+        assert!(DeepLinkRequest::parse("tabler://query?connection=x&connection=y").is_err());
+    }
+
+    #[test]
+    fn query_payload_is_open_only_metadata() {
+        let request = DeepLinkRequest::parse(
+            "tabler://query?connection=local-pg&database=app&sql=DELETE%20FROM%20users",
+        )
+        .unwrap();
+        assert_eq!(
+            request,
+            DeepLinkRequest::Query(DeepLinkQuery {
+                connection: "local-pg".to_string(),
+                database: Some("app".to_string()),
+                sql: Some("DELETE FROM users".to_string()),
+            })
+        );
+    }
 }

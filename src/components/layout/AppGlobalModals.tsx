@@ -1,13 +1,15 @@
 import { lazy, Suspense } from "react";
 import { AppAboutModal } from "../AppAboutModal";
 import { AppPluginManagerModal } from "../AppPluginManagerModal";
+import { AppMcpIntegrationsModal } from "../AppMcpIntegrationsModal";
+import { AppUserRolesModal } from "../AppUserRolesModal";
 import { AppShortcutsModal } from "../AppShortcutsModal";
 import { CommandPalette } from "../CommandPalette/CommandPalette";
 import { QuickSwitcher } from "../QuickSwitcher/QuickSwitcher";
 import { ThemeCustomizer } from "../ThemeCustomizer/ThemeCustomizer";
 import { SafeModeConfirmDialog } from "../SafeMode/SafeModeConfirmDialog";
 import { ConnectionExporter, ConnectionImporter } from "../ConnectionExporter";
-import { useAppStore } from "../../stores/appStore";
+import { useConnectionStore } from "../../stores/connectionStore";
 import { ConnectionConfig } from "../../types/database";
 
 const AISettingsModal = lazy(() => import("../AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
@@ -19,6 +21,10 @@ export interface AppGlobalModalsProps {
   setShowAboutModal: (show: boolean) => void;
   showPluginManager: boolean;
   setShowPluginManager: (show: boolean) => void;
+  showMcpIntegrations: boolean;
+  setShowMcpIntegrations: (show: boolean) => void;
+  showUserRoleManagement: boolean;
+  setShowUserRoleManagement: (show: boolean) => void;
   showKeyboardShortcutsModal: boolean;
   setShowKeyboardShortcutsModal: (show: boolean) => void;
   showThemeCustomizer: boolean;
@@ -30,6 +36,7 @@ export interface AppGlobalModalsProps {
   
   // Dependencies needed by command palette and others
   connections: ConnectionConfig[];
+  activeConnectionId: string | null;
   handleToggleSidebar: () => void;
   setShowTerminalPanel: (update: (v: boolean) => boolean) => void;
   handleRunActiveQuery: () => void;
@@ -46,6 +53,10 @@ export function AppGlobalModals({
   setShowAboutModal,
   showPluginManager,
   setShowPluginManager,
+  showMcpIntegrations,
+  setShowMcpIntegrations,
+  showUserRoleManagement,
+  setShowUserRoleManagement,
   showKeyboardShortcutsModal,
   setShowKeyboardShortcutsModal,
   showThemeCustomizer,
@@ -56,6 +67,7 @@ export function AppGlobalModals({
   setShowConnectionImporter,
   
   connections,
+  activeConnectionId,
   handleToggleSidebar,
   setShowTerminalPanel,
   handleRunActiveQuery,
@@ -77,6 +89,18 @@ export function AppGlobalModals({
       )}
       {showPluginManager && (
         <AppPluginManagerModal onClose={() => setShowPluginManager(false)} />
+      )}
+      {showMcpIntegrations && (
+        <AppMcpIntegrationsModal
+          connections={connections}
+          onClose={() => setShowMcpIntegrations(false)}
+        />
+      )}
+      {showUserRoleManagement && activeConnectionId && (
+        <AppUserRolesModal
+          connection={connections.find((connection) => connection.id === activeConnectionId) ?? null}
+          onClose={() => setShowUserRoleManagement(false)}
+        />
       )}
       {showKeyboardShortcutsModal && (
         <AppShortcutsModal onClose={() => setShowKeyboardShortcutsModal(false)} />
@@ -120,7 +144,7 @@ export function AppGlobalModals({
       {showConnectionImporter && (
         <ConnectionImporter
           onImport={(_imported) => {
-            void useAppStore.getState().loadSavedConnections();
+            void useConnectionStore.getState().loadSavedConnections();
           }}
           onClose={() => setShowConnectionImporter(false)}
         />

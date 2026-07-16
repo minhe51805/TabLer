@@ -1,5 +1,6 @@
 import type { Command } from "../../stores/commandPaletteStore";
-import { useAppStore } from "../../stores/appStore";
+import { useConnectionStore } from "../../stores/connectionStore";
+import { useUIStore } from "../../stores/uiStore";
 import { useEditorPreferencesStore } from "../../stores/editorPreferencesStore";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../../utils/ui-scale";
 
@@ -59,11 +60,11 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       shortcut: "Ctrl+N",
       category: "File",
       action: makeAction("file.new-query", () => {
-        const { activeConnectionId } = useAppStore.getState();
+        const { activeConnectionId } = useConnectionStore.getState();
         if (!activeConnectionId) return;
-        const tabs = useAppStore.getState().tabs;
+        const tabs = useUIStore.getState().tabs;
         const queryCount = tabs.filter((t) => t.type === "query").length;
-        useAppStore.getState().addTab({
+        useUIStore.getState().addTab({
           id: `query-${crypto.randomUUID()}`,
           type: "query",
           title: `Query ${queryCount + 1}`,
@@ -94,7 +95,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       shortcut: "Ctrl+W",
       category: "File",
       action: makeAction("file.close-tab", () => {
-        const { activeTabId, removeTab } = useAppStore.getState();
+        const { activeTabId, removeTab } = useUIStore.getState();
         if (activeTabId) removeTab(activeTabId);
       }, ctx),
     },
@@ -103,7 +104,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       label: "Close All Tabs",
       category: "File",
       action: makeAction("file.close-all-tabs", () => {
-        useAppStore.getState().clearTabs();
+        useUIStore.getState().clearTabs();
       }, ctx),
     },
 
@@ -123,7 +124,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       shortcut: "Ctrl+Shift+`",
       category: "View",
       action: makeAction("view.toggle-results-pane", () => {
-        const { activeTabId } = useAppStore.getState();
+        const { activeTabId } = useUIStore.getState();
         if (activeTabId) {
           window.dispatchEvent(new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTabId } }));
         }
@@ -207,11 +208,11 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       shortcut: "Ctrl+N",
       category: "Query",
       action: makeAction("query.new-tab", () => {
-        const { activeConnectionId } = useAppStore.getState();
+        const { activeConnectionId } = useConnectionStore.getState();
         if (!activeConnectionId) return;
-        const tabs = useAppStore.getState().tabs;
+        const tabs = useUIStore.getState().tabs;
         const queryCount = tabs.filter((t) => t.type === "query").length;
-        useAppStore.getState().addTab({
+        useUIStore.getState().addTab({
           id: `query-${crypto.randomUUID()}`,
           type: "query",
           title: `Query ${queryCount + 1}`,
@@ -224,7 +225,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       label: "Duplicate Tab",
       category: "Query",
       action: makeAction("query.duplicate-tab", () => {
-        const { activeTabId, tabs, addTab } = useAppStore.getState();
+        const { activeTabId, tabs, addTab } = useUIStore.getState();
         if (!activeTabId) return;
         const src = tabs.find((t) => t.id === activeTabId);
         if (!src) return;
@@ -244,7 +245,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       shortcut: "Ctrl+W",
       category: "Query",
       action: makeAction("query.close-tab", () => {
-        const { activeTabId, removeTab } = useAppStore.getState();
+        const { activeTabId, removeTab } = useUIStore.getState();
         if (activeTabId) removeTab(activeTabId);
       }, ctx),
     },
@@ -271,9 +272,9 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       label: "Disconnect",
       category: "Database",
       action: makeAction("database.disconnect", () => {
-        const { activeConnectionId } = useAppStore.getState();
+        const { activeConnectionId } = useConnectionStore.getState();
         if (activeConnectionId) {
-          void useAppStore.getState().disconnectFromDatabase(activeConnectionId);
+          void useConnectionStore.getState().disconnectFromDatabase(activeConnectionId);
         }
       }, ctx),
     },
@@ -283,12 +284,12 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       shortcut: "Ctrl+R",
       category: "Database",
       action: makeAction("database.refresh-explorer", () => {
-        const { activeConnectionId, currentDatabase } = useAppStore.getState();
+        const { activeConnectionId, currentDatabase } = useConnectionStore.getState();
         if (!activeConnectionId) return;
-        void useAppStore.getState().fetchDatabases(activeConnectionId);
+        void useConnectionStore.getState().fetchDatabases(activeConnectionId);
         if (currentDatabase) {
-          void useAppStore.getState().fetchTables(activeConnectionId, currentDatabase);
-          void useAppStore.getState().fetchSchemaObjects(activeConnectionId, currentDatabase);
+          void useConnectionStore.getState().fetchTables(activeConnectionId, currentDatabase);
+          void useConnectionStore.getState().fetchSchemaObjects(activeConnectionId, currentDatabase);
         }
       }, ctx),
     },
@@ -297,9 +298,9 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       label: "Refresh Tables",
       category: "Database",
       action: makeAction("database.refresh-tables", () => {
-        const { activeConnectionId, currentDatabase } = useAppStore.getState();
+        const { activeConnectionId, currentDatabase } = useConnectionStore.getState();
         if (!activeConnectionId || !currentDatabase) return;
-        void useAppStore.getState().fetchTables(activeConnectionId, currentDatabase);
+        void useConnectionStore.getState().fetchTables(activeConnectionId, currentDatabase);
       }, ctx),
     },
 
@@ -405,11 +406,11 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       shortcut: "Ctrl+Tab",
       category: "Navigation",
       action: makeAction("nav.next-tab", () => {
-        const { tabs, activeTabId } = useAppStore.getState();
+        const { tabs, activeTabId } = useUIStore.getState();
         const visible = tabs.filter((t) => t.type !== "metrics");
         const idx = visible.findIndex((t) => t.id === activeTabId);
         const next = visible[(idx + 1) % visible.length];
-        if (next) useAppStore.getState().setActiveTab(next.id);
+        if (next) useUIStore.getState().setActiveTab(next.id);
       }, ctx),
     },
     {
@@ -418,11 +419,11 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       shortcut: "Ctrl+Shift+Tab",
       category: "Navigation",
       action: makeAction("nav.prev-tab", () => {
-        const { tabs, activeTabId } = useAppStore.getState();
+        const { tabs, activeTabId } = useUIStore.getState();
         const visible = tabs.filter((t) => t.type !== "metrics");
         const idx = visible.findIndex((t) => t.id === activeTabId);
         const prev = visible[(idx - 1 + visible.length) % visible.length];
-        if (prev) useAppStore.getState().setActiveTab(prev.id);
+        if (prev) useUIStore.getState().setActiveTab(prev.id);
       }, ctx),
     },
 

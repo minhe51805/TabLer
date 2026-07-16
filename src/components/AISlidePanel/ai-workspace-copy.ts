@@ -22,6 +22,7 @@ export interface AIWorkspaceCopy {
     copy: string;
     insert: string;
     approveRun: string;
+    retry: string;
   };
   modal: {
     kicker: string;
@@ -95,6 +96,8 @@ export interface AIWorkspaceCopy {
     placeholder: string;
     note: string;
     generating: string;
+    cancelling: string;
+    cancelGeneration: string;
     generateBubble: string;
     promptIdeas: PromptIdeaCopy[];
   };
@@ -118,6 +121,10 @@ export interface AIWorkspaceCopy {
     readyNoteSubtitle: string;
     errorTitle: string;
     errorSubtitle: string;
+    cancelledTitle: string;
+    cancelledSubtitle: string;
+    partialTitle: string;
+    partialSubtitle: string;
     selectSomethingError: string;
     runSuccessTitle: string;
     runSuccessSandboxSubtitle: string;
@@ -148,6 +155,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       copy: "Copy",
       insert: "Insert",
       approveRun: "Approve Run",
+      retry: "Retry",
     },
     modal: {
       kicker: "Bubble Detail",
@@ -205,7 +213,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       agentAutonomySmart: "Smart",
       agentAutonomySmartHint: "Auto-run safe read queries, ask before writes.",
       agentAutonomyFull: "Full access",
-      agentAutonomyFullHint: "Run everything automatically without asking.",
+      agentAutonomyFullHint: "Auto-run safe reads; writes and schema changes still ask.",
       thinkingToggleLabel: "Thinking",
       thinkingToggleHint: "Show or hide the agent's live reasoning",
       thinkingOn: "On",
@@ -221,6 +229,8 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       placeholder: "Ask a question, brainstorm, write content, explain code, or request SQL for this database.",
       note: "Enter to send. Use Inspect when you want grounded help from the workspace.",
       generating: "Generating...",
+      cancelling: "Stopping...",
+      cancelGeneration: "Stop",
       generateBubble: "Ask AI",
       promptIdeas: [
         {
@@ -265,6 +275,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       readyNoteSubtitle: "Explanation only, no runnable SQL yet",
       errorTitle: "Bubble could not be generated",
       errorSubtitle: "AI request failed",
+      cancelledTitle: "Request stopped",
+      cancelledSubtitle: "No provider request is still running",
+      partialTitle: "Partial progress preserved",
+      partialSubtitle: "The agent stopped before composing the final answer",
       selectSomethingError: "Select some code or UI text first, then press Enter while the AI orb is in inspect mode.",
       runSuccessTitle: "SQL ran in the sandbox",
       runSuccessSandboxSubtitle: "Protected execution boundary",
@@ -293,6 +307,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       copy: "Sao chép",
       insert: "Chèn",
       approveRun: "Duyệt chạy",
+      retry: "Thử lại",
     },
     modal: {
       kicker: "Chi tiết bong bóng",
@@ -350,7 +365,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       agentAutonomySmart: "Thông minh",
       agentAutonomySmartHint: "Tự chạy câu đọc an toàn, hỏi trước khi ghi.",
       agentAutonomyFull: "Toàn quyền",
-      agentAutonomyFullHint: "Tự chạy mọi thứ mà không hỏi.",
+      agentAutonomyFullHint: "Tự chạy truy vấn đọc an toàn; thao tác ghi và đổi schema vẫn cần xác nhận.",
       thinkingToggleLabel: "Suy lu?n",
       thinkingToggleHint: "Hi?n ho?c ?n suy lu?n tr?c ti?p c?a agent",
       thinkingOn: "B?t",
@@ -364,6 +379,8 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       placeholder: "Hỏi về DB này, yêu cầu SQL, hoặc mô tả thay đổi bạn muốn.",
       note: "Enter để gửi. Inspect để lấy ngữ cảnh.",
       generating: "Đang tạo...",
+      cancelling: "Đang dừng...",
+      cancelGeneration: "Dừng",
       generateBubble: "Hỏi AI",
       promptIdeas: [
         {
@@ -408,6 +425,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       readyNoteSubtitle: "Chỉ có giải thích, chưa có SQL chạy được",
       errorTitle: "Không thể tạo bong bóng",
       errorSubtitle: "Yêu cầu AI thất bại",
+      cancelledTitle: "Đã dừng yêu cầu",
+      cancelledSubtitle: "Không còn request provider nào đang chạy",
+      partialTitle: "Đã giữ lại tiến trình một phần",
+      partialSubtitle: "Agent đã dừng trước khi tổng hợp câu trả lời cuối",
       selectSomethingError: "Hãy chọn một đoạn code hoặc chữ trên UI trước, rồi nhấn Enter khi orb AI đang ở chế độ inspect.",
       runSuccessTitle: "SQL đã chạy trong sandbox",
       runSuccessSandboxSubtitle: "Biên thực thi được bảo vệ",
@@ -436,6 +457,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       copy: "复制",
       insert: "插入",
       approveRun: "批准运行",
+      retry: "重试",
     },
     modal: {
       kicker: "气泡详情",
@@ -493,7 +515,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       agentAutonomySmart: "智能",
       agentAutonomySmartHint: "自动运行安全的读取查询，写入前询问。",
       agentAutonomyFull: "完全权限",
-      agentAutonomyFullHint: "不询问，自动运行一切。",
+      agentAutonomyFullHint: "自动运行安全的只读查询；写入和架构更改仍需确认。",
       thinkingToggleLabel: "??",
       thinkingToggleHint: "????? agent ?????",
       thinkingOn: "?",
@@ -507,6 +529,8 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       placeholder: "询问当前数据库、请求 SQL，或描述你想做的改动。",
       note: "按 Enter 发送。使用 Inspect 从工作区捕获上下文。",
       generating: "生成中...",
+      cancelling: "正在停止...",
+      cancelGeneration: "停止",
       generateBubble: "询问 AI",
       promptIdeas: [
         {
@@ -551,6 +575,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       readyNoteSubtitle: "只有解释，没有可运行的 SQL",
       errorTitle: "无法生成气泡",
       errorSubtitle: "AI 请求失败",
+      cancelledTitle: "请求已停止",
+      cancelledSubtitle: "当前没有仍在运行的 provider 请求",
+      partialTitle: "已保留部分进度",
+      partialSubtitle: "Agent 在生成最终答复前停止了",
       selectSomethingError: "请先选中一段代码或界面文本，然后在 AI orb 处于 inspect 模式时按 Enter。",
       runSuccessTitle: "SQL 已在沙箱中运行",
       runSuccessSandboxSubtitle: "受保护的执行边界",
@@ -579,6 +607,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       copy: "Kopyala",
       insert: "Ekle",
       approveRun: "Çalıştırmayı onayla",
+      retry: "Yeniden dene",
     },
     modal: {
       kicker: "Balon Detayı",
@@ -636,7 +665,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       agentAutonomySmart: "Akıllı",
       agentAutonomySmartHint: "Güvenli okuma sorgularını otomatik çalıştır, yazmadan önce sor.",
       agentAutonomyFull: "Tam erişim",
-      agentAutonomyFullHint: "Sormadan her şeyi otomatik çalıştır.",
+      agentAutonomyFullHint: "Güvenli okumaları otomatik çalıştırır; yazma ve şema değişiklikleri yine onay ister.",
       thinkingToggleLabel: "D???nme",
       thinkingToggleHint: "Ajan?n canl? muhakemesini g?ster veya gizle",
       thinkingOn: "A??k",
@@ -650,6 +679,8 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       placeholder: "Bu veritabanı hakkında sorun, SQL isteyin veya istediğiniz değişikliği açıklayın.",
       note: "Göndermek için Enter. Bağlamı almak için İnceleme'yi kullanın.",
       generating: "Oluşturuluyor...",
+      cancelling: "Durduruluyor...",
+      cancelGeneration: "Durdur",
       generateBubble: "AI'ya Sor",
       promptIdeas: [
         { title: "Tablo oluştur", prompt: "id, name, email, role ve created_at içeren bir users tablosu oluştur." },
@@ -679,6 +710,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       readyNoteSubtitle: "Yalnızca açıklama, henüz çalıştırılabilir SQL yok",
       errorTitle: "Balon oluşturulamadı",
       errorSubtitle: "AI isteği başarısız",
+      cancelledTitle: "İstek durduruldu",
+      cancelledSubtitle: "Çalışan bir sağlayıcı isteği kalmadı",
+      partialTitle: "Kısmi ilerleme korundu",
+      partialSubtitle: "Agent son yanıtı oluşturmadan önce durdu",
       selectSomethingError: "Önce bir kod veya UI metni seçin, ardından AI balonu inceleme modundayken Enter'a basın.",
       runSuccessTitle: "SQL sandbox'ta çalıştı",
       runSuccessSandboxSubtitle: "Korunan çalıştırma sınırı",
@@ -707,6 +742,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       copy: "복사",
       insert: "삽입",
       approveRun: "실행 승인",
+      retry: "다시 시도",
     },
     modal: {
       kicker: "버블 상세",
@@ -764,7 +800,7 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       agentAutonomySmart: "스마트",
       agentAutonomySmartHint: "안전한 읽기 쿼리는 자동 실행하고 쓰기 전에 물어봅니다.",
       agentAutonomyFull: "전체 권한",
-      agentAutonomyFullHint: "물어보지 않고 모든 것을 자동 실행합니다.",
+      agentAutonomyFullHint: "안전한 읽기 쿼리는 자동 실행하고, 쓰기 및 스키마 변경은 계속 확인합니다.",
       thinkingToggleLabel: "??",
       thinkingToggleHint: "????? ??? ?? ??/??",
       thinkingOn: "??",
@@ -778,6 +814,8 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       placeholder: "이 데이터베이스에 대해 질문하거나, SQL을 요청하거나, 원하는 변경 사항을 설명하세요.",
       note: "Enter로 보내기. 컨텍스트를 캡처하려면 Inspect를 사용하세요.",
       generating: "생성 중...",
+      cancelling: "중지 중...",
+      cancelGeneration: "중지",
       generateBubble: "AI에게 질문",
       promptIdeas: [
         { title: "테이블 생성", prompt: "id, name, email, role, created_at를 포함하는 users 테이블을 생성하세요." },
@@ -807,6 +845,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       readyNoteSubtitle: "설명만 있고 실행 가능한 SQL은 아직 없음",
       errorTitle: "버블을 생성할 수 없음",
       errorSubtitle: "AI 요청 실패",
+      cancelledTitle: "요청 중지됨",
+      cancelledSubtitle: "실행 중인 프로바이더 요청이 없습니다",
+      partialTitle: "부분 진행 상황 보존됨",
+      partialSubtitle: "에이전트가 최종 답변을 작성하기 전에 중지되었습니다",
       selectSomethingError: "먼저 코드 또는 UI 텍스트를 선택한 다음 AI 오브가 inspect 모드에 있을 때 Enter를 누르세요.",
       runSuccessTitle: "SQL이 샌드박스에서 실행됨",
       runSuccessSandboxSubtitle: "보호된 실행 경계",

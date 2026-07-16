@@ -69,6 +69,7 @@ export const tr: Record<keyof typeof en, string> = {
   "menu.item.focusExplorerSearch": "Gezgin Aramasina Odaklan",
   "menu.item.openExplorer": "Gezgini Ac",
   "menu.item.pluginManager": "Eklenti Yoneticisi",
+  "menu.item.externalIntegrations": "Harici entegrasyonlar",
   "menu.item.metrics": "Metrikler",
   "menu.item.queryHistory": "Sorgu Gecmisi",
   "menu.item.aboutTableR": "TableR Hakkinda",
@@ -167,7 +168,8 @@ export const tr: Record<keyof typeof en, string> = {
   "connections.new": "Yeni",
   "connections.noSaved": "Kaydedilmis baglanti yok",
   "connections.addToStart": "Baslamak icin bir baglanti ekleyin",
-  "connections.localDbNote": "Yerel VT kurulumu artik Yeni Baglanti'nin icinde.",
+  "connections.localDbNote":
+    "Yerel VT kurulumu artik Yeni Baglanti'nin icinde.",
   "connections.localFileAccess": "Yerel dosya erisimi",
   "connections.credentialsSaved": "Kimlik bilgileri kaydedildi",
   "connections.sqliteFile": "SQLite dosyasi",
@@ -181,7 +183,8 @@ export const tr: Record<keyof typeof en, string> = {
   "startup.manager.noConnectionsDescription":
     "Baslamak icin yeni bir baglanti olusturun veya yerel bir veritabani baslatin.",
   "explorer.noActiveConnection": "Aktif baglanti yok",
-  "explorer.connectToExplore": "Tablolari incelemek icin bir veritabanina baglanin",
+  "explorer.connectToExplore":
+    "Tablolari incelemek icin bir veritabanina baglanin",
   "explorer.title": "Gezgin",
   "explorer.workspace": "Calisma Alani",
   "explorer.create": "Olustur",
@@ -193,10 +196,12 @@ export const tr: Record<keyof typeof en, string> = {
   "explorer.browseHint":
     "Mevcut veritabanindaki tablolari, gorunumleri, tetikleyicileri ve rutinleri inceleyin.",
   "explorer.tablesReady": "{{count}} tablo incelemeye hazir",
-  "explorer.switchWorkspace": "Nesneleri incelemek icin calisma alanini degistirin",
+  "explorer.switchWorkspace":
+    "Nesneleri incelemek icin calisma alanini degistirin",
   "explorer.databaseObjects": "Veritabani nesneleri",
   "explorer.groupedBySchema": "Semaya gore gruplandirilmis",
-  "explorer.showingSchemaByDefault": "Varsayilan olarak {{schema}} gosteriliyor",
+  "explorer.showingSchemaByDefault":
+    "Varsayilan olarak {{schema}} gosteriliyor",
   "explorer.allSchemas": "Tum semalar",
   "explorer.loadingObjects": "Veritabani nesneleri yukleniyor...",
   "explorer.noObjectsMatch": "Filtreyle eslesen nesne yok",
@@ -271,8 +276,10 @@ export const tr: Record<keyof typeof en, string> = {
   "metrics.widget.untitledRadial": "Adsız radyal grafik",
   "metrics.widget.loading": "Yukleniyor...",
   "metrics.widget.noData": "Veri yok",
-  "metrics.widget.queryNeedsSeries": "Sorgu bir etiket ve bir sayisal deger gerektiriyor.",
-  "metrics.validation.addQuery": "Bu widget'i yuklemek icin salt okunur bir SQL sorgusu ekleyin.",
+  "metrics.widget.queryNeedsSeries":
+    "Sorgu bir etiket ve bir sayisal deger gerektiriyor.",
+  "metrics.validation.addQuery":
+    "Bu widget'i yuklemek icin salt okunur bir SQL sorgusu ekleyin.",
   "metrics.validation.singleStatement":
     "Metrik widget'lari yalnızca tek bir salt okunur ifadeyi destekler.",
   "metrics.validation.readOnlyOnly":
@@ -297,6 +304,10 @@ export const tr: Record<keyof typeof en, string> = {
   "tabs.hideResults": "Sonuclari gizle",
   "tabs.showResults": "Sonuclari goster",
   "tabs.readyToExecute": "Calistirmak icin Ctrl+Enter'a basin",
-  "tabs.noSqlToExecute": "Henuz calıstiracak bir sey yok. Once bir sorgu veya komut yazin, ardindan Ctrl+Enter'a basin.",
+  "tabs.noSqlToExecute":
+    "Henuz calıstiracak bir sey yok. Once bir sorgu veya komut yazin, ardindan Ctrl+Enter'a basin.",
+  "metrics.widget.openResult": "Open result in workspace",
+  "metrics.widget.openSourceSql": "Open source SQL",
+  "workspace.bundle.export": "Export workspace bundle",
+  "workspace.bundle.import": "Import workspace bundle",
 };
-

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useAppStore } from "../stores/appStore";
+import { useConnectionStore } from "../stores/connectionStore";
 import { emitAppToast } from "../utils/app-toast";
 
 const BASE_INTERVAL_MS = 30_000; // 30 seconds
@@ -10,15 +10,15 @@ const BACKOFF_MULTIPLIER = 2;
 /**
  * Periodically pings all connected database connections via the Rust backend.
  * On failure for a given connection:
- *   - Sets that connection's health to `false` in appStore
+ *   - Sets that connection's health to `false` in connectionStore
  *   - Emits a warning toast
  *   - Attempts to auto-reconnect
  *   - Applies exponential backoff per-connection (30s → 60s → 120s → 5min cap)
  * On recovery, resets the interval back to 30s and emits an info toast.
  */
 export function useConnectionHealthMonitor() {
-  const connectedIds = useAppStore((s) => s.connectedIds);
-  const setConnectionHealth = useAppStore((s) => s.setConnectionHealth);
+  const connectedIds = useConnectionStore((s) => s.connectedIds);
+  const setConnectionHealth = useConnectionStore((s) => s.setConnectionHealth);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const currentIntervalMs = useRef(BASE_INTERVAL_MS);
@@ -42,14 +42,14 @@ export function useConnectionHealthMonitor() {
   }, []);
 
   const getConnectionLabel = useCallback((connId: string): string => {
-    const conn = useAppStore.getState().connections.find((c) => c.id === connId);
+    const conn = useConnectionStore.getState().connections.find((c) => c.id === connId);
     return conn?.name || conn?.database || connId;
   }, []);
 
   const scheduleNextPing = useCallback(() => {
     clearExistingInterval();
     intervalRef.current = setInterval(async () => {
-      const currentConnectedIds = useAppStore.getState().connectedIds;
+      const currentConnectedIds = useConnectionStore.getState().connectedIds;
       if (currentConnectedIds.size === 0) return;
 
       // Ping each connected connection
@@ -117,7 +117,7 @@ export function useConnectionHealthMonitor() {
         for (const { connId, isAlive } of results) {
           if (!isAlive) {
             try {
-              await useAppStore.getState().connectSavedConnection(connId);
+              await useConnectionStore.getState().connectSavedConnection(connId);
               setConnectionHealth(connId, true);
             } catch {
               // Reconnect failed — keep as unhealthy, backoff already scheduled

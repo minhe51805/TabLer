@@ -7,6 +7,10 @@ interface ModalState {
   setShowAboutModal: (show: boolean) => void;
   showPluginManager: boolean;
   setShowPluginManager: (show: boolean) => void;
+  showMcpIntegrations: boolean;
+  setShowMcpIntegrations: (show: boolean) => void;
+  showUserRoleManagement: boolean;
+  setShowUserRoleManagement: (show: boolean) => void;
   showKeyboardShortcutsModal: boolean;
   setShowKeyboardShortcutsModal: (show: boolean) => void;
   showThemeCustomizer: boolean;
@@ -28,6 +32,10 @@ export const useModalStore = create<ModalState>((set) => ({
   setShowAboutModal: (show) => set({ showAboutModal: show }),
   showPluginManager: false,
   setShowPluginManager: (show) => set({ showPluginManager: show }),
+  showMcpIntegrations: false,
+  setShowMcpIntegrations: (show) => set({ showMcpIntegrations: show }),
+  showUserRoleManagement: false,
+  setShowUserRoleManagement: (show) => set({ showUserRoleManagement: show }),
   showKeyboardShortcutsModal: false,
   setShowKeyboardShortcutsModal: (show) => set({ showKeyboardShortcutsModal: show }),
   showThemeCustomizer: false,

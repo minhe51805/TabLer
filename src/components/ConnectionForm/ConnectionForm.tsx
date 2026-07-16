@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { useAppStore } from "../../stores/appStore";
+import { useConnectionStore } from "../../stores/connectionStore";
+import { usePluginStore } from "../../stores/pluginStore";
 import { useI18n } from "../../i18n";
 import type { ConnectionConfig, DatabaseType } from "../../types";
 import { emitAppToast } from "../../utils/app-toast";
 import { splitSqlStatements } from "../../utils/sqlStatements";
+import { findStableOpenSearchDriver } from "../../utils/plugin-driver-runtime";
 import { ConnectionPickerStep } from "./steps/ConnectionPickerStep";
 import { ConnectionDetailsStep, type DetailsStrings } from "./steps/ConnectionDetailsStep";
 import {
@@ -117,13 +119,29 @@ export function ConnectionForm({
   embeddedInStartupShell = false,
 }: Props) {
   const { language, t } = useI18n();
-  const connectToDatabase = useAppStore((state) => state.connectToDatabase);
-  const loadSavedConnections = useAppStore((state) => state.loadSavedConnections);
-  const testConnection = useAppStore((state) => state.testConnection);
-  const createLocalDatabase = useAppStore((state) => state.createLocalDatabase);
-  const suggestSqliteDatabasePath = useAppStore((state) => state.suggestSqliteDatabasePath);
-  const pickSqliteDatabasePath = useAppStore((state) => state.pickSqliteDatabasePath);
-  const isConnecting = useAppStore((state) => state.isConnecting);
+  const connectToDatabase = useConnectionStore((state) => state.connectToDatabase);
+  const loadSavedConnections = useConnectionStore((state) => state.loadSavedConnections);
+  const testConnection = useConnectionStore((state) => state.testConnection);
+  const createLocalDatabase = useConnectionStore((state) => state.createLocalDatabase);
+  const suggestSqliteDatabasePath = useConnectionStore((state) => state.suggestSqliteDatabasePath);
+  const pickSqliteDatabasePath = useConnectionStore((state) => state.pickSqliteDatabasePath);
+  const isConnecting = useConnectionStore((state) => state.isConnecting);
+  const installedPlugins = usePluginStore((state) => state.plugins);
+  const pluginsHaveLoaded = usePluginStore((state) => state.hasLoaded);
+  const loadPlugins = usePluginStore((state) => state.loadPlugins);
+  const openSearchDriver = useMemo(
+    () => findStableOpenSearchDriver(installedPlugins),
+    [installedPlugins],
+  );
+  const availableDatabases = useMemo(
+    () =>
+      ALL_DATABASES.map((database) =>
+        database.key === "opensearch"
+          ? { ...database, supported: Boolean(openSearchDriver) }
+          : database,
+      ),
+    [openSearchDriver],
+  );
 
   // --- State ---
   const [step, setStep] = useState<"pick" | "form">(editConnection ? "form" : "pick");
@@ -172,9 +190,9 @@ export function ConnectionForm({
   const hasBootstrapDatabaseName = !!formData.database?.trim();
   const isBootstrappingWorkspace = isCreatingDatabase || isConnecting;
   const sqliteDatabaseName = (formData.database || "").trim() || (formData.name || "").trim() || "local-database";
-  const supportedCount = ALL_DATABASES.filter((db) => db.supported).length;
-  const roadmapCount = ALL_DATABASES.length - supportedCount;
-  const localRoadmapCount = ALL_DATABASES.filter(
+  const supportedCount = availableDatabases.filter((db) => db.supported).length;
+  const roadmapCount = availableDatabases.length - supportedCount;
+  const localRoadmapCount = availableDatabases.filter(
     (db) => !LOCAL_BOOTSTRAP_READY.has(db.key),
   ).length;
 
@@ -460,6 +478,7 @@ export function ConnectionForm({
   };
 
   const handleContinueFromPicker = (db: DbEntry) => {
+    if (!db.supported) return;
     if (bootstrapMode && !LOCAL_BOOTSTRAP_READY.has(db.key)) return;
 
     passwordDraftRef.current = "";
@@ -484,7 +503,14 @@ export function ConnectionForm({
             : prev.username,
         file_path: db.connectionMode === "file" ? prev.file_path : "",
         use_ssl: db.supportsSsl ? prev.use_ssl : false,
-        additional_fields: switchedEngine ? {} : (prev.additional_fields ?? {}),
+        additional_fields: db.key === "opensearch" && openSearchDriver
+          ? {
+              plugin_id: openSearchDriver.pluginId,
+              plugin_driver_id: openSearchDriver.id,
+            }
+          : switchedEngine
+            ? {}
+            : (prev.additional_fields ?? {}),
       };
     });
     setStep("form");
@@ -642,11 +668,11 @@ export function ConnectionForm({
 
   // --- Picker computed values ---
   const filteredDbs = pickerSearch
-    ? ALL_DATABASES.filter((d) =>
+    ? availableDatabases.filter((d) =>
       d.label.toLowerCase().includes(pickerSearch.toLowerCase()) ||
       d.key.toLowerCase().includes(pickerSearch.toLowerCase()),
     )
-    : ALL_DATABASES;
+    : availableDatabases;
 
   const pickerSections = useMemo<PickerSection[]>(() => {
     if (!bootstrapMode) {
@@ -662,6 +688,10 @@ export function ConnectionForm({
   }, [bootstrapMode, copy, filteredDbs]);
 
   // --- Effects ---
+  useEffect(() => {
+    if (!pluginsHaveLoaded) void loadPlugins();
+  }, [loadPlugins, pluginsHaveLoaded]);
+
   useEffect(() => {
     if (!bootstrapMode || !isSqlite || sqlitePathTouched) return;
     let cancelled = false;

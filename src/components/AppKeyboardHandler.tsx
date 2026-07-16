@@ -48,7 +48,7 @@ export function AppKeyboardHandler({
         return;
       }
 
-      if (metaPressed && !e.altKey && key === "p") {
+      if (metaPressed && e.altKey && key === "p") {
         e.preventDefault();
         e.stopPropagation();
         setShowAISlidePanel((current) => !current);
@@ -62,7 +62,7 @@ export function AppKeyboardHandler({
       }
 
       // Quick Switcher: Ctrl+P / Cmd+P (no shift)
-      if (metaPressed && !e.shiftKey && key === "p") {
+      if (metaPressed && !e.shiftKey && !e.altKey && key === "p") {
         e.preventDefault();
         e.stopPropagation();
         onOpenQuickSwitcher();
@@ -170,7 +170,7 @@ export function AppKeyboardHandler({
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [activeTab, onNewQuery, onOpenCommandPalette, onRunActiveQuery, onToggleQueryHistory, onToggleSQLFavorites, onToggleSidebar, onToggleTerminalPanel, onToggleVimMode, setUiFontScale, setShowAISlidePanel]);
+  }, [activeTab, onNewQuery, onOpenCommandPalette, onOpenQuickSwitcher, onRunActiveQuery, onToggleQueryHistory, onToggleSQLFavorites, onToggleSidebar, onToggleTerminalPanel, onToggleVimMode, setUiFontScale, setShowAISlidePanel]);
 
   return null;
 }

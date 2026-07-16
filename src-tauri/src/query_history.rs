@@ -48,8 +48,8 @@ impl QueryHistoryStorage {
                 .map_err(|e| format!("Failed to create query history file: {e}"))?;
         }
 
-        let next_id = next_entry_id(&file_path)
-            .map_err(|e| format!("Failed to read query history: {e}"))?;
+        let next_id =
+            next_entry_id(&file_path).map_err(|e| format!("Failed to read query history: {e}"))?;
 
         Ok(Self {
             file_path,
@@ -59,7 +59,9 @@ impl QueryHistoryStorage {
 
     pub fn save_entry(&self, entry: &mut QueryHistoryEntry) -> Result<i64, String> {
         let id = {
-            let mut guard = self.next_id.lock()
+            let mut guard = self
+                .next_id
+                .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
             let id = *guard;
             *guard += 1;
@@ -68,8 +70,8 @@ impl QueryHistoryStorage {
 
         entry.id = Some(id);
 
-        let json = serde_json::to_string(entry)
-            .map_err(|e| format!("Failed to serialize entry: {e}"))?;
+        let json =
+            serde_json::to_string(entry).map_err(|e| format!("Failed to serialize entry: {e}"))?;
 
         let mut file = OpenOptions::new()
             .create(true)
@@ -77,8 +79,7 @@ impl QueryHistoryStorage {
             .open(&self.file_path)
             .map_err(|e| format!("Failed to open query history file: {e}"))?;
 
-        writeln!(file, "{}", json)
-            .map_err(|e| format!("Failed to write entry: {e}"))?;
+        writeln!(file, "{}", json).map_err(|e| format!("Failed to write entry: {e}"))?;
 
         Ok(id)
     }
@@ -101,7 +102,11 @@ impl QueryHistoryStorage {
 
             // Filter by search
             if let Some(search_term) = search {
-                if !entry.query_text.to_lowercase().contains(&search_term.to_lowercase()) {
+                if !entry
+                    .query_text
+                    .to_lowercase()
+                    .contains(&search_term.to_lowercase())
+                {
                     continue;
                 }
             }
@@ -128,7 +133,10 @@ impl QueryHistoryStorage {
 
         let entries = self.read_all_entries()?;
         let original_len = entries.len();
-        let entry_ids = entry_ids.iter().copied().collect::<std::collections::HashSet<_>>();
+        let entry_ids = entry_ids
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>();
         let filtered: Vec<QueryHistoryEntry> = entries
             .into_iter()
             .filter(|entry| entry.id.map(|id| !entry_ids.contains(&id)).unwrap_or(true))
@@ -204,7 +212,9 @@ impl QueryHistoryStorage {
             .max()
             .unwrap_or(0)
             + 1;
-        let mut guard = self.next_id.lock()
+        let mut guard = self
+            .next_id
+            .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
         *guard = next_id;
 
@@ -302,7 +312,8 @@ mod tests {
     #[test]
     fn get_entries_returns_newest_items_first() {
         let path = temp_history_path();
-        let storage = QueryHistoryStorage::new_with_file(path.clone()).expect("storage should initialize");
+        let storage =
+            QueryHistoryStorage::new_with_file(path.clone()).expect("storage should initialize");
 
         let mut first = sample_entry("conn-a", "select 1", "2026-04-02T00:00:00Z");
         let mut second = sample_entry("conn-a", "select 2", "2026-04-02T00:01:00Z");
@@ -326,7 +337,8 @@ mod tests {
     #[test]
     fn delete_entry_rewrites_file_and_preserves_next_id() {
         let path = temp_history_path();
-        let storage = QueryHistoryStorage::new_with_file(path.clone()).expect("storage should initialize");
+        let storage =
+            QueryHistoryStorage::new_with_file(path.clone()).expect("storage should initialize");
 
         let mut first = sample_entry("conn-a", "select 1", "2026-04-02T00:00:00Z");
         let mut second = sample_entry("conn-a", "select 2", "2026-04-02T00:01:00Z");
@@ -334,14 +346,18 @@ mod tests {
         let first_id = storage.save_entry(&mut first).expect("first save");
         storage.save_entry(&mut second).expect("second save");
 
-        let deleted = storage.delete_entry(first_id).expect("delete should succeed");
+        let deleted = storage
+            .delete_entry(first_id)
+            .expect("delete should succeed");
         assert!(deleted);
 
         let mut third = sample_entry("conn-a", "select 3", "2026-04-02T00:02:00Z");
         let third_id = storage.save_entry(&mut third).expect("third save");
         assert_eq!(third_id, 3);
 
-        let entries = storage.get_entries(Some("conn-a"), None, 10).expect("history should load");
+        let entries = storage
+            .get_entries(Some("conn-a"), None, 10)
+            .expect("history should load");
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].query_text, "select 3");
         assert_eq!(entries[1].query_text, "select 2");
@@ -352,7 +368,8 @@ mod tests {
     #[test]
     fn clear_entries_can_target_one_connection() {
         let path = temp_history_path();
-        let storage = QueryHistoryStorage::new_with_file(path.clone()).expect("storage should initialize");
+        let storage =
+            QueryHistoryStorage::new_with_file(path.clone()).expect("storage should initialize");
 
         let mut conn_a = sample_entry("conn-a", "select 1", "2026-04-02T00:00:00Z");
         let mut conn_b = sample_entry("conn-b", "select 2", "2026-04-02T00:01:00Z");
@@ -360,11 +377,17 @@ mod tests {
         storage.save_entry(&mut conn_a).expect("save conn-a");
         storage.save_entry(&mut conn_b).expect("save conn-b");
 
-        let removed = storage.clear_entries(Some("conn-a")).expect("clear should succeed");
+        let removed = storage
+            .clear_entries(Some("conn-a"))
+            .expect("clear should succeed");
         assert_eq!(removed, 1);
 
-        let conn_a_entries = storage.get_entries(Some("conn-a"), None, 10).expect("conn-a history");
-        let conn_b_entries = storage.get_entries(Some("conn-b"), None, 10).expect("conn-b history");
+        let conn_a_entries = storage
+            .get_entries(Some("conn-a"), None, 10)
+            .expect("conn-a history");
+        let conn_b_entries = storage
+            .get_entries(Some("conn-b"), None, 10)
+            .expect("conn-b history");
         assert!(conn_a_entries.is_empty());
         assert_eq!(conn_b_entries.len(), 1);
         assert_eq!(conn_b_entries[0].query_text, "select 2");
@@ -375,7 +398,8 @@ mod tests {
     #[test]
     fn delete_entries_can_remove_multiple_records() {
         let path = temp_history_path();
-        let storage = QueryHistoryStorage::new_with_file(path.clone()).expect("storage should initialize");
+        let storage =
+            QueryHistoryStorage::new_with_file(path.clone()).expect("storage should initialize");
 
         let mut first = sample_entry("conn-a", "select 1", "2026-04-02T00:00:00Z");
         let mut second = sample_entry("conn-a", "select 2", "2026-04-02T00:01:00Z");
@@ -390,7 +414,9 @@ mod tests {
             .expect("bulk delete should succeed");
         assert_eq!(removed, 2);
 
-        let entries = storage.get_entries(Some("conn-a"), None, 10).expect("history should load");
+        let entries = storage
+            .get_entries(Some("conn-a"), None, 10)
+            .expect("history should load");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].query_text, "select 2");
 

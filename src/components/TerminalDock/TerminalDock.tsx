@@ -11,6 +11,18 @@ import "../../styles/lazy-overlays.css";
 interface TerminalDockProps {
   isOpen: boolean;
   onClose: () => void;
+  databaseContext?: TerminalDatabaseContext;
+}
+
+interface TerminalDatabaseContext {
+  connectionId: string;
+  connectionName: string;
+  dbType: string;
+  database?: string;
+  host?: string;
+  port?: number;
+  username?: string;
+  filePath?: string;
 }
 
 interface TerminalSessionInfo {
@@ -32,7 +44,9 @@ interface TerminalExitPayload {
 function getTerminalTheme() {
   const styles = getComputedStyle(document.documentElement);
   const background = styles.getPropertyValue("--bg-base").trim() || "#050b14";
-  const foreground = styles.getPropertyValue("--text-primary").trim() || "rgba(255,255,255,0.88)";
+  const foreground =
+    styles.getPropertyValue("--text-primary").trim() ||
+    "rgba(255,255,255,0.88)";
   const cursor = styles.getPropertyValue("--fintech-green").trim() || "#00d4aa";
   const accent = styles.getPropertyValue("--fintech-cyan").trim() || "#22d3ee";
 
@@ -61,7 +75,11 @@ function getTerminalTheme() {
   };
 }
 
-export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
+export function TerminalDock({
+  isOpen,
+  onClose,
+  databaseContext,
+}: TerminalDockProps) {
   const { language } = useI18n();
   const shellRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -70,12 +88,33 @@ export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const terminalDisposablesRef = useRef<Array<{ dispose: () => void }>>([]);
   const unlistenRef = useRef<UnlistenFn[]>([]);
-  const sessionIdRef = useRef<string>(`workspace-terminal-${crypto.randomUUID()}`);
+  const sessionIdRef = useRef<string>(
+    `workspace-terminal-${crypto.randomUUID()}`,
+  );
+  const databaseContextRef = useRef<TerminalDatabaseContext | undefined>(
+    databaseContext,
+  );
+  const appliedDatabaseContextKeyRef = useRef<string | null>(null);
   const hasInitializedRef = useRef(false);
   const hasStartedSessionRef = useRef(false);
   const [hasBooted, setHasBooted] = useState(false);
-  const [sessionInfo, setSessionInfo] = useState<TerminalSessionInfo | null>(null);
+  const [sessionInfo, setSessionInfo] = useState<TerminalSessionInfo | null>(
+    null,
+  );
   const [isExited, setIsExited] = useState(false);
+
+  const databaseContextKey = [
+    databaseContext?.connectionId,
+    databaseContext?.database,
+    databaseContext?.host,
+    databaseContext?.port,
+    databaseContext?.username,
+    databaseContext?.filePath,
+  ].join("\u0000");
+
+  useEffect(() => {
+    databaseContextRef.current = databaseContext;
+  }, [databaseContext]);
 
   const terminalText =
     language === "vi"
@@ -102,8 +141,13 @@ export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
 
   const fitTerminal = useCallback(() => {
     if (!isOpen) return;
-    if (!viewportRef.current || !terminalRef.current || !fitAddonRef.current) return;
-    if (viewportRef.current.clientWidth === 0 || viewportRef.current.clientHeight === 0) return;
+    if (!viewportRef.current || !terminalRef.current || !fitAddonRef.current)
+      return;
+    if (
+      viewportRef.current.clientWidth === 0 ||
+      viewportRef.current.clientHeight === 0
+    )
+      return;
 
     fitAddonRef.current.fit();
     void invoke("resize_terminal", {
@@ -121,7 +165,9 @@ export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
       if (!terminal) return;
 
       if (forceRestart && hasStartedSessionRef.current) {
-        await invoke("close_terminal", { sessionId: sessionIdRef.current }).catch((error) => {
+        await invoke("close_terminal", {
+          sessionId: sessionIdRef.current,
+        }).catch((error) => {
           console.error("Failed to close terminal session", error);
         });
         hasStartedSessionRef.current = false;
@@ -133,13 +179,15 @@ export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
         cols: Math.max(terminal.cols, 20),
         rows: Math.max(terminal.rows, 8),
         cwd: null,
+        databaseContext: databaseContextRef.current ?? null,
       });
 
       hasStartedSessionRef.current = true;
+      appliedDatabaseContextKeyRef.current = databaseContextKey;
       setSessionInfo(info);
       setIsExited(false);
     },
-    [],
+    [databaseContextKey],
   );
 
   const handleRestart = useCallback(async () => {
@@ -149,6 +197,18 @@ export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
     terminalRef.current?.focus();
     fitTerminal();
   }, [fitTerminal, startTerminalSession]);
+
+  useEffect(() => {
+    if (
+      !hasStartedSessionRef.current ||
+      appliedDatabaseContextKeyRef.current === null ||
+      appliedDatabaseContextKeyRef.current === databaseContextKey
+    ) {
+      return;
+    }
+
+    void handleRestart();
+  }, [databaseContextKey, handleRestart]);
 
   useEffect(() => {
     if (isOpen) {
@@ -165,7 +225,8 @@ export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
       allowTransparency: true,
       cursorBlink: true,
       convertEol: false,
-      fontFamily: "Consolas, 'Cascadia Mono', 'SFMono-Regular', Menlo, monospace",
+      fontFamily:
+        "Consolas, 'Cascadia Mono', 'SFMono-Regular', Menlo, monospace",
       fontSize: 12,
       lineHeight: 1.25,
       scrollback: 5000,
@@ -212,17 +273,23 @@ export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
     let isMounted = true;
 
     void (async () => {
-      const unlistenOutput = await listen<TerminalOutputPayload>("terminal-output", (event) => {
-        if (event.payload.sessionId !== sessionIdRef.current) return;
-        terminalRef.current?.write(event.payload.data);
-      });
+      const unlistenOutput = await listen<TerminalOutputPayload>(
+        "terminal-output",
+        (event) => {
+          if (event.payload.sessionId !== sessionIdRef.current) return;
+          terminalRef.current?.write(event.payload.data);
+        },
+      );
 
-      const unlistenExit = await listen<TerminalExitPayload>("terminal-exit", (event) => {
-        if (event.payload.sessionId !== sessionIdRef.current) return;
-        hasStartedSessionRef.current = false;
-        setIsExited(true);
-        terminalRef.current?.writeln(`\r\n[${event.payload.reason}]`);
-      });
+      const unlistenExit = await listen<TerminalExitPayload>(
+        "terminal-exit",
+        (event) => {
+          if (event.payload.sessionId !== sessionIdRef.current) return;
+          hasStartedSessionRef.current = false;
+          setIsExited(true);
+          terminalRef.current?.writeln(`\r\n[${event.payload.reason}]`);
+        },
+      );
 
       if (!isMounted) {
         unlistenOutput();
@@ -246,7 +313,9 @@ export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
       isMounted = false;
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
-      terminalDisposablesRef.current.forEach((disposable) => disposable.dispose());
+      terminalDisposablesRef.current.forEach((disposable) =>
+        disposable.dispose(),
+      );
       terminalDisposablesRef.current = [];
       unlistenRef.current.forEach((unlisten) => void unlisten());
       unlistenRef.current = [];
@@ -255,7 +324,9 @@ export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
       fitAddonRef.current = null;
       hasInitializedRef.current = false;
       hasStartedSessionRef.current = false;
-      void invoke("close_terminal", { sessionId: sessionIdRef.current }).catch(() => undefined);
+      void invoke("close_terminal", { sessionId: sessionIdRef.current }).catch(
+        () => undefined,
+      );
     };
   }, [fitTerminal, hasBooted, startTerminalSession]);
 
@@ -283,10 +354,18 @@ export function TerminalDock({ isOpen, onClose }: TerminalDockProps) {
             <span>{terminalText.title}</span>
           </div>
           <div className="workspace-terminal-copy">
-            <strong>{sessionInfo?.shellLabel || terminalText.fallbackShell}</strong>
-            <span>{sessionInfo?.cwd || terminalText.loading}</span>
+            <strong>
+              {sessionInfo?.shellLabel || terminalText.fallbackShell}
+            </strong>
+            <span>
+              {databaseContext
+                ? `${databaseContext.connectionName} | ${databaseContext.database || databaseContext.dbType.toUpperCase()}`
+                : sessionInfo?.cwd || terminalText.loading}
+            </span>
           </div>
-          <span className={`workspace-terminal-state ${isExited ? "is-exited" : ""}`}>
+          <span
+            className={`workspace-terminal-state ${isExited ? "is-exited" : ""}`}
+          >
             {isExited ? terminalText.exited : terminalText.live}
           </span>
         </div>

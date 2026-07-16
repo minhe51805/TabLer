@@ -1,29 +1,46 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { InstalledPluginRecord } from "../types/plugin";
+import type {
+  InstalledPluginRecord,
+  PluginRegistryIndex,
+  PluginRegistryPackage,
+  PluginUpdateCandidate,
+} from "../types/plugin";
 
 interface PluginStoreState {
   plugins: InstalledPluginRecord[];
   isLoading: boolean;
+  hasLoaded: boolean;
   error: string | null;
+  registryPackages: PluginRegistryPackage[];
+  updates: PluginUpdateCandidate[];
+  isRegistryLoading: boolean;
 
   loadPlugins: () => Promise<void>;
   reloadPlugins: () => Promise<void>;
+  loadRegistry: () => Promise<void>;
+  checkUpdates: () => Promise<void>;
+  installRegistryPlugin: (pluginId: string) => Promise<InstalledPluginRecord>;
   installPlugin: () => Promise<InstalledPluginRecord | null>;
-  setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<void>;
-  uninstallPlugin: (pluginId: string) => Promise<void>;
+  setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<InstalledPluginRecord | null>;
+  rollbackPlugin: (pluginId: string) => Promise<InstalledPluginRecord>;
+  uninstallPlugin: (pluginId: string) => Promise<boolean>;
 }
 
 export const usePluginStore = create<PluginStoreState>((set) => ({
   plugins: [],
   isLoading: false,
+  hasLoaded: false,
   error: null,
+  registryPackages: [],
+  updates: [],
+  isRegistryLoading: false,
 
   loadPlugins: async () => {
     set({ isLoading: true, error: null });
     try {
       const plugins = await invoke<InstalledPluginRecord[]>("list_installed_plugins");
-      set({ plugins, isLoading: false });
+      set({ plugins, isLoading: false, hasLoaded: true });
     } catch (e) {
       set({ error: String(e), isLoading: false });
     }
@@ -71,8 +88,69 @@ export const usePluginStore = create<PluginStoreState>((set) => ({
           p.manifest.id === updated.manifest.id ? updated : p,
         ),
       }));
+      return updated;
     } catch (e) {
       set({ error: String(e) });
+      return null;
+    }
+  },
+
+  loadRegistry: async () => {
+    set({ isRegistryLoading: true, error: null });
+    try {
+      const registry = await invoke<PluginRegistryIndex>("get_plugin_registry");
+      set({ registryPackages: registry.packages, isRegistryLoading: false });
+    } catch (error) {
+      set({ error: String(error), isRegistryLoading: false });
+    }
+  },
+
+  checkUpdates: async () => {
+    set({ isRegistryLoading: true, error: null });
+    try {
+      const updates = await invoke<PluginUpdateCandidate[]>("check_plugin_updates");
+      set({ updates, isRegistryLoading: false });
+    } catch (error) {
+      set({ error: String(error), isRegistryLoading: false });
+    }
+  },
+
+  installRegistryPlugin: async (pluginId: string) => {
+    set({ isRegistryLoading: true, error: null });
+    try {
+      const installed = await invoke<InstalledPluginRecord>("install_registry_plugin", {
+        pluginId,
+      });
+      set((state) => ({
+        plugins: state.plugins.some((plugin) => plugin.manifest.id === installed.manifest.id)
+          ? state.plugins.map((plugin) =>
+              plugin.manifest.id === installed.manifest.id ? installed : plugin,
+            )
+          : [...state.plugins, installed],
+        updates: state.updates.filter((update) => update.pluginId !== installed.manifest.id),
+        isRegistryLoading: false,
+      }));
+      return installed;
+    } catch (error) {
+      set({ error: String(error), isRegistryLoading: false });
+      throw error;
+    }
+  },
+
+  rollbackPlugin: async (pluginId: string) => {
+    try {
+      const updated = await invoke<InstalledPluginRecord>("rollback_plugin_bundle", {
+        pluginId,
+      });
+      set((state) => ({
+        plugins: state.plugins.map((plugin) =>
+          plugin.manifest.id === updated.manifest.id ? updated : plugin,
+        ),
+      }));
+      return updated;
+    } catch (error) {
+      set({ error: String(error) });
+      throw error;
     }
   },
 
@@ -82,8 +160,10 @@ export const usePluginStore = create<PluginStoreState>((set) => ({
       set((state) => ({
         plugins: state.plugins.filter((p) => p.manifest.id !== pluginId),
       }));
+      return true;
     } catch (e) {
       set({ error: String(e) });
+      return false;
     }
   },
 }));

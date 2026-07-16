@@ -63,7 +63,8 @@ impl RedisDriver {
             .set_redis_settings(redis_settings);
 
         let connection = task::spawn_blocking(move || -> Result<RedisConnection> {
-            let client = Client::open(connection_info).context("Failed to initialize Redis client")?;
+            let client =
+                Client::open(connection_info).context("Failed to initialize Redis client")?;
             let mut connection = client
                 .get_connection()
                 .context("Failed to open the Redis connection")?;
@@ -387,11 +388,17 @@ impl RedisDriver {
         let mut chunks = values.into_iter();
         while let Some(left) = chunks.next() {
             let right = chunks.next().unwrap_or(RedisValue::Nil);
-            rows.push(vec![Self::redis_value_to_cell(left), Self::redis_value_to_cell(right)]);
+            rows.push(vec![
+                Self::redis_value_to_cell(left),
+                Self::redis_value_to_cell(right),
+            ]);
         }
 
         Some((
-            vec![Self::column(left_name, "TEXT"), Self::column(right_name, "TEXT")],
+            vec![
+                Self::column(left_name, "TEXT"),
+                Self::column(right_name, "TEXT"),
+            ],
             rows,
         ))
     }
@@ -401,7 +408,10 @@ impl RedisDriver {
 
         match json {
             JsonValue::Array(items) => {
-                if items.iter().all(|item| matches!(item, JsonValue::Object(_))) {
+                if items
+                    .iter()
+                    .all(|item| matches!(item, JsonValue::Object(_)))
+                {
                     let mut keys = Vec::<String>::new();
                     for item in &items {
                         if let JsonValue::Object(map) = item {
@@ -501,7 +511,11 @@ impl RedisDriver {
         let (columns, rows) = match upper_name.as_str() {
             "HGETALL" => Self::rows_from_pair_array(value.clone(), "field", "value")
                 .unwrap_or_else(|| Self::build_generic_query_table(value)),
-            "ZRANGE" | "ZREVRANGE" if command_tokens.iter().any(|token| token.eq_ignore_ascii_case("WITHSCORES")) => {
+            "ZRANGE" | "ZREVRANGE"
+                if command_tokens
+                    .iter()
+                    .any(|token| token.eq_ignore_ascii_case("WITHSCORES")) =>
+            {
                 Self::rows_from_pair_array(value.clone(), "member", "score")
                     .unwrap_or_else(|| Self::build_generic_query_table(value))
             }
@@ -516,7 +530,10 @@ impl RedisDriver {
                         other => vec![vec![cursor, Self::redis_value_to_cell(other)]],
                     };
                     (
-                        vec![Self::column("cursor", "TEXT"), Self::column("value", "TEXT")],
+                        vec![
+                            Self::column("cursor", "TEXT"),
+                            Self::column("value", "TEXT"),
+                        ],
                         rows,
                     )
                 }
@@ -551,7 +568,10 @@ impl RedisDriver {
                         )
                     } else {
                         (
-                            vec![Self::column("cursor", "TEXT"), Self::column("value", "TEXT")],
+                            vec![
+                                Self::column("cursor", "TEXT"),
+                                Self::column("value", "TEXT"),
+                            ],
                             vec![vec![cursor, JsonValue::Null]],
                         )
                     }
@@ -568,7 +588,9 @@ impl RedisDriver {
                                 let payload = parts.remove(0);
                                 Some(vec![
                                     id,
-                                    JsonValue::String(Self::redis_value_to_json(payload).to_string()),
+                                    JsonValue::String(
+                                        Self::redis_value_to_json(payload).to_string(),
+                                    ),
                                 ])
                             }
                             _ => None,
@@ -775,7 +797,10 @@ impl RedisDriver {
             .collect::<Vec<_>>()
     }
 
-    fn fetch_hash_rows(connection: &mut RedisConnection, table: &str) -> Result<Vec<Vec<JsonValue>>> {
+    fn fetch_hash_rows(
+        connection: &mut RedisConnection,
+        table: &str,
+    ) -> Result<Vec<Vec<JsonValue>>> {
         let value = cmd("HGETALL")
             .arg(table)
             .query::<RedisValue>(connection)
@@ -786,7 +811,10 @@ impl RedisDriver {
             .unwrap_or_default())
     }
 
-    fn fetch_list_rows(connection: &mut RedisConnection, table: &str) -> Result<Vec<Vec<JsonValue>>> {
+    fn fetch_list_rows(
+        connection: &mut RedisConnection,
+        table: &str,
+    ) -> Result<Vec<Vec<JsonValue>>> {
         let values = cmd("LRANGE")
             .arg(table)
             .arg(0)
@@ -797,11 +825,19 @@ impl RedisDriver {
         Ok(values
             .into_iter()
             .enumerate()
-            .map(|(index, value)| vec![JsonValue::from(index as i64), JsonValue::String(Self::bytes_to_string(&value))])
+            .map(|(index, value)| {
+                vec![
+                    JsonValue::from(index as i64),
+                    JsonValue::String(Self::bytes_to_string(&value)),
+                ]
+            })
             .collect::<Vec<_>>())
     }
 
-    fn fetch_set_rows(connection: &mut RedisConnection, table: &str) -> Result<Vec<Vec<JsonValue>>> {
+    fn fetch_set_rows(
+        connection: &mut RedisConnection,
+        table: &str,
+    ) -> Result<Vec<Vec<JsonValue>>> {
         let mut members = cmd("SMEMBERS")
             .arg(table)
             .query::<Vec<Vec<u8>>>(connection)
@@ -814,7 +850,10 @@ impl RedisDriver {
             .collect::<Vec<_>>())
     }
 
-    fn fetch_zset_rows(connection: &mut RedisConnection, table: &str) -> Result<Vec<Vec<JsonValue>>> {
+    fn fetch_zset_rows(
+        connection: &mut RedisConnection,
+        table: &str,
+    ) -> Result<Vec<Vec<JsonValue>>> {
         let value = cmd("ZRANGE")
             .arg(table)
             .arg(0)
@@ -828,7 +867,10 @@ impl RedisDriver {
             .unwrap_or_default())
     }
 
-    fn fetch_stream_rows(connection: &mut RedisConnection, table: &str) -> Result<Vec<Vec<JsonValue>>> {
+    fn fetch_stream_rows(
+        connection: &mut RedisConnection,
+        table: &str,
+    ) -> Result<Vec<Vec<JsonValue>>> {
         let value = cmd("XRANGE")
             .arg(table)
             .arg("-")
@@ -842,7 +884,9 @@ impl RedisDriver {
                 .filter_map(|entry| match entry {
                     RedisValue::Array(mut parts) if parts.len() == 2 => {
                         let id = Self::redis_value_to_cell(parts.remove(0));
-                        let payload = JsonValue::String(Self::redis_value_to_json(parts.remove(0)).to_string());
+                        let payload = JsonValue::String(
+                            Self::redis_value_to_json(parts.remove(0)).to_string(),
+                        );
                         Some(vec![id, payload])
                     }
                     _ => None,
@@ -859,9 +903,7 @@ impl RedisDriver {
 impl DatabaseDriver for RedisDriver {
     async fn ping(&self) -> Result<()> {
         self.with_connection(|connection, _| {
-            let _: String = cmd("PING")
-                .query(connection)
-                .context("Redis ping failed")?;
+            let _: String = cmd("PING").query(connection).context("Redis ping failed")?;
             Ok(())
         })
         .await
@@ -874,9 +916,7 @@ impl DatabaseDriver for RedisDriver {
     async fn list_databases(&self) -> Result<Vec<DatabaseInfo>> {
         self.with_connection(|connection, current_db| {
             let current_label = Self::database_label(*current_db);
-            let info_result = cmd("INFO")
-                .arg("keyspace")
-                .query::<String>(connection);
+            let info_result = cmd("INFO").arg("keyspace").query::<String>(connection);
 
             let mut databases = info_result
                 .ok()
@@ -903,7 +943,10 @@ impl DatabaseDriver for RedisDriver {
                 })
                 .unwrap_or_default();
 
-            if !databases.iter().any(|database| database.name == current_label) {
+            if !databases
+                .iter()
+                .any(|database| database.name == current_label)
+            {
                 databases.push(DatabaseInfo {
                     name: current_label,
                     size: None,
@@ -1034,7 +1077,9 @@ impl DatabaseDriver for RedisDriver {
                     let value = cmd("GET")
                         .arg(&table_name)
                         .query::<Option<Vec<u8>>>(connection)
-                        .with_context(|| format!("Failed to fetch Redis string value for {}", table_name))?;
+                        .with_context(|| {
+                            format!("Failed to fetch Redis string value for {}", table_name)
+                        })?;
                     let rows = value
                         .map(|bytes| {
                             vec![vec![
@@ -1053,7 +1098,10 @@ impl DatabaseDriver for RedisDriver {
                     Self::fetch_hash_rows(connection, &table_name)?,
                 ),
                 "list" => (
-                    vec![Self::column("index", "INTEGER"), Self::column("value", "TEXT")],
+                    vec![
+                        Self::column("index", "INTEGER"),
+                        Self::column("value", "TEXT"),
+                    ],
                     Self::fetch_list_rows(connection, &table_name)?,
                 ),
                 "set" => (
@@ -1061,22 +1109,23 @@ impl DatabaseDriver for RedisDriver {
                     Self::fetch_set_rows(connection, &table_name)?,
                 ),
                 "zset" => (
-                    vec![Self::column("member", "TEXT"), Self::column("score", "DOUBLE")],
+                    vec![
+                        Self::column("member", "TEXT"),
+                        Self::column("score", "DOUBLE"),
+                    ],
                     Self::fetch_zset_rows(connection, &table_name)?,
                 ),
                 "stream" => (
                     vec![Self::column("id", "TEXT"), Self::column("payload", "JSON")],
                     Self::fetch_stream_rows(connection, &table_name)?,
                 ),
-                _ => {
-                    (
-                        vec![Self::column("key", "TEXT"), Self::column("value", "TEXT")],
-                        vec![vec![
-                            JsonValue::String(table_name.clone()),
-                            JsonValue::String(format!("Unsupported Redis key type: {key_type}")),
-                        ]],
-                    )
-                }
+                _ => (
+                    vec![Self::column("key", "TEXT"), Self::column("value", "TEXT")],
+                    vec![vec![
+                        JsonValue::String(table_name.clone()),
+                        JsonValue::String(format!("Unsupported Redis key type: {key_type}")),
+                    ]],
+                ),
             };
 
             let mut filtered_rows = Self::maybe_filter_rows(rows, filter.as_deref());
@@ -1111,23 +1160,36 @@ impl DatabaseDriver for RedisDriver {
                 "hash" => cmd("HLEN")
                     .arg(&table_name)
                     .query::<i64>(connection)
-                    .with_context(|| format!("Failed to count Redis hash entries for {}", table_name))?,
+                    .with_context(|| {
+                        format!("Failed to count Redis hash entries for {}", table_name)
+                    })?,
                 "list" => cmd("LLEN")
                     .arg(&table_name)
                     .query::<i64>(connection)
-                    .with_context(|| format!("Failed to count Redis list entries for {}", table_name))?,
+                    .with_context(|| {
+                        format!("Failed to count Redis list entries for {}", table_name)
+                    })?,
                 "set" => cmd("SCARD")
                     .arg(&table_name)
                     .query::<i64>(connection)
-                    .with_context(|| format!("Failed to count Redis set members for {}", table_name))?,
+                    .with_context(|| {
+                        format!("Failed to count Redis set members for {}", table_name)
+                    })?,
                 "zset" => cmd("ZCARD")
                     .arg(&table_name)
                     .query::<i64>(connection)
-                    .with_context(|| format!("Failed to count Redis sorted-set members for {}", table_name))?,
+                    .with_context(|| {
+                        format!(
+                            "Failed to count Redis sorted-set members for {}",
+                            table_name
+                        )
+                    })?,
                 "stream" => cmd("XLEN")
                     .arg(&table_name)
                     .query::<i64>(connection)
-                    .with_context(|| format!("Failed to count Redis stream entries for {}", table_name))?,
+                    .with_context(|| {
+                        format!("Failed to count Redis stream entries for {}", table_name)
+                    })?,
                 "none" => 0,
                 _ => cmd("EXISTS")
                     .arg(&table_name)
@@ -1219,11 +1281,16 @@ mod tests {
 
     #[test]
     fn parses_redis_cli_command_lines_with_quotes() {
-        let commands = RedisDriver::parse_command_lines("SET greeting \"hello world\"\nPING").unwrap();
+        let commands =
+            RedisDriver::parse_command_lines("SET greeting \"hello world\"\nPING").unwrap();
         assert_eq!(
             commands,
             vec![
-                vec!["SET".to_string(), "greeting".to_string(), "hello world".to_string()],
+                vec![
+                    "SET".to_string(),
+                    "greeting".to_string(),
+                    "hello world".to_string()
+                ],
                 vec!["PING".to_string()],
             ]
         );

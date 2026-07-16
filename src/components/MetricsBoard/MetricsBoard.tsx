@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, Sparkles } from "lucide-react";
-import { useAppStore } from "../../stores/appStore";
+import { useConnectionStore } from "../../stores/connectionStore";
+import { useUIStore } from "../../stores/uiStore";
 import { useI18n } from "../../i18n";
 import type {
   MetricsBoardDefinition,
   MetricsWidgetDefinition,
   MetricsWidgetType,
+  QueryResult,
 } from "../../types";
 import type {
   CSSProperties,
@@ -107,8 +109,14 @@ function buildMetricsBoardAttachmentSnapshot(args: {
   databaseLabel: string;
 }) {
   const { board, connectionLabel, databaseLabel } = args;
-  const visibleWidgets = board.widgets.slice(0, MAX_AI_BOARD_ATTACHMENT_WIDGETS);
-  const hiddenWidgetCount = Math.max(0, board.widgets.length - visibleWidgets.length);
+  const visibleWidgets = board.widgets.slice(
+    0,
+    MAX_AI_BOARD_ATTACHMENT_WIDGETS,
+  );
+  const hiddenWidgetCount = Math.max(
+    0,
+    board.widgets.length - visibleWidgets.length,
+  );
 
   return [
     "Metrics dashboard snapshot:",
@@ -118,11 +126,13 @@ function buildMetricsBoardAttachmentSnapshot(args: {
     `Widget count: ${board.widgets.length}`,
     "",
     "Widgets:",
-    ...visibleWidgets.map((widget, index) => [
-      `${index + 1}. [${widget.type}] ${widget.title}`,
-      `   layout: x=${widget.grid_x}, y=${widget.grid_y}, w=${widget.col_span}, h=${widget.row_span}, refresh=${widget.refresh_seconds}s`,
-      `   query: ${compactWidgetQueryForAI(widget.query)}`,
-    ].join("\n")),
+    ...visibleWidgets.map((widget, index) =>
+      [
+        `${index + 1}. [${widget.type}] ${widget.title}`,
+        `   layout: x=${widget.grid_x}, y=${widget.grid_y}, w=${widget.col_span}, h=${widget.row_span}, refresh=${widget.refresh_seconds}s`,
+        `   query: ${compactWidgetQueryForAI(widget.query)}`,
+      ].join("\n"),
+    ),
     hiddenWidgetCount > 0
       ? `... ${hiddenWidgetCount} more widget(s) are present on this dashboard but omitted from this compact snapshot.`
       : "",
@@ -145,15 +155,20 @@ export function MetricsBoard({
   integratedSidebar = true,
 }: Props) {
   const { language, t } = useI18n();
-  const updateTab = useAppStore((state) => state.updateTab);
-  const connections = useAppStore((state) => state.connections);
+  const updateTab = useUIStore((state) => state.updateTab);
+  const addTab = useUIStore((state) => state.addTab);
+  const setActiveTab = useUIStore((state) => state.setActiveTab);
+  const connections = useConnectionStore((state) => state.connections);
   const [boards, setBoards] = useState<MetricsBoardDefinition[]>([]);
   const [boardSearch, setBoardSearch] = useState("");
-  const [activeBoardId, setActiveBoardId] = useState<string | null>(boardId ?? null);
+  const [activeBoardId, setActiveBoardId] = useState<string | null>(
+    boardId ?? null,
+  );
   const [activeWidgetId, setActiveWidgetId] = useState<string | null>(null);
   const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
   const [widgetQueryDraft, setWidgetQueryDraft] = useState("");
-  const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState | null>(null);
+  const [canvasContextMenu, setCanvasContextMenu] =
+    useState<CanvasContextMenuState | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
   const [canvasWidth, setCanvasWidth] = useState(1080);
@@ -165,7 +180,8 @@ export function MetricsBoard({
   const boardSearchInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeConnection = useMemo(
-    () => connections.find((connection) => connection.id === connectionId) || null,
+    () =>
+      connections.find((connection) => connection.id === connectionId) || null,
     [connectionId, connections],
   );
 
@@ -173,7 +189,9 @@ export function MetricsBoard({
     (nextBoards: MetricsBoardDefinition[]) => {
       setBoards(nextBoards);
       const allBoards = readStoredBoards();
-      const otherBoards = allBoards.filter((board) => board.connection_id !== connectionId);
+      const otherBoards = allBoards.filter(
+        (board) => board.connection_id !== connectionId,
+      );
       writeStoredBoards([...otherBoards, ...nextBoards]);
       window.dispatchEvent(
         new CustomEvent("metrics-boards-updated", {
@@ -185,7 +203,9 @@ export function MetricsBoard({
   );
 
   useEffect(() => {
-    const connectionBoards = readStoredBoards().filter((board) => board.connection_id === connectionId);
+    const connectionBoards = readStoredBoards().filter(
+      (board) => board.connection_id === connectionId,
+    );
     if (connectionBoards.length === 0) {
       const initialBoard = createBoardDefinition(connectionId, database, []);
       persistBoards([initialBoard]);
@@ -197,7 +217,9 @@ export function MetricsBoard({
 
     setBoards(connectionBoards);
     const nextActiveBoardId =
-      (boardId && connectionBoards.some((board) => board.id === boardId) && boardId) ||
+      (boardId &&
+        connectionBoards.some((board) => board.id === boardId) &&
+        boardId) ||
       connectionBoards[0].id;
     setActiveBoardId(nextActiveBoardId);
     setActiveWidgetId(null);
@@ -211,7 +233,9 @@ export function MetricsBoard({
         return;
       }
 
-      const connectionBoards = readStoredBoards().filter((board) => board.connection_id === connectionId);
+      const connectionBoards = readStoredBoards().filter(
+        (board) => board.connection_id === connectionId,
+      );
       setBoards(connectionBoards);
 
       setActiveBoardId((current) => {
@@ -226,7 +250,8 @@ export function MetricsBoard({
     };
 
     window.addEventListener("metrics-boards-updated", handleBoardsUpdated);
-    return () => window.removeEventListener("metrics-boards-updated", handleBoardsUpdated);
+    return () =>
+      window.removeEventListener("metrics-boards-updated", handleBoardsUpdated);
   }, [boardId, connectionId]);
 
   const filteredBoards = useMemo(() => {
@@ -242,37 +267,58 @@ export function MetricsBoard({
   const widgetLibrary = useMemo(() => _getWidgetLibrary(), [language]);
 
   const editingWidget = useMemo(
-    () => activeBoard?.widgets.find((widget) => widget.id === editingWidgetId) || null,
+    () =>
+      activeBoard?.widgets.find((widget) => widget.id === editingWidgetId) ||
+      null,
     [activeBoard, editingWidgetId],
   );
 
   const displayDatabaseLabel = useMemo(() => {
-    if (!database && !activeBoard?.database) return activeConnection?.name || t("common.database");
+    if (!database && !activeBoard?.database)
+      return activeConnection?.name || t("common.database");
     const rawDatabase =
       activeConnection?.db_type === "sqlite"
         ? getLastPathSegment(database || activeBoard?.database)
         : database || activeBoard?.database || "";
-    return compactMetricsLabel(rawDatabase || activeConnection?.name || t("common.database"));
-  }, [activeBoard?.database, activeConnection?.db_type, activeConnection?.name, database, t]);
+    return compactMetricsLabel(
+      rawDatabase || activeConnection?.name || t("common.database"),
+    );
+  }, [
+    activeBoard?.database,
+    activeConnection?.db_type,
+    activeConnection?.name,
+    database,
+    t,
+  ]);
 
   const displayConnectionLabel = useMemo(() => {
     const source =
       activeConnection?.db_type === "sqlite"
         ? `${t("common.file")} workspace`
-        : activeConnection?.name || activeConnection?.host || t("workspace.ready.connection");
+        : activeConnection?.name ||
+          activeConnection?.host ||
+          t("workspace.ready.connection");
     return compactMetricsLabel(source, 16);
-  }, [activeConnection?.db_type, activeConnection?.host, activeConnection?.name, t]);
+  }, [
+    activeConnection?.db_type,
+    activeConnection?.host,
+    activeConnection?.name,
+    t,
+  ]);
 
-  const shouldKeepWidgetSelection = useCallback((target: EventTarget | null) => {
-    if (!(target instanceof HTMLElement)) return false;
+  const shouldKeepWidgetSelection = useCallback(
+    (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false;
 
-    return Boolean(
-      target.closest(".metrics-widget-card") ||
+      return Boolean(
+        target.closest(".metrics-widget-card") ||
         target.closest(".metrics-widget-editor") ||
         target.closest(".metrics-board-list-child") ||
         target.closest(".metrics-board-context-menu-shell"),
-    );
-  }, []);
+      );
+    },
+    [],
+  );
 
   const clearWidgetSelection = useCallback(() => {
     setActiveWidgetId(null);
@@ -287,21 +333,35 @@ export function MetricsBoard({
 
   const handleShellPointerDownCapture = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if ((!activeWidgetId && !editingWidgetId) || dragState || resizeState) return;
+      if ((!activeWidgetId && !editingWidgetId) || dragState || resizeState)
+        return;
       if (shouldKeepWidgetSelection(event.target)) return;
       clearWidgetSelection();
     },
-    [activeWidgetId, clearWidgetSelection, dragState, editingWidgetId, resizeState, shouldKeepWidgetSelection],
+    [
+      activeWidgetId,
+      clearWidgetSelection,
+      dragState,
+      editingWidgetId,
+      resizeState,
+      shouldKeepWidgetSelection,
+    ],
   );
 
   useEffect(() => {
     if (!activeBoard) return;
-    if (activeWidgetId && !activeBoard.widgets.some((widget) => widget.id === activeWidgetId)) {
+    if (
+      activeWidgetId &&
+      !activeBoard.widgets.some((widget) => widget.id === activeWidgetId)
+    ) {
       if (pendingFocusTarget?.widgetId !== activeWidgetId) {
         setActiveWidgetId(null);
       }
     }
-    if (editingWidgetId && !activeBoard.widgets.some((widget) => widget.id === editingWidgetId)) {
+    if (
+      editingWidgetId &&
+      !activeBoard.widgets.some((widget) => widget.id === editingWidgetId)
+    ) {
       if (pendingFocusTarget?.widgetId !== editingWidgetId) {
         setEditingWidgetId(null);
       }
@@ -313,7 +373,9 @@ export function MetricsBoard({
     if (!element || typeof ResizeObserver === "undefined") return;
 
     const updateCanvasWidth = () => {
-      setCanvasWidth(Math.max(element.clientWidth - 32, METRICS_GRID_MIN_WIDTH));
+      setCanvasWidth(
+        Math.max(element.clientWidth - 32, METRICS_GRID_MIN_WIDTH),
+      );
     };
 
     updateCanvasWidth();
@@ -330,14 +392,17 @@ export function MetricsBoard({
 
   useEffect(() => {
     if (!tabId || !activeBoard) return;
-    updateTab(tabId, { metricsBoardId: activeBoard.id, title: activeBoard.name });
+    updateTab(tabId, {
+      metricsBoardId: activeBoard.id,
+      title: activeBoard.name,
+    });
   }, [activeBoard, tabId, updateTab]);
 
   useEffect(() => {
-    const handleFocusMetricsWidget = (
-      event: Event,
-    ) => {
-      const detail = (event as CustomEvent<{ boardId?: string; widgetId?: string }>).detail;
+    const handleFocusMetricsWidget = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ boardId?: string; widgetId?: string }>
+      ).detail;
       if (!detail?.widgetId) return;
 
       if (detail.boardId && detail.boardId !== activeBoardId) {
@@ -354,14 +419,24 @@ export function MetricsBoard({
     };
 
     window.addEventListener("focus-metrics-widget", handleFocusMetricsWidget);
-    return () => window.removeEventListener("focus-metrics-widget", handleFocusMetricsWidget);
+    return () =>
+      window.removeEventListener(
+        "focus-metrics-widget",
+        handleFocusMetricsWidget,
+      );
   }, [activeBoardId]);
 
   useEffect(() => {
     if (!pendingFocusTarget?.widgetId || !activeBoard) return;
-    if (pendingFocusTarget.boardId && pendingFocusTarget.boardId !== activeBoard.id) return;
+    if (
+      pendingFocusTarget.boardId &&
+      pendingFocusTarget.boardId !== activeBoard.id
+    )
+      return;
 
-    const focusedWidget = activeBoard.widgets.find((widget) => widget.id === pendingFocusTarget.widgetId);
+    const focusedWidget = activeBoard.widgets.find(
+      (widget) => widget.id === pendingFocusTarget.widgetId,
+    );
     if (!focusedWidget) return;
 
     setActiveWidgetId(focusedWidget.id);
@@ -372,7 +447,9 @@ export function MetricsBoard({
   useEffect(() => {
     if (!activeWidgetId || !activeBoard) return;
 
-    const activeWidget = activeBoard.widgets.find((widget) => widget.id === activeWidgetId);
+    const activeWidget = activeBoard.widgets.find(
+      (widget) => widget.id === activeWidgetId,
+    );
     const canvasElement = canvasRef.current;
     if (!activeWidget || !canvasElement) return;
 
@@ -386,7 +463,8 @@ export function MetricsBoard({
       const currentTop = canvasElement.scrollTop;
       const currentBottom = currentTop + canvasElement.clientHeight;
       const widgetBottom = top + height + padding;
-      const widgetVisible = maxTop >= currentTop && widgetBottom <= currentBottom;
+      const widgetVisible =
+        maxTop >= currentTop && widgetBottom <= currentBottom;
 
       if (!widgetVisible) {
         canvasElement.scrollTo({
@@ -437,7 +515,9 @@ export function MetricsBoard({
     [canvasWidth],
   );
   const columnWidth = useMemo(
-    () => (surfaceWidth - METRICS_GRID_GAP * (METRICS_GRID_COLUMNS - 1)) / METRICS_GRID_COLUMNS,
+    () =>
+      (surfaceWidth - METRICS_GRID_GAP * (METRICS_GRID_COLUMNS - 1)) /
+      METRICS_GRID_COLUMNS,
     [surfaceWidth],
   );
   const rowUnit = METRICS_GRID_ROW_HEIGHT + METRICS_GRID_GAP;
@@ -446,16 +526,22 @@ export function MetricsBoard({
     const occupiedRows = activeBoard
       ? activeBoard.widgets.reduce((max, widget) => {
           const previewGridY =
-            dragState && dragState.widgetId === widget.id ? dragState.previewGridY : widget.grid_y;
+            dragState && dragState.widgetId === widget.id
+              ? dragState.previewGridY
+              : widget.grid_y;
           if (resizeState && resizeState.widgetId === widget.id) {
-            const bottomPx = previewGridY * rowUnit + resizeState.previewHeightPx;
+            const bottomPx =
+              previewGridY * rowUnit + resizeState.previewHeightPx;
             const rowCount = Math.ceil((bottomPx + METRICS_GRID_GAP) / rowUnit);
             return Math.max(max, rowCount);
           }
           return Math.max(max, previewGridY + widget.row_span);
         }, METRICS_GRID_MIN_ROWS)
       : METRICS_GRID_MIN_ROWS;
-    return occupiedRows * METRICS_GRID_ROW_HEIGHT + Math.max(occupiedRows - 1, 0) * METRICS_GRID_GAP;
+    return (
+      occupiedRows * METRICS_GRID_ROW_HEIGHT +
+      Math.max(occupiedRows - 1, 0) * METRICS_GRID_GAP
+    );
   }, [activeBoard, dragState, resizeState]);
 
   const updateActiveBoard = useCallback(
@@ -476,18 +562,25 @@ export function MetricsBoard({
       if (!activeBoard) return;
 
       updateActiveBoard((board) => {
-        const currentWidget = board.widgets.find((widget) => widget.id === widgetId);
+        const currentWidget = board.widgets.find(
+          (widget) => widget.id === widgetId,
+        );
         if (!currentWidget) return board;
 
         const others = board.widgets.filter((widget) => widget.id !== widgetId);
-        const candidate = normalizeWidgetLayout({ ...currentWidget, ...updates });
+        const candidate = normalizeWidgetLayout({
+          ...currentWidget,
+          ...updates,
+        });
         const positioned = canPlaceWidget(others, candidate, widgetId)
           ? candidate
           : { ...candidate, ...findFirstAvailablePosition(others, candidate) };
 
         return {
           ...board,
-          widgets: board.widgets.map((widget) => (widget.id === widgetId ? positioned : widget)),
+          widgets: board.widgets.map((widget) =>
+            widget.id === widgetId ? positioned : widget,
+          ),
         };
       });
     },
@@ -497,10 +590,10 @@ export function MetricsBoard({
   const createBoard = useCallback(() => {
     const nextBoard = createBoardDefinition(connectionId, database, boards);
     const nextBoards = [nextBoard, ...boards];
-      persistBoards(nextBoards);
-      setActiveBoardId(nextBoard.id);
-      setActiveWidgetId(null);
-      setEditingWidgetId(null);
+    persistBoards(nextBoards);
+    setActiveBoardId(nextBoard.id);
+    setActiveWidgetId(null);
+    setEditingWidgetId(null);
   }, [boards, connectionId, database, persistBoards]);
 
   const handleOpenDatabaseSidebar = useCallback(() => {
@@ -544,10 +637,47 @@ export function MetricsBoard({
     );
   }, [activeBoard, displayConnectionLabel, displayDatabaseLabel, language]);
 
+  const openWidgetResult = useCallback(
+    (widget: MetricsWidgetDefinition, result: QueryResult) => {
+      const id = `metrics-result-${crypto.randomUUID()}`;
+      addTab({
+        id,
+        type: "table",
+        title: `${widget.title || "Metric"} result`,
+        connectionId,
+        database: database || activeBoard?.database,
+        content: widget.query,
+        queryResult: result,
+      });
+      setActiveTab(id);
+    },
+    [activeBoard?.database, addTab, connectionId, database, setActiveTab],
+  );
+
+  const openWidgetQuery = useCallback(
+    (widget: MetricsWidgetDefinition) => {
+      const id = `metrics-query-${crypto.randomUUID()}`;
+      addTab({
+        id,
+        type: "query",
+        title: `${widget.title || "Metric"} SQL`,
+        connectionId,
+        database: database || activeBoard?.database,
+        content: widget.query,
+      });
+      setActiveTab(id);
+    },
+    [activeBoard?.database, addTab, connectionId, database, setActiveTab],
+  );
+
   const addWidget = useCallback(
     (type: MetricsWidgetType, preferredPosition?: Partial<GridPosition>) => {
       if (!activeBoard) return;
-      const nextWidget = createWidgetDefinition(type, activeBoard.widgets, preferredPosition);
+      const nextWidget = createWidgetDefinition(
+        type,
+        activeBoard.widgets,
+        preferredPosition,
+      );
       updateActiveBoard((board) => ({
         ...board,
         widgets: [...board.widgets, nextWidget],
@@ -682,10 +812,19 @@ export function MetricsBoard({
     const leftCandidate = rect.left - editorWidth - METRICS_EDITOR_GAP;
     const left = canPlaceRight
       ? rightCandidate
-      : Math.max(METRICS_GRID_GAP, Math.min(leftCandidate, surfaceWidth - editorWidth - METRICS_GRID_GAP));
+      : Math.max(
+          METRICS_GRID_GAP,
+          Math.min(
+            leftCandidate,
+            surfaceWidth - editorWidth - METRICS_GRID_GAP,
+          ),
+        );
     const top = Math.max(
       METRICS_GRID_GAP,
-      Math.min(rect.top, surfaceHeight - METRICS_EDITOR_ESTIMATED_HEIGHT - METRICS_GRID_GAP),
+      Math.min(
+        rect.top,
+        surfaceHeight - METRICS_EDITOR_ESTIMATED_HEIGHT - METRICS_GRID_GAP,
+      ),
     );
 
     return {
@@ -734,12 +873,24 @@ export function MetricsBoard({
         submenuOpen: false,
       });
     },
-    [activeBoard, clearWidgetSelection, colUnit, dragState, resizeState, rowUnit, surfaceHeight, surfaceWidth],
+    [
+      activeBoard,
+      clearWidgetSelection,
+      colUnit,
+      dragState,
+      resizeState,
+      rowUnit,
+      surfaceHeight,
+      surfaceWidth,
+    ],
   );
 
   const surfaceContentHeight = useMemo(() => {
     if (!widgetEditorLayout) return surfaceHeight;
-    return Math.max(surfaceHeight, widgetEditorLayout.top + widgetEditorLayout.height + 16);
+    return Math.max(
+      surfaceHeight,
+      widgetEditorLayout.top + widgetEditorLayout.height + 16,
+    );
   }, [surfaceHeight, widgetEditorLayout]);
 
   const handleWidgetDragStart = useCallback(
@@ -787,18 +938,31 @@ export function MetricsBoard({
   useEffect(() => {
     if (!dragState || !activeBoard) return;
 
-    const activeWidget = activeBoard.widgets.find((widget) => widget.id === dragState.widgetId);
+    const activeWidget = activeBoard.widgets.find(
+      (widget) => widget.id === dragState.widgetId,
+    );
     if (!activeWidget) return;
 
     const handlePointerMove = (event: PointerEvent) => {
-      const deltaColumns = Math.round((event.clientX - dragState.startClientX) / colUnit);
-      const deltaRows = Math.round((event.clientY - dragState.startClientY) / rowUnit);
-      const nextGridX = clampGridX(dragState.originGridX + deltaColumns, activeWidget.col_span);
+      const deltaColumns = Math.round(
+        (event.clientX - dragState.startClientX) / colUnit,
+      );
+      const deltaRows = Math.round(
+        (event.clientY - dragState.startClientY) / rowUnit,
+      );
+      const nextGridX = clampGridX(
+        dragState.originGridX + deltaColumns,
+        activeWidget.col_span,
+      );
       const nextGridY = clampGridY(dragState.originGridY + deltaRows);
 
       setDragState((current) => {
         if (!current || current.widgetId !== dragState.widgetId) return current;
-        if (current.previewGridX === nextGridX && current.previewGridY === nextGridY) return current;
+        if (
+          current.previewGridX === nextGridX &&
+          current.previewGridY === nextGridY
+        )
+          return current;
         return {
           ...current,
           previewGridX: nextGridX,
@@ -816,7 +980,9 @@ export function MetricsBoard({
           grid_x: current.previewGridX,
           grid_y: current.previewGridY,
         });
-        const others = activeBoard.widgets.filter((widget) => widget.id !== activeWidget.id);
+        const others = activeBoard.widgets.filter(
+          (widget) => widget.id !== activeWidget.id,
+        );
         if (canPlaceWidget(others, candidate, activeWidget.id)) {
           updateWidgetLayout(activeWidget.id, {
             grid_x: candidate.grid_x,
@@ -845,10 +1011,14 @@ export function MetricsBoard({
   useEffect(() => {
     if (!resizeState || !activeBoard) return;
 
-    const activeWidget = activeBoard.widgets.find((widget) => widget.id === resizeState.widgetId);
+    const activeWidget = activeBoard.widgets.find(
+      (widget) => widget.id === resizeState.widgetId,
+    );
     if (!activeWidget) return;
 
-    const others = activeBoard.widgets.filter((widget) => widget.id !== activeWidget.id);
+    const others = activeBoard.widgets.filter(
+      (widget) => widget.id !== activeWidget.id,
+    );
 
     const handlePointerMove = (event: PointerEvent) => {
       const maxColSpan = Math.max(3, 12 - activeWidget.grid_x);
@@ -858,17 +1028,26 @@ export function MetricsBoard({
       const maxHeightPx = rowSpanToHeightPx(6);
       const nextWidthPx = Math.min(
         maxWidthPx,
-        Math.max(minWidthPx, resizeState.originWidthPx + (event.clientX - resizeState.startClientX)),
+        Math.max(
+          minWidthPx,
+          resizeState.originWidthPx +
+            (event.clientX - resizeState.startClientX),
+        ),
       );
       const nextHeightPx = Math.min(
         maxHeightPx,
-        Math.max(minHeightPx, resizeState.originHeightPx + (event.clientY - resizeState.startClientY)),
+        Math.max(
+          minHeightPx,
+          resizeState.originHeightPx +
+            (event.clientY - resizeState.startClientY),
+        ),
       );
       const nextColSpan = widthPxToColSpan(nextWidthPx, columnWidth);
       const nextRowSpan = heightPxToRowSpan(nextHeightPx);
 
       setResizeState((current) => {
-        if (!current || current.widgetId !== resizeState.widgetId) return current;
+        if (!current || current.widgetId !== resizeState.widgetId)
+          return current;
         if (
           current.previewColSpan === nextColSpan &&
           current.previewRowSpan === nextRowSpan &&
@@ -947,7 +1126,9 @@ export function MetricsBoard({
       <div className="metrics-board-main">
         <div className="metrics-board-topbar">
           <div className="metrics-board-topbar-copy">
-            <span className="metrics-board-topbar-kicker">{t("metrics.sidebarKicker")}</span>
+            <span className="metrics-board-topbar-kicker">
+              {t("metrics.sidebarKicker")}
+            </span>
             <strong className="metrics-board-topbar-title">
               {activeBoard?.name || t("metrics.createBoard")}
             </strong>
@@ -962,7 +1143,11 @@ export function MetricsBoard({
               type="button"
               className="metrics-board-topbar-action"
               onClick={handleAttachBoardToAI}
-              title={language === "vi" ? "Dinh kem dashboard vao AI chat" : "Attach this dashboard to AI chat"}
+              title={
+                language === "vi"
+                  ? "Dinh kem dashboard vao AI chat"
+                  : "Attach this dashboard to AI chat"
+              }
               disabled={!activeBoard}
             >
               <Sparkles className="w-3.5 h-3.5" />
@@ -999,6 +1184,8 @@ export function MetricsBoard({
 
         <MetricsBoardCanvas
           connectionId={connectionId}
+          onOpenResult={openWidgetResult}
+          onOpenQuery={openWidgetQuery}
           activeBoard={activeBoard}
           activeWidgetId={activeWidgetId}
           editingWidget={editingWidget}

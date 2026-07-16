@@ -1,23 +1,25 @@
-use super::driver::DatabaseDriver;
-use super::cassandra::CassandraDriver;
 use super::bigquery::BigQueryDriver;
+use super::cassandra::CassandraDriver;
 use super::clickhouse::ClickHouseDriver;
 use super::cloudflare_d1::CloudflareD1Driver;
+use super::driver::DatabaseDriver;
 use super::duckdb::DuckDbDriver;
 use super::libsql::LibSqlDriver;
+use super::models::*;
 use super::mongodb::MongoDbDriver;
 use super::mssql::MssqlDriver;
-use super::models::*;
 use super::mysql::MySqlDriver;
+use super::opensearch::OpenSearchDriver;
 use super::postgres::PostgresDriver;
 use super::redis::RedisDriver;
 use super::snowflake::SnowflakeDriver;
 use super::sqlite::SqliteDriver;
+use crate::ssh::ssh_tunnel::{SshTunnelManager, TunnelHandle};
+use crate::storage::plugin_storage::PluginStorage;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::ssh::ssh_tunnel::{SshTunnelManager, TunnelHandle};
 
 /// Manages all active database connections.
 /// Mirrors TablePro's DatabaseManager — connection pool, lifecycle, primary interface.
@@ -26,14 +28,22 @@ pub struct DatabaseManager {
     connections: Arc<RwLock<HashMap<String, Box<dyn DatabaseDriver>>>>,
     ssh_tunnels: Arc<RwLock<HashMap<String, TunnelHandle>>>,
     ssh_manager: Arc<SshTunnelManager>,
+    plugin_storage: PluginStorage,
 }
 
 impl DatabaseManager {
     pub fn new() -> Self {
+        Self::with_plugin_storage(
+            PluginStorage::new().expect("TableR plugin storage could not be initialized"),
+        )
+    }
+
+    pub fn with_plugin_storage(plugin_storage: PluginStorage) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             ssh_tunnels: Arc::new(RwLock::new(HashMap::new())),
             ssh_manager: Arc::new(SshTunnelManager::new()),
+            plugin_storage,
         }
     }
 
@@ -49,7 +59,7 @@ impl DatabaseManager {
                         .arg(script)
                         .output()
                         .map_err(|e| anyhow!("Failed to execute pre-connect script: {}", e))?;
-                    
+
                     if !output.status.success() {
                         let stderr = String::from_utf8_lossy(&output.stderr);
                         return Err(anyhow!("Pre-connect script failed: {}", stderr));
@@ -63,7 +73,7 @@ impl DatabaseManager {
                         .arg(script)
                         .output()
                         .map_err(|e| anyhow!("Failed to execute pre-connect script: {}", e))?;
-                    
+
                     if !output.status.success() {
                         let stderr = String::from_utf8_lossy(&output.stderr);
                         return Err(anyhow!("Pre-connect script failed: {}", stderr));
@@ -77,12 +87,17 @@ impl DatabaseManager {
         if let Some(ssh_cfg) = &config.ssh_config {
             if ssh_cfg.enabled {
                 let handle = self.ssh_manager.connect_tunnel(ssh_cfg.clone())?;
-                
+
                 // Assuming we want to connect to actual_config.host:actual_config.port but via the SSH tunnel
-                let remote_host = actual_config.host.clone().unwrap_or_else(|| "127.0.0.1".to_string());
+                let remote_host = actual_config
+                    .host
+                    .clone()
+                    .unwrap_or_else(|| "127.0.0.1".to_string());
                 let remote_port = actual_config.port.unwrap_or(actual_config.default_port());
 
-                let local_port = self.ssh_manager.forward_port(handle, None, remote_host, remote_port)?;
+                let local_port =
+                    self.ssh_manager
+                        .forward_port(handle, None, remote_host, remote_port)?;
 
                 actual_config.host = Some("127.0.0.1".to_string());
                 actual_config.port = Some(local_port);
@@ -103,42 +118,59 @@ impl DatabaseManager {
             | DatabaseType::CockroachDB
             | DatabaseType::Greenplum
             | DatabaseType::Redshift
-            | DatabaseType::Vertica => {
-                Box::new(PostgresDriver::connect(&actual_config).await?)
-            }
+            | DatabaseType::Vertica => Box::new(PostgresDriver::connect(&actual_config).await?),
             DatabaseType::SQLite => {
                 let path = actual_config.file_path.as_deref().unwrap_or(":memory:");
                 Box::new(SqliteDriver::connect(path).await?)
             }
-            DatabaseType::DuckDB => {
-                Box::new(DuckDbDriver::connect(&actual_config).await?)
-            }
-            DatabaseType::Cassandra => {
-                Box::new(CassandraDriver::connect(&actual_config).await?)
-            }
-            DatabaseType::Snowflake => {
-                Box::new(SnowflakeDriver::connect(&actual_config).await?)
-            }
-            DatabaseType::MSSQL => {
-                Box::new(MssqlDriver::connect(&actual_config).await?)
-            }
-            DatabaseType::LibSQL => {
-                Box::new(LibSqlDriver::connect(&actual_config).await?)
-            }
-            DatabaseType::ClickHouse => {
-                Box::new(ClickHouseDriver::connect(&actual_config).await?)
-            }
-            DatabaseType::BigQuery => {
-                Box::new(BigQueryDriver::connect(&actual_config).await?)
-            }
+            DatabaseType::DuckDB => Box::new(DuckDbDriver::connect(&actual_config).await?),
+            DatabaseType::Cassandra => Box::new(CassandraDriver::connect(&actual_config).await?),
+            DatabaseType::Snowflake => Box::new(SnowflakeDriver::connect(&actual_config).await?),
+            DatabaseType::MSSQL => Box::new(MssqlDriver::connect(&actual_config).await?),
+            DatabaseType::LibSQL => Box::new(LibSqlDriver::connect(&actual_config).await?),
+            DatabaseType::ClickHouse => Box::new(ClickHouseDriver::connect(&actual_config).await?),
+            DatabaseType::BigQuery => Box::new(BigQueryDriver::connect(&actual_config).await?),
             DatabaseType::CloudflareD1 => {
                 Box::new(CloudflareD1Driver::connect(&actual_config).await?)
             }
-            DatabaseType::Redis => {
-                Box::new(RedisDriver::connect(&actual_config).await?)
-            }
-            DatabaseType::MongoDB => {
-                Box::new(MongoDbDriver::connect(&actual_config).await?)
+            DatabaseType::Redis => Box::new(RedisDriver::connect(&actual_config).await?),
+            DatabaseType::MongoDB => Box::new(MongoDbDriver::connect(&actual_config).await?),
+            DatabaseType::OpenSearch => {
+                let plugin_id = actual_config
+                    .additional_fields
+                    .get("plugin_id")
+                    .map(String::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let driver_id = actual_config
+                    .additional_fields
+                    .get("plugin_driver_id")
+                    .map(String::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if plugin_id.is_empty() || driver_id.is_empty() {
+                    return Err(anyhow!(
+                        "OpenSearch connections require an installed driver plugin"
+                    ));
+                }
+                let storage = self.plugin_storage.clone();
+                let active = tokio::task::spawn_blocking(move || {
+                    crate::commands::plugins::resolve_active_plugin_driver(
+                        &storage, &plugin_id, &driver_id,
+                    )
+                })
+                .await
+                .map_err(|_| anyhow!("Driver plugin verification stopped unexpectedly"))?
+                .map_err(anyhow::Error::msg)?;
+                if active.contribution.runtime != "declarative-http-v1"
+                    || active.contribution.status != "stable"
+                    || active.contribution.protocol != "opensearch"
+                {
+                    return Err(anyhow!(
+                        "The selected plugin driver is incompatible with the OpenSearch host ABI"
+                    ));
+                }
+                Box::new(OpenSearchDriver::connect(&actual_config, active.plugin_id).await?)
             }
         };
 
@@ -159,12 +191,12 @@ impl DatabaseManager {
         if let Some(driver) = conns.remove(connection_id) {
             driver.disconnect().await?;
         }
-        
+
         let mut tunnels = self.ssh_tunnels.write().await;
         if let Some(handle) = tunnels.remove(connection_id) {
             let _ = self.ssh_manager.disconnect_tunnel(handle);
         }
-        
+
         Ok(())
     }
 
@@ -180,15 +212,22 @@ impl DatabaseManager {
         for (_, handle) in tunnels.drain() {
             let _ = self.ssh_manager.disconnect_tunnel(handle);
         }
-        
+
         Ok(())
     }
 
     /// Get a reference to a driver by connection ID
-    pub async fn get_driver(&self, connection_id: &str) -> Result<impl std::ops::Deref<Target = Box<dyn DatabaseDriver>> + '_> {
+    pub async fn get_driver(
+        &self,
+        connection_id: &str,
+    ) -> Result<impl std::ops::Deref<Target = Box<dyn DatabaseDriver>> + '_> {
         let conns = self.connections.read().await;
-        tokio::sync::RwLockReadGuard::try_map(conns, |map| map.get(connection_id))
-            .map_err(|_| anyhow!("Connection '{}' not found. Please connect first.", connection_id))
+        tokio::sync::RwLockReadGuard::try_map(conns, |map| map.get(connection_id)).map_err(|_| {
+            anyhow!(
+                "Connection '{}' not found. Please connect first.",
+                connection_id
+            )
+        })
     }
 
     /// Check if a connection exists and is alive
@@ -207,10 +246,105 @@ impl DatabaseManager {
         let conns = self.connections.read().await;
         conns.keys().cloned().collect()
     }
+
+    pub async fn disconnect_driver_connections(&self, driver_name: &str) -> usize {
+        let connection_ids = {
+            let conns = self.connections.read().await;
+            conns
+                .iter()
+                .filter(|(_, driver)| driver.driver_name() == driver_name)
+                .map(|(connection_id, _)| connection_id.clone())
+                .collect::<Vec<_>>()
+        };
+        for connection_id in &connection_ids {
+            let _ = self.disconnect(connection_id).await;
+        }
+        connection_ids.len()
+    }
 }
 
 impl Default for DatabaseManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::plugin_storage::{InstalledPluginRecord, PluginManifest};
+    use axum::{routing::get, Json, Router};
+    use serde_json::json;
+    use std::fs;
+    use std::path::Path;
+    use tokio::net::TcpListener;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn verified_driver_plugin_connects_and_disconnects_as_one_runtime() {
+        let root = std::env::temp_dir().join(format!("tabler-manager-plugin-{}", Uuid::new_v4()));
+        let storage = PluginStorage::from_data_dir(root.clone()).unwrap();
+        let bundle = storage.bundles_dir().join("opensearch-driver.tableplugin");
+        fs::create_dir_all(&bundle).unwrap();
+        let source_manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("plugins")
+            .join("opensearch-driver")
+            .join("plugin.json");
+        fs::copy(&source_manifest, bundle.join("plugin.json")).unwrap();
+        let manifest: PluginManifest =
+            serde_json::from_slice(&fs::read(&source_manifest).unwrap()).unwrap();
+        storage
+            .save_plugins(&[InstalledPluginRecord {
+                manifest,
+                bundle_path: bundle.to_string_lossy().to_string(),
+                enabled: true,
+                installed_at: 1,
+                updated_at: 1,
+                verified: false,
+                computed_integrity: None,
+                validation_error: None,
+                rollback_available: false,
+                previous_version: None,
+            }])
+            .unwrap();
+
+        let app = Router::new().route(
+            "/",
+            get(|| async { Json(json!({ "version": { "number": "2.17.0" } })) }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let manager = DatabaseManager::with_plugin_storage(storage);
+        let mut config = ConnectionConfig {
+            id: "plugin-connection".to_string(),
+            name: "Plugin connection".to_string(),
+            db_type: DatabaseType::OpenSearch,
+            host: Some("127.0.0.1".to_string()),
+            port: Some(port),
+            database: Some("logs".to_string()),
+            ..ConnectionConfig::default()
+        };
+        config
+            .additional_fields
+            .insert("plugin_id".to_string(), "opensearch-driver".to_string());
+        config
+            .additional_fields
+            .insert("plugin_driver_id".to_string(), "opensearch".to_string());
+
+        manager.connect(&config).await.unwrap();
+        assert!(manager.is_connected(&config.id).await);
+        assert_eq!(
+            manager
+                .disconnect_driver_connections("opensearch-driver")
+                .await,
+            1
+        );
+        assert!(!manager.is_connected(&config.id).await);
+
+        server.abort();
+        let _ = fs::remove_dir_all(root);
     }
 }

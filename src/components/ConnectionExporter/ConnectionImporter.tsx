@@ -27,7 +27,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
     try {
       const picked = await open({
         multiple: false,
-        filters: [{ name: "TableR Connection File", extensions: ["tablepro"] }],
+        filters: [{ name: "TableR Connection Export", extensions: ["tabler-connections", "tablepro"] }],
       });
       if (picked && typeof picked === "string") {
         setFilePath(picked);

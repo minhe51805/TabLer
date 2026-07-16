@@ -48,6 +48,7 @@ import {
 import {
   buildSchemaContextRequiredMessage,
   findMatchingTableName,
+  getAgentSqlSchemaRequirements,
   stringifyAgentObservation,
   summarizeAgentQueryObservation,
   summarizeAgentSchemaSummaryObservation,
@@ -55,8 +56,9 @@ import {
 } from "../ai-agent-grounding";
 import { finalizeAgentResult } from "../ai-agent-finalization";
 import { recoverNonAgentAssistResponse } from "../ai-assist-recovery";
-import { yieldToBrowserFrame } from "../ai-async-utils";
+import { mapWithConcurrency, yieldToBrowserFrame } from "../ai-async-utils";
 import { prepareAIWorkspaceSchemaContext } from "../ai-schema-context-loader";
+import { findAgentSchemaMatches, isAgentRecordLookupRequest } from "../ai-agent-schema-search";
 import {
   extractSqlFromResponse,
   hasSqlStartKeyword,
@@ -359,6 +361,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
       if (interactionMode === "agent") {
         let agentTraceSteps: AgentTraceStep[] = [];
+        const inspectedAgentTables = new Set<string>();
         // Snapshot completed steps plus an optional in-flight step, then stream
         // them to the UI so the bubble can show the agent working live.
         const publishAgentProgress = (pending?: { action: AIWorkspaceAgentActionName; message: string }) => {
@@ -390,6 +393,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           schemaContextEnabled &&
           availableSchemaTables.length > 0 &&
           Boolean(connectionId);
+        const recordLookupRequest = workspaceToolsEnabled && isAgentRecordLookupRequest(normalizedPrompt);
         const workspaceToolStatus = workspaceToolsEnabled
               ? "Database tools are available if grounded workspace evidence is needed."
           : !connectionId
@@ -400,7 +404,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 ? "Schema sharing is disabled for the current provider, so workspace tools are unavailable for this turn."
                 : "No verified schema snapshot is available for tool use on this turn.";
         const sharedAgentInstruction = joinAgentInstructions(
-          "You are an autonomous agent that takes action, not a consultant. Decide your own steps: inspect the schema with list_tables/describe_table, then ACTUALLY run run_readonly_sql to gather the data needed to answer. Do not just suggest queries and do not ask the user which query to run first ? pick the most relevant one and run it yourself.",
+          "You are an autonomous agent that takes action, not a consultant. Decide your own steps: locate unknown fields with search_schema, inspect the exact table with describe_table, then ACTUALLY run run_readonly_sql to gather the data needed to answer. Do not just suggest queries and do not ask the user which query to run first ? pick the most relevant one and run it yourself.",
           "When the user asks to see data, charts, counts, samples, distributions, or 'show me' anything, you MUST run at least one run_readonly_sql before finishing. Finishing with only suggestions and no executed query is a failure.",
           "When you finish, put the single best runnable query in finish.args.sql (a real SELECT grounded in the verified schema) so it can be executed and shown to the user automatically.",
           !isLocalProvider
@@ -482,6 +486,41 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               });
             }
 
+            if (action.action === "search_schema") {
+              const query = typeof action.args?.query === "string" ? action.args.query.trim() : "";
+              if (!query) {
+                return "Tool error: search_schema requires args.query.";
+              }
+
+              const scanned = await mapWithConcurrency(latestTables, 4, async (table) => {
+                const identifier = buildWorkspaceTableIdentifier(table, currentDatabase) || table.name;
+                try {
+                  const columns = await getTableColumnsPreview(
+                    connectionId!,
+                    identifier,
+                    currentDatabase || undefined,
+                  );
+                  return { identifier, columns, failed: false };
+                } catch {
+                  return { identifier, columns: [], failed: true };
+                }
+              });
+              if (requestId !== requestIdRef.current) {
+                throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+              }
+
+              const matches = findAgentSchemaMatches(query, scanned);
+              return stringifyAgentObservation({
+                query,
+                tablesScanned: scanned.length,
+                tablesFailed: scanned.filter((entry) => entry.failed).length,
+                matches,
+                next: matches.length > 0
+                  ? "Call describe_table for the best matching table, then read the requested row data."
+                  : "No matching columns were found in the scanned catalog. Do not claim a column is absent if tablesFailed is greater than zero.",
+              });
+            }
+
             if (action.action === "describe_table") {
               const requestedTable = typeof action.args?.table === "string" ? action.args.table.trim() : "";
               if (!requestedTable) {
@@ -495,6 +534,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
               const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
               if (cachedSummary) {
+                inspectedAgentTables.add(matchedTable);
                 return summarizeAgentSchemaSummaryObservation(matchedTable, cachedSummary);
               }
 
@@ -503,6 +543,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 throw new Error(AI_REQUEST_REPLACED_MESSAGE);
               }
 
+              inspectedAgentTables.add(matchedTable);
               return summarizeAgentStructureObservation(matchedTable, structure);
             }
 
@@ -512,10 +553,22 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 return "Tool error: run_readonly_sql requires args.sql.";
               }
 
-              if (wantsVisualization && requestDataReadConsent) {
+              const schemaRequirements = getAgentSqlSchemaRequirements(
+                sql,
+                availableSchemaTables,
+                inspectedAgentTables,
+              );
+              if (schemaRequirements.unknown.length > 0) {
+                return `Tool blocked: SQL references unknown table(s): ${schemaRequirements.unknown.join(", ")}. Use list_tables and describe_table first.`;
+              }
+              if (schemaRequirements.uninspected.length > 0) {
+                return `Tool blocked: Inspect the schema before reading rows. Call describe_table for: ${schemaRequirements.uninspected.join(", ")}.`;
+              }
+
+              if (requestDataReadConsent) {
                 const approved = await requestDataReadConsent();
                 if (!approved) {
-                  return "Tool blocked: The user did not grant permission to read live database rows for this visualization request.";
+                  return "Tool blocked: The user did not grant permission to read live database rows for this request.";
                 }
               }
 
@@ -653,11 +706,21 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           workspaceToolsEnabled,
           stepBudget: agentStepBudget,
           initialSteps: agentTraceSteps,
-          requestAction: ({ forceFinish, includeHistory, reason, steps }) =>
-            requestAgentAction(
+          requestAction: ({ forceFinish, includeHistory, iteration, reason, steps }) => {
+            const completedToolSteps = steps.filter((step) => step.action !== "plan");
+            if (recordLookupRequest && iteration === 1 && completedToolSteps.length === 0) {
+              return Promise.resolve({
+                action: "search_schema" as const,
+                message: "Locating the exact table and columns for this record",
+                args: { query: normalizedPrompt },
+              });
+            }
+
+            return requestAgentAction(
               buildControllerPrompt(forceFinish, instructionForRunnerRequest(reason), steps),
               includeHistory,
-            ),
+            );
+          },
           runTool: runAgentTool,
           recoverFinish: recoverAgentFinishAction,
           onStateChange: (snapshot) => {

@@ -57,7 +57,7 @@ interface AIComposerDockProps {
   onCancelGeneration: () => void;
 }
 
-type ComposerMenu = "mode" | "autonomy" | "provider" | "utility";
+type ComposerMenu = "mode" | "provider" | "utility";
 
 const INTERACTION_MODES: AIWorkspaceInteractionMode[] = ["prompt", "edit", "agent"];
 const AGENT_AUTONOMY_OPTIONS: AIWorkspaceAgentAutonomy[] = ["review", "smart", "full"];
@@ -247,52 +247,6 @@ export function AIComposerDock({
                 )}
               </div>
 
-              {interactionMode === "agent" && (
-                <div className={`ai-workspace-command-dropdown ai-workspace-command-dropdown--autonomy ${openMenu === "autonomy" ? "is-open" : ""}`}>
-                  <button
-                    type="button"
-                    className={`ai-workspace-command-trigger ${openMenu === "autonomy" ? "is-active" : ""}`}
-                    aria-expanded={openMenu === "autonomy"}
-                    aria-haspopup="menu"
-                    onClick={() => toggleMenu("autonomy")}
-                    title={getAgentAutonomyLabel(agentAutonomy, copy)}
-                  >
-                    <span className="ai-workspace-command-trigger-icon">{renderAgentAutonomyIcon(agentAutonomy)}</span>
-                    <span className="ai-workspace-command-trigger-copy">
-                      <span className="ai-workspace-command-trigger-label">{copy.composer.agentAutonomyLabel}</span>
-                      <strong className="ai-workspace-command-trigger-value">{getAgentAutonomyLabel(agentAutonomy, copy)}</strong>
-                    </span>
-                    <ChevronDown className="w-3.5 h-3.5 ai-workspace-command-trigger-caret" />
-                  </button>
-                  {openMenu === "autonomy" && (
-                    <div className="ai-workspace-command-popover" role="menu" aria-label={copy.composer.agentAutonomyLabel}>
-                      {AGENT_AUTONOMY_OPTIONS.map((autonomy) => {
-                        return (
-                          <button
-                            key={autonomy}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={autonomy === agentAutonomy}
-                            className={`ai-workspace-command-item ${autonomy === agentAutonomy ? "is-active" : ""}`}
-                            onClick={() => {
-                              setOpenMenu(null);
-                              onSelectAgentAutonomy(autonomy);
-                            }}
-                          >
-                            <span className="ai-workspace-command-item-icon">{renderAgentAutonomyIcon(autonomy)}</span>
-                            <span className="ai-workspace-command-item-copy">
-                              <strong>{getAgentAutonomyLabel(autonomy, copy)}</strong>
-                              <span>{getAgentAutonomyHint(autonomy, copy)}</span>
-                            </span>
-                            {autonomy === agentAutonomy && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
               <div className={`ai-workspace-command-dropdown ai-workspace-command-dropdown--provider ${openMenu === "provider" ? "is-open" : ""}`}>
                 <button
                   type="button"
@@ -394,20 +348,44 @@ export function AIComposerDock({
                       {isSessionDataReadEnabled && <Check className="w-3.5 h-3.5" />}
                     </button>
                     {interactionMode === "agent" && (
-                      <button
-                        type="button"
-                        role="menuitemcheckbox"
-                        aria-checked={showThinking}
-                        className={`ai-workspace-command-utility-item ${showThinking ? "is-active" : ""}`}
-                        onClick={() => onSetShowThinking(!showThinking)}
-                      >
-                        <span className="ai-workspace-command-utility-icon"><Brain className="w-3.5 h-3.5" /></span>
-                        <span className="ai-workspace-command-utility-copy">
-                          <strong>{copy.composer.thinkingToggleLabel}</strong>
-                          <span>{showThinking ? copy.composer.thinkingOn : copy.composer.thinkingOff}</span>
-                        </span>
-                        {showThinking && <Check className="w-3.5 h-3.5" />}
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          role="menuitemcheckbox"
+                          aria-checked={showThinking}
+                          className={`ai-workspace-command-utility-item ${showThinking ? "is-active" : ""}`}
+                          onClick={() => onSetShowThinking(!showThinking)}
+                        >
+                          <span className="ai-workspace-command-utility-icon"><Brain className="w-3.5 h-3.5" /></span>
+                          <span className="ai-workspace-command-utility-copy">
+                            <strong>{copy.composer.thinkingToggleLabel}</strong>
+                            <span>{showThinking ? copy.composer.thinkingOn : copy.composer.thinkingOff}</span>
+                          </span>
+                          {showThinking && <Check className="w-3.5 h-3.5" />}
+                        </button>
+                        <div className="ai-workspace-command-utility-divider" role="separator" />
+                        <div className="ai-workspace-command-utility-section-label">
+                          {copy.composer.agentAutonomyLabel}
+                        </div>
+                        {AGENT_AUTONOMY_OPTIONS.map((autonomy) => (
+                          <button
+                            key={autonomy}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={autonomy === agentAutonomy}
+                            className={`ai-workspace-command-utility-item ${autonomy === agentAutonomy ? "is-active" : ""}`}
+                            onClick={() => onSelectAgentAutonomy(autonomy)}
+                          >
+                            <span className="ai-workspace-command-utility-icon">{renderAgentAutonomyIcon(autonomy)}</span>
+                            <span className="ai-workspace-command-utility-copy">
+                              <strong>{getAgentAutonomyLabel(autonomy, copy)}</strong>
+                              <span>{getAgentAutonomyHint(autonomy, copy)}</span>
+                            </span>
+                            {autonomy === agentAutonomy && <Check className="w-3.5 h-3.5" />}
+                          </button>
+                        ))}
+                        <div className="ai-workspace-command-utility-divider" role="separator" />
+                      </>
                     )}
                     <button
                       type="button"

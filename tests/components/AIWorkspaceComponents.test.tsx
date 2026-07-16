@@ -84,6 +84,18 @@ describe("AI workspace components", () => {
     expect(props.onCloseHistory).toHaveBeenCalled();
   });
 
+  it("keeps agent permissions inside the chat tools menu", async () => {
+    const user = userEvent.setup();
+    const props = renderComposer({ interactionMode: "agent", agentAutonomy: "smart" });
+
+    expect(screen.queryByTitle(copy.composer.agentAutonomySmart)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Chat tools" }));
+
+    expect(screen.getByText(copy.composer.agentAutonomyLabel)).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitemradio", { name: new RegExp(copy.composer.agentAutonomyFull) }));
+    expect(props.onSelectAgentAutonomy).toHaveBeenCalledWith("full");
+  });
+
   it("turns the generate command into a stop command while AI is running", async () => {
     const user = userEvent.setup();
     const props = renderComposer({ isGenerating: true, prompt: "Long request" });
@@ -107,6 +119,7 @@ describe("AI workspace components", () => {
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={vi.fn()}
+        onOpenRecord={vi.fn()}
         onUseSuggestion={onUseSuggestion}
       />,
     );
@@ -149,6 +162,7 @@ describe("AI workspace components", () => {
         onInsert={onInsert}
         onRun={onRun}
         onRetry={vi.fn()}
+        onOpenRecord={vi.fn()}
         onUseSuggestion={vi.fn()}
       />,
     );
@@ -205,11 +219,70 @@ describe("AI workspace components", () => {
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={onRetry}
+        onOpenRecord={vi.fn()}
         onUseSuggestion={vi.fn()}
       />,
     );
 
     await user.click(screen.getByRole("button", { name: copy.bubbleActions.retry }));
     expect(onRetry).toHaveBeenCalledWith(bubble);
+  });
+
+  it("replaces a completed agent read SQL block with a record link", async () => {
+    const user = userEvent.setup();
+    const onOpenRecord = vi.fn();
+    const bubble: AIWorkspaceBubbleData = {
+      id: "read-1",
+      threadId: "thread-1",
+      workspaceKey: "connection::database",
+      interactionMode: "agent",
+      kind: "assistant",
+      status: "ready",
+      title: "User found",
+      subtitle: "Found user",
+      prompt: "Find the user by email",
+      preview: "Found one matching user.",
+      detail: "Found one matching user.",
+      sql: "SELECT id, email FROM public.users WHERE email = 'person@example.com'",
+      agentSteps: [{
+        step: 2,
+        action: "run_readonly_sql",
+        message: "Read the matching user",
+        status: "done",
+        observation: JSON.stringify({
+          query: "SELECT id, email FROM public.users WHERE email = '[REDACTED]'",
+          sampleRows: [{ id: 42, email: "person@example.com" }],
+        }),
+      }],
+      x: 0,
+      y: 0,
+      pointer: { x: 0, y: 0, visible: false },
+      createdAt: 1,
+    };
+
+    render(
+      <AIConversationView
+        bubbles={[bubble]}
+        copy={copy}
+        showThinking
+        threadRef={createRef<HTMLDivElement>()}
+        onOpenDetail={vi.fn()}
+        onInsert={vi.fn()}
+        onRun={vi.fn()}
+        onRetry={vi.fn()}
+        onOpenRecord={onOpenRecord}
+        onUseSuggestion={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Open public.users record (id: 42)" })).toBeInTheDocument();
+    expect(screen.queryByText(bubble.sql!)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open public.users record (id: 42)" }));
+    expect(onOpenRecord).toHaveBeenCalledWith({
+      tableName: "public.users",
+      rowKey: { id: 42 },
+      label: "Open public.users record (id: 42)",
+    });
   });
 });

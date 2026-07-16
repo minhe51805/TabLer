@@ -37,6 +37,7 @@ jobs:
       - name: Detect optional signing credentials
         id: signing-mode
         env:
+          ENABLE_APPLE_SIGNING: ${{ vars.ENABLE_APPLE_SIGNING }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -63,7 +64,11 @@ jobs:
             if [ "$present" -eq "$#" ]; then printf 'true'; else printf 'false'; fi
           }
 
-          apple="$(signing_mode Apple "$APPLE_CERTIFICATE" "$APPLE_CERTIFICATE_PASSWORD" "$APPLE_SIGNING_IDENTITY" "$APPLE_ID" "$APPLE_PASSWORD" "$APPLE_TEAM_ID")"
+          if [ "$ENABLE_APPLE_SIGNING" = "true" ]; then
+            apple="$(signing_mode Apple "$APPLE_CERTIFICATE" "$APPLE_CERTIFICATE_PASSWORD" "$APPLE_SIGNING_IDENTITY" "$APPLE_ID" "$APPLE_PASSWORD" "$APPLE_TEAM_ID")"
+          else
+            apple=false
+          fi
           windows="$(signing_mode Windows "$WINDOWS_CERTIFICATE_BASE64" "$WINDOWS_CERTIFICATE_PASSWORD" "$WINDOWS_CERTIFICATE_THUMBPRINT")"
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then updater=true; else updater=false; fi
 
@@ -73,6 +78,10 @@ jobs:
             echo "updater=$updater"
           } >> "$GITHUB_OUTPUT"
           echo "Apple signing: $apple; Windows signing: $windows; updater signing: $updater"
+
+      - name: Explain unsigned macOS release mode
+        if: steps.signing-mode.outputs.apple != 'true'
+        run: echo "macOS will be built unsigned. Set the repository variable ENABLE_APPLE_SIGNING=true only after valid Apple signing and notarization secrets are configured."
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -203,16 +212,31 @@ jobs:
             }
           } | ConvertTo-Json -Depth 5 | Set-Content -Path src-tauri/tauri.release.windows.conf.json -Encoding utf8
 
+      - name: Export Apple signing credentials
+        if: matrix.target == 'macos' && needs.verify.outputs.has_apple_signing == 'true'
+        env:
+          APPLE_CERTIFICATE_SECRET: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD_SECRET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY_SECRET: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID_SECRET: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD_SECRET: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID_SECRET: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          delimiter="TABLER_APPLE_$(date +%s)_$RANDOM"
+          {
+            printf 'APPLE_CERTIFICATE<<%s\n%s\n%s\n' "$delimiter" "$APPLE_CERTIFICATE_SECRET" "$delimiter"
+            printf 'APPLE_CERTIFICATE_PASSWORD=%s\n' "$APPLE_CERTIFICATE_PASSWORD_SECRET"
+            printf 'APPLE_SIGNING_IDENTITY=%s\n' "$APPLE_SIGNING_IDENTITY_SECRET"
+            printf 'APPLE_ID=%s\n' "$APPLE_ID_SECRET"
+            printf 'APPLE_PASSWORD=%s\n' "$APPLE_PASSWORD_SECRET"
+            printf 'APPLE_TEAM_ID=%s\n' "$APPLE_TEAM_ID_SECRET"
+          } >> "$GITHUB_ENV"
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

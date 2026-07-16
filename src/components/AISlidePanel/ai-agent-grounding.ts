@@ -49,11 +49,22 @@ export function findMatchingTableName(tableName: string, availableTableNames: st
 }
 
 export function summarizeAgentQueryObservation(result: QueryResult) {
-  const previewColumns = result.columns.slice(0, MAX_AGENT_QUERY_PREVIEW_COLUMNS);
+  const previewColumns = result.columns
+    .map((column, index) => ({ column, index }))
+    .sort((left, right) => {
+      const leftStable = left.column.is_primary_key
+        || left.column.name.toLowerCase() === "id"
+        || left.column.name.toLowerCase().endsWith("_id");
+      const rightStable = right.column.is_primary_key
+        || right.column.name.toLowerCase() === "id"
+        || right.column.name.toLowerCase().endsWith("_id");
+      return Number(rightStable) - Number(leftStable) || left.index - right.index;
+    })
+    .slice(0, MAX_AGENT_QUERY_PREVIEW_COLUMNS);
   const sampleRows = result.rows
     .slice(0, MAX_AGENT_QUERY_PREVIEW_ROWS)
     .map((row) => Object.fromEntries(
-      previewColumns.map((column, index) => [
+      previewColumns.map(({ column, index }) => [
         column.name,
         sanitizeAgentObservationValue(row[index] ?? null, column.name),
       ])
@@ -66,7 +77,7 @@ export function summarizeAgentQueryObservation(result: QueryResult) {
     affectedRows: result.affected_rows,
     truncated: result.truncated,
     sandboxed: result.sandboxed,
-    columns: previewColumns.map((column) => `${column.name}:${column.data_type}`),
+    columns: previewColumns.map(({ column }) => `${column.name}:${column.data_type}`),
     sampleRows,
   });
 }
@@ -120,6 +131,32 @@ export function extractReferencedTableNamesFromSql(sql: string) {
   }
 
   return [...candidates];
+}
+
+export function getAgentSqlSchemaRequirements(
+  sql: string,
+  availableTableNames: string[],
+  inspectedTableNames: Iterable<string>,
+) {
+  const inspected = new Set(
+    [...inspectedTableNames].map((tableName) => normalizeIntentText(tableName)),
+  );
+  const unknown: string[] = [];
+  const uninspected: string[] = [];
+
+  for (const referencedTable of extractReferencedTableNamesFromSql(sql)) {
+    const matchedTable = findMatchingTableName(referencedTable, availableTableNames);
+    if (!matchedTable) {
+      unknown.push(referencedTable);
+    } else if (!inspected.has(normalizeIntentText(matchedTable))) {
+      uninspected.push(matchedTable);
+    }
+  }
+
+  return {
+    unknown: [...new Set(unknown)],
+    uninspected: [...new Set(uninspected)],
+  };
 }
 
 export function sqlResponseConflictsWithSchema(sql: string, availableTableNames: string[]) {

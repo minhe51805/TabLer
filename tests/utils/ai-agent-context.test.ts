@@ -64,7 +64,7 @@ describe("AI agent context builder", () => {
       "TC=3",
       "TV=users,orders,...",
       "SCHEMA_PREVIEW=\nT=users",
-      "RULE=list_tables for full catalog; describe_table before assuming columns; stay inside verified schema.",
+      "RULE=list_tables for catalog; search_schema for unknown fields; describe_table before assuming columns; stay inside verified schema.",
     ].join("\n"));
   });
 
@@ -102,6 +102,8 @@ describe("AI agent context builder", () => {
     });
 
     expect(prompt).toContain('"action":"run_readonly_sql"');
+    expect(prompt).toContain('"action":"search_schema"');
+    expect(prompt).toContain("describe_table for every table in FROM or JOIN");
     expect(prompt).not.toContain("narration");
     expect(prompt).not.toContain("schema-0");
     expect(prompt).toContain("Observation: (older step, omitted to save space)");

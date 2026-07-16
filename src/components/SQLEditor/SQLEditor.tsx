@@ -1,14 +1,16 @@
 import Editor from "@monaco-editor/react";
-import { useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSQLEditor } from "./hooks/use-sql-editor";
 import type { QueryEditorSessionState, QueryChromeState } from "./hooks/use-sql-editor";
 import { SQLEditorResultsPane } from "./SQLEditorResultsPane";
 import { AlignLeft, Keyboard, Terminal, GitBranch, Loader2 } from "lucide-react";
 import { useI18n } from "../../i18n";
-import { useAppStore } from "../../stores/appStore";
+import { useConnectionStore } from "../../stores/connectionStore";
 import { useEditorPreferencesStore } from "../../stores/editorPreferencesStore";
 import { getQueryProfile } from "../../utils/query-profile";
 import { ExplainVisualizer } from "../ExplainVisualizer/ExplainVisualizer";
+import { SQLParametersPanel } from "./SQLParametersPanel";
+import { extractNamedSqlParameters, type SqlParameterDraft } from "../../utils/sql-parameters";
 
 interface Props {
   connectionId: string;
@@ -31,11 +33,24 @@ export function SQLEditor({
 }: Props) {
   const { t, language } = useI18n();
   const vimStatusRef = useRef<HTMLDivElement | null>(null);
+  const [draftSql, setDraftSql] = useState(initialContent);
+  const parameterStorageKey = `tabler.sql-parameters.${connectionId}.${tabId ?? "scratch"}`;
+  const [parameterDrafts, setParameterDrafts] = useState<Record<string, SqlParameterDraft>>(() => {
+    try {
+      return JSON.parse(window.localStorage.getItem(parameterStorageKey) ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  const parameterNames = useMemo(() => extractNamedSqlParameters(draftSql), [draftSql]);
+  useEffect(() => {
+    window.localStorage.setItem(parameterStorageKey, JSON.stringify(parameterDrafts));
+  }, [parameterDrafts, parameterStorageKey]);
   const toggleResultsTitle =
     language === "vi" ? "Bat/tat vung ket qua (Ctrl+Shift+`)" : "Toggle results pane (Ctrl+Shift+`)";
   const vimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
   const toggleVimMode = useEditorPreferencesStore((state) => state.toggleVimMode);
-  const connections = useAppStore((state) => state.connections);
+  const connections = useConnectionStore((state) => state.connections);
   const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
   const queryProfile = getQueryProfile(dbType);
   const {
@@ -65,6 +80,7 @@ export function SQLEditor({
     runRequestNonce,
     onChromeChange,
     onStateChange,
+    parameterDrafts,
   });
 
   return (
@@ -79,9 +95,9 @@ export function SQLEditor({
             defaultValue={initialContent}
             theme="vs-dark"
             onChange={(value) => {
-              if (tabId && value !== undefined) {
-                schedulePersistedContent(value);
-              }
+              if (value === undefined) return;
+              setDraftSql(value);
+              if (tabId) schedulePersistedContent(value);
             }}
             onMount={handleEditorMount}
             options={{
@@ -103,6 +119,11 @@ export function SQLEditor({
               maxTokenizationLineLength: 10000,
               scrollbar: { verticalScrollbarSize: 7, horizontalScrollbarSize: 7 },
             }}
+          />
+          <SQLParametersPanel
+            names={parameterNames}
+            drafts={parameterDrafts}
+            onChange={(name, next) => setParameterDrafts((current) => ({ ...current, [name]: next }))}
           />
           <div className="sql-editor-floating-tools">
             <button

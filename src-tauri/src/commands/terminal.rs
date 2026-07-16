@@ -1,5 +1,5 @@
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::io::{Read, Write};
@@ -16,6 +16,21 @@ pub struct TerminalSessionInfo {
     pub session_id: String,
     pub shell_label: String,
     pub cwd: String,
+}
+
+/// Safe, non-secret database metadata made available to a terminal session.
+/// Credentials are intentionally absent: the terminal must never receive a password.
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalDatabaseContext {
+    pub connection_id: String,
+    pub connection_name: String,
+    pub db_type: String,
+    pub database: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub file_path: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -107,6 +122,52 @@ fn resolve_terminal_cwd(cwd: Option<String>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+fn database_context_environment(context: &TerminalDatabaseContext) -> Vec<(String, String)> {
+    let mut variables = vec![
+        (
+            "TABLER_ACTIVE_CONNECTION_ID".to_string(),
+            context.connection_id.clone(),
+        ),
+        (
+            "TABLER_ACTIVE_CONNECTION_NAME".to_string(),
+            context.connection_name.clone(),
+        ),
+        ("TABLER_ACTIVE_DB_TYPE".to_string(), context.db_type.clone()),
+    ];
+    if let Some(database) = context
+        .database
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        variables.push(("TABLER_ACTIVE_DATABASE".to_string(), database.to_string()));
+    }
+    if let Some(host) = context
+        .host
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        variables.push(("TABLER_ACTIVE_HOST".to_string(), host.to_string()));
+    }
+    if let Some(port) = context.port {
+        variables.push(("TABLER_ACTIVE_PORT".to_string(), port.to_string()));
+    }
+    if let Some(username) = context
+        .username
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        variables.push(("TABLER_ACTIVE_USERNAME".to_string(), username.to_string()));
+    }
+    if let Some(file_path) = context
+        .file_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        variables.push(("TABLER_ACTIVE_FILE_PATH".to_string(), file_path.to_string()));
+    }
+    variables
+}
+
 fn emit_terminal_exit(
     app: &AppHandle,
     sessions: &Arc<Mutex<HashMap<String, TerminalSession>>>,
@@ -114,7 +175,9 @@ fn emit_terminal_exit(
     reason: String,
 ) {
     {
-        let mut guard = sessions.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = sessions
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.remove(session_id);
     }
 
@@ -135,6 +198,7 @@ pub fn open_terminal(
     cols: u16,
     rows: u16,
     cwd: Option<String>,
+    database_context: Option<TerminalDatabaseContext>,
 ) -> Result<TerminalSessionInfo, String> {
     {
         let guard = terminal_manager
@@ -166,6 +230,11 @@ pub fn open_terminal(
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("TERM_PROGRAM", "TableR");
+    if let Some(context) = database_context.as_ref() {
+        for (key, value) in database_context_environment(context) {
+            command.env(key, value);
+        }
+    }
 
     let child = pair
         .slave
@@ -328,4 +397,31 @@ pub fn close_terminal(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{database_context_environment, TerminalDatabaseContext};
+
+    #[test]
+    fn terminal_database_context_exports_only_safe_metadata() {
+        let variables = database_context_environment(&TerminalDatabaseContext {
+            connection_id: "connection-1".to_string(),
+            connection_name: "Production reporting".to_string(),
+            db_type: "postgresql".to_string(),
+            database: Some("reporting".to_string()),
+            host: Some("db.example.test".to_string()),
+            port: Some(5432),
+            username: Some("readonly".to_string()),
+            file_path: None,
+        });
+
+        assert!(variables
+            .iter()
+            .any(|(key, value)| key == "TABLER_ACTIVE_DATABASE" && value == "reporting"));
+        assert!(variables.iter().all(|(key, value)| {
+            !key.to_ascii_lowercase().contains("password")
+                && !value.to_ascii_lowercase().contains("password")
+        }));
+    }
 }

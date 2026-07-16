@@ -1,11 +1,23 @@
 import { create } from "zustand";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
-import type { ColumnDetail, QueryResult, TableCellUpdateRequest, TableRowDeleteRequest, TableStructure } from "../types";
+import type { ColumnDetail, QueryParameter, QueryResult, TableCellUpdateRequest, TableRowDeleteRequest, TableStructure } from "../types";
+import { assertQueryAllowed } from "../utils/safe-mode-query-guard";
+import {
+  containsSchemaMutation,
+  getOrLoadTableColumns,
+  getOrLoadTableStructure,
+} from "../utils/schema-cache";
+import { useConnectionStore } from "./connectionStore";
+import {
+  invokeAIWorkspaceToolMutation,
+  invokeAIWorkspaceToolWithTimeout,
+} from "../utils/ai-tool-command-client";
 
-interface QueryState {
+export interface QueryState {
   isExecutingQuery: boolean;
 
   executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
+  executeParameterizedQuery: (connectionId: string, sql: string, parameters: QueryParameter[]) => Promise<QueryResult>;
   executeSandboxQuery: (connectionId: string, statements: string[]) => Promise<QueryResult>;
   getTableData: (
     connectionId: string,
@@ -24,17 +36,38 @@ interface QueryState {
   countRows: (connectionId: string, table: string, database?: string) => Promise<number>;
   countTableNullValues: (connectionId: string, table: string, column: string, database?: string) => Promise<number>;
   updateTableCell: (connectionId: string, request: TableCellUpdateRequest) => Promise<number>;
+  applyTableUpdatesAtomically: (connectionId: string, updates: TableCellUpdateRequest[]) => Promise<number>;
   deleteTableRows: (connectionId: string, request: TableRowDeleteRequest) => Promise<number>;
+  insertTableRow: (
+    connectionId: string,
+    request: { table: string; database?: string; values: [string, unknown][] },
+  ) => Promise<number>;
+  insertTableRowsAtomically: (
+    connectionId: string,
+    requests: Array<{ table: string; database?: string; values: [string, unknown][] }>,
+    operationId: string,
+  ) => Promise<number>;
+  cancelCsvImport: (operationId: string) => Promise<boolean>;
   executeStructureStatements: (connectionId: string, statements: string[]) => Promise<number>;
+  getForeignKeyLookupValues: (
+    connectionId: string,
+    table: string,
+    column: string,
+    search?: string,
+  ) => Promise<Array<{ value: string | number; label: string }>>;
 }
 
 export const useQueryStore = create<QueryState>((set) => ({
   isExecutingQuery: false,
 
   executeQuery: async (connectionId: string, sql: string) => {
+    await assertQueryAllowed(sql, connectionId);
     set({ isExecutingQuery: true });
     try {
       const result = await invokeMutation<QueryResult>("execute_query", { connectionId, sql });
+      if (containsSchemaMutation(sql)) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
       set({ isExecutingQuery: false });
       return result;
     } catch (e) {
@@ -46,7 +79,10 @@ export const useQueryStore = create<QueryState>((set) => ({
   executeSandboxQuery: async (connectionId: string, statements: string[]) => {
     set({ isExecutingQuery: true });
     try {
-      const result = await invokeMutation<QueryResult>("execute_sandboxed_query", { connectionId, statements });
+      const result = await invokeAIWorkspaceToolMutation(
+        "execute_sandboxed_query",
+        { connectionId, statements },
+      );
       set({ isExecutingQuery: false });
       return result;
     } catch (e) {
@@ -74,19 +110,27 @@ export const useQueryStore = create<QueryState>((set) => ({
   },
 
   getTableStructure: async (connectionId, table, database) =>
-    invokeWithTimeout<TableStructure>(
-      "get_table_structure",
-      { connectionId, table, database: database || null },
-      15_000,
-      "Loading table structure"
+    getOrLoadTableStructure(
+      { connectionId, database },
+      table,
+      () => invokeAIWorkspaceToolWithTimeout(
+        "get_table_structure",
+        { connectionId, table, database: database || null },
+        15_000,
+        "Loading table structure",
+      ),
     ),
 
   getTableColumnsPreview: async (connectionId, table, database) =>
-    invokeWithTimeout<ColumnDetail[]>(
-      "get_table_columns_preview",
-      { connectionId, table, database: database || null },
-      15_000,
-      "Loading table columns"
+    getOrLoadTableColumns(
+      { connectionId, database },
+      table,
+      () => invokeWithTimeout<ColumnDetail[]>(
+        "get_table_columns_preview",
+        { connectionId, table, database: database || null },
+        15_000,
+        "Loading table columns",
+      ),
     ),
 
   countRows: async (connectionId, table, database) =>
@@ -117,6 +161,73 @@ export const useQueryStore = create<QueryState>((set) => ({
       request: { ...request, database: request.database || null },
     }),
 
-  executeStructureStatements: async (connectionId, statements) =>
-    invokeMutation<number>("execute_structure_statements", { connectionId, statements }),
+  applyTableUpdatesAtomically: async (connectionId, updates) =>
+    invokeMutation<number>("apply_table_updates_atomically", {
+      connectionId,
+      updates: updates.map((request) => ({ ...request, database: request.database || null })),
+    }),
+
+  insertTableRow: async (connectionId, request) =>
+    invokeMutation<number>("insert_table_row", {
+      connectionId,
+      request: {
+        table: request.table,
+        database: request.database || null,
+        values: request.values,
+      },
+    }),
+
+  insertTableRowsAtomically: async (connectionId, requests, operationId) =>
+    invokeMutation<number>("insert_table_rows_atomically", {
+      connectionId,
+      operationId,
+      requests: requests.map((request) => ({
+        table: request.table,
+        database: request.database || null,
+        values: request.values,
+      })),
+    }),
+
+  cancelCsvImport: async (operationId) =>
+    invokeMutation<boolean>("cancel_csv_import", { operationId }),
+
+  executeStructureStatements: async (connectionId, statements) => {
+    const affectedRows = await invokeMutation<number>("execute_structure_statements", { connectionId, statements });
+    useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+    return affectedRows;
+  },
+
+  executeParameterizedQuery: async (connectionId, sql, parameters) => {
+    await assertQueryAllowed(sql, connectionId);
+    set({ isExecutingQuery: true });
+    try {
+      const result = await invokeMutation<QueryResult>("execute_parameterized_query", {
+        connectionId,
+        sql,
+        parameters,
+      });
+      if (containsSchemaMutation(sql)) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set({ isExecutingQuery: false });
+      return result;
+    } catch (error) {
+      set({ isExecutingQuery: false });
+      throw error;
+    }
+  },
+
+  getForeignKeyLookupValues: async (connectionId, table, column, search) =>
+    invokeWithTimeout<Array<{ value: string | number; label: string }>>(
+      "get_foreign_key_lookup_values",
+      {
+        connection_id: connectionId,
+        referenced_table: table,
+        referenced_column: column,
+        search: search || null,
+        limit: 1000,
+      },
+      30_000,
+      "Loading FK lookup values",
+    ),
 }));

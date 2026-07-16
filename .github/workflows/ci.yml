@@ -1,0 +1,106 @@
+name: Quality Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  frontend:
+    name: Frontend quality
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck, lint, test, and build
+        run: npm run check:frontend
+
+  rust:
+    name: Rust quality
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tabler_test
+          POSTGRES_USER: tabler
+          POSTGRES_PASSWORD: tabler_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tabler -d tabler_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: tabler_test
+          MYSQL_USER: tabler
+          MYSQL_PASSWORD: tabler_test
+          MYSQL_ROOT_PASSWORD: root_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -u root -proot_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Test backend
+        env:
+          TABLER_TEST_POSTGRES_HOST: 127.0.0.1
+          TABLER_TEST_POSTGRES_PORT: 5432
+          TABLER_TEST_POSTGRES_USER: tabler
+          TABLER_TEST_POSTGRES_PASSWORD: tabler_test
+          TABLER_TEST_POSTGRES_DATABASE: tabler_test
+          TABLER_TEST_MYSQL_HOST: 127.0.0.1
+          TABLER_TEST_MYSQL_PORT: 3306
+          TABLER_TEST_MYSQL_USER: tabler
+          TABLER_TEST_MYSQL_PASSWORD: tabler_test
+          TABLER_TEST_MYSQL_DATABASE: tabler_test
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml -- --include-ignored
+
+      - name: Check backend
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml

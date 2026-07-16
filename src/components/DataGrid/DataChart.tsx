@@ -241,15 +241,60 @@ function EmptyState({
 
 const AXIS_TICK = { fill: "var(--text-secondary)", fontSize: 11 };
 const GRID_STROKE = "var(--border-subtle)";
+const MAX_CHART_POINTS = 480;
+const MAX_CATEGORY_BUCKETS = 24;
+
+export function selectRelevantChartTypes(isTemporalXAxis: boolean, numericMetricCount: number): ChartType[] {
+  if (isTemporalXAxis) return ["line", "area", "bar"];
+  return numericMetricCount >= 2 ? ["bar", "donut", "scatter"] : ["bar", "donut"];
+}
+
+function isTemporalColumn(column: ResolvedColumn | undefined) {
+  if (!column) return false;
+  const type = (column.column_type || column.data_type || "").toLowerCase();
+  return /date|time|timestamp/.test(type) || /(^|_)(date|time|month|day|year|created|updated|modified)(_at)?$/i.test(column.name);
+}
+
+function sampleChartRows(rows: unknown[][], maxPoints = MAX_CHART_POINTS) {
+  if (rows.length <= maxPoints) return rows;
+  const step = (rows.length - 1) / (maxPoints - 1);
+  return Array.from({ length: maxPoints }, (_, index) => rows[Math.round(index * step)]);
+}
+
+function aggregateChartRows(
+  data: Record<string, unknown>[],
+  xKey: string,
+  yKeys: string[],
+  maxBuckets = MAX_CATEGORY_BUCKETS,
+) {
+  const buckets = new Map<string, Record<string, unknown>>();
+  data.forEach((row, rowIndex) => {
+    const label = formatCategoryValue(row[xKey], rowIndex);
+    const bucket = buckets.get(label) ?? { [xKey]: label };
+    yKeys.forEach((key) => {
+      const value = tryParseNumeric(row[key]);
+      if (value !== null) bucket[key] = (tryParseNumeric(bucket[key]) ?? 0) + value;
+    });
+    buckets.set(label, bucket);
+  });
+
+  const primaryKey = yKeys[0];
+  return [...buckets.values()]
+    .sort((left, right) => (tryParseNumeric(right[primaryKey]) ?? 0) - (tryParseNumeric(left[primaryKey]) ?? 0))
+    .slice(0, maxBuckets);
+}
 
 export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
   const rows = queryResult?.rows ?? [];
 
-  const numericColumns = useMemo(
-    () =>
-      resolvedColumns.filter((column, index) => isNumericColumn(column, rows, index)),
-    [resolvedColumns, rows],
-  );
+  const numericColumns = useMemo(() => {
+    const candidates = resolvedColumns.filter((column, index) => isNumericColumn(column, rows, index));
+    const metrics = candidates.filter((column) => !column.is_primary_key);
+
+    // A primary key is not a useful metric when real measures exist, but it is
+    // a practical fallback for text-only tables so the Chart view never dead-ends.
+    return metrics.length > 0 ? metrics : candidates;
+  }, [resolvedColumns, rows]);
 
   const defaultXColumnName = useMemo(
     () => detectXAxis(resolvedColumns, rows)?.name ?? resolvedColumns[0]?.name ?? "",
@@ -260,12 +305,23 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
   const [selectedX, setSelectedX] = useState(defaultXColumnName);
   const [selectedY, setSelectedY] = useState<string[]>(() => (numericColumns[0] ? [numericColumns[0].name] : []));
 
+  const selectedXColumn = useMemo(
+    () => resolvedColumns.find((column) => column.name === selectedX) ?? resolvedColumns[0],
+    [resolvedColumns, selectedX],
+  );
+  const isTemporalX = isTemporalColumn(selectedXColumn);
+  const availableChartTypes = useMemo(() => {
+    const relevantTypes = new Set(selectRelevantChartTypes(isTemporalX, numericColumns.length));
+    return CHART_TYPES.filter((meta) => relevantTypes.has(meta.type));
+  }, [isTemporalX, numericColumns.length]);
+
   const chartMeta = useMemo(
-    () => CHART_TYPES.find((meta) => meta.type === chartType) ?? CHART_TYPES[0],
-    [chartType],
+    () => availableChartTypes.find((meta) => meta.type === chartType) ?? availableChartTypes[0],
+    [availableChartTypes, chartType],
   );
   const isSingleValueChart = Boolean(chartMeta.singleValue);
-  const hasMultipleXAxisChoices = resolvedColumns.length > 1;
+  const xAxisColumns = chartType === "scatter" ? numericColumns : resolvedColumns;
+  const hasMultipleXAxisChoices = xAxisColumns.length > 1;
   const hasMultipleNumericChoices = numericColumns.length > 1;
 
   useEffect(() => {
@@ -273,6 +329,14 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
       resolvedColumns.some((column) => column.name === current) ? current : defaultXColumnName
     );
   }, [defaultXColumnName, resolvedColumns]);
+
+  useEffect(() => {
+    setSelectedX((current) =>
+      xAxisColumns.some((column) => column.name === current)
+        ? current
+        : xAxisColumns[0]?.name ?? current
+    );
+  }, [xAxisColumns]);
 
   useEffect(() => {
     setSelectedY((current) => {
@@ -284,21 +348,33 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
     });
   }, [numericColumns]);
 
+  useEffect(() => {
+    if (chartMeta.type !== chartType) {
+      setChartType(chartMeta.type);
+    }
+  }, [chartMeta.type, chartType]);
+
   const handleYToggle = useCallback((columnName: string) => {
-    setSelectedY((current) =>
-      current.includes(columnName)
-        ? current.filter((value) => value !== columnName)
-        : [...current, columnName]
-    );
+    setSelectedY((current) => {
+      if (!current.includes(columnName)) return [...current, columnName];
+      return current.length > 1 ? current.filter((value) => value !== columnName) : current;
+    });
   }, []);
 
-  const selectedXColumn = useMemo(
-    () => resolvedColumns.find((column) => column.name === selectedX) ?? resolvedColumns[0],
-    [resolvedColumns, selectedX],
-  );
+  const handleChartTypeChange = useCallback((nextType: ChartType) => {
+    setChartType(nextType);
+    if (nextType === "scatter") {
+      const nextX = numericColumns.find((column) => column.name !== selectedY[0]) ?? numericColumns[0];
+      if (nextX) setSelectedX(nextX.name);
+    }
+  }, [numericColumns, selectedY]);
 
   const xIndex = selectedXColumn ? resolvedColumns.findIndex((column) => column.name === selectedXColumn.name) : -1;
   const xKey = selectedXColumn?.name ?? "__label";
+  const columnIndexByName = useMemo(
+    () => new Map(resolvedColumns.map((column, index) => [column.name, index])),
+    [resolvedColumns],
+  );
 
   const selectedYColumns = useMemo(
     () => numericColumns.filter((column) => selectedY.includes(column.name)),
@@ -308,7 +384,7 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
   const chartData = useMemo(() => {
     if (!selectedXColumn) return [];
 
-    return rows.map((row, rowIndex) => {
+    return sampleChartRows(rows).map((row, rowIndex) => {
       const entry: Record<string, unknown> = {
         __rowIndex: rowIndex + 1,
       };
@@ -316,17 +392,24 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
       entry[xKey] = xIndex >= 0 ? row[xIndex] ?? formatCategoryValue(null, rowIndex) : formatCategoryValue(null, rowIndex);
 
       selectedYColumns.forEach((column) => {
-        const columnIndex = resolvedColumns.findIndex((candidate) => candidate.name === column.name);
+        const columnIndex = columnIndexByName.get(column.name) ?? -1;
         entry[column.name] = columnIndex >= 0 ? tryParseNumeric(row[columnIndex]) : null;
       });
 
       return entry;
     });
-  }, [resolvedColumns, rows, selectedXColumn, selectedYColumns, xIndex, xKey]);
+  }, [columnIndexByName, rows, selectedXColumn, selectedYColumns, xIndex, xKey]);
 
   const cleanYKeys = useMemo(
     () => cleanSeries(selectedYColumns.map((column) => column.name), chartData),
     [chartData, selectedYColumns],
+  );
+
+  const seriesData = useMemo(
+    () => (!isTemporalX && chartType !== "scatter"
+      ? aggregateChartRows(chartData, xKey, cleanYKeys)
+      : chartData),
+    [chartData, chartType, cleanYKeys, isTemporalX, xKey],
   );
 
   const categoryData = useMemo(() => {
@@ -336,7 +419,7 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
     const valueKey = selectedYColumns[0].name;
     const totals = new Map<string, number>();
 
-    chartData.forEach((row, rowIndex) => {
+    seriesData.forEach((row, rowIndex) => {
       const label = formatCategoryValue(row[labelKey], rowIndex);
       const value = tryParseNumeric(row[valueKey]);
       if (value === null) return;
@@ -346,7 +429,7 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
     return [...totals.entries()]
       .map(([name, value]) => ({ name, value }))
       .filter((item) => item.value !== 0);
-  }, [chartData, selectedXColumn, selectedYColumns]);
+  }, [selectedXColumn, selectedYColumns, seriesData]);
 
   const radarData = useMemo(() => {
     if (!selectedXColumn || cleanYKeys.length === 0) return [];
@@ -421,12 +504,12 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
         <div className="datachart-group datachart-group--types">
           <label className="datachart-label">Chart</label>
           <div className="datachart-toggle-group">
-            {CHART_TYPES.map(({ type, label, icon: Icon }) => (
+            {availableChartTypes.map(({ type, label, icon: Icon }) => (
               <button
                 key={type}
                 type="button"
                 className={`datachart-toggle-btn${chartType === type ? " active" : ""}`}
-                onClick={() => setChartType(type)}
+                onClick={() => handleChartTypeChange(type)}
                 title={label}
               >
                 <Icon className="w-3.5 h-3.5" />
@@ -436,13 +519,10 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
           </div>
         </div>
 
-        {chartType !== "pie" &&
-          chartType !== "donut" &&
-          chartType !== "radial" &&
-          hasMultipleXAxisChoices && (
+        {hasMultipleXAxisChoices && (
           <div className="datachart-group datachart-group--select-right">
             <label className="datachart-label" htmlFor="datachart-x-select">
-              {chartType === "radar" ? "Axis" : "X-Axis"}
+              {isSingleValueChart ? "Category" : "X-Axis"}
             </label>
             <select
               id="datachart-x-select"
@@ -450,21 +530,16 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
               value={selectedX}
               onChange={(event) => setSelectedX(event.target.value)}
             >
-              {resolvedColumns.map((column) => (
+              {xAxisColumns.map((column) => (
                 <option key={column.name} value={column.name}>
                   {column.name}
                 </option>
               ))}
             </select>
-            {chartType === "scatter" && scatterUsesRowIndex && (
-              <span className="datachart-inline-note">
-                Scatter needs a numeric X-axis, so it is using row order right now.
-              </span>
-            )}
           </div>
         )}
 
-        {!isSingleValueChart && hasMultipleNumericChoices && (
+        {!isSingleValueChart && numericColumns.length > 0 && (
           <div className="datachart-group">
             <label className="datachart-label">{chartType === "radar" ? "Series" : "Y-Axis"}</label>
             <div className="datachart-y-pills">
@@ -474,7 +549,8 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
                   type="button"
                   className={`datachart-y-pill${selectedY.includes(column.name) ? " active" : ""}`}
                   onClick={() => handleYToggle(column.name)}
-                  title={`Type: ${column.data_type || column.column_type || "unknown"}`}
+                  title={`Type: ${column.data_type || column.column_type || "unknown"}. Select multiple metrics to compare them.`}
+                  aria-pressed={selectedY.includes(column.name)}
                 >
                   {column.name}
                 </button>
@@ -505,7 +581,7 @@ export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
       <div className="datachart-body">
         <ChartCanvas
           chartType={chartType}
-          chartData={chartData}
+          chartData={seriesData}
           xKey={xKey}
           cleanYKeys={cleanYKeys}
           categoryData={categoryData}
@@ -663,7 +739,7 @@ function BarSeriesChart({
             stroke={colorAt(index)}
             strokeWidth={1}
             radius={stacked ? [0, 0, 0, 0] : horizontal ? [0, 6, 6, 0] : [6, 6, 0, 0]}
-            isAnimationActive
+            isAnimationActive={false}
           />
         ))}
       </BarChart>
@@ -697,9 +773,9 @@ function LineSeriesChart({
             dataKey={key}
             stroke={colorAt(index)}
             strokeWidth={2.4}
-            dot={{ r: 2.5, strokeWidth: 0, fill: colorAt(index) }}
+            dot={data.length <= 120 ? { r: 2.5, strokeWidth: 0, fill: colorAt(index) } : false}
             activeDot={{ r: 5 }}
-            isAnimationActive
+            isAnimationActive={false}
           />
         ))}
       </LineChart>
@@ -737,7 +813,7 @@ function AreaSeriesChart({
             strokeWidth={2}
             fill={`url(#datachart-grad-${index})`}
             fillOpacity={1}
-            isAnimationActive
+            isAnimationActive={false}
           />
         ))}
       </AreaChart>
@@ -772,7 +848,7 @@ function ComposedSeriesChart({
               stroke={colorAt(index)}
               strokeWidth={1}
               radius={[6, 6, 0, 0]}
-              isAnimationActive
+              isAnimationActive={false}
             />
           ) : (
             <Line
@@ -781,9 +857,9 @@ function ComposedSeriesChart({
               dataKey={key}
               stroke={colorAt(index)}
               strokeWidth={2.4}
-              dot={{ r: 2.5, strokeWidth: 0, fill: colorAt(index) }}
+              dot={data.length <= 120 ? { r: 2.5, strokeWidth: 0, fill: colorAt(index) } : false}
               activeDot={{ r: 5 }}
-              isAnimationActive
+              isAnimationActive={false}
             />
           )
         )}
@@ -818,7 +894,7 @@ function ScatterChartView({
             data={item.data}
             fill={colorAt(index)}
             fillOpacity={0.75}
-            isAnimationActive
+            isAnimationActive={false}
           />
         ))}
       </ScatterChart>
@@ -849,7 +925,7 @@ function RadarChartView({
             stroke={colorAt(index)}
             fill={colorAt(index)}
             fillOpacity={0.18}
-            isAnimationActive
+            isAnimationActive={false}
           />
         ))}
       </RadarChart>
@@ -868,7 +944,7 @@ function RadialChartView({ data }: { data: Array<{ name: string; value: number }
         startAngle={90}
         endAngle={-270}
       >
-        <RadialBar background dataKey="value" cornerRadius={6} isAnimationActive />
+        <RadialBar background dataKey="value" cornerRadius={6} isAnimationActive={false} />
         <Legend iconSize={10} layout="vertical" verticalAlign="middle" align="right" />
         <Tooltip content={<BaseTooltip />} />
       </RadialBarChart>
@@ -890,7 +966,7 @@ function PieChartView({ data, donut }: { data: Array<{ name: string; value: numb
           outerRadius="58%"
           paddingAngle={donut ? 2 : 0}
           label={({ name, percent }) => `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`}
-          isAnimationActive
+          isAnimationActive={false}
         >
           {data.map((item, index) => (
             <Cell key={`${item.name}-${index}`} fill={colorAt(index)} stroke="var(--bg-secondary)" strokeWidth={2} />

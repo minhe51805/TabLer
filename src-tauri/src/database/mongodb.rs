@@ -169,10 +169,7 @@ impl MongoDbDriver {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            query_params.push(format!(
-                "authSource={}",
-                Self::percent_encode(auth_source)
-            ));
+            query_params.push(format!("authSource={}", Self::percent_encode(auth_source)));
         }
         if let Some(replica_set) = config
             .additional_fields
@@ -181,12 +178,12 @@ impl MongoDbDriver {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            query_params.push(format!(
-                "replicaSet={}",
-                Self::percent_encode(replica_set)
-            ));
+            query_params.push(format!("replicaSet={}", Self::percent_encode(replica_set)));
         }
-        query_params.push(format!("tls={}", if config.use_ssl { "true" } else { "false" }));
+        query_params.push(format!(
+            "tls={}",
+            if config.use_ssl { "true" } else { "false" }
+        ));
 
         if !query_params.is_empty() {
             uri.push('?');
@@ -200,23 +197,16 @@ impl MongoDbDriver {
         value
             .bytes()
             .flat_map(|byte| match byte {
-                b'A'..=b'Z'
-                | b'a'..=b'z'
-                | b'0'..=b'9'
-                | b'-'
-                | b'_'
-                | b'.'
-                | b'~' => vec![byte as char].into_iter().collect::<Vec<_>>(),
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    vec![byte as char].into_iter().collect::<Vec<_>>()
+                }
                 _ => format!("%{byte:02X}").chars().collect(),
             })
             .collect()
     }
 
     async fn database_name(&self, database: Option<&str>) -> String {
-        if let Some(database) = database
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(database) = database.map(str::trim).filter(|value| !value.is_empty()) {
             return database.to_string();
         }
         self.current_db.read().await.clone()
@@ -534,7 +524,12 @@ impl MongoDbDriver {
 
     fn build_sort_document(order_by: Option<&str>, order_dir: Option<&str>) -> Option<Document> {
         let field = order_by.map(str::trim).filter(|value| !value.is_empty())?;
-        let direction = match order_dir.unwrap_or("ASC").trim().to_ascii_uppercase().as_str() {
+        let direction = match order_dir
+            .unwrap_or("ASC")
+            .trim()
+            .to_ascii_uppercase()
+            .as_str()
+        {
             "DESC" => -1,
             _ => 1,
         };
@@ -543,11 +538,7 @@ impl MongoDbDriver {
         Some(sort)
     }
 
-    fn insert_type_hint(
-        fields: &mut BTreeMap<String, (String, bool)>,
-        path: String,
-        value: &Bson,
-    ) {
+    fn insert_type_hint(fields: &mut BTreeMap<String, (String, bool)>, path: String, value: &Bson) {
         if path.is_empty() {
             return;
         }
@@ -751,26 +742,25 @@ impl MongoDbDriver {
             .strip_prefix("db.")
             .ok_or_else(|| anyhow!("MongoDB commands must start with db."))?;
 
-        let (collection, after_collection) = if let Some(after_get_collection) =
-            after_db.strip_prefix("getCollection(")
-        {
-            let close_index = Self::find_matching_closer(after_get_collection, '(', ')')?;
-            let raw_collection = after_get_collection[..close_index].trim();
-            let collection_value = Self::parse_relaxed_json_value(raw_collection)?;
-            let collection = collection_value
-                .as_str()
-                .ok_or_else(|| anyhow!("db.getCollection(...) requires a string collection name"))?;
-            let remainder = after_get_collection[close_index + 1..].trim();
-            (collection.to_string(), remainder)
-        } else {
-            let dot_index = after_db
-                .find('.')
-                .ok_or_else(|| anyhow!("MongoDB collection command is missing a method name"))?;
-            (
-                after_db[..dot_index].trim().to_string(),
-                after_db[dot_index..].trim(),
-            )
-        };
+        let (collection, after_collection) =
+            if let Some(after_get_collection) = after_db.strip_prefix("getCollection(") {
+                let close_index = Self::find_matching_closer(after_get_collection, '(', ')')?;
+                let raw_collection = after_get_collection[..close_index].trim();
+                let collection_value = Self::parse_relaxed_json_value(raw_collection)?;
+                let collection = collection_value.as_str().ok_or_else(|| {
+                    anyhow!("db.getCollection(...) requires a string collection name")
+                })?;
+                let remainder = after_get_collection[close_index + 1..].trim();
+                (collection.to_string(), remainder)
+            } else {
+                let dot_index = after_db.find('.').ok_or_else(|| {
+                    anyhow!("MongoDB collection command is missing a method name")
+                })?;
+                (
+                    after_db[..dot_index].trim().to_string(),
+                    after_db[dot_index..].trim(),
+                )
+            };
 
         if collection.is_empty() {
             return Err(anyhow!("MongoDB collection name cannot be empty"));
@@ -788,7 +778,9 @@ impl MongoDbDriver {
         let args = inside[..close_index].trim().to_string();
         let trailing = inside[close_index + 1..].trim();
         if !trailing.is_empty() {
-            return Err(anyhow!("Unexpected trailing characters after MongoDB command"));
+            return Err(anyhow!(
+                "Unexpected trailing characters after MongoDB command"
+            ));
         }
 
         Ok((collection, method, args))
@@ -797,11 +789,13 @@ impl MongoDbDriver {
     fn parse_update_payload(input: &str) -> Result<MongoUpdatePayload> {
         let value = Self::parse_relaxed_json_value(input)?;
         if matches!(value, JsonValue::Array(_)) {
-            Ok(MongoUpdatePayload::Pipeline(Self::json_value_to_document_array(
+            Ok(MongoUpdatePayload::Pipeline(
+                Self::json_value_to_document_array(value)?,
+            ))
+        } else {
+            Ok(MongoUpdatePayload::Document(Self::json_value_to_document(
                 value,
             )?))
-        } else {
-            Ok(MongoUpdatePayload::Document(Self::json_value_to_document(value)?))
         }
     }
 
@@ -812,9 +806,9 @@ impl MongoDbDriver {
         }
 
         if trimmed.starts_with('{') {
-            return Ok(MongoQueryCommand::RunCommand(Self::parse_json_document_arg(
-                trimmed,
-            )?));
+            return Ok(MongoQueryCommand::RunCommand(
+                Self::parse_json_document_arg(trimmed)?,
+            ));
         }
 
         if let Some(after_run_command) = trimmed.strip_prefix("db.runCommand(") {
@@ -822,7 +816,9 @@ impl MongoDbDriver {
             let command = Self::parse_json_document_arg(after_run_command[..close_index].trim())?;
             let trailing = after_run_command[close_index + 1..].trim();
             if !trailing.is_empty() {
-                return Err(anyhow!("Unexpected trailing characters after db.runCommand(...)"));
+                return Err(anyhow!(
+                    "Unexpected trailing characters after db.runCommand(...)"
+                ));
             }
             return Ok(MongoQueryCommand::RunCommand(command));
         }
@@ -1059,7 +1055,9 @@ impl DatabaseDriver for MongoDbDriver {
                     .collection::<Document>(&collection)
                     .aggregate(pipeline)
                     .await
-                    .with_context(|| format!("Failed to aggregate MongoDB collection {collection}"))?;
+                    .with_context(|| {
+                        format!("Failed to aggregate MongoDB collection {collection}")
+                    })?;
                 let (documents, truncated) = Self::collect_cursor_limited(cursor).await?;
                 Self::documents_to_result(
                     documents,
@@ -1076,7 +1074,9 @@ impl DatabaseDriver for MongoDbDriver {
                     .collection::<Document>(&collection)
                     .count_documents(filter)
                     .await
-                    .with_context(|| format!("Failed to count MongoDB documents in {collection}"))?;
+                    .with_context(|| {
+                        format!("Failed to count MongoDB documents in {collection}")
+                    })?;
                 Self::scalar_result(
                     "count",
                     JsonValue::from(count),
@@ -1095,7 +1095,9 @@ impl DatabaseDriver for MongoDbDriver {
                     .collection::<Document>(&collection)
                     .insert_one(document)
                     .await
-                    .with_context(|| format!("Failed to insert into MongoDB collection {collection}"))?;
+                    .with_context(|| {
+                        format!("Failed to insert into MongoDB collection {collection}")
+                    })?;
                 Self::scalar_result(
                     "inserted_id",
                     Self::bson_to_json(insert.inserted_id),
@@ -1114,7 +1116,9 @@ impl DatabaseDriver for MongoDbDriver {
                     .collection::<Document>(&collection)
                     .insert_many(documents)
                     .await
-                    .with_context(|| format!("Failed to insert into MongoDB collection {collection}"))?;
+                    .with_context(|| {
+                        format!("Failed to insert into MongoDB collection {collection}")
+                    })?;
                 Self::scalar_result(
                     "inserted_count",
                     JsonValue::from(inserted_count),
@@ -1129,22 +1133,28 @@ impl DatabaseDriver for MongoDbDriver {
                 update,
             } => {
                 let modified_count = match update {
-                    MongoUpdatePayload::Document(update_document) => self
-                        .client
-                        .database(&active_database)
-                        .collection::<Document>(&collection)
-                        .update_one(filter, update_document)
-                        .await
-                        .with_context(|| format!("Failed to update MongoDB collection {collection}"))?
-                        .modified_count,
-                    MongoUpdatePayload::Pipeline(update_pipeline) => self
-                        .client
-                        .database(&active_database)
-                        .collection::<Document>(&collection)
-                        .update_one(filter, update_pipeline)
-                        .await
-                        .with_context(|| format!("Failed to update MongoDB collection {collection}"))?
-                        .modified_count,
+                    MongoUpdatePayload::Document(update_document) => {
+                        self.client
+                            .database(&active_database)
+                            .collection::<Document>(&collection)
+                            .update_one(filter, update_document)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to update MongoDB collection {collection}")
+                            })?
+                            .modified_count
+                    }
+                    MongoUpdatePayload::Pipeline(update_pipeline) => {
+                        self.client
+                            .database(&active_database)
+                            .collection::<Document>(&collection)
+                            .update_one(filter, update_pipeline)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to update MongoDB collection {collection}")
+                            })?
+                            .modified_count
+                    }
                 };
                 Self::scalar_result(
                     "modified_count",
@@ -1160,22 +1170,28 @@ impl DatabaseDriver for MongoDbDriver {
                 update,
             } => {
                 let modified_count = match update {
-                    MongoUpdatePayload::Document(update_document) => self
-                        .client
-                        .database(&active_database)
-                        .collection::<Document>(&collection)
-                        .update_many(filter, update_document)
-                        .await
-                        .with_context(|| format!("Failed to update MongoDB collection {collection}"))?
-                        .modified_count,
-                    MongoUpdatePayload::Pipeline(update_pipeline) => self
-                        .client
-                        .database(&active_database)
-                        .collection::<Document>(&collection)
-                        .update_many(filter, update_pipeline)
-                        .await
-                        .with_context(|| format!("Failed to update MongoDB collection {collection}"))?
-                        .modified_count,
+                    MongoUpdatePayload::Document(update_document) => {
+                        self.client
+                            .database(&active_database)
+                            .collection::<Document>(&collection)
+                            .update_many(filter, update_document)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to update MongoDB collection {collection}")
+                            })?
+                            .modified_count
+                    }
+                    MongoUpdatePayload::Pipeline(update_pipeline) => {
+                        self.client
+                            .database(&active_database)
+                            .collection::<Document>(&collection)
+                            .update_many(filter, update_pipeline)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to update MongoDB collection {collection}")
+                            })?
+                            .modified_count
+                    }
                 };
                 Self::scalar_result(
                     "modified_count",
@@ -1192,7 +1208,9 @@ impl DatabaseDriver for MongoDbDriver {
                     .collection::<Document>(&collection)
                     .delete_one(filter)
                     .await
-                    .with_context(|| format!("Failed to delete from MongoDB collection {collection}"))?
+                    .with_context(|| {
+                        format!("Failed to delete from MongoDB collection {collection}")
+                    })?
                     .deleted_count;
                 Self::scalar_result(
                     "deleted_count",
@@ -1209,7 +1227,9 @@ impl DatabaseDriver for MongoDbDriver {
                     .collection::<Document>(&collection)
                     .delete_many(filter)
                     .await
-                    .with_context(|| format!("Failed to delete from MongoDB collection {collection}"))?
+                    .with_context(|| {
+                        format!("Failed to delete from MongoDB collection {collection}")
+                    })?
                     .deleted_count;
                 Self::scalar_result(
                     "deleted_count",
@@ -1309,7 +1329,9 @@ impl DatabaseDriver for MongoDbDriver {
             deleted += collection
                 .delete_one(filter)
                 .await
-                .with_context(|| format!("Failed to delete from MongoDB collection {}", request.table))?
+                .with_context(|| {
+                    format!("Failed to delete from MongoDB collection {}", request.table)
+                })?
                 .deleted_count;
         }
         Ok(deleted)
@@ -1323,10 +1345,9 @@ impl DatabaseDriver for MongoDbDriver {
         for (key, value) in &request.values {
             document.insert(key.clone(), Self::json_value_to_bson(value.clone())?);
         }
-        collection
-            .insert_one(document)
-            .await
-            .with_context(|| format!("Failed to insert into MongoDB collection {}", request.table))?;
+        collection.insert_one(document).await.with_context(|| {
+            format!("Failed to insert into MongoDB collection {}", request.table)
+        })?;
         Ok(1)
     }
 

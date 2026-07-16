@@ -1,5 +1,6 @@
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryResult;
+use serde::Serialize;
 use tauri::State;
 use tokio::time::{timeout, Duration};
 
@@ -7,7 +8,7 @@ const MAINTENANCE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Supported maintenance commands.
 /// The frontend passes these as string enum values.
-fn build_maintenance_sql(
+pub fn build_maintenance_sql(
     command: &str,
     db_type: &str,
     table: Option<&str>,
@@ -23,7 +24,10 @@ fn build_maintenance_sql(
                 }
             }
             "sqlite" | "libsql" | "cloudflare_d1" => Ok("VACUUM;".to_string()),
-            _ => Err(format!("VACUUM is not supported for {} databases.", db_type)),
+            _ => Err(format!(
+                "VACUUM is not supported for {} databases.",
+                db_type
+            )),
         },
         "analyze" => match db_type {
             "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica" => {
@@ -48,7 +52,10 @@ fn build_maintenance_sql(
                     Ok("ANALYZE;".to_string())
                 }
             }
-            _ => Err(format!("ANALYZE is not supported for {} databases.", db_type)),
+            _ => Err(format!(
+                "ANALYZE is not supported for {} databases.",
+                db_type
+            )),
         },
         "optimize" => match db_type {
             "mysql" | "mariadb" => {
@@ -66,7 +73,10 @@ fn build_maintenance_sql(
                     return Err("OPTIMIZE TABLE requires a table name for ClickHouse.".to_string());
                 }
             }
-            _ => Err(format!("OPTIMIZE is not supported for {} databases.", db_type)),
+            _ => Err(format!(
+                "OPTIMIZE is not supported for {} databases.",
+                db_type
+            )),
         },
         "reindex" => match db_type {
             "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica" => {
@@ -87,7 +97,10 @@ fn build_maintenance_sql(
                     Ok("REINDEX;".to_string())
                 }
             }
-            _ => Err(format!("REINDEX is not supported for {} databases.", db_type)),
+            _ => Err(format!(
+                "REINDEX is not supported for {} databases.",
+                db_type
+            )),
         },
         "check_table" => match db_type {
             "mysql" | "mariadb" => {
@@ -108,10 +121,46 @@ fn build_maintenance_sql(
                     return Err("CHECK TABLE requires a table name.".to_string());
                 }
             }
-            _ => Err(format!("CHECK TABLE is not supported for {} databases.", db_type)),
+            _ => Err(format!(
+                "CHECK TABLE is not supported for {} databases.",
+                db_type
+            )),
         },
         _ => Err(format!("Unknown maintenance command: {}", command)),
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaintenancePreview {
+    pub command: String,
+    pub sql: String,
+    pub requires_confirmation: bool,
+}
+
+#[tauri::command]
+pub async fn preview_maintenance_command(
+    connection_id: String,
+    command: String,
+    table: Option<String>,
+    database: Option<String>,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<MaintenancePreview, String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let sql = build_maintenance_sql(
+        &command,
+        driver.driver_name(),
+        table.as_deref(),
+        database.as_deref(),
+    )?;
+    Ok(MaintenancePreview {
+        command,
+        sql,
+        requires_confirmation: true,
+    })
 }
 
 #[tauri::command]
@@ -128,19 +177,34 @@ pub async fn run_maintenance_command(
         .map_err(|e| e.to_string())?;
 
     let db_type = driver.driver_name();
-    let sql = build_maintenance_sql(
-        &command,
-        db_type,
-        table.as_deref(),
-        database.as_deref(),
-    )?;
+    let sql = build_maintenance_sql(&command, db_type, table.as_deref(), database.as_deref())?;
 
     timeout(MAINTENANCE_TIMEOUT, driver.execute_query(&sql))
         .await
-        .map_err(|_| format!(
-            "Maintenance command '{}' timed out after {} seconds.",
-            command,
-            MAINTENANCE_TIMEOUT.as_secs()
-        ))?
+        .map_err(|_| {
+            format!(
+                "Maintenance command '{}' timed out after {} seconds.",
+                command,
+                MAINTENANCE_TIMEOUT.as_secs()
+            )
+        })?
         .map_err(|e| format!("Maintenance command '{}' failed: {}", command, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_maintenance_sql;
+
+    #[test]
+    fn builds_reviewable_postgres_vacuum_sql() {
+        assert_eq!(
+            build_maintenance_sql("vacuum", "postgresql", Some("events"), None).unwrap(),
+            "VACUUM ANALYZE \"events\";",
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_engine_command_pairs() {
+        assert!(build_maintenance_sql("optimize", "postgresql", Some("events"), None).is_err());
+    }
 }

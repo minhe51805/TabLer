@@ -67,6 +67,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "menu.item.focusExplorerSearch": "聚焦 Explorer 搜索",
   "menu.item.openExplorer": "打开 Explorer",
   "menu.item.pluginManager": "插件管理器",
+  "menu.item.externalIntegrations": "外部集成",
   "menu.item.metrics": "指标",
   "menu.item.queryHistory": "查询历史",
   "menu.item.aboutTableR": "关于 TableR",
@@ -238,7 +239,8 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.deleteBoard": "删除面板",
   "metrics.renameBoardModalKicker": "指标面板",
   "metrics.renameBoardModalTitle": "重命名面板",
-  "metrics.renameBoardModalSubtitle": "更新在指标侧边栏和工作区中显示的面板名称。",
+  "metrics.renameBoardModalSubtitle":
+    "更新在指标侧边栏和工作区中显示的面板名称。",
   "metrics.boardNamePlaceholder": "面板名称",
   "metrics.rename": "重命名",
   "metrics.manual": "手动",
@@ -271,7 +273,8 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.validation.addQuery": "添加一个只读 SQL 查询来加载该 widget。",
   "metrics.validation.singleStatement": "Metrics widget 仅支持单条只读语句。",
   "metrics.validation.readOnlyOnly": "Metrics board widget 仅支持只读查询。",
-  "metrics.validation.noMutatingCte": "Metrics board widget 不允许带写操作的 CTE。",
+  "metrics.validation.noMutatingCte":
+    "Metrics board widget 不允许带写操作的 CTE。",
   "metrics.widget.refresh": "刷新 widget",
   "metrics.widget.issue": "问题",
   "metrics.widget.refreshing": "刷新中",
@@ -289,6 +292,10 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "tabs.hideResults": "隐藏结果",
   "tabs.showResults": "显示结果",
   "tabs.readyToExecute": "按 Ctrl+Enter 运行",
-  "tabs.noSqlToExecute": "还没有可运行的内容。先输入查询或命令，再按 Ctrl+Enter。",
+  "tabs.noSqlToExecute":
+    "还没有可运行的内容。先输入查询或命令，再按 Ctrl+Enter。",
+  "metrics.widget.openResult": "Open result in workspace",
+  "metrics.widget.openSourceSql": "Open source SQL",
+  "workspace.bundle.export": "Export workspace bundle",
+  "workspace.bundle.import": "Import workspace bundle",
 };
-

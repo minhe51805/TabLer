@@ -1,5 +1,6 @@
-import { useAppStore } from "../../stores/appStore";
-import { getActiveAIProvider } from "../../types";
+import { useConnectionStore } from "../../stores/connectionStore";
+import { useAIStore } from "../../stores/aiStore";
+import { getActiveAIProvider } from "../../utils/ai-provider-registry";
 import { devLogError } from "../../utils/logger";
 import {
   isTrustedInlineCompletionConnection,
@@ -29,14 +30,14 @@ export function registerInlineAICompletionProvider(
 
       if (textUntilPosition.trim().length < 5) return { items: [] };
 
-      const activeProvider = getActiveAIProvider(useAppStore.getState().aiConfigs);
+      const activeProvider = getActiveAIProvider(useAIStore.getState().aiConfigs);
       if (!activeProvider) return { items: [] };
       if (!activeProvider.allow_inline_completion) return { items: [] };
 
-      const activeConnection = useAppStore.getState().connections.find((c) => c.id === connectionId);
+      const activeConnection = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
       if (!isTrustedInlineCompletionConnection(activeConnection)) return { items: [] };
 
-      const dbName = useAppStore.getState().currentDatabase || "Default";
+      const dbName = useConnectionStore.getState().currentDatabase || "Default";
       const completionKey = `${dbName}:${textUntilPosition.trim()}`;
 
       // Cache check
@@ -79,7 +80,7 @@ export function registerInlineAICompletionProvider(
 
       try {
         const tableNameList = activeProvider.allow_schema_context
-          ? useAppStore.getState().tables.slice(0, INLINE_COMPLETION_TABLE_LIMIT).map((t) => t.name).join(", ")
+          ? useConnectionStore.getState().tables.slice(0, INLINE_COMPLETION_TABLE_LIMIT).map((t) => t.name).join(", ")
           : "";
 
         const dbContext = activeProvider.allow_schema_context
@@ -88,7 +89,7 @@ export function registerInlineAICompletionProvider(
 
         const prompt = `Complete this SQL query (return only the remaining code):\n${textUntilPosition}`;
 
-        const requestPromise = useAppStore
+        const requestPromise = useAIStore
           .getState()
           .askAI(prompt, dbContext, "inline")
           .then((response) => normalizeInlineSuggestion(response, textUntilPosition))

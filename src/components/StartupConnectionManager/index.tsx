@@ -10,7 +10,7 @@ import {
 } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useI18n } from "../../i18n";
-import { useAppStore } from "../../stores/appStore";
+import { useConnectionStore } from "../../stores/connectionStore";
 import { emitAppToast } from "../../utils/app-toast";
 import {
   changeGroupColor,
@@ -63,7 +63,7 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
     deleteSavedConnection,
     fetchDatabases,
     fetchTables,
-  } = useAppStore(
+  } = useConnectionStore(
     useShallow((state) => ({
       connections: state.connections,
       activeConnectionId: state.activeConnectionId,
@@ -222,9 +222,9 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
     setSelectedConnectionId(connection.id);
     setHoverPreview(null);
     if (connectedIds.has(connection.id)) {
-      const currentDatabase = useAppStore.getState().currentDatabase ?? null;
+      const currentDatabase = useConnectionStore.getState().currentDatabase ?? null;
       const targetDatabase = connection.database ?? null;
-      useAppStore.setState({
+      useConnectionStore.setState({
         activeConnectionId: connection.id,
         currentDatabase: targetDatabase,
         schemaObjects: [],
@@ -268,7 +268,7 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
 
     await deleteSavedConnection(connection.id);
 
-    const stillExists = useAppStore.getState().connections.some((item) => item.id === connection.id);
+    const stillExists = useConnectionStore.getState().connections.some((item) => item.id === connection.id);
     if (stillExists) return;
 
     emitAppToast({

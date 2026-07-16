@@ -2,18 +2,21 @@ use super::driver::DatabaseDriver;
 use super::models::*;
 use super::query_common::{statement_returns_rows, MAX_QUERY_RESULT_ROWS};
 use super::safety::{
-    normalize_order_dir, qualify_mysql_table_name, quote_mysql_identifier,
-    quote_mysql_order_by, sanitize_mysql_filter_clause,
+    normalize_order_dir, qualify_mysql_table_name, quote_mysql_identifier, quote_mysql_order_by,
+    sanitize_mysql_filter_clause,
 };
 use crate::utils::sql::split_sql_statements;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow};
+use sqlx::mysql::{MySqlArguments, MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow};
+use sqlx::query::Query;
+use sqlx::types::Json;
 use sqlx::{Column, ConnectOptions, Executor, MySql, QueryBuilder, Row, TypeInfo};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::time::Instant;
+use tokio::sync::RwLock;
 
 pub struct MySqlDriver {
     pool: MySqlPool,
@@ -104,7 +107,8 @@ impl MySqlDriver {
                 Err(e) => {
                     last_error = Some(e);
                     if attempt < 3 {
-                        tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64))
+                            .await;
                     }
                 }
             }
@@ -132,7 +136,8 @@ impl MySqlDriver {
         truncated: bool,
     ) -> QueryResult {
         let columns = if let Some(first) = rows.first() {
-            first.columns()
+            first
+                .columns()
                 .iter()
                 .map(|c| ColumnInfo {
                     name: c.name().to_string(),
@@ -198,6 +203,60 @@ impl MySqlDriver {
         Ok((rows, false))
     }
 
+    fn bind_parameterized_query<'q>(
+        mut query: Query<'q, MySql, MySqlArguments>,
+        parameters: &[QueryParameter],
+    ) -> Result<Query<'q, MySql, MySqlArguments>> {
+        for parameter in parameters {
+            query = match parameter.data_type {
+                QueryParameterType::Text => query.bind(
+                    parameter
+                        .value
+                        .as_str()
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Parameter '{}' must be text.", parameter.name)
+                        })?
+                        .to_string(),
+                ),
+                QueryParameterType::Integer => {
+                    query.bind(parameter.value.as_i64().ok_or_else(|| {
+                        anyhow::anyhow!("Parameter '{}' must be an integer.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Decimal => {
+                    query.bind(parameter.value.as_f64().ok_or_else(|| {
+                        anyhow::anyhow!("Parameter '{}' must be a number.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Boolean => {
+                    query.bind(parameter.value.as_bool().ok_or_else(|| {
+                        anyhow::anyhow!("Parameter '{}' must be boolean.", parameter.name)
+                    })?)
+                }
+                QueryParameterType::Json => query.bind(Json(parameter.value.clone())),
+                QueryParameterType::Null => query.bind(Option::<String>::None),
+            };
+        }
+        Ok(query)
+    }
+
+    async fn fetch_parameterized_rows(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<(Vec<MySqlRow>, bool)> {
+        let mut stream =
+            Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&self.pool);
+        let mut rows = Vec::new();
+        while let Some(row) = stream.try_next().await? {
+            if rows.len() == MAX_QUERY_RESULT_ROWS {
+                return Ok((rows, true));
+            }
+            rows.push(row);
+        }
+        Ok((rows, false))
+    }
+
     fn push_bound_value(
         builder: &mut QueryBuilder<'_, MySql>,
         value: &serde_json::Value,
@@ -256,28 +315,21 @@ impl DatabaseDriver for MySqlDriver {
     }
 
     async fn list_databases(&self) -> Result<Vec<DatabaseInfo>> {
-        let rows: Vec<MySqlRow> = sqlx::query("SHOW DATABASES")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows: Vec<MySqlRow> = sqlx::query("SHOW DATABASES").fetch_all(&self.pool).await?;
 
         let mut databases = Vec::new();
         for row in rows {
             let name: String = row.get(0);
-            databases.push(DatabaseInfo {
-                name,
-                size: None,
-            });
+            databases.push(DatabaseInfo { name, size: None });
         }
         Ok(databases)
     }
 
     async fn list_tables(&self, database: Option<&str>) -> Result<Vec<TableInfo>> {
-        let db = database
-            .map(String::from)
-            .or_else(|| {
-                let current = self.current_db.try_read().ok();
-                current.and_then(|guard| guard.clone())
-            });
+        let db = database.map(String::from).or_else(|| {
+            let current = self.current_db.try_read().ok();
+            current.and_then(|guard| guard.clone())
+        });
 
         let rows: Vec<MySqlRow> = if let Some(ref db_name) = db {
             sqlx::query(
@@ -310,12 +362,10 @@ impl DatabaseDriver for MySqlDriver {
     }
 
     async fn list_schema_objects(&self, database: Option<&str>) -> Result<Vec<SchemaObjectInfo>> {
-        let db = database
-            .map(String::from)
-            .or_else(|| {
-                let current = self.current_db.try_read().ok();
-                current.and_then(|guard| guard.clone())
-            });
+        let db = database.map(String::from).or_else(|| {
+            let current = self.current_db.try_read().ok();
+            current.and_then(|guard| guard.clone())
+        });
 
         let mut objects = Vec::new();
 
@@ -640,14 +690,8 @@ impl DatabaseDriver for MySqlDriver {
 
         if statements.len() <= 1 && Self::query_returns_rows(sql) {
             let (rows, truncated) = Self::fetch_rows_limited(&self.pool, sql).await?;
-            let mut result = Self::build_result_from_rows(
-                &rows,
-                0,
-                sql.to_string(),
-                0,
-                false,
-                truncated,
-            );
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
             result.execution_time_ms = start.elapsed().as_millis();
             Ok(result)
         } else {
@@ -657,7 +701,8 @@ impl DatabaseDriver for MySqlDriver {
             if statements.len() > 1 {
                 for statement in &statements {
                     if Self::query_returns_rows(statement) {
-                        let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
+                        let (rows, truncated) =
+                            Self::fetch_rows_limited(&self.pool, statement).await?;
                         last_result = Some(Self::build_result_from_rows(
                             &rows,
                             0,
@@ -707,6 +752,33 @@ impl DatabaseDriver for MySqlDriver {
         }
     }
 
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        if Self::query_returns_rows(sql) {
+            let (rows, truncated) = self.fetch_parameterized_rows(sql, parameters).await?;
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            result.execution_time_ms = start.elapsed().as_millis();
+            return Ok(result);
+        }
+        let outcome = Self::bind_parameterized_query(sqlx::query(sql), parameters)?
+            .execute(&self.pool)
+            .await?;
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: outcome.rows_affected(),
+            execution_time_ms: start.elapsed().as_millis(),
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -717,7 +789,10 @@ impl DatabaseDriver for MySqlDriver {
         order_dir: Option<&str>,
         filter: Option<&str>,
     ) -> Result<QueryResult> {
-        let mut sql = format!("SELECT * FROM {}", qualify_mysql_table_name(table, database)?);
+        let mut sql = format!(
+            "SELECT * FROM {}",
+            qualify_mysql_table_name(table, database)?
+        );
         if let Some(filter_clause) = sanitize_mysql_filter_clause(filter)? {
             sql.push_str(&format!(" WHERE {}", filter_clause));
         }
@@ -731,7 +806,10 @@ impl DatabaseDriver for MySqlDriver {
     }
 
     async fn count_rows(&self, table: &str, database: Option<&str>) -> Result<i64> {
-        let sql = format!("SELECT COUNT(*) FROM {}", qualify_mysql_table_name(table, database)?);
+        let sql = format!(
+            "SELECT COUNT(*) FROM {}",
+            qualify_mysql_table_name(table, database)?
+        );
         let row: MySqlRow = sqlx::query(&sql).fetch_one(&self.pool).await?;
         let count: i64 = row.get(0);
         Ok(count)
@@ -788,6 +866,53 @@ impl DatabaseDriver for MySqlDriver {
         Ok(result.rows_affected())
     }
 
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        let mut transaction = self.pool.begin().await?;
+        let mut affected_rows = 0;
+        for request in updates {
+            if request.primary_keys.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Inline update requires at least one primary key column"
+                ));
+            }
+
+            let mut builder = QueryBuilder::<MySql>::new("UPDATE ");
+            builder.push(qualify_mysql_table_name(
+                &request.table,
+                request.database.as_deref(),
+            )?);
+            builder.push(" SET ");
+            builder.push(quote_mysql_order_by(&request.target_column)?);
+            builder.push(" = ");
+            Self::push_bound_value(&mut builder, &request.value)?;
+            builder.push(" WHERE ");
+            for (index, primary_key) in request.primary_keys.iter().enumerate() {
+                if index > 0 {
+                    builder.push(" AND ");
+                }
+                builder.push(quote_mysql_order_by(&primary_key.column)?);
+                if primary_key.value.is_null() {
+                    builder.push(" IS NULL");
+                } else {
+                    builder.push(" = ");
+                    Self::push_bound_value(&mut builder, &primary_key.value)?;
+                }
+            }
+            let result = builder.build().execute(&mut *transaction).await?;
+            if result.rows_affected() == 0 {
+                return Err(anyhow::anyhow!(
+                    "An edit queue row no longer matches its primary-key selector"
+                ));
+            }
+            affected_rows += result.rows_affected();
+        }
+        transaction.commit().await?;
+        Ok(affected_rows)
+    }
+
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
         if request.rows.is_empty() {
             return Err(anyhow::anyhow!(
@@ -836,16 +961,17 @@ impl DatabaseDriver for MySqlDriver {
 
     async fn use_database(&self, database: &str) -> Result<()> {
         let sql = format!("USE {}", quote_mysql_identifier(database)?);
-        sqlx::query(&sql)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(&sql).execute(&self.pool).await?;
         let mut db = self.current_db.write().await;
         *db = Some(database.to_string());
         Ok(())
     }
 
     fn current_database(&self) -> Option<String> {
-        self.current_db.try_read().ok().and_then(|guard| guard.clone())
+        self.current_db
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
@@ -854,7 +980,10 @@ impl DatabaseDriver for MySqlDriver {
         }
 
         let mut builder = QueryBuilder::<MySql>::new("INSERT INTO ");
-        builder.push(qualify_mysql_table_name(&request.table, request.database.as_deref())?);
+        builder.push(qualify_mysql_table_name(
+            &request.table,
+            request.database.as_deref(),
+        )?);
         builder.push(" (");
 
         let mut first = true;
@@ -881,6 +1010,58 @@ impl DatabaseDriver for MySqlDriver {
 
         let result = builder.build().execute(&self.pool).await?;
         Ok(result.rows_affected())
+    }
+
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow::anyhow!("CSV import requires at least one row"));
+        }
+
+        let mut transaction = self.pool.begin().await?;
+        let mut affected_rows = 0;
+        for request in requests {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!(
+                    "CSV import cancelled; all rows were rolled back"
+                ));
+            }
+            if request.values.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Each CSV row requires at least one column value"
+                ));
+            }
+            let mut builder = QueryBuilder::<MySql>::new("INSERT INTO ");
+            builder.push(qualify_mysql_table_name(
+                &request.table,
+                request.database.as_deref(),
+            )?);
+            builder.push(" (");
+            for (index, (column, _)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                builder.push(quote_mysql_identifier(column)?);
+            }
+            builder.push(") VALUES (");
+            for (index, (_, value)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                Self::push_bound_value(&mut builder, value)?;
+            }
+            builder.push(")");
+            affected_rows += builder
+                .build()
+                .execute(&mut *transaction)
+                .await?
+                .rows_affected();
+        }
+        transaction.commit().await?;
+        Ok(affected_rows)
     }
 
     fn driver_name(&self) -> &str {
@@ -939,15 +1120,9 @@ impl DatabaseDriver for MySqlDriver {
              FROM `{}` \
              ORDER BY `{}` \
              LIMIT {}",
-            referenced_column,
-            label_expr,
-            referenced_table,
-            referenced_column,
-            limit
+            referenced_column, label_expr, referenced_table, referenced_column, limit
         );
-        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql)
-            .fetch_all(pool)
-            .await?;
+        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql).fetch_all(pool).await?;
         Ok(rows
             .into_iter()
             .map(|(value, label)| LookupValue { value, label })

@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use ssh2::Session;
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use ssh2::Session;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -65,7 +65,9 @@ impl SshTunnelManager {
                     let pass = config.passphrase.as_deref();
                     sess.userauth_pubkey_file(&config.user, None, path, pass)?;
                 } else {
-                    return Err(anyhow!("PrivateKey auth without a file path is not fully supported yet"));
+                    return Err(anyhow!(
+                        "PrivateKey auth without a file path is not fully supported yet"
+                    ));
                 }
             }
         }
@@ -74,7 +76,9 @@ impl SshTunnelManager {
             return Err(anyhow!("SSH authentication failed"));
         }
 
-        let ctx = Arc::new(SshSessionContext { session: Arc::new(sess) });
+        let ctx = Arc::new(SshSessionContext {
+            session: Arc::new(sess),
+        });
         let mut guard = self.next_id.lock().unwrap();
         let handle = TunnelHandle(*guard);
         *guard += 1;
@@ -102,12 +106,14 @@ impl SshTunnelManager {
     ) -> Result<u16> {
         let ctx = {
             let map = self.tunnels.lock().unwrap();
-            map.get(&handle).cloned().ok_or_else(|| anyhow!("Tunnel handle not found"))?
+            map.get(&handle)
+                .cloned()
+                .ok_or_else(|| anyhow!("Tunnel handle not found"))?
         };
 
         let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port.unwrap_or(0)))?;
         let actual_port = listener.local_addr()?.port();
-        
+
         thread::spawn(move || {
             for stream_res in listener.incoming() {
                 match stream_res {
@@ -115,12 +121,15 @@ impl SshTunnelManager {
                         let sess = ctx.session.clone();
                         let remote_h = remote_host.clone();
                         let remote_p = remote_port;
-                        
+
                         thread::spawn(move || {
-                            if let Ok(channel) = sess.channel_direct_tcpip(&remote_h, remote_p, None) {
-                                let mut local_read = local_stream.try_clone().expect("clone tcp stream");
+                            if let Ok(channel) =
+                                sess.channel_direct_tcpip(&remote_h, remote_p, None)
+                            {
+                                let mut local_read =
+                                    local_stream.try_clone().expect("clone tcp stream");
                                 let mut channel_read = channel.stream(0);
-                                
+
                                 let mut channel_write = channel;
                                 let mut local_write = local_stream;
 
@@ -130,7 +139,7 @@ impl SshTunnelManager {
                                 let handle2 = thread::spawn(move || {
                                     let _ = std::io::copy(&mut channel_read, &mut local_write);
                                 });
-                                
+
                                 let _ = handle1.join();
                                 let _ = handle2.join();
                             }

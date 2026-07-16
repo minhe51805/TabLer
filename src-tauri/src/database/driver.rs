@@ -1,6 +1,7 @@
 use super::models::*;
 use anyhow::Result;
 use async_trait::async_trait;
+use std::sync::{atomic::AtomicBool, Arc};
 
 /// Core database driver trait — mirrors TablePro's DatabaseDriver protocol.
 /// All database operations go through this trait.
@@ -41,6 +42,18 @@ pub trait DatabaseDriver: Send + Sync {
     /// Execute a raw SQL query and return results
     async fn execute_query(&self, sql: &str) -> Result<QueryResult>;
 
+    /// Execute one SQL statement using already compiled bind markers. Values are
+    /// supplied separately so callers never interpolate data into SQL text.
+    async fn execute_parameterized_query(
+        &self,
+        _sql: &str,
+        _parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        Err(anyhow::anyhow!(
+            "Prepared SQL parameters are not supported by this database driver yet"
+        ))
+    }
+
     /// Get rows from a table with pagination
     async fn get_table_data(
         &self,
@@ -67,11 +80,36 @@ pub trait DatabaseDriver: Send + Sync {
     /// Update a single cell in a table using a primary-key based row selector.
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64>;
 
+    /// Apply a batch of primary-key based cell updates atomically. Drivers that
+    /// cannot guarantee a single transaction must reject this operation rather
+    /// than leave the edit queue partially committed.
+    async fn apply_table_updates_atomically(
+        &self,
+        _updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        Err(anyhow::anyhow!(
+            "Atomic edit queues are not supported by this database driver yet"
+        ))
+    }
+
     /// Delete one or more rows in a table using primary-key based row selectors.
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64>;
 
     /// Insert a single new row into a table.
     async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64>;
+
+    /// Insert many rows in one transaction. Drivers that do not have a
+    /// transaction primitive must reject this instead of partially importing a
+    /// CSV file.
+    async fn insert_table_rows_atomically(
+        &self,
+        _requests: &[TableRowInsertRequest],
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        Err(anyhow::anyhow!(
+            "Atomic CSV imports are not supported by this database driver yet"
+        ))
+    }
 
     /// Execute reviewed schema-change statements in the backend, sequentially.
     async fn execute_structure_statements(&self, statements: &[String]) -> Result<u64> {
@@ -80,6 +118,12 @@ pub trait DatabaseDriver: Send + Sync {
             total_affected += self.execute_query(statement).await?.affected_rows;
         }
         Ok(total_affected)
+    }
+
+    /// Restore a reviewed SQL dump. Transaction-capable drivers override this
+    /// so every statement is pinned to the same database transaction.
+    async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        self.execute_structure_statements(statements).await
     }
 
     /// Switch to a different database

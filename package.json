@@ -2,6 +2,7 @@
   "name": "tabler",
   "private": true,
   "version": "0.1.4",
+  "releaseLabel": "0.1.4b",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,13 +12,18 @@
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests --max-warnings=64",
+    "check:frontend": "npm run typecheck && npm run lint && npm run test:run && npm run build",
+    "check:release-contract": "node scripts/check-release-contract.mjs",
+    "check:tauri-target": "node scripts/check-tauri-binary-target.mjs",
     "check:sql-splitter": "node scripts/check-sql-splitter.mjs && cargo test sql_splitter_contract --manifest-path src-tauri/Cargo.toml",
-    "build:release": "npm run build && node scripts/generate-updater-manifest.mjs $(node -p \"require('./src-tauri/tauri.conf.json').version\")"
+    "build:release": "tauri build --config src-tauri/tauri.release.conf.json"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "^3.14.6",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-updater": "^2",
@@ -33,14 +39,13 @@
     "recharts": "^3.8.1",
     "sql-formatter": "^15.7.3",
     "tailwindcss": "^4.2.1",
-    "xlsx": "^0.18.5",
-    "xterm": "^5.3.0",
-    "xterm-addon-fit": "^0.8.0",
+    "write-excel-file": "^4.1.1",
     "zustand": "^4.5.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2",
+    "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -57,5 +62,8 @@
     "typescript": "~5.9.3",
     "vite": "^7.0.4",
     "vitest": "^4.1.0"
+  },
+  "overrides": {
+    "dompurify": "^3.4.12"
   }
 }

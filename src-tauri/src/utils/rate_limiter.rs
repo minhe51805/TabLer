@@ -10,11 +10,7 @@ pub struct SlidingWindowRateLimiter {
 }
 
 impl SlidingWindowRateLimiter {
-    pub fn new(
-        window: Duration,
-        max_attempts: usize,
-        retry_after_message: &'static str,
-    ) -> Self {
+    pub fn new(window: Duration, max_attempts: usize, retry_after_message: &'static str) -> Self {
         Self {
             attempts: AsyncMutex::new(HashMap::new()),
             window,
@@ -25,10 +21,7 @@ impl SlidingWindowRateLimiter {
 
     pub async fn check(&self, key: &str) -> Result<(), String> {
         let now = Instant::now();
-        let mut attempts = self
-            .attempts
-            .lock()
-            .await;
+        let mut attempts = self.attempts.lock().await;
 
         let entry = attempts.entry(key.to_string()).or_default();
         entry.retain(|attempt| now.duration_since(*attempt) < self.window);

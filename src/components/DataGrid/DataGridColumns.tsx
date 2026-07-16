@@ -57,7 +57,10 @@ interface DataGridColumnsProps {
   savingCell: EditingCell | null;
   sortColumn: string | null;
   sortDir: "ASC" | "DESC";
-  currentPage: number;
+  /** Absolute offset of the first loaded row; keeps row identity stable across chunks. */
+  rowOffset: number;
+  /** Maps a filtered visible row back to its source row in the loaded data window. */
+  rowIndexMap?: number[];
   copiedCell: string | null;
   editingDraftRef: EditingDraft;
   handleSort: (colName: string, event?: MouseEvent) => void;
@@ -112,7 +115,8 @@ export function buildDataGridColumns({
   savingCell,
   sortColumn,
   sortDir,
-  currentPage,
+  rowOffset,
+  rowIndexMap,
   copiedCell,
   editingDraftRef,
   handleSort,
@@ -156,28 +160,30 @@ export function buildDataGridColumns({
         ) : (
           <span className="datagrid-index-label">#</span>
         ),
-      cell: ({ row }) =>
-        canSelectRows ? (
+      cell: ({ row }) => {
+        const sourceRowIndex = rowIndexMap?.[row.index] ?? row.index;
+        return canSelectRows ? (
           <button
             type="button"
-            className={`datagrid-index-value datagrid-index-selectable ${selectedRows.has(row.index) ? "selected" : ""}`}
+            className={`datagrid-index-value datagrid-index-selectable ${selectedRows.has(sourceRowIndex) ? "selected" : ""}`}
             onClick={(event) => {
               event.stopPropagation();
-              handleRowSelection(row.index, event.nativeEvent);
+              handleRowSelection(sourceRowIndex, event.nativeEvent);
             }}
             onDoubleClick={(event) => {
               event.stopPropagation();
-              onOpenRowInspector?.(row.index);
+              onOpenRowInspector?.(sourceRowIndex);
             }}
-            title={selectedRows.has(row.index) ? "Row selected" : "Select row, double-click to inspect"}
+            title={selectedRows.has(sourceRowIndex) ? "Row selected" : "Select row, double-click to inspect"}
           >
-            {currentPage * 100 + row.index + 1}
+            {rowOffset + sourceRowIndex + 1}
           </button>
         ) : (
           <span className="datagrid-index-value">
-            {currentPage * 100 + row.index + 1}
+            {rowOffset + sourceRowIndex + 1}
           </span>
-        ),
+        );
+      },
       size: 72,
       minSize: 40,
       maxSize: 800,
@@ -196,7 +202,7 @@ export function buildDataGridColumns({
           <button
             className="flex items-center gap-1.5 w-full text-left font-semibold group/header"
             onClick={(e) => handleSort(col.name, e.nativeEvent)}
-            title={multiSort.length > 0 ? "Click to toggle direction, Shift+Click to remove from multi-sort" : "Click to sort, Shift+Click to add to multi-sort"}
+            title="Sort all loaded chunks by this column"
           >
             {col.is_primary_key && <Key className="w-3 h-3 text-[var(--warning)] shrink-0" />}
             <span className="truncate">{col.name}</span>
@@ -218,12 +224,13 @@ export function buildDataGridColumns({
       cell: ({ getValue, row: tableRow }: { getValue: () => unknown; row: { index: number } }) => {
         const value = getValue() as GridCellValue;
         const rowIndex = tableRow.index;
-        const isSelected = selectedCell?.row === rowIndex && selectedCell?.col === idx;
-        const isEditing = editingCell?.row === rowIndex && editingCell?.col === idx;
-        const isSaving = savingCell?.row === rowIndex && savingCell?.col === idx;
+        const sourceRowIndex = rowIndexMap?.[rowIndex] ?? rowIndex;
+        const isSelected = selectedCell?.row === sourceRowIndex && selectedCell?.col === idx;
+        const isEditing = editingCell?.row === sourceRowIndex && editingCell?.col === idx;
+        const isSaving = savingCell?.row === sourceRowIndex && savingCell?.col === idx;
         const isEditableColumn =
           canAttemptInlineEdit && (structureStatus !== "ready" || !col.is_primary_key);
-        const cellKey = `${rowIndex}-${idx}`;
+        const cellKey = `${sourceRowIndex}-${idx}`;
         const stringValue = value === null ? null : String(value);
         const isUrlCell = stringValue !== null && URL_RE.test(stringValue);
         const isImageCell = isUrlCell && isImageUrl(stringValue);
@@ -254,16 +261,16 @@ export function buildDataGridColumns({
               if (!isEditableColumn || isEditing) return;
 
               const isRepeatSelection =
-                selectedCell?.row === rowIndex && selectedCell?.col === idx;
+                selectedCell?.row === sourceRowIndex && selectedCell?.col === idx;
               if (isRepeatSelection || event.detail >= 2) {
                 event.preventDefault();
                 event.stopPropagation();
-                void startEditingCell(rowIndex, idx);
+                void startEditingCell(sourceRowIndex, idx);
               }
             }}
             onClick={() => {
               if (!isEditing) {
-                setSelectedCell({ row: rowIndex, col: idx });
+                setSelectedCell({ row: sourceRowIndex, col: idx });
               }
             }}
             onDoubleClick={() => {

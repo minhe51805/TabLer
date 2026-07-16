@@ -99,7 +99,10 @@ impl DuckDbDriver {
     }
 
     fn query_returns_rows(sql: &str) -> bool {
-        statement_returns_rows(sql, &["SELECT", "PRAGMA", "EXPLAIN", "WITH", "SHOW", "DESCRIBE"])
+        statement_returns_rows(
+            sql,
+            &["SELECT", "PRAGMA", "EXPLAIN", "WITH", "SHOW", "DESCRIBE"],
+        )
     }
 
     fn duck_value_to_json(value: DuckValue) -> serde_json::Value {
@@ -118,21 +121,29 @@ impl DuckDbDriver {
             DuckValue::Float(value) => serde_json::Value::from(value as f64),
             DuckValue::Double(value) => serde_json::Value::from(value),
             DuckValue::Decimal(value) => serde_json::Value::String(value.to_string()),
-            DuckValue::Timestamp(unit, value) => serde_json::Value::String(format!("{unit:?}:{value}")),
+            DuckValue::Timestamp(unit, value) => {
+                serde_json::Value::String(format!("{unit:?}:{value}"))
+            }
             DuckValue::Text(value) => serde_json::Value::String(value),
-            DuckValue::Blob(value) => serde_json::Value::Array(
-                value.into_iter().map(serde_json::Value::from).collect(),
-            ),
+            DuckValue::Blob(value) => {
+                serde_json::Value::Array(value.into_iter().map(serde_json::Value::from).collect())
+            }
             DuckValue::Date32(value) => serde_json::Value::from(value),
-            DuckValue::Time64(unit, value) => serde_json::Value::String(format!("{unit:?}:{value}")),
-            DuckValue::Interval { months, days, nanos } => serde_json::json!({
+            DuckValue::Time64(unit, value) => {
+                serde_json::Value::String(format!("{unit:?}:{value}"))
+            }
+            DuckValue::Interval {
+                months,
+                days,
+                nanos,
+            } => serde_json::json!({
                 "months": months,
                 "days": days,
                 "nanos": nanos,
             }),
-            DuckValue::List(values) | DuckValue::Array(values) => serde_json::Value::Array(
-                values.into_iter().map(Self::duck_value_to_json).collect(),
-            ),
+            DuckValue::List(values) | DuckValue::Array(values) => {
+                serde_json::Value::Array(values.into_iter().map(Self::duck_value_to_json).collect())
+            }
             DuckValue::Enum(value) => serde_json::Value::String(value),
             DuckValue::Struct(values) => serde_json::Value::Object(
                 values
@@ -143,10 +154,12 @@ impl DuckDbDriver {
             DuckValue::Map(values) => serde_json::Value::Array(
                 values
                     .iter()
-                    .map(|(key, value)| serde_json::json!({
-                        "key": Self::duck_value_to_json(key.clone()),
-                        "value": Self::duck_value_to_json(value.clone()),
-                    }))
+                    .map(|(key, value)| {
+                        serde_json::json!({
+                            "key": Self::duck_value_to_json(key.clone()),
+                            "value": Self::duck_value_to_json(value.clone()),
+                        })
+                    })
                     .collect(),
             ),
             DuckValue::Union(value) => Self::duck_value_to_json(*value),
@@ -199,7 +212,10 @@ impl DuckDbDriver {
 
         let bytes = fs::metadata(path).ok()?.len();
         if bytes >= 1024 * 1024 * 1024 {
-            Some(format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0)))
+            Some(format!(
+                "{:.1} GB",
+                bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+            ))
         } else if bytes >= 1024 * 1024 {
             Some(format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0)))
         } else if bytes >= 1024 {
@@ -215,10 +231,11 @@ impl DuckDbDriver {
         original_query: &str,
         affected_rows: u64,
         sandboxed: bool,
+        params: &[&dyn ToSql],
     ) -> Result<QueryResult> {
         let start = Instant::now();
         let mut statement = conn.prepare(sql)?;
-        let mut rows = statement.query([])?;
+        let mut rows = statement.query(params)?;
 
         let columns = if let Some(statement_ref) = rows.as_ref() {
             (0..statement_ref.column_count())
@@ -497,7 +514,7 @@ impl DatabaseDriver for DuckDbDriver {
             let mut last_result: Option<QueryResult> = None;
 
             if statements.len() <= 1 && Self::query_returns_rows(&sql_text) {
-                return Self::execute_select(conn, &sql_text, &sql_text, 0, false);
+                return Self::execute_select(conn, &sql_text, &sql_text, 0, false, &[]);
             }
 
             for statement in statements {
@@ -512,6 +529,7 @@ impl DatabaseDriver for DuckDbDriver {
                         &sql_text,
                         total_affected,
                         false,
+                        &[],
                     )?);
                 } else {
                     total_affected += conn.execute(&statement, [])? as u64;
@@ -537,6 +555,43 @@ impl DatabaseDriver for DuckDbDriver {
         .await
     }
 
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let sql_text = sql.to_string();
+        let parameters = parameters.to_vec();
+        self.with_connection(move |conn| {
+            let values = parameters
+                .iter()
+                .map(|parameter| match parameter.data_type {
+                    QueryParameterType::Json => Ok(DuckValue::Text(parameter.value.to_string())),
+                    _ => Self::json_to_duck_value(&parameter.value),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let params = values
+                .iter()
+                .map(|value| value as &dyn ToSql)
+                .collect::<Vec<_>>();
+            let start = Instant::now();
+            if Self::query_returns_rows(&sql_text) {
+                return Self::execute_select(conn, &sql_text, &sql_text, 0, false, &params);
+            }
+            let affected_rows = conn.execute(&sql_text, params.as_slice())? as u64;
+            Ok(QueryResult {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                affected_rows,
+                execution_time_ms: start.elapsed().as_millis(),
+                query: sql_text,
+                sandboxed: false,
+                truncated: false,
+            })
+        })
+        .await
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -547,7 +602,10 @@ impl DatabaseDriver for DuckDbDriver {
         order_dir: Option<&str>,
         filter: Option<&str>,
     ) -> Result<QueryResult> {
-        let mut sql = format!("SELECT * FROM {}", qualify_postgres_table_name(table, "main")?);
+        let mut sql = format!(
+            "SELECT * FROM {}",
+            qualify_postgres_table_name(table, "main")?
+        );
         if let Some(filter_clause) = sanitize_postgres_filter_clause(filter)? {
             sql.push_str(&format!(" WHERE {filter_clause}"));
         }
@@ -569,8 +627,11 @@ impl DatabaseDriver for DuckDbDriver {
             "SELECT COUNT(*) FROM {}",
             qualify_postgres_table_name(table, "main")?
         );
-        self.with_connection(move |conn| conn.query_row(&sql, [], |row| row.get(0)).map_err(Into::into))
-            .await
+        self.with_connection(move |conn| {
+            conn.query_row(&sql, [], |row| row.get(0))
+                .map_err(Into::into)
+        })
+        .await
     }
 
     async fn count_null_values(
@@ -584,8 +645,11 @@ impl DatabaseDriver for DuckDbDriver {
             qualify_postgres_table_name(table, "main")?,
             quote_postgres_order_by(column)?,
         );
-        self.with_connection(move |conn| conn.query_row(&sql, [], |row| row.get(0)).map_err(Into::into))
-            .await
+        self.with_connection(move |conn| {
+            conn.query_row(&sql, [], |row| row.get(0))
+                .map_err(Into::into)
+        })
+        .await
     }
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
@@ -616,7 +680,10 @@ impl DatabaseDriver for DuckDbDriver {
         }
 
         self.with_connection(move |conn| {
-            let param_refs = params.iter().map(|value| value as &dyn ToSql).collect::<Vec<_>>();
+            let param_refs = params
+                .iter()
+                .map(|value| value as &dyn ToSql)
+                .collect::<Vec<_>>();
             Ok(conn.execute(&sql, param_refs.as_slice())? as u64)
         })
         .await
@@ -624,9 +691,7 @@ impl DatabaseDriver for DuckDbDriver {
 
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
         if request.rows.is_empty() {
-            return Err(anyhow!(
-                "Deleting rows requires at least one selected row"
-            ));
+            return Err(anyhow!("Deleting rows requires at least one selected row"));
         }
 
         let request = request.clone();
@@ -660,7 +725,10 @@ impl DatabaseDriver for DuckDbDriver {
                         }
                     }
 
-                    let param_refs = params.iter().map(|value| value as &dyn ToSql).collect::<Vec<_>>();
+                    let param_refs = params
+                        .iter()
+                        .map(|value| value as &dyn ToSql)
+                        .collect::<Vec<_>>();
                     total_affected += conn.execute(&sql, param_refs.as_slice())? as u64;
                 }
 
@@ -706,7 +774,10 @@ impl DatabaseDriver for DuckDbDriver {
             }
             sql.push(')');
 
-            let param_refs = params.iter().map(|value| value as &dyn ToSql).collect::<Vec<_>>();
+            let param_refs = params
+                .iter()
+                .map(|value| value as &dyn ToSql)
+                .collect::<Vec<_>>();
             Ok(conn.execute(&sql, param_refs.as_slice())? as u64)
         })
         .await
@@ -721,7 +792,7 @@ impl DatabaseDriver for DuckDbDriver {
                     continue;
                 }
                 if Self::query_returns_rows(&statement) {
-                    let result = Self::execute_select(conn, &statement, &statement, 0, false)?;
+                    let result = Self::execute_select(conn, &statement, &statement, 0, false, &[])?;
                     total_affected += result.affected_rows;
                 } else {
                     total_affected += conn.execute(&statement, [])? as u64;
@@ -777,7 +848,10 @@ impl DatabaseDriver for DuckDbDriver {
                 referenced_column_quoted, limit
             ));
 
-            let param_refs = params.iter().map(|value| value as &dyn ToSql).collect::<Vec<_>>();
+            let param_refs = params
+                .iter()
+                .map(|value| value as &dyn ToSql)
+                .collect::<Vec<_>>();
             let mut statement = conn.prepare(&sql)?;
             let mut rows = statement.query(param_refs.as_slice())?;
             let mut lookup_values = Vec::new();
@@ -811,7 +885,8 @@ mod tests {
 
     #[tokio::test]
     async fn duckdb_driver_smoke_test() -> Result<()> {
-        let temp_path = std::env::temp_dir().join(format!("tabler-duckdb-{}.duckdb", Uuid::new_v4()));
+        let temp_path =
+            std::env::temp_dir().join(format!("tabler-duckdb-{}.duckdb", Uuid::new_v4()));
         let temp_path_string = temp_path.to_string_lossy().to_string();
         let config = ConnectionConfig {
             id: Uuid::new_v4().to_string(),
@@ -854,7 +929,9 @@ mod tests {
             let structure = driver.get_table_structure("items", None).await?;
             assert!(structure.columns.iter().any(|column| column.name == "id"));
 
-            let rows = driver.get_table_data("items", None, 0, 10, None, None, None).await?;
+            let rows = driver
+                .get_table_data("items", None, 0, 10, None, None, None)
+                .await?;
             assert_eq!(rows.rows.len(), 1);
         }
 

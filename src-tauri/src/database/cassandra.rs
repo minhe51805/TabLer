@@ -202,7 +202,11 @@ impl CassandraDriver {
             rows.push(
                 row.columns
                     .into_iter()
-                    .map(|value| value.map(Self::cql_value_to_json).unwrap_or(JsonValue::Null))
+                    .map(|value| {
+                        value
+                            .map(Self::cql_value_to_json)
+                            .unwrap_or(JsonValue::Null)
+                    })
                     .collect::<Vec<_>>(),
             );
         }
@@ -290,7 +294,11 @@ impl CassandraDriver {
             CqlValue::Tuple(values) => JsonValue::Array(
                 values
                     .into_iter()
-                    .map(|value| value.map(Self::cql_value_to_json).unwrap_or(JsonValue::Null))
+                    .map(|value| {
+                        value
+                            .map(Self::cql_value_to_json)
+                            .unwrap_or(JsonValue::Null)
+                    })
                     .collect::<Vec<_>>(),
             ),
             CqlValue::UserDefinedType { fields, .. } => JsonValue::Object(
@@ -299,7 +307,9 @@ impl CassandraDriver {
                     .map(|(name, value)| {
                         (
                             name,
-                            value.map(Self::cql_value_to_json).unwrap_or(JsonValue::Null),
+                            value
+                                .map(Self::cql_value_to_json)
+                                .unwrap_or(JsonValue::Null),
                         )
                     })
                     .collect(),
@@ -347,7 +357,11 @@ impl CassandraDriver {
 
     fn build_columns_from_table(table: &Table) -> Vec<ColumnDetail> {
         let pk_names = table.partition_key.iter().cloned().collect::<BTreeSet<_>>();
-        let ck_names = table.clustering_key.iter().cloned().collect::<BTreeSet<_>>();
+        let ck_names = table
+            .clustering_key
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
         let mut ordered_names = Vec::new();
 
         for name in &table.partition_key {
@@ -572,7 +586,10 @@ impl DatabaseDriver for CassandraDriver {
         let affected_rows = 0u64;
         let mut last_result = None;
 
-        for statement in statements.iter().filter(|statement| !statement.trim().is_empty()) {
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
             if let Some(keyspace) = Self::parse_use_statement(statement) {
                 self.use_database(&keyspace).await?;
                 continue;

@@ -191,16 +191,21 @@ impl CloudflareD1Driver {
                 .first()
                 .map(|error| {
                     if let Some(url) = error.documentation_url.as_deref() {
-                        format!("Cloudflare D1 API error {}: {} ({url})", error.code, error.message)
+                        format!(
+                            "Cloudflare D1 API error {}: {} ({url})",
+                            error.code, error.message
+                        )
                     } else {
                         format!("Cloudflare D1 API error {}: {}", error.code, error.message)
                     }
                 })
                 .or_else(|| {
-                    parsed
-                        .messages
-                        .first()
-                        .map(|message| format!("Cloudflare D1 API message {}: {}", message.code, message.message))
+                    parsed.messages.first().map(|message| {
+                        format!(
+                            "Cloudflare D1 API message {}: {}",
+                            message.code, message.message
+                        )
+                    })
                 })
                 .unwrap_or_else(|| format!("Cloudflare D1 request failed with status {}", status));
             return Err(anyhow!(message));
@@ -434,11 +439,7 @@ impl DatabaseDriver for CloudflareD1Driver {
                     .and_then(JsonValue::as_str)
                     .unwrap_or("TEXT")
                     .to_string(),
-                is_nullable: row
-                    .get("notnull")
-                    .and_then(JsonValue::as_i64)
-                    .unwrap_or(0)
-                    == 0,
+                is_nullable: row.get("notnull").and_then(JsonValue::as_i64).unwrap_or(0) == 0,
                 default_value: row
                     .get("dflt_value")
                     .and_then(JsonValue::as_str)
@@ -472,7 +473,10 @@ impl DatabaseDriver for CloudflareD1Driver {
                 columns: idx_info_rows
                     .into_iter()
                     .filter_map(|entry| {
-                        entry.get("name").and_then(JsonValue::as_str).map(str::to_string)
+                        entry
+                            .get("name")
+                            .and_then(JsonValue::as_str)
+                            .map(str::to_string)
                     })
                     .collect::<Vec<_>>(),
                 is_unique: row.get("unique").and_then(JsonValue::as_i64).unwrap_or(0) == 1,
@@ -486,7 +490,10 @@ impl DatabaseDriver for CloudflareD1Driver {
         let foreign_keys = fk_rows
             .into_iter()
             .map(|row| ForeignKeyInfo {
-                name: format!("fk_{}", row.get("id").and_then(JsonValue::as_i64).unwrap_or(0)),
+                name: format!(
+                    "fk_{}",
+                    row.get("id").and_then(JsonValue::as_i64).unwrap_or(0)
+                ),
                 column: row
                     .get("from")
                     .and_then(JsonValue::as_str)
@@ -593,16 +600,15 @@ impl DatabaseDriver for CloudflareD1Driver {
         let mut total_affected = 0u64;
         let mut last_result = None;
 
-        for statement in statements.iter().filter(|statement| !statement.trim().is_empty()) {
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
             let result = self.execute_raw_statement(statement).await?;
             total_affected += Self::affected_rows(&result.meta);
 
             if Self::query_returns_rows(statement) {
-                last_result = Some(Self::statement_to_query_result(
-                    result,
-                    sql.to_string(),
-                    0,
-                ));
+                last_result = Some(Self::statement_to_query_result(result, sql.to_string(), 0));
             }
         }
 
@@ -674,7 +680,9 @@ impl DatabaseDriver for CloudflareD1Driver {
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
         if request.primary_keys.is_empty() {
-            return Err(anyhow!("Inline update requires at least one primary key column"));
+            return Err(anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
         }
 
         let mut sql = format!(
@@ -714,7 +722,10 @@ impl DatabaseDriver for CloudflareD1Driver {
                 ));
             }
 
-            let mut sql = format!("DELETE FROM {} WHERE ", quote_sqlite_identifier(&request.table)?);
+            let mut sql = format!(
+                "DELETE FROM {} WHERE ",
+                quote_sqlite_identifier(&request.table)?
+            );
             for (index, primary_key) in row_keys.iter().enumerate() {
                 if index > 0 {
                     sql.push_str(" AND ");
@@ -764,7 +775,10 @@ impl DatabaseDriver for CloudflareD1Driver {
 
     async fn execute_structure_statements(&self, statements: &[String]) -> Result<u64> {
         let mut total_affected = 0u64;
-        for statement in statements.iter().filter(|statement| !statement.trim().is_empty()) {
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
             let result = self.execute_raw_statement(statement).await?;
             total_affected += Self::affected_rows(&result.meta);
         }
@@ -825,11 +839,7 @@ impl DatabaseDriver for CloudflareD1Driver {
                  FROM \"{}\" \
                  ORDER BY \"{}\" \
                  LIMIT {}",
-                referenced_column,
-                label_expr,
-                referenced_table,
-                referenced_column,
-                limit
+                referenced_column, label_expr, referenced_table, referenced_column, limit
             )
         };
 
@@ -863,8 +873,14 @@ mod tests {
 
     #[test]
     fn serializes_json_values_for_sqlite_literals() {
-        assert_eq!(CloudflareD1Driver::sqlite_literal(&json!(null)).unwrap(), "NULL");
-        assert_eq!(CloudflareD1Driver::sqlite_literal(&json!(true)).unwrap(), "1");
+        assert_eq!(
+            CloudflareD1Driver::sqlite_literal(&json!(null)).unwrap(),
+            "NULL"
+        );
+        assert_eq!(
+            CloudflareD1Driver::sqlite_literal(&json!(true)).unwrap(),
+            "1"
+        );
         assert_eq!(
             CloudflareD1Driver::sqlite_literal(&json!("O'Reilly")).unwrap(),
             "'O''Reilly'"

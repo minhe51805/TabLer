@@ -1,5 +1,7 @@
 use crate::database::manager::DatabaseManager;
+use crate::database::models::QueryParameter;
 use crate::database::models::QueryResult;
+use crate::database::parameterized_query::{compile_parameterized_query, PlaceholderStyle};
 use crate::utils::sql::split_sql_statements;
 use tauri::State;
 use tokio::time::{timeout, Duration};
@@ -33,7 +35,8 @@ fn format_query_connection_error(error: impl std::fmt::Display) -> String {
     if normalized.contains("not found") || normalized.contains("connect first") {
         "The selected connection is not active. Please reconnect and try again.".to_string()
     } else {
-        "The database connection is not available right now. Please reconnect and try again.".to_string()
+        "The database connection is not available right now. Please reconnect and try again."
+            .to_string()
     }
 }
 
@@ -43,14 +46,16 @@ fn format_query_runtime_error(error: impl std::fmt::Display) -> String {
     let normalized = compact_message.to_ascii_lowercase();
 
     if normalized.contains("permission") || normalized.contains("access denied") {
-        return "The current connection does not have permission to run this statement.".to_string();
+        return "The current connection does not have permission to run this statement."
+            .to_string();
     }
 
     if normalized.contains("authentication")
         || normalized.contains("password")
         || normalized.contains("auth failed")
     {
-        return "Database authentication failed. Please verify the connection settings.".to_string();
+        return "Database authentication failed. Please verify the connection settings."
+            .to_string();
     }
 
     if normalized.contains("refused")
@@ -59,7 +64,8 @@ fn format_query_runtime_error(error: impl std::fmt::Display) -> String {
         || normalized.contains("connection closed")
         || normalized.contains("not connected")
     {
-        return "The database connection is no longer available. Please reconnect and try again.".to_string();
+        return "The database connection is no longer available. Please reconnect and try again."
+            .to_string();
     }
 
     if normalized.contains("syntax")
@@ -130,7 +136,9 @@ fn strip_leading_sql_noise(statement: &str) -> Result<&str, String> {
 fn validate_sandbox_statement(statement: &str) -> Result<(), String> {
     let fragments = split_sql_statements(statement);
     if fragments.len() != 1 {
-        return Err("Sandbox gateway requires exactly one SQL statement per execution item.".to_string());
+        return Err(
+            "Sandbox gateway requires exactly one SQL statement per execution item.".to_string(),
+        );
     }
 
     let normalized = strip_leading_sql_noise(&fragments[0])?.to_ascii_uppercase();
@@ -156,7 +164,8 @@ fn validate_sandbox_statement(statement: &str) -> Result<(), String> {
 }
 
 fn is_likely_read_only_statement(statement: &str) -> bool {
-    let Ok(normalized) = strip_leading_sql_noise(statement).map(|value| value.to_ascii_uppercase()) else {
+    let Ok(normalized) = strip_leading_sql_noise(statement).map(|value| value.to_ascii_uppercase())
+    else {
         return false;
     };
 
@@ -206,21 +215,25 @@ pub async fn execute_query(
     sql: String,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
-    log::info!("[TableR] execute_query: connection_id={}, sql={}", connection_id, sql);
-    let driver = db_manager
-        .get_driver(&connection_id)
-        .await
-        .map_err(|e| {
-            let formatted = format_query_connection_error(e);
-            log::error!("[TableR] execute_query connection error: {}", formatted);
-            formatted
-        })?;
+    log::info!(
+        "[TableR] execute_query: connection_id={}, sql={}",
+        connection_id,
+        sql
+    );
+    let driver = db_manager.get_driver(&connection_id).await.map_err(|e| {
+        let formatted = format_query_connection_error(e);
+        log::error!("[TableR] execute_query connection error: {}", formatted);
+        formatted
+    })?;
     let statements = split_sql_statements(&sql);
     let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
     let result = timeout(timeout_window, driver.execute_query(&sql))
         .await
         .map_err(|_| {
-            let err_msg = format!("Query timed out after {} seconds.", timeout_window.as_secs());
+            let err_msg = format!(
+                "Query timed out after {} seconds.",
+                timeout_window.as_secs()
+            );
             log::error!("[TableR] execute_query timeout error: {}", err_msg);
             err_msg
         })?
@@ -234,6 +247,39 @@ pub async fn execute_query(
         result.columns.len(),
         result.rows.len()
     );
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn execute_parameterized_query(
+    connection_id: String,
+    sql: String,
+    parameters: Vec<QueryParameter>,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<QueryResult, String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(format_query_connection_error)?;
+    let style = match driver.driver_name() {
+        "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica" => {
+            PlaceholderStyle::DollarNumber
+        }
+        "mssql" => PlaceholderStyle::AtNumber,
+        _ => PlaceholderStyle::QuestionMark,
+    };
+    let compiled = compile_parameterized_query(&sql, &parameters, style)
+        .map_err(format_query_runtime_error)?;
+    if split_sql_statements(&compiled.sql).len() != 1 {
+        return Err("Prepared parameters only support one SQL statement at a time.".to_string());
+    }
+    let result = timeout(
+        Duration::from_secs(30),
+        driver.execute_parameterized_query(&compiled.sql, &compiled.parameters),
+    )
+    .await
+    .map_err(|_| "Parameterized query timed out after 30 seconds.".to_string())?
+    .map_err(format_query_runtime_error)?;
     Ok(result)
 }
 
@@ -255,31 +301,43 @@ pub async fn execute_sandboxed_query(
 
     for statement in &statements {
         if let Err(e) = validate_sandbox_statement(statement) {
-            log::error!("[TableR] execute_sandboxed_query sandbox validation error: {}", e);
+            log::error!(
+                "[TableR] execute_sandboxed_query sandbox validation error: {}",
+                e
+            );
             return Err(e);
         }
     }
 
-    let driver = db_manager
-        .get_driver(&connection_id)
-        .await
-        .map_err(|e| {
-            let formatted = format_query_connection_error(e);
-            log::error!("[TableR] execute_sandboxed_query connection error: {}", formatted);
+    let driver = db_manager.get_driver(&connection_id).await.map_err(|e| {
+        let formatted = format_query_connection_error(e);
+        log::error!(
+            "[TableR] execute_sandboxed_query connection error: {}",
             formatted
-        })?;
+        );
+        formatted
+    })?;
     let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
     let combined_query = statements.join(";\n");
     let mut result = timeout(timeout_window, driver.execute_query(&combined_query))
         .await
         .map_err(|_| {
-            let err_msg = format!("Sandbox query timed out after {} seconds.", timeout_window.as_secs());
-            log::error!("[TableR] execute_sandboxed_query timeout error: {}", err_msg);
+            let err_msg = format!(
+                "Sandbox query timed out after {} seconds.",
+                timeout_window.as_secs()
+            );
+            log::error!(
+                "[TableR] execute_sandboxed_query timeout error: {}",
+                err_msg
+            );
             err_msg
         })?
         .map_err(|e| {
             let formatted = format_query_runtime_error(e);
-            log::error!("[TableR] execute_sandboxed_query runtime error: {}", formatted);
+            log::error!(
+                "[TableR] execute_sandboxed_query runtime error: {}",
+                formatted
+            );
             formatted
         })?;
     result.sandboxed = true;

@@ -34,8 +34,8 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
 
   const handleExport = async () => {
     setError(null);
-    if (password.length < 4) {
-      setError("Password must be at least 4 characters.");
+    if (password.length < 10) {
+      setError("Password must be at least 10 characters.");
       return;
     }
     if (password !== confirmPassword) {
@@ -73,7 +73,7 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
           </div>
           <div className="flex-1">
             <h2 className="text-base font-semibold text-[var(--text-primary)]">Export Connections</h2>
-            <p className="text-xs text-[var(--text-muted)]">Save connections as an encrypted .tablepro file</p>
+            <p className="text-xs text-[var(--text-muted)]">Save connections as an encrypted, versioned export</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-muted)]">
             <X className="w-4 h-4" />
@@ -140,9 +140,9 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
                       type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Min. 4 characters"
+                      placeholder="Min. 10 characters"
                       className="input h-11 pr-11"
-                      minLength={4}
+                      minLength={10}
                     />
                     <button
                       type="button"
@@ -164,7 +164,7 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Repeat password"
                     className="input h-11"
-                    minLength={4}
+                    minLength={10}
                   />
                 </div>
               </div>

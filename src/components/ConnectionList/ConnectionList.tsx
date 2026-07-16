@@ -8,12 +8,18 @@ import {
   ArrowUpDown,
   LayoutList,
   LayoutGrid,
+  ShieldCheck,
+  Activity,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { useAppStore } from "../../stores/appStore";
+import { useConnectionStore } from "../../stores/connectionStore";
 import type { ConnectionConfig } from "../../types";
 import { formatCountLabel, useI18n } from "../../i18n";
+import { useSafeModeStore } from "../../stores/safeModeStore";
+import { CONNECTION_ENVIRONMENT_LABELS, type ConnectionEnvironment } from "../../types/safe-mode";
+import { ConnectionSafetyProfileModal } from "../SafeMode/ConnectionSafetyProfileModal";
+import { OperationsDashboardModal } from "../OperationsDashboard";
 
 interface Props {
   onNewConnection: () => void;
@@ -21,6 +27,13 @@ interface Props {
 
 type ConnectionLayoutMode = "stacked" | "inline";
 type ConnectionSortMode = "connected" | "alpha";
+
+const ENVIRONMENT_BADGE_CLASS: Record<ConnectionEnvironment, string> = {
+  development: "development",
+  staging: "staging",
+  production: "production",
+  unknown: "unknown",
+};
 
 const CONNECTION_LAYOUT_STORAGE_KEY = "tabler.connection-list-layout";
 const CONNECTION_SORT_STORAGE_KEY = "tabler.connection-list-sort";
@@ -73,7 +86,7 @@ export function ConnectionList({ onNewConnection }: Props) {
     connectSavedConnection,
     disconnectFromDatabase,
     deleteSavedConnection,
-  } = useAppStore(
+  } = useConnectionStore(
     useShallow((state) => ({
       connections: state.connections,
       activeConnectionId: state.activeConnectionId,
@@ -85,8 +98,12 @@ export function ConnectionList({ onNewConnection }: Props) {
     }))
   );
   const connectedCount = connectedIds.size;
+  const getConnectionEnvironment = useSafeModeStore((state) => state.getConnectionEnvironment);
+  const getEffectiveLevel = useSafeModeStore((state) => state.getEffectiveLevelForConnection);
   const [layoutMode, setLayoutMode] = useState<ConnectionLayoutMode>(getInitialLayoutMode);
   const [sortMode, setSortMode] = useState<ConnectionSortMode>(getInitialSortMode);
+  const [safetyConnection, setSafetyConnection] = useState<ConnectionConfig | null>(null);
+  const [operationsConnection, setOperationsConnection] = useState<ConnectionConfig | null>(null);
   const showLayoutToggle = connections.length >= MIN_CONNECTIONS_FOR_LAYOUT_TOGGLE;
   const effectiveLayoutMode = showLayoutToggle ? layoutMode : "stacked";
   const sortedConnections = useMemo(() => {
@@ -118,11 +135,11 @@ export function ConnectionList({ onNewConnection }: Props) {
 
   const handleConnect = async (conn: ConnectionConfig) => {
     if (connectedIds.has(conn.id)) {
-      useAppStore.setState({ activeConnectionId: conn.id });
-      void useAppStore.getState().fetchDatabases(conn.id);
+      useConnectionStore.setState({ activeConnectionId: conn.id });
+      void useConnectionStore.getState().fetchDatabases(conn.id);
       if (conn.database) {
-        useAppStore.setState({ currentDatabase: conn.database });
-        void useAppStore.getState().fetchTables(conn.id, conn.database);
+        useConnectionStore.setState({ currentDatabase: conn.database });
+        void useConnectionStore.getState().fetchTables(conn.id, conn.database);
       }
     } else {
       await connectSavedConnection(conn.id);
@@ -281,6 +298,8 @@ export function ConnectionList({ onNewConnection }: Props) {
                 : isConnected
                   ? t("common.open")
                   : t("common.connect");
+              const environment = getConnectionEnvironment(conn.id);
+              const safetyLevel = getEffectiveLevel(conn.id);
 
               return (
                 <div
@@ -335,6 +354,22 @@ export function ConnectionList({ onNewConnection }: Props) {
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
+                      <button
+                        onClick={(event) => { event.stopPropagation(); setSafetyConnection(conn); }}
+                        className="connection-icon-btn"
+                        title="Configure connection safety"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                      </button>
+                      {(conn.db_type === "postgresql" || conn.db_type === "mysql" || conn.db_type === "mariadb") && (
+                        <button
+                          onClick={(event) => { event.stopPropagation(); setOperationsConnection(conn); }}
+                          className="connection-icon-btn"
+                          title="Open operations dashboard"
+                        >
+                          <Activity className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -361,6 +396,10 @@ export function ConnectionList({ onNewConnection }: Props) {
                   <div className="connection-card-footer">
                     <div className="connection-card-badges">
                       <span className="connection-type-pill">{conn.db_type}</span>
+                      <span className={`connection-status-pill environment ${ENVIRONMENT_BADGE_CLASS[environment]}`}>
+                        {CONNECTION_ENVIRONMENT_LABELS[environment]}
+                      </span>
+                      <span className="connection-status-pill secure">Safe {safetyLevel}</span>
                       {conn.use_ssl && conn.db_type !== "sqlite" && (
                         <span className="connection-status-pill secure">SSL</span>
                       )}
@@ -400,6 +439,9 @@ export function ConnectionList({ onNewConnection }: Props) {
                     </div>
                     <div className="connection-card-hover-badges">
                       <span className="connection-type-pill">{conn.db_type}</span>
+                      <span className={`connection-status-pill environment ${ENVIRONMENT_BADGE_CLASS[environment]}`}>
+                        {CONNECTION_ENVIRONMENT_LABELS[environment]}
+                      </span>
                       {conn.use_ssl && conn.db_type !== "sqlite" && (
                         <span className="connection-status-pill secure">SSL</span>
                       )}
@@ -411,6 +453,20 @@ export function ConnectionList({ onNewConnection }: Props) {
           </div>
         )}
       </div>
+      {safetyConnection && (
+        <ConnectionSafetyProfileModal
+          connectionId={safetyConnection.id}
+          connectionName={defaultConnectionLabel(safetyConnection)}
+          onClose={() => setSafetyConnection(null)}
+        />
+      )}
+      {operationsConnection && (
+        <OperationsDashboardModal
+          connectionId={operationsConnection.id}
+          connectionName={defaultConnectionLabel(operationsConnection)}
+          onClose={() => setOperationsConnection(null)}
+        />
+      )}
     </div>
   );
 }

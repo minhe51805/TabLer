@@ -72,6 +72,8 @@ pub struct AIProviderConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AIRequest {
+    #[serde(default)]
+    pub request_id: Option<String>,
     pub prompt: String,
     pub context: String, // DB schema context
     #[serde(default = "default_ai_request_mode")]
@@ -99,6 +101,14 @@ fn default_ai_response_language() -> AIResponseLanguage {
 impl AIRequest {
     /// Validate AI request before processing
     pub fn validate(&self) -> Result<(), String> {
+        if self
+            .request_id
+            .as_ref()
+            .is_some_and(|request_id| request_id.trim().is_empty() || request_id.len() > 128)
+        {
+            return Err("Request ID must contain 1 to 128 characters".to_string());
+        }
+
         if self.prompt.trim().is_empty() {
             return Err("Prompt cannot be empty".to_string());
         }

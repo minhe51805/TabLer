@@ -42,6 +42,7 @@ export interface WindowMenuActions {
   readonly onOpenAISettings: () => void;
   readonly onOpenAISlidePanel: () => void;
   readonly onOpenPluginManager: () => void;
+  readonly onOpenMcpIntegrations: () => void;
   readonly onOpenAboutModal: () => void;
   readonly onOpenKeyboardShortcuts: () => void;
   readonly onToggleQueryHistory: () => void;
@@ -203,6 +204,7 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
         items: [
           { label: t("menu.item.askAI"), action: () => { actions.onOpenAISlidePanel(); closeMenu(); }, disabled: !isConnected },
           { label: t("menu.item.pluginManager"), action: () => { actions.onOpenPluginManager(); closeMenu(); } },
+          { label: t("menu.item.externalIntegrations"), action: () => { actions.onOpenMcpIntegrations(); closeMenu(); } },
         ],
       },
       {

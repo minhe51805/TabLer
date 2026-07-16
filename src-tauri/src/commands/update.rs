@@ -11,7 +11,9 @@ pub struct UpdateStatus {
 /// Check if an update is available
 #[tauri::command]
 pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateStatus, String> {
-    let updater = app.updater().map_err(|e| format!("Updater not available: {e}"))?;
+    let updater = app
+        .updater()
+        .map_err(|e| format!("Updater not available: {e}"))?;
     match updater.check().await {
         Ok(Some(update)) => Ok(UpdateStatus {
             available: true,
@@ -30,18 +32,26 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateStatus, Str
 /// Download and install the update
 #[tauri::command]
 pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), String> {
-    let updater = app.updater().map_err(|e| format!("Updater not available: {e}"))?;
-    let update = updater.check().await.map_err(|e| format!("Failed to check for updates: {e}"))?
+    let updater = app
+        .updater()
+        .map_err(|e| format!("Updater not available: {e}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("Failed to check for updates: {e}"))?
         .ok_or("No update available")?;
 
-    update.download_and_install(
-        |_chunk, _total| {
-            // Progress tracking can be added here if needed
-        },
-        || {
-            // Download finished callback
-        },
-    ).await.map_err(|e| format!("Failed to install update: {e}"))?;
+    update
+        .download_and_install(
+            |_chunk, _total| {
+                // Progress tracking can be added here if needed
+            },
+            || {
+                // Download finished callback
+            },
+        )
+        .await
+        .map_err(|e| format!("Failed to install update: {e}"))?;
 
     Ok(())
 }

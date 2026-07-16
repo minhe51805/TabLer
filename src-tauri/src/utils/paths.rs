@@ -1,6 +1,6 @@
+use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
-use anyhow::{Context, Result};
 
 pub fn resolve_data_dir() -> Result<PathBuf> {
     let base_dir = dirs::data_dir()

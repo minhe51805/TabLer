@@ -1,7 +1,31 @@
 import { create } from "zustand";
-import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
+
+import type {
+  ConnectionConfig,
+  DatabaseInfo,
+  QueryResult,
+  SchemaObjectInfo,
+  TableInfo,
+} from "../types";
+import { invokeAIWorkspaceToolWithTimeout } from "../utils/ai-tool-command-client";
 import { resolveEnvVars } from "../utils/env-resolve";
-import type { ConnectionConfig, DatabaseInfo, TableInfo, SchemaObjectInfo } from "../types";
+import { invokeMutation, invokeWithTimeout } from "../utils/tauri-utils";
+import {
+  getOrLoadSchemaObjects,
+  getOrLoadSchemaTables,
+  invalidateSchemaCache,
+} from "../utils/schema-cache";
+import { useGlobalErrorStore } from "./globalErrorStore";
+import { useUIStore } from "./uiStore";
+
+const FRONTEND_TIMEOUTS = {
+  connection: 30_000,
+  metadata: 15_000,
+} as const;
+
+const MISSING_CONNECTION_ERROR_PATTERNS = [/please connect first/i];
+const inFlightTableFetches = new Map<string, Promise<void>>();
+const inFlightSchemaObjectFetches = new Map<string, Promise<void>>();
 
 const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig => ({
   ...config,
@@ -25,21 +49,61 @@ export function deriveConnectionName(config: ConnectionConfig): string {
   const host = (config.host || "").trim();
   const database = (config.database || "").trim();
   const dbLabel = config.db_type.toUpperCase();
-
   if (host && database) return `${dbLabel} ${host} / ${database}`;
   if (database) return `${dbLabel} ${database}`;
   if (host) return `${dbLabel} ${host}`;
   return `${dbLabel} connection`;
 }
 
-const ensureConnectionName = (config: ConnectionConfig): ConnectionConfig => ({
-  ...config,
-  name: deriveConnectionName(config),
-});
+function resolveConnectionConfig(config: ConnectionConfig): ConnectionConfig {
+  const resolvedConfig = {
+    ...config,
+    host: config.host ? resolveEnvVars(config.host) : config.host,
+    username: config.username ? resolveEnvVars(config.username) : config.username,
+    password: config.password ? resolveEnvVars(config.password) : config.password,
+    database: config.database ? resolveEnvVars(config.database) : config.database,
+    file_path: config.file_path ? resolveEnvVars(config.file_path) : config.file_path,
+    additional_fields: config.additional_fields
+      ? Object.fromEntries(
+          Object.entries(config.additional_fields).map(([key, value]) => [
+            key,
+            typeof value === "string" ? resolveEnvVars(value) : value,
+          ]),
+        )
+      : config.additional_fields,
+  };
 
-const FRONTEND_TIMEOUT_MS = 30_000;
+  return {
+    ...resolvedConfig,
+    name: deriveConnectionName(resolvedConfig),
+  };
+}
 
-interface ConnectionState {
+function metadataFetchKey(connectionId: string, database?: string): string {
+  return `${connectionId}:${database ?? ""}`;
+}
+
+function isMissingConnectionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return MISSING_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+async function executeStartupCommands(connectionId: string, commands: string): Promise<void> {
+  const statements = commands
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+
+  for (const sql of statements) {
+    try {
+      await invokeMutation<QueryResult>("execute_query", { connectionId, sql });
+    } catch (error) {
+      console.warn("[StartupCommands] Failed to execute:", sql, error);
+    }
+  }
+}
+
+export interface ConnectionState {
   connections: ConnectionConfig[];
   activeConnectionId: string | null;
   connectedIds: Set<string>;
@@ -47,9 +111,14 @@ interface ConnectionState {
   currentDatabase: string | null;
   tables: TableInfo[];
   schemaObjects: SchemaObjectInfo[];
+  connectionHealth: Record<string, boolean>;
   isConnecting: boolean;
+  isLoadingDatabases: boolean;
+  isSwitchingDatabase: boolean;
   isLoadingTables: boolean;
+  isLoadingSchemaObjects: boolean;
 
+  setConnectionHealth: (connectionId: string, healthy: boolean) => void;
   loadSavedConnections: () => Promise<void>;
   connectToDatabase: (config: ConnectionConfig) => Promise<void>;
   connectSavedConnection: (connectionId: string) => Promise<void>;
@@ -60,9 +129,31 @@ interface ConnectionState {
   switchDatabase: (connectionId: string, database: string) => Promise<void>;
   fetchTables: (connectionId: string, database?: string) => Promise<void>;
   fetchSchemaObjects: (connectionId: string, database?: string) => Promise<void>;
-  createLocalDatabase: (config: ConnectionConfig, databaseName: string, bootstrapStatements?: string[]) => Promise<string>;
+  invalidateSchemaMetadata: (connectionId: string, database?: string) => void;
+  createLocalDatabase: (
+    config: ConnectionConfig,
+    databaseName: string,
+    bootstrapStatements?: string[],
+  ) => Promise<string>;
   suggestSqliteDatabasePath: (databaseName: string) => Promise<string>;
   pickSqliteDatabasePath: (databaseName: string) => Promise<string | null>;
+}
+
+function disconnectedPatch(
+  state: Pick<ConnectionState, "activeConnectionId" | "connectedIds">,
+  connectionId: string,
+): Partial<ConnectionState> {
+  const connectedIds = new Set(state.connectedIds);
+  connectedIds.delete(connectionId);
+  if (state.activeConnectionId !== connectionId) return { connectedIds };
+  return {
+    connectedIds,
+    activeConnectionId: null,
+    currentDatabase: null,
+    databases: [],
+    tables: [],
+    schemaObjects: [],
+  };
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
@@ -73,237 +164,325 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   currentDatabase: null,
   tables: [],
   schemaObjects: [],
+  connectionHealth: {},
   isConnecting: false,
+  isLoadingDatabases: false,
+  isSwitchingDatabase: false,
   isLoadingTables: false,
+  isLoadingSchemaObjects: false,
+
+  setConnectionHealth: (connectionId, healthy) => {
+    set((state) => ({
+      connectionHealth: { ...state.connectionHealth, [connectionId]: healthy },
+    }));
+  },
 
   loadSavedConnections: async () => {
     try {
       const connections = await invokeWithTimeout<ConnectionConfig[]>(
-        "get_saved_connections", {}, FRONTEND_TIMEOUT_MS, "Loading saved connections"
+        "get_saved_connections",
+        {},
+        FRONTEND_TIMEOUTS.metadata,
+        "Loading saved connections",
       );
       set({ connections: connections.map(sanitizeConnectionConfig) });
-    } catch (e) {
-      console.error("Failed to load connections:", e);
+    } catch (error) {
+      useGlobalErrorStore.getState().setError(`Failed to load connections: ${error}`);
     }
   },
 
-  connectToDatabase: async (config: ConnectionConfig) => {
+  connectToDatabase: async (config) => {
     if (get().isConnecting) return;
-    set({ isConnecting: true });
-    try {
-      const resolvedConfig: ConnectionConfig = {
-        ...config,
-        host: config.host ? resolveEnvVars(config.host) : config.host,
-        port: config.port,
-        username: config.username ? resolveEnvVars(config.username) : config.username,
-        password: config.password ? resolveEnvVars(config.password) : config.password,
-        database: config.database ? resolveEnvVars(config.database) : config.database,
-        file_path: config.file_path ? resolveEnvVars(config.file_path) : config.file_path,
-        additional_fields: config.additional_fields
-          ? Object.fromEntries(
-              Object.entries(config.additional_fields).map(
-                ([k, v]) => [k, typeof v === "string" ? resolveEnvVars(v) : v]
-              )
-            )
-          : config.additional_fields,
-      };
-      const normalizedConfig = ensureConnectionName(resolvedConfig);
-      const connections = get().connections;
-      const sameId = connections.find((c) => c.id === normalizedConfig.id);
-      const connectionRequest = normalizedConfig;
-      const finalConfig = sanitizeConnectionConfig(normalizedConfig);
+    const previousState = {
+      activeConnectionId: get().activeConnectionId,
+      currentDatabase: get().currentDatabase,
+      tables: get().tables,
+      schemaObjects: get().schemaObjects,
+    };
+    const normalizedConfig = resolveConnectionConfig(config);
+    set({
+      isConnecting: true,
+      activeConnectionId: normalizedConfig.id,
+      currentDatabase: normalizedConfig.database ?? null,
+      schemaObjects: [],
+      ...(normalizedConfig.database ? {} : { tables: [] }),
+    });
 
-      await invokeMutation("connect_database", { config: connectionRequest });
+    try {
+      const connections = get().connections;
+      await invokeMutation("connect_database", { config: normalizedConfig });
 
       const connectedIds = new Set(get().connectedIds);
       connectedIds.add(normalizedConfig.id);
-
-      let newConnections = connections;
-      if (sameId) {
-        newConnections = connections.map((c) => (c.id === normalizedConfig.id ? finalConfig : c));
-      } else {
-        newConnections = [...connections, finalConfig];
-      }
+      const savedConfig = sanitizeConnectionConfig(normalizedConfig);
+      const nextConnections = connections.some((item) => item.id === normalizedConfig.id)
+        ? connections.map((item) => (item.id === normalizedConfig.id ? savedConfig : item))
+        : [...connections, savedConfig];
 
       set({
         connectedIds,
         activeConnectionId: normalizedConfig.id,
-        connections: newConnections,
+        connections: nextConnections,
         currentDatabase: normalizedConfig.database ?? null,
-        ...(normalizedConfig.database ? {} : { tables: [], schemaObjects: [] }),
+        schemaObjects: [],
+        ...(normalizedConfig.database ? {} : { tables: [] }),
         isConnecting: false,
       });
 
-      await get().fetchDatabases(normalizedConfig.id);
+      await executeStartupCommands(
+        normalizedConfig.id,
+        normalizedConfig.startupCommands ?? "",
+      );
+      void get().fetchDatabases(normalizedConfig.id);
       if (normalizedConfig.database) {
-        set({ currentDatabase: normalizedConfig.database });
-        await Promise.all([
-          get().fetchTables(normalizedConfig.id, normalizedConfig.database),
-          get().fetchSchemaObjects(normalizedConfig.id, normalizedConfig.database),
-        ]);
+        void get().fetchTables(normalizedConfig.id, normalizedConfig.database);
+        void get().fetchSchemaObjects(normalizedConfig.id, normalizedConfig.database);
       }
-    } catch (e) {
-      set({ isConnecting: false });
-      console.error("Connection failed:", e);
-      throw e;
+    } catch (error) {
+      if (get().activeConnectionId === normalizedConfig.id) {
+        set({ ...previousState, isConnecting: false });
+      } else {
+        set({ isConnecting: false });
+      }
+      useGlobalErrorStore.getState().setError(`Connection to target failed: ${error}`);
+      throw error;
     }
   },
 
-  connectSavedConnection: async (connectionId: string) => {
+  connectSavedConnection: async (connectionId) => {
     if (get().isConnecting) return;
-    set({ isConnecting: true });
+    const previousState = {
+      activeConnectionId: get().activeConnectionId,
+      currentDatabase: get().currentDatabase,
+      tables: get().tables,
+      schemaObjects: get().schemaObjects,
+    };
+    const connection = get().connections.find((item) => item.id === connectionId);
+    set({
+      isConnecting: true,
+      activeConnectionId: connectionId,
+      currentDatabase: connection?.database ?? null,
+      schemaObjects: [],
+      ...(connection?.database ? {} : { tables: [] }),
+    });
+
     try {
       await invokeMutation("connect_saved_connection", { connectionId });
-      const connection = get().connections.find((item) => item.id === connectionId);
       const connectedIds = new Set(get().connectedIds);
       connectedIds.add(connectionId);
-
       set({
         connectedIds,
         activeConnectionId: connectionId,
         currentDatabase: connection?.database ?? null,
-        ...(connection?.database ? {} : { tables: [], schemaObjects: [] }),
+        schemaObjects: [],
+        ...(connection?.database ? {} : { tables: [] }),
         isConnecting: false,
       });
 
-      await get().fetchDatabases(connectionId);
+      await executeStartupCommands(connectionId, connection?.startupCommands ?? "");
+      void get().fetchDatabases(connectionId);
       if (connection?.database) {
-        set({ currentDatabase: connection.database });
-        await Promise.all([
-          get().fetchTables(connectionId, connection.database),
-          get().fetchSchemaObjects(connectionId, connection.database),
-        ]);
+        void get().fetchTables(connectionId, connection.database);
+        void get().fetchSchemaObjects(connectionId, connection.database);
       }
-    } catch (e) {
-      set({ isConnecting: false });
-      console.error("Connection failed:", e);
-      throw e;
+    } catch (error) {
+      if (get().activeConnectionId === connectionId) {
+        set({ ...previousState, isConnecting: false });
+      } else {
+        set({ isConnecting: false });
+      }
+      useGlobalErrorStore.getState().setError(`Connection to target failed: ${error}`);
+      throw error;
     }
   },
 
-  disconnectFromDatabase: async (connectionId: string) => {
+  disconnectFromDatabase: async (connectionId) => {
     try {
       await invokeMutation("disconnect_database", { connectionId });
-      const connectedIds = new Set(get().connectedIds);
-      connectedIds.delete(connectionId);
-
-      const newState: Partial<ConnectionState> = { connectedIds };
-      if (get().activeConnectionId === connectionId) {
-        newState.activeConnectionId = null;
-        newState.databases = [];
-        newState.tables = [];
-        newState.schemaObjects = [];
-        newState.currentDatabase = null;
-      }
-      set(newState);
-    } catch (e) {
-      console.error("Disconnect failed:", e);
+      set(disconnectedPatch(get(), connectionId));
+      useUIStore.getState().removeTabsForConnection(connectionId);
+    } catch (error) {
+      useGlobalErrorStore.getState().setError(`Disconnect failed: ${error}`);
     }
   },
 
-  testConnection: async (config: ConnectionConfig) => {
-    // Resolve env vars in the config before sending to backend
-    const resolvedConfig: ConnectionConfig = {
-      ...config,
-      host: config.host ? resolveEnvVars(config.host) : config.host,
-      port: config.port,
-      username: config.username ? resolveEnvVars(config.username) : config.username,
-      password: config.password ? resolveEnvVars(config.password) : config.password,
-      database: config.database ? resolveEnvVars(config.database) : config.database,
-      file_path: config.file_path ? resolveEnvVars(config.file_path) : config.file_path,
-      additional_fields: config.additional_fields
-        ? Object.fromEntries(
-            Object.entries(config.additional_fields).map(
-              ([k, v]) => [k, typeof v === "string" ? resolveEnvVars(v) : v]
-            )
-          )
-        : config.additional_fields,
-    };
-    return invokeWithTimeout<string>(
+  testConnection: async (config) =>
+    invokeWithTimeout<string>(
       "test_connection",
-      { config: ensureConnectionName(resolvedConfig) },
-      FRONTEND_TIMEOUT_MS,
-      "Testing database connection"
-    );
-  },
+      { config: resolveConnectionConfig(config) },
+      FRONTEND_TIMEOUTS.connection,
+      "Testing database connection",
+    ),
 
-  deleteSavedConnection: async (connectionId: string) => {
+  deleteSavedConnection: async (connectionId) => {
     try {
       await invokeMutation("delete_saved_connection", { connectionId });
-      set({ connections: get().connections.filter((c) => c.id !== connectionId) });
-    } catch (e) {
-      console.error("Delete failed:", e);
+      set({
+        connections: get().connections.filter((connection) => connection.id !== connectionId),
+      });
+      useUIStore.getState().removeTabsForConnection(connectionId);
+    } catch (error) {
+      useGlobalErrorStore.getState().setError(`Delete failed: ${error}`);
     }
   },
 
-  fetchDatabases: async (connectionId: string) => {
+  fetchDatabases: async (connectionId) => {
+    set({ isLoadingDatabases: true });
     try {
       const databases = await invokeWithTimeout<DatabaseInfo[]>(
-        "list_databases", { connectionId }, 15_000, "Listing databases"
+        "list_databases",
+        { connectionId },
+        FRONTEND_TIMEOUTS.metadata,
+        "Listing databases",
       );
-      set({ databases });
-    } catch (e) {
-      console.error("Failed to list databases:", e);
+      set({ databases, isLoadingDatabases: false });
+    } catch (error) {
+      const message = `Failed to list databases: ${error}`;
+      set({
+        isLoadingDatabases: false,
+        ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
+      });
+      useGlobalErrorStore.getState().setError(message);
     }
   },
 
-  switchDatabase: async (connectionId: string, database: string) => {
+  switchDatabase: async (connectionId, database) => {
+    set({ isSwitchingDatabase: true });
     try {
       await invokeMutation("use_database", { connectionId, database });
-      set({ currentDatabase: database });
+      set({ currentDatabase: database, schemaObjects: [], isSwitchingDatabase: false });
       await Promise.all([
         get().fetchTables(connectionId, database),
         get().fetchSchemaObjects(connectionId, database),
       ]);
-    } catch (e) {
-      console.error("Failed to switch database:", e);
+    } catch (error) {
+      set({
+        isSwitchingDatabase: false,
+        ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
+      });
+      useGlobalErrorStore.getState().setError(`Failed to switch database: ${error}`);
     }
   },
 
-  fetchTables: async (connectionId: string, database?: string) => {
-    set({ isLoadingTables: true });
+  fetchTables: async (connectionId, database) => {
+    const key = metadataFetchKey(connectionId, database);
+    const pending = inFlightTableFetches.get(key);
+    if (pending) return pending;
+
+    const request = (async () => {
+      set({ isLoadingTables: true });
+      try {
+        const tables = await getOrLoadSchemaTables(
+          { connectionId, database },
+          () => invokeAIWorkspaceToolWithTimeout(
+            "list_tables",
+            { connectionId, database: database || null },
+            FRONTEND_TIMEOUTS.metadata,
+            "Listing tables",
+          ),
+        );
+        set({ tables, isLoadingTables: false });
+      } catch (error) {
+        set({
+          isLoadingTables: false,
+          ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
+        });
+        useGlobalErrorStore
+          .getState()
+          .setError(`Failed to list tables: ${error}`);
+      }
+    })();
+
+    inFlightTableFetches.set(key, request);
     try {
-      const tables = await invokeWithTimeout<TableInfo[]>(
-        "list_tables", { connectionId, database: database || null }, 15_000, "Listing tables"
-      );
-      set({ tables, isLoadingTables: false });
-    } catch (e) {
-      set({ isLoadingTables: false });
-      console.error("Failed to list tables:", e);
+      await request;
+    } finally {
+      inFlightTableFetches.delete(key);
     }
   },
 
-  fetchSchemaObjects: async (connectionId: string, database?: string) => {
+  fetchSchemaObjects: async (connectionId, database) => {
+    const key = metadataFetchKey(connectionId, database);
+    const pending = inFlightSchemaObjectFetches.get(key);
+    if (pending) return pending;
+
+    const request = (async () => {
+      set({ isLoadingSchemaObjects: true });
+      try {
+        const schemaObjects = await getOrLoadSchemaObjects(
+          { connectionId, database },
+          () => invokeWithTimeout<SchemaObjectInfo[]>(
+            "list_schema_objects",
+            { connectionId, database: database || null },
+            FRONTEND_TIMEOUTS.metadata,
+            "Listing schema objects",
+          ),
+        );
+        set({ schemaObjects, isLoadingSchemaObjects: false });
+      } catch (error) {
+        set({
+          isLoadingSchemaObjects: false,
+          ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
+        });
+        useGlobalErrorStore
+          .getState()
+          .setError(`Failed to list schema objects: ${error}`);
+      }
+    })();
+
+    inFlightSchemaObjectFetches.set(key, request);
     try {
-      const schemaObjects = await invokeWithTimeout<SchemaObjectInfo[]>(
-        "list_schema_objects", { connectionId, database: database || null }, 15_000, "Listing schema objects"
-      );
-      set({ schemaObjects });
-    } catch (e) {
-      console.error("Failed to list schema objects:", e);
+      await request;
+    } finally {
+      inFlightSchemaObjectFetches.delete(key);
     }
   },
 
-  createLocalDatabase: async (config: ConnectionConfig, databaseName: string, bootstrapStatements = []) => {
+  invalidateSchemaMetadata: (connectionId, database) => {
+    invalidateSchemaCache(connectionId, database);
+
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("schema-cache-invalidated", { detail: { connectionId, database } }),
+      );
+    }
+
+    const state = get();
+    const activeDatabase = state.currentDatabase ?? undefined;
+    if (state.activeConnectionId === connectionId && (database === undefined || database === activeDatabase)) {
+      void Promise.all([
+        state.fetchTables(connectionId, activeDatabase),
+        state.fetchSchemaObjects(connectionId, activeDatabase),
+      ]);
+    }
+  },
+
+  createLocalDatabase: async (config, databaseName, bootstrapStatements = []) => {
     try {
       return await invokeMutation<string>("create_local_database", {
-        config: ensureConnectionName(config),
+        config: resolveConnectionConfig(config),
         databaseName,
         bootstrapStatements: bootstrapStatements.length > 0 ? bootstrapStatements : null,
       });
-    } catch (e) {
-      console.error("Create database failed:", e);
-      throw e;
+    } catch (error) {
+      useGlobalErrorStore.getState().setError(`Create database failed: ${error}`);
+      throw error;
     }
   },
 
-  suggestSqliteDatabasePath: async (databaseName: string) =>
+  suggestSqliteDatabasePath: async (databaseName) =>
     invokeWithTimeout<string>(
-      "suggest_sqlite_database_path", { databaseName }, 15_000, "Preparing SQLite database location"
+      "suggest_sqlite_database_path",
+      { databaseName },
+      FRONTEND_TIMEOUTS.metadata,
+      "Preparing SQLite database location",
     ),
 
-  pickSqliteDatabasePath: async (databaseName: string) =>
+  pickSqliteDatabasePath: async (databaseName) =>
     invokeWithTimeout<string | null>(
-      "pick_sqlite_database_path", { databaseName }, 15_000, "Opening SQLite save dialog"
+      "pick_sqlite_database_path",
+      { databaseName },
+      FRONTEND_TIMEOUTS.metadata,
+      "Opening SQLite save dialog",
     ),
 }));

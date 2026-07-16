@@ -290,6 +290,21 @@ export const ALL_DATABASES: DbEntry[] = [
     fieldProfile: "tokenNoDatabase",
     extraFields: ENGINE_EXTRA_FIELDS.cloudflareD1,
   }),
+  buildDbEntry({
+    key: "opensearch",
+    abbr: "Os",
+    label: "OpenSearch",
+    color: "#005eb8",
+    supported: false,
+    connectionMode: "network",
+    defaultPort: 9200,
+    supportsSsl: true,
+    localBootstrap: "none",
+    isFile: false,
+    defaultHost: "127.0.0.1",
+    hostPlaceholder: "search.example.com",
+    fieldProfile: "optionalUserSecretWithDatabase",
+  }),
 ];
 
 const DATABASE_MAP = new Map<DatabaseType, DbEntry>(

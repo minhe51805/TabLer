@@ -1,50 +1,65 @@
-use tauri::{Manager, Emitter};
-mod commands;
+use tauri::{Emitter, Manager};
 mod ai_workspace_history;
-mod database;
-mod query_history;
-mod storage;
-mod utils;
+mod commands;
+pub mod database;
+pub mod mcp;
+pub mod mcp_local;
+pub mod mcp_security;
+pub mod query_history;
 pub mod ssh;
+pub mod storage;
+mod utils;
 mod watcher;
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
-use commands::connection::*;
-use commands::plugins::{
-    install_plugin_bundle, list_installed_plugins, reload_installed_plugins,
-    set_plugin_enabled, uninstall_plugin_bundle,
+use commands::ai::{
+    ask_ai, cancel_ai_request, get_ai_configs, save_ai_configs, AIRequestCancellationState,
 };
+use commands::connection::*;
+use commands::connection_export::{export_connections_to_file, import_connections_from_file};
+use commands::deep_link::parse_deep_link;
 use commands::export::*;
 use commands::file::*;
+use commands::maintenance::{preview_maintenance_command, run_maintenance_command};
+use commands::mcp::{
+    create_mcp_token, get_mcp_audit_events, get_mcp_connection_policy, get_mcp_local_server_status,
+    list_mcp_tokens, revoke_mcp_token, set_mcp_connection_policy, start_mcp_local_server,
+    stop_mcp_local_server,
+};
+use commands::operations::get_operational_queries;
+use commands::plugins::{
+    check_plugin_updates, get_plugin_registry, install_plugin_bundle, install_registry_plugin,
+    list_installed_plugins, reload_installed_plugins, rollback_plugin_bundle, set_plugin_enabled,
+    uninstall_plugin_bundle,
+};
 use commands::query::*;
+use commands::restore::{preview_database_restore, restore_database_sql};
 use commands::table::*;
-use commands::terminal::{close_terminal, open_terminal, resize_terminal, write_terminal, TerminalManager};
-use commands::ai::{ask_ai, get_ai_configs, save_ai_configs};
+use commands::tabs::{delete_tabs, load_tabs, save_tabs};
+use commands::terminal::{
+    close_terminal, open_terminal, resize_terminal, write_terminal, TerminalManager,
+};
+use commands::update::{check_for_update, download_and_install_update, get_app_version};
+use commands::users_roles::{
+    apply_user_role_change, get_user_role_snapshot, review_user_role_change,
+};
 use commands::window::{apply_window_profile, apply_window_profile_to_main, WindowProfile};
-use commands::tabs::{save_tabs, load_tabs, delete_tabs};
-use commands::deep_link::parse_deep_link;
-use commands::update::{
-    check_for_update, download_and_install_update, get_app_version,
-};
-use commands::connection_export::{
-    export_connections_to_file, import_connections_from_file,
-};
-use commands::maintenance::run_maintenance_command;
+use commands::workspace_sync::{pull_workspace_sync, push_workspace_sync};
 use database::manager::DatabaseManager;
+use log::{error, info};
+use mcp_local::McpLocalServer;
 use query_history::{
     clear_query_history, delete_query_history_entries, delete_query_history_entry,
     get_query_history, save_query_history,
 };
-use storage::connection_storage::ConnectionStorage;
-use storage::plugin_storage::PluginStorage;
-use storage::ai_storage::AIStorage;
-use storage::tab_persistence::TabPersistence;
-use storage::sql_favorites::{
-    delete_sql_favorite, get_sql_favorites, save_sql_favorite,
-};
-use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter};
 use std::time::Duration;
-use log::{info, error};
+use storage::ai_storage::AIStorage;
+use storage::connection_storage::ConnectionStorage;
+use storage::mcp_storage::McpStorage;
+use storage::plugin_storage::PluginStorage;
+use storage::sql_favorites::{delete_sql_favorite, get_sql_favorites, save_sql_favorite};
+use storage::tab_persistence::TabPersistence;
+use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -54,16 +69,19 @@ pub fn run() {
     let start_time = std::time::Instant::now();
     info!("[TableR] Application starting...");
 
-    let db_manager = DatabaseManager::new();
-    info!("[TableR] DatabaseManager initialized: {:?}", start_time.elapsed());
-
     let conn_storage = match ConnectionStorage::new() {
         Ok(storage) => {
-            info!("[TableR] ConnectionStorage initialized: {:?}", start_time.elapsed());
+            info!(
+                "[TableR] ConnectionStorage initialized: {:?}",
+                start_time.elapsed()
+            );
             storage
         }
         Err(error) => {
-            error!("[TableR] FAILED to initialize connection storage: {}", error);
+            error!(
+                "[TableR] FAILED to initialize connection storage: {}",
+                error
+            );
             return;
         }
     };
@@ -79,7 +97,10 @@ pub fn run() {
     };
     let plugin_storage = match PluginStorage::new() {
         Ok(storage) => {
-            info!("[TableR] PluginStorage initialized: {:?}", start_time.elapsed());
+            info!(
+                "[TableR] PluginStorage initialized: {:?}",
+                start_time.elapsed()
+            );
             storage
         }
         Err(error) => {
@@ -87,13 +108,31 @@ pub fn run() {
             return;
         }
     };
+    let db_manager = DatabaseManager::with_plugin_storage(plugin_storage.clone());
+    info!(
+        "[TableR] DatabaseManager initialized: {:?}",
+        start_time.elapsed()
+    );
     let tab_storage = match TabPersistence::new() {
         Ok(storage) => {
-            info!("[TableR] TabPersistence initialized: {:?}", start_time.elapsed());
+            info!(
+                "[TableR] TabPersistence initialized: {:?}",
+                start_time.elapsed()
+            );
             storage
         }
         Err(error) => {
-            error!("[TableR] FAILED to initialize tab persistence storage: {}", error);
+            error!(
+                "[TableR] FAILED to initialize tab persistence storage: {}",
+                error
+            );
+            return;
+        }
+    };
+    let mcp_storage = match McpStorage::new() {
+        Ok(storage) => storage,
+        Err(error) => {
+            error!("[TableR] FAILED to initialize MCP storage: {}", error);
             return;
         }
     };
@@ -107,6 +146,8 @@ pub fn run() {
         24,
         "Too many AI requests in a short time. Please wait a moment and try again.",
     );
+    let ai_request_cancellation_state = AIRequestCancellationState::default();
+    let csv_import_cancellation_state = CsvImportCancellationState::default();
     let terminal_manager = TerminalManager::default();
 
     let app = tauri::Builder::default()
@@ -119,10 +160,14 @@ pub fn run() {
         .manage(plugin_storage)
         .manage(ai_storage)
         .manage(tab_storage)
+        .manage(mcp_storage)
+        .manage(McpLocalServer::default())
         .manage(watcher::LinkedFoldersState::new())
         .manage(terminal_manager)
         .manage(connection_rate_limiter)
         .manage(ai_rate_limiter)
+        .manage(ai_request_cancellation_state)
+        .manage(csv_import_cancellation_state)
         .setup(|app| {
             if let Err(e) = watcher::start_watcher(app.handle().clone()) {
                 error!("[TableR] Failed to start watcher: {}", e);
@@ -135,7 +180,8 @@ pub fn run() {
                 }
             }
 
-            if let Err(error) = apply_window_profile_to_main(app.handle(), WindowProfile::Launcher) {
+            if let Err(error) = apply_window_profile_to_main(app.handle(), WindowProfile::Launcher)
+            {
                 error!("Failed to apply launcher window profile: {}", error);
             }
 
@@ -147,7 +193,7 @@ pub fn run() {
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
                         let url_str = url.to_string();
-                        info!("[DeepLink] Received: {}", url_str);
+                        info!("[DeepLink] Received external navigation request");
                         // Emit to frontend via event
                         if let Some(window) = app_handle.get_webview_window("main") {
                             let _ = window.emit("deep-link", url_str);
@@ -178,7 +224,10 @@ pub fn run() {
             open_support_page,
             // Query commands
             execute_query,
+            execute_parameterized_query,
             execute_sandboxed_query,
+            preview_database_restore,
+            restore_database_sql,
             // Table commands
             list_tables,
             list_schema_objects,
@@ -188,12 +237,16 @@ pub fn run() {
             count_table_rows,
             count_table_null_values,
             update_table_cell,
+            apply_table_updates_atomically,
             delete_table_rows,
             insert_table_row,
+            insert_table_rows_atomically,
+            cancel_csv_import,
             execute_structure_statements,
             get_foreign_key_lookup_values,
             // AI commands
             ask_ai,
+            cancel_ai_request,
             get_ai_configs,
             save_ai_configs,
             // Query history commands
@@ -208,6 +261,7 @@ pub fn run() {
             // File commands
             read_sql_file,
             read_sql_file_from_path,
+            read_csv_file,
             pick_database_file,
             export_database,
             // Terminal commands
@@ -225,6 +279,23 @@ pub fn run() {
             set_plugin_enabled,
             uninstall_plugin_bundle,
             reload_installed_plugins,
+            rollback_plugin_bundle,
+            get_plugin_registry,
+            check_plugin_updates,
+            install_registry_plugin,
+            // MCP security and integration commands
+            list_mcp_tokens,
+            create_mcp_token,
+            revoke_mcp_token,
+            get_mcp_audit_events,
+            get_mcp_connection_policy,
+            set_mcp_connection_policy,
+            start_mcp_local_server,
+            stop_mcp_local_server,
+            get_mcp_local_server_status,
+            get_user_role_snapshot,
+            review_user_role_change,
+            apply_user_role_change,
             // Window commands
             apply_window_profile,
             // Tab persistence commands
@@ -247,7 +318,12 @@ pub fn run() {
             watcher::scan_linked_folder,
             watcher::read_linked_file,
             // Maintenance commands
+            preview_maintenance_command,
             run_maintenance_command,
+            // Operations dashboard queries
+            get_operational_queries,
+            push_workspace_sync,
+            pull_workspace_sync,
         ]);
 
     if let Err(error) = app.run(tauri::generate_context!()) {

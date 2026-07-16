@@ -86,7 +86,10 @@ pub fn qualify_postgres_table_name(table: &str, default_schema: &str) -> Result<
     let (schema, table_name) = if parts.len() == 2 {
         (parts[0].clone(), parts[1].clone())
     } else {
-        (validate_identifier_part(default_schema, "Schema")?, parts[0].clone())
+        (
+            validate_identifier_part(default_schema, "Schema")?,
+            parts[0].clone(),
+        )
     };
 
     Ok(format!(
@@ -122,7 +125,10 @@ pub fn qualify_mssql_table_name(table: &str, default_schema: &str) -> Result<Str
     let (schema, table_name) = if parts.len() == 2 {
         (parts[0].clone(), parts[1].clone())
     } else {
-        (validate_identifier_part(default_schema, "Schema")?, parts[0].clone())
+        (
+            validate_identifier_part(default_schema, "Schema")?,
+            parts[0].clone(),
+        )
     };
 
     Ok(format!(
@@ -151,7 +157,12 @@ pub fn qualify_cassandra_table_name(table: &str, default_keyspace: &str) -> Resu
 }
 
 pub fn normalize_order_dir(order_dir: Option<&str>) -> Result<&'static str> {
-    match order_dir.unwrap_or("ASC").trim().to_ascii_uppercase().as_str() {
+    match order_dir
+        .unwrap_or("ASC")
+        .trim()
+        .to_ascii_uppercase()
+        .as_str()
+    {
         "ASC" => Ok("ASC"),
         "DESC" => Ok("DESC"),
         _ => Err(anyhow!("Order direction must be ASC or DESC")),
@@ -560,7 +571,9 @@ fn sanitize_filter_clause_with(
         ));
     }
 
-    Ok(Some(FilterParser::new(trimmed, quote_identifier, allow_ilike).parse()?))
+    Ok(Some(
+        FilterParser::new(trimmed, quote_identifier, allow_ilike).parse()?,
+    ))
 }
 
 pub fn sanitize_postgres_filter_clause(filter: Option<&str>) -> Result<Option<String>> {

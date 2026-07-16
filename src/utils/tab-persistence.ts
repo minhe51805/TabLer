@@ -77,3 +77,25 @@ export async function loadTabState(connectionId: string): Promise<PersistedTab[]
     return [];
   }
 }
+
+export function restoreTabSnapshot(snapshot: PersistedTab, connectionId: string): Tab | null {
+  const baseTab: Tab = {
+    id: snapshot.tabId,
+    type: snapshot.tabType,
+    title: snapshot.title,
+    connectionId,
+    database: snapshot.database,
+  };
+
+  switch (snapshot.tabType) {
+    case "query":
+      return { ...baseTab, content: snapshot.content };
+    case "table":
+    case "structure":
+      return snapshot.tableName ? { ...baseTab, tableName: snapshot.tableName } : null;
+    case "er-diagram":
+      return baseTab;
+    case "metrics":
+      return null;
+  }
+}

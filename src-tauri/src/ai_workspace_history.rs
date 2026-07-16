@@ -92,7 +92,10 @@ impl AIWorkspaceHistoryStorage {
     }
 
     fn connect_options(&self) -> Result<SqliteConnectOptions, String> {
-        let db_url = format!("sqlite://{}", self.file_path.to_string_lossy().replace('\\', "/"));
+        let db_url = format!(
+            "sqlite://{}",
+            self.file_path.to_string_lossy().replace('\\', "/")
+        );
         let options = SqliteConnectOptions::from_str(&db_url)
             .map_err(|error| format!("Failed to prepare AI history database path: {error}"))?
             .create_if_missing(true)
@@ -205,18 +208,27 @@ mod tests {
     #[tokio::test]
     async fn round_trips_workspace_state() {
         let path = temp_history_db_path();
-        let storage = AIWorkspaceHistoryStorage::new_with_file(path.clone()).expect("storage should init");
+        let storage =
+            AIWorkspaceHistoryStorage::new_with_file(path.clone()).expect("storage should init");
 
         let mut state = PersistedAIWorkspaceState::default();
         state.version = 1;
-        state.active_thread_ids.insert("workspace-1".into(), "thread-1".into());
+        state
+            .active_thread_ids
+            .insert("workspace-1".into(), "thread-1".into());
 
-        storage.save_state(&state).await.expect("save should succeed");
+        storage
+            .save_state(&state)
+            .await
+            .expect("save should succeed");
         let loaded = storage.load_state().await.expect("load should succeed");
 
         assert_eq!(loaded.version, 1);
         assert_eq!(
-            loaded.active_thread_ids.get("workspace-1").map(String::as_str),
+            loaded
+                .active_thread_ids
+                .get("workspace-1")
+                .map(String::as_str),
             Some("thread-1")
         );
 

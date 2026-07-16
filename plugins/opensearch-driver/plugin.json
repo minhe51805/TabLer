@@ -1,0 +1,43 @@
+{
+  "apiVersion": 1,
+  "id": "opensearch-driver",
+  "name": "OpenSearch read-only driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-07-16T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds bounded, read-only OpenSearch index browsing and JSON search through the declarative HTTP driver host.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute",
+    "network.fetch"
+  ],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "8db6d8e892c7151a63ede9ff223021eaf472eeec0df36d485a82a612127b6150"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "opensearch",
+        "label": "OpenSearch",
+        "protocol": "opensearch",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

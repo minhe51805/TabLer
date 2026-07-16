@@ -1,11 +1,12 @@
 import type * as Monaco from "monaco-editor";
 import type { TableStructure } from "../../types";
-import { analyzeSqlContext, getTablesInScope } from "./SQLContextAnalyzer";
+import { analyzeSqlContext, getCteScopes, getTablesInScope, type SQLTableScope } from "./SQLContextAnalyzer";
 import { getCompletionSet } from "../../utils/sql-completions";
 import type { DatabaseType } from "../../types/database";
 
 // Type for column objects from the table structure API
 type TableColumn = TableStructure["columns"][number];
+type CompletionColumn = Pick<TableColumn, "name" | "data_type" | "is_primary_key">;
 
 // Shape of a Monaco completion item we build internally
 type CompletionItem = {
@@ -61,13 +62,6 @@ export interface CompletionProviderDeps {
   dbType: DatabaseType | undefined;
 }
 
-interface TableStructureCacheEntry {
-  structure: TableStructure;
-  timestamp: number;
-}
-
-const CACHE_TTL_MS = 30_000; // 30 seconds
-
 /**
  * Schema-aware SQL completion provider.
  *
@@ -83,34 +77,17 @@ export function registerSchemaCompletionProvider(
 ): { dispose: () => void } {
   const { getTables, getTableStructure, dbType } = deps;
 
-  // Per-instance cache to avoid repeated backend calls for the same table
-  const structureCache = new Map<string, TableStructureCacheEntry>();
-  // Deduplicate in-flight fetches
-  const fetchInFlight = new Map<string, Promise<TableStructure>>();
-
-  function getCachedStructure(tableName: string): TableStructure | null {
-    const cached = structureCache.get(tableName);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-      return cached.structure;
-    }
-    return null;
+  async function fetchStructure(tableName: string): Promise<TableStructure> {
+    // QueryStore owns the versioned cache, including in-flight deduplication.
+    // Keeping a Monaco-local cache would allow stale completions after DDL.
+    return getTableStructure(tableName);
   }
 
-  async function fetchStructure(tableName: string): Promise<TableStructure> {
-    const cached = getCachedStructure(tableName);
-    if (cached) return cached;
-
-    const inFlight = fetchInFlight.get(tableName);
-    if (inFlight) return inFlight;
-
-    const promise = getTableStructure(tableName).finally(() => {
-      fetchInFlight.delete(tableName);
-    });
-    fetchInFlight.set(tableName, promise);
-
-    const structure = await promise;
-    structureCache.set(tableName, { structure, timestamp: Date.now() });
-    return structure;
+  async function fetchScopeColumns(scope: SQLTableScope): Promise<CompletionColumn[]> {
+    if (scope.kind === "cte") {
+      return (scope.columns ?? []).map((name) => ({ name, data_type: "CTE result", is_primary_key: false }));
+    }
+    return (await fetchStructure(scope.table)).columns;
   }
 
   function makeRange(range: Monaco.IRange): Monaco.IRange {
@@ -122,7 +99,7 @@ export function registerSchemaCompletionProvider(
     };
   }
 
-  function colDetail(col: TableColumn, prefix: string): string {
+  function colDetail(col: CompletionColumn, prefix: string): string {
     const pk = col.is_primary_key ? " (PK)" : "";
     return col.data_type + pk + prefix;
   }
@@ -147,6 +124,17 @@ export function registerSchemaCompletionProvider(
       case "FROM":
       case "JOIN": {
         const tables = getTables();
+        const ctes = getCteScopes(model);
+        for (const cte of ctes) {
+          suggestions.push({
+            label: cte.table,
+            kind: monaco.languages.CompletionItemKind.Class,
+            insertText: cte.table,
+            detail: "CTE result",
+            documentation: cte.columns?.length ? `Columns: ${cte.columns.join(", ")}` : undefined,
+            range,
+          });
+        }
         for (const table of tables) {
           const schemaDetail = table.schema ? "schema: " + table.schema : "Table";
           const schemaLabel = table.schema ? table.schema + "." + table.name : table.name;
@@ -198,13 +186,14 @@ export function registerSchemaCompletionProvider(
       case "ON": {
         const tablesInScope = getTablesInScope(model, position);
         await Promise.all(
-          tablesInScope.map(async ({ table }) => {
-            const structure = await fetchStructure(table);
-            for (const col of structure.columns) {
+          tablesInScope.map(async (scope) => {
+            const columns = await fetchScopeColumns(scope);
+            const prefix = scope.alias !== scope.table ? `${scope.alias}.` : "";
+            for (const col of columns) {
               suggestions.push({
                 label: col.name,
                 kind: monaco.languages.CompletionItemKind.Field,
-                insertText: col.name,
+                insertText: prefix + col.name,
                 detail: colDetail(col, ""),
                 range,
               });
@@ -236,15 +225,15 @@ export function registerSchemaCompletionProvider(
 
         if (tablesInScope.length > 0) {
           await Promise.all(
-            tablesInScope.map(async ({ table, alias }) => {
-              const structure = await fetchStructure(table);
-              const prefix = alias !== table ? alias + "." : "";
-              for (const col of structure.columns) {
+            tablesInScope.map(async (scope) => {
+              const columns = await fetchScopeColumns(scope);
+              const prefix = scope.alias !== scope.table ? scope.alias + "." : "";
+              for (const col of columns) {
                 suggestions.push({
                   label: col.name,
                   kind: monaco.languages.CompletionItemKind.Field,
                   insertText: prefix + col.name,
-                  detail: colDetail(col, alias !== table ? " [" + alias + "]" : ""),
+                  detail: colDetail(col, scope.alias !== scope.table ? " [" + scope.alias + "]" : ""),
                   range,
                 });
               }
@@ -288,13 +277,14 @@ export function registerSchemaCompletionProvider(
         const tablesInScope = getTablesInScope(model, position);
         if (tablesInScope.length > 0) {
           await Promise.all(
-            tablesInScope.map(async ({ table }) => {
-              const structure = await fetchStructure(table);
-              for (const col of structure.columns) {
-                suggestions.push({
-                  label: col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: col.name,
+            tablesInScope.map(async (scope) => {
+              const columns = await fetchScopeColumns(scope);
+              const prefix = scope.alias !== scope.table ? `${scope.alias}.` : "";
+              for (const col of columns) {
+              suggestions.push({
+                label: col.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: prefix + col.name,
                   detail: col.data_type,
                   range,
                 });
@@ -349,10 +339,10 @@ export function registerSchemaCompletionProvider(
         const tablesInScope = getTablesInScope(model, position);
         if (tablesInScope.length > 0) {
           await Promise.all(
-            tablesInScope.map(async ({ table, alias }) => {
-              const structure = await fetchStructure(table);
-              const prefix = alias !== table ? alias + "." : "";
-              for (const col of structure.columns) {
+            tablesInScope.map(async (scope) => {
+              const columns = await fetchScopeColumns(scope);
+              const prefix = scope.alias !== scope.table ? scope.alias + "." : "";
+              for (const col of columns) {
                 suggestions.push({
                   label: col.name,
                   kind: monaco.languages.CompletionItemKind.Field,

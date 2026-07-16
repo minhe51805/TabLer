@@ -40,7 +40,7 @@ export interface PastePreview {
   insertRows: [string, unknown][][];
   /** Number of rows that will be inserted */
   rowCount: number;
-  /** Columns in the table that will be set to NULL (no mapping) */
+  /** Columns in the table that receive no imported value (defaults apply) */
   nullColumns: string[];
   /** Clipboard columns that will be skipped (extra columns not in table) */
   skippedColumns: { index: number; header: string }[];
@@ -56,46 +56,64 @@ function detectDelimiter(sample: string): "tsv" | "csv" {
   return "csv";
 }
 
-/** Parse a single row into values, respecting basic CSV quoting. */
-function parseRow(row: string, delimiter: "\t" | ","): string[] {
-  if (delimiter === "\t") {
-    return row.split("\t");
-  }
-  // CSV with quoting support
-  const values: string[] = [];
-  let current = "";
+/**
+ * Parse delimited text in one pass so a quoted CSV field can contain commas,
+ * escaped quotes, or line breaks. Clipboard TSV is deliberately parsed by the
+ * same code path: quoted tabs are uncommon, but harmlessly supported.
+ */
+function parseDelimitedText(text: string, delimiter: "\t" | ","): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let value = "";
   let inQuotes = false;
-  for (let i = 0; i < row.length; i++) {
-    const ch = row[i];
-    if (ch === '"') {
-      if (inQuotes && row[i + 1] === '"') {
-        current += '"';
-        i++;
+
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (char === '"') {
+      if (inQuotes && text[index + 1] === '"') {
+        value += '"';
+        index++;
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (ch === delimiter && !inQuotes) {
-      values.push(current.trim());
-      current = "";
-    } else {
-      current += ch;
+      continue;
     }
+    if (char === delimiter && !inQuotes) {
+      row.push(value);
+      value = "";
+      continue;
+    }
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && text[index + 1] === "\n") {
+        index++;
+      }
+      row.push(value);
+      if (row.some((cell) => cell.trim().length > 0)) {
+        rows.push(row);
+      }
+      row = [];
+      value = "";
+      continue;
+    }
+    value += char;
   }
-  values.push(current.trim());
-  return values;
+
+  row.push(value);
+  if (row.some((cell) => cell.trim().length > 0)) {
+    rows.push(row);
+  }
+  return rows;
 }
 
 /** Parse clipboard text into structured data. */
 export function parseClipboardText(text: string): ParsedClipboardData | null {
   if (!text || !text.trim()) return null;
 
-  const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-  if (lines.length === 0) return null;
-
-  const delimiter = detectDelimiter(lines[0]);
+  const firstLine = text.split(/\r?\n/, 1)[0];
+  const delimiter = detectDelimiter(firstLine);
   const sep: "\t" | "," = delimiter === "tsv" ? "\t" : ",";
-
-  const rows = lines.map((line) => parseRow(line, sep));
+  const rows = parseDelimitedText(text, sep);
+  if (rows.length === 0) return null;
 
   // Heuristic: if first row looks like it could be a header (mix of text vs numbers),
   // or if it contains non-value-like content, treat as header
@@ -142,6 +160,10 @@ export function buildPastePreview(
       const tableIdx = tableLowerToIndex.get(headerLower);
 
       if (tableIdx !== undefined) {
+        if (mappings.some((mapping) => mapping.tableColumnIndex === tableIdx)) {
+          skippedColumns.push({ index: ci, header });
+          continue;
+        }
         mappings.push({
           clipboardIndex: ci,
           clipboardHeader: header,
@@ -152,6 +174,20 @@ export function buildPastePreview(
       } else {
         skippedColumns.push({ index: ci, header });
       }
+    }
+  } else {
+    const mappedColumnCount = Math.min(parsed.columnCount, tableColumns.length);
+    for (let index = 0; index < mappedColumnCount; index++) {
+      mappings.push({
+        clipboardIndex: index,
+        clipboardHeader: `Column ${index + 1}`,
+        tableColumnIndex: index,
+        tableColumnName: tableColumns[index],
+        matchedBy: "position",
+      });
+    }
+    for (let index = mappedColumnCount; index < parsed.columnCount; index++) {
+      skippedColumns.push({ index, header: `Column ${index + 1}` });
     }
   }
 

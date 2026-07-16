@@ -1,6 +1,7 @@
 import { X, Table, Code, Columns, Play, Loader2, BarChart3, Terminal } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { useAppStore } from "../../stores/appStore";
+import { useConnectionStore } from "../../stores/connectionStore";
+import { useUIStore } from "../../stores/uiStore";
 import { useI18n } from "../../i18n";
 import { getQueryProfile } from "../../utils/query-profile";
 
@@ -16,16 +17,16 @@ interface Props {
 
 export function TabBar({ queryChrome, onRunActiveQuery, onClearVisibleTabs }: Props) {
   const { t } = useI18n();
-  const { tabs, activeTabId, setActiveTab, removeTab, pinTab, connections } = useAppStore(
+  const { tabs, activeTabId, setActiveTab, removeTab, pinTab } = useUIStore(
     useShallow((state) => ({
       tabs: state.tabs,
       activeTabId: state.activeTabId,
       setActiveTab: state.setActiveTab,
       removeTab: state.removeTab,
       pinTab: state.pinTab,
-      connections: state.connections,
     }))
   );
+  const connections = useConnectionStore((state) => state.connections);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
   const visibleTabs = tabs.filter((tab) => tab.type !== "metrics");
 

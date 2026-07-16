@@ -15,7 +15,7 @@ import {
   Workflow,
 } from "lucide-react";
 import type { ParsedExplainPlan, ExplainNode } from "../../utils/explain-parser";
-import { getNodeCategory } from "../../utils/explain-parser";
+import { getExplainHotspots, getNodeCategory } from "../../utils/explain-parser";
 import { ExplainDiagram } from "./ExplainDiagram";
 
 type ExplainViewMode = "tree" | "diagram" | "raw";
@@ -142,6 +142,13 @@ function PlanNode({
           </span>
         )}
 
+        {plan.analyzed && node.actualTimeMs !== undefined && (
+          <span className="explain-node-metric">
+            <span className="explain-metric-label">time</span>
+            <span className="explain-metric-value">{node.actualTimeMs.toFixed(2)} ms</span>
+          </span>
+        )}
+
         {Object.entries(node.extras).slice(0, 4).map(([k, v]) =>
           v !== null ? (
             <span key={k} className="explain-node-extra" title={`${k}: ${v}`}>
@@ -216,6 +223,7 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
   });
 
   const [viewMode, setViewMode] = useState<ExplainViewMode>("tree");
+  const hotspots = useMemo(() => getExplainHotspots(plan), [plan]);
 
   const handleToggle = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -345,6 +353,18 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
             Red highlights indicate actual vs estimated row counts differ by &gt;30%.
             Run ANALYZE to update statistics.
           </span>
+        </div>
+      )}
+
+      {hotspots.length > 0 && (
+        <div className="explain-hotspots" aria-label="Plan hotspots">
+          <span className="explain-hotspots-label">Hotspots</span>
+          {hotspots.map(({ node, reasons }) => (
+            <span key={node.id} className="explain-hotspot-item" title={node.operation}>
+              <strong>{node.operation}</strong>
+              <span>{reasons.join(" | ")}</span>
+            </span>
+          ))}
         </div>
       )}
 

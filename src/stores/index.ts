@@ -1,20 +1,15 @@
-// Store exports - components can migrate to individual stores over time:
+// Domain stores are the only writable state owners:
 // - import { useConnectionStore } from "./stores/connectionStore"
 // - import { useQueryStore } from "./stores/queryStore"
 // - import { useAIStore } from "./stores/aiStore"
 // - import { useUIStore } from "./stores/uiStore"
-//
-// For backward compatibility, continue importing from "./stores/appStore":
-//   import { useAppStore } from "./stores/appStore"
 
 export { useConnectionStore } from "./connectionStore";
 export { useQueryStore } from "./queryStore";
 export { useAIStore } from "./aiStore";
 export { useUIStore } from "./uiStore";
 export { useSafeModeStore } from "./safeModeStore";
-
-// Re-export from appStore (monolithic - kept for backward compatibility)
-export { useAppStore } from "./appStore";
+export { useGlobalErrorStore } from "./globalErrorStore";
 
 // Shared utilities
 export { deriveConnectionName } from "./connectionStore";

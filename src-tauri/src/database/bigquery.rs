@@ -331,16 +331,18 @@ impl BigQueryDriver {
             return None;
         }
 
-        Some(match (reason.is_empty(), location.is_empty(), message.is_empty()) {
-            (false, false, false) => format!("{reason} at {location}: {message}"),
-            (false, true, false) => format!("{reason}: {message}"),
-            (true, false, false) => format!("{location}: {message}"),
-            (_, _, false) => message.to_string(),
-            (false, false, true) => format!("{reason} at {location}"),
-            (false, true, true) => reason.to_string(),
-            (true, false, true) => location.to_string(),
-            (true, true, true) => String::new(),
-        })
+        Some(
+            match (reason.is_empty(), location.is_empty(), message.is_empty()) {
+                (false, false, false) => format!("{reason} at {location}: {message}"),
+                (false, true, false) => format!("{reason}: {message}"),
+                (true, false, false) => format!("{location}: {message}"),
+                (_, _, false) => message.to_string(),
+                (false, false, true) => format!("{reason} at {location}"),
+                (false, true, true) => reason.to_string(),
+                (true, false, true) => location.to_string(),
+                (true, true, true) => String::new(),
+            },
+        )
     }
 
     async fn get_json<T: DeserializeOwned>(
@@ -390,10 +392,7 @@ impl BigQueryDriver {
             }
 
             let response: BigQueryDatasetListResponse = self
-                .get_json(
-                    &format!("projects/{}/datasets", self.project_id),
-                    &query,
-                )
+                .get_json(&format!("projects/{}/datasets", self.project_id), &query)
                 .await?;
 
             datasets.extend(response.datasets);
@@ -424,10 +423,7 @@ impl BigQueryDriver {
     }
 
     async fn resolve_dataset_name(&self, database: Option<&str>) -> Result<String> {
-        if let Some(dataset) = database
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(dataset) = database.map(str::trim).filter(|value| !value.is_empty()) {
             return Ok(dataset.to_string());
         }
 
@@ -441,7 +437,10 @@ impl BigQueryDriver {
     }
 
     fn current_dataset_name(&self) -> Option<String> {
-        self.current_dataset.try_read().ok().and_then(|guard| guard.clone())
+        self.current_dataset
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     async fn get_dataset(&self, dataset: &str) -> Result<BigQueryDatasetListItem> {
@@ -464,10 +463,7 @@ impl BigQueryDriver {
 
             let response: BigQueryTableListResponse = self
                 .get_json(
-                    &format!(
-                        "projects/{}/datasets/{}/tables",
-                        self.project_id, dataset
-                    ),
+                    &format!("projects/{}/datasets/{}/tables", self.project_id, dataset),
                     &query,
                 )
                 .await?;
@@ -489,9 +485,7 @@ impl BigQueryDriver {
         table_id: &str,
     ) -> Result<BigQueryTableResource> {
         self.get_json(
-            &format!(
-                "projects/{project_id}/datasets/{dataset_id}/tables/{table_id}"
-            ),
+            &format!("projects/{project_id}/datasets/{dataset_id}/tables/{table_id}"),
             &[],
         )
         .await
@@ -548,10 +542,11 @@ impl BigQueryDriver {
                 dataset_id: dataset_id.to_string(),
             })
             .or_else(|| {
-                self.current_dataset_name().map(|dataset_id| BigQueryDatasetReference {
-                    project_id: self.project_id.clone(),
-                    dataset_id,
-                })
+                self.current_dataset_name()
+                    .map(|dataset_id| BigQueryDatasetReference {
+                        project_id: self.project_id.clone(),
+                        dataset_id,
+                    })
             });
 
         let mut response: BigQueryQueryResponse = self
@@ -685,7 +680,8 @@ impl BigQueryDriver {
             .iter()
             .enumerate()
             .map(|(index, field)| {
-                row.f.get(index)
+                row.f
+                    .get(index)
                     .map(|cell| Self::cell_to_json(&cell.v, field))
                     .unwrap_or(JsonValue::Null)
             })
@@ -774,8 +770,8 @@ impl BigQueryDriver {
                 .unwrap_or_else(|| JsonValue::String(raw.to_string())),
             "JSON" => serde_json::from_str::<JsonValue>(raw)
                 .unwrap_or_else(|_| JsonValue::String(raw.to_string())),
-            "NUMERIC" | "BIGNUMERIC" | "BYTES" | "DATE" | "DATETIME" | "TIME"
-            | "TIMESTAMP" | "GEOGRAPHY" | "STRING" => JsonValue::String(raw.to_string()),
+            "NUMERIC" | "BIGNUMERIC" | "BYTES" | "DATE" | "DATETIME" | "TIME" | "TIMESTAMP"
+            | "GEOGRAPHY" | "STRING" => JsonValue::String(raw.to_string()),
             _ => JsonValue::String(raw.to_string()),
         }
     }
@@ -1025,7 +1021,11 @@ impl DatabaseDriver for BigQueryDriver {
     async fn list_tables(&self, database: Option<&str>) -> Result<Vec<TableInfo>> {
         let dataset = self.resolve_dataset_name(database).await?;
         let mut tables = self.list_table_items(&dataset).await?;
-        tables.sort_by(|left, right| left.table_reference.table_id.cmp(&right.table_reference.table_id));
+        tables.sort_by(|left, right| {
+            left.table_reference
+                .table_id
+                .cmp(&right.table_reference.table_id)
+        });
         Ok(tables.into_iter().map(Self::table_info_from_item).collect())
     }
 
@@ -1113,7 +1113,10 @@ impl DatabaseDriver for BigQueryDriver {
         let mut total_affected = 0u64;
         let mut last_result = None;
 
-        for statement in statements.iter().filter(|statement| !statement.trim().is_empty()) {
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
             let result = self.execute_single_query(statement, None, sql).await?;
             total_affected += result.affected_rows;
 
@@ -1151,7 +1154,10 @@ impl DatabaseDriver for BigQueryDriver {
     ) -> Result<QueryResult> {
         let dataset = self.resolve_dataset_name(database).await?;
         let table_reference = self.parse_table_reference(table, Some(&dataset))?;
-        let mut sql = format!("SELECT * FROM {}", Self::qualify_table_name(&table_reference)?);
+        let mut sql = format!(
+            "SELECT * FROM {}",
+            Self::qualify_table_name(&table_reference)?
+        );
 
         if let Some(filter_clause) = sanitize_bigquery_filter_clause(filter)? {
             sql.push_str(&format!(" WHERE {filter_clause}"));
@@ -1178,7 +1184,9 @@ impl DatabaseDriver for BigQueryDriver {
             "SELECT COUNT(*) AS count FROM {}",
             Self::qualify_table_name(&table_reference)?
         );
-        let result = self.execute_single_query(&sql, Some(&table_reference.dataset_id), &sql).await?;
+        let result = self
+            .execute_single_query(&sql, Some(&table_reference.dataset_id), &sql)
+            .await?;
         Self::scalar_i64(&result)
     }
 
@@ -1195,12 +1203,16 @@ impl DatabaseDriver for BigQueryDriver {
             Self::qualify_table_name(&table_reference)?,
             quote_bigquery_order_by(column)?,
         );
-        let result = self.execute_single_query(&sql, Some(&table_reference.dataset_id), &sql).await?;
+        let result = self
+            .execute_single_query(&sql, Some(&table_reference.dataset_id), &sql)
+            .await?;
         Self::scalar_i64(&result)
     }
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
-        let dataset = self.resolve_dataset_name(request.database.as_deref()).await?;
+        let dataset = self
+            .resolve_dataset_name(request.database.as_deref())
+            .await?;
         let table_reference = self.parse_table_reference(&request.table, Some(&dataset))?;
         let where_clause = Self::build_where_clause(&request.primary_keys)?;
         let sql = format!(
@@ -1222,7 +1234,9 @@ impl DatabaseDriver for BigQueryDriver {
             return Err(anyhow!("Deleting rows requires at least one selected row"));
         }
 
-        let dataset = self.resolve_dataset_name(request.database.as_deref()).await?;
+        let dataset = self
+            .resolve_dataset_name(request.database.as_deref())
+            .await?;
         let table_reference = self.parse_table_reference(&request.table, Some(&dataset))?;
         let mut predicates = Vec::new();
 
@@ -1247,7 +1261,9 @@ impl DatabaseDriver for BigQueryDriver {
             return Err(anyhow!("Insert requires at least one column value"));
         }
 
-        let dataset = self.resolve_dataset_name(request.database.as_deref()).await?;
+        let dataset = self
+            .resolve_dataset_name(request.database.as_deref())
+            .await?;
         let table_reference = self.parse_table_reference(&request.table, Some(&dataset))?;
         let columns = request
             .values
@@ -1389,7 +1405,13 @@ mod tests {
             BigQueryDriver::quote_sql_literal(&json!("O'Reilly")).unwrap(),
             "'O''Reilly'"
         );
-        assert_eq!(BigQueryDriver::quote_sql_literal(&json!(true)).unwrap(), "TRUE");
-        assert_eq!(BigQueryDriver::quote_sql_literal(&json!(null)).unwrap(), "NULL");
+        assert_eq!(
+            BigQueryDriver::quote_sql_literal(&json!(true)).unwrap(),
+            "TRUE"
+        );
+        assert_eq!(
+            BigQueryDriver::quote_sql_literal(&json!(null)).unwrap(),
+            "NULL"
+        );
     }
 }

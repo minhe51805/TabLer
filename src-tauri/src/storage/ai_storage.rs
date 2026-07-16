@@ -5,9 +5,7 @@ use keyring::Error as KeyringError;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{
-    Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
-};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// Cross-platform AI configuration storage using JSON files with in-memory caching.
 /// API Keys are stored securely in the OS keyring.
@@ -50,9 +48,8 @@ impl AIStorage {
             .context("Failed to open secure storage for the AI provider secret")?;
         match entry.delete_credential() {
             Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-            Err(error) => Err(anyhow::Error::new(error).context(
-                "Failed to delete the AI provider secret from secure storage",
-            )),
+            Err(error) => Err(anyhow::Error::new(error)
+                .context("Failed to delete the AI provider secret from secure storage")),
         }
     }
 
@@ -153,8 +150,10 @@ impl AIStorage {
             .map(|provider| provider.id)
             .collect();
         let normalized_providers = Self::normalize_provider_configs(providers.to_vec());
-        let next_provider_ids: HashSet<String> =
-            normalized_providers.iter().map(|provider| provider.id.clone()).collect();
+        let next_provider_ids: HashSet<String> = normalized_providers
+            .iter()
+            .map(|provider| provider.id.clone())
+            .collect();
 
         for removed_provider_id in existing_provider_ids.difference(&next_provider_ids) {
             Self::delete_provider_secret(removed_provider_id)?;
@@ -213,15 +212,20 @@ impl AIStorage {
         self.load_provider_configs()?
             .into_iter()
             .find(|provider| provider.is_enabled && provider.is_primary)
-            .or_else(|| self.load_provider_configs().ok()?.into_iter().find(|provider| provider.is_enabled))
+            .or_else(|| {
+                self.load_provider_configs()
+                    .ok()?
+                    .into_iter()
+                    .find(|provider| provider.is_enabled)
+            })
             .ok_or_else(|| anyhow::anyhow!("No enabled AI provider found"))
     }
 
     pub fn get_api_key(&self, provider_id: &str) -> Result<String> {
         let entry = keyring::Entry::new("TableR_AI", provider_id)?;
-        entry
-            .get_password()
-            .map_err(|error| anyhow::anyhow!("Missing API key for provider '{}': {}", provider_id, error))
+        entry.get_password().map_err(|error| {
+            anyhow::anyhow!("Missing API key for provider '{}': {}", provider_id, error)
+        })
     }
 
     pub fn get_api_key_optional(&self, provider_id: &str) -> Result<Option<String>> {
@@ -230,9 +234,8 @@ impl AIStorage {
         match entry.get_password() {
             Ok(password) => Ok(Some(password)),
             Err(KeyringError::NoEntry) => Ok(None),
-            Err(error) => Err(anyhow::Error::new(error).context(
-                "Failed to read the AI provider secret from secure storage",
-            )),
+            Err(error) => Err(anyhow::Error::new(error)
+                .context("Failed to read the AI provider secret from secure storage")),
         }
     }
 }

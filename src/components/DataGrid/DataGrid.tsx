@@ -6,11 +6,14 @@ import {
   flexRender,
   type ColumnDef,
 } from "@tanstack/react-table";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Copy, Loader2, Plus, X, ClipboardPaste } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import { useChangeTrackingStore } from "../../stores/change-tracking-store";
-import { useAppStore } from "../../stores/appStore";
+import { useConnectionStore } from "../../stores/connectionStore";
+import { useGlobalErrorStore } from "../../stores/globalErrorStore";
+import { useQueryStore } from "../../stores/queryStore";
 import { EventCenter } from "../../stores/event-center";
 import {
   parseClipboardText,
@@ -19,6 +22,7 @@ import {
 } from "../../utils/clipboard-parser";
 import type { ColumnDetail, ConnectionConfig, QueryResult } from "../../types";
 import { devLogError } from "../../utils/logger";
+import { invokeMutation } from "../../utils/tauri-utils";
 import { computeNewRowPlan, computeColumnPlan } from "./hooks/useInsertColumnPlan";
 import { lazy, Suspense } from "react";
 import "./DataChart.css";
@@ -49,10 +53,11 @@ import {
 } from "./hooks/useDataGrid";
 import { getColumnWidths, saveColumnWidth } from "../../stores/column-width-store";
 import { useDateFormatStore } from "../../stores/dateFormatStore";
+import { filterAndSortLocalRows, filterRowsWithSourceIndices } from "./local-result-operations";
+import { resolveDataWindowColumns } from "./data-window";
 
 const TABLE_COUNT_CACHE_TTL_MS = 600_000;
 import { DataGridToolbar } from "./DataGridToolbar";
-import { DataGridPagination } from "./DataGridPagination";
 import { ChangeTrackingPreviewModal } from "./components/ChangeTrackingPreviewModal";
 import { buildDataGridColumns, editingDraftRef } from "./DataGridColumns";
 import type { ColumnDisplayFormat } from "./editors";
@@ -64,8 +69,6 @@ import {
   generateDeleteSqlParameterized,
   copyToClipboard,
 } from "../../utils/sql-generator";
-
-const MAX_QUERY_RESULT_RENDER_ROWS = 500;
 
 interface Props {
   connectionId: string;
@@ -95,26 +98,30 @@ export function DataGrid({
     getTableData,
     countRows,
     getTableStructure,
-    updateTableCell,
+    applyTableUpdatesAtomically,
     deleteTableRows,
     insertTableRow,
-    setError,
+    insertTableRowsAtomically,
+    cancelCsvImport,
     getForeignKeyLookupValues,
-    connections,
     executeQuery,
-  } = useAppStore(
+  } = useQueryStore(
     useShallow((state) => ({
       getTableData: state.getTableData,
       countRows: state.countRows,
       getTableStructure: state.getTableStructure,
-      updateTableCell: state.updateTableCell,
+      applyTableUpdatesAtomically: state.applyTableUpdatesAtomically,
       deleteTableRows: state.deleteTableRows,
       insertTableRow: state.insertTableRow,
-      setError: state.setError,
+      insertTableRowsAtomically: state.insertTableRowsAtomically,
+      cancelCsvImport: state.cancelCsvImport,
       getForeignKeyLookupValues: state.getForeignKeyLookupValues,
-      connections: state.connections as ConnectionConfig[],
       executeQuery: state.executeQuery,
     })),
+  );
+  const setError = useGlobalErrorStore((state) => state.setError);
+  const connections = useConnectionStore(
+    (state) => state.connections as ConnectionConfig[],
   );
 
   const {
@@ -132,12 +139,15 @@ export function DataGrid({
   const [lookupValuesCache, setLookupValuesCache] = useState<Map<string, Array<{ value: string | number; label: string }>>>(new Map());
   const [totalRows, setTotalRows] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
+  const [hasMoreTableRows, setHasMoreTableRows] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [structureStatus, setStructureStatus] = useState<StructureStatus>(
     externalResult ? "ready" : "idle",
   );
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
+  const [filterDraft, setFilterDraft] = useState("");
+  const [tableFilter, setTableFilter] = useState("");
   /** Multi-column sort: array of {column, direction, priority}. Priority 1 = highest. */
   const [multiSort, setMultiSort] = useState<Array<{ column: string; direction: "ASC" | "DESC"; priority: number }>>([]);
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
@@ -157,7 +167,9 @@ export function DataGrid({
   /** Paste dialog state */
   const [isPasteDialogOpen, setIsPasteDialogOpen] = useState(false);
   const [pastePreview, setPastePreview] = useState<PastePreview | null>(null);
+  const [pasteSourceLabel, setPasteSourceLabel] = useState("Clipboard data");
   const [isSubmittingPaste, setIsSubmittingPaste] = useState(false);
+  const [isCancellingPaste, setIsCancellingPaste] = useState(false);
   /** Set of row indices with pending staged changes */
   const [stagedRowIndices, setStagedRowIndices] = useState<Set<number>>(new Set());
   /** FK Preview: {table, column, value, rowIndex, colIndex} */
@@ -177,8 +189,12 @@ export function DataGrid({
   const columnNamesRef = useRef<string[]>([]);
   const tableWrapRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
+  const dataScopeRef = useRef("");
+  const countRequestIdRef = useRef(0);
   const structureRequestIdRef = useRef(0);
   const structurePromiseRef = useRef<Promise<ColumnDetail[]> | null>(null);
+  const structureRetryAttemptRef = useRef(0);
+  const structureRetryTimeoutRef = useRef<number | null>(null);
   const countTimeoutRef = useRef<number | null>(null);
   const isMountedRef = useRef(true);
   const isActiveRef = useRef(isActive);
@@ -186,6 +202,8 @@ export function DataGrid({
   const editingOpenedAtRef = useRef(0);
   const rowSelectionAnchorRef = useRef<number | null>(null);
   const dataGridInstanceIdRef = useRef(`datagrid-${Math.random().toString(36).slice(2)}`);
+  const csvImportOperationIdRef = useRef<string | null>(null);
+  const loadedTablePagesRef = useRef(new Map<number, QueryResult>());
   const assignInputRef = useCallback((element: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null) => {
     editorRef.current = element;
   }, []);
@@ -199,11 +217,47 @@ export function DataGrid({
     onViewModeChange?.(mode);
   }, [onViewModeChange]);
 
+  const setLoadedTablePage = useCallback((page: number, result: QueryResult) => {
+    if (page === 0) loadedTablePagesRef.current.clear();
+    loadedTablePagesRef.current.set(page, result);
+    const rows: QueryResult["rows"] = [];
+    for (let index = 0; loadedTablePagesRef.current.has(index); index += 1) {
+      rows.push(...(loadedTablePagesRef.current.get(index)?.rows ?? []));
+    }
+    const canonicalColumns = loadedTablePagesRef.current.get(0)?.columns ?? [];
+    setData((previous) => ({
+      ...result,
+      columns: resolveDataWindowColumns(canonicalColumns, previous?.columns ?? [], result.columns),
+      rows,
+    }));
+    setHasMoreTableRows(result.rows.length === PAGE_SIZE);
+  }, []);
+
+  const patchLoadedTableCell = useCallback((rowIndex: number, columnIndex: number, value: GridCellValue) => {
+    const page = Math.floor(rowIndex / PAGE_SIZE);
+    const pageRowIndex = rowIndex % PAGE_SIZE;
+    const pageResult = loadedTablePagesRef.current.get(page);
+    if (!pageResult?.rows[pageRowIndex]) return;
+
+    const rows = pageResult.rows.map((row, index) => {
+      if (index !== pageRowIndex) return row;
+      const nextRow = [...row];
+      nextRow[columnIndex] = value;
+      return nextRow;
+    });
+    loadedTablePagesRef.current.set(page, { ...pageResult, rows });
+  }, []);
+
   const fetchData = useCallback(
     async (page: number) => {
       if (!tableName || !isActive) return;
 
-      const requestId = ++requestIdRef.current;
+      const dataScope = `${connectionId}|${database || ""}|${tableName}|${sortColumn || ""}|${sortDir}`;
+      if (dataScopeRef.current !== dataScope) {
+        dataScopeRef.current = dataScope;
+        requestIdRef.current += 1;
+      }
+      const requestId = requestIdRef.current;
       const tableCacheKey = buildTableCacheKey(
         connectionId,
         tableName,
@@ -211,23 +265,24 @@ export function DataGrid({
         page,
         sortColumn,
         sortDir,
+        "",
       );
       const cachedPage = tablePageCache.get(tableCacheKey);
       const tableScopeKey = buildTableScopeKey(connectionId, tableName, database);
       const cachedCount = tableCountCache.get(tableScopeKey);
-      const hasFreshCount = Boolean(
+      const hasFreshCount = !tableFilter.trim() && Boolean(
         cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS),
       );
 
       if (cachedPage && isFreshCacheEntry(cachedPage.cachedAt, 120_000)) {
-        setData(cachedPage.result);
+        setLoadedTablePage(page, cachedPage.result);
         setTotalRows(cachedPage.totalRows);
         setIsLoading(false);
         return;
       }
 
       if (cachedPage) {
-        setData(cachedPage.result);
+        setLoadedTablePage(page, cachedPage.result);
         setTotalRows(cachedPage.totalRows);
       } else if (cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS)) {
         setTotalRows(cachedCount.totalRows);
@@ -242,11 +297,12 @@ export function DataGrid({
           limit: PAGE_SIZE,
           orderBy: sortColumn || undefined,
           orderDir: sortColumn ? sortDir : undefined,
+          filter: undefined,
         });
 
         if (!isMountedRef.current || requestId !== requestIdRef.current) return;
 
-        setData(result);
+        setLoadedTablePage(page, result);
         setIsLoading(false);
 
         if (result.execution_time_ms >= 0) {
@@ -277,6 +333,7 @@ export function DataGrid({
           );
 
           if (needsExactCount && !hasFreshCount) {
+            const countRequestId = countRequestIdRef.current;
             if (countTimeoutRef.current !== null) {
               window.clearTimeout(countTimeoutRef.current);
             }
@@ -286,7 +343,7 @@ export function DataGrid({
                 .then((count) => {
                   if (
                     !isMountedRef.current ||
-                    requestId !== requestIdRef.current ||
+                    countRequestId !== countRequestIdRef.current ||
                     !isActiveRef.current
                   ) {
                     return;
@@ -310,7 +367,7 @@ export function DataGrid({
                   devLogError("Failed to count table rows:", error);
                 });
             }, 800);
-          } else {
+          } else if (!tableFilter.trim()) {
             setBoundedMapEntry(
               tableCountCache,
               tableScopeKey,
@@ -319,7 +376,8 @@ export function DataGrid({
             );
           }
         } else {
-          const fallbackTotalRows = cachedCount?.totalRows || page * PAGE_SIZE + result.rows.length;
+          const fallbackTotalRows = (!tableFilter.trim() ? cachedCount?.totalRows : undefined)
+            || page * PAGE_SIZE + result.rows.length;
           setBoundedMapEntry(
             tablePageCache,
             tableCacheKey,
@@ -341,40 +399,74 @@ export function DataGrid({
       database,
       sortColumn,
       sortDir,
+      tableFilter,
       getTableData,
       countRows,
       isActive,
       setError,
+      setLoadedTablePage,
     ],
   );
+
+  const refreshTableFromStart = useCallback(async () => {
+    loadedTablePagesRef.current.clear();
+    setHasMoreTableRows(true);
+    setCurrentPage(0);
+    await fetchData(0);
+  }, [fetchData]);
 
   useEffect(() => {
     if (externalResult) {
       setData(externalResult);
+      loadedTablePagesRef.current.clear();
       setStructureColumns([]);
       setTotalRows(externalResult.rows.length);
       setIsLoading(false);
       setStructureStatus("ready");
       structurePromiseRef.current = null;
+      structureRetryAttemptRef.current = 0;
+      if (structureRetryTimeoutRef.current !== null) {
+        window.clearTimeout(structureRetryTimeoutRef.current);
+        structureRetryTimeoutRef.current = null;
+      }
+      structureRequestIdRef.current += 1;
       return;
     }
 
     setData(null);
+    loadedTablePagesRef.current.clear();
+    setHasMoreTableRows(true);
     setStructureColumns([]);
     setTotalRows(0);
     setCurrentPage(0);
+    setFilterDraft("");
+    setTableFilter("");
     setStructureStatus("idle");
     structurePromiseRef.current = null;
+    structureRetryAttemptRef.current = 0;
+    if (structureRetryTimeoutRef.current !== null) {
+      window.clearTimeout(structureRetryTimeoutRef.current);
+      structureRetryTimeoutRef.current = null;
+    }
     requestIdRef.current += 1;
+    countRequestIdRef.current += 1;
     structureRequestIdRef.current += 1;
     // Restore persisted column widths for the new table
-    setColumnSizes(getColumnWidths(connectionId, tableName ?? "", database));
+      setColumnSizes(getColumnWidths(connectionId, tableName ?? "", database));
   }, [tableName, connectionId, database, externalResult]);
 
   useEffect(() => {
     if (!tableName || externalResult || !isActive) return;
     void fetchData(currentPage);
   }, [currentPage, externalResult, fetchData, isActive, tableName]);
+
+  useEffect(() => {
+    if (filterDraft === tableFilter) return;
+    const timeoutId = window.setTimeout(() => {
+      setTableFilter(filterDraft);
+    }, 250);
+    return () => window.clearTimeout(timeoutId);
+  }, [filterDraft, tableFilter]);
 
   const ensureStructureLoaded = useCallback(async () => {
     if (!tableName || externalResult) {
@@ -415,6 +507,11 @@ export function DataGrid({
         setStructureColumns(structure.columns);
         setForeignKeys(structure.foreign_keys);
         setStructureStatus("ready");
+        structureRetryAttemptRef.current = 0;
+        if (structureRetryTimeoutRef.current !== null) {
+          window.clearTimeout(structureRetryTimeoutRef.current);
+          structureRetryTimeoutRef.current = null;
+        }
 
         // Setup change tracking column name map for SQL preview generation
         if (tableName) {
@@ -436,7 +533,22 @@ export function DataGrid({
 
         devLogError("Failed to load table structure for inline edit:", error);
         setStructureColumns([]);
-        setStructureStatus("failed");
+        const retryAttempt = ++structureRetryAttemptRef.current;
+        if (retryAttempt <= 3) {
+          const retryDelay = 300 * 2 ** (retryAttempt - 1);
+          setStructureStatus("loading");
+          if (structureRetryTimeoutRef.current !== null) {
+            window.clearTimeout(structureRetryTimeoutRef.current);
+          }
+          structureRetryTimeoutRef.current = window.setTimeout(() => {
+            if (isMountedRef.current && requestId === structureRequestIdRef.current) {
+              setStructureStatus("idle");
+            }
+            structureRetryTimeoutRef.current = null;
+          }, retryDelay);
+        } else {
+          setStructureStatus("failed");
+        }
         throw error;
       })
       .finally(() => {
@@ -475,7 +587,7 @@ export function DataGrid({
   }, [isActive]);
 
   // Column resolution - must be declared before any callbacks that use resolvedColumns
-  const dataColumns = data?.columns || [];
+  const dataColumns = data?.columns.length ? data.columns : structureColumns;
   const dataColumnSignature = useMemo(() => buildColumnSignature(dataColumns), [dataColumns]);
   const structureColumnSignature = useMemo(
     () => buildColumnSignature(structureColumns),
@@ -503,13 +615,16 @@ export function DataGrid({
     setIsSubmittingInsert(false);
   }, []);
 
-  const closePasteDialog = useCallback(() => {
+  const closePasteDialog = useCallback((force = false) => {
+    if (isSubmittingPaste && !force) return;
     setIsPasteDialogOpen(false);
     setPastePreview(null);
+    setPasteSourceLabel("Clipboard data");
     setIsSubmittingPaste(false);
+    setIsCancellingPaste(false);
     setDragSourceIndex(null);
     setDropTargetIndex(null);
-  }, []);
+  }, [isSubmittingPaste]);
 
   const handlePasteRowsFromClipboard = useCallback(async () => {
     if (!tableName || resolvedColumns.length === 0) return;
@@ -539,8 +654,25 @@ export function DataGrid({
     }
 
     setPastePreview(preview);
+    setPasteSourceLabel("Clipboard data");
     setIsPasteDialogOpen(true);
   }, [tableName, resolvedColumns, setError]);
+
+  const handleImportCsv = useCallback(async () => {
+    if (!tableName || resolvedColumns.length === 0) return;
+    try {
+      const file = await invokeMutation<{ fileName: string; content: string; byteSize: number }>("read_csv_file", {});
+      const parsed = parseClipboardText(file.content);
+      if (!parsed) throw new Error("The selected file does not contain valid CSV or TSV data.");
+      const preview = buildPastePreview(parsed, resolvedColumns.map((column) => column.name));
+      if (preview.mappings.length === 0) throw new Error("No CSV headers match columns in the selected table.");
+      setPastePreview(preview);
+      setPasteSourceLabel(file.fileName);
+      setIsPasteDialogOpen(true);
+    } catch (errorValue) {
+      setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
+    }
+  }, [resolvedColumns, setError, tableName]);
 
   // Ctrl+Shift+V: paste rows from clipboard (in DataGrid, not in insert mode)
   useEffect(() => {
@@ -644,7 +776,7 @@ export function DataGrid({
           detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
         }),
       );
-      await fetchData(currentPage);
+      await refreshTableFromStart();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(`Reorder failed: ${message}`);
@@ -652,7 +784,7 @@ export function DataGrid({
       setDragSourceIndex(null);
       setDropTargetIndex(null);
     }
-  }, [dragSourceIndex, tableName, data, primaryKeyColumns, orderColumn, connections, connectionId, resolvedColumns, executeQuery, setError, invalidateTableCaches, database, fetchData, currentPage]);
+  }, [dragSourceIndex, tableName, data, primaryKeyColumns, orderColumn, connections, connectionId, resolvedColumns, executeQuery, setError, invalidateTableCaches, database, refreshTableFromStart]);
 
   const handleDragEnd = useCallback(() => {
     setDragSourceIndex(null);
@@ -698,6 +830,11 @@ export function DataGrid({
       requestIdRef.current += 1;
       structureRequestIdRef.current += 1;
       structurePromiseRef.current = null;
+      structureRetryAttemptRef.current = 0;
+      if (structureRetryTimeoutRef.current !== null) {
+        window.clearTimeout(structureRetryTimeoutRef.current);
+        structureRetryTimeoutRef.current = null;
+      }
       if (countTimeoutRef.current !== null) {
         window.clearTimeout(countTimeoutRef.current);
       }
@@ -884,38 +1021,21 @@ export function DataGrid({
   }, [currentPage, fetchData, isActive, undoableChanges, selectedCell, foreignKeys, connectionId, database]);
 
 
-  /** Toggle sort on a column (click header). Shift+click for multi-column. */
-  const handleSort = useCallback((colName: string, event?: MouseEvent) => {
-    if (event?.shiftKey) {
-      // Multi-column sort: add or toggle priority
-      setMultiSort((prev) => {
-        const existing = prev.find((s) => s.column === colName);
-        if (existing) {
-          if (prev.length === 1) {
-            // Toggle direction if only one column
-            return [{ ...existing, direction: existing.direction === "ASC" ? "DESC" : "ASC" }];
-          }
-          // Remove column from sort
-          return prev.filter((s) => s.column !== colName).map((s, i) => ({
-            ...s,
-            priority: i + 1,
-          }));
-        }
-        // Add new column at lowest priority
-        return [...prev, { column: colName, direction: "ASC" as const, priority: prev.length + 1 }];
-      });
+  /** Server-side order is single-column so every loaded chunk uses one consistent order. */
+  const handleSort = useCallback((colName: string) => {
+    if (sortColumn === colName) {
+      setSortDir((prev) => (prev === "ASC" ? "DESC" : "ASC"));
     } else {
-      // Single click: toggle direction or start fresh
-      if (sortColumn === colName && multiSort.length === 0) {
-        setSortDir((prev) => (prev === "ASC" ? "DESC" : "ASC"));
-      } else {
-        setMultiSort([]);
-        setSortColumn(colName);
-        setSortDir("ASC");
-      }
+      setMultiSort([]);
+      setSortColumn(colName);
+      setSortDir("ASC");
     }
     setCurrentPage(0);
-  }, [sortColumn, multiSort.length]);
+  }, [sortColumn]);
+
+  const handleFilterChange = useCallback((value: string) => {
+    setFilterDraft(value);
+  }, []);
 
   /** Add column to multi-sort at specific priority position */
   const handleMultiSortAdd = useCallback((colName: string, direction: "ASC" | "DESC") => {
@@ -1045,7 +1165,7 @@ export function DataGrid({
     (rowIndex: number) => {
       if (!data || !data.rows[rowIndex]) return;
       const row = data.rows[rowIndex];
-      const absoluteRowNumber = currentPage * 100 + rowIndex + 1;
+      const absoluteRowNumber = rowIndex + 1;
       const pkEntries = buildRowPrimaryKeys(row, resolvedColumns, primaryKeyColumns);
       const pkValues: Record<string, string | number | boolean | null> = {};
       pkEntries.forEach((entry) => {
@@ -1060,7 +1180,7 @@ export function DataGrid({
         database,
       });
     },
-    [data, currentPage, resolvedColumns, primaryKeyColumns, tableName, database],
+    [data, resolvedColumns, primaryKeyColumns, tableName, database],
   );
 
   const canAttemptInlineEdit = Boolean(tableName && !externalResult);
@@ -1069,8 +1189,14 @@ export function DataGrid({
     tableName && !externalResult && structureStatus === "ready" && primaryKeyColumns.length > 0,
   );
   const selectedRowCount = selectedRows.size;
+  const filteredTableRowIndices = useMemo(() => {
+    if (!data || externalResult) return [];
+    return filterRowsWithSourceIndices(data.rows, tableFilter).map(({ sourceIndex }) => sourceIndex);
+  }, [data, externalResult, tableFilter]);
   const allVisibleRowsSelected = Boolean(
-    canSelectRows && data?.rows.length && selectedRows.size === data.rows.length,
+    canSelectRows
+      && filteredTableRowIndices.length
+      && filteredTableRowIndices.every((rowIndex) => selectedRows.has(rowIndex)),
   );
 
   const startEditingCell = useCallback(
@@ -1171,7 +1297,8 @@ export function DataGrid({
         originalRow: rowValues as (string | number | boolean | null)[],
       });
 
-      // Optimistic local update — apply change immediately to the grid
+      // Keep the authoritative chunk cache in sync before virtual scrolling loads another page.
+      patchLoadedTableCell(editingCell.row, editingCell.col, nextValue);
       setData((previous) => {
         if (!previous) return previous;
         const nextRows = previous.rows.map((row, index) => {
@@ -1198,6 +1325,7 @@ export function DataGrid({
     data,
     database,
     editingCell,
+    patchLoadedTableCell,
     primaryKeyColumns,
     resolvedColumns,
     setError,
@@ -1224,42 +1352,30 @@ export function DataGrid({
     const tableChanges = stagedChanges.filter((c) => c.tableName === tableName && c.database === database);
     if (tableChanges.length === 0) return;
 
-    let successCount = 0;
-    let errorCount = 0;
-    let lastError = "";
+    const updates = tableChanges.flatMap((change) => {
+      if (change.type !== "update") return [];
+      const primaryKeys = Object.entries(change.rowKey).map(([column, value]) => ({
+        column,
+        value: value as string | number | boolean | null,
+      }));
+      return Object.entries(change.columns).map(([targetColumn, diff]) => ({
+        table: change.tableName,
+        database: change.database,
+        target_column: targetColumn,
+        value: diff.new as string | number | boolean | null,
+        primary_keys: primaryKeys,
+      }));
+    });
+    if (updates.length === 0 || tableChanges.some((change) => change.type !== "update")) {
+      setError("The edit queue contains an operation that cannot be committed atomically yet.");
+      return;
+    }
 
     setIsLoading(true);
     try {
-      for (const change of tableChanges) {
-        try {
-          if (change.type === "update") {
-            for (const [colName, { new: newVal }] of Object.entries(change.columns)) {
-              const pkRows: Array<{ column: string; value: string | number | boolean | null }> = Object.entries(change.rowKey).map(([column, value]) => ({
-                column,
-                value: value as string | number | boolean | null,
-              }));
-              const affectedRows = await updateTableCell(connectionId, {
-                table: change.tableName,
-                database: change.database,
-                target_column: colName,
-                value: newVal as string | number | boolean | null,
-                primary_keys: pkRows,
-              });
-              if (affectedRows === 0) {
-                errorCount++;
-                lastError = `No rows updated for ${change.tableName} WHERE ${JSON.stringify(change.rowKey)}`;
-              } else {
-                successCount++;
-              }
-            }
-          }
-        } catch (err) {
-          errorCount++;
-          lastError = err instanceof Error ? err.message : String(err);
-        }
-      }
+      await applyTableUpdatesAtomically(connectionId, updates);
 
-      // Clear staged changes for this table
+      // The optimistic queue changes only after the backend transaction commits.
       for (const change of tableChanges) {
         unstageChange(change.id);
       }
@@ -1271,15 +1387,15 @@ export function DataGrid({
           detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
         }),
       );
-      await fetchData(currentPage);
+      await refreshTableFromStart();
 
-      if (errorCount > 0) {
-        setError(`Committed ${successCount} changes. ${errorCount} failed: ${lastError}`);
-      }
+    } catch (errorValue) {
+      const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+      setError(`No queued edits were committed: ${message}`);
     } finally {
       setIsLoading(false);
     }
-  }, [stagedChanges, tableName, database, connectionId, updateTableCell, unstageChange, invalidateTableCaches, fetchData, currentPage, setError]);
+  }, [applyTableUpdatesAtomically, stagedChanges, tableName, database, connectionId, unstageChange, invalidateTableCaches, refreshTableFromStart, setError]);
 
   /** Discard all staged changes for this table */
   const discardStagedChanges = useCallback(() => {
@@ -1290,9 +1406,9 @@ export function DataGrid({
     setStagedRowIndices(new Set());
     // Reload original data
     if (tableName) {
-      void fetchData(currentPage);
+      void refreshTableFromStart();
     }
-  }, [stagedChanges, tableName, database, unstageChange, fetchData, currentPage]);
+  }, [stagedChanges, tableName, database, unstageChange, refreshTableFromStart]);
 
   const handleRowSelection = useCallback(
     (rowIndex: number, event?: Pick<MouseEvent, "shiftKey" | "metaKey" | "ctrlKey">) => {
@@ -1332,20 +1448,22 @@ export function DataGrid({
   );
 
   const handleToggleSelectAllRows = useCallback(() => {
-    if (!canSelectRows || !data?.rows.length) return;
+    if (!canSelectRows || filteredTableRowIndices.length === 0) return;
 
     setSelectedRows((previous) => {
-      if (previous.size === data.rows.length) {
+      if (filteredTableRowIndices.every((rowIndex) => previous.has(rowIndex))) {
         rowSelectionAnchorRef.current = null;
-        return new Set();
+        const next = new Set(previous);
+        filteredTableRowIndices.forEach((rowIndex) => next.delete(rowIndex));
+        return next;
       }
 
-      const next = new Set<number>();
-      data.rows.forEach((_, index) => next.add(index));
-      rowSelectionAnchorRef.current = 0;
+      const next = new Set(previous);
+      filteredTableRowIndices.forEach((rowIndex) => next.add(rowIndex));
+      rowSelectionAnchorRef.current = filteredTableRowIndices[0] ?? null;
       return next;
     });
-  }, [canSelectRows, data]);
+  }, [canSelectRows, filteredTableRowIndices]);
 
   const handleDeleteSelectedRows = useCallback(async () => {
     if (!tableName || !data || selectedRows.size === 0 || primaryKeyColumns.length === 0) {
@@ -1405,11 +1523,7 @@ export function DataGrid({
         }),
       );
 
-      if (currentPage > 0 && data.rows.length === sortedRows.length) {
-        setCurrentPage((page) => Math.max(0, page - 1));
-      } else {
-        void fetchData(currentPage);
-      }
+      await refreshTableFromStart();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setError(`Delete rows failed: ${message}`);
@@ -1419,11 +1533,10 @@ export function DataGrid({
   }, [
     cancelEditingCell,
     connectionId,
-    currentPage,
     data,
     database,
     deleteTableRows,
-    fetchData,
+    refreshTableFromStart,
     primaryKeyColumns,
     resolvedColumns,
     selectedRows,
@@ -1455,8 +1568,8 @@ export function DataGrid({
         },
       }),
     );
-    await fetchData(currentPage);
-  }, [connectionId, currentPage, database, fetchData, insertTableRow, tableName]);
+    await refreshTableFromStart();
+  }, [connectionId, database, insertTableRow, refreshTableFromStart, tableName]);
 
   const handleInsertRow = useCallback(async () => {
     if (!tableName || structureColumns.length === 0) {
@@ -1547,28 +1660,34 @@ export function DataGrid({
   const handleSubmitPasteDialog = useCallback(async () => {
     if (!pastePreview || !tableName || !connectionId) return;
 
-    setIsSubmittingPaste(true);
-    let insertedCount = 0;
-    let lastError: string | null = null;
-
+    const columnsByName = new Map(resolvedColumns.map((column) => [column.name, column]));
+    let validatedRows: [string, unknown][][];
     try {
-      for (const rowValues of pastePreview.insertRows) {
+      validatedRows = pastePreview.insertRows.map((row, rowIndex) => row.map(([columnName, rawValue]) => {
+        const column = columnsByName.get(columnName);
+        if (!column || rawValue === null) return [columnName, rawValue];
         try {
-          await insertTableRow(connectionId, { table: tableName, database, values: rowValues });
-          insertedCount++;
-        } catch (err) {
-          lastError = err instanceof Error ? err.message : String(err);
+          return [columnName, parseEditorValue(String(rawValue), column)];
+        } catch (errorValue) {
+          const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+          throw new Error(`CSV row ${rowIndex + 1}, column ${columnName}: ${message}`);
         }
-      }
+      }));
+    } catch (errorValue) {
+      setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
+      return;
+    }
 
-      if (insertedCount === 0) {
-        setError(`Failed to insert any rows: ${lastError}`);
-        return;
-      }
-
-      if (insertedCount < pastePreview.insertRows.length) {
-        setError(`Inserted ${insertedCount}/${pastePreview.insertRows.length} rows. Some rows failed: ${lastError}`);
-      }
+    setIsSubmittingPaste(true);
+    setIsCancellingPaste(false);
+    const operationId = `csv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    csvImportOperationIdRef.current = operationId;
+    try {
+      await insertTableRowsAtomically(
+        connectionId,
+        validatedRows.map((values) => ({ table: tableName, database, values })),
+        operationId,
+      );
 
       invalidateTableCaches(connectionId, tableName, database);
       window.dispatchEvent(
@@ -1576,12 +1695,33 @@ export function DataGrid({
           detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
         }),
       );
-      await fetchData(currentPage);
-      closePasteDialog();
+      await refreshTableFromStart();
+      closePasteDialog(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setError(`CSV import was rolled back: ${message}`);
     } finally {
+      csvImportOperationIdRef.current = null;
       setIsSubmittingPaste(false);
+      setIsCancellingPaste(false);
     }
-  }, [pastePreview, tableName, connectionId, database, insertTableRow, setError, invalidateTableCaches, fetchData, currentPage, closePasteDialog]);
+  }, [pastePreview, tableName, connectionId, database, insertTableRowsAtomically, setError, invalidateTableCaches, refreshTableFromStart, closePasteDialog, resolvedColumns]);
+
+  const handleCancelPasteImport = useCallback(async () => {
+    const operationId = csvImportOperationIdRef.current;
+    if (!operationId || isCancellingPaste) return;
+    setIsCancellingPaste(true);
+    try {
+      const accepted = await cancelCsvImport(operationId);
+      if (!accepted) {
+        setError("The CSV import had already completed and could not be cancelled.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setError(`Could not cancel CSV import: ${message}`);
+      setIsCancellingPaste(false);
+    }
+  }, [cancelCsvImport, isCancellingPaste, setError]);
 
   const handleCopyAsInsert = useCallback(async () => {
     if (selectedRows.size === 0 || !data || !tableName || resolvedColumns.length === 0) return;
@@ -1671,15 +1811,28 @@ export function DataGrid({
     if (!ok) setError("Failed to copy SQL to clipboard.");
   }, [tableName, primaryKeyColumns, connections, connectionId, setError]);
 
-  const displayedRows = useMemo(() => {
-    if (!data?.rows) return [];
-    if (!externalResult) return data.rows;
-    return data.rows.slice(0, MAX_QUERY_RESULT_RENDER_ROWS);
-  }, [data, externalResult]);
+  const filteredTableRows = useMemo(() => {
+    if (!data || externalResult) return [];
+    return filterRowsWithSourceIndices(data.rows, tableFilter);
+  }, [data, externalResult, tableFilter]);
 
-  const isQueryResultTruncated = Boolean(
-    externalResult && ((data?.truncated ?? false) || (data?.rows.length ?? 0) > MAX_QUERY_RESULT_RENDER_ROWS),
+  const displayedRows = useMemo(() => {
+    if (!data) return [];
+    if (!externalResult) return filteredTableRows.map(({ row }) => row);
+    return filterAndSortLocalRows(
+      data.rows as GridCellValue[][],
+      data.columns.map((column) => column.name),
+      tableFilter,
+      sortColumn,
+      sortDir,
+    );
+  }, [data, externalResult, filteredTableRows, sortColumn, sortDir, tableFilter]);
+  const displayedRowIndices = useMemo(
+    () => externalResult ? displayedRows.map((_, index) => index) : filteredTableRows.map(({ sourceIndex }) => sourceIndex),
+    [displayedRows, externalResult, filteredTableRows],
   );
+
+  const isQueryResultTruncated = Boolean(externalResult && data?.truncated);
 
   // Derive dbType and date format for date cell formatting
   const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
@@ -1713,7 +1866,8 @@ export function DataGrid({
       savingCell,
       sortColumn,
       sortDir,
-      currentPage,
+      rowOffset: 0,
+      rowIndexMap: displayedRowIndices,
       copiedCell,
       editingDraftRef,
       handleSort,
@@ -1775,6 +1929,7 @@ export function DataGrid({
     handleColumnAutoFit,
     handleContextMenu,
     columnSizes,
+    displayedRowIndices,
     multiSort,
     settings,
     dateFormat,
@@ -1806,10 +1961,59 @@ export function DataGrid({
     },
   });
 
+  const estimatedRowHeight = settings.rowHeight === "small"
+    ? 26
+    : settings.rowHeight === "large"
+      ? 38
+      : 32;
+  const rowVirtualizer = useVirtualizer({
+    count: table.getRowModel().rows.length,
+    getScrollElement: () => tableWrapRef.current,
+    estimateSize: () => estimatedRowHeight,
+    overscan: 12,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const virtualPaddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const virtualPaddingBottom = virtualRows.length > 0
+    ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
+    : 0;
+  const visibleLeafColumns = table.getVisibleLeafColumns();
+  const indexColumn = visibleLeafColumns.find((column) => column.id === "_row_num");
+  const virtualizableColumns = visibleLeafColumns.filter((column) => column.id !== "_row_num");
+  const columnVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: virtualizableColumns.length,
+    getScrollElement: () => tableWrapRef.current,
+    estimateSize: (index) => virtualizableColumns[index]?.getSize() ?? 150,
+    overscan: 3,
+  });
+  const virtualColumns = columnVirtualizer.getVirtualItems();
+  const virtualPaddingLeft = virtualColumns.length > 0 ? virtualColumns[0].start : 0;
+  const virtualPaddingRight = virtualColumns.length > 0
+    ? columnVirtualizer.getTotalSize() - virtualColumns[virtualColumns.length - 1].end
+    : 0;
+  const tableMinWidth = (indexColumn?.getSize() ?? 56) + columnVirtualizer.getTotalSize();
+  const renderedColumnCount = 1 + virtualColumns.length
+    + Number(virtualPaddingLeft > 0)
+    + Number(virtualPaddingRight > 0);
+  const getVirtualSpacerStyle = (width: number) => ({
+    width,
+    minWidth: width,
+    maxWidth: width,
+  });
+
+  useEffect(() => {
+    if (!tableName || externalResult || isLoading || !hasMoreTableRows || virtualRows.length === 0) return;
+    const lastVisibleIndex = virtualRows[virtualRows.length - 1].index;
+    const lastVisibleSourceIndex = displayedRowIndices[lastVisibleIndex] ?? lastVisibleIndex;
+    if (lastVisibleSourceIndex >= (data?.rows.length ?? 0) - Math.max(24, Math.ceil(PAGE_SIZE / 4))) {
+      setCurrentPage((page) => page + 1);
+    }
+  }, [data?.rows.length, displayedRowIndices, externalResult, hasMoreTableRows, isLoading, tableName, virtualRows]);
+
   const stagedChangeCount = stagedChanges.filter(
     (c) => c.tableName === tableName && c.database === database,
   ).length;
-  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
   const visibleRowCount = tableData.length;
   const columnCount = resolvedColumns.length;
   const insertDialogModal =
@@ -1975,11 +2179,14 @@ export function DataGrid({
         executionTimeMs={data?.execution_time_ms ?? 0}
         sortColumn={sortColumn}
         sortDir={sortDir}
+        filterValue={filterDraft}
+        onFilterChange={handleFilterChange}
         selectedRowCount={selectedRowCount}
         isDeletingRows={isDeletingRows}
         handleDeleteSelectedRows={handleDeleteSelectedRows}
         handleInsertRow={handleInsertRow}
         onPasteRows={handlePasteRowsFromClipboard}
+        onImportCsv={handleImportCsv}
         handleCopyAsInsert={handleCopyAsInsert}
         handleCopyAsUpdate={handleCopyAsUpdate}
         handleCopyAsInsertParam={handleCopyAsInsertParam}
@@ -2000,8 +2207,7 @@ export function DataGrid({
       <div className="datagrid-table-wrap" ref={tableWrapRef}>
         {isQueryResultTruncated && (
           <div className="datagrid-query-result-notice">
-            Showing the first {MAX_QUERY_RESULT_RENDER_ROWS.toLocaleString()} rows from a larger
-            query result to keep the grid responsive.
+            The database returned a partial result set. Refine the query or load more data to continue.
           </div>
         )}
 
@@ -2021,35 +2227,55 @@ export function DataGrid({
             </Suspense>
           </div>
         ) : (
-          <table className="datagrid-table">
+          <table className="datagrid-table" style={{ minWidth: tableMinWidth, tableLayout: "fixed" }}>
           <thead className="datagrid-head">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
-                {hg.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    className={`datagrid-th ${header.column.id === "_row_num" ? "datagrid-th-index" : ""}`}
-                    data-col-id={header.column.id}
-                    style={{
-                      width: columnSizes[header.column.id] ?? header.getSize(),
-                      minWidth: columnSizes[header.column.id] ?? header.getSize(),
-                    }}
-                  >
+                {hg.headers.filter((header) => header.column.id === "_row_num").map((header) => (
+                  <th key={header.id} className="datagrid-th datagrid-th-index" data-col-id={header.column.id}>
                     <div className="datagrid-th-inner">
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
-                      {header.column.id !== "_row_num" && (
+                      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                    </div>
+                  </th>
+                ))}
+                {virtualPaddingLeft > 0 && (
+                  <th
+                    aria-hidden="true"
+                    className="datagrid-virtual-column-spacer"
+                    style={getVirtualSpacerStyle(virtualPaddingLeft)}
+                  />
+                )}
+                {virtualColumns.map((virtualColumn) => {
+                  const column = virtualizableColumns[virtualColumn.index];
+                  const header = hg.headers.find((candidate) => candidate.column.id === column.id);
+                  if (!header) return null;
+                  const width = columnSizes[header.column.id] ?? header.getSize();
+                  return (
+                    <th
+                      key={header.id}
+                      className="datagrid-th"
+                      data-col-id={header.column.id}
+                      style={{ width, minWidth: width }}
+                    >
+                      <div className="datagrid-th-inner">
+                        {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                         <div
                           className="datagrid-col-resize-handle"
                           onMouseDown={header.getResizeHandler()}
                           onDoubleClick={() => handleColumnAutoFit(header.column.id)}
                           title="Drag to resize, double-click to auto-fit"
                         />
-                      )}
-                    </div>
-                  </th>
-                ))}
+                      </div>
+                    </th>
+                  );
+                })}
+                {virtualPaddingRight > 0 && (
+                  <th
+                    aria-hidden="true"
+                    className="datagrid-virtual-column-spacer"
+                    style={getVirtualSpacerStyle(virtualPaddingRight)}
+                  />
+                )}
               </tr>
             ))}
           </thead>
@@ -2071,41 +2297,89 @@ export function DataGrid({
               handleContextMenu(e, "cell");
             }
           }}>
-            {table.getRowModel().rows.map((row, rowIdx) => (
+            {virtualPaddingTop > 0 && (
+              <tr aria-hidden="true" className="datagrid-virtual-spacer">
+                <td colSpan={renderedColumnCount} style={{ height: virtualPaddingTop, padding: 0 }} />
+              </tr>
+            )}
+            {virtualRows.map((virtualRow) => {
+              const row = table.getRowModel().rows[virtualRow.index];
+              const rowIdx = virtualRow.index;
+              const sourceRowIndex = displayedRowIndices[rowIdx] ?? rowIdx;
+              return (
               <tr
                 key={row.id}
+                data-index={sourceRowIndex}
                 className={[
                   "datagrid-row",
                   rowIdx % 2 !== 0 ? "alt" : "",
-                  selectedRows.has(row.index) ? "selected" : "",
-                  dragSourceIndex === row.index ? "dragging" : "",
-                  dropTargetIndex === row.index ? "drop-target" : "",
+                  selectedRows.has(sourceRowIndex) ? "selected" : "",
+                  dragSourceIndex === sourceRowIndex ? "dragging" : "",
+                  dropTargetIndex === sourceRowIndex ? "drop-target" : "",
                   isTableEditable && orderColumn ? "datagrid-row-draggable" : "",
-                  stagedRowIndices.has(row.index) ? "staged-change" : "",
+                  stagedRowIndices.has(sourceRowIndex) ? "staged-change" : "",
                 ].join(" ")}
                 draggable={isTableEditable && !!orderColumn}
-                onDragStart={() => handleDragStart(row.index)}
-                onDragOver={(e) => handleDragOver(e, row.index)}
-                onDrop={(e) => handleDrop(e, row.index)}
+                onDragStart={() => handleDragStart(sourceRowIndex)}
+                onDragOver={(e) => handleDragOver(e, sourceRowIndex)}
+                onDrop={(e) => handleDrop(e, sourceRowIndex)}
                 onDragEnd={handleDragEnd}
               >
-                {row.getVisibleCells().map((cell) => (
+                {row.getVisibleCells().filter((cell) => cell.column.id === "_row_num").map((cell) => (
                   <td
                     key={cell.id}
                     className={[
                       "datagrid-td",
-                      cell.column.id === "_row_num" ? "datagrid-td-index" : "",
-                      stagedRowIndices.has(row.index) ? "staged-cell" : "",
+                      "datagrid-td-index",
+                      stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
                     ].join(" ")}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}
+                {virtualPaddingLeft > 0 && (
+                  <td
+                    aria-hidden="true"
+                    className="datagrid-virtual-column-spacer"
+                    style={getVirtualSpacerStyle(virtualPaddingLeft)}
+                  />
+                )}
+                {virtualColumns.map((virtualColumn) => {
+                  const column = virtualizableColumns[virtualColumn.index];
+                  const cell = row.getVisibleCells().find((candidate) => candidate.column.id === column.id);
+                  if (!cell) return null;
+                  const width = columnSizes[cell.column.id] ?? cell.column.getSize();
+                  return (
+                    <td
+                      key={cell.id}
+                      className={[
+                        "datagrid-td",
+                        stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
+                      ].join(" ")}
+                      style={{ width, minWidth: width }}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  );
+                })}
+                {virtualPaddingRight > 0 && (
+                  <td
+                    aria-hidden="true"
+                    className="datagrid-virtual-column-spacer"
+                    style={getVirtualSpacerStyle(virtualPaddingRight)}
+                  />
+                )}
               </tr>
-            ))}
+              );
+            })}
+            {virtualPaddingBottom > 0 && (
+              <tr aria-hidden="true" className="datagrid-virtual-spacer">
+                <td colSpan={renderedColumnCount} style={{ height: virtualPaddingBottom, padding: 0 }} />
+              </tr>
+            )}
             {dropTargetIndex !== null && (
               <tr className="datagrid-row drop-indicator">
-                <td colSpan={resolvedColumns.length + 1}>
+                <td colSpan={renderedColumnCount}>
                   <div className="datagrid-drop-indicator-line" />
                 </td>
               </tr>
@@ -2322,12 +2596,8 @@ export function DataGrid({
             )}
           </div>
 
-          {tableName && totalPages > 1 && (
-            <DataGridPagination
-              currentPage={currentPage}
-              totalPages={totalPages}
-              onPageChange={setCurrentPage}
-            />
+          {tableName && hasMoreTableRows && (
+            <span className="datagrid-footer-pill">Scroll to load more</span>
           )}
         </div>
       )}
@@ -2351,7 +2621,7 @@ export function DataGrid({
       {/* Paste Rows Dialog */}
       {isPasteDialogOpen && pastePreview && typeof document !== "undefined"
         ? createPortal(
-            <div className="datagrid-insert-dialog-backdrop" onClick={closePasteDialog}>
+            <div className="datagrid-insert-dialog-backdrop" onClick={() => closePasteDialog()}>
               <div
                 className="datagrid-insert-dialog"
                 onClick={(event) => event.stopPropagation()}
@@ -2361,21 +2631,22 @@ export function DataGrid({
               >
                 <div className="datagrid-insert-dialog-header">
                   <div className="datagrid-insert-dialog-copy">
-                    <span className="datagrid-insert-dialog-kicker">Paste rows from clipboard</span>
+                    <span className="datagrid-insert-dialog-kicker">{pasteSourceLabel}</span>
                     <h3 id="datagrid-paste-dialog-title" className="datagrid-insert-dialog-title">
                       {tableName ? `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""} into ${tableName.split(".").pop() || tableName}` : `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""}`}
                     </h3>
                     <p className="datagrid-insert-dialog-description">
                       Column mappings from clipboard ({pastePreview.firstRowWasHeader ? "headers detected" : "positional mapping"}):
-                      {pastePreview.nullColumns.length > 0 && ` Unmapped columns will be set to NULL: ${pastePreview.nullColumns.join(", ")}`}
+                      {pastePreview.nullColumns.length > 0 && ` Unmapped table columns are omitted so database defaults can apply: ${pastePreview.nullColumns.join(", ")}`}
                       {pastePreview.skippedColumns.length > 0 && ` Skipped clipboard columns: ${pastePreview.skippedColumns.map((c) => `"${c.header}"`).join(", ")}`}
                     </p>
                   </div>
                   <button
                     type="button"
                     className="datagrid-insert-dialog-close"
-                    onClick={closePasteDialog}
+                    onClick={() => closePasteDialog()}
                     aria-label="Close paste dialog"
+                    disabled={isSubmittingPaste}
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -2417,7 +2688,7 @@ export function DataGrid({
                   )}
                   <div className="datagrid-paste-summary">
                     <strong>{pastePreview.rowCount}</strong> row{pastePreview.rowCount !== 1 ? "s" : ""} to insert
-                    {pastePreview.nullColumns.length > 0 && `, <strong>${pastePreview.nullColumns.length}</strong> column(s) will be NULL`}
+                    {pastePreview.nullColumns.length > 0 && `, <strong>${pastePreview.nullColumns.length}</strong> column(s) use database defaults`}
                   </div>
                 </div>
 
@@ -2425,10 +2696,16 @@ export function DataGrid({
                   <button
                     type="button"
                     className="datagrid-insert-dialog-btn"
-                    onClick={closePasteDialog}
-                    disabled={isSubmittingPaste}
+                    onClick={() => {
+                      if (isSubmittingPaste) {
+                        void handleCancelPasteImport();
+                      } else {
+                        closePasteDialog();
+                      }
+                    }}
+                    disabled={isCancellingPaste}
                   >
-                    Cancel
+                    {isSubmittingPaste ? (isCancellingPaste ? "Cancelling..." : "Cancel import") : "Cancel"}
                   </button>
                   <button
                     type="button"
@@ -2439,7 +2716,7 @@ export function DataGrid({
                     {isSubmittingPaste ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        Inserting...
+                        Importing {pastePreview.rowCount} rows atomically...
                       </>
                     ) : (
                       <>

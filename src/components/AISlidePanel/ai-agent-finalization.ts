@@ -1,5 +1,4 @@
 import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
-import { buildAgentTraceMarkdown } from "./ai-assist-prompts";
 import type { AIAgentFinishAction, AIAgentToolAction } from "./ai-agent-tools";
 import { joinAgentInstructions, type AgentTraceStep } from "./ai-agent-context";
 import { sqlResponseConflictsWithSchema } from "./ai-agent-grounding";
@@ -64,7 +63,11 @@ export async function finalizeAgentResult(options: FinalizeAgentResultOptions): 
   }
   const shouldExposeSql = hasSqlStartKeyword(sql);
   const responseBody = typeof args.response === "string" && args.response.trim() ? args.response.trim() : finalAction.message?.trim() || (sql ? "The agent prepared grounded SQL for your review." : "The agent finished its inspection but did not produce a usable final answer.");
-  const rawResponse = [shouldExposeSql ? responseBody : stripSqlCodeBlocksFromResponse(responseBody) || responseBody, buildAgentTraceMarkdown(agentTraceSteps)].filter(Boolean).join("\n\n---\n\n");
+  // Agent steps are returned separately for the live trace UI. Never append them
+  // to the user-facing response, otherwise internal tool logs leak into chat.
+  const rawResponse = shouldExposeSql
+    ? responseBody
+    : stripSqlCodeBlocksFromResponse(responseBody) || responseBody;
   const widgets = buildWidgets(args as Record<string, unknown>);
   return { rawResponse, sql: shouldExposeSql ? sql : null, agentSteps: buildSteps(agentTraceSteps), agentWidgets: widgets.length ? widgets : undefined };
 }

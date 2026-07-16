@@ -112,7 +112,7 @@ export function buildAgentRecoveryContext(params: {
     `TC=${availableTableNames.length}`,
     `TV=${visibleTableNames.join(",")}${availableTableNames.length > visibleTableNames.length ? ",..." : ""}`,
     schemaCapsulePreview ? `SCHEMA_PREVIEW=\n${schemaCapsulePreview}` : "",
-    "RULE=list_tables for full catalog; describe_table before assuming columns; stay inside verified schema.",
+    "RULE=list_tables for catalog; search_schema for unknown fields; describe_table before assuming columns; stay inside verified schema.",
   ].filter(Boolean).join("\n");
 }
 
@@ -202,9 +202,10 @@ export function buildAgentControllerPrompt(params: {
   const availableActions = workspaceToolsEnabled
     ? [
         '1. {"action":"list_tables","message":"short reason","args":{}}',
-        '2. {"action":"describe_table","message":"short reason","args":{"table":"exact_table_name"}}',
-        '3. {"action":"run_readonly_sql","message":"short reason","args":{"sql":"SELECT ..."}}',
-        '4. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval","metricsWidgets":[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ..."}]}}',
+        '2. {"action":"search_schema","message":"short reason","args":{"query":"column or concept to find"}}',
+        '3. {"action":"describe_table","message":"short reason","args":{"table":"exact_table_name"}}',
+        '4. {"action":"run_readonly_sql","message":"short reason","args":{"sql":"SELECT ..."}}',
+        '5. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval","metricsWidgets":[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ..."}]}}',
       ]
     : ['1. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval"}}'];
 
@@ -232,11 +233,26 @@ export function buildAgentControllerPrompt(params: {
       ? "- run_readonly_sql accepts only SELECT, SHOW, EXPLAIN, DESCRIBE, WITH, or read-only PRAGMA."
       : "",
     workspaceToolsEnabled
+      ? "- Before run_readonly_sql, call describe_table for every table in FROM or JOIN. Use only the exact columns reported by the latest describe_table observation; never guess columns such as name, content, title, or value."
+      : "",
+    workspaceToolsEnabled
+      ? "- When the user identifies data by a field or concept but does not name the exact table, call search_schema first. Trust its catalog-wide column matches instead of guessing from table names."
+      : "",
+    workspaceToolsEnabled
+      ? "- For a text search, inspect each candidate table first, then search only its verified text columns."
+      : "",
+    workspaceToolsEnabled
       ? "- Never execute INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, TRUNCATE, USE, ATTACH, DETACH, SET search_path, GRANT, or REVOKE."
       : "",
     "- Final SQL must be grounded in verified context and ready for later human approval.",
     workspaceToolsEnabled
       ? "- If data answers the request, run run_readonly_sql before finishing; do not return only query ideas."
+      : "",
+    workspaceToolsEnabled
+      ? "- For an individual-record lookup, include the verified primary key or id/*_id column in the SELECT result. TableR uses that stable key to provide a link that opens the exact row."
+      : "",
+    workspaceToolsEnabled
+      ? "- After a successful read, give the user the factual result. Do not repeat the executed SQL in the final response; TableR keeps it in the private audit trace and will provide record links when available."
       : "",
     "- For charts, run a chart-friendly aggregate and return that exact SQL in finish.args.sql.",
     forceFinish

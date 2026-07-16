@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import { useAIStore } from "../../stores/aiStore";
 import { useConnectionStore } from "../../stores/connectionStore";
+import { useUIStore } from "../../stores/uiStore";
 import type { MetricsWidgetType } from "../../types";
 import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import { normalizeAIProviderConfigs } from "../../utils/ai-provider-registry";
@@ -34,6 +35,7 @@ import {
 } from "./ai-visualization-intent";
 import { buildAIWorkspaceKey, buildConversationHistoryMessages, createAIWorkspaceId, createChatThread, prunePersistedAIWorkspaceState, summarizePromptForDisplay, type AIChatThread, type PersistedAIWorkspaceState } from "./ai-conversation-state";
 import { buildExecutionDetail, buildPromptWithSelection, isSingleSqlStatement, type SelectionContextState } from "./ai-panel-selection";
+import type { AIAgentRecordLink } from "./ai-agent-record-links";
 
 interface Props {
   isOpen: boolean;
@@ -341,7 +343,7 @@ export function AISlidePanel({
   }, [getCurrentVisualizationApprovalScope]);
 
   const requestVisualizationReadConsent = useCallback(async (promptText: string) => {
-    if (!connectionId || !isVisualizationPrompt(promptText)) {
+    if (!connectionId) {
       return true;
     }
 
@@ -355,15 +357,22 @@ export function AISlidePanel({
     }
 
     const isVietnamese = prefersVietnameseSystemReply(promptText, language);
+    const isVisualization = isVisualizationPrompt(promptText);
     const databaseLabel = currentDatabase || "current database";
 
     return new Promise<boolean>((resolve) => {
       visualizationConsentResolverRef.current = resolve;
       setVisualizationConsentPending({
-        title: isVietnamese ? "Cap quyen doc data de ve bieu do?" : "Allow AI to read data for charts?",
+        title: isVietnamese
+          ? (isVisualization ? "Cap quyen doc data de ve bieu do?" : "Cap quyen doc data cho Agent?")
+          : (isVisualization ? "Allow AI to read data for charts?" : "Allow Agent to read live data?"),
         message: isVietnamese
-          ? `Model hien da co schema capsule de hieu cau truc DB. Buoc tiep theo can doc du lieu chi-doc trong ${databaseLabel} de tao chart/dashboard. TableR se chi cho phep doc du lieu trong session AI hien tai. Ban co muon tiep tuc khong?`
-          : `The model already has a schema capsule for structure. The next step needs read-only access to live data in ${databaseLabel} to build charts or dashboards. TableR will scope this to the current AI session only. Continue?`,
+          ? (isVisualization
+            ? `Model hien da co schema capsule de hieu cau truc DB. Buoc tiep theo can doc du lieu chi-doc trong ${databaseLabel} de tao chart/dashboard. TableR se chi cho phep doc du lieu trong session AI hien tai. Ban co muon tiep tuc khong?`
+            : `Agent da co schema de hieu cau truc DB. Buoc tiep theo can doc du lieu chi-doc trong ${databaseLabel} de tra loi. TableR chi cho phep doc trong session AI hien tai. Ban co muon tiep tuc khong?`)
+          : (isVisualization
+            ? `The model already has a schema capsule for structure. The next step needs read-only access to live data in ${databaseLabel} to build charts or dashboards. TableR will scope this to the current AI session only. Continue?`
+            : `The agent already has the database schema. The next step needs read-only access to live data in ${databaseLabel} to answer your request. TableR scopes this to the current AI session only. Continue?`),
         confirmText: isVietnamese ? "Cho phep doc data" : "Allow data read",
         cancelText: isVietnamese ? "Khong cho phep" : "Deny",
       });
@@ -414,11 +423,12 @@ export function AISlidePanel({
     const id = createAIWorkspaceId();
     const workspaceKey = options?.workspaceKey || currentWorkspaceKey;
     const threadId = options?.threadId || currentThread?.id || workspaceThreads[0]?.id || createAIWorkspaceId();
+    const interactionMode = options?.interactionMode || activeInteractionMode;
     return {
       id,
       threadId,
       workspaceKey,
-      interactionMode: options?.interactionMode || activeInteractionMode,
+      interactionMode,
       kind: "assistant",
       status: "loading",
       title: options?.mode === "inspect" ? aiCopy.bubbleStates.loadingInspectTitle : aiCopy.bubbleStates.loadingComposeTitle,
@@ -429,6 +439,14 @@ export function AISlidePanel({
         ? aiCopy.bubbleStates.loadingInspectPreview
         : aiCopy.bubbleStates.loadingComposePreview,
       detail: "",
+      agentSteps: interactionMode === "agent"
+        ? [{
+            step: 1,
+            action: "plan",
+            message: "",
+            status: "running",
+          }]
+        : undefined,
       x: 0,
       y: 0,
       pointer: {
@@ -661,6 +679,9 @@ export function AISlidePanel({
         : promptWithSelection
     );
 
+    // The request is now captured in its own chat turn, so clear the composer
+    // immediately instead of leaving an already-sent draft visible while it runs.
+    setPromptDraft("");
     const result = await createAssistantBubble(promptWithSelection, {
       mode: "compose",
       displayPrompt,
@@ -672,7 +693,6 @@ export function AISlidePanel({
     });
 
     if (result?.success) {
-      setPromptDraft("");
       if (!isDashboardSelectionSource(attachedSelection?.source)) {
         setAttachedSelection(null);
       }
@@ -756,6 +776,26 @@ export function AISlidePanel({
     if (!bubble.sql || !aiModeAllowsInsert(bubble.interactionMode)) return;
     insertSql(bubble.sql, bubble.risk);
   }, [insertSql]);
+
+  const handleOpenAgentRecord = useCallback((link: AIAgentRecordLink) => {
+    if (!connectionId) {
+      setError("Connect to a database before opening a record.");
+      return;
+    }
+
+    useUIStore.getState().addTab({
+      id: `table-${connectionId}-${currentDatabase || ""}-${link.tableName}-${crypto.randomUUID()}`,
+      type: "table",
+      title: link.tableName,
+      connectionId,
+      tableName: link.tableName,
+      database: currentDatabase || undefined,
+      rowFocus: {
+        token: crypto.randomUUID(),
+        values: link.rowKey,
+      },
+    });
+  }, [connectionId, currentDatabase, setError]);
 
   const handleRunBubble = useCallback(async (bubble: AIWorkspaceBubbleData) => {
     if (!bubble.sql || !aiModeAllowsRun(bubble.interactionMode)) return;
@@ -992,5 +1032,5 @@ export function AISlidePanel({
 
   if (!isOpen) return null;
   const visibleError = error && error !== AI_REQUEST_REPLACED_MESSAGE ? error : null;
-  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isCancelling, isGenerating, isHistoryOpen, isInspectMode, isLongformComposer, isRunning, isSessionDataReadEnabled, isSwitchingProvider, language, promptDraft, recentWorkspaceThreads, selectionContext, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, chatThreadRef, close: () => { setIsInspectMode(false); onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, requestDeleteThread: handleRequestDeleteThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setInspectMode: setIsInspectMode, setPromptDraft, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomy, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id) => void handleActivateProvider(id), confirmVisualizationConsent: resolveVisualizationConsent, cancelDeleteThread: handleCancelDeleteThread, composerKeyDown: handleComposerKeyDown }} />;
+  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isCancelling, isGenerating, isHistoryOpen, isInspectMode, isLongformComposer, isRunning, isSessionDataReadEnabled, isSwitchingProvider, language, promptDraft, recentWorkspaceThreads, selectionContext, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, chatThreadRef, close: () => { setIsInspectMode(false); onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, requestDeleteThread: handleRequestDeleteThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setInspectMode: setIsInspectMode, setPromptDraft, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomy, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id) => void handleActivateProvider(id), confirmVisualizationConsent: resolveVisualizationConsent, cancelDeleteThread: handleCancelDeleteThread, composerKeyDown: handleComposerKeyDown }} />;
 }

@@ -20,7 +20,7 @@ import {
   buildPastePreview,
   type PastePreview,
 } from "../../utils/clipboard-parser";
-import type { ColumnDetail, ConnectionConfig, QueryResult } from "../../types";
+import type { ColumnDetail, ConnectionConfig, QueryResult, TableRowFocus } from "../../types";
 import { devLogError } from "../../utils/logger";
 import { invokeMutation } from "../../utils/tauri-utils";
 import { computeNewRowPlan, computeColumnPlan } from "./hooks/useInsertColumnPlan";
@@ -78,11 +78,24 @@ interface Props {
   isActive?: boolean;
   initialViewMode?: "table" | "chart";
   onViewModeChange?: (mode: "table" | "chart") => void;
+  rowFocus?: TableRowFocus;
 }
 
 const MAX_TABLE_PAGE_CACHE_ENTRIES = 48;
 const MAX_TABLE_COUNT_CACHE_ENTRIES = 24;
 const MAX_INLINE_STRUCTURE_CACHE_ENTRIES = 48;
+
+function buildRowFocusFilter(rowFocus: TableRowFocus | undefined) {
+  if (!rowFocus) return "";
+  const clauses = Object.entries(rowFocus.values).flatMap(([column, value]) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(column)) return [];
+    if (value === null) return [`${column} IS NULL`];
+    if (typeof value === "number") return [Number.isFinite(value) ? `${column} = ${value}` : ""];
+    if (typeof value === "boolean") return [`${column} = ${value ? "TRUE" : "FALSE"}`];
+    return [`${column} = '${value.replace(/'/g, "''")}'`];
+  }).filter(Boolean);
+  return clauses.join(" AND ");
+}
 
 export function DataGrid({
   connectionId,
@@ -92,6 +105,7 @@ export function DataGrid({
   isActive = true,
   initialViewMode = "table",
   onViewModeChange,
+  rowFocus,
 }: Props) {
   const { settings } = useDataGridSettings();
   const {
@@ -180,6 +194,7 @@ export function DataGrid({
   const [columnSizes, setColumnSizes] = useState<Record<string, number>>(() =>
     getColumnWidths(connectionId, tableName ?? "", database),
   );
+  const rowFocusFilter = useMemo(() => buildRowFocusFilter(rowFocus), [rowFocus]);
   const [columnDisplayFormats, setColumnDisplayFormats] = useState<Record<string, ColumnDisplayFormat>>({});
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: "cell" | "header" | "row"; colName?: string; rowIndex?: number } | null>(null);
   /** Row drag-and-drop state */
@@ -252,7 +267,7 @@ export function DataGrid({
     async (page: number) => {
       if (!tableName || !isActive) return;
 
-      const dataScope = `${connectionId}|${database || ""}|${tableName}|${sortColumn || ""}|${sortDir}`;
+      const dataScope = `${connectionId}|${database || ""}|${tableName}|${sortColumn || ""}|${sortDir}|${rowFocusFilter}`;
       if (dataScopeRef.current !== dataScope) {
         dataScopeRef.current = dataScope;
         requestIdRef.current += 1;
@@ -265,12 +280,12 @@ export function DataGrid({
         page,
         sortColumn,
         sortDir,
-        "",
+        rowFocusFilter,
       );
       const cachedPage = tablePageCache.get(tableCacheKey);
       const tableScopeKey = buildTableScopeKey(connectionId, tableName, database);
       const cachedCount = tableCountCache.get(tableScopeKey);
-      const hasFreshCount = !tableFilter.trim() && Boolean(
+      const hasFreshCount = !tableFilter.trim() && !rowFocusFilter && Boolean(
         cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS),
       );
 
@@ -297,7 +312,7 @@ export function DataGrid({
           limit: PAGE_SIZE,
           orderBy: sortColumn || undefined,
           orderDir: sortColumn ? sortDir : undefined,
-          filter: undefined,
+          filter: rowFocusFilter || undefined,
         });
 
         if (!isMountedRef.current || requestId !== requestIdRef.current) return;
@@ -318,7 +333,7 @@ export function DataGrid({
         }
 
         if (page === 0 && isActiveRef.current) {
-          const needsExactCount = result.rows.length === PAGE_SIZE;
+          const needsExactCount = !rowFocusFilter && result.rows.length === PAGE_SIZE;
           const nextTotalRows = hasFreshCount
             ? cachedCount!.totalRows
             : needsExactCount
@@ -367,7 +382,7 @@ export function DataGrid({
                   devLogError("Failed to count table rows:", error);
                 });
             }, 800);
-          } else if (!tableFilter.trim()) {
+          } else if (!tableFilter.trim() && !rowFocusFilter) {
             setBoundedMapEntry(
               tableCountCache,
               tableScopeKey,
@@ -376,7 +391,7 @@ export function DataGrid({
             );
           }
         } else {
-          const fallbackTotalRows = (!tableFilter.trim() ? cachedCount?.totalRows : undefined)
+          const fallbackTotalRows = (!tableFilter.trim() && !rowFocusFilter ? cachedCount?.totalRows : undefined)
             || page * PAGE_SIZE + result.rows.length;
           setBoundedMapEntry(
             tablePageCache,
@@ -400,6 +415,7 @@ export function DataGrid({
       sortColumn,
       sortDir,
       tableFilter,
+      rowFocusFilter,
       getTableData,
       countRows,
       isActive,
@@ -453,7 +469,12 @@ export function DataGrid({
     structureRequestIdRef.current += 1;
     // Restore persisted column widths for the new table
       setColumnSizes(getColumnWidths(connectionId, tableName ?? "", database));
-  }, [tableName, connectionId, database, externalResult]);
+  }, [tableName, connectionId, database, externalResult, rowFocus?.token]);
+
+  useEffect(() => {
+    if (!rowFocus || !data?.rows.length || externalResult) return;
+    setSelectedRows(new Set([0]));
+  }, [data, externalResult, rowFocus]);
 
   useEffect(() => {
     if (!tableName || externalResult || !isActive) return;

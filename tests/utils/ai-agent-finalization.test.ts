@@ -23,6 +23,8 @@ describe("agent finalization", () => {
     });
 
     expect(result.sql).toBe("SELECT count(*) FROM users");
+    expect(result.rawResponse).toBe("Here is the answer.");
+    expect(result.rawResponse).not.toContain("Agent Trace");
     expect(result.agentSteps).toHaveLength(1);
     expect(result.agentWidgets).toEqual([{ title: "Users", type: "scoreboard", query: "SELECT count(*) FROM users" }]);
   });
@@ -39,6 +41,7 @@ describe("agent finalization", () => {
     });
 
     expect(result.sql).toBe("SELECT * FROM users");
-    expect(result.rawResponse).toContain("referenced tables outside");
+    expect(result.rawResponse).toBe("Recovered");
+    expect(result.rawResponse).not.toContain("Agent Trace");
   });
 });

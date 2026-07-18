@@ -92,7 +92,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -110,6 +110,8 @@ jobs:
       - name: Validate release contract and plugin registry
         run: |
           node scripts/check-release-contract.mjs --tag "$RELEASE_TAG"
+          npm audit --omit=dev --audit-level=high
+          npm run check:secrets
           node scripts/build-plugin-registry.mjs
           git diff --exit-code -- plugins plugin-registry.json
 
@@ -119,6 +121,7 @@ jobs:
           npm run check:tauri-target
           cargo fmt --manifest-path src-tauri/Cargo.toml --check
           cargo fmt --manifest-path src-tauri/mcp-stdio/Cargo.toml --check
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml --lib -- -D warnings
           cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
           cargo check --locked --manifest-path src-tauri/mcp-stdio/Cargo.toml
 
@@ -140,7 +143,8 @@ jobs:
             cc: "gcc"
             cxx: "g++"
             cxxflags: ""
-          - platform: "windows-latest"
+          # Keep release builds on the MSVC toolset supported by DuckDB 1.4.x.
+          - platform: "windows-2022"
             args: "--config src-tauri/tauri.release.conf.json --config src-tauri/tauri.runtime-release.conf.json --config src-tauri/tauri.release.windows.conf.json"
             target: "windows"
             cc: "clang-cl"
@@ -242,11 +246,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
-          CXXFLAGS: ${{ matrix.target == 'windows' && format('{0} /FI{1}/src-tauri/src/clang_compat.h', matrix.cxxflags, github.workspace) || matrix.cxxflags }}
+          CXXFLAGS: ${{ matrix.cxxflags }}
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: "TableR ${{ env.RELEASE_TAG }}"
-          releaseBody: "See the assets to download this version of TableR. Unsigned builds may require an operating-system security override on first launch."
+          releaseBody: |
+            TableR v0.1.5 focuses on dependable grid editing, streaming data movement, parser-backed SQL safety, recoverable connections, grounded AI, qualified workspace navigation, and release hardening.
+
+            Download only the installer for your operating system from Assets. The macOS build is currently unsigned and not notarized; Gatekeeper may require Open Anyway in Privacy & Security on first launch.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
@@ -339,10 +346,22 @@ jobs:
       - name: Build plugin registry
         run: node scripts/build-plugin-registry.mjs
 
-      - name: Upload plugin registry
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$RELEASE_TAG" plugin-registry.json --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Generate source SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: tabler-sbom.spdx.json
+
+      - name: Archive internal release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabler-${{ env.RELEASE_TAG }}-internal-metadata
+          path: |
+            plugin-registry.json
+            tabler-sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Download draft release assets
         env:
@@ -356,16 +375,24 @@ jobs:
         run: |
           node scripts/validate-updater-manifest.mjs --file release-assets/latest.json --tag "$RELEASE_TAG" --assets release-assets
 
-      - name: Publish release checksums
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify downloaded release asset matrix
+        run: node scripts/verify-release-assets.mjs release-assets
+
+      - name: Generate internal release checksums
         run: |
           cd release-assets
           checksum_file="$(mktemp)"
           find . -maxdepth 1 -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > "$checksum_file"
           mv "$checksum_file" SHA256SUMS.txt
           test -s SHA256SUMS.txt
-          gh release upload "$RELEASE_TAG" SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Archive checksum evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabler-${{ env.RELEASE_TAG }}-checksums
+          path: release-assets/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Publish the verified draft
         env:

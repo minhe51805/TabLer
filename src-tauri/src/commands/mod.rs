@@ -1,7 +1,9 @@
 pub mod ai;
 pub mod connection;
 pub mod connection_export;
+pub mod data_export;
 pub mod deep_link;
+pub mod diagnostics;
 pub mod export;
 pub mod file;
 pub mod maintenance;

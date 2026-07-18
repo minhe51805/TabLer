@@ -3,6 +3,15 @@ use std::fs;
 use std::path::PathBuf;
 
 pub fn resolve_data_dir() -> Result<PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("TABLER_DATA_DIR") {
+        let path = PathBuf::from(path);
+        fs::create_dir_all(&path).with_context(|| {
+            format!("Failed to create debug data directory '{}'", path.display())
+        })?;
+        return Ok(path);
+    }
+
     let base_dir = dirs::data_dir()
         .context("Cannot find user data directory")?
         .join("TableR");

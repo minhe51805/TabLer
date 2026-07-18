@@ -127,6 +127,9 @@ window.addEventListener("unhandledrejection", (event) => {
 
 async function startApp() {
   try {
+    if (import.meta.env.MODE === "e2e") {
+      await import("@wdio/tauri-plugin");
+    }
     window.__TABLER_SET_BOOT_STATUS__?.("Importing App module...", "warning");
     const module = await import("./App");
     clearPersistedBootFailure();

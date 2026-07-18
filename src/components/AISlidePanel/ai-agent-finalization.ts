@@ -37,7 +37,17 @@ function buildWidgets(args: Record<string, unknown>): AIMetricsWidgetSpec[] {
     const query = typeof record.query === "string" ? record.query.trim() : typeof record.sql === "string" ? record.sql.trim() : "";
     const typeValue = typeof record.type === "string" ? record.type.trim().toLowerCase() : "table";
     const type = (["table", "scoreboard", "bar", "horizontal-bar", "line", "area", "pie", "donut", "radial"].includes(typeValue) ? typeValue : "table") as AIMetricsWidgetSpec["type"];
-    return { title, type, query };
+    const dimension = typeof record.dimension === "string" ? record.dimension.trim() || undefined : undefined;
+    const measures = Array.isArray(record.measures)
+      ? record.measures.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean).slice(0, 12)
+      : [];
+    const transforms = Array.isArray(record.transforms)
+      ? record.transforms.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean).slice(0, 12)
+      : [];
+    const limit = typeof record.limit === "number" && Number.isFinite(record.limit)
+      ? Math.min(10_000, Math.max(1, Math.floor(record.limit)))
+      : 100;
+    return { title, type, query, dimension, measures, transforms, limit };
   }).filter((widget) => widget.title.length > 0 && widget.query.length > 0).slice(0, 12);
 }
 

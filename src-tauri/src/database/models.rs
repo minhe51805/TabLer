@@ -2,7 +2,7 @@ use crate::mcp_security::ExternalAccessPolicy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -434,7 +434,7 @@ impl ParsedConnectionUrl {
         };
 
         // Default ports
-        let port = port.or_else(|| match db_type {
+        let port = port.or(match db_type {
             DatabaseType::MySQL => Some(3306),
             DatabaseType::MariaDB => Some(3306),
             DatabaseType::PostgreSQL => Some(5432),
@@ -570,7 +570,7 @@ impl ConnectionConfig {
         let parsed = ParsedConnectionUrl::parse(url)?;
 
         let id = Uuid::new_v4().to_string();
-        let db_type = parsed.db_type.clone();
+        let db_type = parsed.db_type;
         let host = parsed.host.clone();
         let database = parsed.database.clone();
         let use_ssl = parsed.use_ssl;
@@ -1052,8 +1052,7 @@ fn validate_local_file_path(
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase());
 
-    if !matches!(extension.as_deref(), Some(ext) if allowed_extensions.iter().any(|candidate| ext == *candidate))
-    {
+    if !matches!(extension.as_deref(), Some(ext) if allowed_extensions.contains(&ext)) {
         let formatted_extensions = allowed_extensions
             .iter()
             .map(|ext| format!(".{ext}"))
@@ -1068,7 +1067,6 @@ fn validate_local_file_path(
         local_path.to_path_buf()
     } else {
         std::env::current_dir()
-            .map(PathBuf::from)
             .map_err(|_| "Could not resolve the current working directory".to_string())?
             .join(local_path)
     };
@@ -1123,21 +1121,16 @@ pub struct QueryResult {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum QueryParameterType {
+    #[default]
     Text,
     Integer,
     Decimal,
     Boolean,
     Json,
     Null,
-}
-
-impl Default for QueryParameterType {
-    fn default() -> Self {
-        Self::Text
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1188,6 +1181,26 @@ pub struct TableRowInsertRequest {
     /// Column names and values for the new row.
     pub values: Vec<(String, serde_json::Value)>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CsvColumnMapping {
+    pub source_index: usize,
+    pub target_column: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CsvFileImportRequest {
+    pub file_path: String,
+    pub table: String,
+    pub database: Option<String>,
+    pub delimiter: String,
+    pub has_headers: bool,
+    pub mappings: Vec<CsvColumnMapping>,
+}
+
+pub type CsvImportRow = Result<TableRowInsertRequest, String>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {

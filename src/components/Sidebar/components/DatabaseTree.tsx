@@ -153,6 +153,7 @@ export function DatabaseTree({
             className={`explorer-db-section ${isCurrent ? "active" : ""}`}
           >
             <button
+              data-testid={isCurrent ? "database-current" : undefined}
               onClick={() => onToggleDb(db)}
               className={`explorer-db-button ${isCurrent ? "active" : ""}`}
             >
@@ -310,6 +311,7 @@ export function DatabaseTree({
                                     title={`Table filter: ${itemState} — checked=include, unchecked=exclude, indeterminate=no filter`}
                                   />
                                   <button
+                                    data-testid={`table-${section.schemaName}-${table.name}`}
                                     onClick={() => onTableClick(table)}
                                     onDoubleClick={(e) => { e.stopPropagation(); onTableDoubleClick?.(table); }}
                                     className="explorer-table-main"

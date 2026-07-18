@@ -97,6 +97,13 @@ impl McpStorage {
             .find(|grant| token_matches(grant, plaintext)))
     }
 
+    pub fn find_token_by_id(&self, token_id: &str) -> Result<Option<McpTokenGrant>> {
+        Ok(self
+            .list_tokens()?
+            .into_iter()
+            .find(|grant| grant.id == token_id))
+    }
+
     pub fn create_token(
         &self,
         name: String,

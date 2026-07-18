@@ -25,6 +25,25 @@ export interface DiagramNodeFrame {
   isExpanded?: boolean;
 }
 
+export function buildDiagramGridPositions(
+  count: number,
+  nodeHeight: number,
+  options: { left?: number; top?: number; horizontalGap?: number; verticalGap?: number; maxColumns?: number } = {},
+) {
+  const safeCount = Math.max(0, Math.floor(count));
+  if (safeCount === 0) return [];
+  const left = options.left ?? 48;
+  const top = options.top ?? 48;
+  const slotWidth = DIAGRAM_NODE_WIDTH + (options.horizontalGap ?? 42);
+  const slotHeight = Math.max(1, nodeHeight) + (options.verticalGap ?? 42);
+  const columns = Math.max(1, Math.min(options.maxColumns ?? 10, Math.ceil(Math.sqrt(safeCount * 1.35))));
+
+  return Array.from({ length: safeCount }, (_, index) => ({
+    x: left + (index % columns) * slotWidth,
+    y: top + Math.floor(index / columns) * slotHeight,
+  }));
+}
+
 export function getVisibleDiagramColumns<T>(columns: readonly T[], expanded = false) {
   return expanded ? [...columns] : columns.slice(0, DIAGRAM_VISIBLE_COLUMN_COUNT);
 }

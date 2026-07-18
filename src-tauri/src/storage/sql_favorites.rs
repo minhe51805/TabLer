@@ -13,6 +13,10 @@ pub struct SqlFavorite {
     pub description: Option<String>,
     pub sql: String,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub connection_id: Option<String>,
+    #[serde(default)]
+    pub database: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -110,6 +114,8 @@ pub fn save_sql_favorite(
     description: Option<String>,
     sql: String,
     tags: Option<Vec<String>>,
+    connection_id: Option<String>,
+    database: Option<String>,
 ) -> Result<SqlFavorite, String> {
     let mut storage = SqlFavoritesStorage::new()?;
     storage.save(SqlFavorite {
@@ -118,6 +124,8 @@ pub fn save_sql_favorite(
         description,
         sql,
         tags: tags.unwrap_or_default(),
+        connection_id,
+        database,
         created_at: String::new(),
         updated_at: String::new(),
     })

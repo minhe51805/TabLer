@@ -1,6 +1,6 @@
 /**
  * ThemeEngine — Singleton store for theming.
- * Inspired by TablePro's ThemeEngine.swift.
+ * Centralizes TableR theme state and token application.
  *
  * Features:
  * - Centralized theme definition (editor, datagrid, ui, sidebar, toolbar, spacing, typography)
@@ -601,7 +601,7 @@ const FOREST_THEME: ThemeDefinition = {
 };
 
 // ---------------------------------------------------------------------------
-// MiniMax Theme — Apple-native Light (TablePro palette, Apple blue #007AFF)
+// MiniMax Theme - light palette with Apple blue #007AFF
 // ---------------------------------------------------------------------------
 
 const MINIMAX_THEME: ThemeDefinition = {

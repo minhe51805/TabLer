@@ -712,7 +712,7 @@ impl DatabaseDriver for LibSqlDriver {
                 sql.push_str(", ");
             }
             first = false;
-            sql.push_str("?");
+            sql.push('?');
             params.push(Self::serde_to_libsql_value(value)?);
         }
 

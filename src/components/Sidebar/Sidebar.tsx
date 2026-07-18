@@ -405,6 +405,8 @@ function FilterToolbar({
 import { LinkedFoldersPanel } from "./LinkedFoldersPanel";
 import { FolderSearch } from "lucide-react";
 import { useState } from "react";
+import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
+import { isCapabilitySupported } from "../../types";
 
 // ---------------------------------------------------------------------------
 // Sidebar
@@ -490,6 +492,8 @@ export function Sidebar() {
     handleDeletePreset,
     handleClearFilters,
   } = useSidebar();
+  const capabilityProfile = useConnectionCapabilities(activeConnectionId);
+  const canEditSchema = isCapabilitySupported(capabilityProfile?.capabilities.schemaEdit);
 
   const [filterToolbarOpen, setFilterToolbarOpen] = useState(false);
 
@@ -527,7 +531,7 @@ export function Sidebar() {
           </div>
 
           <div className="explorer-header-actions">
-            {supportsCreateWizard && (
+            {supportsCreateWizard && canEditSchema && (
               <button
                 type="button"
                 onClick={() => setShowCreateWizard(true)}
@@ -708,7 +712,7 @@ export function Sidebar() {
         onSubmenuChange={setActiveContextSubmenuKey}
       />
 
-      {showCreateWizard && activeConnection && (
+      {showCreateWizard && activeConnection && canEditSchema && (
         <CreateSchemaObjectModal
           dbType={activeConnection.db_type}
           database={currentDatabase || undefined}

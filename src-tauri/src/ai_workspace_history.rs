@@ -69,9 +69,8 @@ pub struct AIWorkspaceHistoryStorage {
 
 impl AIWorkspaceHistoryStorage {
     pub fn new() -> Result<Self, String> {
-        let data_dir = dirs::data_dir()
-            .ok_or_else(|| "Cannot find user data directory".to_string())?
-            .join("TableR");
+        let data_dir =
+            crate::utils::paths::resolve_data_dir().map_err(|error| error.to_string())?;
 
         fs::create_dir_all(&data_dir)
             .map_err(|error| format!("Failed to create AI history directory: {error}"))?;
@@ -211,8 +210,10 @@ mod tests {
         let storage =
             AIWorkspaceHistoryStorage::new_with_file(path.clone()).expect("storage should init");
 
-        let mut state = PersistedAIWorkspaceState::default();
-        state.version = 1;
+        let mut state = PersistedAIWorkspaceState {
+            version: 1,
+            ..PersistedAIWorkspaceState::default()
+        };
         state
             .active_thread_ids
             .insert("workspace-1".into(), "thread-1".into());

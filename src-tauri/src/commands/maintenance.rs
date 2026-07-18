@@ -41,7 +41,7 @@ pub fn build_maintenance_sql(
                 if let Some(tbl) = table {
                     Ok(format!("ANALYZE TABLE `{}`;", tbl))
                 } else {
-                    return Err("ANALYZE requires a table name for MySQL/MariaDB.".to_string());
+                    Err("ANALYZE requires a table name for MySQL/MariaDB.".to_string())
                 }
             }
             "sqlite" | "libsql" | "cloudflare_d1" => {
@@ -62,7 +62,7 @@ pub fn build_maintenance_sql(
                 if let Some(tbl) = table {
                     Ok(format!("OPTIMIZE TABLE `{}`;", tbl))
                 } else {
-                    return Err("OPTIMIZE TABLE requires a table name.".to_string());
+                    Err("OPTIMIZE TABLE requires a table name.".to_string())
                 }
             }
             "clickhouse" => {
@@ -70,7 +70,7 @@ pub fn build_maintenance_sql(
                     let db_prefix = database.map_or(String::new(), |d| format!("{}.", d));
                     Ok(format!("OPTIMIZE TABLE {}`{}` FINAL;", db_prefix, tbl))
                 } else {
-                    return Err("OPTIMIZE TABLE requires a table name for ClickHouse.".to_string());
+                    Err("OPTIMIZE TABLE requires a table name for ClickHouse.".to_string())
                 }
             }
             _ => Err(format!(
@@ -82,12 +82,10 @@ pub fn build_maintenance_sql(
             "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica" => {
                 if let Some(tbl) = table {
                     Ok(format!("REINDEX TABLE \"{}\";", tbl))
+                } else if let Some(db) = database {
+                    Ok(format!("REINDEX DATABASE \"{}\";", db))
                 } else {
-                    if let Some(db) = database {
-                        Ok(format!("REINDEX DATABASE \"{}\";", db))
-                    } else {
-                        Ok("REINDEX;".to_string())
-                    }
+                    Ok("REINDEX;".to_string())
                 }
             }
             "sqlite" | "libsql" | "cloudflare_d1" => {
@@ -107,7 +105,7 @@ pub fn build_maintenance_sql(
                 if let Some(tbl) = table {
                     Ok(format!("CHECK TABLE `{}`;", tbl))
                 } else {
-                    return Err("CHECK TABLE requires a table name.".to_string());
+                    Err("CHECK TABLE requires a table name.".to_string())
                 }
             }
             "postgresql" | "greenplum" | "cockroachdb" => {
@@ -118,7 +116,7 @@ pub fn build_maintenance_sql(
                         tbl
                     ))
                 } else {
-                    return Err("CHECK TABLE requires a table name.".to_string());
+                    Err("CHECK TABLE requires a table name.".to_string())
                 }
             }
             _ => Err(format!(

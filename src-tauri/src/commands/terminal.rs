@@ -82,11 +82,11 @@ fn get_shell_launch_config() -> ShellLaunchConfig {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "powershell.exe".to_string());
 
-        return ShellLaunchConfig {
+        ShellLaunchConfig {
             program: shell,
             args: vec!["-NoLogo".to_string()],
             label: "PowerShell".to_string(),
-        };
+        }
     }
 
     #[cfg(not(target_os = "windows"))]

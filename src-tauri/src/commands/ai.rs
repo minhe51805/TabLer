@@ -4,12 +4,14 @@ use crate::database::ai_models::{
 };
 use crate::storage::ai_storage::AIStorage;
 use crate::utils::rate_limiter::AIRequestLimiter;
+use futures_util::StreamExt;
 use reqwest::{Client, StatusCode, Url};
+use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::OnceLock;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex;
 use tokio::task;
 use tokio::time::{sleep, Duration};
@@ -17,6 +19,38 @@ use tokio_util::sync::CancellationToken;
 
 static AI_HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
 const AI_REQUEST_CANCELLED_ERROR: &str = "AI request cancelled.";
+const MAX_AI_STREAM_BUFFER_BYTES: usize = 1_048_576;
+const MAX_AI_STREAM_OUTPUT_BYTES: usize = 2_097_152;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AIStreamEvent {
+    request_id: String,
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<serde_json::Value>,
+}
+
+fn emit_ai_stream_event(
+    app: &AppHandle,
+    request_id: &str,
+    kind: &'static str,
+    text: Option<String>,
+    usage: Option<serde_json::Value>,
+) -> Result<(), String> {
+    app.emit(
+        "ai-stream-event",
+        AIStreamEvent {
+            request_id: request_id.to_string(),
+            kind,
+            text,
+            usage,
+        },
+    )
+    .map_err(|_| "Failed to publish AI stream event.".to_string())
+}
 
 #[derive(Default)]
 pub struct AIRequestCancellationState {
@@ -729,6 +763,134 @@ fn extract_gemini_response_text(payload: &serde_json::Value) -> Option<String> {
     payload.get("text").and_then(extract_text_from_json)
 }
 
+fn extract_stream_deltas(
+    provider: &AIProviderType,
+    payload: &serde_json::Value,
+) -> (Option<String>, Option<String>) {
+    match provider {
+        AIProviderType::Anthropic => {
+            let text = payload
+                .pointer("/delta/text")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string);
+            let reasoning = payload
+                .pointer("/delta/thinking")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string);
+            (text, reasoning)
+        }
+        AIProviderType::Gemini => (extract_gemini_response_text(payload), None),
+        _ => (
+            extract_openai_like_response_text(payload),
+            extract_openai_like_reasoning(payload),
+        ),
+    }
+}
+
+fn streaming_request_body(
+    config: &AIProviderConfig,
+    endpoint: &str,
+    system_prompt: &str,
+    prompt: &str,
+    mode: &AIRequestMode,
+) -> serde_json::Value {
+    let mut body = build_provider_request_body(config, endpoint, system_prompt, prompt, mode);
+    if let Some(object) = body.as_object_mut() {
+        if config.provider_type != AIProviderType::Gemini {
+            object.insert("stream".to_string(), serde_json::Value::Bool(true));
+        }
+        if matches!(
+            config.provider_type,
+            AIProviderType::OpenAI | AIProviderType::OpenRouter | AIProviderType::Custom
+        ) {
+            object.insert(
+                "stream_options".to_string(),
+                json!({ "include_usage": true }),
+            );
+        }
+    }
+    body
+}
+
+fn streaming_endpoint(config: &AIProviderConfig, endpoint: &str) -> String {
+    if config.provider_type == AIProviderType::Gemini {
+        let Ok(mut url) = Url::parse(endpoint) else {
+            return endpoint.replace(":generateContent", ":streamGenerateContent");
+        };
+        let streaming_path = url
+            .path()
+            .replace(":generateContent", ":streamGenerateContent");
+        url.set_path(&streaming_path);
+        if !url.query_pairs().any(|(key, _)| key == "alt") {
+            url.query_pairs_mut().append_pair("alt", "sse");
+        }
+        url.to_string()
+    } else {
+        endpoint.to_string()
+    }
+}
+
+fn publish_stream_payload(
+    app: &AppHandle,
+    request_id: &str,
+    provider: &AIProviderType,
+    payload: &serde_json::Value,
+    pending_text: &mut String,
+    visible_started: &mut bool,
+    output_bytes: &mut usize,
+) -> Result<(), String> {
+    let (text_delta, reasoning_delta) = extract_stream_deltas(provider, payload);
+    if reasoning_delta.is_some() {
+        emit_ai_stream_event(app, request_id, "reasoning_delta", None, None)?;
+    }
+
+    if let Some(delta) = text_delta {
+        let visible_delta = take_visible_stream_delta(&delta, pending_text, visible_started);
+
+        if !visible_delta.is_empty() {
+            *output_bytes = output_bytes.saturating_add(visible_delta.len());
+            if *output_bytes > MAX_AI_STREAM_OUTPUT_BYTES {
+                return Err("AI stream exceeded the 2 MB output limit.".to_string());
+            }
+            emit_ai_stream_event(app, request_id, "text_delta", Some(visible_delta), None)?;
+        }
+    }
+
+    if let Some(usage) = payload
+        .get("usage")
+        .cloned()
+        .or_else(|| payload.get("usageMetadata").cloned())
+    {
+        emit_ai_stream_event(app, request_id, "usage", None, Some(usage))?;
+    }
+    Ok(())
+}
+
+fn take_visible_stream_delta(
+    delta: &str,
+    pending_text: &mut String,
+    visible_started: &mut bool,
+) -> String {
+    if *visible_started {
+        return delta.to_string();
+    }
+    pending_text.push_str(delta);
+    if pending_text.starts_with("<think>") {
+        if let Some(end) = pending_text.find("</think>") {
+            *visible_started = true;
+            let visible = pending_text[end + "</think>".len()..].to_string();
+            pending_text.clear();
+            return visible;
+        }
+        return String::new();
+    }
+    if "<think>".starts_with(pending_text.as_str()) {
+        return String::new();
+    }
+    *visible_started = true;
+    std::mem::take(pending_text)
+}
+
 fn endpoint_path(endpoint: &str) -> Option<String> {
     Url::parse(endpoint)
         .ok()
@@ -1000,6 +1162,202 @@ pub async fn ask_ai(
     }
 
     result
+}
+
+#[tauri::command]
+pub async fn ask_ai_stream(
+    request: AIRequest,
+    app: AppHandle,
+    storage: State<'_, AIStorage>,
+    ai_rate_limiter: State<'_, AIRequestLimiter>,
+    cancellation_state: State<'_, AIRequestCancellationState>,
+) -> Result<(), String> {
+    request
+        .validate()
+        .map_err(|error| format!("Invalid request: {error}"))?;
+    let request_id = request
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Streaming AI requests require a request ID.".to_string())?
+        .to_string();
+    let token = CancellationToken::new();
+    cancellation_state
+        .register(&request_id, token.clone())
+        .await;
+
+    let result = execute_ai_stream_request(
+        request,
+        &request_id,
+        &app,
+        storage.inner(),
+        ai_rate_limiter.inner(),
+        token,
+    )
+    .await;
+    cancellation_state.finish(&request_id).await;
+
+    match result {
+        Ok(()) => emit_ai_stream_event(&app, &request_id, "done", None, None),
+        Err(error) => {
+            let _ = emit_ai_stream_event(&app, &request_id, "error", Some(error.clone()), None);
+            Err(error)
+        }
+    }
+}
+
+async fn execute_ai_stream_request(
+    request: AIRequest,
+    request_id: &str,
+    app: &AppHandle,
+    storage: &AIStorage,
+    ai_rate_limiter: &AIRequestLimiter,
+    cancellation_token: CancellationToken,
+) -> Result<(), String> {
+    let storage = storage.clone();
+    let (config, api_key) = run_blocking_storage_task(move || {
+        let config = storage
+            .get_active_provider_config()
+            .map_err(|_| ai_provider_config_error())?;
+        let api_key = if provider_requires_api_key(&config.provider_type) {
+            Some(
+                storage
+                    .get_api_key(&config.id)
+                    .map_err(|_| ai_provider_config_error())?,
+            )
+        } else {
+            storage
+                .get_api_key_optional(&config.id)
+                .map_err(|_| ai_provider_config_error())?
+        };
+        Ok((config, api_key))
+    })
+    .await?;
+
+    ai_rate_limiter
+        .check(&format!("{}:{:?}:stream", config.id, request.mode))
+        .await?;
+    if !config.is_enabled {
+        return Err("Selected AI provider is disabled.".to_string());
+    }
+
+    let effective_context = if config.allow_schema_context {
+        request.context.trim()
+    } else {
+        ""
+    };
+    let (system_prompt, prompt) = build_ai_prompt(
+        &request.mode,
+        &request.intent,
+        &request.language,
+        effective_context,
+        &request.history,
+        &request.prompt,
+    );
+    let base_endpoint = resolve_provider_endpoint(&config);
+    validate_ai_endpoint(&config, &base_endpoint)?;
+    let endpoint = streaming_endpoint(&config, &base_endpoint);
+    let body = streaming_request_body(
+        &config,
+        &base_endpoint,
+        &system_prompt,
+        &prompt,
+        &request.mode,
+    );
+    let mut request_builder = ai_http_client().post(&endpoint);
+    match config.provider_type {
+        AIProviderType::Anthropic => {
+            request_builder = request_builder
+                .header("x-api-key", api_key.as_deref().unwrap_or_default())
+                .header("anthropic-version", "2023-06-01");
+        }
+        AIProviderType::Gemini => {
+            request_builder =
+                request_builder.header("x-goog-api-key", api_key.as_deref().unwrap_or_default());
+        }
+        _ => {
+            if let Some(api_key) = api_key.as_deref() {
+                request_builder = request_builder.bearer_auth(api_key);
+            }
+        }
+    }
+
+    let response = tokio::select! {
+        _ = cancellation_token.cancelled() => return Err(AI_REQUEST_CANCELLED_ERROR.to_string()),
+        response = request_builder.json(&body).send() => response
+            .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?,
+    };
+    let status = response.status();
+    if !status.is_success() {
+        let raw_body = response
+            .text()
+            .await
+            .map_err(|_| ai_provider_response_error())?;
+        return Err(ai_provider_http_status_error(
+            &config,
+            &endpoint,
+            status,
+            &raw_body,
+            api_key.as_deref(),
+        ));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = Vec::<u8>::new();
+    let mut pending_text = String::new();
+    let mut visible_started = false;
+    let mut output_bytes = 0usize;
+
+    loop {
+        let next = tokio::select! {
+            _ = cancellation_token.cancelled() => return Err(AI_REQUEST_CANCELLED_ERROR.to_string()),
+            next = stream.next() => next,
+        };
+        let Some(chunk) = next else { break };
+        let chunk = chunk.map_err(|_| ai_provider_response_error())?;
+        buffer.extend_from_slice(&chunk);
+        if buffer.len() > MAX_AI_STREAM_BUFFER_BYTES {
+            return Err("AI stream frame exceeded the 1 MB buffer limit.".to_string());
+        }
+
+        while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+            let line = buffer.drain(..=newline).collect::<Vec<_>>();
+            let line = String::from_utf8_lossy(&line);
+            let line = line.trim().trim_start_matches("data:").trim();
+            if line.is_empty() || line == "[DONE]" || line.starts_with("event:") {
+                continue;
+            }
+            if let Ok(payload) = serde_json::from_str::<serde_json::Value>(line) {
+                publish_stream_payload(
+                    app,
+                    request_id,
+                    &config.provider_type,
+                    &payload,
+                    &mut pending_text,
+                    &mut visible_started,
+                    &mut output_bytes,
+                )?;
+            }
+        }
+    }
+
+    if !buffer.is_empty() {
+        let line = String::from_utf8_lossy(&buffer);
+        let line = line.trim().trim_start_matches("data:").trim();
+        if let Ok(payload) = serde_json::from_str::<serde_json::Value>(line) {
+            publish_stream_payload(
+                app,
+                request_id,
+                &config.provider_type,
+                &payload,
+                &mut pending_text,
+                &mut visible_started,
+                &mut output_bytes,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1410,6 +1768,43 @@ mod tests {
     }
 
     #[test]
+    fn streaming_body_is_enabled_and_think_chunks_stay_private() {
+        let provider = sample_provider(AIProviderType::OpenAI);
+        let endpoint = resolve_provider_endpoint(&provider);
+        let body = streaming_request_body(
+            &provider,
+            &endpoint,
+            "system",
+            "prompt",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(
+            body.get("stream").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+
+        let mut pending = String::new();
+        let mut visible = false;
+        assert_eq!(
+            take_visible_stream_delta("<thi", &mut pending, &mut visible),
+            ""
+        );
+        assert_eq!(
+            take_visible_stream_delta(
+                "nk>private scratch</think>Hello",
+                &mut pending,
+                &mut visible,
+            ),
+            "Hello"
+        );
+        assert_eq!(
+            take_visible_stream_delta(" world", &mut pending, &mut visible),
+            " world"
+        );
+        assert!(!pending.contains("Hello"));
+    }
+
+    #[test]
     fn extracts_openai_reasoning_field() {
         let payload = json!({
             "choices": [{
@@ -1526,6 +1921,15 @@ mod tests {
         assert_eq!(
             resolve_provider_endpoint(&custom),
             "https://example.com/v1/chat/completions"
+        );
+
+        let gemini = sample_provider(AIProviderType::Gemini);
+        assert_eq!(
+            streaming_endpoint(
+                &gemini,
+                "https://generativelanguage.googleapis.com/v1beta/models/demo-model:generateContent?key=demo"
+            ),
+            "https://generativelanguage.googleapis.com/v1beta/models/demo-model:streamGenerateContent?key=demo&alt=sse"
         );
     }
 

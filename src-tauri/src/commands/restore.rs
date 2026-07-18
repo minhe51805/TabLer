@@ -1,3 +1,4 @@
+use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::DatabaseType;
 use crate::utils::sql::split_sql_statements;
@@ -72,6 +73,10 @@ pub async fn restore_database_sql(
     db_type: DatabaseType,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<RestoreResult, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::BackupRestore)
+        .await
+        .map_err(|e| e.to_string())?;
     if db_type == DatabaseType::OpenSearch {
         return Err(
             "SQL restore is not supported by the read-only OpenSearch plugin driver.".to_string(),

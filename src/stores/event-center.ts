@@ -1,6 +1,6 @@
 /**
  * EventCenter — Cross-component event bus.
- * Inspired by Swift's NotificationCenter in TablePro.
+ * Provides TableR's typed cross-component event channel.
  *
  * Provides a typed custom event system so components can communicate
  * without props drilling or direct imports.

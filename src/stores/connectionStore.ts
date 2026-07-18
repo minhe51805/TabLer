@@ -17,6 +17,7 @@ import {
 } from "../utils/schema-cache";
 import { useGlobalErrorStore } from "./globalErrorStore";
 import { useUIStore } from "./uiStore";
+import { invalidateConnectionCapabilities } from "../hooks/useConnectionCapabilities";
 
 const FRONTEND_TIMEOUTS = {
   connection: 30_000,
@@ -30,6 +31,14 @@ const inFlightSchemaObjectFetches = new Map<string, Promise<void>>();
 const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig => ({
   ...config,
   password: undefined,
+  ssh_config: config.ssh_config
+    ? {
+        ...config.ssh_config,
+        password: undefined,
+        privateKey: undefined,
+        passphrase: undefined,
+      }
+    : undefined,
 });
 
 export function deriveConnectionName(config: ConnectionConfig): string {
@@ -210,7 +219,19 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
     try {
       const connections = get().connections;
-      await invokeMutation("connect_database", { config: normalizedConfig });
+      const requestId = crypto.randomUUID();
+      await invokeWithTimeout(
+        "connect_database",
+        { config: normalizedConfig, requestId },
+        FRONTEND_TIMEOUTS.connection,
+        "Connecting to database",
+        {
+          onTimeout: () => {
+            void invokeMutation("cancel_connection_attempt", { requestId });
+          },
+        },
+      );
+      invalidateConnectionCapabilities(normalizedConfig.id);
 
       const connectedIds = new Set(get().connectedIds);
       connectedIds.add(normalizedConfig.id);
@@ -268,6 +289,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
     try {
       await invokeMutation("connect_saved_connection", { connectionId });
+      invalidateConnectionCapabilities(connectionId);
       const connectedIds = new Set(get().connectedIds);
       connectedIds.add(connectionId);
       set({
@@ -299,6 +321,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   disconnectFromDatabase: async (connectionId) => {
     try {
       await invokeMutation("disconnect_database", { connectionId });
+      invalidateConnectionCapabilities(connectionId);
       set(disconnectedPatch(get(), connectionId));
       useUIStore.getState().removeTabsForConnection(connectionId);
     } catch (error) {
@@ -306,13 +329,20 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
 
-  testConnection: async (config) =>
-    invokeWithTimeout<string>(
+  testConnection: async (config) => {
+    const requestId = crypto.randomUUID();
+    return invokeWithTimeout<string>(
       "test_connection",
-      { config: resolveConnectionConfig(config) },
+      { config: resolveConnectionConfig(config), requestId },
       FRONTEND_TIMEOUTS.connection,
       "Testing database connection",
-    ),
+      {
+        onTimeout: () => {
+          void invokeMutation("cancel_connection_attempt", { requestId });
+        },
+      },
+    );
+  },
 
   deleteSavedConnection: async (connectionId) => {
     try {

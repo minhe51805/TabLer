@@ -20,6 +20,8 @@ export interface PersistedTab {
   database?: string;
   tableName?: string;
   content?: string;
+  cursorLine?: number;
+  cursorColumn?: number;
   scrollTop?: number;
   panelHeights?: { editorHeight?: number; resultsHeight?: number };
   isActive: boolean;
@@ -42,6 +44,8 @@ export function buildPersistableTabs(tabs: Tab[], activeTabId: string | null): P
       database: tab.database,
       tableName: tab.tableName,
       content: persistableContent(tab.content),
+      cursorLine: tab.editorCursor?.lineNumber,
+      cursorColumn: tab.editorCursor?.column,
       isActive: tab.id === activeTabId,
       createdAtMs: Date.now(),
     }));
@@ -89,7 +93,14 @@ export function restoreTabSnapshot(snapshot: PersistedTab, connectionId: string)
 
   switch (snapshot.tabType) {
     case "query":
-      return { ...baseTab, content: snapshot.content };
+      return {
+        ...baseTab,
+        content: snapshot.content,
+        editorCursor:
+          snapshot.cursorLine && snapshot.cursorColumn
+            ? { lineNumber: snapshot.cursorLine, column: snapshot.cursorColumn }
+            : undefined,
+      };
     case "table":
     case "structure":
       return snapshot.tableName ? { ...baseTab, tableName: snapshot.tableName } : null;

@@ -21,11 +21,26 @@ const queryResult = {
   truncated: false,
 };
 
+function safetyDecision(sql: string) {
+  const schema = /^\s*(CREATE|ALTER|DROP|TRUNCATE)/i.test(sql);
+  const readOnly = /^\s*(SELECT|SHOW|EXPLAIN|WITH|DESCRIBE)/i.test(sql);
+  return {
+    statements: [{ sql, kind: schema ? "schema" : readOnly ? "read" : "write", readOnly }],
+    readOnly,
+    hasSchemaMutation: schema,
+    parseError: null,
+  };
+}
+
 describe("queryStore", () => {
   beforeEach(() => {
     invokeMutationMock.mockReset();
     invokeWithTimeoutMock.mockReset();
-    useQueryStore.setState({ isExecutingQuery: false });
+    invokeWithTimeoutMock.mockImplementation((command: string, args: { sql?: string }) => {
+      if (command === "classify_sql_safety") return Promise.resolve(safetyDecision(args.sql || ""));
+      return Promise.resolve(queryResult);
+    });
+    useQueryStore.setState({ isExecutingQuery: false, activeQueryRequestId: null });
     useSafeModeStore.getState().setGlobalLevel(1);
     useSafeModeStore.getState().clearConnectionOverrides();
   });
@@ -35,14 +50,19 @@ describe("queryStore", () => {
 
     const promise = useQueryStore.getState().executeQuery("connection-1", "select 1");
     await Promise.resolve();
+    await Promise.resolve();
     expect(useQueryStore.getState().isExecutingQuery).toBe(true);
 
     await expect(promise).resolves.toEqual(queryResult);
     expect(useQueryStore.getState().isExecutingQuery).toBe(false);
-    expect(invokeMutationMock).toHaveBeenCalledWith("execute_query", {
-      connectionId: "connection-1",
-      sql: "select 1",
-    });
+    expect(invokeMutationMock).toHaveBeenCalledWith(
+      "execute_query",
+      expect.objectContaining({
+        connectionId: "connection-1",
+        sql: "select 1",
+        requestId: expect.any(String),
+      }),
+    );
   });
 
   it("always clears the execution flag after a backend error", async () => {
@@ -154,6 +174,57 @@ describe("queryStore", () => {
     await expect(useQueryStore.getState().cancelCsvImport("csv-operation-1")).resolves.toBe(true);
     expect(invokeMutationMock).toHaveBeenCalledWith("cancel_csv_import", {
       operationId: "csv-operation-1",
+    });
+  });
+
+  it("streams selected CSV files without loading rows into frontend memory", async () => {
+    invokeMutationMock.mockResolvedValue(50_000);
+
+    await expect(useQueryStore.getState().importCsvFileAtomically("connection-1", {
+      filePath: "C:\\imports\\users.csv",
+      table: "users",
+      database: "app",
+      delimiter: "csv",
+      hasHeaders: true,
+      mappings: [{ sourceIndex: 0, targetColumn: "email" }],
+    }, "csv-file-1")).resolves.toBe(50_000);
+
+    expect(invokeMutationMock).toHaveBeenCalledWith("import_csv_file_atomically", {
+      connectionId: "connection-1",
+      operationId: "csv-file-1",
+      request: {
+        filePath: "C:\\imports\\users.csv",
+        table: "users",
+        database: "app",
+        delimiter: "csv",
+        hasHeaders: true,
+        mappings: [{ sourceIndex: 0, targetColumn: "email" }],
+      },
+    });
+  });
+
+  it("exports the full table through the backend instead of the loaded page", async () => {
+    invokeMutationMock.mockResolvedValue({ filePath: "C:\\exports\\users.csv", format: "csv", rowCount: 790 });
+
+    await expect(useQueryStore.getState().exportTableData("connection-1", {
+      table: "users",
+      database: "app",
+      format: "csv",
+      orderBy: "id",
+      orderDir: "ASC",
+    }, "export-1")).resolves.toMatchObject({ rowCount: 790 });
+
+    expect(invokeMutationMock).toHaveBeenCalledWith("export_table_data", {
+      connectionId: "connection-1",
+      operationId: "export-1",
+      request: {
+        table: "users",
+        database: "app",
+        format: "csv",
+        orderBy: "id",
+        orderDir: "ASC",
+        filter: null,
+      },
     });
   });
 

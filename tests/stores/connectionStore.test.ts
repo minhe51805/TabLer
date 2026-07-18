@@ -90,7 +90,7 @@ describe("connectionStore", () => {
       currentDatabase: "main",
       tables: [previousTable],
     });
-    invokeMutationMock.mockRejectedValue(new Error("connection refused"));
+    invokeWithTimeoutMock.mockRejectedValue(new Error("connection refused"));
 
     await expect(
       useConnectionStore.getState().connectToDatabase(connection({ id: "next" })),
@@ -107,21 +107,26 @@ describe("connectionStore", () => {
 
   it("derives the connection name after resolving environment fields", async () => {
     (window as unknown as Record<string, unknown>).ENV_DB_HOST = "db.internal";
-    invokeMutationMock.mockResolvedValue(undefined);
-    invokeWithTimeoutMock.mockResolvedValue([]);
+    invokeWithTimeoutMock.mockImplementation((command: string) =>
+      Promise.resolve(command === "connect_database" ? undefined : []),
+    );
 
     await useConnectionStore
       .getState()
       .connectToDatabase(connection({ host: "$DB_HOST", database: "analytics" }));
 
-    expect(invokeMutationMock).toHaveBeenCalledWith(
+    expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
       "connect_database",
       expect.objectContaining({
         config: expect.objectContaining({
           host: "db.internal",
           name: "POSTGRESQL db.internal / analytics",
         }),
+        requestId: expect.any(String),
       }),
+      30_000,
+      "Connecting to database",
+      expect.objectContaining({ onTimeout: expect.any(Function) }),
     );
   });
 

@@ -13,7 +13,7 @@ describe("agent finalization", () => {
         args: {
           response: "Here is the answer.",
           sql: "SELECT count(*) FROM users",
-          metricsWidgets: [{ title: "Users", type: "scoreboard", query: "SELECT count(*) FROM users" }, { title: "", query: "SELECT 1" }],
+          metricsWidgets: [{ title: "Users", type: "scoreboard", query: "SELECT count(*) AS total FROM users", measures: ["total"], transforms: ["count"], limit: 1 }, { title: "", query: "SELECT 1" }],
         },
       },
       initialSteps: [{ step: 1, action: "list_tables", message: "Inspect", observation: "TABLES=users" }],
@@ -26,7 +26,15 @@ describe("agent finalization", () => {
     expect(result.rawResponse).toBe("Here is the answer.");
     expect(result.rawResponse).not.toContain("Agent Trace");
     expect(result.agentSteps).toHaveLength(1);
-    expect(result.agentWidgets).toEqual([{ title: "Users", type: "scoreboard", query: "SELECT count(*) FROM users" }]);
+    expect(result.agentWidgets).toEqual([{
+      title: "Users",
+      type: "scoreboard",
+      query: "SELECT count(*) AS total FROM users",
+      dimension: undefined,
+      measures: ["total"],
+      transforms: ["count"],
+      limit: 1,
+    }]);
   });
 
   it("repairs SQL that references a table outside the verified schema", async () => {

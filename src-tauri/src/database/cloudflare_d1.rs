@@ -297,7 +297,7 @@ impl CloudflareD1Driver {
                     .columns
                     .iter()
                     .cloned()
-                    .zip(row.into_iter())
+                    .zip(row)
                     .collect::<JsonMap<String, JsonValue>>()
             })
             .collect::<Vec<_>>())

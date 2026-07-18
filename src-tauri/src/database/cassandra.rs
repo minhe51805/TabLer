@@ -231,7 +231,7 @@ impl CassandraDriver {
                 result
                     .columns
                     .iter()
-                    .zip(row.into_iter())
+                    .zip(row)
                     .map(|(column, value)| (column.name.clone(), value))
                     .collect::<JsonMap<String, JsonValue>>()
             })

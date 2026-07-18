@@ -10,16 +10,63 @@ use rfd::FileDialog;
 use sqlx::mysql::{MySqlConnectOptions, MySqlConnection, MySqlSslMode};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 use sqlx::{ConnectOptions, Connection, Executor};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
+use tokio::sync::Mutex;
 use tokio::task;
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(45);
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const USE_DATABASE_TIMEOUT: Duration = Duration::from_secs(15);
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[derive(Default)]
+pub struct ConnectionAttemptCancellationState {
+    active: Mutex<HashMap<String, CancellationToken>>,
+}
+
+impl ConnectionAttemptCancellationState {
+    async fn register(&self, request_id: &str, token: CancellationToken) {
+        if let Some(previous) = self
+            .active
+            .lock()
+            .await
+            .insert(request_id.to_string(), token)
+        {
+            previous.cancel();
+        }
+    }
+
+    async fn finish(&self, request_id: &str) {
+        self.active.lock().await.remove(request_id);
+    }
+
+    async fn cancel(&self, request_id: &str) -> bool {
+        let token = self.active.lock().await.get(request_id).cloned();
+        if let Some(token) = token {
+            token.cancel();
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn cancel_connection_attempt(
+    request_id: String,
+    cancellation_state: State<'_, ConnectionAttemptCancellationState>,
+) -> Result<bool, String> {
+    let request_id = request_id.trim();
+    if request_id.is_empty() {
+        return Err("Request ID cannot be empty.".to_string());
+    }
+    Ok(cancellation_state.cancel(request_id).await)
+}
 
 #[tauri::command]
 pub async fn get_connection_capabilities(
@@ -88,6 +135,74 @@ fn connection_engine_label(db_type: DatabaseType) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionFailureStage {
+    Dns,
+    Tcp,
+    Tunnel,
+    Tls,
+    Authentication,
+    DatabaseSelection,
+    Timeout,
+    Unknown,
+}
+
+fn classify_connection_failure(
+    config: &ConnectionConfig,
+    normalized: &str,
+) -> ConnectionFailureStage {
+    if config.ssh_config.as_ref().is_some_and(|ssh| ssh.enabled)
+        && ["ssh", "handshake", "tunnel", "channel"]
+            .iter()
+            .any(|token| normalized.contains(token))
+    {
+        return ConnectionFailureStage::Tunnel;
+    }
+    if [
+        "dns",
+        "failed to lookup address",
+        "name or service not known",
+        "nodename nor servname",
+        "no such host",
+    ]
+    .iter()
+    .any(|token| normalized.contains(token))
+    {
+        return ConnectionFailureStage::Dns;
+    }
+    if normalized.contains("10061")
+        || normalized.contains("actively refused")
+        || normalized.contains("connection refused")
+        || normalized.contains("network is unreachable")
+    {
+        return ConnectionFailureStage::Tcp;
+    }
+    if normalized.contains("certificate")
+        || normalized.contains("tls")
+        || normalized.contains("ssl")
+    {
+        return ConnectionFailureStage::Tls;
+    }
+    if normalized.contains("authentication")
+        || normalized.contains("password")
+        || normalized.contains("access denied")
+        || normalized.contains("auth failed")
+    {
+        return ConnectionFailureStage::Authentication;
+    }
+    if normalized.contains("does not exist")
+        || normalized.contains("unknown database")
+        || normalized.contains("database")
+            && (normalized.contains("not found") || normalized.contains("missing"))
+    {
+        return ConnectionFailureStage::DatabaseSelection;
+    }
+    if normalized.contains("timed out") || normalized.contains("timeout") {
+        return ConnectionFailureStage::Timeout;
+    }
+    ConnectionFailureStage::Unknown
+}
+
 fn format_connection_runtime_error(
     config: &ConnectionConfig,
     error: impl std::fmt::Display,
@@ -96,59 +211,78 @@ fn format_connection_runtime_error(
     let raw = error.to_string();
     let normalized = raw.to_ascii_lowercase();
 
-    if normalized.contains("10061")
-        || normalized.contains("actively refused")
-        || normalized.contains("connection refused")
-    {
-        return format!(
-            "Cannot reach the {} server. Please make sure the service is running and the host/port are correct.",
+    match classify_connection_failure(config, &normalized) {
+        ConnectionFailureStage::Dns => format!(
+            "Connection failed at DNS lookup: the {} host name could not be resolved.", engine
+        ),
+        ConnectionFailureStage::Tcp => format!(
+            "Connection failed at TCP: the {} server refused or could not accept the host/port connection.", engine
+        ),
+        ConnectionFailureStage::Tunnel => format!(
+            "Connection failed at SSH tunnel: verify the bastion host, SSH credentials, and forwarding settings for {}.", engine
+        ),
+        ConnectionFailureStage::Tls => format!(
+            "Connection failed at TLS: {} certificate or SSL negotiation failed.", engine
+        ),
+        ConnectionFailureStage::Authentication => format!(
+            "Connection failed at authentication: verify the {} username and password.", engine
+        ),
+        ConnectionFailureStage::DatabaseSelection => format!(
+            "Connection failed at database selection: the requested {} database was not found.", engine
+        ),
+        ConnectionFailureStage::Timeout => format!(
+            "Connection timed out: {} did not respond before the deadline.", engine
+        ),
+        ConnectionFailureStage::Unknown => format!(
+            "Failed to connect to {}. Please verify the host, port, credentials, and database settings.",
             engine
-        );
+        ),
+    }
+}
+
+#[cfg(test)]
+mod connection_diagnostic_tests {
+    use super::{
+        classify_connection_failure, ConnectionAttemptCancellationState, ConnectionFailureStage,
+    };
+    use crate::database::models::ConnectionConfig;
+    use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn diagnostics_distinguish_connection_failure_stages() {
+        let config = ConnectionConfig::default();
+        let fixtures = [
+            ("dns: no such host", ConnectionFailureStage::Dns),
+            ("connection refused", ConnectionFailureStage::Tcp),
+            ("certificate verify failed", ConnectionFailureStage::Tls),
+            (
+                "password authentication failed",
+                ConnectionFailureStage::Authentication,
+            ),
+            (
+                "database does not exist",
+                ConnectionFailureStage::DatabaseSelection,
+            ),
+            ("operation timed out", ConnectionFailureStage::Timeout),
+        ];
+        for (error, expected) in fixtures {
+            assert_eq!(classify_connection_failure(&config, error), expected);
+        }
     }
 
-    if normalized.contains("authentication")
-        || normalized.contains("password")
-        || normalized.contains("access denied")
-        || normalized.contains("auth failed")
-    {
-        return format!(
-            "{} authentication failed. Please verify the username and password.",
-            engine
-        );
+    #[tokio::test]
+    async fn connection_cancellation_replaces_and_cleans_up_requests() {
+        let state = ConnectionAttemptCancellationState::default();
+        let first = CancellationToken::new();
+        let second = CancellationToken::new();
+        state.register("connect-1", first.clone()).await;
+        state.register("connect-1", second.clone()).await;
+        assert!(first.is_cancelled());
+        assert!(state.cancel("connect-1").await);
+        assert!(second.is_cancelled());
+        state.finish("connect-1").await;
+        assert!(!state.cancel("connect-1").await);
     }
-
-    if normalized.contains("does not exist")
-        || normalized.contains("unknown database")
-        || normalized.contains("database")
-            && (normalized.contains("not found") || normalized.contains("missing"))
-    {
-        return format!(
-            "The requested {} database could not be found. Please verify the database name.",
-            engine
-        );
-    }
-
-    if normalized.contains("certificate")
-        || normalized.contains("tls")
-        || normalized.contains("ssl")
-    {
-        return format!(
-            "{} TLS/SSL negotiation failed. Please verify the server certificate and SSL settings.",
-            engine
-        );
-    }
-
-    if normalized.contains("timed out") || normalized.contains("timeout") {
-        return format!(
-            "{} did not respond in time. Please verify the network path and try again.",
-            engine
-        );
-    }
-
-    format!(
-        "Failed to connect to {}. Please verify the host, port, credentials, and database settings.",
-        engine
-    )
 }
 
 fn format_local_admin_connection_error(
@@ -563,9 +697,11 @@ async fn create_local_mysql_database(
 #[tauri::command]
 pub async fn connect_database(
     mut config: ConnectionConfig,
+    request_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
+    cancellation_state: State<'_, ConnectionAttemptCancellationState>,
 ) -> Result<String, String> {
     config.resolve_env_vars();
     config.fill_generated_name();
@@ -577,10 +713,25 @@ pub async fn connect_database(
         .check(&connection_rate_limit_key(&config))
         .await?;
 
-    timeout(CONNECTION_TIMEOUT, db_manager.connect(&config))
-        .await
-        .map_err(|_| "Connection attempt timed out after 45 seconds.".to_string())?
-        .map_err(|e| format_connection_runtime_error(&config, e))?;
+    let request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let token = CancellationToken::new();
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.register(request_id, token.clone()).await;
+    }
+    let connect_result = tokio::select! {
+        _ = token.cancelled() => Err("Connection attempt cancelled.".to_string()),
+        result = timeout(CONNECTION_TIMEOUT, db_manager.connect(&config)) => result
+            .map_err(|_| "Connection attempt timed out after 45 seconds.".to_string())
+            .and_then(|result| result.map_err(|error| format_connection_runtime_error(&config, error))),
+    };
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.finish(request_id).await;
+    }
+    connect_result?;
 
     let storage = conn_storage.inner().clone();
     let config_to_save = config.clone();
@@ -622,7 +773,9 @@ pub async fn disconnect_database(
 #[tauri::command]
 pub async fn test_connection(
     mut config: ConnectionConfig,
+    request_id: Option<String>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
+    cancellation_state: State<'_, ConnectionAttemptCancellationState>,
 ) -> Result<String, String> {
     config.resolve_env_vars();
     config.fill_generated_name();
@@ -635,10 +788,25 @@ pub async fn test_connection(
         .await?;
 
     let temp_manager = DatabaseManager::new();
-    timeout(CONNECTION_TIMEOUT, temp_manager.connect(&config))
-        .await
-        .map_err(|_| "Connection test timed out after 45 seconds.".to_string())?
-        .map_err(|e| format_connection_runtime_error(&config, e))?;
+    let request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let token = CancellationToken::new();
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.register(request_id, token.clone()).await;
+    }
+    let test_result = tokio::select! {
+        _ = token.cancelled() => Err("Connection test cancelled.".to_string()),
+        result = timeout(CONNECTION_TIMEOUT, temp_manager.connect(&config)) => result
+            .map_err(|_| "Connection test timed out after 45 seconds.".to_string())
+            .and_then(|result| result.map_err(|error| format_connection_runtime_error(&config, error))),
+    };
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.finish(request_id).await;
+    }
+    test_result?;
     timeout(DISCONNECT_TIMEOUT, temp_manager.disconnect(&config.id))
         .await
         .map_err(|_| "Connection test cleanup timed out after 15 seconds.".to_string())?

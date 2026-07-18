@@ -27,7 +27,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
     try {
       const picked = await open({
         multiple: false,
-        filters: [{ name: "TableR Connection Export", extensions: ["tabler-connections", "tablepro"] }],
+        filters: [{ name: "TableR Connection Export", extensions: ["tabler-connections"] }],
       });
       if (picked && typeof picked === "string") {
         setFilePath(picked);
@@ -108,7 +108,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
           </div>
           <div className="flex-1">
             <h2 className="text-base font-semibold text-[var(--text-primary)]">Import Connections</h2>
-            <p className="text-xs text-[var(--text-muted)]">Load connections from an encrypted .tablepro file</p>
+            <p className="text-xs text-[var(--text-muted)]">Load connections from an encrypted TableR file</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-muted)]">
             <X className="w-4 h-4" />
@@ -207,9 +207,9 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
               >
                 <FileUp className="w-10 h-10 mx-auto mb-3 text-[var(--text-muted)]" />
                 <p className="text-sm font-medium text-[var(--text-primary)]">
-                  {filePath ? filePath.split(/[/\\]/).pop() : "Click to select a .tablepro file"}
+                  {filePath ? filePath.split(/[/\\]/).pop() : "Click to select a .tabler-connections file"}
                 </p>
-                <p className="text-xs text-[var(--text-muted)] mt-1">TableR Connection File (*.tablepro)</p>
+                <p className="text-xs text-[var(--text-muted)] mt-1">TableR Connection File (*.tabler-connections)</p>
               </div>
 
               {filePath && (

@@ -3,8 +3,10 @@ use serde::{Deserialize, Serialize};
 use ssh2::Session;
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +40,7 @@ pub struct SshTunnelManager {
 
 pub struct SshSessionContext {
     pub session: Arc<Session>,
+    active: AtomicBool,
 }
 
 impl SshTunnelManager {
@@ -78,6 +81,7 @@ impl SshTunnelManager {
 
         let ctx = Arc::new(SshSessionContext {
             session: Arc::new(sess),
+            active: AtomicBool::new(true),
         });
         let mut guard = self.next_id.lock().unwrap();
         let handle = TunnelHandle(*guard);
@@ -90,7 +94,8 @@ impl SshTunnelManager {
 
     pub fn disconnect_tunnel(&self, handle: TunnelHandle) -> Result<()> {
         let mut map = self.tunnels.lock().unwrap();
-        if map.remove(&handle).is_some() {
+        if let Some(context) = map.remove(&handle) {
+            context.active.store(false, Ordering::Release);
             Ok(())
         } else {
             Err(anyhow!("Tunnel handle not found: {:?}", handle))
@@ -112,12 +117,13 @@ impl SshTunnelManager {
         };
 
         let listener = TcpListener::bind(format!("127.0.0.1:{}", local_port.unwrap_or(0)))?;
+        listener.set_nonblocking(true)?;
         let actual_port = listener.local_addr()?.port();
 
         thread::spawn(move || {
-            for stream_res in listener.incoming() {
-                match stream_res {
-                    Ok(local_stream) => {
+            while ctx.active.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((local_stream, _)) => {
                         let sess = ctx.session.clone();
                         let remote_h = remote_host.clone();
                         let remote_p = remote_port;
@@ -145,8 +151,12 @@ impl SshTunnelManager {
                             }
                         });
                     }
-                    Err(e) => {
-                        log::error!("Local listener error: {}", e);
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(25));
+                    }
+                    Err(error) => {
+                        log::error!("Local listener error: {}", error);
+                        break;
                     }
                 }
             }

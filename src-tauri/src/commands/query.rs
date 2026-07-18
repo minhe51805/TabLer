@@ -3,34 +3,48 @@ use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryParameter;
 use crate::database::models::QueryResult;
 use crate::database::parameterized_query::{compile_parameterized_query, PlaceholderStyle};
-use crate::utils::sql::split_sql_statements;
+use crate::utils::sql::{classify_sql, split_sql_statements, SqlSafetyDecision, SqlStatementKind};
+use std::collections::HashMap;
 use tauri::State;
+use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const READ_ONLY_QUERY_TIMEOUT: Duration = Duration::from_secs(180);
 const MUTATING_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
 
-const SANDBOX_BLOCKED_PREFIXES: [&str; 18] = [
-    "USE",
-    "ATTACH",
-    "DETACH",
-    "SET SEARCH_PATH",
-    "SET ROLE",
-    "SET SESSION",
-    "SET NAMES",
-    "SET CHARACTER SET",
-    "BEGIN",
-    "START TRANSACTION",
-    "COMMIT",
-    "ROLLBACK",
-    "SAVEPOINT",
-    "RELEASE SAVEPOINT",
-    "GRANT",
-    "REVOKE",
-    "CREATE USER",
-    "DROP USER",
-];
+#[derive(Default)]
+pub struct QueryCancellationState {
+    active: Mutex<HashMap<String, CancellationToken>>,
+}
+
+impl QueryCancellationState {
+    async fn register(&self, request_id: &str, token: CancellationToken) {
+        if let Some(previous) = self
+            .active
+            .lock()
+            .await
+            .insert(request_id.to_string(), token)
+        {
+            previous.cancel();
+        }
+    }
+
+    async fn finish(&self, request_id: &str) {
+        self.active.lock().await.remove(request_id);
+    }
+
+    async fn cancel(&self, request_id: &str) -> bool {
+        let token = self.active.lock().await.get(request_id).cloned();
+        if let Some(token) = token {
+            token.cancel();
+            true
+        } else {
+            false
+        }
+    }
+}
 
 fn format_query_connection_error(error: impl std::fmt::Display) -> String {
     let normalized = error.to_string().to_ascii_lowercase();
@@ -109,53 +123,21 @@ fn format_query_runtime_error(error: impl std::fmt::Display) -> String {
     }
 }
 
-fn strip_leading_sql_noise(statement: &str) -> Result<&str, String> {
-    let mut remaining = statement;
-
-    loop {
-        remaining = remaining.trim_start_matches(char::is_whitespace);
-
-        if let Some(after_line_comment) = remaining.strip_prefix("--") {
-            if let Some((_, next_line)) = after_line_comment.split_once('\n') {
-                remaining = next_line;
-                continue;
-            }
-            return Err("Sandbox mode does not allow comment-only statements.".to_string());
-        }
-
-        if let Some(after_block_comment) = remaining.strip_prefix("/*") {
-            if let Some(block_end) = after_block_comment.find("*/") {
-                remaining = &after_block_comment[block_end + 2..];
-                continue;
-            }
-            return Err("Sandbox mode found an unterminated block comment.".to_string());
-        }
-
-        return Ok(remaining);
-    }
-}
-
 fn validate_sandbox_statement(statement: &str) -> Result<(), String> {
-    let fragments = split_sql_statements(statement);
-    if fragments.len() != 1 {
+    let decision = classify_sql(statement);
+    if let Some(error) = decision.parse_error {
+        return Err(format!("Sandbox gateway could not parse SQL: {error}"));
+    }
+    if decision.statements.len() != 1 {
         return Err(
             "Sandbox gateway requires exactly one SQL statement per execution item.".to_string(),
         );
     }
-
-    let normalized = strip_leading_sql_noise(&fragments[0])?.to_ascii_uppercase();
-    if normalized.is_empty() {
-        return Err("Sandbox gateway requires a non-empty SQL statement.".to_string());
-    }
-
-    if normalized.starts_with("PRAGMA") && normalized.contains('=') {
-        return Err("Sandbox gateway only allows read-only PRAGMA statements.".to_string());
-    }
-
-    if SANDBOX_BLOCKED_PREFIXES
-        .iter()
-        .any(|prefix| normalized.starts_with(prefix))
-    {
+    let statement = &decision.statements[0];
+    if matches!(
+        statement.kind,
+        SqlStatementKind::Session | SqlStatementKind::Transaction | SqlStatementKind::Unknown
+    ) {
         return Err(
             "Sandbox gateway blocks session-control and access-control statements such as USE, ATTACH, SET search_path, transaction commands, and GRANT/REVOKE."
                 .to_string(),
@@ -165,46 +147,26 @@ fn validate_sandbox_statement(statement: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn is_likely_read_only_statement(statement: &str) -> bool {
-    let Ok(normalized) = strip_leading_sql_noise(statement).map(|value| value.to_ascii_uppercase())
-    else {
-        return false;
-    };
-
-    if normalized.is_empty() {
-        return false;
+fn validate_sandbox_batch(statements: &[String], require_read_only: bool) -> Result<(), String> {
+    if statements.is_empty() {
+        return Err("Sandbox execution requires at least one SQL statement.".to_string());
     }
-
-    if normalized.starts_with("PRAGMA") {
-        return !normalized.contains('=');
+    for statement in statements {
+        validate_sandbox_statement(statement)?;
     }
-
-    if normalized.starts_with("WITH") {
-        return ![
-            "INSERT ",
-            "UPDATE ",
-            "DELETE ",
-            "MERGE ",
-            "ALTER ",
-            "CREATE ",
-            "DROP ",
-            "TRUNCATE ",
-        ]
-        .iter()
-        .any(|keyword| normalized.contains(keyword));
+    if require_read_only {
+        let combined = statements.join(";\n");
+        let decision = classify_sql(&combined);
+        if decision.parse_error.is_some() || !decision.read_only {
+            return Err("This execution boundary only permits read-only SQL.".to_string());
+        }
     }
-
-    normalized.starts_with("SELECT")
-        || normalized.starts_with("SHOW")
-        || normalized.starts_with("EXPLAIN")
-        || normalized.starts_with("DESCRIBE")
+    Ok(())
 }
 
 fn timeout_for_statements<'a>(statements: impl Iterator<Item = &'a str>) -> Duration {
-    if statements
-        .filter(|statement| !statement.trim().is_empty())
-        .all(is_likely_read_only_statement)
-    {
+    let sql = statements.collect::<Vec<_>>().join(";\n");
+    if classify_sql(&sql).read_only {
         READ_ONLY_QUERY_TIMEOUT
     } else {
         MUTATING_QUERY_TIMEOUT
@@ -212,10 +174,17 @@ fn timeout_for_statements<'a>(statements: impl Iterator<Item = &'a str>) -> Dura
 }
 
 #[tauri::command]
+pub fn classify_sql_safety(sql: String) -> SqlSafetyDecision {
+    classify_sql(&sql)
+}
+
+#[tauri::command]
 pub async fn execute_query(
     connection_id: String,
     sql: String,
+    request_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, QueryCancellationState>,
 ) -> Result<QueryResult, String> {
     let operation_id = Uuid::new_v4();
     db_manager
@@ -239,9 +208,21 @@ pub async fn execute_query(
     })?;
     let statements = split_sql_statements(&sql);
     let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
-    let result = timeout(timeout_window, driver.execute_query(&sql))
-        .await
-        .map_err(|_| {
+    let request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let cancellation_token = CancellationToken::new();
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state
+            .register(request_id, cancellation_token.clone())
+            .await;
+    }
+    let result = tokio::select! {
+        _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
+        result = timeout(timeout_window, driver.execute_query(&sql)) => result
+            .map_err(|_| {
             let err_msg = format!(
                 "Query timed out after {} seconds.",
                 timeout_window.as_secs()
@@ -252,8 +233,8 @@ pub async fn execute_query(
                 err_msg
             );
             err_msg
-        })?
-        .map_err(|e| {
+        })
+        .and_then(|result| result.map_err(|e| {
             let formatted = format_query_runtime_error(e);
             log::error!(
                 "operation_id={} operation=query.execute status=failed stage=runtime error={}",
@@ -261,7 +242,12 @@ pub async fn execute_query(
                 formatted
             );
             formatted
-        })?;
+        })),
+    };
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.finish(request_id).await;
+    }
+    let result = result?;
     log::info!(
         "operation_id={} operation=query.execute status=succeeded columns={} rows={}",
         operation_id,
@@ -269,6 +255,18 @@ pub async fn execute_query(
         result.rows.len()
     );
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn cancel_query(
+    request_id: String,
+    cancellation_state: State<'_, QueryCancellationState>,
+) -> Result<bool, String> {
+    let request_id = request_id.trim();
+    if request_id.is_empty() {
+        return Err("Request ID cannot be empty.".to_string());
+    }
+    Ok(cancellation_state.cancel(request_id).await)
 }
 
 #[tauri::command]
@@ -325,6 +323,7 @@ pub async fn execute_parameterized_query(
 pub async fn execute_sandboxed_query(
     connection_id: String,
     statements: Vec<String>,
+    require_read_only: Option<bool>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
     let operation_id = Uuid::new_v4();
@@ -338,20 +337,13 @@ pub async fn execute_sandboxed_query(
         connection_id,
         statements.len()
     );
-    if statements.is_empty() {
-        log::error!("operation_id={} operation=query.execute_sandboxed status=failed stage=validation error=No statements supplied", operation_id);
-        return Err("Sandbox execution requires at least one SQL statement.".to_string());
-    }
-
-    for statement in &statements {
-        if let Err(e) = validate_sandbox_statement(statement) {
-            log::error!(
-                "operation_id={} operation=query.execute_sandboxed status=failed stage=validation error={}",
-                operation_id,
-                e
-            );
-            return Err(e);
-        }
+    if let Err(error) = validate_sandbox_batch(&statements, require_read_only.unwrap_or(false)) {
+        log::error!(
+            "operation_id={} operation=query.execute_sandboxed status=failed stage=validation error={}",
+            operation_id,
+            error
+        );
+        return Err(error);
     }
 
     let driver = db_manager.get_driver(&connection_id).await.map_err(|e| {
@@ -396,4 +388,48 @@ pub async fn execute_sandboxed_query(
         result.rows.len()
     );
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_sandbox_batch, validate_sandbox_statement, QueryCancellationState};
+    use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn sandbox_uses_canonical_classifier_for_edge_cases() {
+        assert!(validate_sandbox_statement("-- inspect\nSELECT 1").is_ok());
+        assert!(validate_sandbox_statement(
+            "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed"
+        )
+        .is_ok());
+        assert!(validate_sandbox_statement("SET search_path TO public").is_err());
+        assert!(validate_sandbox_statement("SELECT 1; SELECT 2").is_err());
+        assert!(validate_sandbox_statement("-- no executable SQL").is_err());
+    }
+
+    #[test]
+    fn read_only_sandbox_rejects_mutating_ctes() {
+        let mutating = vec![
+            "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed".to_string(),
+        ];
+        assert!(validate_sandbox_batch(&mutating, true).is_err());
+        assert!(validate_sandbox_batch(&mutating, false).is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancellation_registry_replaces_and_cancels_active_requests() {
+        let state = QueryCancellationState::default();
+        let first = CancellationToken::new();
+        let second = CancellationToken::new();
+
+        state.register("query-1", first.clone()).await;
+        state.register("query-1", second.clone()).await;
+        assert!(first.is_cancelled());
+        assert!(!second.is_cancelled());
+
+        assert!(state.cancel("query-1").await);
+        assert!(second.is_cancelled());
+        state.finish("query-1").await;
+        assert!(!state.cancel("query-1").await);
+    }
 }

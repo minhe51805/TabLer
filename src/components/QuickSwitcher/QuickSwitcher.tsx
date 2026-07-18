@@ -44,6 +44,14 @@ const KIND_LABELS: Record<SwitcherItemKind, string> = {
   connection: "Connection",
 };
 
+function scopedItemId(kind: string, ...parts: Array<string | undefined | null>) {
+  return [kind, ...parts.map((part) => encodeURIComponent(part || ""))].join(":");
+}
+
+function qualifyTableName(name: string, schema?: string) {
+  return name.includes(".") || !schema ? name : `${schema}.${name}`;
+}
+
 interface QuickSwitcherProps {
   /** Called when a saved-query item is selected — app should open it */
   onOpenSavedQuery?: (id: string) => void;
@@ -101,31 +109,37 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
       for (let start = 0; start < visibleTables.length; start += 4) {
         const batch = visibleTables.slice(start, start + 4);
         const results = await Promise.allSettled(
-          batch.map((table) => getTableColumnsPreview(activeConnectionId, table.name, currentDatabase || undefined)),
+          batch.map((table) => getTableColumnsPreview(
+            activeConnectionId,
+            qualifyTableName(table.name, table.schema),
+            currentDatabase || undefined,
+          )),
         );
         results.forEach((result, index) => {
           if (result.status !== "fulfilled") return;
           const table = batch[index];
+          const tableIdentifier = qualifyTableName(table.name, table.schema);
           for (const column of result.value as ColumnDetail[]) {
+            const itemId = scopedItemId("column", activeConnectionId, currentDatabase, table.schema, table.name, column.name);
             nextItems.push({
-              id: `column:${table.name}:${column.name}`,
+              id: itemId,
               kind: "column",
               label: column.name,
               description: `${table.name} - ${column.column_type || column.data_type}`,
               meta: table.schema,
               action: () => {
                 addTab({
-                  id: `structure-${activeConnectionId}-${currentDatabase || ""}-${table.name}`,
+                  id: `structure-${activeConnectionId}-${currentDatabase || ""}-${tableIdentifier}`,
                   type: "structure",
                   title: `${table.name} structure`,
                   connectionId: activeConnectionId,
                   database: currentDatabase || undefined,
-                  tableName: table.name,
+                  tableName: tableIdentifier,
                   structureFocusSection: "columns",
                   structureFocusColumn: column.name,
                   structureFocusToken: crypto.randomUUID(),
                 });
-                addRecentItem(`column:${table.name}:${column.name}`);
+                addRecentItem(itemId);
                 close();
               },
             });
@@ -174,30 +188,33 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
 
     if (activeConnectionId) {
       for (const table of tables) {
+        const tableIdentifier = qualifyTableName(table.name, table.schema);
+        const itemId = scopedItemId("table", activeConnectionId, currentDatabase, table.schema, table.name);
         items.push({
-          id: `table:${table.name}`,
+          id: itemId,
           kind: "table",
           label: table.name,
           description: table.table_type || "Table",
           meta: table.schema,
           action: () => {
             addTab({
-              id: `table-${activeConnectionId}-${currentDatabase || ""}-${table.name}`,
+              id: `table-${activeConnectionId}-${currentDatabase || ""}-${tableIdentifier}`,
               type: "table",
               title: table.name,
               connectionId: activeConnectionId,
               database: currentDatabase || undefined,
-              tableName: table.name,
+              tableName: tableIdentifier,
             });
-            addRecentItem(`table:${table.name}`);
+            addRecentItem(itemId);
             close();
           },
         });
       }
 
       for (const object of schemaObjects) {
+        const itemId = scopedItemId("object", activeConnectionId, currentDatabase, object.schema, object.object_type, object.name);
         items.push({
-          id: `object:${object.object_type}:${object.name}`,
+          id: itemId,
           kind: "schema-object",
           label: object.name,
           description: object.object_type,
@@ -211,7 +228,7 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
               database: currentDatabase || undefined,
               content: object.definition || `-- ${object.object_type} ${object.name}`,
             });
-            addRecentItem(`object:${object.object_type}:${object.name}`);
+            addRecentItem(itemId);
             close();
           },
         });
@@ -222,23 +239,29 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
 
     // Saved queries
     for (const fav of favorites) {
+      if (fav.connectionId && fav.connectionId !== activeConnectionId) continue;
+      if (fav.database && fav.database !== currentDatabase) continue;
+      const itemId = scopedItemId("query", fav.connectionId, fav.database, fav.id);
       items.push({
-        id: `query:${fav.id}`,
+        id: itemId,
         kind: "saved-query",
         label: fav.name,
         description: fav.sql.replace(/\s+/g, " ").trim().slice(0, 80),
-        meta: fav.tags.length > 0 ? fav.tags.join(", ") : undefined,
+        meta: [fav.database, fav.tags.length > 0 ? fav.tags.join(", ") : undefined].filter(Boolean).join(" - ") || undefined,
         action: () => {
           onOpenSavedQuery?.(fav.id);
-          addRecentItem(`query:${fav.id}`);
+          addRecentItem(itemId);
           close();
         },
       });
     }
 
     for (const entry of historyEntries) {
+      if (activeConnectionId && entry.connection_id !== activeConnectionId) continue;
+      if (entry.database && currentDatabase && entry.database !== currentDatabase) continue;
+      const itemId = scopedItemId("history", entry.connection_id, entry.database, String(entry.id ?? entry.executed_at));
       items.push({
-        id: `history:${entry.id ?? entry.executed_at}`,
+        id: itemId,
         kind: "history",
         label: entry.query_text.replace(/\s+/g, " ").trim().slice(0, 72) || "SQL query",
         description: entry.error || `${entry.duration_ms} ms - ${entry.executed_at}`,
@@ -252,7 +275,7 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
             database: entry.database,
             content: entry.query_text,
           });
-          addRecentItem(`history:${entry.id ?? entry.executed_at}`);
+          addRecentItem(itemId);
           close();
         },
       });
@@ -355,16 +378,21 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
+            role="combobox"
+            aria-label="Search workspace"
+            aria-controls="quick-switcher-results"
+            aria-expanded="true"
+            aria-activedescendant={filteredItems[selectedIndex] ? `quick-switcher-option-${selectedIndex}` : undefined}
           />
           {searchQuery && (
-            <button type="button" className="qs-clear-btn" onClick={() => setSearchQuery("")}>
+            <button type="button" className="qs-clear-btn" aria-label="Clear search" onClick={() => setSearchQuery("")}>
               <X size={14} />
             </button>
           )}
         </div>
 
         {/* List */}
-        <div className="qs-list" ref={listRef}>
+        <div className="qs-list" id="quick-switcher-results" role="listbox" ref={listRef}>
           {filteredItems.length === 0 ? (
             <div className="qs-empty">
               {searchQuery ? "No results found" : "No items available"}
@@ -391,6 +419,7 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
                     return (
                       <div
                         key={item.id}
+                        id={`quick-switcher-option-${idx}`}
                         data-idx={idx}
                         className={`qs-item ${isSelected ? "selected" : ""}`}
                         role="option"

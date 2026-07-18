@@ -1,5 +1,6 @@
 import { browser, $ } from "@wdio/globals";
 import path from "node:path";
+import AxeBuilder from "@axe-core/webdriverio";
 
 describe("TableR desktop workspace smoke", () => {
   const engine = process.env.TABLER_E2E_ENGINE === "postgresql" ? "postgresql" : "sqlite";
@@ -94,6 +95,16 @@ describe("TableR desktop workspace smoke", () => {
     const queryText = JSON.stringify(query);
     if (!queryText.includes("smoke_count") || !queryText.includes("2")) {
       throw new Error(`Unexpected count query result: ${queryText}`);
+    }
+  });
+
+  it("has no serious or critical automated accessibility violations", async () => {
+    const results = await new AxeBuilder({ client: browser }).analyze();
+    const blocking = results.violations.filter((violation) =>
+      violation.impact === "serious" || violation.impact === "critical"
+    );
+    if (blocking.length > 0) {
+      throw new Error(`Blocking accessibility violations: ${JSON.stringify(blocking, null, 2)}`);
     }
   });
 });

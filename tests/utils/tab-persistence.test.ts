@@ -29,10 +29,15 @@ function makeTab(overrides: Partial<Tab> = {}): Tab {
 
 describe("buildPersistableTabs", () => {
   it("keeps content under the cap intact", () => {
-    const tab = makeTab({ content: "SELECT * FROM users" });
+    const tab = makeTab({
+      content: "SELECT * FROM users",
+      editorCursor: { lineNumber: 3, column: 8 },
+    });
     const [persisted] = buildPersistableTabs([tab], "tab-1");
     expect(persisted.content).toBe("SELECT * FROM users");
     expect(persisted.isActive).toBe(true);
+    expect(persisted.cursorLine).toBe(3);
+    expect(persisted.cursorColumn).toBe(8);
   });
 
   it("drops content that exceeds the persistence cap", () => {
@@ -114,6 +119,8 @@ describe("restoreTabSnapshot", () => {
           tabType: "query",
           title: "Query 1",
           content: "select 1",
+          cursorLine: 2,
+          cursorColumn: 4,
           isActive: true,
           createdAtMs,
         },
@@ -124,6 +131,7 @@ describe("restoreTabSnapshot", () => {
       type: "query",
       connectionId: "connection-1",
       content: "select 1",
+      editorCursor: { lineNumber: 2, column: 4 },
     });
     expect(
       restoreTabSnapshot(

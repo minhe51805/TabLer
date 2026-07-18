@@ -1,4 +1,5 @@
-import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useAIStore } from "../../../stores/aiStore";
 import type { AIConversationMessage, DatabaseType, MetricsWidgetType } from "../../../types";
 import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
@@ -243,6 +244,20 @@ export function useAIAssistantGeneration({
   cancelledGenerationBubbleIdsRef,
   openSessionRef,
 }: UseAIAssistantGenerationOptions) {
+  const streamingText = useAIStore((state) => state.streamingText);
+
+  useEffect(() => {
+    const bubbleId = activeGenerationBubbleIdRef.current;
+    if (!bubbleId || !streamingText) return;
+    setBubbles((current) =>
+      current.map((bubble) =>
+        bubble.id === bubbleId && bubble.status === "loading"
+          ? { ...bubble, detail: streamingText }
+          : bubble,
+      ),
+    );
+  }, [activeGenerationBubbleIdRef, setBubbles, streamingText]);
+
   const createAssistantBubble = useCallback(async (
     prompt: string,
     options?: {

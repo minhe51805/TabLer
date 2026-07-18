@@ -87,6 +87,7 @@ import {
   DIAGRAM_NODE_ROW_GAP,
   DIAGRAM_NODE_ROW_HEIGHT,
   DIAGRAM_NODE_WIDTH,
+  buildDiagramGridPositions,
   buildDiagramEdgePoints,
   estimateDiagramNodeHeight,
   getDiagramNodeAnchorPoint,
@@ -1186,20 +1187,18 @@ function buildNodes(
   );
   const slotWidth = DIAGRAM_NODE_WIDTH + DIAGRAM_HORIZONTAL_GAP;
   const slotHeight = maxNodeHeight + DIAGRAM_VERTICAL_GAP;
-  const colsCount = Math.max(
-    1,
-    Math.min(10, Math.ceil(Math.sqrt(filtered.length * 1.35))),
-  );
+  const plannedPositions = buildDiagramGridPositions(filtered.length, maxNodeHeight, {
+    left: DIAGRAM_LEFT_OFFSET,
+    top: DIAGRAM_TOP_OFFSET,
+    horizontalGap: DIAGRAM_HORIZONTAL_GAP,
+    verticalGap: DIAGRAM_VERTICAL_GAP,
+    maxColumns: 10,
+  });
 
   return filtered.map((table, index) => {
-    const col = index % colsCount;
-    const row = Math.floor(index / colsCount);
     const isExpanded = expandedTableNames.has(table.name);
     const preferredPosition = existingPositions.get(table.name) ||
-      rememberedPositions.get(table.name) || {
-        x: DIAGRAM_LEFT_OFFSET + col * slotWidth,
-        y: DIAGRAM_TOP_OFFSET + row * slotHeight,
-      };
+      rememberedPositions.get(table.name) || plannedPositions[index];
     const resolvedPosition = findAvailableDiagramPosition(
       preferredPosition,
       occupiedPositions,

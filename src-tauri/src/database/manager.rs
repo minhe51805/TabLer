@@ -23,7 +23,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Manages all active database connections.
-/// Mirrors TablePro's DatabaseManager — connection pool, lifecycle, primary interface.
+/// Owns the connection pool, lifecycle, and primary database interface.
 #[allow(dead_code)]
 pub struct DatabaseManager {
     connections: Arc<RwLock<HashMap<String, Box<dyn DatabaseDriver>>>>,
@@ -31,6 +31,34 @@ pub struct DatabaseManager {
     ssh_tunnels: Arc<RwLock<HashMap<String, TunnelHandle>>>,
     ssh_manager: Arc<SshTunnelManager>,
     plugin_storage: PluginStorage,
+}
+
+struct PendingTunnel {
+    manager: Arc<SshTunnelManager>,
+    handle: Option<TunnelHandle>,
+}
+
+impl PendingTunnel {
+    fn new(manager: Arc<SshTunnelManager>, handle: TunnelHandle) -> Self {
+        Self {
+            manager,
+            handle: Some(handle),
+        }
+    }
+
+    fn commit(mut self) -> TunnelHandle {
+        self.handle
+            .take()
+            .expect("pending tunnel must have a handle")
+    }
+}
+
+impl Drop for PendingTunnel {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = self.manager.disconnect_tunnel(handle);
+        }
+    }
 }
 
 impl DatabaseManager {
@@ -86,6 +114,7 @@ impl DatabaseManager {
         }
 
         let mut actual_config = config.clone();
+        let mut pending_tunnel = None;
 
         if let Some(ssh_cfg) = &config.ssh_config {
             if ssh_cfg.enabled {
@@ -104,12 +133,7 @@ impl DatabaseManager {
 
                 actual_config.host = Some("127.0.0.1".to_string());
                 actual_config.port = Some(local_port);
-
-                // Disconnect any existing tunnel for this connection before overwriting
-                let mut ssh_tunnels = self.ssh_tunnels.write().await;
-                if let Some(old_handle) = ssh_tunnels.insert(config.id.clone(), handle) {
-                    let _ = self.ssh_manager.disconnect_tunnel(old_handle);
-                }
+                pending_tunnel = Some(PendingTunnel::new(self.ssh_manager.clone(), handle));
             }
         }
 
@@ -185,6 +209,14 @@ impl DatabaseManager {
             .write()
             .await
             .insert(config.id.clone(), config.db_type);
+
+        if let Some(pending_tunnel) = pending_tunnel {
+            let handle = pending_tunnel.commit();
+            let mut ssh_tunnels = self.ssh_tunnels.write().await;
+            if let Some(old_handle) = ssh_tunnels.insert(config.id.clone(), handle) {
+                let _ = self.ssh_manager.disconnect_tunnel(old_handle);
+            }
+        }
 
         if let Some(previous_driver) = previous_driver {
             let _ = previous_driver.disconnect().await;

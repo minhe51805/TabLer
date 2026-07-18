@@ -210,7 +210,7 @@ impl From<&ConnectionConfig> for ExportableConnection {
     fn from(config: &ConnectionConfig) -> Self {
         Self {
             name: config.name.clone(),
-            db_type: config.db_type.clone(),
+            db_type: config.db_type,
             host: config.host.clone(),
             port: config.port,
             username: config.username.clone(),

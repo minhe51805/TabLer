@@ -210,8 +210,10 @@ mod tests {
         let storage =
             AIWorkspaceHistoryStorage::new_with_file(path.clone()).expect("storage should init");
 
-        let mut state = PersistedAIWorkspaceState::default();
-        state.version = 1;
+        let mut state = PersistedAIWorkspaceState {
+            version: 1,
+            ..PersistedAIWorkspaceState::default()
+        };
         state
             .active_thread_ids
             .insert("workspace-1".into(), "thread-1".into());

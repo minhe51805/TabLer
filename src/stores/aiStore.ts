@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
 import { getCurrentAppLanguage } from "../i18n";
 import {
@@ -50,6 +51,9 @@ export interface AIState {
   aiConfigs: AIProviderConfig[];
   activeAIRequestId: string | null;
   requestPhase: AIRequestPhase;
+  streamingText: string;
+  streamingReasoning: boolean;
+  streamingUsage: Record<string, unknown> | null;
 
   loadAIConfigs: () => Promise<{
     aiConfigs: AIProviderConfig[];
@@ -86,6 +90,9 @@ export const useAIStore = create<AIState>((set, get) => ({
   aiConfigs: [],
   activeAIRequestId: null,
   requestPhase: "idle",
+  streamingText: "",
+  streamingReasoning: false,
+  streamingUsage: null,
 
   loadAIConfigs: async () => {
     try {
@@ -169,9 +176,59 @@ export const useAIStore = create<AIState>((set, get) => ({
     }
     const timeoutMs = getAIRequestTimeout(config, mode, intent);
     const requestId = createAIRequestId();
-    set({ activeAIRequestId: requestId, requestPhase: "requesting" });
+    set({
+      activeAIRequestId: requestId,
+      requestPhase: "requesting",
+      streamingText: "",
+      streamingReasoning: false,
+      streamingUsage: null,
+    });
 
+    let unlisten: UnlistenFn | undefined;
     try {
+      if (mode === "panel") {
+        let streamedText = "";
+        unlisten = await listen<{
+          requestId: string;
+          kind: "text_delta" | "reasoning_delta" | "usage" | "error" | "done";
+          text?: string;
+          usage?: Record<string, unknown>;
+        }>("ai-stream-event", (event) => {
+          const payload = event.payload;
+          if (payload.requestId !== requestId || get().activeAIRequestId !== requestId) return;
+          if (payload.kind === "text_delta" && payload.text) {
+            streamedText += payload.text;
+            if (intent !== "agent") set({ streamingText: streamedText });
+          } else if (payload.kind === "reasoning_delta") {
+            set({ streamingReasoning: true });
+          } else if (payload.kind === "usage" && payload.usage) {
+            set({ streamingUsage: payload.usage });
+          }
+        });
+        await invokeWithTimeout<void>(
+          "ask_ai_stream",
+          {
+            request: {
+              request_id: requestId,
+              prompt,
+              context,
+              mode,
+              intent,
+              language: getCurrentAppLanguage(),
+              history,
+            },
+          },
+          timeoutMs,
+          "AI request",
+          {
+            onTimeout: () => {
+              void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
+            },
+          },
+        );
+        return { text: streamedText };
+      }
+
       const resp = await invokeWithTimeout<{ text: string; reasoning?: string; error?: string }>(
         "ask_ai",
         {
@@ -198,8 +255,13 @@ export const useAIStore = create<AIState>((set, get) => ({
     } catch (errorValue) {
       throw normalizeAIRequestError(errorValue);
     } finally {
+      unlisten?.();
       if (get().activeAIRequestId === requestId) {
-        set({ activeAIRequestId: null, requestPhase: "idle" });
+        set({
+          activeAIRequestId: null,
+          requestPhase: "idle",
+          streamingReasoning: false,
+        });
       }
     }
   },

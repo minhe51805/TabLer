@@ -1,4 +1,4 @@
-import { X, Table, Code, Columns, Play, Loader2, BarChart3, Terminal } from "lucide-react";
+import { X, Table, Code, Columns, Play, Square, BarChart3, Terminal } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
@@ -12,10 +12,11 @@ interface QueryChromeState {
 interface Props {
   queryChrome?: QueryChromeState | null;
   onRunActiveQuery?: () => void;
+  onCancelActiveQuery?: () => void;
   onClearVisibleTabs?: () => void;
 }
 
-export function TabBar({ queryChrome, onRunActiveQuery, onClearVisibleTabs }: Props) {
+export function TabBar({ queryChrome, onRunActiveQuery, onCancelActiveQuery, onClearVisibleTabs }: Props) {
   const { t } = useI18n();
   const { tabs, activeTabId, setActiveTab, removeTab, pinTab } = useUIStore(
     useShallow((state) => ({
@@ -117,17 +118,16 @@ export function TabBar({ queryChrome, onRunActiveQuery, onClearVisibleTabs }: Pr
             <button
               data-testid="run-query"
               type="button"
-              onClick={onRunActiveQuery}
+              onClick={queryChrome?.isRunning ? onCancelActiveQuery : onRunActiveQuery}
               className="tabbar-run-btn"
-              title={t("tabs.runTitle")}
-              disabled={queryChrome?.isRunning}
+              title={queryChrome?.isRunning ? "Stop query" : t("tabs.runTitle")}
             >
               {queryChrome?.isRunning ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <Square className="w-3.5 h-3.5" />
               ) : (
                 <Play className="w-3.5 h-3.5" />
               )}
-              <span>{t("tabs.run")}</span>
+              <span>{queryChrome?.isRunning ? "Stop" : t("tabs.run")}</span>
             </button>
           )}
         </div>

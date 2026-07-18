@@ -146,6 +146,7 @@ pub async fn list_schema_objects(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_table_data(
     connection_id: String,
     table: String,
@@ -604,7 +605,7 @@ fn stream_csv_rows(
             return Ok(());
         }
         processed_rows += 1;
-        if processed_rows % 250 == 0 {
+        if processed_rows.is_multiple_of(250) {
             let processed_bytes = record
                 .position()
                 .map(|position| position.byte())
@@ -702,6 +703,10 @@ mod csv_tests {
     use super::parse_csv_value;
     use crate::database::models::ColumnDetail;
     use serde_json::json;
+    use std::fs;
+    use std::io::{BufWriter, Write};
+    use sysinfo::{Pid, System};
+    use uuid::Uuid;
 
     fn column(data_type: &str, nullable: bool) -> ColumnDetail {
         ColumnDetail {
@@ -738,6 +743,74 @@ mod csv_tests {
         assert_eq!(
             parse_csv_value("", &column("TEXT", true)).unwrap(),
             json!(null)
+        );
+    }
+
+    #[test]
+    #[ignore = "release benchmark creates and parses a 1 GiB CSV fixture"]
+    fn one_gib_csv_parser_has_bounded_resident_memory() {
+        const TARGET_BYTES: u64 = 1024 * 1024 * 1024;
+        const MAX_RSS_GROWTH_BYTES: u64 = 256 * 1024 * 1024;
+        let path = std::env::temp_dir().join(format!("tabler-1g-{}.csv", Uuid::new_v4()));
+        let file = fs::File::create(&path).unwrap();
+        let mut writer = BufWriter::with_capacity(1024 * 1024, file);
+        writer.write_all(b"id,value\n").unwrap();
+        let payload = vec![b'x'; 4096];
+        let mut written = 9_u64;
+        let mut row_id = 1_u64;
+        while written < TARGET_BYTES {
+            let prefix = format!("{row_id},");
+            writer.write_all(prefix.as_bytes()).unwrap();
+            writer.write_all(&payload).unwrap();
+            writer.write_all(b"\n").unwrap();
+            written += prefix.len() as u64 + payload.len() as u64 + 1;
+            row_id += 1;
+        }
+        writer.flush().unwrap();
+        drop(writer);
+
+        let pid = Pid::from_u32(std::process::id());
+        let mut system = System::new();
+        system.refresh_process(pid);
+        let baseline = system
+            .process(pid)
+            .map(|process| process.memory())
+            .unwrap_or(0);
+        let mut peak = baseline;
+        let mut reader = csv::ReaderBuilder::new()
+            .flexible(true)
+            .from_path(&path)
+            .unwrap();
+        let id_column = column("INTEGER", false);
+        let value_column = column("TEXT", false);
+        let mut parsed_rows = 0_u64;
+        for record in reader.records() {
+            let record = record.unwrap();
+            parse_csv_value(record.get(0).unwrap_or_default(), &id_column).unwrap();
+            parse_csv_value(record.get(1).unwrap_or_default(), &value_column).unwrap();
+            parsed_rows += 1;
+            if parsed_rows.is_multiple_of(2_000) {
+                system.refresh_process(pid);
+                peak = peak.max(
+                    system
+                        .process(pid)
+                        .map(|process| process.memory())
+                        .unwrap_or(0),
+                );
+            }
+        }
+        let fixture_bytes = fs::metadata(&path).unwrap().len();
+        fs::remove_file(&path).unwrap();
+        let rss_growth = peak.saturating_sub(baseline);
+        println!(
+            "csv_1g rows={parsed_rows} bytes={fixture_bytes} baseline_rss={baseline} peak_rss={peak} growth_rss={rss_growth}"
+        );
+
+        assert!(parsed_rows > 200_000, "fixture did not contain enough rows");
+        assert!(
+            rss_growth < MAX_RSS_GROWTH_BYTES,
+            "1 GiB CSV parse grew RSS by {} MiB",
+            rss_growth / 1024 / 1024
         );
     }
 }

@@ -1661,6 +1661,10 @@ export interface AIMetricsWidgetSpec {
   title: string;
   type: MetricsWidgetType;
   query: string;
+  dimension?: string;
+  measures?: string[];
+  transforms?: string[];
+  limit?: number;
 }
 
 const VALID_METRICS_WIDGET_TYPES: MetricsWidgetType[] = ["table", "scoreboard", "bar", "horizontal-bar", "line", "area", "pie", "donut", "radial"];
@@ -1688,6 +1692,10 @@ export function createAIMetricsBoardFromWidgets(args: {
       title: (widget.title || "").trim(),
       type: normalizeAIWidgetType(widget.type),
       query: (widget.query || "").trim(),
+      dimension: widget.dimension?.trim() || undefined,
+      measures: (widget.measures || []).map((value) => value.trim()).filter(Boolean).slice(0, 12),
+      transforms: (widget.transforms || []).map((value) => value.trim()).filter(Boolean).slice(0, 12),
+      limit: Math.min(10_000, Math.max(1, Math.floor(widget.limit || 100))),
     }))
     .filter((widget) => widget.title.length > 0 && widget.query.length > 0)
     .slice(0, 12);
@@ -1713,6 +1721,14 @@ export function createAIMetricsBoardFromWidgets(args: {
       row_span: rowSpan,
       grid_x: index % COLUMNS,
       grid_y: Math.floor(index / COLUMNS),
+      chart_spec: {
+        version: 1,
+        source_query: widget.query,
+        dimension: widget.dimension,
+        measures: widget.measures,
+        transforms: widget.transforms,
+        limit: widget.limit,
+      },
     };
   });
 

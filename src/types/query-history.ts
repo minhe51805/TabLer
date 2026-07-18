@@ -15,6 +15,8 @@ export interface SqlFavorite {
   description?: string;
   sql: string;
   tags: string[];
+  connectionId?: string;
+  database?: string;
   createdAt: string;
   updatedAt: string;
 }

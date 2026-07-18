@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useSqlFavoritesStore } from "../../stores/sql-favorites-store";
+import { useConnectionStore } from "../../stores/connectionStore";
 import "../../styles/lazy-overlays.css";
 
 interface Props {
@@ -105,6 +106,8 @@ export function SQLFavoritesPanel({
 }: Props) {
   const { favorites, isLoading, loadFavorites, saveFavorite, deleteFavorite } =
     useSqlFavoritesStore();
+  const activeConnectionId = useConnectionStore((state) => state.activeConnectionId);
+  const currentDatabase = useConnectionStore((state) => state.currentDatabase);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [saveDialog, setSaveDialog] = useState<SaveDialogState>({
@@ -199,6 +202,8 @@ export function SQLFavoritesPanel({
           .split(",")
           .map((t) => t.trim())
           .filter(Boolean),
+        connectionId: activeConnectionId || undefined,
+        database: currentDatabase || undefined,
       });
       setSaveDialog((prev) => ({
         ...prev,
@@ -211,7 +216,7 @@ export function SQLFavoritesPanel({
     } catch {
       // error logged in store
     }
-  }, [saveDialog, currentEditorSql, saveFavorite]);
+  }, [activeConnectionId, currentDatabase, saveDialog, currentEditorSql, saveFavorite]);
 
   if (!isOpen) return null;
 

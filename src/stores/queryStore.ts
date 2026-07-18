@@ -2,11 +2,7 @@ import { create } from "zustand";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
 import type { ColumnDetail, QueryParameter, QueryResult, TableCellUpdateRequest, TableRowDeleteRequest, TableStructure } from "../types";
 import { assertQueryAllowed } from "../utils/safe-mode-query-guard";
-import {
-  containsSchemaMutation,
-  getOrLoadTableColumns,
-  getOrLoadTableStructure,
-} from "../utils/schema-cache";
+import { getOrLoadTableColumns, getOrLoadTableStructure } from "../utils/schema-cache";
 import { useConnectionStore } from "./connectionStore";
 import {
   invokeAIWorkspaceToolMutation,
@@ -15,10 +11,16 @@ import {
 
 export interface QueryState {
   isExecutingQuery: boolean;
+  activeQueryRequestId: string | null;
 
   executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
+  cancelQuery: () => Promise<boolean>;
   executeParameterizedQuery: (connectionId: string, sql: string, parameters: QueryParameter[]) => Promise<QueryResult>;
-  executeSandboxQuery: (connectionId: string, statements: string[]) => Promise<QueryResult>;
+  executeSandboxQuery: (
+    connectionId: string,
+    statements: string[],
+    requireReadOnly?: boolean,
+  ) => Promise<QueryResult>;
   getTableData: (
     connectionId: string,
     table: string,
@@ -82,31 +84,51 @@ export interface QueryState {
   ) => Promise<Array<{ value: string | number; label: string }>>;
 }
 
-export const useQueryStore = create<QueryState>((set) => ({
+export const useQueryStore = create<QueryState>((set, get) => ({
   isExecutingQuery: false,
+  activeQueryRequestId: null,
 
   executeQuery: async (connectionId: string, sql: string) => {
-    await assertQueryAllowed(sql, connectionId);
-    set({ isExecutingQuery: true });
+    const safety = await assertQueryAllowed(sql, connectionId);
+    const requestId = crypto.randomUUID();
+    set({ isExecutingQuery: true, activeQueryRequestId: requestId });
     try {
-      const result = await invokeMutation<QueryResult>("execute_query", { connectionId, sql });
-      if (containsSchemaMutation(sql)) {
+      const result = await invokeMutation<QueryResult>("execute_query", {
+        connectionId,
+        sql,
+        requestId,
+      });
+      if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
-      set({ isExecutingQuery: false });
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        : state);
       return result;
     } catch (e) {
-      set({ isExecutingQuery: false });
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        : state);
       throw e;
     }
   },
 
-  executeSandboxQuery: async (connectionId: string, statements: string[]) => {
+  cancelQuery: async () => {
+    const requestId = get().activeQueryRequestId;
+    if (!requestId) return false;
+    return invokeMutation<boolean>("cancel_query", { requestId });
+  },
+
+  executeSandboxQuery: async (
+    connectionId: string,
+    statements: string[],
+    requireReadOnly = false,
+  ) => {
     set({ isExecutingQuery: true });
     try {
       const result = await invokeAIWorkspaceToolMutation(
         "execute_sandboxed_query",
-        { connectionId, statements },
+        { connectionId, statements, requireReadOnly },
       );
       set({ isExecutingQuery: false });
       return result;
@@ -249,7 +271,7 @@ export const useQueryStore = create<QueryState>((set) => ({
   },
 
   executeParameterizedQuery: async (connectionId, sql, parameters) => {
-    await assertQueryAllowed(sql, connectionId);
+    const safety = await assertQueryAllowed(sql, connectionId);
     set({ isExecutingQuery: true });
     try {
       const result = await invokeMutation<QueryResult>("execute_parameterized_query", {
@@ -257,7 +279,7 @@ export const useQueryStore = create<QueryState>((set) => ({
         sql,
         parameters,
       });
-      if (containsSchemaMutation(sql)) {
+      if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
       set({ isExecutingQuery: false });

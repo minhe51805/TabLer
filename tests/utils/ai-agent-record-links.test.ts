@@ -10,6 +10,7 @@ describe("extractAgentRecordLinks", () => {
       status: "done",
       observation: JSON.stringify({
         query: "SELECT id, email FROM public.users WHERE email = '[REDACTED]'",
+        identityColumns: ["id"],
         sampleRows: [{ id: 42, email: "person@example.com" }],
       }),
     }]);
@@ -29,6 +30,24 @@ describe("extractAgentRecordLinks", () => {
       status: "done",
       observation: JSON.stringify({
         query: "SELECT users.id FROM public.users JOIN public.teams ON teams.id = users.team_id",
+        identityColumns: ["id"],
+        sampleRows: [{ id: 42 }],
+      }),
+    }]);
+
+    expect(links).toEqual([]);
+  });
+
+  it("does not guess an id column when primary-key metadata is unavailable", () => {
+    const links = extractAgentRecordLinks([{
+      step: 1,
+      action: "run_readonly_sql",
+      message: "Read users",
+      status: "done",
+      observation: JSON.stringify({
+        query: "SELECT id FROM public.users",
+        identityColumns: [],
+        navigation: "non-navigable: query metadata did not verify a primary key",
         sampleRows: [{ id: 42 }],
       }),
     }]);

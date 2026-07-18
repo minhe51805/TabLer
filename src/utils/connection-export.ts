@@ -39,7 +39,7 @@ export interface ImportResult {
 }
 
 /**
- * Export selected connections to an encrypted .tablepro file.
+ * Export selected connections to an encrypted TableR connection file.
  */
 export async function exportConnections(
   connections: ConnectionConfig[],
@@ -84,7 +84,7 @@ export async function exportConnections(
 }
 
 /**
- * Import connections from a .tablepro file.
+ * Import connections from an encrypted TableR connection file.
  */
 export async function importConnections(
   filePath: string,

@@ -3,7 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::{atomic::AtomicBool, Arc};
 
-/// Core database driver trait — mirrors TablePro's DatabaseDriver protocol.
+/// Core database driver trait.
 /// All database operations go through this trait.
 #[async_trait]
 #[allow(dead_code)]
@@ -55,6 +55,7 @@ pub trait DatabaseDriver: Send + Sync {
     }
 
     /// Get rows from a table with pagination
+    #[allow(clippy::too_many_arguments)]
     async fn get_table_data(
         &self,
         table: &str,

@@ -482,7 +482,7 @@ fn table_identifier(table: &TableInfo) -> String {
     }
 }
 
-fn order_tables_for_export<'a>(tables: &'a [ExportTableBundle]) -> Vec<&'a ExportTableBundle> {
+fn order_tables_for_export(tables: &[ExportTableBundle]) -> Vec<&ExportTableBundle> {
     let table_names = tables
         .iter()
         .map(|bundle| bundle.identifier.clone())

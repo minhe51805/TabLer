@@ -21,11 +21,26 @@ const queryResult = {
   truncated: false,
 };
 
+function safetyDecision(sql: string) {
+  const schema = /^\s*(CREATE|ALTER|DROP|TRUNCATE)/i.test(sql);
+  const readOnly = /^\s*(SELECT|SHOW|EXPLAIN|WITH|DESCRIBE)/i.test(sql);
+  return {
+    statements: [{ sql, kind: schema ? "schema" : readOnly ? "read" : "write", readOnly }],
+    readOnly,
+    hasSchemaMutation: schema,
+    parseError: null,
+  };
+}
+
 describe("queryStore", () => {
   beforeEach(() => {
     invokeMutationMock.mockReset();
     invokeWithTimeoutMock.mockReset();
-    useQueryStore.setState({ isExecutingQuery: false });
+    invokeWithTimeoutMock.mockImplementation((command: string, args: { sql?: string }) => {
+      if (command === "classify_sql_safety") return Promise.resolve(safetyDecision(args.sql || ""));
+      return Promise.resolve(queryResult);
+    });
+    useQueryStore.setState({ isExecutingQuery: false, activeQueryRequestId: null });
     useSafeModeStore.getState().setGlobalLevel(1);
     useSafeModeStore.getState().clearConnectionOverrides();
   });
@@ -35,14 +50,19 @@ describe("queryStore", () => {
 
     const promise = useQueryStore.getState().executeQuery("connection-1", "select 1");
     await Promise.resolve();
+    await Promise.resolve();
     expect(useQueryStore.getState().isExecutingQuery).toBe(true);
 
     await expect(promise).resolves.toEqual(queryResult);
     expect(useQueryStore.getState().isExecutingQuery).toBe(false);
-    expect(invokeMutationMock).toHaveBeenCalledWith("execute_query", {
-      connectionId: "connection-1",
-      sql: "select 1",
-    });
+    expect(invokeMutationMock).toHaveBeenCalledWith(
+      "execute_query",
+      expect.objectContaining({
+        connectionId: "connection-1",
+        sql: "select 1",
+        requestId: expect.any(String),
+      }),
+    );
   });
 
   it("always clears the execution flag after a backend error", async () => {

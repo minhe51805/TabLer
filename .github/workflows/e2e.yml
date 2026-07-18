@@ -59,6 +59,8 @@ jobs:
         run: npm run build:e2e
       - name: Run SQLite smoke
         run: xvfb-run --auto-servernum npm run test:e2e
+      - name: Run binding frontend benchmarks
+        run: npm run test:performance
       - name: Run PostgreSQL smoke
         env:
           TABLER_E2E_ENGINE: postgresql

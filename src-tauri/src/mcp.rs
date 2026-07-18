@@ -2,75 +2,28 @@ use crate::database::manager::DatabaseManager;
 use crate::mcp_security::{authorize_mcp_access, McpPermission};
 use crate::storage::connection_storage::ConnectionStorage;
 use crate::storage::mcp_storage::{McpAuditEvent, McpStorage};
-use crate::utils::sql::split_sql_statements;
+use crate::utils::sql::classify_sql;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 
 pub(crate) const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
-fn strip_leading_sql_noise(statement: &str) -> &str {
-    let mut remaining = statement.trim_start();
-    loop {
-        if let Some(after_line_comment) = remaining.strip_prefix("--") {
-            let Some((_, next_line)) = after_line_comment.split_once('\n') else {
-                return "";
-            };
-            remaining = next_line.trim_start();
-            continue;
-        }
-        if let Some(after_block_comment) = remaining.strip_prefix("/*") {
-            let Some(block_end) = after_block_comment.find("*/") else {
-                return "";
-            };
-            remaining = after_block_comment[block_end + 2..].trim_start();
-            continue;
-        }
-        return remaining;
-    }
-}
-
 /// MCP intentionally accepts exactly one inspection query and never a mutation.
 pub fn validate_read_only_mcp_query(sql: &str) -> Result<String> {
-    let statements = split_sql_statements(sql)
-        .into_iter()
-        .filter(|statement| !statement.trim().is_empty())
-        .collect::<Vec<_>>();
-    if statements.len() != 1 {
+    let decision = classify_sql(sql);
+    if let Some(error) = decision.parse_error {
+        return Err(anyhow!("MCP could not parse SQL: {error}"));
+    }
+    if decision.statements.len() != 1 {
         return Err(anyhow!(
             "MCP read_query requires exactly one SQL statement."
         ));
     }
-
-    let statement = statements[0].trim();
-    let normalized = strip_leading_sql_noise(statement)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_uppercase();
-    if normalized.is_empty() {
-        return Err(anyhow!(
-            "MCP read_query requires a non-empty SQL statement."
-        ));
-    }
-    if normalized.starts_with("PRAGMA") && normalized.contains('=') {
-        return Err(anyhow!("MCP only permits read-only PRAGMA statements."));
-    }
-    if [
-        "INSERT", "UPDATE", "DELETE", "MERGE", "ALTER", "CREATE", "DROP", "TRUNCATE",
-    ]
-    .iter()
-    .any(|keyword| normalized.contains(keyword))
-    {
-        return Err(anyhow!("MCP does not permit mutating CTE statements."));
-    }
-    if !["SELECT", "WITH", "SHOW", "DESCRIBE", "EXPLAIN", "PRAGMA"]
-        .iter()
-        .any(|prefix| normalized.starts_with(prefix))
-    {
+    if !decision.read_only {
         return Err(anyhow!("MCP is read-only. Only inspection SQL is allowed."));
     }
-    Ok(statement.to_string())
+    Ok(decision.statements[0].sql.clone())
 }
 
 pub(crate) fn tool_definitions() -> Value {

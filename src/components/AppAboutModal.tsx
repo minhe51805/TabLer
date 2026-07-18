@@ -1,6 +1,7 @@
 import { X, Shield, Zap, Globe, Code2, FileWarning } from "lucide-react";
 import { useI18n } from "../i18n";
 import { UpdateButton } from "./UpdateButton";
+import { APP_VERSION } from "../constants/version";
 
 interface AppAboutModalProps {
   onClose: () => void;
@@ -35,7 +36,7 @@ export function AppAboutModal({ onClose, onOpenDiagnostics }: AppAboutModalProps
         <div className="app-help-modal-grid">
           <div className="app-help-modal-metric">
             <span className="app-help-modal-metric-label">{t("help.about.version")}</span>
-            <strong className="app-help-modal-metric-value">0.1.4b</strong>
+            <strong className="app-help-modal-metric-value">{APP_VERSION}</strong>
           </div>
           <div className="app-help-modal-metric">
             <span className="app-help-modal-metric-label">{t("help.about.build")}</span>

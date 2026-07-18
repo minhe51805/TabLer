@@ -14,7 +14,8 @@ mod watcher;
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
-    ask_ai, cancel_ai_request, get_ai_configs, save_ai_configs, AIRequestCancellationState,
+    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_ai_configs,
+    AIRequestCancellationState,
 };
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
@@ -172,6 +173,8 @@ pub fn run() {
     let ai_request_cancellation_state = AIRequestCancellationState::default();
     let csv_import_cancellation_state = CsvImportCancellationState::default();
     let table_export_cancellation_state = TableExportCancellationState::default();
+    let query_cancellation_state = QueryCancellationState::default();
+    let connection_attempt_cancellation_state = ConnectionAttemptCancellationState::default();
     let terminal_manager = TerminalManager::default();
 
     let builder = tauri::Builder::default();
@@ -197,6 +200,8 @@ pub fn run() {
         .manage(ai_request_cancellation_state)
         .manage(csv_import_cancellation_state)
         .manage(table_export_cancellation_state)
+        .manage(query_cancellation_state)
+        .manage(connection_attempt_cancellation_state)
         .manage(DiagnosticReviewState::default())
         .setup(|app| {
             if let Err(e) = watcher::start_watcher(app.handle().clone()) {
@@ -237,6 +242,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Connection commands
             connect_database,
+            cancel_connection_attempt,
             disconnect_database,
             test_connection,
             list_databases,
@@ -257,6 +263,8 @@ pub fn run() {
             export_diagnostic_bundle,
             // Query commands
             execute_query,
+            classify_sql_safety,
+            cancel_query,
             execute_parameterized_query,
             execute_sandboxed_query,
             preview_database_restore,
@@ -282,6 +290,7 @@ pub fn run() {
             get_foreign_key_lookup_values,
             // AI commands
             ask_ai,
+            ask_ai_stream,
             cancel_ai_request,
             get_ai_configs,
             save_ai_configs,

@@ -18,6 +18,7 @@ import {
   LoaderCircle,
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { APP_VERSION } from "../constants/version";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { WorkspaceErrorFallback } from "./layout/WorkspaceErrorFallback";
 import { MetricsSidebar } from "./MetricsSidebar/MetricsSidebar";
@@ -43,6 +44,7 @@ import { useEvent } from "../stores/event-center";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useUIStore } from "../stores/uiStore";
 import { useAppLayoutStore } from "../stores/appLayoutStore";
+import { useQueryStore } from "../stores/queryStore";
 import { getLastPathSegment } from "../utils/path-utils";
 import { getQueryProfile } from "../utils/query-profile";
 import {
@@ -209,6 +211,7 @@ export function AppWorkspacePanel({
   onHandleMouseDown,
 }: AppWorkspacePanelProps) {
   const { t, language } = useI18n();
+  const cancelQuery = useQueryStore((state) => state.cancelQuery);
   const capabilityProfile = useConnectionCapabilities(activeConn?.id);
   const canExportDatabase = isCapabilitySupported(capabilityProfile?.capabilities.dataExport);
   const terminalToggleTitle =
@@ -793,6 +796,7 @@ export function AppWorkspacePanel({
                 key={tab.id}
                 connectionId={tab.connectionId}
                 initialContent={tab.content || ""}
+                initialCursor={tab.editorCursor}
                 tabId={tab.id}
                 initialState={querySessionByTab[tab.id]}
                 runRequestNonce={queryRunRequestByTab[tab.id] ?? 0}
@@ -1239,6 +1243,7 @@ export function AppWorkspacePanel({
           <TabBar
             queryChrome={activeQueryChrome}
             onRunActiveQuery={onRunActiveQuery}
+            onCancelActiveQuery={() => void cancelQuery()}
             onClearVisibleTabs={onClearVisibleTabs}
           />
 
@@ -1304,7 +1309,7 @@ export function AppWorkspacePanel({
             <kbd className="kbd">Ctrl+`</kbd>
             <kbd className="kbd">Ctrl+Shift+P</kbd>
           </span>
-          <span>TableR v0.1.4b</span>
+          <span>TableR v{APP_VERSION}</span>
         </div>
       </footer>
     </>

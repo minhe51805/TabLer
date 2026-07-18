@@ -47,6 +47,7 @@ export interface UseSQLEditorOptions {
   connectionId: string;
   tabId?: string;
   initialContent: string;
+  initialCursor?: { lineNumber: number; column: number };
   vimStatusRef?: RefObject<HTMLDivElement | null>;
   initialState?: QueryEditorSessionState;
   runRequestNonce: number;
@@ -59,6 +60,7 @@ export function useSQLEditor({
   connectionId,
   tabId,
   initialContent,
+  initialCursor,
   vimStatusRef,
   initialState,
   runRequestNonce,
@@ -84,6 +86,7 @@ export function useSQLEditor({
   const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const selectionContextDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const contentPersistTimerRef = useRef<number | null>(null);
+  const cursorPersistTimerRef = useRef<number | null>(null);
   const vimModeRef = useRef<VimAdapterInstance | null>(null);
   const contentDraftRef = useRef(initialContent);
   const onChromeChangeRef = useRef(onChromeChange);
@@ -128,7 +131,15 @@ export function useSQLEditor({
   const schedulePersistedContent = useCallback(
     (value: string) => {
       if (!tabId) return;
-      contentDraftRef.current = value;
+    contentDraftRef.current = value;
+      try {
+        window.localStorage.setItem(
+          `tabler.editor-draft.${connectionId}.${tabId}`,
+          value.length <= 500_000 ? value : "",
+        );
+      } catch {
+        // Backend tab persistence remains the fallback when storage is unavailable.
+      }
       if (contentPersistTimerRef.current !== null) {
         window.clearTimeout(contentPersistTimerRef.current);
       }
@@ -137,7 +148,7 @@ export function useSQLEditor({
         updateTab(tabId, { content: value });
       }, 180);
     },
-    [tabId, updateTab]
+    [connectionId, tabId, updateTab]
   );
 
   useEffect(() => {
@@ -457,6 +468,10 @@ export function useSQLEditor({
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    if (initialCursor) {
+      editor.setPosition(initialCursor);
+      editor.revealPositionInCenterIfOutsideViewport(initialCursor);
+    }
 
     editor.addAction({
       id: "execute-query",
@@ -514,6 +529,18 @@ export function useSQLEditor({
     selectionContextDisposableRef.current?.dispose();
     selectionContextDisposableRef.current = editor.onDidChangeCursorSelection(() => {
       const currentSelection = editor.getSelection();
+      const position = editor.getPosition();
+      if (tabId && position) {
+        if (cursorPersistTimerRef.current !== null) {
+          window.clearTimeout(cursorPersistTimerRef.current);
+        }
+        cursorPersistTimerRef.current = window.setTimeout(() => {
+          cursorPersistTimerRef.current = null;
+          updateTab(tabId, {
+            editorCursor: { lineNumber: position.lineNumber, column: position.column },
+          });
+        }, 180);
+      }
       const text = currentSelection && !currentSelection.isEmpty()
         ? editor.getModel()?.getValueInRange(currentSelection) || ""
         : "";
@@ -640,6 +667,10 @@ export function useSQLEditor({
   useEffect(() => {
     return () => {
       flushPersistedContent();
+      if (cursorPersistTimerRef.current !== null) {
+        window.clearTimeout(cursorPersistTimerRef.current);
+        cursorPersistTimerRef.current = null;
+      }
       vimModeRef.current?.dispose();
       inlineCompletionDisposableRef.current?.dispose();
       completionDisposableRef.current?.dispose();

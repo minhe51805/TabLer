@@ -5,6 +5,7 @@ use crate::storage::connection_storage::ConnectionStorage;
 use crate::storage::mcp_storage::{McpAuditEvent, McpStorage};
 use anyhow::{anyhow, Result};
 use axum::{
+    extract::DefaultBodyLimit,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
@@ -30,6 +31,7 @@ const MAX_ACTIVITY_EVENTS: usize = 100;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const HANDSHAKE_FILE: &str = "mcp-local.json";
 const REQUESTS_PER_MINUTE: usize = 60;
+const MAX_REQUEST_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +111,7 @@ impl McpLocalServer {
         let app = Router::new()
             .route("/health", get(local_health))
             .route("/mcp", post(local_mcp))
+            .layer(DefaultBodyLimit::max(MAX_REQUEST_BYTES))
             .with_state(state);
         let (shutdown, shutdown_receiver) = oneshot::channel();
         tokio::spawn(async move {
@@ -268,13 +271,39 @@ async fn local_mcp(
         );
     }
 
-    let outcome = match method {
+    let mut outcome = match method {
         "tools/list" => Ok(json!({ "tools": local_tool_definitions() })),
         "tools/call" => execute_tool(&state, &connection_id, &params).await,
         "resources/list" => Ok(json!({ "resources": local_resources(&connection_id) })),
         "resources/read" => read_resource(&state, &connection_id, &params).await,
         _ => Err(anyhow!("Method '{method}' is not supported.")),
     };
+    if outcome.is_ok() {
+        let latest_grant = state.mcp_storage.find_token_by_id(&grant.id);
+        let connection_policy = state
+            .connection_storage
+            .load_connection_by_id(&connection_id)
+            .map(|config| config.external_access_policy());
+        let still_authorized = latest_grant
+            .ok()
+            .flatten()
+            .zip(connection_policy.ok())
+            .is_some_and(|(latest, policy)| {
+                authorize_mcp_access(
+                    &latest,
+                    &connection_id,
+                    policy,
+                    McpPermission::ReadOnly,
+                    Utc::now(),
+                )
+                .is_ok()
+            });
+        if !still_authorized {
+            outcome = Err(anyhow!(
+                "MCP authorization was revoked before the request completed."
+            ));
+        }
+    }
     let _ = state.mcp_storage.append_audit(audit_event(
         Some(grant.id.clone()),
         if method.starts_with("resources/") {
@@ -633,7 +662,7 @@ fn text_result(value: impl serde::Serialize) -> Result<Value> {
 
 fn bounded_json_text(value: &impl serde::Serialize) -> Result<String> {
     let text = serde_json::to_string_pretty(value)?;
-    if text.as_bytes().len() > MAX_RESULT_BYTES {
+    if text.len() > MAX_RESULT_BYTES {
         return Err(anyhow!(
             "External MCP response exceeds the {} KB payload limit.",
             MAX_RESULT_BYTES / 1024

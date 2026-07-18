@@ -2,6 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeMutationMock = vi.fn();
 const invokeWithTimeoutMock = vi.fn();
+const listenMock = vi.fn();
+let streamListener: ((event: { payload: Record<string, unknown> }) => void) | undefined;
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (...args: unknown[]) => listenMock(...args),
+}));
 
 vi.mock("@/utils/tauri-utils", () => ({
   invokeMutation: (...args: unknown[]) => invokeMutationMock(...args),
@@ -28,7 +34,20 @@ describe("aiStore", () => {
   beforeEach(() => {
     invokeMutationMock.mockReset();
     invokeWithTimeoutMock.mockReset();
-    useAIStore.setState({ aiConfigs: [], activeAIRequestId: null, requestPhase: "idle" });
+    listenMock.mockReset();
+    streamListener = undefined;
+    listenMock.mockImplementation(async (_eventName, listener) => {
+      streamListener = listener;
+      return vi.fn();
+    });
+    useAIStore.setState({
+      aiConfigs: [],
+      activeAIRequestId: null,
+      requestPhase: "idle",
+      streamingText: "",
+      streamingReasoning: false,
+      streamingUsage: null,
+    });
     useGlobalErrorStore.getState().clearError();
   });
 
@@ -42,18 +61,29 @@ describe("aiStore", () => {
     expect(useAIStore.getState().aiConfigs).toEqual([provider]);
   });
 
-  it("returns text and reasoning using the agent timeout policy", async () => {
+  it("collects streamed text using the agent timeout policy", async () => {
     useAIStore.setState({ aiConfigs: [provider] });
-    invokeWithTimeoutMock.mockResolvedValue({ text: "SELECT 1", reasoning: "Simple query" });
+    invokeWithTimeoutMock.mockImplementation(async (_command, args) => {
+      const requestId = args.request.request_id;
+      streamListener?.({
+        payload: { requestId, kind: "reasoning_delta", text: "private" },
+      });
+      streamListener?.({
+        payload: { requestId, kind: "text_delta", text: "SELECT " },
+      });
+      streamListener?.({
+        payload: { requestId, kind: "text_delta", text: "1" },
+      });
+    });
 
     await expect(
       useAIStore
         .getState()
         .askAIWithReasoning("write SQL", "schema", "panel", "agent"),
-    ).resolves.toEqual({ text: "SELECT 1", reasoning: "Simple query" });
+    ).resolves.toEqual({ text: "SELECT 1" });
 
     expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
-      "ask_ai",
+      "ask_ai_stream",
       expect.objectContaining({
         request: expect.objectContaining({
           prompt: "write SQL",
@@ -68,6 +98,8 @@ describe("aiStore", () => {
       expect.objectContaining({ onTimeout: expect.any(Function) }),
     );
     expect(useAIStore.getState().requestPhase).toBe("idle");
+    expect(useAIStore.getState().streamingText).toBe("");
+    expect(listenMock).toHaveBeenCalledWith("ai-stream-event", expect.any(Function));
   });
 
   it("cancels the active provider request", async () => {
@@ -88,7 +120,12 @@ describe("aiStore", () => {
 
   it("classifies timeout failures and asks Tauri to cancel the request", async () => {
     useAIStore.setState({ aiConfigs: [provider] });
-    invokeWithTimeoutMock.mockRejectedValue(new Error("AI request timed out after 180s"));
+    let rejectRequest: ((error: Error) => void) | undefined;
+    invokeWithTimeoutMock.mockImplementation(
+      () => new Promise((_resolve, reject) => {
+        rejectRequest = reject;
+      }),
+    );
     invokeMutationMock.mockResolvedValue(true);
 
     const request = useAIStore.getState().askAIWithReasoning(
@@ -97,8 +134,10 @@ describe("aiStore", () => {
       "panel",
       "overview",
     );
+    await vi.waitFor(() => expect(invokeWithTimeoutMock).toHaveBeenCalledOnce());
     const timeoutOptions = invokeWithTimeoutMock.mock.calls[0][4] as { onTimeout: () => void };
     timeoutOptions.onTimeout();
+    rejectRequest?.(new Error("AI request timed out after 180s"));
 
     await expect(request).rejects.toMatchObject({ code: "timeout", retryable: true });
     expect(invokeMutationMock).toHaveBeenCalledWith("cancel_ai_request", {

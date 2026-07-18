@@ -64,7 +64,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -94,6 +94,7 @@ jobs:
           npm run check:tauri-target
           cargo fmt --manifest-path src-tauri/Cargo.toml --check
           cargo fmt --manifest-path src-tauri/mcp-stdio/Cargo.toml --check
+          cargo clippy --locked --manifest-path src-tauri/Cargo.toml --lib -- -D warnings
           cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
           cargo check --locked --manifest-path src-tauri/mcp-stdio/Cargo.toml
 
@@ -113,6 +114,10 @@ jobs:
           chmod +x "$appimage"
           "$appimage" --appimage-extract >/dev/null
           test -x squashfs-root/AppRun
+          deb="$(find src-tauri/target/release/bundle -type f -name '*.deb' -print -quit)"
+          test -n "$deb"
+          dpkg-deb --extract "$deb" "$RUNNER_TEMP/tabler-deb"
+          test -n "$(find "$RUNNER_TEMP/tabler-deb" -type f -name tabler -print -quit)"
 
       - name: Validate macOS bundles
         if: matrix.target == 'macos'
@@ -123,6 +128,11 @@ jobs:
           test -n "$dmg"
           test -s "$dmg"
           test -x "$app/Contents/MacOS/tabler"
+          mount_point="$RUNNER_TEMP/tabler-dmg"
+          mkdir -p "$mount_point"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mount_point"
+          test -n "$(find "$mount_point" -maxdepth 2 -name '*.app' -print -quit)"
+          hdiutil detach "$mount_point"
 
       - name: Validate Windows bundles
         if: matrix.target == 'windows'
@@ -133,6 +143,12 @@ jobs:
           foreach ($bundle in $bundles) {
             if ($bundle.Length -le 0) { throw "Empty Windows bundle: $($bundle.FullName)" }
           }
+          $msi = $bundles | Where-Object Extension -eq ".msi" | Select-Object -First 1
+          if (-not $msi) { throw "No MSI bundle was produced for administrative install validation." }
+          $adminTarget = Join-Path $env:RUNNER_TEMP "tabler-msi"
+          $process = Start-Process msiexec.exe -ArgumentList @('/a', $msi.FullName, '/qn', "TARGETDIR=$adminTarget") -Wait -PassThru -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) { throw "MSI administrative install failed with exit code $($process.ExitCode)." }
+          if (-not (Get-ChildItem -LiteralPath $adminTarget -Recurse -File -Filter *.exe)) { throw "MSI did not install an executable." }
 
       - name: Upload validation bundles
         uses: actions/upload-artifact@v4

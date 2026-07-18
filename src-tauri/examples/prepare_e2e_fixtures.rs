@@ -1,4 +1,3 @@
-use serde_json::json;
 use sqlx::{Connection, Executor, PgConnection, SqliteConnection};
 use std::fs;
 use std::path::PathBuf;
@@ -27,29 +26,6 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     sqlite.close().await?;
 
-    let mut connections = vec![json!({
-        "id": "e2e-sqlite",
-        "name": "E2E SQLite",
-        "db_type": "sqlite",
-        "host": null,
-        "port": null,
-        "username": null,
-        "password": null,
-        "database": null,
-        "file_path": sqlite_path,
-        "use_ssl": false,
-        "ssl_mode": null,
-        "ssl_ca_cert_path": null,
-        "ssl_client_cert_path": null,
-        "ssl_client_key_path": null,
-        "ssl_skip_host_verification": null,
-        "color": "#3498db",
-        "additional_fields": {},
-        "pre_connect_script": null,
-        "startup_commands": null,
-        "ssh_config": null
-    })];
-
     if std::env::var("TABLER_E2E_POSTGRES").as_deref() == Ok("1") {
         let host = std::env::var("TABLER_E2E_POSTGRES_HOST").unwrap_or_else(|_| "127.0.0.1".into());
         let port = std::env::var("TABLER_E2E_POSTGRES_PORT").unwrap_or_else(|_| "5432".into());
@@ -76,35 +52,9 @@ async fn main() -> anyhow::Result<()> {
             .execute("INSERT INTO public.smoke_items (id, label) VALUES (1, 'PostgreSQL ready'), (2, 'desktop smoke')")
             .await?;
         postgres.close().await?;
-
-        connections.push(json!({
-            "id": "e2e-postgresql",
-            "name": "E2E PostgreSQL",
-            "db_type": "postgresql",
-            "host": host,
-            "port": port.parse::<u16>()?,
-            "username": user,
-            "password": if password.is_empty() { None } else { Some(password) },
-            "database": database,
-            "file_path": null,
-            "use_ssl": false,
-            "ssl_mode": "disable",
-            "ssl_ca_cert_path": null,
-            "ssl_client_cert_path": null,
-            "ssl_client_key_path": null,
-            "ssl_skip_host_verification": null,
-            "color": "#336791",
-            "additional_fields": {},
-            "pre_connect_script": null,
-            "startup_commands": null,
-            "ssh_config": null
-        }));
     }
 
-    fs::write(
-        data_dir.join("connections.json"),
-        serde_json::to_vec_pretty(&connections)?,
-    )?;
+    fs::write(data_dir.join("connections.json"), "[]\n")?;
     println!("Prepared TableR E2E fixtures in {}", data_dir.display());
     Ok(())
 }

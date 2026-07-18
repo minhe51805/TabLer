@@ -67,6 +67,9 @@ use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(feature = "e2e")]
+    keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+
     let start_time = std::time::Instant::now();
     let data_dir = match utils::paths::resolve_data_dir() {
         Ok(path) => path,

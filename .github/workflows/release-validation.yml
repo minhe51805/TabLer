@@ -101,7 +101,7 @@ jobs:
         env:
           CC: ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
-          CXXFLAGS: ${{ matrix.target == 'windows' && format('{0} /FI{1}/src-tauri/src/clang_compat.h', matrix.cxxflags, github.workspace) || matrix.cxxflags }}
+          CXXFLAGS: ${{ matrix.cxxflags }}
         run: npm run tauri build
 
       - name: Validate Linux bundles

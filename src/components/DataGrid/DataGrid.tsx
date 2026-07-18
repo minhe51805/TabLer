@@ -5,8 +5,12 @@ import {
   getCoreRowModel,
   flexRender,
   type ColumnDef,
+  type ColumnOrderState,
+  type VisibilityState,
+  type ColumnPinningState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Copy, Loader2, Plus, X, ClipboardPaste } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
@@ -51,7 +55,8 @@ import {
   type StructureStatus,
   type EditingCell,
 } from "./hooks/useDataGrid";
-import { getColumnWidths, saveColumnWidth } from "../../stores/column-width-store";
+import { clearColumnWidths, getColumnWidths, saveColumnWidth } from "../../stores/column-width-store";
+import { clearColumnLayout, getColumnLayout, saveColumnLayout } from "../../stores/column-layout-store";
 import { useDateFormatStore } from "../../stores/dateFormatStore";
 import { filterAndSortLocalRows, filterRowsWithSourceIndices } from "./local-result-operations";
 import { resolveDataWindowColumns } from "./data-window";
@@ -127,6 +132,9 @@ export function DataGrid({
     deleteTableRows,
     insertTableRow,
     insertTableRowsAtomically,
+    importCsvFileAtomically,
+    exportTableData,
+    cancelTableExport,
     cancelCsvImport,
     getForeignKeyLookupValues,
     executeQuery,
@@ -139,6 +147,9 @@ export function DataGrid({
       deleteTableRows: state.deleteTableRows,
       insertTableRow: state.insertTableRow,
       insertTableRowsAtomically: state.insertTableRowsAtomically,
+      importCsvFileAtomically: state.importCsvFileAtomically,
+      exportTableData: state.exportTableData,
+      cancelTableExport: state.cancelTableExport,
       cancelCsvImport: state.cancelCsvImport,
       getForeignKeyLookupValues: state.getForeignKeyLookupValues,
       executeQuery: state.executeQuery,
@@ -153,6 +164,7 @@ export function DataGrid({
   const allowsAtomicEdits = isCapabilitySupported(capabilityProfile?.capabilities.atomicEditQueue);
   const allowsCsvImport = isCapabilitySupported(capabilityProfile?.capabilities.atomicCsvImport);
   const allowsDataExport = isCapabilitySupported(capabilityProfile?.capabilities.dataExport);
+  const initialColumnLayoutRef = useRef(getColumnLayout(connectionId, tableName ?? "", database));
 
   const {
     stagedChanges,
@@ -178,10 +190,10 @@ export function DataGrid({
   const [structureStatus, setStructureStatus] = useState<StructureStatus>(
     externalResult ? "ready" : "idle",
   );
-  const [sortColumn, setSortColumn] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
-  const [filterDraft, setFilterDraft] = useState("");
-  const [tableFilter, setTableFilter] = useState("");
+  const [sortColumn, setSortColumn] = useState<string | null>(initialColumnLayoutRef.current.sort?.column ?? null);
+  const [sortDir, setSortDir] = useState<"ASC" | "DESC">(initialColumnLayoutRef.current.sort?.direction ?? "ASC");
+  const [filterDraft, setFilterDraft] = useState(initialColumnLayoutRef.current.filter);
+  const [tableFilter, setTableFilter] = useState(initialColumnLayoutRef.current.filter);
   /** Multi-column sort: array of {column, direction, priority}. Priority 1 = highest. */
   const [multiSort, setMultiSort] = useState<Array<{ column: string; direction: "ASC" | "DESC"; priority: number }>>([]);
   const [gridSelection, setGridSelection] = useState(createEmptyGridSelection);
@@ -202,8 +214,21 @@ export function DataGrid({
   const [isPasteDialogOpen, setIsPasteDialogOpen] = useState(false);
   const [pastePreview, setPastePreview] = useState<PastePreview | null>(null);
   const [pasteSourceLabel, setPasteSourceLabel] = useState("Clipboard data");
+  const [csvFileSelection, setCsvFileSelection] = useState<{
+    filePath: string;
+    delimiter: "csv" | "tsv";
+    byteSize: number;
+    isTruncated: boolean;
+  } | null>(null);
   const [isSubmittingPaste, setIsSubmittingPaste] = useState(false);
   const [isCancellingPaste, setIsCancellingPaste] = useState(false);
+  const [csvImportProgress, setCsvImportProgress] = useState<{
+    processedRows: number;
+    processedBytes: number;
+    totalBytes: number;
+  } | null>(null);
+  const [isExportingFull, setIsExportingFull] = useState(false);
+  const [exportedRowCount, setExportedRowCount] = useState(0);
   /** Set of row indices with pending staged changes */
   const [stagedRowIndices, setStagedRowIndices] = useState<Set<number>>(new Set());
   /** FK Preview: {table, column, value, rowIndex, colIndex} */
@@ -214,6 +239,9 @@ export function DataGrid({
   const [columnSizes, setColumnSizes] = useState<Record<string, number>>(() =>
     getColumnWidths(connectionId, tableName ?? "", database),
   );
+  const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(initialColumnLayoutRef.current.order);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(initialColumnLayoutRef.current.visibility);
+  const [columnPinning, setColumnPinning] = useState<ColumnPinningState>(initialColumnLayoutRef.current.pinning);
   const rowFocusFilter = useMemo(() => buildRowFocusFilter(rowFocus), [rowFocus]);
   const [columnDisplayFormats, setColumnDisplayFormats] = useState<Record<string, ColumnDisplayFormat>>({});
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: "cell" | "header" | "row"; colName?: string; rowIndex?: number } | null>(null);
@@ -238,9 +266,44 @@ export function DataGrid({
   const rowSelectionAnchorRef = useRef<string | null>(null);
   const dataGridInstanceIdRef = useRef(`datagrid-${Math.random().toString(36).slice(2)}`);
   const csvImportOperationIdRef = useRef<string | null>(null);
+  const tableExportOperationIdRef = useRef<string | null>(null);
   const loadedTablePagesRef = useRef(new Map<number, QueryResult>());
   const assignInputRef = useCallback((element: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null) => {
     editorRef.current = element;
+  }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    void listen<{
+      operationId: string;
+      processedRows: number;
+      processedBytes: number;
+      totalBytes: number;
+    }>("csv-import-progress", (event) => {
+      if (event.payload.operationId !== csvImportOperationIdRef.current) return;
+      setCsvImportProgress({
+        processedRows: event.payload.processedRows,
+        processedBytes: event.payload.processedBytes,
+        totalBytes: event.payload.totalBytes,
+      });
+    }).then((cleanup) => { unlisten = cleanup; }).catch(() => {
+      // Browser-only tests and previews do not expose Tauri's event bridge.
+    });
+    return () => unlisten?.();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    void listen<{ operationId: string; exportedRows: number }>(
+      "table-export-progress",
+      (event) => {
+        if (event.payload.operationId !== tableExportOperationIdRef.current) return;
+        setExportedRowCount(event.payload.exportedRows);
+      },
+    ).then((cleanup) => { unlisten = cleanup; }).catch(() => {
+      // Browser-only tests and previews do not expose Tauri's event bridge.
+    });
+    return () => unlisten?.();
   }, []);
 
   const setSelectedCell = useCallback((
@@ -541,8 +604,14 @@ export function DataGrid({
     setStructureColumns([]);
     setTotalRows(0);
     setCurrentPage(0);
-    setFilterDraft("");
-    setTableFilter("");
+    const persistedLayout = getColumnLayout(connectionId, tableName ?? "", database);
+    setFilterDraft(persistedLayout.filter);
+    setTableFilter(persistedLayout.filter);
+    setSortColumn(persistedLayout.sort?.column ?? null);
+    setSortDir(persistedLayout.sort?.direction ?? "ASC");
+    setColumnOrder(persistedLayout.order);
+    setColumnVisibility(persistedLayout.visibility);
+    setColumnPinning(persistedLayout.pinning);
     setStructureStatus("idle");
     structurePromiseRef.current = null;
     structureRetryAttemptRef.current = 0;
@@ -556,6 +625,34 @@ export function DataGrid({
     // Restore persisted column widths for the new table
       setColumnSizes(getColumnWidths(connectionId, tableName ?? "", database));
   }, [tableName, connectionId, database, externalResult, rowFocus?.token]);
+
+  useEffect(() => {
+    if (!tableName || externalResult) return;
+    const timeoutId = window.setTimeout(() => {
+      saveColumnLayout(connectionId, tableName, {
+        order: columnOrder,
+        visibility: columnVisibility,
+        pinning: {
+          left: columnPinning.left ?? [],
+          right: columnPinning.right ?? [],
+        },
+        sort: sortColumn ? { column: sortColumn, direction: sortDir } : null,
+        filter: filterDraft,
+      }, database);
+    }, 150);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    columnOrder,
+    columnPinning,
+    columnVisibility,
+    connectionId,
+    database,
+    externalResult,
+    filterDraft,
+    sortColumn,
+    sortDir,
+    tableName,
+  ]);
 
   useEffect(() => {
     if (!tableName || externalResult || !isActive) return;
@@ -795,6 +892,8 @@ export function DataGrid({
     setIsPasteDialogOpen(false);
     setPastePreview(null);
     setPasteSourceLabel("Clipboard data");
+    setCsvFileSelection(null);
+    setCsvImportProgress(null);
     setIsSubmittingPaste(false);
     setIsCancellingPaste(false);
     setDragSourceIndex(null);
@@ -830,19 +929,36 @@ export function DataGrid({
 
     setPastePreview(preview);
     setPasteSourceLabel("Clipboard data");
+    setCsvFileSelection(null);
     setIsPasteDialogOpen(true);
   }, [tableName, resolvedColumns, setError]);
 
   const handleImportCsv = useCallback(async () => {
     if (!tableName || resolvedColumns.length === 0) return;
     try {
-      const file = await invokeMutation<{ fileName: string; content: string; byteSize: number }>("read_csv_file", {});
+      const file = await invokeMutation<{
+        fileName: string;
+        content: string;
+        byteSize: number;
+        filePath: string;
+        isTruncated: boolean;
+        delimiter: "csv" | "tsv";
+      }>("read_csv_file", {});
       const parsed = parseClipboardText(file.content);
       if (!parsed) throw new Error("The selected file does not contain valid CSV or TSV data.");
       const preview = buildPastePreview(parsed, resolvedColumns.map((column) => column.name));
       if (preview.mappings.length === 0) throw new Error("No CSV headers match columns in the selected table.");
       setPastePreview(preview);
-      setPasteSourceLabel(file.fileName);
+      setCsvFileSelection({
+        filePath: file.filePath,
+        delimiter: file.delimiter,
+        byteSize: file.byteSize,
+        isTruncated: file.isTruncated,
+      });
+      const sizeLabel = file.byteSize >= 1024 * 1024
+        ? `${(file.byteSize / (1024 * 1024)).toFixed(1)} MB`
+        : `${Math.max(1, Math.round(file.byteSize / 1024))} KB`;
+      setPasteSourceLabel(`${file.fileName} (${sizeLabel}, streaming import)`);
       setIsPasteDialogOpen(true);
     } catch (errorValue) {
       setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
@@ -1890,14 +2006,29 @@ export function DataGrid({
 
     setIsSubmittingPaste(true);
     setIsCancellingPaste(false);
+    setCsvImportProgress(null);
     const operationId = `csv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     csvImportOperationIdRef.current = operationId;
     try {
-      await insertTableRowsAtomically(
-        connectionId,
-        validatedRows.map((values) => ({ table: tableName, database, values })),
-        operationId,
-      );
+      if (csvFileSelection) {
+        await importCsvFileAtomically(connectionId, {
+          filePath: csvFileSelection.filePath,
+          table: tableName,
+          database,
+          delimiter: csvFileSelection.delimiter,
+          hasHeaders: pastePreview.firstRowWasHeader,
+          mappings: pastePreview.mappings.map((mapping) => ({
+            sourceIndex: mapping.clipboardIndex,
+            targetColumn: mapping.tableColumnName,
+          })),
+        }, operationId);
+      } else {
+        await insertTableRowsAtomically(
+          connectionId,
+          validatedRows.map((values) => ({ table: tableName, database, values })),
+          operationId,
+        );
+      }
 
       invalidateTableCaches(connectionId, tableName, database);
       window.dispatchEvent(
@@ -1914,8 +2045,9 @@ export function DataGrid({
       csvImportOperationIdRef.current = null;
       setIsSubmittingPaste(false);
       setIsCancellingPaste(false);
+      setCsvImportProgress(null);
     }
-  }, [pastePreview, tableName, connectionId, database, insertTableRowsAtomically, setError, invalidateTableCaches, refreshTableFromStart, closePasteDialog, resolvedColumns]);
+  }, [csvFileSelection, pastePreview, tableName, connectionId, database, importCsvFileAtomically, insertTableRowsAtomically, setError, invalidateTableCaches, refreshTableFromStart, closePasteDialog, resolvedColumns]);
 
   const handleCancelPasteImport = useCallback(async () => {
     const operationId = csvImportOperationIdRef.current;
@@ -1932,6 +2064,40 @@ export function DataGrid({
       setIsCancellingPaste(false);
     }
   }, [cancelCsvImport, isCancellingPaste, setError]);
+
+  const handleFullTableExport = useCallback(async (format: "csv" | "jsonl") => {
+    if (!tableName || isExportingFull) return;
+    const operationId = `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    tableExportOperationIdRef.current = operationId;
+    setExportedRowCount(0);
+    setIsExportingFull(true);
+    try {
+      await exportTableData(connectionId, {
+        table: tableName,
+        database,
+        format,
+        orderBy: sortColumn ?? undefined,
+        orderDir: sortColumn ? sortDir : undefined,
+        filter: rowFocusFilter || undefined,
+      }, operationId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/cancel/i.test(message)) setError(`Full table export failed: ${message}`);
+    } finally {
+      tableExportOperationIdRef.current = null;
+      setIsExportingFull(false);
+    }
+  }, [connectionId, database, exportTableData, isExportingFull, rowFocusFilter, setError, sortColumn, sortDir, tableName]);
+
+  const handleCancelFullTableExport = useCallback(async () => {
+    const operationId = tableExportOperationIdRef.current;
+    if (!operationId) return;
+    try {
+      await cancelTableExport(operationId);
+    } catch (error) {
+      setError(`Could not cancel table export: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [cancelTableExport, setError]);
 
   const handleCopyAsInsert = useCallback(async () => {
     if (selectedRows.size === 0 || !data || !tableName || resolvedColumns.length === 0) return;
@@ -2157,7 +2323,15 @@ export function DataGrid({
     columns,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: "onChange",
-    state: { columnSizing: columnSizes },
+    state: {
+      columnSizing: columnSizes,
+      columnOrder,
+      columnVisibility,
+      columnPinning,
+    },
+    onColumnOrderChange: setColumnOrder,
+    onColumnVisibilityChange: setColumnVisibility,
+    onColumnPinningChange: setColumnPinning,
     onColumnSizingChange: (updater) => {
       setColumnSizes((prev) => {
         const next = typeof updater === "function" ? updater(prev) : updater;
@@ -2190,9 +2364,9 @@ export function DataGrid({
   const virtualPaddingBottom = virtualRows.length > 0
     ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
     : 0;
-  const visibleLeafColumns = table.getVisibleLeafColumns();
-  const indexColumn = visibleLeafColumns.find((column) => column.id === "_row_num");
-  const virtualizableColumns = visibleLeafColumns.filter((column) => column.id !== "_row_num");
+  const leftPinnedColumns = table.getLeftVisibleLeafColumns();
+  const virtualizableColumns = table.getCenterVisibleLeafColumns();
+  const rightPinnedColumns = table.getRightVisibleLeafColumns();
   const columnVirtualizer = useVirtualizer({
     horizontal: true,
     count: virtualizableColumns.length,
@@ -2205,8 +2379,10 @@ export function DataGrid({
   const virtualPaddingRight = virtualColumns.length > 0
     ? columnVirtualizer.getTotalSize() - virtualColumns[virtualColumns.length - 1].end
     : 0;
-  const tableMinWidth = (indexColumn?.getSize() ?? 56) + columnVirtualizer.getTotalSize();
-  const renderedColumnCount = 1 + virtualColumns.length
+  const pinnedWidth = [...leftPinnedColumns, ...rightPinnedColumns]
+    .reduce((total, column) => total + column.getSize(), 0);
+  const tableMinWidth = pinnedWidth + columnVirtualizer.getTotalSize();
+  const renderedColumnCount = leftPinnedColumns.length + virtualColumns.length + rightPinnedColumns.length
     + Number(virtualPaddingLeft > 0)
     + Number(virtualPaddingRight > 0);
   const getVirtualSpacerStyle = (width: number) => ({
@@ -2214,6 +2390,17 @@ export function DataGrid({
     minWidth: width,
     maxWidth: width,
   });
+  const pinnedColumnStyle = (column: (typeof leftPinnedColumns)[number]) => {
+    const pinned = column.getIsPinned();
+    if (!pinned) return undefined;
+    return {
+      position: "sticky" as const,
+      left: pinned === "left" ? column.getStart("left") : undefined,
+      right: pinned === "right" ? column.getAfter("right") : undefined,
+      zIndex: 3,
+      background: "var(--bg-primary)",
+    };
+  };
 
   useEffect(() => {
     if (!tableName || externalResult || isLoading || !hasMoreTableRows || virtualRows.length === 0) return;
@@ -2410,6 +2597,10 @@ export function DataGrid({
           ? `${capabilityProfile.label} is read-only in TableR; editing actions are unavailable.`
           : undefined}
         canExportData={allowsDataExport}
+        onExportFull={tableName && !externalResult ? handleFullTableExport : undefined}
+        isExportingFull={isExportingFull}
+        exportedRowCount={exportedRowCount}
+        onCancelExport={handleCancelFullTableExport}
         canImportCsv={allowsCsvImport}
         structureStatus={structureStatus}
         resolvedColumns={resolvedColumns}
@@ -2452,16 +2643,35 @@ export function DataGrid({
           </div>
         ) : (
           <table className="datagrid-table" style={{ minWidth: tableMinWidth, tableLayout: "fixed" }}>
-          <thead className="datagrid-head">
+          <thead
+            className="datagrid-head"
+            onContextMenu={(event) => {
+              const header = (event.target as HTMLElement).closest("th.datagrid-th");
+              const columnId = header?.getAttribute("data-col-id") ?? undefined;
+              if (!columnId) return;
+              event.preventDefault();
+              handleContextMenu(event, "header", columnId);
+            }}
+          >
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
-                {hg.headers.filter((header) => header.column.id === "_row_num").map((header) => (
-                  <th key={header.id} className="datagrid-th datagrid-th-index" data-col-id={header.column.id}>
+                {leftPinnedColumns.map((column) => {
+                  const header = hg.headers.find((candidate) => candidate.column.id === column.id);
+                  if (!header) return null;
+                  const width = columnSizes[column.id] ?? column.getSize();
+                  return (
+                  <th
+                    key={header.id}
+                    className={`datagrid-th${column.id === "_row_num" ? " datagrid-th-index" : ""}`}
+                    data-col-id={column.id}
+                    style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
+                  >
                     <div className="datagrid-th-inner">
                       {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                     </div>
                   </th>
-                ))}
+                  );
+                })}
                 {virtualPaddingLeft > 0 && (
                   <th
                     aria-hidden="true"
@@ -2500,6 +2710,23 @@ export function DataGrid({
                     style={getVirtualSpacerStyle(virtualPaddingRight)}
                   />
                 )}
+                {rightPinnedColumns.map((column) => {
+                  const header = hg.headers.find((candidate) => candidate.column.id === column.id);
+                  if (!header) return null;
+                  const width = columnSizes[column.id] ?? column.getSize();
+                  return (
+                    <th
+                      key={header.id}
+                      className="datagrid-th"
+                      data-col-id={column.id}
+                      style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
+                    >
+                      <div className="datagrid-th-inner">
+                        {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                      </div>
+                    </th>
+                  );
+                })}
               </tr>
             ))}
           </thead>
@@ -2549,18 +2776,24 @@ export function DataGrid({
                 onDrop={(e) => handleDrop(e, sourceRowIndex)}
                 onDragEnd={handleDragEnd}
               >
-                {row.getVisibleCells().filter((cell) => cell.column.id === "_row_num").map((cell) => (
+                {leftPinnedColumns.map((column) => {
+                  const cell = row.getVisibleCells().find((candidate) => candidate.column.id === column.id);
+                  if (!cell) return null;
+                  const width = columnSizes[column.id] ?? column.getSize();
+                  return (
                   <td
                     key={cell.id}
                     className={[
                       "datagrid-td",
-                      "datagrid-td-index",
+                      column.id === "_row_num" ? "datagrid-td-index" : "",
                       stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
                     ].join(" ")}
+                    style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
-                ))}
+                  );
+                })}
                 {virtualPaddingLeft > 0 && (
                   <td
                     aria-hidden="true"
@@ -2593,6 +2826,23 @@ export function DataGrid({
                     style={getVirtualSpacerStyle(virtualPaddingRight)}
                   />
                 )}
+                {rightPinnedColumns.map((column) => {
+                  const cell = row.getVisibleCells().find((candidate) => candidate.column.id === column.id);
+                  if (!cell) return null;
+                  const width = columnSizes[column.id] ?? column.getSize();
+                  return (
+                    <td
+                      key={cell.id}
+                      className={[
+                        "datagrid-td",
+                        stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
+                      ].join(" ")}
+                      style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </td>
+                  );
+                })}
               </tr>
               );
             })}
@@ -2676,6 +2926,115 @@ export function DataGrid({
                 }}
               >
                 Auto-fit column
+              </button>
+              {contextMenu.colName !== "_row_num" && (
+                <>
+                  <button
+                    className="datagrid-context-menu-item"
+                    onClick={() => {
+                      table.getColumn(contextMenu.colName!)?.pin("left");
+                      setContextMenu(null);
+                    }}
+                  >
+                    Pin left
+                  </button>
+                  <button
+                    className="datagrid-context-menu-item"
+                    onClick={() => {
+                      table.getColumn(contextMenu.colName!)?.pin("right");
+                      setContextMenu(null);
+                    }}
+                  >
+                    Pin right
+                  </button>
+                  <button
+                    className="datagrid-context-menu-item"
+                    onClick={() => {
+                      table.getColumn(contextMenu.colName!)?.pin(false);
+                      setContextMenu(null);
+                    }}
+                  >
+                    Unpin
+                  </button>
+                  <button
+                    className="datagrid-context-menu-item"
+                    onClick={() => {
+                      const columnId = contextMenu.colName!;
+                      setColumnOrder((previous) => {
+                        const allIds = table.getAllLeafColumns().map((column) => column.id);
+                        const order = previous.length > 0
+                          ? [...previous, ...allIds.filter((id) => !previous.includes(id))]
+                          : allIds;
+                        const index = order.indexOf(columnId);
+                        if (index <= 1) return order;
+                        [order[index - 1], order[index]] = [order[index], order[index - 1]];
+                        return order;
+                      });
+                      setContextMenu(null);
+                    }}
+                  >
+                    Move left
+                  </button>
+                  <button
+                    className="datagrid-context-menu-item"
+                    onClick={() => {
+                      const columnId = contextMenu.colName!;
+                      setColumnOrder((previous) => {
+                        const allIds = table.getAllLeafColumns().map((column) => column.id);
+                        const order = previous.length > 0
+                          ? [...previous, ...allIds.filter((id) => !previous.includes(id))]
+                          : allIds;
+                        const index = order.indexOf(columnId);
+                        if (index < 0 || index >= order.length - 1) return order;
+                        [order[index], order[index + 1]] = [order[index + 1], order[index]];
+                        return order;
+                      });
+                      setContextMenu(null);
+                    }}
+                  >
+                    Move right
+                  </button>
+                  <button
+                    className="datagrid-context-menu-item"
+                    onClick={() => {
+                      table.getColumn(contextMenu.colName!)?.toggleVisibility(false);
+                      setContextMenu(null);
+                    }}
+                  >
+                    Hide column
+                  </button>
+                </>
+              )}
+              {table.getAllLeafColumns().some((column) => !column.getIsVisible()) && (
+                <button
+                  className="datagrid-context-menu-item"
+                  onClick={() => {
+                    table.toggleAllColumnsVisible(true);
+                    setContextMenu(null);
+                  }}
+                >
+                  Show all columns
+                </button>
+              )}
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => {
+                  if (tableName) {
+                    clearColumnLayout(connectionId, tableName, database);
+                    clearColumnWidths(connectionId, tableName, database);
+                  }
+                  setColumnOrder([]);
+                  setColumnVisibility({});
+                  setColumnPinning({ left: ["_row_num"], right: [] });
+                  setColumnSizes({});
+                  setSortColumn(null);
+                  setSortDir("ASC");
+                  setFilterDraft("");
+                  setTableFilter("");
+                  setContextMenu(null);
+                }}
+              >
+                Reset table layout
               </button>
               <div className="datagrid-context-menu-separator" />
               <div className="datagrid-context-menu-label" style={{ padding: "4px 12px", fontSize: "11px", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Display As</div>
@@ -2857,7 +3216,9 @@ export function DataGrid({
                   <div className="datagrid-insert-dialog-copy">
                     <span className="datagrid-insert-dialog-kicker">{pasteSourceLabel}</span>
                     <h3 id="datagrid-paste-dialog-title" className="datagrid-insert-dialog-title">
-                      {tableName ? `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""} into ${tableName.split(".").pop() || tableName}` : `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""}`}
+                      {csvFileSelection
+                        ? `Import full file into ${tableName?.split(".").pop() || tableName || "table"}`
+                        : tableName ? `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""} into ${tableName.split(".").pop() || tableName}` : `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""}`}
                     </h3>
                     <p className="datagrid-insert-dialog-description">
                       Column mappings from clipboard ({pastePreview.firstRowWasHeader ? "headers detected" : "positional mapping"}):
@@ -2911,9 +3272,23 @@ export function DataGrid({
                     </div>
                   )}
                   <div className="datagrid-paste-summary">
-                    <strong>{pastePreview.rowCount}</strong> row{pastePreview.rowCount !== 1 ? "s" : ""} to insert
+                    <strong>{pastePreview.rowCount}</strong> {csvFileSelection?.isTruncated ? "preview rows checked; the full file will stream" : `row${pastePreview.rowCount !== 1 ? "s" : ""} to insert`}
                     {pastePreview.nullColumns.length > 0 && `, <strong>${pastePreview.nullColumns.length}</strong> column(s) use database defaults`}
                   </div>
+                  {isSubmittingPaste && csvFileSelection && csvImportProgress && (
+                    <div className="datagrid-import-progress" aria-live="polite">
+                      <progress
+                        max={Math.max(1, csvImportProgress.totalBytes)}
+                        value={csvImportProgress.processedBytes}
+                      />
+                      <span>
+                        {csvImportProgress.processedRows.toLocaleString()} rows processed
+                        {csvImportProgress.totalBytes > 0
+                          ? ` (${Math.min(100, Math.round((csvImportProgress.processedBytes / csvImportProgress.totalBytes) * 100))}%)`
+                          : ""}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="datagrid-insert-dialog-actions">
@@ -2940,12 +3315,12 @@ export function DataGrid({
                     {isSubmittingPaste ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        Importing {pastePreview.rowCount} rows atomically...
+                        {csvFileSelection ? "Streaming file in one transaction..." : `Importing ${pastePreview.rowCount} rows atomically...`}
                       </>
                     ) : (
                       <>
                         <ClipboardPaste className="w-4 h-4" />
-                        Insert {pastePreview.rowCount} row{pastePreview.rowCount !== 1 ? "s" : ""}
+                        {csvFileSelection ? "Import full file" : `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""}`}
                       </>
                     )}
                   </button>

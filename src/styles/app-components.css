@@ -10067,6 +10067,20 @@ body {
   }
 }
 
+.datagrid-import-progress {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.datagrid-import-progress progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
 .connection-list-header {
   gap: 10px;
   flex-direction: column;

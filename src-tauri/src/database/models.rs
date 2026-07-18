@@ -1190,6 +1190,26 @@ pub struct TableRowInsertRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CsvColumnMapping {
+    pub source_index: usize,
+    pub target_column: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CsvFileImportRequest {
+    pub file_path: String,
+    pub table: String,
+    pub database: Option<String>,
+    pub delimiter: String,
+    pub has_headers: bool,
+    pub mappings: Vec<CsvColumnMapping>,
+}
+
+pub type CsvImportRow = Result<TableRowInsertRequest, String>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {
     pub name: String,
     pub schema: Option<String>,

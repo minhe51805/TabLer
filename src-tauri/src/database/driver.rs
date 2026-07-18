@@ -111,6 +111,19 @@ pub trait DatabaseDriver: Send + Sync {
         ))
     }
 
+    /// Consume a bounded row stream inside one transaction. Implementations
+    /// must roll back the transaction when parsing fails, cancellation is
+    /// requested, or the channel closes before a successful end-of-stream.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        _rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        Err(anyhow::anyhow!(
+            "Streaming CSV imports are not supported by this database driver yet"
+        ))
+    }
+
     /// Execute reviewed schema-change statements in the backend, sequentially.
     async fn execute_structure_statements(&self, statements: &[String]) -> Result<u64> {
         let mut total_affected = 0;

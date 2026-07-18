@@ -157,6 +157,57 @@ describe("queryStore", () => {
     });
   });
 
+  it("streams selected CSV files without loading rows into frontend memory", async () => {
+    invokeMutationMock.mockResolvedValue(50_000);
+
+    await expect(useQueryStore.getState().importCsvFileAtomically("connection-1", {
+      filePath: "C:\\imports\\users.csv",
+      table: "users",
+      database: "app",
+      delimiter: "csv",
+      hasHeaders: true,
+      mappings: [{ sourceIndex: 0, targetColumn: "email" }],
+    }, "csv-file-1")).resolves.toBe(50_000);
+
+    expect(invokeMutationMock).toHaveBeenCalledWith("import_csv_file_atomically", {
+      connectionId: "connection-1",
+      operationId: "csv-file-1",
+      request: {
+        filePath: "C:\\imports\\users.csv",
+        table: "users",
+        database: "app",
+        delimiter: "csv",
+        hasHeaders: true,
+        mappings: [{ sourceIndex: 0, targetColumn: "email" }],
+      },
+    });
+  });
+
+  it("exports the full table through the backend instead of the loaded page", async () => {
+    invokeMutationMock.mockResolvedValue({ filePath: "C:\\exports\\users.csv", format: "csv", rowCount: 790 });
+
+    await expect(useQueryStore.getState().exportTableData("connection-1", {
+      table: "users",
+      database: "app",
+      format: "csv",
+      orderBy: "id",
+      orderDir: "ASC",
+    }, "export-1")).resolves.toMatchObject({ rowCount: 790 });
+
+    expect(invokeMutationMock).toHaveBeenCalledWith("export_table_data", {
+      connectionId: "connection-1",
+      operationId: "export-1",
+      request: {
+        table: "users",
+        database: "app",
+        format: "csv",
+        orderBy: "id",
+        orderDir: "ASC",
+        filter: null,
+      },
+    });
+  });
+
   it("sends queued updates through the single atomic backend command", async () => {
     invokeMutationMock.mockResolvedValue(2);
     await expect(useQueryStore.getState().applyTableUpdatesAtomically("connection-1", [

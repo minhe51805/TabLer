@@ -47,7 +47,32 @@ export interface QueryState {
     requests: Array<{ table: string; database?: string; values: [string, unknown][] }>,
     operationId: string,
   ) => Promise<number>;
+  importCsvFileAtomically: (
+    connectionId: string,
+    request: {
+      filePath: string;
+      table: string;
+      database?: string;
+      delimiter: "csv" | "tsv";
+      hasHeaders: boolean;
+      mappings: Array<{ sourceIndex: number; targetColumn: string }>;
+    },
+    operationId: string,
+  ) => Promise<number>;
   cancelCsvImport: (operationId: string) => Promise<boolean>;
+  exportTableData: (
+    connectionId: string,
+    request: {
+      table: string;
+      database?: string;
+      format: "csv" | "jsonl";
+      orderBy?: string;
+      orderDir?: "ASC" | "DESC";
+      filter?: string;
+    },
+    operationId: string,
+  ) => Promise<{ filePath: string; format: string; rowCount: number }>;
+  cancelTableExport: (operationId: string) => Promise<boolean>;
   executeStructureStatements: (connectionId: string, statements: string[]) => Promise<number>;
   getForeignKeyLookupValues: (
     connectionId: string,
@@ -188,8 +213,34 @@ export const useQueryStore = create<QueryState>((set) => ({
       })),
     }),
 
+  importCsvFileAtomically: async (connectionId, request, operationId) =>
+    invokeMutation<number>("import_csv_file_atomically", {
+      connectionId,
+      operationId,
+      request: {
+        ...request,
+        database: request.database || null,
+      },
+    }),
+
   cancelCsvImport: async (operationId) =>
     invokeMutation<boolean>("cancel_csv_import", { operationId }),
+
+  exportTableData: async (connectionId, request, operationId) =>
+    invokeMutation<{ filePath: string; format: string; rowCount: number }>("export_table_data", {
+      connectionId,
+      operationId,
+      request: {
+        ...request,
+        database: request.database || null,
+        orderBy: request.orderBy || null,
+        orderDir: request.orderDir || null,
+        filter: request.filter || null,
+      },
+    }),
+
+  cancelTableExport: async (operationId) =>
+    invokeMutation<boolean>("cancel_table_export", { operationId }),
 
   executeStructureStatements: async (connectionId, statements) => {
     const affectedRows = await invokeMutation<number>("execute_structure_statements", { connectionId, statements });

@@ -1312,6 +1312,55 @@ impl DatabaseDriver for PostgresDriver {
         Ok(affected_rows)
     }
 
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut transaction = self.pool.begin().await?;
+        let mut affected_rows = 0;
+        while let Some(request) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!(
+                    "CSV import cancelled; all rows were rolled back"
+                ));
+            }
+            let request = request.map_err(anyhow::Error::msg)?;
+            if request.values.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Each CSV row requires at least one column value"
+                ));
+            }
+            let mut builder = QueryBuilder::<Postgres>::new("INSERT INTO ");
+            builder.push(qualify_postgres_table_name(&request.table, "public")?);
+            builder.push(" (");
+            for (index, (column, _)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                builder.push(quote_postgres_identifier(column)?);
+            }
+            builder.push(") VALUES (");
+            for (index, (_, value)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                Self::push_bound_value(&mut builder, value)?;
+            }
+            builder.push(")");
+            affected_rows += builder
+                .build()
+                .execute(&mut *transaction)
+                .await?
+                .rows_affected();
+        }
+        if affected_rows == 0 {
+            return Err(anyhow::anyhow!("CSV import did not contain any data rows"));
+        }
+        transaction.commit().await?;
+        Ok(affected_rows)
+    }
+
     fn driver_name(&self) -> &str {
         "PostgreSQL"
     }

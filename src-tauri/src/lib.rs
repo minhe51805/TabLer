@@ -18,6 +18,7 @@ use commands::ai::{
 };
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
+use commands::data_export::{cancel_table_export, export_table_data, TableExportCancellationState};
 use commands::deep_link::parse_deep_link;
 use commands::diagnostics::{
     export_diagnostic_bundle, preview_diagnostic_bundle, DiagnosticReviewState,
@@ -170,6 +171,7 @@ pub fn run() {
     );
     let ai_request_cancellation_state = AIRequestCancellationState::default();
     let csv_import_cancellation_state = CsvImportCancellationState::default();
+    let table_export_cancellation_state = TableExportCancellationState::default();
     let terminal_manager = TerminalManager::default();
 
     let builder = tauri::Builder::default();
@@ -194,6 +196,7 @@ pub fn run() {
         .manage(ai_rate_limiter)
         .manage(ai_request_cancellation_state)
         .manage(csv_import_cancellation_state)
+        .manage(table_export_cancellation_state)
         .manage(DiagnosticReviewState::default())
         .setup(|app| {
             if let Err(e) = watcher::start_watcher(app.handle().clone()) {
@@ -271,7 +274,10 @@ pub fn run() {
             delete_table_rows,
             insert_table_row,
             insert_table_rows_atomically,
+            import_csv_file_atomically,
             cancel_csv_import,
+            export_table_data,
+            cancel_table_export,
             execute_structure_statements,
             get_foreign_key_lookup_values,
             // AI commands

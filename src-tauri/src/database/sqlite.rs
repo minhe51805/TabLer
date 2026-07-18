@@ -142,6 +142,38 @@ mod tests {
         let result = driver.execute_query("SELECT * FROM items").await.unwrap();
         assert!(result.rows.is_empty());
     }
+
+    #[tokio::test]
+    async fn streaming_csv_import_rolls_back_after_parser_error() {
+        let driver = SqliteDriver::connect("sqlite::memory:?cache=shared")
+            .await
+            .unwrap();
+        driver
+            .execute_query("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
+            .await
+            .unwrap();
+        let (sender, receiver) = tokio::sync::mpsc::channel(2);
+        sender
+            .send(Ok(TableRowInsertRequest {
+                table: "items".into(),
+                database: None,
+                values: vec![
+                    ("id".into(), serde_json::json!(1)),
+                    ("value".into(), serde_json::json!("first")),
+                ],
+            }))
+            .await
+            .unwrap();
+        sender.send(Err("row 2 is invalid".into())).await.unwrap();
+        drop(sender);
+
+        assert!(driver
+            .insert_table_row_stream_atomically(receiver, Arc::new(AtomicBool::new(false)),)
+            .await
+            .is_err());
+        let result = driver.execute_query("SELECT * FROM items").await.unwrap();
+        assert!(result.rows.is_empty());
+    }
 }
 
 impl SqliteDriver {
@@ -911,6 +943,55 @@ impl DatabaseDriver for SqliteDriver {
                 .rows_affected();
         }
 
+        transaction.commit().await?;
+        Ok(affected_rows)
+    }
+
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut transaction = self.pool.begin().await?;
+        let mut affected_rows = 0;
+        while let Some(request) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!(
+                    "CSV import cancelled; all rows were rolled back"
+                ));
+            }
+            let request = request.map_err(anyhow::Error::msg)?;
+            if request.values.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Each CSV row requires at least one column value"
+                ));
+            }
+            let mut builder = QueryBuilder::<Sqlite>::new("INSERT INTO ");
+            builder.push(quote_sqlite_identifier(&request.table)?);
+            builder.push(" (");
+            for (index, (column, _)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                builder.push(quote_sqlite_identifier(column)?);
+            }
+            builder.push(") VALUES (");
+            for (index, (_, value)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    builder.push(", ");
+                }
+                Self::push_bound_value(&mut builder, value)?;
+            }
+            builder.push(")");
+            affected_rows += builder
+                .build()
+                .execute(&mut *transaction)
+                .await?
+                .rows_affected();
+        }
+        if affected_rows == 0 {
+            return Err(anyhow::anyhow!("CSV import did not contain any data rows"));
+        }
         transaction.commit().await?;
         Ok(affected_rows)
     }

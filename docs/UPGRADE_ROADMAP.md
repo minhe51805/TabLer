@@ -814,7 +814,7 @@ This board tracks only committed execution work. Existing partial features stay 
 
 | ID | Status | Target sprint group | Evidence |
 | --- | --- | --- | --- |
-| ROAD-001 | Verification | 0A | [Sprint evidence](roadmap/SPRINT_0A_EVIDENCE.md), [tracking issue #65](https://github.com/minhe51805/TabLer/issues/65), [template](roadmap/EVIDENCE_TEMPLATE.md), and commit `79874a2`; review pending |
+| ROAD-001 | Verification | 0A | [Sprint evidence](roadmap/SPRINT_0A_EVIDENCE.md), [issue #65](https://github.com/minhe51805/TabLer/issues/65), [draft PR #66](https://github.com/minhe51805/TabLer/pull/66), [template](roadmap/EVIDENCE_TEMPLATE.md), and commit `79874a2`; review pending |
 | CAP-001 | Verification | 0A | [Sprint evidence](roadmap/SPRINT_0A_EVIDENCE.md), [Rust catalog](../src-tauri/src/database/capabilities.rs), and [generated matrix](generated/driver-capabilities.json) |
 | SEC-001 | Verification | 0A | [Threat model](security/THREAT_MODEL.md) records assets, boundaries, 15 threats, controls, owners, and accepted risks; review pending |
 | PROD-001 | Verification | 0A | [Workflow baseline](product/PROFESSIONAL_WORKFLOW_BASELINE.md) defines persona, fixtures, 10 workflows, metrics, and remaining moderated validation |

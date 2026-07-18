@@ -3,6 +3,7 @@
 > Sprint group: 0A
 > Branch: `feature/sprint-0a-capability-baseline`
 > Tracking issue: [#65](https://github.com/minhe51805/TabLer/issues/65)
+> Draft pull request: [#66](https://github.com/minhe51805/TabLer/pull/66)
 > Implementation commit: `79874a2`
 > Updated: 2026-07-18
 > Decision: Verification
@@ -11,8 +12,8 @@
 
 | ID | Evidence | Status |
 | --- | --- | --- |
-| ROAD-001 | `docs/UPGRADE_ROADMAP.md`, `docs/roadmap/EVIDENCE_TEMPLATE.md`, issue #65, commit `79874a2` | Verification; review pending |
-| CAP-001 | Rust catalog, generator, committed JSON matrix, contract tests, issue #65, commit `79874a2` | Verification; review pending |
+| ROAD-001 | `docs/UPGRADE_ROADMAP.md`, `docs/roadmap/EVIDENCE_TEMPLATE.md`, issue #65, PR #66, commit `79874a2` | Verification; review pending |
+| CAP-001 | Rust catalog, generator, committed JSON matrix, contract tests, issue #65, PR #66, commit `79874a2` | Verification; review pending |
 | SEC-001 | `docs/security/THREAT_MODEL.md` | Verification; security review pending |
 | PROD-001 | `docs/product/PROFESSIONAL_WORKFLOW_BASELINE.md` | Verification; fixture run and moderated validation pending |
 
@@ -43,7 +44,6 @@ One focused contract-test retry initially failed because `link.exe` returned an 
 
 ## Remaining Before Done
 
-- Link a pull request; tracking issue is #65 and implementation is committed as `79874a2`.
 - Obtain roadmap/capability and security review.
 - Run the product baseline against TEST-002 fixtures when available.
 - Install Clippy in the CI/toolchain path or document the approved equivalent lint gate.

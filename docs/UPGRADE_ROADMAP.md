@@ -420,14 +420,14 @@ The release is delayed when a required gate fails. A gate may not be waived by r
 | PROD-001 | Verification | 1 | [Workflow baseline](product/PROFESSIONAL_WORKFLOW_BASELINE.md) |
 | CAP-002 | Verification | 1 | [Sprint 0B evidence](roadmap/SPRINT_0B_EVIDENCE.md) |
 | MIG-001 | Verification | 1 | [Recovery guide](operations/STORAGE_RECOVERY.md) |
-| TEST-001 | Verification | 2 | [Issue #69](https://github.com/minhe51805/TabLer/issues/69), [draft PR #70](https://github.com/minhe51805/TabLer/pull/70); Windows proof and production exclusion pass |
-| TEST-002 | Verification | 2 | [Issue #69](https://github.com/minhe51805/TabLer/issues/69), [draft PR #70](https://github.com/minhe51805/TabLer/pull/70); SQLite passes, PostgreSQL/Linux CI pending |
-| OBS-001 | Verification | 2 | [Issue #69](https://github.com/minhe51805/TabLer/issues/69), [draft PR #70](https://github.com/minhe51805/TabLer/pull/70); redaction, artifact privacy, and review-token tests pass |
+| TEST-001 | Done | 2 | [Sprint 2 evidence](roadmap/SPRINT_0C_EVIDENCE.md), [PR #70](https://github.com/minhe51805/TabLer/pull/70); feature-gated desktop E2E and production exclusion verified |
+| TEST-002 | Done | 2 | [Desktop E2E run](https://github.com/minhe51805/TabLer/actions/runs/29647545143); SQLite and PostgreSQL production-command smoke pass |
+| OBS-001 | Done | 2 | [Sprint 2 evidence](roadmap/SPRINT_0C_EVIDENCE.md); structured redaction, artifact privacy, operation IDs, and reviewed diagnostic export pass |
 
 ## 12. Immediate Execution Order
 
-1. Finish Sprint 2 verification without expanding its scope.
-2. Resolve review and CI evidence for Sprint 1, then mark accepted items `Done`.
+1. Resolve review and CI evidence for Sprint 1, then mark accepted items `Done`.
+2. Merge the Sprint 1 parent stack, rebase PR #70 onto `develop`, and merge the accepted Sprint 2 scope.
 3. Record baseline startup, memory, schema-load, grid-scroll, cancellation, and import measurements before Sprint 3 changes behavior.
 4. Create Sprint 3 issues only after the Foundation gate passes.
 5. Reforecast dates and conditional scope at the end of every second sprint.

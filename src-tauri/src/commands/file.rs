@@ -1,8 +1,9 @@
 use rfd::FileDialog;
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 
-const MAX_CSV_IMPORT_BYTES: u64 = 50 * 1024 * 1024;
+const CSV_PREVIEW_RECORD_LIMIT: usize = 200;
 
 /// Opens a file picker dialog filtered to SQL/text files and returns the file contents.
 /// Returns the full file path and content on success, or an error message.
@@ -55,13 +56,36 @@ pub async fn read_csv_file() -> Result<CsvFileContent, String> {
 
 fn read_csv_file_from_path(file_path: PathBuf) -> Result<CsvFileContent, String> {
     let metadata = fs::metadata(&file_path).map_err(|e| format!("Failed to inspect file: {e}"))?;
-    if metadata.len() > MAX_CSV_IMPORT_BYTES {
-        return Err(
-            "CSV import preview is limited to 50 MB. Split the file before importing.".to_string(),
-        );
+    let delimiter = detect_csv_delimiter(&file_path)?;
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(delimiter)
+        .has_headers(false)
+        .flexible(true)
+        .from_path(&file_path)
+        .map_err(|e| format!("Failed to open delimited file: {e}"))?;
+    let mut writer = csv::WriterBuilder::new()
+        .delimiter(delimiter)
+        .from_writer(Vec::new());
+    let mut preview_records = 0_usize;
+    for record in reader.byte_records().take(CSV_PREVIEW_RECORD_LIMIT) {
+        let record = record.map_err(|e| format!("Failed to parse preview row: {e}"))?;
+        writer
+            .write_byte_record(&record)
+            .map_err(|e| format!("Failed to build CSV preview: {e}"))?;
+        preview_records += 1;
     }
-    let content =
-        fs::read_to_string(&file_path).map_err(|e| format!("Failed to read file: {e}"))?;
+    writer
+        .flush()
+        .map_err(|e| format!("Failed to finish CSV preview: {e}"))?;
+    let content = String::from_utf8(
+        writer
+            .into_inner()
+            .map_err(|e| format!("Failed to finish CSV preview: {e}"))?,
+    )
+    .map_err(|_| "CSV import requires UTF-8 text.".to_string())?;
+    if preview_records == 0 {
+        return Err("The selected CSV file does not contain any rows.".to_string());
+    }
     Ok(CsvFileContent {
         file_name: file_path
             .file_name()
@@ -70,6 +94,29 @@ fn read_csv_file_from_path(file_path: PathBuf) -> Result<CsvFileContent, String>
             .to_string(),
         content,
         byte_size: metadata.len(),
+        file_path: file_path.to_string_lossy().to_string(),
+        is_truncated: reader.position().byte() < metadata.len(),
+        delimiter: if delimiter == b'\t' { "tsv" } else { "csv" }.to_string(),
+    })
+}
+
+fn detect_csv_delimiter(file_path: &PathBuf) -> Result<u8, String> {
+    let mut file = fs::File::open(file_path).map_err(|e| format!("Failed to open file: {e}"))?;
+    let mut sample = vec![0_u8; 8192];
+    let read = file
+        .read(&mut sample)
+        .map_err(|e| format!("Failed to sample file: {e}"))?;
+    sample.truncate(read);
+    let first_line = sample
+        .split(|byte| *byte == b'\n')
+        .next()
+        .unwrap_or(&sample);
+    let tabs = first_line.iter().filter(|byte| **byte == b'\t').count();
+    let commas = first_line.iter().filter(|byte| **byte == b',').count();
+    Ok(if tabs > 0 && tabs >= commas {
+        b'\t'
+    } else {
+        b','
     })
 }
 
@@ -110,6 +157,9 @@ pub struct CsvFileContent {
     pub file_name: String,
     pub content: String,
     pub byte_size: u64,
+    pub file_path: String,
+    pub is_truncated: bool,
+    pub delimiter: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

@@ -205,7 +205,7 @@ export function buildAgentControllerPrompt(params: {
         '2. {"action":"search_schema","message":"short reason","args":{"query":"column or concept to find"}}',
         '3. {"action":"describe_table","message":"short reason","args":{"table":"exact_table_name"}}',
         '4. {"action":"run_readonly_sql","message":"short reason","args":{"sql":"SELECT ..."}}',
-        '5. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval","metricsWidgets":[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ..."}]}}',
+        '5. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval","metricsWidgets":[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ...","dimension":"verified label column","measures":["verified numeric alias"],"transforms":["group/sort operation"],"limit":100}]}}',
       ]
     : ['1. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval"}}'];
 

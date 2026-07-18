@@ -16,6 +16,10 @@ pub struct PersistedTab {
     pub database: Option<String>,
     pub table_name: Option<String>,
     pub content: Option<String>,
+    #[serde(default)]
+    pub cursor_line: Option<u32>,
+    #[serde(default)]
+    pub cursor_column: Option<u32>,
     pub scroll_top: Option<i32>,
     pub panel_heights: Option<PanelHeights>,
     pub is_active: bool,

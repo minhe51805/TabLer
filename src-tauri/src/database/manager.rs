@@ -1,4 +1,5 @@
 use super::bigquery::BigQueryDriver;
+use super::capabilities::{driver_capabilities, DriverCapability, DriverCapabilityProfile};
 use super::cassandra::CassandraDriver;
 use super::clickhouse::ClickHouseDriver;
 use super::cloudflare_d1::CloudflareD1Driver;
@@ -22,13 +23,42 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Manages all active database connections.
-/// Mirrors TablePro's DatabaseManager — connection pool, lifecycle, primary interface.
+/// Owns the connection pool, lifecycle, and primary database interface.
 #[allow(dead_code)]
 pub struct DatabaseManager {
     connections: Arc<RwLock<HashMap<String, Box<dyn DatabaseDriver>>>>,
+    connection_types: Arc<RwLock<HashMap<String, DatabaseType>>>,
     ssh_tunnels: Arc<RwLock<HashMap<String, TunnelHandle>>>,
     ssh_manager: Arc<SshTunnelManager>,
     plugin_storage: PluginStorage,
+}
+
+struct PendingTunnel {
+    manager: Arc<SshTunnelManager>,
+    handle: Option<TunnelHandle>,
+}
+
+impl PendingTunnel {
+    fn new(manager: Arc<SshTunnelManager>, handle: TunnelHandle) -> Self {
+        Self {
+            manager,
+            handle: Some(handle),
+        }
+    }
+
+    fn commit(mut self) -> TunnelHandle {
+        self.handle
+            .take()
+            .expect("pending tunnel must have a handle")
+    }
+}
+
+impl Drop for PendingTunnel {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            let _ = self.manager.disconnect_tunnel(handle);
+        }
+    }
 }
 
 impl DatabaseManager {
@@ -41,6 +71,7 @@ impl DatabaseManager {
     pub fn with_plugin_storage(plugin_storage: PluginStorage) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
+            connection_types: Arc::new(RwLock::new(HashMap::new())),
             ssh_tunnels: Arc::new(RwLock::new(HashMap::new())),
             ssh_manager: Arc::new(SshTunnelManager::new()),
             plugin_storage,
@@ -83,6 +114,7 @@ impl DatabaseManager {
         }
 
         let mut actual_config = config.clone();
+        let mut pending_tunnel = None;
 
         if let Some(ssh_cfg) = &config.ssh_config {
             if ssh_cfg.enabled {
@@ -101,12 +133,7 @@ impl DatabaseManager {
 
                 actual_config.host = Some("127.0.0.1".to_string());
                 actual_config.port = Some(local_port);
-
-                // Disconnect any existing tunnel for this connection before overwriting
-                let mut ssh_tunnels = self.ssh_tunnels.write().await;
-                if let Some(old_handle) = ssh_tunnels.insert(config.id.clone(), handle) {
-                    let _ = self.ssh_manager.disconnect_tunnel(old_handle);
-                }
+                pending_tunnel = Some(PendingTunnel::new(self.ssh_manager.clone(), handle));
             }
         }
 
@@ -178,6 +205,19 @@ impl DatabaseManager {
         let previous_driver = conns.insert(config.id.clone(), driver);
         drop(conns);
 
+        self.connection_types
+            .write()
+            .await
+            .insert(config.id.clone(), config.db_type);
+
+        if let Some(pending_tunnel) = pending_tunnel {
+            let handle = pending_tunnel.commit();
+            let mut ssh_tunnels = self.ssh_tunnels.write().await;
+            if let Some(old_handle) = ssh_tunnels.insert(config.id.clone(), handle) {
+                let _ = self.ssh_manager.disconnect_tunnel(old_handle);
+            }
+        }
+
         if let Some(previous_driver) = previous_driver {
             let _ = previous_driver.disconnect().await;
         }
@@ -188,7 +228,10 @@ impl DatabaseManager {
     /// Disconnect from a specific connection
     pub async fn disconnect(&self, connection_id: &str) -> Result<()> {
         let mut conns = self.connections.write().await;
-        if let Some(driver) = conns.remove(connection_id) {
+        let driver = conns.remove(connection_id);
+        drop(conns);
+        self.connection_types.write().await.remove(connection_id);
+        if let Some(driver) = driver {
             driver.disconnect().await?;
         }
 
@@ -207,6 +250,8 @@ impl DatabaseManager {
         for (_, driver) in conns.drain() {
             let _ = driver.disconnect().await;
         }
+        drop(conns);
+        self.connection_types.write().await.clear();
 
         let mut tunnels = self.ssh_tunnels.write().await;
         for (_, handle) in tunnels.drain() {
@@ -238,6 +283,34 @@ impl DatabaseManager {
         } else {
             false
         }
+    }
+
+    pub async fn get_connection_capabilities(
+        &self,
+        connection_id: &str,
+    ) -> Result<DriverCapabilityProfile> {
+        let connection_types = self.connection_types.read().await;
+        let database_type = connection_types
+            .get(connection_id)
+            .copied()
+            .ok_or_else(|| {
+                anyhow!(
+                    "Connection '{}' not found. Please connect first.",
+                    connection_id
+                )
+            })?;
+        Ok(driver_capabilities(database_type))
+    }
+
+    pub async fn require_capability(
+        &self,
+        connection_id: &str,
+        capability: DriverCapability,
+    ) -> Result<()> {
+        self.get_connection_capabilities(connection_id)
+            .await?
+            .require(capability)
+            .map_err(anyhow::Error::msg)
     }
 
     /// List all active connection IDs
@@ -272,6 +345,7 @@ impl Default for DatabaseManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::capabilities::{CapabilitySupport, DriverCapability};
     use crate::storage::plugin_storage::{InstalledPluginRecord, PluginManifest};
     use axum::{routing::get, Json, Router};
     use serde_json::json;
@@ -279,6 +353,42 @@ mod tests {
     use std::path::Path;
     use tokio::net::TcpListener;
     use uuid::Uuid;
+
+    #[tokio::test]
+    async fn active_connection_exposes_and_clears_its_capability_contract() {
+        let root =
+            std::env::temp_dir().join(format!("tabler-manager-capability-{}", Uuid::new_v4()));
+        let storage = PluginStorage::from_data_dir(root.clone()).unwrap();
+        let manager = DatabaseManager::with_plugin_storage(storage);
+        let config = ConnectionConfig {
+            id: "sqlite-capability".to_string(),
+            name: "SQLite capability".to_string(),
+            db_type: DatabaseType::SQLite,
+            file_path: Some(":memory:".to_string()),
+            ..ConnectionConfig::default()
+        };
+
+        manager.connect(&config).await.unwrap();
+        let profile = manager
+            .get_connection_capabilities(&config.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            profile.capabilities.inline_edit,
+            CapabilitySupport::Supported
+        );
+        manager
+            .require_capability(&config.id, DriverCapability::AtomicEditQueue)
+            .await
+            .unwrap();
+
+        manager.disconnect(&config.id).await.unwrap();
+        assert!(manager
+            .get_connection_capabilities(&config.id)
+            .await
+            .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[tokio::test]
     async fn verified_driver_plugin_connects_and_disconnects_as_one_runtime() {

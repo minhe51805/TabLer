@@ -1,5 +1,6 @@
 import { useSafeModeStore } from "../stores/safeModeStore";
 import { isBlockedAtLevel, requiresConfirmationAtLevel } from "../types/safe-mode";
+import { classifySqlSafety, type SqlSafetyDecision } from "./sql-safety";
 
 const CONFIRMATION_TIMEOUT_MS = 300_000;
 
@@ -24,21 +25,45 @@ function requestConfirmation(sql: string, connectionId: string, level: number): 
   });
 }
 
-export async function assertQueryAllowed(sql: string, connectionId: string): Promise<void> {
+export async function assertQueryAllowed(
+  sql: string,
+  connectionId: string,
+): Promise<SqlSafetyDecision> {
   const safeLevel = useSafeModeStore.getState().getEffectiveLevel(connectionId);
-  if (isBlockedAtLevel(safeLevel, sql)) {
+  const decision = await classifySqlSafety(sql);
+  if (decision.statements.length === 0) {
+    throw new Error(decision.parseError || "SQL contains no executable statements.");
+  }
+  if (decision.parseError && safeLevel > 0) {
+    throw new Error(
+      `Safe Mode could not classify this SQL reliably: ${decision.parseError}`,
+    );
+  }
+
+  const blocked = decision.statements.find(
+    (statement) =>
+      (statement.kind === "unknown" && safeLevel > 0) ||
+      isBlockedAtLevel(safeLevel, statement.sql),
+  );
+  if (blocked) {
     throw new Error(
       `[Safe Mode level ${safeLevel}] This statement is blocked. ` +
         "Upgrade to a lower protection level or disable Safe Mode in settings to proceed.",
     );
   }
 
-  if (safeLevel === 5 || requiresConfirmationAtLevel(safeLevel, sql)) {
+  const needsConfirmation =
+    safeLevel === 5 ||
+    decision.statements.some((statement) =>
+      requiresConfirmationAtLevel(safeLevel, statement.sql),
+    );
+  if (needsConfirmation) {
     const confirmed = await requestConfirmation(sql, connectionId, safeLevel);
     if (!confirmed) {
       throw new Error("Query cancelled by Safe Mode confirmation.");
     }
   }
+  return decision;
 }
 
 /** Guard a reviewed multi-statement operation, such as a database restore, with one confirmation. */

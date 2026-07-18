@@ -49,6 +49,9 @@ export function findMatchingTableName(tableName: string, availableTableNames: st
 }
 
 export function summarizeAgentQueryObservation(result: QueryResult) {
+  const identityColumns = result.columns
+    .filter((column) => column.is_primary_key)
+    .map((column) => column.name);
   const previewColumns = result.columns
     .map((column, index) => ({ column, index }))
     .sort((left, right) => {
@@ -78,6 +81,10 @@ export function summarizeAgentQueryObservation(result: QueryResult) {
     truncated: result.truncated,
     sandboxed: result.sandboxed,
     columns: previewColumns.map(({ column }) => `${column.name}:${column.data_type}`),
+    identityColumns,
+    navigation: identityColumns.length > 0
+      ? "stable-primary-key"
+      : "non-navigable: query metadata did not verify a primary key",
     sampleRows,
   });
 }

@@ -651,6 +651,7 @@ function App() {
   const { menuSections: windowMenuSections } = useWindowMenu({
     state: {
       isConnected,
+      activeConnectionId,
       supportsSqlFileActions,
       activeTabType: activeTab?.type,
       uiFontScale,

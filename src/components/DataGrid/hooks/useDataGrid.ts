@@ -1,4 +1,5 @@
 import type { ColumnDetail, QueryResult, RowKeyValue } from "../../../types";
+import { buildDatabaseObjectKey, buildQualifiedObjectIdentity } from "../../../utils/database-object-identity";
 
 // ─── Cache types ───────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ export { PAGE_SIZE };
 // ─── Cache helpers ─────────────────────────────────────────────────────────────
 
 export function buildTableScopeKey(connectionId: string, tableName: string, database?: string) {
-  return `${connectionId}|${database || ""}|${tableName}`;
+  return buildDatabaseObjectKey(buildQualifiedObjectIdentity(connectionId, tableName, database));
 }
 
 export function buildTableCacheKey(
@@ -42,9 +43,7 @@ export function buildTableCacheKey(
   filter?: string,
 ) {
   return [
-    connectionId,
-    database || "",
-    tableName,
+    buildTableScopeKey(connectionId, tableName, database),
     page ?? 0,
     sortColumn || "",
     sortDir || "",

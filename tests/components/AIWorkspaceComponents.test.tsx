@@ -251,6 +251,7 @@ describe("AI workspace components", () => {
         status: "done",
         observation: JSON.stringify({
           query: "SELECT id, email FROM public.users WHERE email = '[REDACTED]'",
+          identityColumns: ["id"],
           sampleRows: [{ id: 42, email: "person@example.com" }],
         }),
       }],

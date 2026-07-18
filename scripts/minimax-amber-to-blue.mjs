@@ -1,7 +1,7 @@
 /*
  * MiniMax amber → Apple-blue migration
  * ------------------------------------
- * P1 of the TablePro redesign drops the legacy MiniMax amber accent entirely in
+ * The visual refresh drops the legacy MiniMax amber accent entirely in
  * favour of Apple blue #007AFF. The token layers (minimax-design-system.css +
  * MINIMAX_THEME in theme-engine.ts) are already reskinned, but ~189 hardcoded
  * amber literals remain scattered across component stylesheets as either:

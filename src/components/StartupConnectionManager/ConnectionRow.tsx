@@ -41,6 +41,7 @@ export function ConnectionRow({
       aria-disabled={Boolean(isBusy)}
       className={`startup-connection-row ${isSelected ? "active" : ""}`}
       data-conn-id={connection.id}
+      data-testid={`connection-${connection.id}`}
       onClick={() => {
         if (isBusy) return;
         onClick();

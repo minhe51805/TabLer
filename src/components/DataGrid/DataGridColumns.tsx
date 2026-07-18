@@ -38,7 +38,10 @@ interface EditingDraft {
 }
 
 interface SetSelectedCellFn {
-  (cell: { row: number; col: number } | null): void;
+  (
+    cell: { row: number; col: number } | null,
+    modifiers?: { extend?: boolean; additive?: boolean },
+  ): void;
 }
 
 interface LookupValue {
@@ -52,6 +55,7 @@ interface DataGridColumnsProps {
   canAttemptInlineEdit: boolean;
   selectedRows: Set<number>;
   selectedCell: { row: number; col: number } | null;
+  isCellSelected: (row: number, col: number) => boolean;
   editingCell: EditingCell | null;
   editingSeedValue: string;
   savingCell: EditingCell | null;
@@ -110,6 +114,7 @@ export function buildDataGridColumns({
   canAttemptInlineEdit,
   selectedRows,
   selectedCell,
+  isCellSelected,
   editingCell,
   editingSeedValue,
   savingCell,
@@ -225,7 +230,7 @@ export function buildDataGridColumns({
         const value = getValue() as GridCellValue;
         const rowIndex = tableRow.index;
         const sourceRowIndex = rowIndexMap?.[rowIndex] ?? rowIndex;
-        const isSelected = selectedCell?.row === sourceRowIndex && selectedCell?.col === idx;
+        const isSelected = isCellSelected(sourceRowIndex, idx);
         const isEditing = editingCell?.row === sourceRowIndex && editingCell?.col === idx;
         const isSaving = savingCell?.row === sourceRowIndex && savingCell?.col === idx;
         const isEditableColumn =
@@ -268,9 +273,15 @@ export function buildDataGridColumns({
                 void startEditingCell(sourceRowIndex, idx);
               }
             }}
-            onClick={() => {
+            onClick={(event) => {
               if (!isEditing) {
-                setSelectedCell({ row: sourceRowIndex, col: idx });
+                setSelectedCell(
+                  { row: sourceRowIndex, col: idx },
+                  {
+                    extend: event.shiftKey,
+                    additive: event.metaKey || event.ctrlKey,
+                  },
+                );
               }
             }}
             onDoubleClick={() => {

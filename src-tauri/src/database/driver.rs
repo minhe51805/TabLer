@@ -3,7 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::{atomic::AtomicBool, Arc};
 
-/// Core database driver trait — mirrors TablePro's DatabaseDriver protocol.
+/// Core database driver trait.
 /// All database operations go through this trait.
 #[async_trait]
 #[allow(dead_code)]
@@ -55,6 +55,7 @@ pub trait DatabaseDriver: Send + Sync {
     }
 
     /// Get rows from a table with pagination
+    #[allow(clippy::too_many_arguments)]
     async fn get_table_data(
         &self,
         table: &str,
@@ -108,6 +109,19 @@ pub trait DatabaseDriver: Send + Sync {
     ) -> Result<u64> {
         Err(anyhow::anyhow!(
             "Atomic CSV imports are not supported by this database driver yet"
+        ))
+    }
+
+    /// Consume a bounded row stream inside one transaction. Implementations
+    /// must roll back the transaction when parsing fails, cancellation is
+    /// requested, or the channel closes before a successful end-of-stream.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        _rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        Err(anyhow::anyhow!(
+            "Streaming CSV imports are not supported by this database driver yet"
         ))
     }
 

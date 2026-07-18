@@ -2,11 +2,7 @@ import { create } from "zustand";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
 import type { ColumnDetail, QueryParameter, QueryResult, TableCellUpdateRequest, TableRowDeleteRequest, TableStructure } from "../types";
 import { assertQueryAllowed } from "../utils/safe-mode-query-guard";
-import {
-  containsSchemaMutation,
-  getOrLoadTableColumns,
-  getOrLoadTableStructure,
-} from "../utils/schema-cache";
+import { getOrLoadTableColumns, getOrLoadTableStructure } from "../utils/schema-cache";
 import { useConnectionStore } from "./connectionStore";
 import {
   invokeAIWorkspaceToolMutation,
@@ -15,10 +11,16 @@ import {
 
 export interface QueryState {
   isExecutingQuery: boolean;
+  activeQueryRequestId: string | null;
 
   executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
+  cancelQuery: () => Promise<boolean>;
   executeParameterizedQuery: (connectionId: string, sql: string, parameters: QueryParameter[]) => Promise<QueryResult>;
-  executeSandboxQuery: (connectionId: string, statements: string[]) => Promise<QueryResult>;
+  executeSandboxQuery: (
+    connectionId: string,
+    statements: string[],
+    requireReadOnly?: boolean,
+  ) => Promise<QueryResult>;
   getTableData: (
     connectionId: string,
     table: string,
@@ -47,7 +49,32 @@ export interface QueryState {
     requests: Array<{ table: string; database?: string; values: [string, unknown][] }>,
     operationId: string,
   ) => Promise<number>;
+  importCsvFileAtomically: (
+    connectionId: string,
+    request: {
+      filePath: string;
+      table: string;
+      database?: string;
+      delimiter: "csv" | "tsv";
+      hasHeaders: boolean;
+      mappings: Array<{ sourceIndex: number; targetColumn: string }>;
+    },
+    operationId: string,
+  ) => Promise<number>;
   cancelCsvImport: (operationId: string) => Promise<boolean>;
+  exportTableData: (
+    connectionId: string,
+    request: {
+      table: string;
+      database?: string;
+      format: "csv" | "jsonl";
+      orderBy?: string;
+      orderDir?: "ASC" | "DESC";
+      filter?: string;
+    },
+    operationId: string,
+  ) => Promise<{ filePath: string; format: string; rowCount: number }>;
+  cancelTableExport: (operationId: string) => Promise<boolean>;
   executeStructureStatements: (connectionId: string, statements: string[]) => Promise<number>;
   getForeignKeyLookupValues: (
     connectionId: string,
@@ -57,31 +84,51 @@ export interface QueryState {
   ) => Promise<Array<{ value: string | number; label: string }>>;
 }
 
-export const useQueryStore = create<QueryState>((set) => ({
+export const useQueryStore = create<QueryState>((set, get) => ({
   isExecutingQuery: false,
+  activeQueryRequestId: null,
 
   executeQuery: async (connectionId: string, sql: string) => {
-    await assertQueryAllowed(sql, connectionId);
-    set({ isExecutingQuery: true });
+    const safety = await assertQueryAllowed(sql, connectionId);
+    const requestId = crypto.randomUUID();
+    set({ isExecutingQuery: true, activeQueryRequestId: requestId });
     try {
-      const result = await invokeMutation<QueryResult>("execute_query", { connectionId, sql });
-      if (containsSchemaMutation(sql)) {
+      const result = await invokeMutation<QueryResult>("execute_query", {
+        connectionId,
+        sql,
+        requestId,
+      });
+      if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
-      set({ isExecutingQuery: false });
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        : state);
       return result;
     } catch (e) {
-      set({ isExecutingQuery: false });
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        : state);
       throw e;
     }
   },
 
-  executeSandboxQuery: async (connectionId: string, statements: string[]) => {
+  cancelQuery: async () => {
+    const requestId = get().activeQueryRequestId;
+    if (!requestId) return false;
+    return invokeMutation<boolean>("cancel_query", { requestId });
+  },
+
+  executeSandboxQuery: async (
+    connectionId: string,
+    statements: string[],
+    requireReadOnly = false,
+  ) => {
     set({ isExecutingQuery: true });
     try {
       const result = await invokeAIWorkspaceToolMutation(
         "execute_sandboxed_query",
-        { connectionId, statements },
+        { connectionId, statements, requireReadOnly },
       );
       set({ isExecutingQuery: false });
       return result;
@@ -188,8 +235,34 @@ export const useQueryStore = create<QueryState>((set) => ({
       })),
     }),
 
+  importCsvFileAtomically: async (connectionId, request, operationId) =>
+    invokeMutation<number>("import_csv_file_atomically", {
+      connectionId,
+      operationId,
+      request: {
+        ...request,
+        database: request.database || null,
+      },
+    }),
+
   cancelCsvImport: async (operationId) =>
     invokeMutation<boolean>("cancel_csv_import", { operationId }),
+
+  exportTableData: async (connectionId, request, operationId) =>
+    invokeMutation<{ filePath: string; format: string; rowCount: number }>("export_table_data", {
+      connectionId,
+      operationId,
+      request: {
+        ...request,
+        database: request.database || null,
+        orderBy: request.orderBy || null,
+        orderDir: request.orderDir || null,
+        filter: request.filter || null,
+      },
+    }),
+
+  cancelTableExport: async (operationId) =>
+    invokeMutation<boolean>("cancel_table_export", { operationId }),
 
   executeStructureStatements: async (connectionId, statements) => {
     const affectedRows = await invokeMutation<number>("execute_structure_statements", { connectionId, statements });
@@ -198,7 +271,7 @@ export const useQueryStore = create<QueryState>((set) => ({
   },
 
   executeParameterizedQuery: async (connectionId, sql, parameters) => {
-    await assertQueryAllowed(sql, connectionId);
+    const safety = await assertQueryAllowed(sql, connectionId);
     set({ isExecutingQuery: true });
     try {
       const result = await invokeMutation<QueryResult>("execute_parameterized_query", {
@@ -206,7 +279,7 @@ export const useQueryStore = create<QueryState>((set) => ({
         sql,
         parameters,
       });
-      if (containsSchemaMutation(sql)) {
+      if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
       set({ isExecutingQuery: false });

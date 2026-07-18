@@ -20,7 +20,7 @@ const MAX_PLUGIN_FILES: usize = 512;
 const MAX_PLUGIN_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_REGISTRY_BYTES: u64 = 2 * 1024 * 1024;
 const DEFAULT_PLUGIN_REGISTRY_URL: &str =
-    "https://github.com/minhe51805/TabLer/releases/latest/download/plugin-registry.json";
+    "https://raw.githubusercontent.com/minhe51805/TabLer/main/plugin-registry.json";
 const ALLOWED_KINDS: &[&str] = &[
     "tooling",
     "adapter",
@@ -249,7 +249,7 @@ fn validate_manifest_metadata(manifest: &PluginManifest) -> Result<(), String> {
         .integrity
         .as_ref()
         .ok_or_else(|| "Plugin manifest requires integrity metadata.".to_string())?;
-    if integrity.algorithm.to_ascii_lowercase() != "sha256" {
+    if !integrity.algorithm.eq_ignore_ascii_case("sha256") {
         return Err("Plugin integrity algorithm must be 'sha256'.".to_string());
     }
     if integrity.digest.len() != 64

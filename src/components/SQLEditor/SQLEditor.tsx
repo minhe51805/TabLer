@@ -15,6 +15,7 @@ import { extractNamedSqlParameters, type SqlParameterDraft } from "../../utils/s
 interface Props {
   connectionId: string;
   initialContent?: string;
+  initialCursor?: { lineNumber: number; column: number };
   tabId?: string;
   initialState?: QueryEditorSessionState;
   runRequestNonce?: number;
@@ -25,6 +26,7 @@ interface Props {
 export function SQLEditor({
   connectionId,
   initialContent = "",
+  initialCursor,
   tabId,
   initialState,
   runRequestNonce = 0,
@@ -33,7 +35,15 @@ export function SQLEditor({
 }: Props) {
   const { t, language } = useI18n();
   const vimStatusRef = useRef<HTMLDivElement | null>(null);
-  const [draftSql, setDraftSql] = useState(initialContent);
+  const emergencyDraftKey = `tabler.editor-draft.${connectionId}.${tabId ?? "scratch"}`;
+  const restoredContent = useMemo(() => {
+    try {
+      return window.localStorage.getItem(emergencyDraftKey) ?? initialContent;
+    } catch {
+      return initialContent;
+    }
+  }, [emergencyDraftKey, initialContent]);
+  const [draftSql, setDraftSql] = useState(restoredContent);
   const parameterStorageKey = `tabler.sql-parameters.${connectionId}.${tabId ?? "scratch"}`;
   const [parameterDrafts, setParameterDrafts] = useState<Record<string, SqlParameterDraft>>(() => {
     try {
@@ -74,7 +84,8 @@ export function SQLEditor({
   } = useSQLEditor({
     connectionId,
     tabId,
-    initialContent,
+    initialContent: restoredContent,
+    initialCursor,
     vimStatusRef,
     initialState,
     runRequestNonce,
@@ -84,7 +95,7 @@ export function SQLEditor({
   });
 
   return (
-    <div className="sql-editor-shell">
+    <div className="sql-editor-shell" data-testid="sql-editor">
       <div className="sql-editor-stack">
         <div
           className="sql-editor-pane"
@@ -92,7 +103,7 @@ export function SQLEditor({
         >
           <Editor
             defaultLanguage={queryProfile.editorLanguage}
-            defaultValue={initialContent}
+            defaultValue={restoredContent}
             theme="vs-dark"
             onChange={(value) => {
               if (value === undefined) return;

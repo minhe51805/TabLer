@@ -12,6 +12,8 @@ import { useEditorPreferencesStore } from "../stores/editorPreferencesStore";
 import { useTheme, ThemeEngine } from "../stores/useTheme";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 import type { WindowMenuSectionKey, WindowMenuItem } from "../types/app-types";
+import { useConnectionCapabilities } from "./useConnectionCapabilities";
+import { isCapabilitySupported } from "../types";
 
 // ─── Action interface ─────────────────────────────────────────────────────────
 
@@ -54,6 +56,7 @@ export interface WindowMenuActions {
 
 export interface WindowMenuState {
   readonly isConnected: boolean;
+  readonly activeConnectionId: string | null;
   readonly supportsSqlFileActions: boolean;
   readonly activeTabType?: string;
   readonly uiFontScale: number;
@@ -81,6 +84,10 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
   );
 
   const { isConnected, supportsSqlFileActions, activeTabType, uiFontScale, languagePreference, connectionsCount } = state;
+  const capabilityProfile = useConnectionCapabilities(state.activeConnectionId);
+  const canExport = isCapabilitySupported(capabilityProfile?.capabilities.dataExport);
+  const canRestore = isCapabilitySupported(capabilityProfile?.capabilities.backupRestore);
+  const canAdminister = isCapabilitySupported(capabilityProfile?.capabilities.administration);
 
   const closeMenu = actions.onWindowMenuClose;
 
@@ -108,8 +115,8 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
           { label: t("menu.item.newQuery"), action: () => { actions.onNewQuery(); closeMenu(); }, disabled: !isConnected },
           { label: t("menu.item.openDatabaseFile"), action: () => { actions.onOpenDatabaseFile(); closeMenu(); }, shortcut: "Ctrl+Shift+O" },
           { label: t("menu.item.openSqlFile"), action: () => { actions.onImportSqlFile(); closeMenu(); }, shortcut: "Ctrl+O", disabled: !supportsSqlFileActions },
-          { label: t("menu.item.importSqlIntoDatabase"), action: () => { actions.onImportSqlIntoCurrentDatabase(); closeMenu(); }, disabled: !supportsSqlFileActions },
-          { label: t("menu.item.exportDatabase"), action: () => { actions.onExportDatabase(); closeMenu(); }, disabled: !isConnected },
+          { label: t("menu.item.importSqlIntoDatabase"), action: () => { actions.onImportSqlIntoCurrentDatabase(); closeMenu(); }, disabled: !supportsSqlFileActions || !canRestore },
+          { label: t("menu.item.exportDatabase"), action: () => { actions.onExportDatabase(); closeMenu(); }, disabled: !isConnected || !canExport },
           { divider: true },
           { label: t("menu.item.exportConnections"), action: () => { actions.onOpenConnectionExporter(); closeMenu(); }, disabled: connectionsCount === 0 },
           { label: t("menu.item.importConnections"), action: () => { actions.onOpenConnectionImporter(); closeMenu(); } },
@@ -181,8 +188,8 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
         key: "tools",
         label: t("menu.section.tools"),
         items: [
-          { label: t("menu.item.userManagement"), action: () => { actions.onOpenUserManagement(); closeMenu(); }, disabled: !isConnected },
-          { label: t("menu.item.processList"), action: () => { actions.onOpenProcessList(); closeMenu(); }, disabled: !isConnected, shortcut: "Ctrl ." },
+          { label: t("menu.item.userManagement"), action: () => { actions.onOpenUserManagement(); closeMenu(); }, disabled: !isConnected || !canAdminister },
+          { label: t("menu.item.processList"), action: () => { actions.onOpenProcessList(); closeMenu(); }, disabled: !isConnected || !canAdminister, shortcut: "Ctrl ." },
           { divider: true },
           { label: t("menu.item.searchInDatabase"), action: () => { actions.onSearchInDatabase(); closeMenu(); }, disabled: !isConnected },
           { divider: true },
@@ -241,7 +248,7 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
     [
       t, isConnected, supportsSqlFileActions, connectionsCount, uiFontScale, vimModeEnabled,
       themeMenuLabel, toggleTerminalLabel, themeMenuOptions, activeTheme.id,
-      languagePreference, activeTabType, actions, closeMenu,
+      languagePreference, activeTabType, actions, closeMenu, canExport, canRestore, canAdminister,
     ]
   );
 

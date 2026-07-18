@@ -5,6 +5,7 @@ pub mod database;
 pub mod mcp;
 pub mod mcp_local;
 pub mod mcp_security;
+mod observability;
 pub mod query_history;
 pub mod ssh;
 pub mod storage;
@@ -13,11 +14,16 @@ mod watcher;
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
-    ask_ai, cancel_ai_request, get_ai_configs, save_ai_configs, AIRequestCancellationState,
+    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_ai_configs,
+    AIRequestCancellationState,
 };
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
+use commands::data_export::{cancel_table_export, export_table_data, TableExportCancellationState};
 use commands::deep_link::parse_deep_link;
+use commands::diagnostics::{
+    export_diagnostic_bundle, preview_diagnostic_bundle, DiagnosticReviewState,
+};
 use commands::export::*;
 use commands::file::*;
 use commands::maintenance::{preview_maintenance_command, run_maintenance_command};
@@ -63,11 +69,29 @@ use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize env_logger with default filter level info
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    #[cfg(feature = "e2e")]
+    keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
 
     let start_time = std::time::Instant::now();
-    info!("[TableR] Application starting...");
+    let data_dir = match utils::paths::resolve_data_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            error!(
+                "[TableR] FAILED to resolve application data directory: {}",
+                error
+            );
+            return;
+        }
+    };
+    if let Err(error) = observability::initialize(&data_dir) {
+        eprintln!("TableR logging initialization failed: {error}");
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    }
+    info!("[TableR] Application starting");
+    if let Err(error) = storage::migrations::run_storage_migrations(&data_dir) {
+        error!("[TableR] SAFE STARTUP ABORT: {}", error);
+        return;
+    }
 
     let conn_storage = match ConnectionStorage::new() {
         Ok(storage) => {
@@ -148,9 +172,16 @@ pub fn run() {
     );
     let ai_request_cancellation_state = AIRequestCancellationState::default();
     let csv_import_cancellation_state = CsvImportCancellationState::default();
+    let table_export_cancellation_state = TableExportCancellationState::default();
+    let query_cancellation_state = QueryCancellationState::default();
+    let connection_attempt_cancellation_state = ConnectionAttemptCancellationState::default();
     let terminal_manager = TerminalManager::default();
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio::init());
+
+    let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
@@ -168,6 +199,10 @@ pub fn run() {
         .manage(ai_rate_limiter)
         .manage(ai_request_cancellation_state)
         .manage(csv_import_cancellation_state)
+        .manage(table_export_cancellation_state)
+        .manage(query_cancellation_state)
+        .manage(connection_attempt_cancellation_state)
+        .manage(DiagnosticReviewState::default())
         .setup(|app| {
             if let Err(e) = watcher::start_watcher(app.handle().clone()) {
                 error!("[TableR] Failed to start watcher: {}", e);
@@ -207,6 +242,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Connection commands
             connect_database,
+            cancel_connection_attempt,
             disconnect_database,
             test_connection,
             list_databases,
@@ -218,12 +254,17 @@ pub fn run() {
             connect_saved_connection,
             delete_saved_connection,
             check_connection_status,
+            get_connection_capabilities,
             parse_connection_url,
             parse_url_details,
             get_support_url,
             open_support_page,
+            preview_diagnostic_bundle,
+            export_diagnostic_bundle,
             // Query commands
             execute_query,
+            classify_sql_safety,
+            cancel_query,
             execute_parameterized_query,
             execute_sandboxed_query,
             preview_database_restore,
@@ -241,11 +282,15 @@ pub fn run() {
             delete_table_rows,
             insert_table_row,
             insert_table_rows_atomically,
+            import_csv_file_atomically,
             cancel_csv_import,
+            export_table_data,
+            cancel_table_export,
             execute_structure_statements,
             get_foreign_key_lookup_values,
             // AI commands
             ask_ai,
+            ask_ai_stream,
             cancel_ai_request,
             get_ai_configs,
             save_ai_configs,

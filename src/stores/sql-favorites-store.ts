@@ -14,6 +14,8 @@ interface SqlFavoritesState {
     description?: string;
     sql: string;
     tags?: string[];
+    connectionId?: string;
+    database?: string;
   }) => Promise<SqlFavorite>;
   deleteFavorite: (id: string) => Promise<void>;
 }
@@ -34,7 +36,7 @@ export const useSqlFavoritesStore = create<SqlFavoritesState>((set) => ({
     }
   },
 
-  saveFavorite: async ({ id, name, description, sql, tags }) => {
+  saveFavorite: async ({ id, name, description, sql, tags, connectionId, database }) => {
     set({ isSaving: true });
     try {
       const saved = await invokeMutation<SqlFavorite>("save_sql_favorite", {
@@ -43,6 +45,8 @@ export const useSqlFavoritesStore = create<SqlFavoritesState>((set) => ({
         description: description ?? null,
         sql,
         tags: tags ?? null,
+        connectionId: connectionId ?? null,
+        database: database ?? null,
       });
       set((state) => {
         const exists = state.favorites.some((f) => f.id === saved.id);

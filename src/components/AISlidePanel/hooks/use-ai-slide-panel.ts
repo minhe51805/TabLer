@@ -17,7 +17,6 @@ import {
 } from "../ai-workspace-types";
 import {
   parseAIAgentToolAction,
-  validateAIAgentReadonlySql,
   type AIAgentFinishAction,
   type AIAgentToolAction,
 } from "../ai-agent-tools";
@@ -572,8 +571,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 }
               }
 
-              const statements = validateAIAgentReadonlySql(sql);
-              const queryResult = await executeSandboxQuery(connectionId!, statements);
+              const queryResult = await executeSandboxQuery(connectionId!, [sql], true);
               if (requestId !== requestIdRef.current) {
                 throw new Error(AI_REQUEST_REPLACED_MESSAGE);
               }

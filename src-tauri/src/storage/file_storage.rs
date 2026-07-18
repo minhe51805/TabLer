@@ -32,6 +32,7 @@ impl StorageFileLock {
         let lock_path = lock_path_for(path);
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&lock_path)

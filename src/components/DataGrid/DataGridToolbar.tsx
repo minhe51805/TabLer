@@ -58,6 +58,13 @@ interface DataGridToolbarProps {
   onDiscardChanges?: () => void;
   filterValue?: string;
   onFilterChange?: (value: string) => void;
+  editUnavailableReason?: string;
+  canExportData?: boolean;
+  canImportCsv?: boolean;
+  onExportFull?: (format: "csv" | "jsonl") => void;
+  isExportingFull?: boolean;
+  exportedRowCount?: number;
+  onCancelExport?: () => void;
 }
 
 function buildExportFilename(tableName: string | undefined, extension: string): string {
@@ -103,6 +110,13 @@ export function DataGridToolbar({
   onDiscardChanges,
   filterValue = "",
   onFilterChange,
+  editUnavailableReason,
+  canExportData = true,
+  canImportCsv = true,
+  onExportFull,
+  isExportingFull = false,
+  exportedRowCount = 0,
+  onCancelExport,
 }: DataGridToolbarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -140,7 +154,9 @@ export function DataGridToolbar({
   const dataViewSubtitle = tableName
     ? isTableEditable
       ? "Use # to select rows. Click a cell once to select, then click again or double-click to edit. Press Enter to save or type NULL to clear."
-      : structureStatus === "loading"
+      : editUnavailableReason
+        ? editUnavailableReason
+        : structureStatus === "loading"
         ? "Loading inline edit metadata for this table..."
         : structureStatus === "idle"
           ? "Browsing table rows. Inline edit metadata loads the first time you edit a cell."
@@ -156,22 +172,30 @@ export function DataGridToolbar({
           .join(", ")
       : "Natural order";
 
-  const canExport = resolvedColumns.length > 0 && dataRows.length > 0;
+  const canExport = canExportData && resolvedColumns.length > 0 && (dataRows.length > 0 || Boolean(tableName && onExportFull));
   const exportFilenameBase = tableName
     ? tableName.replace(/[^a-zA-Z0-9_.-]/g, "_").split(".").pop() || tableName
     : "table_export";
 
   const handleExportCSV = useCallback(() => {
     if (!canExport) return;
+    if (tableName && onExportFull) {
+      onExportFull("csv");
+      return;
+    }
     const cols = resolvedColumns.map((c) => c.name);
     exportToCSV(cols, dataRows, buildExportFilename(exportFilenameBase, "csv"));
-  }, [canExport, dataRows, exportFilenameBase, resolvedColumns]);
+  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName]);
 
   const handleExportJSON = useCallback(() => {
     if (!canExport) return;
+    if (tableName && onExportFull) {
+      onExportFull("jsonl");
+      return;
+    }
     const cols = resolvedColumns.map((c) => c.name);
     exportToJSON(cols, dataRows, buildExportFilename(exportFilenameBase, "json"));
-  }, [canExport, dataRows, exportFilenameBase, resolvedColumns]);
+  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName]);
 
   const handleExportXLSX = useCallback(async () => {
     if (!canExport) return;
@@ -304,7 +328,7 @@ export function DataGridToolbar({
             </span>
           )}
 
-          {isTableEditable && tableName && (
+          {isTableEditable && canImportCsv && tableName && (
             <span
               className="popover-container"
               data-popover="Paste rows from clipboard (TSV/CSV)"
@@ -320,7 +344,7 @@ export function DataGridToolbar({
               </button>
             </span>
           )}
-          {isTableEditable && tableName && (
+          {isTableEditable && canImportCsv && tableName && (
             <button type="button" className="datagrid-footer-action" onClick={() => void onImportCsv?.()} title="Import CSV file">
               <FileUp className="!w-3.5 !h-3.5" />
               <span>Import CSV</span>
@@ -459,14 +483,25 @@ export function DataGridToolbar({
               type="button"
               className={`datagrid-footer-action ${showExportMenu ? "active" : ""}`}
               onClick={() => setShowExportMenu((v) => !v)}
-              disabled={!canExport}
+              disabled={!canExport || isExportingFull}
               title="Export data"
             >
-              <Download className="!w-3.5 !h-3.5" />
-              <span>Export</span>
+              {isExportingFull ? <Loader2 className="!w-3.5 !h-3.5 animate-spin" /> : <Download className="!w-3.5 !h-3.5" />}
+              <span>{isExportingFull ? `${exportedRowCount.toLocaleString()} rows` : "Export"}</span>
               <ChevronDown className="!w-3 !h-3" />
             </button>
           </span>
+          {isExportingFull && onCancelExport && (
+            <button
+              type="button"
+              className="datagrid-footer-action danger"
+              onClick={onCancelExport}
+              title="Cancel full table export"
+            >
+              <X className="!w-3.5 !h-3.5" />
+              <span>Stop export</span>
+            </button>
+          )}
 
           {useMemo(() => {
             if (!showExportMenu || !exportBtnRef.current) return null;
@@ -474,8 +509,8 @@ export function DataGridToolbar({
             const top = rect.bottom + 6;
             const right = window.innerWidth - rect.right;
             const exportOptions: Array<{ label: string; hint: string; icon: typeof FileSpreadsheet; run: () => void }> = [
-              { label: "CSV", hint: "Comma-separated values", icon: FileSpreadsheet, run: handleExportCSV },
-              { label: "JSON", hint: "Structured JSON array", icon: FileJson, run: handleExportJSON },
+              { label: tableName && onExportFull ? "Full CSV" : "CSV", hint: tableName && onExportFull ? "Every matching table row" : "Loaded rows as comma-separated values", icon: FileSpreadsheet, run: handleExportCSV },
+              { label: tableName && onExportFull ? "Full JSONL" : "JSON", hint: tableName && onExportFull ? "Every matching row as JSON Lines" : "Loaded rows as a JSON array", icon: FileJson, run: handleExportJSON },
               { label: "XLSX", hint: "Excel workbook", icon: FileSpreadsheet, run: handleExportXLSX },
               { label: "MQL", hint: "MongoDB shell script", icon: FileCode, run: () => void handleExportMQL() },
               ...pluginFormats.map((format) => ({
@@ -518,6 +553,8 @@ export function DataGridToolbar({
             handleExportXLSX,
             handleExportMQL,
             handlePluginExport,
+            onExportFull,
+            tableName,
           ])}
 
           {selectedRowCount > 0 && tableName && (

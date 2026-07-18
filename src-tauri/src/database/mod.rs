@@ -1,5 +1,6 @@
 pub mod ai_models;
 pub mod bigquery;
+pub mod capabilities;
 pub mod cassandra;
 pub mod clickhouse;
 pub mod cloudflare_d1;

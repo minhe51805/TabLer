@@ -190,6 +190,15 @@ export type MetricsWidgetType =
   | "donut"
   | "radial";
 
+export interface ChartReproductionSpec {
+  version: 1;
+  source_query: string;
+  dimension?: string;
+  measures: string[];
+  transforms: string[];
+  limit: number;
+}
+
 export interface MetricsWidgetDefinition {
   id: string;
   type: MetricsWidgetType;
@@ -200,6 +209,7 @@ export interface MetricsWidgetDefinition {
   row_span: number;
   grid_x: number;
   grid_y: number;
+  chart_spec?: ChartReproductionSpec;
 }
 
 export interface MetricsBoardDefinition {
@@ -254,6 +264,7 @@ export interface Tab {
   filePath?: string;
   database?: string;
   content?: string;
+  editorCursor?: { lineNumber: number; column: number };
   /**
    * Ephemeral result data opened from a safe workspace action (for example a
    * Metrics widget). It is intentionally excluded from tab persistence.

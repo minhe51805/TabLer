@@ -29,7 +29,7 @@
 
 :root,
 :root[data-theme-preset="tabler.minimax"] {
-  /* Brand color reference (TablePro Apple-native palette) */
+  /* TableR brand color reference */
   --mm-charcoal: #000000;
   --mm-jet: #000000;
   --mm-amber: #007AFF;

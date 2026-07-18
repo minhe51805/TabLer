@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 import { AppAboutModal } from "../AppAboutModal";
 import { AppPluginManagerModal } from "../AppPluginManagerModal";
 import { AppMcpIntegrationsModal } from "../AppMcpIntegrationsModal";
@@ -11,6 +11,7 @@ import { SafeModeConfirmDialog } from "../SafeMode/SafeModeConfirmDialog";
 import { ConnectionExporter, ConnectionImporter } from "../ConnectionExporter";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { ConnectionConfig } from "../../types/database";
+import { DiagnosticBundleModal } from "../DiagnosticBundleModal";
 
 const AISettingsModal = lazy(() => import("../AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
 
@@ -76,6 +77,7 @@ export function AppGlobalModals({
   handleOpenThemeCustomizer,
   setShowAISlidePanel,
 }: AppGlobalModalsProps) {
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   return (
     <>
@@ -85,7 +87,13 @@ export function AppGlobalModals({
         </Suspense>
       )}
       {showAboutModal && (
-        <AppAboutModal onClose={() => setShowAboutModal(false)} />
+        <AppAboutModal
+          onClose={() => setShowAboutModal(false)}
+          onOpenDiagnostics={() => setShowDiagnostics(true)}
+        />
+      )}
+      {showDiagnostics && (
+        <DiagnosticBundleModal onClose={() => setShowDiagnostics(false)} />
       )}
       {showPluginManager && (
         <AppPluginManagerModal onClose={() => setShowPluginManager(false)} />

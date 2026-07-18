@@ -80,6 +80,16 @@ export default async function DownloadPage() {
             your operating system.
           </span>
         </aside>
+
+        <aside className="download-help">
+          <strong>Installing the unsigned macOS build</strong>
+          <span>
+            Move TableR to Applications, try to open it once, then choose Open
+            Anyway in System Settings &gt; Privacy &amp; Security. If Gatekeeper still
+            blocks it, run <code>xattr -dr com.apple.quarantine /Applications/TableR.app</code>
+            and open it again. This override does not mean the app is Apple-notarized.
+          </span>
+        </aside>
       </div>
 
       <footer className="download-footer">

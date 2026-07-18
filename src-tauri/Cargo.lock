@@ -6926,6 +6926,7 @@ dependencies = [
  "portable-pty",
  "rand 0.8.5",
  "redis",
+ "regex",
  "reqwest 0.12.28",
  "rfd 0.15.4",
  "scylla",
@@ -6942,6 +6943,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-updater",
+ "tauri-plugin-wdio",
  "thiserror 2.0.18",
  "tiberius",
  "tokio",
@@ -7289,6 +7291,23 @@ dependencies = [
  "url",
  "windows-sys 0.60.2",
  "zip 4.6.1",
+]
+
+[[package]]
+name = "tauri-plugin-wdio"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8aa9b559f110924b9897793767a3bb4880c195db75838030eb224f94d21565d9"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

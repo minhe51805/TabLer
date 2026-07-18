@@ -115,6 +115,7 @@ export function TabBar({ queryChrome, onRunActiveQuery, onClearVisibleTabs }: Pr
 
           {showRunButton && (
             <button
+              data-testid="run-query"
               type="button"
               onClick={onRunActiveQuery}
               className="tabbar-run-btn"

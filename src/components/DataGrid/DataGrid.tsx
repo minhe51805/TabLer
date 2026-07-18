@@ -2202,7 +2202,7 @@ export function DataGrid({
 
   return (
     <>
-    <div className={`datagrid-shell${externalResult ? "" : " compact"}${settings.rowHeight !== "medium" ? ` row-height-${settings.rowHeight}` : ""}${!settings.alternatingRows ? " alternating-rows-disabled" : ""}`}>
+    <div data-testid="data-grid" className={`datagrid-shell${externalResult ? "" : " compact"}${settings.rowHeight !== "medium" ? ` row-height-${settings.rowHeight}` : ""}${!settings.alternatingRows ? " alternating-rows-disabled" : ""}`}>
       <DataGridToolbar
         viewMode={viewMode}
         onViewModeChange={handleViewModeChange}

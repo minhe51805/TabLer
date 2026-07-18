@@ -6,6 +6,7 @@ use crate::database::parameterized_query::{compile_parameterized_query, Placehol
 use crate::utils::sql::split_sql_statements;
 use tauri::State;
 use tokio::time::{timeout, Duration};
+use uuid::Uuid;
 
 const READ_ONLY_QUERY_TIMEOUT: Duration = Duration::from_secs(180);
 const MUTATING_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -216,18 +217,24 @@ pub async fn execute_query(
     sql: String,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
+    let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
         .await
         .map_err(|error| error.to_string())?;
     log::info!(
-        "[TableR] execute_query: connection_id={}, sql={}",
+        "operation_id={} operation=query.execute status=started connection_id={} statement_count={}",
+        operation_id,
         connection_id,
-        sql
+        split_sql_statements(&sql).len()
     );
     let driver = db_manager.get_driver(&connection_id).await.map_err(|e| {
         let formatted = format_query_connection_error(e);
-        log::error!("[TableR] execute_query connection error: {}", formatted);
+        log::error!(
+            "operation_id={} operation=query.execute status=failed stage=connection error={}",
+            operation_id,
+            formatted
+        );
         formatted
     })?;
     let statements = split_sql_statements(&sql);
@@ -239,16 +246,25 @@ pub async fn execute_query(
                 "Query timed out after {} seconds.",
                 timeout_window.as_secs()
             );
-            log::error!("[TableR] execute_query timeout error: {}", err_msg);
+            log::error!(
+                "operation_id={} operation=query.execute status=failed stage=timeout error={}",
+                operation_id,
+                err_msg
+            );
             err_msg
         })?
         .map_err(|e| {
             let formatted = format_query_runtime_error(e);
-            log::error!("[TableR] execute_query runtime error: {}", formatted);
+            log::error!(
+                "operation_id={} operation=query.execute status=failed stage=runtime error={}",
+                operation_id,
+                formatted
+            );
             formatted
         })?;
     log::info!(
-        "[TableR] execute_query success: columns={}, rows={}",
+        "operation_id={} operation=query.execute status=succeeded columns={} rows={}",
+        operation_id,
         result.columns.len(),
         result.rows.len()
     );
@@ -262,6 +278,7 @@ pub async fn execute_parameterized_query(
     parameters: Vec<QueryParameter>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
+    let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::PreparedParameters)
         .await
@@ -279,6 +296,12 @@ pub async fn execute_parameterized_query(
     };
     let compiled = compile_parameterized_query(&sql, &parameters, style)
         .map_err(format_query_runtime_error)?;
+    log::info!(
+        "operation_id={} operation=query.execute_parameterized status=started connection_id={} parameter_count={}",
+        operation_id,
+        connection_id,
+        parameters.len()
+    );
     if split_sql_statements(&compiled.sql).len() != 1 {
         return Err("Prepared parameters only support one SQL statement at a time.".to_string());
     }
@@ -289,6 +312,12 @@ pub async fn execute_parameterized_query(
     .await
     .map_err(|_| "Parameterized query timed out after 30 seconds.".to_string())?
     .map_err(format_query_runtime_error)?;
+    log::info!(
+        "operation_id={} operation=query.execute_parameterized status=succeeded columns={} rows={}",
+        operation_id,
+        result.columns.len(),
+        result.rows.len()
+    );
     Ok(result)
 }
 
@@ -298,24 +327,27 @@ pub async fn execute_sandboxed_query(
     statements: Vec<String>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
+    let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
         .await
         .map_err(|error| error.to_string())?;
     log::info!(
-        "[TableR] execute_sandboxed_query: connection_id={}, statements_count={}",
+        "operation_id={} operation=query.execute_sandboxed status=started connection_id={} statements_count={}",
+        operation_id,
         connection_id,
         statements.len()
     );
     if statements.is_empty() {
-        log::error!("[TableR] execute_sandboxed_query error: Sandbox execution requires at least one SQL statement.");
+        log::error!("operation_id={} operation=query.execute_sandboxed status=failed stage=validation error=No statements supplied", operation_id);
         return Err("Sandbox execution requires at least one SQL statement.".to_string());
     }
 
     for statement in &statements {
         if let Err(e) = validate_sandbox_statement(statement) {
             log::error!(
-                "[TableR] execute_sandboxed_query sandbox validation error: {}",
+                "operation_id={} operation=query.execute_sandboxed status=failed stage=validation error={}",
+                operation_id,
                 e
             );
             return Err(e);
@@ -325,7 +357,8 @@ pub async fn execute_sandboxed_query(
     let driver = db_manager.get_driver(&connection_id).await.map_err(|e| {
         let formatted = format_query_connection_error(e);
         log::error!(
-            "[TableR] execute_sandboxed_query connection error: {}",
+            "operation_id={} operation=query.execute_sandboxed status=failed stage=connection error={}",
+            operation_id,
             formatted
         );
         formatted
@@ -340,7 +373,8 @@ pub async fn execute_sandboxed_query(
                 timeout_window.as_secs()
             );
             log::error!(
-                "[TableR] execute_sandboxed_query timeout error: {}",
+                "operation_id={} operation=query.execute_sandboxed status=failed stage=timeout error={}",
+                operation_id,
                 err_msg
             );
             err_msg
@@ -348,14 +382,16 @@ pub async fn execute_sandboxed_query(
         .map_err(|e| {
             let formatted = format_query_runtime_error(e);
             log::error!(
-                "[TableR] execute_sandboxed_query runtime error: {}",
+                "operation_id={} operation=query.execute_sandboxed status=failed stage=runtime error={}",
+                operation_id,
                 formatted
             );
             formatted
         })?;
     result.sandboxed = true;
     log::info!(
-        "[TableR] execute_sandboxed_query success: columns={}, rows={}",
+        "operation_id={} operation=query.execute_sandboxed status=succeeded columns={} rows={}",
+        operation_id,
         result.columns.len(),
         result.rows.len()
     );

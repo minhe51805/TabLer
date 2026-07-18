@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+.artifacts/
 *.local
 
 # Editor directories and files
@@ -43,6 +44,8 @@ docs/*
 !docs/product/PROFESSIONAL_WORKFLOW_BASELINE.md
 !docs/operations/
 !docs/operations/STORAGE_RECOVERY.md
+!docs/architecture/
+!docs/architecture/E2E_TEST_STRATEGY.md
 !docs/roadmap/
 !docs/roadmap/EVIDENCE_TEMPLATE.md
 !docs/roadmap/SPRINT_0A_EVIDENCE.md

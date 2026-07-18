@@ -5,6 +5,7 @@ pub mod database;
 pub mod mcp;
 pub mod mcp_local;
 pub mod mcp_security;
+mod observability;
 pub mod query_history;
 pub mod ssh;
 pub mod storage;
@@ -18,6 +19,9 @@ use commands::ai::{
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
 use commands::deep_link::parse_deep_link;
+use commands::diagnostics::{
+    export_diagnostic_bundle, preview_diagnostic_bundle, DiagnosticReviewState,
+};
 use commands::export::*;
 use commands::file::*;
 use commands::maintenance::{preview_maintenance_command, run_maintenance_command};
@@ -63,12 +67,7 @@ use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize env_logger with default filter level info
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-
     let start_time = std::time::Instant::now();
-    info!("[TableR] Application starting...");
-
     let data_dir = match utils::paths::resolve_data_dir() {
         Ok(path) => path,
         Err(error) => {
@@ -79,6 +78,11 @@ pub fn run() {
             return;
         }
     };
+    if let Err(error) = observability::initialize(&data_dir) {
+        eprintln!("TableR logging initialization failed: {error}");
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    }
+    info!("[TableR] Application starting");
     if let Err(error) = storage::migrations::run_storage_migrations(&data_dir) {
         error!("[TableR] SAFE STARTUP ABORT: {}", error);
         return;
@@ -165,7 +169,11 @@ pub fn run() {
     let csv_import_cancellation_state = CsvImportCancellationState::default();
     let terminal_manager = TerminalManager::default();
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio::init());
+
+    let app = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
@@ -183,6 +191,7 @@ pub fn run() {
         .manage(ai_rate_limiter)
         .manage(ai_request_cancellation_state)
         .manage(csv_import_cancellation_state)
+        .manage(DiagnosticReviewState::default())
         .setup(|app| {
             if let Err(e) = watcher::start_watcher(app.handle().clone()) {
                 error!("[TableR] Failed to start watcher: {}", e);
@@ -238,6 +247,8 @@ pub fn run() {
             parse_url_details,
             get_support_url,
             open_support_page,
+            preview_diagnostic_bundle,
+            export_diagnostic_bundle,
             // Query commands
             execute_query,
             execute_parameterized_query,

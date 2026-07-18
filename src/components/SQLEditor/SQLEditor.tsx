@@ -84,7 +84,7 @@ export function SQLEditor({
   });
 
   return (
-    <div className="sql-editor-shell">
+    <div className="sql-editor-shell" data-testid="sql-editor">
       <div className="sql-editor-stack">
         <div
           className="sql-editor-pane"

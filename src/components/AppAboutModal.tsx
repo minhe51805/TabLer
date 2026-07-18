@@ -1,12 +1,13 @@
-import { X, Shield, Zap, Globe, Code2 } from "lucide-react";
+import { X, Shield, Zap, Globe, Code2, FileWarning } from "lucide-react";
 import { useI18n } from "../i18n";
 import { UpdateButton } from "./UpdateButton";
 
 interface AppAboutModalProps {
   onClose: () => void;
+  onOpenDiagnostics?: () => void;
 }
 
-export function AppAboutModal({ onClose }: AppAboutModalProps) {
+export function AppAboutModal({ onClose, onOpenDiagnostics }: AppAboutModalProps) {
   const { t } = useI18n();
 
   return (
@@ -89,6 +90,12 @@ export function AppAboutModal({ onClose }: AppAboutModalProps) {
 
         <div className="app-help-modal-actions">
           <UpdateButton variant="ghost" size="md" className="app-help-modal-update-btn" />
+          {onOpenDiagnostics && (
+            <button type="button" className="btn btn-secondary" onClick={onOpenDiagnostics}>
+              <FileWarning size={15} />
+              Export diagnostics
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-primary"

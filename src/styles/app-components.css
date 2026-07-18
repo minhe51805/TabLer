@@ -4939,6 +4939,72 @@ body {
   gap: 8px;
 }
 
+.diagnostic-review-backdrop {
+  z-index: 10020;
+}
+
+.diagnostic-review-modal {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.diagnostic-review-loading,
+.diagnostic-review-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 0;
+  color: var(--text-secondary);
+}
+
+.diagnostic-review-error {
+  color: var(--error-color, #c62828);
+}
+
+.diagnostic-review-content {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.diagnostic-review-content section {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.diagnostic-review-content h4,
+.diagnostic-review-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnostic-review-content h4 {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.diagnostic-review-row {
+  margin: 8px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.diagnostic-review-content p {
+  margin: 12px 0 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+@media (max-width: 620px) {
+  .diagnostic-review-content {
+    grid-template-columns: 1fr;
+  }
+}
+
 .app-help-modal-update-btn {
   border-radius: 10px !important;
   border: 1px solid var(--mm-border) !important;

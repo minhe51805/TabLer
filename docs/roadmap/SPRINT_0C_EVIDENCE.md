@@ -7,6 +7,10 @@ Status: Verification
 Branch: `feature/sprint-0c-e2e-observability`
 Tracking issue: [#69](https://github.com/minhe51805/TabLer/issues/69)
 
+Draft pull request: [#70](https://github.com/minhe51805/TabLer/pull/70)
+
+Implementation commit: `db3da2e`
+
 ## TEST-001 Desktop E2E Spike
 
 - Decision record: `docs/architecture/E2E_TEST_STRATEGY.md`.

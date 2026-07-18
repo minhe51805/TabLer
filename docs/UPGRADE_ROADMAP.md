@@ -420,9 +420,9 @@ The release is delayed when a required gate fails. A gate may not be waived by r
 | PROD-001 | Verification | 1 | [Workflow baseline](product/PROFESSIONAL_WORKFLOW_BASELINE.md) |
 | CAP-002 | Verification | 1 | [Sprint 0B evidence](roadmap/SPRINT_0B_EVIDENCE.md) |
 | MIG-001 | Verification | 1 | [Recovery guide](operations/STORAGE_RECOVERY.md) |
-| TEST-001 | Verification | 2 | [Issue #69](https://github.com/minhe51805/TabLer/issues/69); Windows proof passes and production exclusion is recorded |
-| TEST-002 | Verification | 2 | [Issue #69](https://github.com/minhe51805/TabLer/issues/69); SQLite local proof passes, PostgreSQL/Linux CI artifact pending |
-| OBS-001 | Verification | 2 | [Issue #69](https://github.com/minhe51805/TabLer/issues/69); redaction, artifact privacy, and review-token tests pass |
+| TEST-001 | Verification | 2 | [Issue #69](https://github.com/minhe51805/TabLer/issues/69), [draft PR #70](https://github.com/minhe51805/TabLer/pull/70); Windows proof and production exclusion pass |
+| TEST-002 | Verification | 2 | [Issue #69](https://github.com/minhe51805/TabLer/issues/69), [draft PR #70](https://github.com/minhe51805/TabLer/pull/70); SQLite passes, PostgreSQL/Linux CI pending |
+| OBS-001 | Verification | 2 | [Issue #69](https://github.com/minhe51805/TabLer/issues/69), [draft PR #70](https://github.com/minhe51805/TabLer/pull/70); redaction, artifact privacy, and review-token tests pass |
 
 ## 12. Immediate Execution Order
 

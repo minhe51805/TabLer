@@ -641,6 +641,47 @@ fn extract_text_from_json(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+fn extract_stream_text_from_json(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => {
+            if text.is_empty() {
+                None
+            } else {
+                Some(text.to_string())
+            }
+        }
+        serde_json::Value::Array(items) => {
+            let text = items
+                .iter()
+                .filter_map(extract_stream_text_from_json)
+                .collect::<String>();
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for key in [
+                "text",
+                "content",
+                "parts",
+                "response",
+                "output_text",
+                "value",
+                "message",
+                "delta",
+            ] {
+                if let Some(text) = map.get(key).and_then(extract_stream_text_from_json) {
+                    return Some(text);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 /// Splits a leading `<think>...</think>` reasoning block out of model content.
 /// Returns (reasoning, cleaned_text). Reasoning models like DeepSeek-R1 and some
 /// Qwen variants emit their chain-of-thought this way inside the normal content.
@@ -779,9 +820,38 @@ fn extract_stream_deltas(
                 .map(ToString::to_string);
             (text, reasoning)
         }
-        AIProviderType::Gemini => (extract_gemini_response_text(payload), None),
+        AIProviderType::Gemini => {
+            let text = [
+                "/candidates/0/content/parts",
+                "/candidates/0/output",
+                "/text",
+            ]
+            .into_iter()
+            .find_map(|pointer| {
+                payload
+                    .pointer(pointer)
+                    .and_then(extract_stream_text_from_json)
+            });
+            (text, None)
+        }
         _ => (
-            extract_openai_like_response_text(payload),
+            [
+                "/choices/0/delta/content",
+                "/choices/0/text",
+                "/choices/0/message/content",
+                "/message/content",
+                "/response",
+                "/output_text",
+                "/output/0/content",
+                "/content",
+                "/text",
+            ]
+            .into_iter()
+            .find_map(|pointer| {
+                payload
+                    .pointer(pointer)
+                    .and_then(extract_stream_text_from_json)
+            }),
             extract_openai_like_reasoning(payload),
         ),
     }
@@ -1802,6 +1872,34 @@ mod tests {
             " world"
         );
         assert!(!pending.contains("Hello"));
+    }
+
+    #[test]
+    fn streamed_provider_tokens_preserve_leading_and_whitespace_only_chunks() {
+        let openai_word = json!({
+            "choices": [{ "delta": { "content": " database" } }]
+        });
+        let openai_space = json!({
+            "choices": [{ "delta": { "content": " " } }]
+        });
+        let gemini_line = json!({
+            "candidates": [{
+                "content": { "parts": [{ "text": "\n- next item" }] }
+            }]
+        });
+
+        assert_eq!(
+            extract_stream_deltas(&AIProviderType::OpenAI, &openai_word).0,
+            Some(" database".to_string())
+        );
+        assert_eq!(
+            extract_stream_deltas(&AIProviderType::OpenAI, &openai_space).0,
+            Some(" ".to_string())
+        );
+        assert_eq!(
+            extract_stream_deltas(&AIProviderType::Gemini, &gemini_line).0,
+            Some("\n- next item".to_string())
+        );
     }
 
     #[test]

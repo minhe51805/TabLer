@@ -818,8 +818,8 @@ This board tracks only committed execution work. Existing partial features stay 
 | CAP-001 | Verification | 0A | [Sprint evidence](roadmap/SPRINT_0A_EVIDENCE.md), [Rust catalog](../src-tauri/src/database/capabilities.rs), and [generated matrix](generated/driver-capabilities.json) |
 | SEC-001 | Verification | 0A | [Threat model](security/THREAT_MODEL.md) records assets, boundaries, 15 threats, controls, owners, and accepted risks; review pending |
 | PROD-001 | Verification | 0A | [Workflow baseline](product/PROFESSIONAL_WORKFLOW_BASELINE.md) defines persona, fixtures, 10 workflows, metrics, and remaining moderated validation |
-| CAP-002 | Planned | 0B | Not started |
-| MIG-001 | Planned | 0B | Not started |
+| CAP-002 | Verification | 0B | [Sprint evidence](roadmap/SPRINT_0B_EVIDENCE.md); backend command guards, capability-driven UI, and canonical object identity implemented; review pending |
+| MIG-001 | Verification | 0B | [Sprint evidence](roadmap/SPRINT_0B_EVIDENCE.md) and [recovery guide](operations/STORAGE_RECOVERY.md); four migration fixtures pass; review pending |
 | TEST-001 | Planned | 0C | Not started |
 | TEST-002 | Planned | 0C | Not started |
 | OBS-001 | Planned | 0C | Not started |
@@ -828,10 +828,10 @@ The board is updated when work enters a sprint. Future-release items remain in S
 
 ## 16. Immediate Next Actions
 
-1. Create tracking issues for CAP-001, SEC-001, PROD-001, and ROAD-001 evidence.
-2. Implement CAP-001 without changing visible behavior.
-3. Complete the security threat model before adding new external connectivity or AI data tools.
-4. Hold the Sprint 0A review and update later sprint dates using measured velocity.
-5. Start CAP-002 and MIG-001 only after CAP-001's contract shape is accepted.
+1. Complete review and CI verification for Sprint groups 0A and 0B.
+2. Run the Tier A manual capability check for edit, import, schema, export, restore, and administration controls.
+3. Start TEST-001 as a time-boxed desktop E2E framework spike.
+4. Use the selected E2E path to implement TEST-002 launch/connect/query/browse smoke coverage.
+5. Implement OBS-001 structured redacted logs and diagnostic bundle export before closing Phase 0.
 
 No new database engine or unrelated major UI feature should enter the train before the Phase 0 gate.

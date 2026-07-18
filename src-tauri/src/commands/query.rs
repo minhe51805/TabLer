@@ -1,3 +1,4 @@
+use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryParameter;
 use crate::database::models::QueryResult;
@@ -215,6 +216,10 @@ pub async fn execute_query(
     sql: String,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::Query)
+        .await
+        .map_err(|error| error.to_string())?;
     log::info!(
         "[TableR] execute_query: connection_id={}, sql={}",
         connection_id,
@@ -257,6 +262,10 @@ pub async fn execute_parameterized_query(
     parameters: Vec<QueryParameter>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::PreparedParameters)
+        .await
+        .map_err(|error| error.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -289,6 +298,10 @@ pub async fn execute_sandboxed_query(
     statements: Vec<String>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::Query)
+        .await
+        .map_err(|error| error.to_string())?;
     log::info!(
         "[TableR] execute_sandboxed_query: connection_id={}, statements_count={}",
         connection_id,

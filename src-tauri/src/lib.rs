@@ -69,6 +69,21 @@ pub fn run() {
     let start_time = std::time::Instant::now();
     info!("[TableR] Application starting...");
 
+    let data_dir = match utils::paths::resolve_data_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            error!(
+                "[TableR] FAILED to resolve application data directory: {}",
+                error
+            );
+            return;
+        }
+    };
+    if let Err(error) = storage::migrations::run_storage_migrations(&data_dir) {
+        error!("[TableR] SAFE STARTUP ABORT: {}", error);
+        return;
+    }
+
     let conn_storage = match ConnectionStorage::new() {
         Ok(storage) => {
             info!(
@@ -218,6 +233,7 @@ pub fn run() {
             connect_saved_connection,
             delete_saved_connection,
             check_connection_status,
+            get_connection_capabilities,
             parse_connection_url,
             parse_url_details,
             get_support_url,

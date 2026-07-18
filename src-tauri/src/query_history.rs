@@ -26,9 +26,8 @@ pub struct QueryHistoryStorage {
 
 impl QueryHistoryStorage {
     pub fn new() -> Result<Self, String> {
-        let data_dir = dirs::data_dir()
-            .ok_or_else(|| "Cannot find user data directory".to_string())?
-            .join("TableR");
+        let data_dir =
+            crate::utils::paths::resolve_data_dir().map_err(|error| error.to_string())?;
 
         fs::create_dir_all(&data_dir)
             .map_err(|e| format!("Failed to create data directory: {e}"))?;

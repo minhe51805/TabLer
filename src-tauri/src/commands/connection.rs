@@ -1,3 +1,4 @@
+use crate::database::capabilities::DriverCapabilityProfile;
 use crate::database::driver::DatabaseDriver;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{ConnectionConfig, DatabaseInfo, DatabaseType, ParsedConnectionUrl};
@@ -19,6 +20,17 @@ const CONNECTION_TIMEOUT: Duration = Duration::from_secs(45);
 const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const USE_DATABASE_TIMEOUT: Duration = Duration::from_secs(15);
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[tauri::command]
+pub async fn get_connection_capabilities(
+    connection_id: String,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<DriverCapabilityProfile, String> {
+    db_manager
+        .get_connection_capabilities(&connection_id)
+        .await
+        .map_err(|error| error.to_string())
+}
 
 async fn run_blocking_storage_task<T, F>(operation: F) -> Result<T, String>
 where

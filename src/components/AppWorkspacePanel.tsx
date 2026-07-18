@@ -59,6 +59,8 @@ import {
   type WorkspaceBundle,
 } from "../utils/workspace-bundle";
 import { WorkspaceSyncModal } from "./WorkspaceSyncModal";
+import { useConnectionCapabilities } from "../hooks/useConnectionCapabilities";
+import { isCapabilitySupported } from "../types";
 
 const SQLEditor = lazy(() =>
   import("./SQLEditor").then((module) => ({ default: module.SQLEditor })),
@@ -207,6 +209,8 @@ export function AppWorkspacePanel({
   onHandleMouseDown,
 }: AppWorkspacePanelProps) {
   const { t, language } = useI18n();
+  const capabilityProfile = useConnectionCapabilities(activeConn?.id);
+  const canExportDatabase = isCapabilitySupported(capabilityProfile?.capabilities.dataExport);
   const terminalToggleTitle =
     language === "vi"
       ? "Bat/tat terminal (Ctrl+`)"
@@ -1172,7 +1176,7 @@ export function AppWorkspacePanel({
                               setShowToolbarMore(false);
                               onExportDatabase();
                             }}
-                            disabled={!isConnected || isExportingDatabase}
+                            disabled={!isConnected || !canExportDatabase || isExportingDatabase}
                           >
                             {isExportingDatabase ? (
                               <LoaderCircle className="w-3.5 h-3.5 animate-spin" />

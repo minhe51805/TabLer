@@ -1,3 +1,4 @@
+use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{
     ColumnDetail, LookupValue, QueryResult, SchemaObjectInfo, TableCellUpdateRequest, TableInfo,
@@ -140,6 +141,10 @@ pub async fn get_table_data(
     filter: Option<String>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::Query)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -208,6 +213,10 @@ pub async fn update_table_cell(
     request: TableCellUpdateRequest,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<u64, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::InlineEdit)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -227,6 +236,10 @@ pub async fn apply_table_updates_atomically(
     if updates.is_empty() {
         return Ok(0);
     }
+    db_manager
+        .require_capability(&connection_id, DriverCapability::AtomicEditQueue)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -246,6 +259,10 @@ pub async fn delete_table_rows(
     request: TableRowDeleteRequest,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<u64, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::InlineEdit)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -262,6 +279,10 @@ pub async fn insert_table_row(
     request: TableRowInsertRequest,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<u64, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::InlineEdit)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -278,6 +299,10 @@ pub async fn execute_structure_statements(
     statements: Vec<String>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<u64, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::SchemaEdit)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -335,6 +360,10 @@ pub async fn insert_table_rows_atomically(
     if requests.is_empty() {
         return Err("CSV import requires at least one row.".to_string());
     }
+    db_manager
+        .require_capability(&connection_id, DriverCapability::AtomicCsvImport)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await

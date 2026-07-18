@@ -41,6 +41,8 @@ docs/*
 !docs/generated/driver-capabilities.json
 !docs/product/
 !docs/product/PROFESSIONAL_WORKFLOW_BASELINE.md
+!docs/operations/
+!docs/operations/STORAGE_RECOVERY.md
 !docs/roadmap/
 !docs/roadmap/EVIDENCE_TEMPLATE.md
 !docs/roadmap/SPRINT_0A_EVIDENCE.md

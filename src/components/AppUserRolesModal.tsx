@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ConnectionConfig } from "../types/database";
 import { assertStatementsAllowed } from "../utils/safe-mode-query-guard";
 import { emitAppToast } from "../utils/app-toast";
+import { useConnectionCapabilities } from "../hooks/useConnectionCapabilities";
+import { isCapabilitySupported } from "../types";
 
 type ChangeAction = "createUser" | "grantRole" | "revokeRole";
 
@@ -48,6 +50,7 @@ const ACTIONS: Array<{ value: ChangeAction; label: string }> = [
 ];
 
 export function AppUserRolesModal({ connection, onClose }: Props) {
+  const capabilityProfile = useConnectionCapabilities(connection?.id);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isStaging, setIsStaging] = useState(false);
@@ -60,7 +63,7 @@ export function AppUserRolesModal({ connection, onClose }: Props) {
   const [review, setReview] = useState<Review | null>(null);
   const [confirmation, setConfirmation] = useState("");
 
-  const supportsUsersRoles = connection?.db_type === "postgresql" || connection?.db_type === "mysql" || connection?.db_type === "mariadb";
+  const supportsUsersRoles = isCapabilitySupported(capabilityProfile?.capabilities.administration);
   const actionNeedsRole = action !== "createUser";
   const actionNeedsHost = connection?.db_type === "mysql" || connection?.db_type === "mariadb";
   const request = useMemo<ChangeRequest>(() => ({
@@ -141,7 +144,7 @@ export function AppUserRolesModal({ connection, onClose }: Props) {
           <button type="button" className="app-help-modal-close" onClick={onClose} aria-label="Close"><X size={16} /></button>
         </div>
 
-        {!connection || !supportsUsersRoles ? <div className="app-plugin-manager-empty">Users & Roles is available for connected PostgreSQL, MySQL, and MariaDB workspaces.</div> : <>
+        {!connection || !supportsUsersRoles ? <div className="app-plugin-manager-empty">{capabilityProfile ? `${capabilityProfile.label} does not support Users & Roles in TableR.` : "Checking database administration capabilities..."}</div> : <>
           <section className="user-role-section">
             <div className="mcp-list-header"><div className="mcp-section-heading"><UserCog className="w-4 h-4" /><span>Effective access</span><span className="app-plugin-manager-badge accent">{snapshot?.principals.length ?? 0}</span></div><button type="button" className="icon-btn" title="Refresh server state" aria-label="Refresh server state" onClick={() => void refresh()} disabled={isLoading}><RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} /></button></div>
             {isLoading ? <div className="app-plugin-manager-empty"><LoaderCircle className="w-4 h-4 animate-spin" /> Loading principals...</div> : snapshot?.principals.length ? <div className="user-role-principal-list">{snapshot.principals.map((principal) => <div className="user-role-principal" key={principal.id}><div><strong>{principal.name}</strong><span>{principal.host ? `@${principal.host}` : "Server role"}{principal.isSuperuser ? " · Superuser" : principal.canLogin ? " · Login" : ""}</span></div><div className="user-role-tags">{principal.roles.slice(0, 3).map((role) => <span key={role}>{role}</span>)}{principal.privileges.slice(0, 2).map((privilege) => <span key={privilege}>{privilege}</span>)}</div></div>)}</div> : <div className="app-plugin-manager-empty">No server principals were returned. The connected account may not have catalog access.</div>}

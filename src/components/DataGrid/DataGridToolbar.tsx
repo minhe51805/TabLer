@@ -58,6 +58,9 @@ interface DataGridToolbarProps {
   onDiscardChanges?: () => void;
   filterValue?: string;
   onFilterChange?: (value: string) => void;
+  editUnavailableReason?: string;
+  canExportData?: boolean;
+  canImportCsv?: boolean;
 }
 
 function buildExportFilename(tableName: string | undefined, extension: string): string {
@@ -103,6 +106,9 @@ export function DataGridToolbar({
   onDiscardChanges,
   filterValue = "",
   onFilterChange,
+  editUnavailableReason,
+  canExportData = true,
+  canImportCsv = true,
 }: DataGridToolbarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -140,7 +146,9 @@ export function DataGridToolbar({
   const dataViewSubtitle = tableName
     ? isTableEditable
       ? "Use # to select rows. Click a cell once to select, then click again or double-click to edit. Press Enter to save or type NULL to clear."
-      : structureStatus === "loading"
+      : editUnavailableReason
+        ? editUnavailableReason
+        : structureStatus === "loading"
         ? "Loading inline edit metadata for this table..."
         : structureStatus === "idle"
           ? "Browsing table rows. Inline edit metadata loads the first time you edit a cell."
@@ -156,7 +164,7 @@ export function DataGridToolbar({
           .join(", ")
       : "Natural order";
 
-  const canExport = resolvedColumns.length > 0 && dataRows.length > 0;
+  const canExport = canExportData && resolvedColumns.length > 0 && dataRows.length > 0;
   const exportFilenameBase = tableName
     ? tableName.replace(/[^a-zA-Z0-9_.-]/g, "_").split(".").pop() || tableName
     : "table_export";
@@ -304,7 +312,7 @@ export function DataGridToolbar({
             </span>
           )}
 
-          {isTableEditable && tableName && (
+          {isTableEditable && canImportCsv && tableName && (
             <span
               className="popover-container"
               data-popover="Paste rows from clipboard (TSV/CSV)"
@@ -320,7 +328,7 @@ export function DataGridToolbar({
               </button>
             </span>
           )}
-          {isTableEditable && tableName && (
+          {isTableEditable && canImportCsv && tableName && (
             <button type="button" className="datagrid-footer-action" onClick={() => void onImportCsv?.()} title="Import CSV file">
               <FileUp className="!w-3.5 !h-3.5" />
               <span>Import CSV</span>

@@ -1,3 +1,4 @@
+use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryResult;
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,10 @@ pub async fn get_user_role_snapshot(
     connection_id: String,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<UserRoleSnapshot, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::Administration)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -103,6 +108,10 @@ pub async fn review_user_role_change(
     request: UserRoleChangeRequest,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<UserRoleChangeReview, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::Administration)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -120,6 +129,10 @@ pub async fn apply_user_role_change(
     if confirmation_phrase.trim() != APPLY_CONFIRMATION {
         return Err("Explicit confirmation phrase did not match.".to_string());
     }
+    db_manager
+        .require_capability(&connection_id, DriverCapability::Administration)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await

@@ -1,3 +1,4 @@
+use crate::database::capabilities::DriverCapability;
 use crate::database::driver::DatabaseDriver;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{
@@ -88,6 +89,10 @@ pub async fn export_database(
     connection_name: Option<String>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<DatabaseExportResult, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::DataExport)
+        .await
+        .map_err(|e| e.to_string())?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await

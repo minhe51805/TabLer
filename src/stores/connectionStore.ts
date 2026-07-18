@@ -17,6 +17,7 @@ import {
 } from "../utils/schema-cache";
 import { useGlobalErrorStore } from "./globalErrorStore";
 import { useUIStore } from "./uiStore";
+import { invalidateConnectionCapabilities } from "../hooks/useConnectionCapabilities";
 
 const FRONTEND_TIMEOUTS = {
   connection: 30_000,
@@ -211,6 +212,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     try {
       const connections = get().connections;
       await invokeMutation("connect_database", { config: normalizedConfig });
+      invalidateConnectionCapabilities(normalizedConfig.id);
 
       const connectedIds = new Set(get().connectedIds);
       connectedIds.add(normalizedConfig.id);
@@ -268,6 +270,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
     try {
       await invokeMutation("connect_saved_connection", { connectionId });
+      invalidateConnectionCapabilities(connectionId);
       const connectedIds = new Set(get().connectedIds);
       connectedIds.add(connectionId);
       set({
@@ -299,6 +302,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   disconnectFromDatabase: async (connectionId) => {
     try {
       await invokeMutation("disconnect_database", { connectionId });
+      invalidateConnectionCapabilities(connectionId);
       set(disconnectedPatch(get(), connectionId));
       useUIStore.getState().removeTabsForConnection(connectionId);
     } catch (error) {

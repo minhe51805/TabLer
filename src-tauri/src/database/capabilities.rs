@@ -18,6 +18,35 @@ pub enum CapabilitySupport {
     NotApplicable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriverCapability {
+    Query,
+    PreparedParameters,
+    InlineEdit,
+    AtomicEditQueue,
+    AtomicCsvImport,
+    DataExport,
+    SchemaEdit,
+    BackupRestore,
+    Administration,
+}
+
+impl DriverCapability {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Query => "query execution",
+            Self::PreparedParameters => "prepared query parameters",
+            Self::InlineEdit => "inline data editing",
+            Self::AtomicEditQueue => "atomic edit queue",
+            Self::AtomicCsvImport => "atomic CSV import",
+            Self::DataExport => "data export",
+            Self::SchemaEdit => "schema editing",
+            Self::BackupRestore => "backup and restore",
+            Self::Administration => "database administration",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DriverCapabilitySet {
@@ -46,6 +75,38 @@ pub struct DriverCapabilityProfile {
     pub tier: DriverTier,
     pub capabilities: DriverCapabilitySet,
     pub limitations: &'static [&'static str],
+}
+
+impl DriverCapabilityProfile {
+    pub const fn support(self, capability: DriverCapability) -> CapabilitySupport {
+        match capability {
+            DriverCapability::Query => self.capabilities.query,
+            DriverCapability::PreparedParameters => self.capabilities.prepared_parameters,
+            DriverCapability::InlineEdit => self.capabilities.inline_edit,
+            DriverCapability::AtomicEditQueue => self.capabilities.atomic_edit_queue,
+            DriverCapability::AtomicCsvImport => self.capabilities.atomic_csv_import,
+            DriverCapability::DataExport => self.capabilities.data_export,
+            DriverCapability::SchemaEdit => self.capabilities.schema_edit,
+            DriverCapability::BackupRestore => self.capabilities.backup_restore,
+            DriverCapability::Administration => self.capabilities.administration,
+        }
+    }
+
+    pub fn require(self, capability: DriverCapability) -> Result<(), String> {
+        match self.support(capability) {
+            CapabilitySupport::Supported => Ok(()),
+            CapabilitySupport::Limited => Err(format!(
+                "{} has limited {} support, so TableR keeps this action disabled until it meets the safety contract.",
+                self.label,
+                capability.label()
+            )),
+            CapabilitySupport::Unsupported | CapabilitySupport::NotApplicable => Err(format!(
+                "{} does not support {} in TableR.",
+                self.label,
+                capability.label()
+            )),
+        }
+    }
 }
 
 pub const ALL_DATABASE_TYPES: [DatabaseType; 19] = [

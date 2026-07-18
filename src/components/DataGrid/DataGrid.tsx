@@ -55,6 +55,8 @@ import { getColumnWidths, saveColumnWidth } from "../../stores/column-width-stor
 import { useDateFormatStore } from "../../stores/dateFormatStore";
 import { filterAndSortLocalRows, filterRowsWithSourceIndices } from "./local-result-operations";
 import { resolveDataWindowColumns } from "./data-window";
+import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
+import { isCapabilitySupported } from "../../types";
 
 const TABLE_COUNT_CACHE_TTL_MS = 600_000;
 import { DataGridToolbar } from "./DataGridToolbar";
@@ -137,6 +139,11 @@ export function DataGrid({
   const connections = useConnectionStore(
     (state) => state.connections as ConnectionConfig[],
   );
+  const capabilityProfile = useConnectionCapabilities(connectionId);
+  const allowsInlineEdit = isCapabilitySupported(capabilityProfile?.capabilities.inlineEdit);
+  const allowsAtomicEdits = isCapabilitySupported(capabilityProfile?.capabilities.atomicEditQueue);
+  const allowsCsvImport = isCapabilitySupported(capabilityProfile?.capabilities.atomicCsvImport);
+  const allowsDataExport = isCapabilitySupported(capabilityProfile?.capabilities.dataExport);
 
   const {
     stagedChanges,
@@ -1204,10 +1211,17 @@ export function DataGrid({
     [data, resolvedColumns, primaryKeyColumns, tableName, database],
   );
 
-  const canAttemptInlineEdit = Boolean(tableName && !externalResult);
+  const canAttemptInlineEdit = Boolean(
+    tableName && !externalResult && allowsInlineEdit && allowsAtomicEdits,
+  );
   const canSelectRows = Boolean(tableName && !externalResult && primaryKeyColumns.length > 0);
   const isTableEditable = Boolean(
-    tableName && !externalResult && structureStatus === "ready" && primaryKeyColumns.length > 0,
+    tableName
+      && !externalResult
+      && allowsInlineEdit
+      && allowsAtomicEdits
+      && structureStatus === "ready"
+      && primaryKeyColumns.length > 0,
   );
   const selectedRowCount = selectedRows.size;
   const filteredTableRowIndices = useMemo(() => {
@@ -2214,6 +2228,11 @@ export function DataGrid({
         handleCopyAsUpdateParam={handleCopyAsUpdateParam}
         handleCopyAsDeleteParam={handleCopyAsDeleteParam}
         isTableEditable={isTableEditable}
+        editUnavailableReason={capabilityProfile && !allowsInlineEdit
+          ? `${capabilityProfile.label} is read-only in TableR; editing actions are unavailable.`
+          : undefined}
+        canExportData={allowsDataExport}
+        canImportCsv={allowsCsvImport}
         structureStatus={structureStatus}
         resolvedColumns={resolvedColumns}
         dataRows={tableData}

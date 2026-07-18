@@ -37,6 +37,15 @@ docs/*
 !docs/UPGRADE_ROADMAP.md
 !docs/STORE_OWNERSHIP.md
 !docs/WORKSPACE_SYNC.md
+!docs/generated/
+!docs/generated/driver-capabilities.json
+!docs/product/
+!docs/product/PROFESSIONAL_WORKFLOW_BASELINE.md
+!docs/roadmap/
+!docs/roadmap/EVIDENCE_TEMPLATE.md
+!docs/roadmap/SPRINT_0A_EVIDENCE.md
+!docs/security/
+!docs/security/THREAT_MODEL.md
 plans
 CLAUDE.md
 

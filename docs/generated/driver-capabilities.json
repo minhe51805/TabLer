@@ -1,0 +1,446 @@
+[
+  {
+    "key": "mysql",
+    "label": "MySQL",
+    "tier": "core",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "supported",
+      "backupRestore": "limited",
+      "administration": "supported"
+    },
+    "limitations": [
+      "Query timeout does not yet guarantee server-side cancellation.",
+      "Restore can retain earlier statements after a failure."
+    ]
+  },
+  {
+    "key": "mariadb",
+    "label": "MariaDB",
+    "tier": "core",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "supported",
+      "backupRestore": "limited",
+      "administration": "supported"
+    },
+    "limitations": [
+      "Query timeout does not yet guarantee server-side cancellation.",
+      "MariaDB currently shares the MySQL driver and capability tests."
+    ]
+  },
+  {
+    "key": "postgresql",
+    "label": "PostgreSQL",
+    "tier": "core",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "supported",
+      "backupRestore": "supported",
+      "administration": "supported"
+    },
+    "limitations": [
+      "Query timeout does not yet guarantee server-side cancellation."
+    ]
+  },
+  {
+    "key": "cockroachdb",
+    "label": "CockroachDB",
+    "tier": "extended",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "limited",
+      "backupRestore": "limited",
+      "administration": "limited"
+    },
+    "limitations": [
+      "CockroachDB shares the PostgreSQL wire driver; dialect-specific schema and administration coverage is incomplete."
+    ]
+  },
+  {
+    "key": "greenplum",
+    "label": "Greenplum",
+    "tier": "specialized",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "limited",
+      "backupRestore": "limited",
+      "administration": "limited"
+    },
+    "limitations": [
+      "Greenplum shares the PostgreSQL wire driver; distributed-operation coverage is incomplete."
+    ]
+  },
+  {
+    "key": "redshift",
+    "label": "Amazon Redshift",
+    "tier": "specialized",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
+      "dataExport": "supported",
+      "explain": "limited",
+      "schemaEdit": "limited",
+      "backupRestore": "limited",
+      "administration": "limited"
+    },
+    "limitations": [
+      "Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage."
+    ]
+  },
+  {
+    "key": "sqlite",
+    "label": "SQLite",
+    "tier": "core",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "supported",
+      "administration": "not_applicable"
+    },
+    "limitations": [
+      "Query timeout does not interrupt every SQLite operation.",
+      "Direct column schema changes are not wired into TableR actions yet."
+    ]
+  },
+  {
+    "key": "duckdb",
+    "label": "DuckDB",
+    "tier": "extended",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "limited",
+      "administration": "not_applicable"
+    },
+    "limitations": [
+      "Atomic edit queues and CSV imports are not implemented.",
+      "Restore is classified as transactional but is not yet pinned to one driver transaction."
+    ]
+  },
+  {
+    "key": "cassandra",
+    "label": "Apache Cassandra",
+    "tier": "specialized",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "unsupported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "unsupported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "limited",
+      "administration": "limited"
+    },
+    "limitations": [
+      "CQL prepared parameters, tracing plans, atomic imports, and schema actions are not integrated."
+    ]
+  },
+  {
+    "key": "snowflake",
+    "label": "Snowflake",
+    "tier": "specialized",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "unsupported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "limited",
+      "administration": "limited"
+    },
+    "limitations": [
+      "Prepared parameters, atomic edits/imports, and reviewed schema actions are not implemented."
+    ]
+  },
+  {
+    "key": "mssql",
+    "label": "SQL Server",
+    "tier": "extended",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "limited",
+      "schemaEdit": "unsupported",
+      "backupRestore": "limited",
+      "administration": "limited"
+    },
+    "limitations": [
+      "Server-side cancellation, atomic edit/import queues, and reviewed schema actions are incomplete."
+    ]
+  },
+  {
+    "key": "redis",
+    "label": "Redis",
+    "tier": "extended",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "not_applicable",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "unsupported",
+      "atomicEditQueue": "not_applicable",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "not_applicable",
+      "schemaEdit": "not_applicable",
+      "backupRestore": "limited",
+      "administration": "limited"
+    },
+    "limitations": [
+      "Redis key projections are read-only; mutations require the CLI tab.",
+      "Backup/export uses a TableR JSON snapshot rather than a native Redis backup."
+    ]
+  },
+  {
+    "key": "mongodb",
+    "label": "MongoDB",
+    "tier": "extended",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "not_applicable",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "unsupported",
+      "schemaEdit": "not_applicable",
+      "backupRestore": "limited",
+      "administration": "limited"
+    },
+    "limitations": [
+      "Atomic edit/import queues and explain integration are not implemented.",
+      "Backup/export uses a TableR JSON snapshot."
+    ]
+  },
+  {
+    "key": "vertica",
+    "label": "Vertica",
+    "tier": "specialized",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
+      "dataExport": "supported",
+      "explain": "limited",
+      "schemaEdit": "limited",
+      "backupRestore": "limited",
+      "administration": "limited"
+    },
+    "limitations": [
+      "Vertica shares the PostgreSQL wire driver; dialect-specific DDL and administration coverage is incomplete."
+    ]
+  },
+  {
+    "key": "clickhouse",
+    "label": "ClickHouse",
+    "tier": "extended",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "unsupported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "limited",
+      "administration": "limited"
+    },
+    "limitations": [
+      "Prepared parameters, atomic mutations/imports, and reviewed schema actions are not implemented."
+    ]
+  },
+  {
+    "key": "bigquery",
+    "label": "Google BigQuery",
+    "tier": "specialized",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "unsupported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "unsupported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "limited",
+      "administration": "unsupported"
+    },
+    "limitations": [
+      "Prepared parameters, atomic mutations/imports, explain plans, and administration are not integrated."
+    ]
+  },
+  {
+    "key": "libsql",
+    "label": "LibSQL",
+    "tier": "specialized",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "unsupported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "limited",
+      "administration": "not_applicable"
+    },
+    "limitations": [
+      "Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented."
+    ]
+  },
+  {
+    "key": "cloudflare_d1",
+    "label": "Cloudflare D1",
+    "tier": "specialized",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "unsupported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "limited",
+      "administration": "not_applicable"
+    },
+    "limitations": [
+      "Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented."
+    ]
+  },
+  {
+    "key": "opensearch",
+    "label": "OpenSearch",
+    "tier": "specialized",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "not_applicable",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "unsupported",
+      "atomicEditQueue": "not_applicable",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "unsupported",
+      "schemaEdit": "not_applicable",
+      "backupRestore": "unsupported",
+      "administration": "unsupported"
+    },
+    "limitations": [
+      "The declarative OpenSearch plugin driver is read-only.",
+      "SQL restore and server administration are unavailable."
+    ]
+  }
+]

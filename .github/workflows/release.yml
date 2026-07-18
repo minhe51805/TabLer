@@ -140,7 +140,8 @@ jobs:
             cc: "gcc"
             cxx: "g++"
             cxxflags: ""
-          - platform: "windows-latest"
+          # Keep release builds on the MSVC toolset supported by DuckDB 1.4.x.
+          - platform: "windows-2022"
             args: "--config src-tauri/tauri.release.conf.json --config src-tauri/tauri.runtime-release.conf.json --config src-tauri/tauri.release.windows.conf.json"
             target: "windows"
             cc: "clang-cl"

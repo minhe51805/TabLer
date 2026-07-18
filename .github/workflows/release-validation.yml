@@ -43,7 +43,9 @@ jobs:
             cc: gcc
             cxx: g++
             cxxflags: ""
-          - platform: windows-latest
+          # DuckDB 1.4.x does not compile with the MSVC toolset currently shipped
+          # by windows-latest (Windows 2025 / Visual Studio 2026).
+          - platform: windows-2022
             target: windows
             cc: clang-cl
             cxx: clang-cl

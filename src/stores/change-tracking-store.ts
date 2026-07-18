@@ -104,6 +104,7 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()(
       // State
       stagedChanges: [],
       history: [],
+      future: [],
       isPreviewOpen: false,
       selectedChangeId: null,
       _columnNameMap: {},
@@ -111,32 +112,44 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()(
 
       // Actions
       stageChange: (change) => {
+        get().stageChanges([change]);
+      },
+
+      stageChanges: (changes) => {
+        if (changes.length === 0) return;
         const state = get();
-        const tableName = change.tableName;
-        const dbType = state._dbTypeMap[tableName];
-
-        // Resolve column indices to names for SQL preview
-        const columnNameMap = state._columnNameMap[tableName] || {};
-        const resolvedColumns = resolveColumnNames(change.columns, columnNameMap);
-
-        const stagedChange: StagedChange = {
-          ...change,
-          columns: resolvedColumns,
-          id: generateId(),
-          timestamp: Date.now(),
-          sqlPreview: generateSqlPreview({ ...change, columns: resolvedColumns }, dbType),
-        };
+        const timestamp = Date.now();
+        const stagedBatch = changes.map((change): StagedChange => {
+          const tableName = change.tableName;
+          const dbType = state._dbTypeMap[tableName];
+          const columnNameMap = state._columnNameMap[tableName] || {};
+          const resolvedColumns = resolveColumnNames(change.columns, columnNameMap);
+          return {
+            ...change,
+            columns: resolvedColumns,
+            id: generateId(),
+            timestamp,
+            sqlPreview: generateSqlPreview({ ...change, columns: resolvedColumns }, dbType),
+          };
+        });
 
         set((s) => ({
-          stagedChanges: [...s.stagedChanges, stagedChange],
+          stagedChanges: [...s.stagedChanges, ...stagedBatch],
           history: [...s.history, s.stagedChanges],
+          future: [],
         }));
       },
 
       unstageChange: (id) => {
-        set((s) => ({
-          stagedChanges: s.stagedChanges.filter((c) => c.id !== id),
-        }));
+        set((s) => {
+          const next = s.stagedChanges.filter((c) => c.id !== id);
+          if (next.length === s.stagedChanges.length) return s;
+          return {
+            stagedChanges: next,
+            history: [...s.history, s.stagedChanges],
+            future: [],
+          };
+        });
       },
 
       discardAll: () => {
@@ -144,6 +157,7 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()(
         set({
           stagedChanges: [],
           history: [...state.history, state.stagedChanges],
+          future: [],
         });
       },
 
@@ -155,12 +169,36 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()(
         set({
           stagedChanges: state.stagedChanges.filter((c) => c.id !== id),
           history: [...state.history, state.stagedChanges],
+          future: [],
         });
       },
 
       redoChange: () => {
-        // Redo is not directly implemented — history is append-only
-        // User can re-edit a cell to re-stage the change
+        get().redoLast();
+      },
+
+      undoLast: () => {
+        const state = get();
+        const previous = state.history[state.history.length - 1];
+        if (!previous) return null;
+        set({
+          stagedChanges: previous,
+          history: state.history.slice(0, -1),
+          future: [...state.future, state.stagedChanges],
+        });
+        return previous;
+      },
+
+      redoLast: () => {
+        const state = get();
+        const next = state.future[state.future.length - 1];
+        if (!next) return null;
+        set({
+          stagedChanges: next,
+          history: [...state.history, state.stagedChanges],
+          future: state.future.slice(0, -1),
+        });
+        return next;
       },
 
       openPreview: () => set({ isPreviewOpen: true }),
@@ -207,6 +245,7 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()(
         set({
           stagedChanges: state.stagedChanges.filter((c) => c.tableName !== tableName),
           history: [...state.history, state.stagedChanges],
+          future: [],
         });
       },
     }),
@@ -216,6 +255,7 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()(
       partialize: (state) => ({
         stagedChanges: state.stagedChanges,
         history: state.history.slice(-10), // Keep last 10 history entries
+        future: state.future.slice(-10),
       }),
     },
   ),

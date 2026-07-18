@@ -30,6 +30,8 @@ export interface ChangeTrackingState {
   stagedChanges: StagedChange[];
   /** History stack for redo — each entry is a snapshot of stagedChanges */
   history: StagedChange[][];
+  /** Snapshots removed by undo and available to redo. */
+  future: StagedChange[][];
   /** Whether preview modal is open */
   isPreviewOpen: boolean;
   /** Currently selected change ID in preview */
@@ -39,6 +41,8 @@ export interface ChangeTrackingState {
 export interface ChangeTrackingActions {
   /** Push a new change into the staging queue */
   stageChange: (change: Omit<StagedChange, "id" | "timestamp" | "sqlPreview">) => void;
+  /** Push several related changes as one undo/redo command. */
+  stageChanges: (changes: Array<Omit<StagedChange, "id" | "timestamp" | "sqlPreview">>) => void;
   /** Remove a specific change from the queue (per-change undo) */
   unstageChange: (id: string) => void;
   /** Clear all staged changes (discard all) */
@@ -47,6 +51,10 @@ export interface ChangeTrackingActions {
   undoChange: (id: string) => void;
   /** Redo a previously undone change */
   redoChange: (id: string) => void;
+  /** Restore the previous queue snapshot for optimistic UI reconciliation. */
+  undoLast: () => StagedChange[] | null;
+  /** Restore the next queue snapshot for optimistic UI reconciliation. */
+  redoLast: () => StagedChange[] | null;
   /** Open the preview modal */
   openPreview: () => void;
   /** Close the preview modal */

@@ -55,6 +55,15 @@ import { getColumnWidths, saveColumnWidth } from "../../stores/column-width-stor
 import { useDateFormatStore } from "../../stores/dateFormatStore";
 import { filterAndSortLocalRows, filterRowsWithSourceIndices } from "./local-result-operations";
 import { resolveDataWindowColumns } from "./data-window";
+import {
+  createEmptyGridSelection,
+  isGridCellSelected,
+  moveGridSelection,
+  selectEntireGrid,
+  selectGridCell,
+  type GridSelectionModifiers,
+} from "./grid-selection";
+import { buildStableRowIdentity } from "./row-identity";
 import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
 import { isCapabilitySupported } from "../../types";
 
@@ -149,9 +158,13 @@ export function DataGrid({
     stagedChanges,
     stageChange,
     unstageChange,
+    undoLast,
+    redoLast,
     setColumnNameMap,
     setDbType,
     getChangeCount,
+    history,
+    future,
   } = useChangeTrackingStore();
 
   const [data, setData] = useState<QueryResult | null>(externalResult || null);
@@ -171,14 +184,14 @@ export function DataGrid({
   const [tableFilter, setTableFilter] = useState("");
   /** Multi-column sort: array of {column, direction, priority}. Priority 1 = highest. */
   const [multiSort, setMultiSort] = useState<Array<{ column: string; direction: "ASC" | "DESC"; priority: number }>>([]);
-  const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
-  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [gridSelection, setGridSelection] = useState(createEmptyGridSelection);
+  const selectedCell = gridSelection.activeCell;
+  const [selectedRowIdentities, setSelectedRowIdentities] = useState<Set<string>>(new Set());
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const [editingSeedValue, setEditingSeedValue] = useState("");
   const [savingCell, setSavingCell] = useState<EditingCell | null>(null);
   const [isDeletingRows, setIsDeletingRows] = useState(false);
   const [copiedCell, setCopiedCell] = useState<string | null>(null);
-  const [undoableChanges, setUndoableChanges] = useState(0);
   const [isInsertDialogOpen, setIsInsertDialogOpen] = useState(false);
   const [insertDialogColumns, setInsertDialogColumns] = useState<ColumnDetail[]>([]);
   const [insertDialogBaseValues, setInsertDialogBaseValues] = useState<[string, unknown][]>([]);
@@ -222,13 +235,38 @@ export function DataGrid({
   const isActiveRef = useRef(isActive);
   const editorRef = useRef<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>(null);
   const editingOpenedAtRef = useRef(0);
-  const rowSelectionAnchorRef = useRef<number | null>(null);
+  const rowSelectionAnchorRef = useRef<string | null>(null);
   const dataGridInstanceIdRef = useRef(`datagrid-${Math.random().toString(36).slice(2)}`);
   const csvImportOperationIdRef = useRef<string | null>(null);
   const loadedTablePagesRef = useRef(new Map<number, QueryResult>());
   const assignInputRef = useCallback((element: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null) => {
     editorRef.current = element;
   }, []);
+
+  const setSelectedCell = useCallback((
+    cell: { row: number; col: number } | null,
+    modifiers: GridSelectionModifiers = {},
+  ) => {
+    if (!cell) {
+      setGridSelection(createEmptyGridSelection());
+      return;
+    }
+    tableWrapRef.current?.focus({ preventScroll: true });
+    setGridSelection((previous) => selectGridCell(
+      previous,
+      cell,
+      {
+        rowCount: data?.rows.length ?? 0,
+        columnCount: structureColumns.length || data?.columns.length || 0,
+      },
+      modifiers,
+    ));
+  }, [data?.columns.length, data?.rows.length, structureColumns.length]);
+
+  const isCellSelected = useCallback(
+    (row: number, col: number) => isGridCellSelected(gridSelection, { row, col }),
+    [gridSelection],
+  );
 
   useEffect(() => {
     setViewMode(initialViewMode);
@@ -238,6 +276,47 @@ export function DataGrid({
     setViewMode(mode);
     onViewModeChange?.(mode);
   }, [onViewModeChange]);
+
+  useEffect(() => {
+    const element = tableWrapRef.current;
+    if (!element || viewMode !== "table") return;
+
+    const handleGridKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+
+      const bounds = {
+        rowCount: data?.rows.length ?? 0,
+        columnCount: structureColumns.length || data?.columns.length || 0,
+      };
+      if (bounds.rowCount === 0 || bounds.columnCount === 0) return;
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        setGridSelection(selectEntireGrid(bounds));
+        return;
+      }
+      if (event.key === "Escape") {
+        setGridSelection(createEmptyGridSelection());
+        return;
+      }
+
+      const deltas: Record<string, { row: number; col: number }> = {
+        ArrowUp: { row: -1, col: 0 },
+        ArrowDown: { row: 1, col: 0 },
+        ArrowLeft: { row: 0, col: -1 },
+        ArrowRight: { row: 0, col: 1 },
+      };
+      const delta = deltas[event.key];
+      if (!delta) return;
+
+      event.preventDefault();
+      setGridSelection((previous) => moveGridSelection(previous, delta, bounds, event.shiftKey));
+    };
+
+    element.addEventListener("keydown", handleGridKeyDown);
+    return () => element.removeEventListener("keydown", handleGridKeyDown);
+  }, [data?.columns.length, data?.rows.length, structureColumns.length, viewMode]);
 
   const setLoadedTablePage = useCallback((page: number, result: QueryResult) => {
     if (page === 0) loadedTablePagesRef.current.clear();
@@ -479,11 +558,6 @@ export function DataGrid({
   }, [tableName, connectionId, database, externalResult, rowFocus?.token]);
 
   useEffect(() => {
-    if (!rowFocus || !data?.rows.length || externalResult) return;
-    setSelectedRows(new Set([0]));
-  }, [data, externalResult, rowFocus]);
-
-  useEffect(() => {
     if (!tableName || externalResult || !isActive) return;
     void fetchData(currentPage);
   }, [currentPage, externalResult, fetchData, isActive, tableName]);
@@ -633,6 +707,79 @@ export function DataGrid({
     () => resolvedColumns.filter((column) => column.is_primary_key),
     [resolvedColumns],
   );
+
+  const rowIdentities = useMemo(
+    () => (data?.rows ?? []).map((row) => buildStableRowIdentity(row, resolvedColumns)),
+    [data?.rows, resolvedColumns],
+  );
+  const selectedRows = useMemo(() => {
+    const indices = new Set<number>();
+    rowIdentities.forEach((identity, index) => {
+      if (identity && selectedRowIdentities.has(identity)) indices.add(index);
+    });
+    return indices;
+  }, [rowIdentities, selectedRowIdentities]);
+  const setSelectedRows = useCallback((
+    update: Set<number> | ((previous: Set<number>) => Set<number>),
+  ) => {
+    setSelectedRowIdentities((previousIdentities) => {
+      const previousIndices = new Set<number>();
+      rowIdentities.forEach((identity, index) => {
+        if (identity && previousIdentities.has(identity)) previousIndices.add(index);
+      });
+      const nextIndices = typeof update === "function" ? update(previousIndices) : update;
+      const nextIdentities = new Set<string>();
+      nextIndices.forEach((index) => {
+        const identity = rowIdentities[index];
+        if (identity) nextIdentities.add(identity);
+      });
+      return nextIdentities;
+    });
+  }, [rowIdentities]);
+
+  const reconcileStagedChanges = useCallback((nextChanges: typeof stagedChanges) => {
+    const currentTableChanges = stagedChanges.filter(
+      (change) => change.tableName === tableName && change.database === database && change.type === "update",
+    );
+    const nextTableChanges = nextChanges.filter(
+      (change) => change.tableName === tableName && change.database === database && change.type === "update",
+    );
+
+    const applyChanges = (
+      rows: QueryResult["rows"],
+      changes: typeof stagedChanges,
+      direction: "old" | "new",
+    ) => {
+      for (const change of changes) {
+        const rowIndex = rows.findIndex((row) => Object.entries(change.rowKey).every(([columnName, value]) => {
+          const columnIndex = resolvedColumns.findIndex((column) => column.name === columnName);
+          return columnIndex >= 0 && Object.is(row[columnIndex], value);
+        }));
+        if (rowIndex < 0) continue;
+        for (const [columnName, diff] of Object.entries(change.columns)) {
+          const columnIndex = resolvedColumns.findIndex((column) => column.name === columnName);
+          if (columnIndex >= 0) rows[rowIndex][columnIndex] = diff[direction] as GridCellValue;
+        }
+      }
+    };
+
+    setData((previous) => {
+      if (!previous) return previous;
+      const rows = previous.rows.map((row) => [...row]);
+      applyChanges(rows, [...currentTableChanges].reverse(), "old");
+      applyChanges(rows, nextTableChanges, "new");
+      return { ...previous, rows };
+    });
+    setStagedRowIndices(new Set(nextTableChanges.map((change) => change.rowIndex)));
+  }, [database, resolvedColumns, stagedChanges, tableName]);
+
+  const undoableChanges = history.length;
+  const redoableChanges = future.length;
+
+  useEffect(() => {
+    if (!rowFocus || !data?.rows.length || externalResult) return;
+    setSelectedRows(new Set([0]));
+  }, [data, externalResult, rowFocus, setSelectedRows]);
 
   const closeInsertDialog = useCallback(() => {
     setIsInsertDialogOpen(false);
@@ -934,18 +1081,16 @@ export function DataGrid({
     setEditingSeedValue("");
     editingDraftRef.current = "";
     setSavingCell(null);
-    setSelectedRows(new Set());
-    rowSelectionAnchorRef.current = null;
   }, [tableName, currentPage, sortColumn, sortDir, externalResult]);
+
+  useEffect(() => {
+    setSelectedRowIdentities(new Set());
+    rowSelectionAnchorRef.current = null;
+  }, [connectionId, database, externalResult, tableName]);
 
   // Reset multi-sort when switching tables
   useEffect(() => {
     setMultiSort([]);
-  }, [tableName, connectionId, database]);
-
-  // Reset undo count when switching tables or clearing data
-  useEffect(() => {
-    setUndoableChanges(0);
   }, [tableName, connectionId, database]);
 
   // Reset view mode when switching data source
@@ -998,16 +1143,15 @@ export function DataGrid({
     if (!isActive) return;
 
     const handleUndo = () => {
-      if (undoableChanges > 0) {
-        void fetchData(currentPage);
-        setUndoableChanges((prev) => Math.max(0, prev - 1));
-      }
+      if (undoableChanges === 0) return;
+      const nextChanges = undoLast();
+      if (nextChanges) reconcileStagedChanges(nextChanges);
     };
 
     const handleRedo = () => {
-      if (undoableChanges > 0) {
-        void fetchData(currentPage);
-      }
+      if (redoableChanges === 0) return;
+      const nextChanges = redoLast();
+      if (nextChanges) reconcileStagedChanges(nextChanges);
     };
 
     window.addEventListener("datagrid-undo", handleUndo);
@@ -1046,7 +1190,21 @@ export function DataGrid({
       window.removeEventListener("datagrid-fk-preview", handleFkPreviewEvent);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, fetchData, isActive, undoableChanges, selectedCell, foreignKeys, connectionId, database]);
+  }, [
+    connectionId,
+    data,
+    database,
+    foreignKeys,
+    getTableData,
+    isActive,
+    reconcileStagedChanges,
+    redoLast,
+    redoableChanges,
+    resolvedColumns,
+    selectedCell,
+    undoLast,
+    undoableChanges,
+  ]);
 
 
   /** Server-side order is single-column so every loaded chunk uses one consistent order. */
@@ -1265,6 +1423,11 @@ export function DataGrid({
         return;
       }
 
+      if (!buildStableRowIdentity(rowValues, nextResolvedColumns)) {
+        setError(`Inline edit unavailable for ${tableName}: this row has an incomplete primary key.`);
+        return;
+      }
+
       if (column.is_primary_key) {
         setError(`Primary key column "${column.name}" is read-only in inline edit mode.`);
         return;
@@ -1281,6 +1444,7 @@ export function DataGrid({
       data,
       ensureStructureLoaded,
       resolvedColumns,
+      setSelectedCell,
       setError,
       structureStatus,
       tableName,
@@ -1301,6 +1465,12 @@ export function DataGrid({
     const rowValues = data.rows[editingCell.row];
     if (!targetColumn || !rowValues || targetColumn.is_primary_key || primaryKeyColumns.length === 0) {
       cancelEditingCell();
+      return;
+    }
+
+    if (!buildStableRowIdentity(rowValues, resolvedColumns)) {
+      cancelEditingCell();
+      setError(`Inline edit unavailable for ${tableName}: this row has an incomplete primary key.`);
       return;
     }
 
@@ -1348,7 +1518,6 @@ export function DataGrid({
       // Track staged row for visual indicator
       setStagedRowIndices((prev) => new Set([...prev, editingCell.row]));
       cancelEditingCell();
-      setUndoableChanges((prev) => prev + 1);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setError(`Failed to stage change: ${message}`);
@@ -1451,9 +1620,13 @@ export function DataGrid({
 
       setSelectedRows((previous) => {
         const next = new Set(previous);
-        const anchor = rowSelectionAnchorRef.current;
+        const rowIdentity = rowIdentities[rowIndex];
+        const anchor = rowSelectionAnchorRef.current
+          ? rowIdentities.indexOf(rowSelectionAnchorRef.current)
+          : -1;
+        if (!rowIdentity) return next;
 
-        if (event?.shiftKey && anchor !== null) {
+        if (event?.shiftKey && anchor >= 0) {
           const start = Math.min(anchor, rowIndex);
           const end = Math.max(anchor, rowIndex);
           next.clear();
@@ -1466,20 +1639,20 @@ export function DataGrid({
           } else {
             next.add(rowIndex);
           }
-          rowSelectionAnchorRef.current = rowIndex;
+          rowSelectionAnchorRef.current = rowIdentity;
         } else {
           const shouldClear = next.size === 1 && next.has(rowIndex);
           next.clear();
           if (!shouldClear) {
             next.add(rowIndex);
           }
-          rowSelectionAnchorRef.current = shouldClear ? null : rowIndex;
+          rowSelectionAnchorRef.current = shouldClear ? null : rowIdentity;
         }
 
         return next;
       });
     },
-    [canSelectRows, data],
+    [canSelectRows, data, rowIdentities, setSelectedRows],
   );
 
   const handleToggleSelectAllRows = useCallback(() => {
@@ -1495,10 +1668,10 @@ export function DataGrid({
 
       const next = new Set(previous);
       filteredTableRowIndices.forEach((rowIndex) => next.add(rowIndex));
-      rowSelectionAnchorRef.current = filteredTableRowIndices[0] ?? null;
+      rowSelectionAnchorRef.current = rowIdentities[filteredTableRowIndices[0] ?? -1] ?? null;
       return next;
     });
-  }, [canSelectRows, filteredTableRowIndices]);
+  }, [canSelectRows, filteredTableRowIndices, rowIdentities, setSelectedRows]);
 
   const handleDeleteSelectedRows = useCallback(async () => {
     if (!tableName || !data || selectedRows.size === 0 || primaryKeyColumns.length === 0) {
@@ -1575,7 +1748,9 @@ export function DataGrid({
     primaryKeyColumns,
     resolvedColumns,
     selectedRows,
+    setSelectedCell,
     setError,
+    setSelectedRows,
     tableName,
   ]);
 
@@ -1896,6 +2071,7 @@ export function DataGrid({
       canAttemptInlineEdit,
       selectedRows,
       selectedCell,
+      isCellSelected,
       editingCell,
       editingSeedValue,
       savingCell,
@@ -1949,6 +2125,8 @@ export function DataGrid({
     resolvedColumns,
     savingCell,
     selectedCell,
+    setSelectedCell,
+    isCellSelected,
     selectedRows,
     sortColumn,
     sortDir,
@@ -2244,7 +2422,13 @@ export function DataGrid({
         onDiscardChanges={discardStagedChanges}
       />
 
-      <div className="datagrid-table-wrap" ref={tableWrapRef}>
+      <div
+        className="datagrid-table-wrap"
+        ref={tableWrapRef}
+        tabIndex={0}
+        role="grid"
+        aria-label={tableName ? `${tableName} data grid` : "Query result data grid"}
+      >
         {isQueryResultTruncated && (
           <div className="datagrid-query-result-notice">
             The database returned a partial result set. Refine the query or load more data to continue.

@@ -3,6 +3,8 @@
 > Sprint group: 0B
 > Branch: `feature/sprint-0b-capabilities-migrations`
 > Tracking issue: [#67](https://github.com/minhe51805/TabLer/issues/67)
+> Draft pull request: [#68](https://github.com/minhe51805/TabLer/pull/68)
+> Implementation commit: `287e398`
 > Updated: 2026-07-18
 > Decision: Verification
 

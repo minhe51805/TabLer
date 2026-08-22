@@ -63,6 +63,7 @@ use storage::ai_storage::AIStorage;
 use storage::connection_storage::ConnectionStorage;
 use storage::mcp_storage::McpStorage;
 use storage::plugin_storage::PluginStorage;
+use storage::semantic_storage::{delete_semantic_entry, get_semantic_entries, save_semantic_entry};
 use storage::sql_favorites::{delete_sql_favorite, get_sql_favorites, save_sql_favorite};
 use storage::tab_persistence::TabPersistence;
 use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter};
@@ -267,6 +268,7 @@ pub fn run() {
             cancel_query,
             execute_parameterized_query,
             execute_sandboxed_query,
+            preview_write_transaction,
             preview_database_restore,
             restore_database_sql,
             // Table commands
@@ -318,6 +320,10 @@ pub fn run() {
             get_sql_favorites,
             save_sql_favorite,
             delete_sql_favorite,
+            // Semantic glossary commands
+            get_semantic_entries,
+            save_semantic_entry,
+            delete_semantic_entry,
             // Plugin commands
             list_installed_plugins,
             install_plugin_bundle,

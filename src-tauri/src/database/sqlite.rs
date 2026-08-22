@@ -649,6 +649,45 @@ impl DatabaseDriver for SqliteDriver {
         }
     }
 
+    async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
+        let mut tx = self.pool.begin().await?;
+        let mut results = Vec::new();
+
+        // Every statement runs inside one transaction; any failure stops the
+        // loop and the unconditional rollback below discards partial work.
+        let execution = async {
+            for statement in statements {
+                let start = Instant::now();
+                if Self::query_returns_rows(statement) {
+                    let (rows, truncated) =
+                        Self::fetch_rows_limited(&mut *tx, statement).await?;
+                    let mut result =
+                        Self::build_result_from_rows(&rows, 0, statement.clone(), 0, false, truncated);
+                    result.execution_time_ms = start.elapsed().as_millis();
+                    results.push(result);
+                } else {
+                    let executed = sqlx::query(statement).execute(&mut *tx).await?;
+                    results.push(QueryResult {
+                        columns: Vec::new(),
+                        rows: Vec::new(),
+                        affected_rows: executed.rows_affected(),
+                        execution_time_ms: start.elapsed().as_millis(),
+                        query: statement.clone(),
+                        sandboxed: true,
+                        truncated: false,
+                    });
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+
+        if let Err(error) = tx.rollback().await {
+            log::warn!("write-preview rollback failed: {error}");
+        }
+        execution?;
+        Ok(results)
+    }
     async fn execute_parameterized_query(
         &self,
         sql: &str,

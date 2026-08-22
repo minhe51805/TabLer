@@ -22,6 +22,9 @@ const AI_TIMEOUTS = {
   localOllamaInline: 120_000,
 } as const;
 
+/** Active provider first, then at most this many enabled fallbacks. */
+const MAX_PROVIDER_ATTEMPTS = 3;
+
 export type AIRequestPhase = "idle" | "requesting" | "cancelling";
 
 function createAIRequestId() {
@@ -167,49 +170,90 @@ export const useAIStore = create<AIState>((set, get) => ({
     intent = "sql",
     history = [],
   ) => {
-    const config = getActiveAIProvider(get().aiConfigs);
-    if (!config) {
+    const activeConfig = getActiveAIProvider(get().aiConfigs);
+    if (!activeConfig) {
       throw new AIRequestError(
         "provider",
         "No AI provider is enabled. Open AI Settings and select a provider before retrying.",
       );
     }
-    const timeoutMs = getAIRequestTimeout(config, mode, intent);
-    const requestId = createAIRequestId();
-    set({
-      activeAIRequestId: requestId,
-      requestPhase: "requesting",
-      streamingText: "",
-      streamingReasoning: false,
-      streamingUsage: null,
-    });
 
-    let unlisten: UnlistenFn | undefined;
-    try {
-      if (mode === "panel") {
-        let streamedText = "";
-        unlisten = await listen<{
-          requestId: string;
-          kind: "text_delta" | "reasoning_delta" | "usage" | "error" | "done";
-          text?: string;
-          usage?: Record<string, unknown>;
-        }>("ai-stream-event", (event) => {
-          const payload = event.payload;
-          if (payload.requestId !== requestId || get().activeAIRequestId !== requestId) return;
-          if (payload.kind === "text_delta" && payload.text) {
-            streamedText += payload.text;
-            if (intent !== "agent") set({ streamingText: streamedText });
-          } else if (payload.kind === "reasoning_delta") {
-            set({ streamingReasoning: true });
-          } else if (payload.kind === "usage" && payload.usage) {
-            set({ streamingUsage: payload.usage });
-          }
-        });
-        await invokeWithTimeout<void>(
-          "ask_ai_stream",
+    // Failover chain: the active provider first, then the next enabled
+    // providers, so one rate-limited or broken endpoint no longer kills a run.
+    const fallbackConfigs = get()
+      .aiConfigs
+      .filter((candidate) => candidate.is_enabled && candidate.id !== activeConfig.id)
+      .slice(0, MAX_PROVIDER_ATTEMPTS - 1);
+    const chain: Array<{ config: AIProviderConfig; providerId?: string }> = [
+      { config: activeConfig },
+      ...fallbackConfigs.map((config) => ({ config, providerId: config.id })),
+    ];
+
+    let lastError: unknown;
+    for (const [index, attempt] of chain.entries()) {
+      const config = attempt.config;
+      const timeoutMs = getAIRequestTimeout(config, mode, intent);
+      const requestId = createAIRequestId();
+      set({
+        activeAIRequestId: requestId,
+        requestPhase: "requesting",
+        streamingText: "",
+        streamingReasoning: false,
+        streamingUsage: null,
+      });
+
+      let unlisten: UnlistenFn | undefined;
+      try {
+        if (mode === "panel") {
+          let streamedText = "";
+          unlisten = await listen<{
+            requestId: string;
+            kind: "text_delta" | "reasoning_delta" | "usage" | "error" | "done";
+            text?: string;
+            usage?: Record<string, unknown>;
+          }>("ai-stream-event", (event) => {
+            const payload = event.payload;
+            if (payload.requestId !== requestId || get().activeAIRequestId !== requestId) return;
+            if (payload.kind === "text_delta" && payload.text) {
+              streamedText += payload.text;
+              if (intent !== "agent") set({ streamingText: streamedText });
+            } else if (payload.kind === "reasoning_delta") {
+              set({ streamingReasoning: true });
+            } else if (payload.kind === "usage" && payload.usage) {
+              set({ streamingUsage: payload.usage });
+            }
+          });
+          await invokeWithTimeout<void>(
+            "ask_ai_stream",
+            {
+              request: {
+                request_id: requestId,
+                provider_id: attempt.providerId ?? null,
+                prompt,
+                context,
+                mode,
+                intent,
+                language: getCurrentAppLanguage(),
+                history,
+              },
+            },
+            timeoutMs,
+            "AI request",
+            {
+              onTimeout: () => {
+                void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
+              },
+            },
+          );
+          return { text: streamedText };
+        }
+
+        const resp = await invokeWithTimeout<{ text: string; reasoning?: string; error?: string }>(
+          "ask_ai",
           {
             request: {
               request_id: requestId,
+              provider_id: attempt.providerId ?? null,
               prompt,
               context,
               mode,
@@ -226,44 +270,31 @@ export const useAIStore = create<AIState>((set, get) => ({
             },
           },
         );
-        return { text: streamedText };
-      }
-
-      const resp = await invokeWithTimeout<{ text: string; reasoning?: string; error?: string }>(
-        "ask_ai",
-        {
-          request: {
-            request_id: requestId,
-            prompt,
-            context,
-            mode,
-            intent,
-            language: getCurrentAppLanguage(),
-            history,
-          },
-        },
-        timeoutMs,
-        "AI request",
-        {
-          onTimeout: () => {
-            void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
-          },
-        },
-      );
-      if (resp.error) throw new Error(resp.error);
-      return { text: resp.text, reasoning: resp.reasoning };
-    } catch (errorValue) {
-      throw normalizeAIRequestError(errorValue);
-    } finally {
-      unlisten?.();
-      if (get().activeAIRequestId === requestId) {
-        set({
-          activeAIRequestId: null,
-          requestPhase: "idle",
-          streamingReasoning: false,
-        });
+        if (resp.error) throw new Error(resp.error);
+        return { text: resp.text, reasoning: resp.reasoning };
+      } catch (errorValue) {
+        lastError = errorValue;
+        const requestError = normalizeAIRequestError(errorValue);
+        if (requestError.code === "cancelled") throw requestError;
+        const canFailOver = requestError.code === "timeout" || requestError.code === "provider";
+        if (!canFailOver || index === chain.length - 1) throw requestError;
+        // Stop the superseded backend request before switching endpoints.
+        void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
+        console.warn(
+          `[AI] Provider "${config.name || config.id}" failed (${requestError.code}); failing over to the next enabled provider.`,
+        );
+      } finally {
+        unlisten?.();
+        if (get().activeAIRequestId === requestId) {
+          set({
+            activeAIRequestId: null,
+            requestPhase: "idle",
+            streamingReasoning: false,
+          });
+        }
       }
     }
+    throw normalizeAIRequestError(lastError);
   },
 
   askAI: async (prompt, context, mode = "panel", intent = "sql", history = []) => {

@@ -1286,10 +1286,16 @@ async fn execute_ai_stream_request(
     cancellation_token: CancellationToken,
 ) -> Result<(), String> {
     let storage = storage.clone();
+    let override_provider_id = request.provider_id.clone();
     let (config, api_key) = run_blocking_storage_task(move || {
-        let config = storage
-            .get_active_provider_config()
-            .map_err(|_| ai_provider_config_error())?;
+        let config = match override_provider_id.as_deref() {
+            Some(provider_id) if !provider_id.trim().is_empty() => storage
+                .get_enabled_provider_config_by_id(provider_id.trim())
+                .map_err(|_| ai_provider_config_error())?,
+            _ => storage
+                .get_active_provider_config()
+                .map_err(|_| ai_provider_config_error())?,
+        };
         let api_key = if provider_requires_api_key(&config.provider_type) {
             Some(
                 storage
@@ -1453,10 +1459,16 @@ async fn execute_ai_request(
 
     let client = ai_http_client();
     let storage = storage.clone();
+    let override_provider_id = request.provider_id.clone();
     let (config, api_key) = run_blocking_storage_task(move || {
-        let config = storage
-            .get_active_provider_config()
-            .map_err(|_| ai_provider_config_error())?;
+        let config = match override_provider_id.as_deref() {
+            Some(provider_id) if !provider_id.trim().is_empty() => storage
+                .get_enabled_provider_config_by_id(provider_id.trim())
+                .map_err(|_| ai_provider_config_error())?,
+            _ => storage
+                .get_active_provider_config()
+                .map_err(|_| ai_provider_config_error())?,
+        };
         let api_key = if provider_requires_api_key(&config.provider_type) {
             Some(
                 storage

@@ -74,6 +74,10 @@ pub struct AIProviderConfig {
 pub struct AIRequest {
     #[serde(default)]
     pub request_id: Option<String>,
+    /// Optional explicit provider override; when absent the active provider is used.
+    /// Powers the frontend failover chain across enabled providers.
+    #[serde(default)]
+    pub provider_id: Option<String>,
     pub prompt: String,
     pub context: String, // DB schema context
     #[serde(default = "default_ai_request_mode")]

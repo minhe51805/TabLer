@@ -14,7 +14,7 @@ mod watcher;
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
-    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_ai_configs,
+    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_ai_configs, save_agent_trace,
     AIRequestCancellationState,
 };
 use commands::connection::*;
@@ -269,6 +269,7 @@ pub fn run() {
             execute_parameterized_query,
             execute_sandboxed_query,
             preview_write_transaction,
+            save_agent_trace,
             preview_database_restore,
             restore_database_sql,
             // Table commands

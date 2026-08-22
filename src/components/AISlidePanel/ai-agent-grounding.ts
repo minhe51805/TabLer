@@ -48,6 +48,20 @@ export function findMatchingTableName(tableName: string, availableTableNames: st
     || null;
 }
 
+const MAX_EXPLAIN_PLAN_CHARS = 800;
+
+/** Condenses an EXPLAIN result into a bounded plan preview for observations. */
+export function summarizeAgentExplainPlan(result: QueryResult) {
+  const text = result.rows
+    .map((row) => (row.length > 0 ? String(row[0] ?? "") : ""))
+    .filter(Boolean)
+    .join("\n");
+  if (!text.trim()) return "";
+  return text.length <= MAX_EXPLAIN_PLAN_CHARS
+    ? text
+    : `${text.slice(0, MAX_EXPLAIN_PLAN_CHARS)}\n[plan truncated]`;
+}
+
 export function summarizeAgentQueryObservation(result: QueryResult) {
   const identityColumns = result.columns
     .filter((column) => column.is_primary_key)

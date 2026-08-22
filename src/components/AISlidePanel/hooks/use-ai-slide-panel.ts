@@ -8,6 +8,7 @@ import { type AIConversationMessage, type AIRequestIntent, type AIRequestMode } 
 import { getActiveAIProvider, isLocalAIProvider } from "../../../utils/ai-provider-registry";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { getSemanticGlossary, saveSemanticGlossaryEntry } from "../../../utils/semantic-glossary";
+import { invokeMutation } from "../../../utils/tauri-utils";
 import {
   formatExecutionError,
   isHighRiskStatement,
@@ -57,6 +58,7 @@ import {
   findMatchingTableName,
   getAgentSqlSchemaRequirements,
   stringifyAgentObservation,
+  summarizeAgentExplainPlan,
   summarizeAgentQueryObservation,
   summarizeAgentSchemaSummaryObservation,
   summarizeAgentStructureObservation,
@@ -66,6 +68,7 @@ import { recoverNonAgentAssistResponse } from "../ai-assist-recovery";
 import { mapWithConcurrency, yieldToBrowserFrame } from "../ai-async-utils";
 import { prepareAIWorkspaceSchemaContext } from "../ai-schema-context-loader";
 import { findAgentSchemaMatches, isAgentRecordLookupRequest, prioritizeSchemaScanCandidates } from "../ai-agent-schema-search";
+import { verifyAgentResponseAgainstEvidence } from "../ai-agent-verification";
 import {
   extractSqlFromResponse,
   hasSqlStartKeyword,
@@ -783,12 +786,35 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 }
               }
 
+              // Heavy-read guard: an unbounded SELECT gets an automatic EXPLAIN
+              // first so the model sees scan estimates before pulling data.
+              let explainNote = "";
+              if (
+                /^(SELECT|WITH)\b/i.test(sql)
+                && !/\bLIMIT\s+\d/i.test(sql)
+                && !/^EXPLAIN\b/i.test(sql)
+              ) {
+                try {
+                  const plan = await executeSandboxQuery(connectionId!, [`EXPLAIN ${sql}`], true);
+                  const planText = summarizeAgentExplainPlan(plan);
+                  if (planText) {
+                    explainNote = `\n\nQuery plan (EXPLAIN, not executed):\n${planText}`;
+                  }
+                } catch (errorValue) {
+                  if (isSupersededAIRequestError(errorValue)) throw errorValue;
+                  // Engines without EXPLAIN support simply skip the cost preview.
+                }
+                if (requestId !== requestIdRef.current) {
+                  throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+                }
+              }
+
               const queryResult = await executeSandboxQuery(connectionId!, [sql], true);
               if (requestId !== requestIdRef.current) {
                 throw new Error(AI_REQUEST_REPLACED_MESSAGE);
               }
 
-              return summarizeAgentQueryObservation(queryResult);
+              return `${summarizeAgentQueryObservation(queryResult)}${explainNote}`;
             }
 
             if (action.action === "preview_write") {
@@ -1134,7 +1160,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           const missingData = !finishHasSql(finalAction) && !hasExecutedReadStep(finalSteps);
           const response = typeof finalAction.args?.response === "string" ? finalAction.args.response : "";
           const missingReportTable = wantsReportTable && !responseHasMarkdownTable(response);
-          return missingData || missingReportTable;
+          const verification = verifyAgentResponseAgainstEvidence(response, finalSteps);
+          return missingData || missingReportTable || !verification.ok;
         };
         while (
           workspaceToolsEnabled
@@ -1146,19 +1173,21 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           evidenceRoundsLeft -= 1;
           const lastChance = evidenceRoundsLeft === 0;
           const missingDataNow = !finishHasSql(finalAction) && !hasExecutedReadStep(finalSteps);
-          const composeOnly = !missingDataNow;
+          const responseNow = typeof finalAction.args?.response === "string" ? finalAction.args.response : "";
+          const verificationNow = verifyAgentResponseAgainstEvidence(responseNow, finalSteps);
+          const composeOnly = !missingDataNow && verificationNow.ok;
           try {
+            const recoveryInstruction = composeOnly
+              ? "The evidence is already gathered. Finish now: args.response MUST contain ONE complete markdown table — | header | row, |---| separator, then data rows — summarizing the verified data, followed by at most three short notes."
+              : lastChance
+                ? "This is the final round. Run the one read that answers the request, or finish with the complete answer built from the evidence already gathered. Do not end with a promise."
+                : !verificationNow.ok
+                  ? `Your answer cites figures that no tool observation supports (e.g. ${verificationNow.unsupported.slice(0, 4).join(", ")}). Either run the read that verifies them, or correct the answer to cite only observed figures.`
+                  : "Your previous finish returned no SQL and no executed query, but this request needs real workspace data. Either call sample_table_data, describe_tables, or run_readonly_sql now, or if that is genuinely impossible, finish again with a complete explanation instead of a promise.";
             const recoveryAction = await requestAgentAction(
               buildControllerPrompt(
                 lastChance || composeOnly,
-                joinAgentInstructions(
-                  sharedAgentInstruction,
-                  composeOnly
-                    ? "The evidence is already gathered. Finish now: args.response MUST contain ONE complete markdown table — | header | row, |---| separator, then data rows — summarizing the verified data, followed by at most three short notes."
-                    : lastChance
-                      ? "This is the final round. Run the one read that answers the request, or finish with the complete answer built from the evidence already gathered. Do not end with a promise."
-                      : "Your previous finish returned no SQL and no executed query, but this request needs real workspace data. Either call sample_table_data, describe_tables, or run_readonly_sql now, or if that is genuinely impossible, finish again with a complete explanation instead of a promise.",
-                ),
+                joinAgentInstructions(sharedAgentInstruction, recoveryInstruction),
                 finalSteps,
               ),
               false,
@@ -1206,6 +1235,37 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             // The gate is best-effort; fall back to the current finish.
             break;
           }
+        }
+
+        // Best-effort debug artifact: persist the full snapshot stream so
+        // failed or surprising runs can be replayed offline.
+        try {
+          const traceLines = [
+            JSON.stringify({
+              kind: "meta",
+              at: new Date().toISOString(),
+              prompt: normalizedPrompt,
+              intent: assistIntent,
+              connectionId,
+              database: currentDatabase,
+              workspaceToolsEnabled,
+            }),
+            ...agentRunnerResult.snapshots.map((snapshot) =>
+              JSON.stringify({
+                kind: "snapshot",
+                phase: snapshot.phase,
+                iteration: snapshot.iteration,
+                action: snapshot.action ?? null,
+                steps: snapshot.steps,
+              }),
+            ),
+            JSON.stringify({ kind: "final", steps: finalSteps }),
+          ].join("\n");
+          void invokeMutation<string>("save_agent_trace", { requestId, content: traceLines }).catch(
+            () => undefined,
+          );
+        } catch {
+          // Tracing must never break the run.
         }
 
         const finalization = await finalizeAgentResult({

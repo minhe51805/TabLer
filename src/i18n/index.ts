@@ -99,7 +99,7 @@ export function formatCountLabel(
   }
 
   if (language === "tr") {
-    return `${count} ${count === 1 ? labels.one : labels.other}`;
+    return `${count} ${labels.tr ?? (count === 1 ? labels.one : labels.other)}`;
   }
 
   if (language === "ko") {

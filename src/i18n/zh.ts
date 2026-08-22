@@ -106,7 +106,6 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "workspace.kicker.structure": "结构视图",
   "workspace.readyForQueries": "准备开始查询",
   "workspace.status.success": "成功",
-  "workspace.status.rows": "{{count}} 行",
   "workspace.status.affected": "影响 {{count}} 行",
   "workspace.status.batch": "批次 {{count}}",
   "toolbar.closeAllTabs": "关闭所有标签",

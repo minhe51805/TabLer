@@ -44,10 +44,16 @@ export function isAIWorkspaceAgentAutonomy(value: unknown): value is AIWorkspace
 
 export type AIWorkspaceAgentActionName =
   | "plan"
+  | "think"
+  | "ask_user"
   | "list_tables"
   | "search_schema"
   | "describe_table"
+  | "describe_tables"
+  | "sample_table_data"
   | "run_readonly_sql"
+  | "preview_write"
+  | "remember_term"
   | "finish";
 
 export type AIWorkspaceAgentStepStatus = "running" | "done" | "error";

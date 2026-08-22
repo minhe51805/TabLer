@@ -7,8 +7,14 @@ import { useQueryStore } from "../../../stores/queryStore";
 import { type AIConversationMessage, type AIRequestIntent, type AIRequestMode } from "../../../types";
 import { getActiveAIProvider, isLocalAIProvider } from "../../../utils/ai-provider-registry";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
-import { formatExecutionError } from "../../SQLEditor/SQLEditorUtils";
-import { analyzeGeneratedSql, MAX_TABLE_NAMES_IN_CONTEXT, type SqlRiskAnalysis } from "../AISlidePanelUtils";
+import { getSemanticGlossary, saveSemanticGlossaryEntry } from "../../../utils/semantic-glossary";
+import {
+  formatExecutionError,
+  isHighRiskStatement,
+  isMutatingStatement,
+  isSessionSwitchStatement,
+} from "../../SQLEditor/SQLEditorUtils";
+import { analyzeGeneratedSql, type SqlRiskAnalysis } from "../AISlidePanelUtils";
 import {
   aiModeUsesSchemaContext,
   type AIWorkspaceAgentActionName,
@@ -16,6 +22,8 @@ import {
   type AIWorkspaceInteractionMode,
 } from "../ai-workspace-types";
 import {
+  AI_AGENT_BATCH_DESCRIBE_LIMIT,
+  AI_AGENT_SAMPLE_MAX_ROWS,
   parseAIAgentToolAction,
   type AIAgentFinishAction,
   type AIAgentToolAction,
@@ -57,7 +65,7 @@ import { finalizeAgentResult } from "../ai-agent-finalization";
 import { recoverNonAgentAssistResponse } from "../ai-assist-recovery";
 import { mapWithConcurrency, yieldToBrowserFrame } from "../ai-async-utils";
 import { prepareAIWorkspaceSchemaContext } from "../ai-schema-context-loader";
-import { findAgentSchemaMatches, isAgentRecordLookupRequest } from "../ai-agent-schema-search";
+import { findAgentSchemaMatches, isAgentRecordLookupRequest, prioritizeSchemaScanCandidates } from "../ai-agent-schema-search";
 import {
   extractSqlFromResponse,
   hasSqlStartKeyword,
@@ -80,10 +88,16 @@ export interface AIGeneratedAssistResult {
 }
 
 const MAX_AGENT_STEPS = 10;
-const MAX_REMOTE_AGENT_STEPS = 6;
+const MAX_REMOTE_AGENT_STEPS = 8;
 const MAX_LOCAL_COMPLEX_AGENT_STEPS = 14;
-const MAX_REMOTE_COMPLEX_AGENT_STEPS = 8;
+const MAX_REMOTE_COMPLEX_AGENT_STEPS = 10;
 const MAX_REMOTE_HISTORY_MESSAGES = 4;
+/** Upper bound for tables scanned per search_schema call; large catalogs are prioritized, not fully scanned. */
+const MAX_AGENT_SCHEMA_SCAN_TABLES = 120;
+/** Pause before retrying a transient provider failure inside the agent loop. */
+const AGENT_TRANSIENT_RETRY_DELAY_MS = 800;
+/** Rate limits need a longer cooldown than blips; one patient retry still beats failing the run. */
+const AGENT_RATE_LIMIT_RETRY_DELAY_MS = 5_000;
 export const AI_REQUEST_REPLACED_MESSAGE = "This AI request was replaced by a newer one.";
 
 export function isSupersededAIRequestError(errorValue: unknown) {
@@ -125,11 +139,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       currentDatabase: state.currentDatabase,
     })),
   );
-  const { getTableStructure, getTableColumnsPreview, executeSandboxQuery } = useQueryStore(
+  const { getTableStructure, getTableColumnsPreview, getTableData, executeSandboxQuery, previewWriteTransaction } = useQueryStore(
     useShallow((state) => ({
       getTableStructure: state.getTableStructure,
       getTableColumnsPreview: state.getTableColumnsPreview,
+      getTableData: state.getTableData,
       executeSandboxQuery: state.executeSandboxQuery,
+      previewWriteTransaction: state.previewWriteTransaction,
     })),
   );
 
@@ -201,9 +217,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     if (isOpen) {
       setError(null);
     } else {
+      // Closing the panel must also stop the backend stream; bumping the
+      // request id alone only silences the result, the provider keeps
+      // generating until it finishes on its own.
       requestIdRef.current += 1;
+      void cancelAIRequest();
     }
-  }, [isOpen]);
+  }, [isOpen, cancelAIRequest]);
 
   const cancelGeneration = useCallback(() => {
     if (!isGenerating) return;
@@ -403,8 +423,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 ? "Schema sharing is disabled for the current provider, so workspace tools are unavailable for this turn."
                 : "No verified schema snapshot is available for tool use on this turn.";
         const sharedAgentInstruction = joinAgentInstructions(
-          "You are an autonomous agent that takes action, not a consultant. Decide your own steps: locate unknown fields with search_schema, inspect the exact table with describe_table, then ACTUALLY run run_readonly_sql to gather the data needed to answer. Do not just suggest queries and do not ask the user which query to run first ? pick the most relevant one and run it yourself.",
-          "When the user asks to see data, charts, counts, samples, distributions, or 'show me' anything, you MUST run at least one run_readonly_sql before finishing. Finishing with only suggestions and no executed query is a failure.",
+          "You are an autonomous agent that takes action, not a consultant. Decide your own steps: locate unknown fields with search_schema, inspect the exact table with describe_table, then ACTUALLY gather data yourself with sample_table_data or run_readonly_sql. Do not just suggest queries and do not ask the user which query to run first ? pick the most relevant one and run it yourself.",
+          "When the user asks to see data, charts, counts, samples, distributions, or 'show me' anything, you MUST run at least one sample_table_data or run_readonly_sql before finishing. Finishing with only suggestions and no executed query is a failure.",
           "When you finish, put the single best runnable query in finish.args.sql (a real SELECT grounded in the verified schema) so it can be executed and shown to the user automatically.",
           !isLocalProvider
             ? "Be efficient: a few targeted tool calls are better than exploring every table, but never skip running the query that produces the answer."
@@ -416,6 +436,25 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
             : undefined
         );
+        // Summaries already fetched while preparing schema context are injected
+        // into every controller prompt so the agent does not spend tool steps
+        // re-describing tables it can already see.
+        const cachedTableSummaries = workspaceToolsEnabled && relationalSchemaSummaryByTable.size > 0
+          ? [...relationalSchemaSummaryByTable.entries()]
+              .filter(([tableName]) => availableSchemaTables.includes(tableName))
+              .map(([, summary]) => summary)
+          : undefined;
+
+        // Verified business semantics for this connection/database scope are
+        // injected so analyses never contradict curated definitions.
+        const glossaryLines = workspaceToolsEnabled && connectionId
+          ? await getSemanticGlossary(connectionId, currentDatabase || undefined)
+              .then((entries) => entries.slice(0, 24).map((entry) =>
+                `- ${entry.term}${entry.kind !== "term" ? ` (${entry.kind})` : ""}: ${entry.definition}`,
+              ))
+              .catch(() => [] as string[])
+          : undefined;
+
         const buildControllerPrompt = (
           forceFinish: boolean,
           extraInstruction?: string,
@@ -431,17 +470,38 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             workspaceToolStatus,
             forceFinish,
             extraInstruction,
+            cachedTableSummaries,
+            glossaryLines,
           });
 
+        // A single slow provider response must not discard an agent run that
+        // may already have executed several successful tool steps, so
+        // transport-level failures (timeout/provider) get one immediate retry.
+        const askAgentWithTransientRetry = async (
+          prompt: string,
+          history: AIConversationMessage[],
+        ) => {
+          try {
+            return await askAI(prompt, strictRecoveryContext || context, "panel", "agent", history);
+          } catch (errorValue) {
+            if (isSupersededAIRequestError(errorValue)) throw errorValue;
+            const requestError = normalizeAIRequestError(errorValue);
+            if (requestError.code !== "timeout" && requestError.code !== "provider") throw errorValue;
+            const rateLimited = /rate limit|429|quota|too many requests/i.test(requestError.message);
+            await new Promise((resolve) => setTimeout(
+              resolve,
+              rateLimited ? AGENT_RATE_LIMIT_RETRY_DELAY_MS : AGENT_TRANSIENT_RETRY_DELAY_MS,
+            ));
+            return askAI(prompt, strictRecoveryContext || context, "panel", "agent", history);
+          }
+        };
+
         const requestAgentAction = async (controllerPrompt: string, includeHistory: boolean, extraInstruction?: string) => {
-          let rawAgentResponse = await askAI(
+          let rawAgentResponse = await askAgentWithTransientRetry(
             extraInstruction
               ? `${controllerPrompt}\n\nRepair note:\n${extraInstruction}`
               : controllerPrompt,
-            strictRecoveryContext || context,
-            "panel",
-            "agent",
-            includeHistory ? requestHistory : []
+            includeHistory ? requestHistory : [],
           );
           if (requestId !== requestIdRef.current) {
             throw new Error(AI_REQUEST_REPLACED_MESSAGE);
@@ -449,17 +509,20 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
           try {
             return parseAIAgentToolAction(rawAgentResponse);
-          } catch {
-            rawAgentResponse = await askAI(
+          } catch (parseError) {
+            if (isSupersededAIRequestError(parseError)) throw parseError;
+            const parseDetail = parseError instanceof Error ? parseError.message : String(parseError);
+            const invalidSnippet = rawAgentResponse.trim().slice(0, 600);
+            // Show the model its own broken output so it can correct the format
+            // instead of repeating the same mistake blindly.
+            rawAgentResponse = await askAgentWithTransientRetry(
               [
                 controllerPrompt,
                 "",
-                "The previous reply was not valid. Return the same next action again as valid JSON only.",
+                `The previous reply was not valid (${parseDetail}). Return the same next action again as valid JSON only.`,
                 'Example shape: {"action":"describe_table","message":"Need the schema first.","args":{"table":"users"}}',
-              ].join("\n"),
-              strictRecoveryContext || context,
-              "panel",
-              "agent",
+                invalidSnippet ? `Previous reply for reference:\n${invalidSnippet}` : "",
+              ].filter(Boolean).join("\n"),
               []
             );
             if (requestId !== requestIdRef.current) {
@@ -469,13 +532,56 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           }
         };
 
+        let lastExplorationToolKey = "";
         const runAgentTool = async (action: AIAgentToolAction) => {
           try {
+            // Repeating an exploration call with identical arguments returns the
+            // identical observation and burns a step from a tight budget.
+            const explorationKey = action.action !== "run_readonly_sql" && action.action !== "sample_table_data"
+              ? `${action.action}:${JSON.stringify(action.args ?? {})}`
+              : "";
+            if (explorationKey && explorationKey === lastExplorationToolKey) {
+              const varyHint = action.action === "list_tables"
+                ? ' Narrow with args {"pattern":"substring"} or {"schema":"..."}, or raise {"limit":200}.'
+                : " Vary the arguments or move on to the next step.";
+              return `Tool notice: identical ${action.action} call repeated — vary the arguments or continue.${varyHint}`;
+            }
+            if (explorationKey) {
+              lastExplorationToolKey = explorationKey;
+            }
+
             if (action.action === "list_tables") {
+              const schemaFilter = typeof action.args?.schema === "string" ? action.args.schema.trim().toLowerCase() : "";
+              const patternFilter = typeof action.args?.pattern === "string" ? action.args.pattern.trim().toLowerCase() : "";
+              const limitFilter = typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
+                ? Math.min(200, Math.max(1, Math.floor(action.args.limit)))
+                : 200;
+              const minRowsFilter = typeof action.args?.minRows === "number" && Number.isFinite(action.args.minRows)
+                ? Math.max(1, Math.floor(action.args.minRows))
+                : undefined;
+
+              const filteredTables = latestTables.filter((table) => {
+                const identifier = (buildWorkspaceTableIdentifier(table, currentDatabase) || table.name).toLowerCase();
+                if (schemaFilter && (table.schema ?? "").toLowerCase() !== schemaFilter) return false;
+                if (patternFilter && !identifier.includes(patternFilter) && !table.name.toLowerCase().includes(patternFilter)) {
+                  return false;
+                }
+                if (minRowsFilter !== undefined && (table.row_count ?? 0) < minRowsFilter) return false;
+                return true;
+              });
+
               return stringifyAgentObservation({
                 database: currentDatabase || "Default",
-                tableCount: latestTables.length,
-                tables: latestTables.slice(0, MAX_TABLE_NAMES_IN_CONTEXT).map((table) => ({
+                catalogTables: latestTables.length,
+                filtered: schemaFilter || patternFilter ? true : undefined,
+                minRows: minRowsFilter,
+                tableCount: filteredTables.length,
+                truncated: filteredTables.length > limitFilter ? true : undefined,
+                next:
+                  filteredTables.length > limitFilter
+                    ? `${filteredTables.length} tables exceed the ${limitFilter}-name preview. Narrow with args {"pattern":"substring"} or {"schema":"..."}, or raise {"limit":200}.`
+                    : undefined,
+                tables: filteredTables.slice(0, limitFilter).map((table) => ({
                   name: table.name,
                   schema: table.schema ?? null,
                   identifier: buildWorkspaceTableIdentifier(table, currentDatabase),
@@ -491,17 +597,39 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 return "Tool error: search_schema requires args.query.";
               }
 
-              const scanned = await mapWithConcurrency(latestTables, 4, async (table) => {
-                const identifier = buildWorkspaceTableIdentifier(table, currentDatabase) || table.name;
+              // Column-scanning every table means hundreds of metadata queries
+              // on large catalogs, so prioritize name matches and cap the scan.
+              const catalogEntries = latestTables.map((table) => ({
+                identifier: buildWorkspaceTableIdentifier(table, currentDatabase) || table.name,
+              }));
+              const prioritizedIdentifiers = new Set(
+                prioritizeSchemaScanCandidates(
+                  catalogEntries.map((entry) => entry.identifier),
+                  query,
+                  MAX_AGENT_SCHEMA_SCAN_TABLES,
+                ),
+              );
+              const scanEntries = catalogEntries.filter((entry) => prioritizedIdentifiers.has(entry.identifier));
+
+              let scannedCount = 0;
+              const scanned = await mapWithConcurrency(scanEntries, 4, async (entry) => {
                 try {
                   const columns = await getTableColumnsPreview(
                     connectionId!,
-                    identifier,
+                    entry.identifier,
                     currentDatabase || undefined,
                   );
-                  return { identifier, columns, failed: false };
+                  return { identifier: entry.identifier, columns, failed: false };
                 } catch {
-                  return { identifier, columns: [], failed: true };
+                  return { identifier: entry.identifier, columns: [], failed: true };
+                } finally {
+                  scannedCount += 1;
+                  if (scanEntries.length > 24 && scannedCount % 24 === 0) {
+                    publishAgentProgress({
+                      action: "search_schema",
+                      message: `Scanning schema (${scannedCount}/${scanEntries.length})`,
+                    });
+                  }
                 }
               });
               if (requestId !== requestIdRef.current) {
@@ -511,8 +639,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               const matches = findAgentSchemaMatches(query, scanned);
               return stringifyAgentObservation({
                 query,
+                catalogTables: catalogEntries.length,
                 tablesScanned: scanned.length,
                 tablesFailed: scanned.filter((entry) => entry.failed).length,
+                truncatedCatalog:
+                  scanned.length < catalogEntries.length
+                    ? `Only the ${scanned.length} tables whose names best match the query were scanned; ${catalogEntries.length - scanned.length} were skipped.`
+                    : undefined,
                 matches,
                 next: matches.length > 0
                   ? "Call describe_table for the best matching table, then read the requested row data."
@@ -546,6 +679,85 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               return summarizeAgentStructureObservation(matchedTable, structure);
             }
 
+            if (action.action === "describe_tables") {
+              const requestedTables: unknown[] = Array.isArray(action.args?.tables) ? action.args.tables : [];
+              const names = [...new Set(
+                requestedTables
+                  .filter((value): value is string | number => typeof value === "string" || typeof value === "number")
+                  .map((value) => String(value).trim())
+                  .filter(Boolean),
+              )].slice(0, AI_AGENT_BATCH_DESCRIBE_LIMIT);
+              if (names.length === 0) {
+                return "Tool error: describe_tables requires a non-empty args.tables array.";
+              }
+
+              const sections: string[] = [];
+              for (const requestedTable of names) {
+                const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
+                if (!matchedTable) {
+                  sections.push(`TABLE=${requestedTable} ERROR=Not present in the current workspace schema.`);
+                  continue;
+                }
+                try {
+                  const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
+                  if (cachedSummary) {
+                    inspectedAgentTables.add(matchedTable);
+                    sections.push(cachedSummary);
+                    continue;
+                  }
+                  const structure = await getTableStructure(connectionId!, matchedTable, currentDatabase || undefined);
+                  if (requestId !== requestIdRef.current) {
+                    throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+                  }
+                  inspectedAgentTables.add(matchedTable);
+                  sections.push(summarizeAgentStructureObservation(matchedTable, structure));
+                } catch (errorValue) {
+                  if (isSupersededAIRequestError(errorValue)) throw errorValue;
+                  sections.push(`TABLE=${matchedTable} ERROR=${formatExecutionError(errorValue)}`);
+                }
+              }
+
+              return stringifyAgentObservation({
+                described: sections.length,
+                tables: sections.join("\n\n"),
+              });
+            }
+
+            if (action.action === "sample_table_data") {
+              const requestedTable = typeof action.args?.table === "string" ? action.args.table.trim() : "";
+              if (!requestedTable) {
+                return "Tool error: sample_table_data requires args.table.";
+              }
+
+              const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
+              if (!matchedTable) {
+                return `Tool error: Table "${requestedTable}" is not present in the current workspace schema.`;
+              }
+
+              if (requestDataReadConsent) {
+                const approved = await requestDataReadConsent();
+                if (!approved) {
+                  return "Tool blocked: The user did not grant permission to read live database rows for this request.";
+                }
+              }
+
+              const requestedLimit = typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
+                ? Math.min(AI_AGENT_SAMPLE_MAX_ROWS, Math.max(1, Math.floor(action.args.limit)))
+                : 10;
+              // get_table_data goes through the engine driver so identifiers are
+              // quoted per dialect; no model-supplied SQL is involved here.
+              const queryResult = await getTableData(connectionId!, matchedTable, {
+                database: currentDatabase || undefined,
+                limit: requestedLimit,
+              });
+              if (requestId !== requestIdRef.current) {
+                throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+              }
+
+              inspectedAgentTables.add(matchedTable);
+              return summarizeAgentQueryObservation(queryResult);
+            }
+
             if (action.action === "run_readonly_sql") {
               const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
               if (!sql) {
@@ -577,6 +789,84 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               }
 
               return summarizeAgentQueryObservation(queryResult);
+            }
+
+            if (action.action === "preview_write") {
+              const requested = Array.isArray(action.args?.statements) ? action.args.statements : [];
+              const statements = requested
+                .filter((value): value is string => typeof value === "string")
+                .map((value) => value.trim())
+                .filter(Boolean);
+              if (statements.length === 0) {
+                return "Tool error: preview_write requires a non-empty args.statements array.";
+              }
+
+              // Safety rails: at least one real change, no session switching,
+              // and explicit user consent before touching live rows.
+              const mutatingCount = statements.filter(
+                (statement) => isMutatingStatement(statement) || isHighRiskStatement(statement),
+              ).length;
+              if (mutatingCount === 0) {
+                return "Tool error: preview_write requires at least one INSERT/UPDATE/DELETE/ALTER/CREATE statement. Use run_readonly_sql for reads.";
+              }
+              for (const statement of statements) {
+                if (isSessionSwitchStatement(statement)) {
+                  return "Tool blocked: session-switch statements are not allowed in write previews.";
+                }
+              }
+
+              if (requestDataReadConsent) {
+                const approved = await requestDataReadConsent();
+                if (!approved) {
+                  return "Tool blocked: The user did not grant permission to run the write preview for this request.";
+                }
+              }
+
+              try {
+                const preview = await previewWriteTransaction(connectionId!, statements);
+                const summary = preview.results.map((result, index) => ({
+                  statement: statements[index] ?? `statement ${index + 1}`,
+                  affectedRows: result.affected_rows,
+                  returnedRows: result.rows.length,
+                  truncated: result.truncated || undefined,
+                }));
+                return stringifyAgentObservation({
+                  rolledBack: true,
+                  persisted: false,
+                  note: "Executed inside one transaction and ROLLED BACK. Nothing was saved. Report these effects as a PREVIEW and direct the user to apply the final SQL through the approval flow.",
+                  statementCount: statements.length,
+                  results: summary,
+                });
+              } catch (errorValue) {
+                if (isSupersededAIRequestError(errorValue)) throw errorValue;
+                return `Tool error: ${formatExecutionError(errorValue)}`;
+              }
+            }
+
+            if (action.action === "remember_term") {
+              const term = typeof action.args?.term === "string" ? action.args.term.trim() : "";
+              const definition = typeof action.args?.definition === "string" ? action.args.definition.trim() : "";
+              if (!term || !definition) {
+                return "Tool error: remember_term requires args.term and args.definition.";
+              }
+              try {
+                await saveSemanticGlossaryEntry({
+                  connectionId: connectionId!,
+                  database: currentDatabase || undefined,
+                  term,
+                  definition,
+                  kind: action.args?.kind,
+                  source: "agent",
+                });
+                return stringifyAgentObservation({
+                  saved: term,
+                  definition,
+                  note: "Saved to the business glossary; future runs for this database will see it automatically.",
+                });
+              } catch (errorValue) {
+                if (isSupersededAIRequestError(errorValue)) throw errorValue;
+                return `Tool error: could not save the glossary entry: ${formatExecutionError(errorValue)}`;
+              }
             }
 
             return "Tool error: finish does not execute a tool observation.";
@@ -700,11 +990,16 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           return sharedAgentInstruction;
         };
 
+        const formatActionFailureReason = (errorValue: unknown) =>
+          errorValue instanceof Error ? errorValue.message : String(errorValue);
+        let consecutiveActionFailures = 0;
+        let endedWithAskUser = false;
+
         const agentRunnerResult = await runAIAgentToolLoop({
           workspaceToolsEnabled,
           stepBudget: agentStepBudget,
           initialSteps: agentTraceSteps,
-          requestAction: ({ forceFinish, includeHistory, iteration, reason, steps }) => {
+          requestAction: async ({ forceFinish, includeHistory, iteration, reason, steps }) => {
             const completedToolSteps = steps.filter((step) => step.action !== "plan");
             if (recordLookupRequest && iteration === 1 && completedToolSteps.length === 0) {
               return Promise.resolve({
@@ -714,10 +1009,64 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               });
             }
 
-            return requestAgentAction(
-              buildControllerPrompt(forceFinish, instructionForRunnerRequest(reason), steps),
-              includeHistory,
+            const controllerPrompt = buildControllerPrompt(
+              forceFinish,
+              instructionForRunnerRequest(reason),
+              steps,
             );
+            try {
+              const action = await requestAgentAction(controllerPrompt, includeHistory);
+              consecutiveActionFailures = 0;
+              if (action.action === "ask_user") {
+                // The harness runs one agent turn per user message, so a
+                // clarifying question ends the turn: the reply arrives as the
+                // next message with full history attached.
+                endedWithAskUser = true;
+                const optionsBlock = action.args.options?.length
+                  ? `\n\n${action.args.options.map((option, index) => `${index + 1}. ${option}`).join("\n")}`
+                  : "";
+                const suffix = appLanguage === "vi"
+                  ? "\n\n_(Trả lời bằng số thứ tự hoặc nội dung của bạn.)_"
+                  : "\n\n_(Reply with an option number or your own answer.)_";
+                agentTraceSteps = [
+                  ...steps,
+                  {
+                    step: steps.length + 1,
+                    action: "ask_user",
+                    message: action.args.question,
+                    observation: "",
+                  },
+                ];
+                publishAgentProgress();
+                return {
+                  action: "finish" as const,
+                  message: action.message || "Asking the user for clarification.",
+                  args: { response: `${action.args.question}${optionsBlock}${suffix}` },
+                };
+              }
+              return action;
+            } catch (errorValue) {
+              if (isSupersededAIRequestError(errorValue)) throw errorValue;
+              // One bad model turn must not discard the evidence already
+              // gathered: retry the same prompt once, then salvage the run
+              // through the finish-recovery path instead of failing outright.
+              consecutiveActionFailures += 1;
+              if (consecutiveActionFailures >= 2) {
+                return recoverAgentFinishAction(
+                  `The agent could not return a valid action: ${formatActionFailureReason(errorValue)}`,
+                );
+              }
+              try {
+                const retriedAction = await requestAgentAction(controllerPrompt, false);
+                consecutiveActionFailures = 0;
+                return retriedAction;
+              } catch (retryError) {
+                if (isSupersededAIRequestError(retryError)) throw retryError;
+                return recoverAgentFinishAction(
+                  `The agent could not return a valid action: ${formatActionFailureReason(retryError)}`,
+                );
+              }
+            }
           },
           runTool: runAgentTool,
           recoverFinish: recoverAgentFinishAction,
@@ -730,15 +1079,140 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               });
             } else if (snapshot.phase === "tool-completed") {
               publishAgentProgress();
+            } else if (snapshot.phase === "requesting-action") {
+              // The model call is the longest part of every step; show it
+              // explicitly so the trace never looks frozen between tools.
+              publishAgentProgress({
+                action: "think",
+                message:
+                  snapshot.requestReason === "budget"
+                    ? "Tool budget reached — wrapping up with the evidence gathered."
+                    : snapshot.requestReason === "direct"
+                      ? "Composing response."
+                      : `Deciding next action (step ${Math.min(snapshot.iteration, snapshot.stepBudget)}/${snapshot.stepBudget}).`,
+              });
+            } else if (snapshot.phase === "recovering-finish") {
+              publishAgentProgress({ action: "think", message: "Finalizing answer." });
             }
           },
         });
         agentTraceSteps = agentRunnerResult.steps;
+        let finalAction = agentRunnerResult.finalAction;
+        let finalSteps = agentRunnerResult.steps;
+        if (endedWithAskUser && typeof finalAction.args?.response === "string") {
+          const askStep: AgentTraceStep = {
+            step: finalSteps.length + 1,
+            action: "ask_user",
+            message: finalAction.args.response,
+            observation: "",
+          };
+          finalSteps = [...finalSteps, askStep];
+          agentTraceSteps = [...agentTraceSteps, askStep];
+        }
+
+        // Quality gate: a data-seeking request must not end in a finish that
+        // neither executed a read nor proposed SQL — that is how runs used to
+        // stop with "I have enough data" and no deliverable. The gate retries
+        // a bounded number of rounds, then accepts the best available answer.
+        const hasExecutedReadStep = (steps: AgentTraceStep[]) => steps.some(
+          (step) =>
+            (step.action === "run_readonly_sql" || step.action === "sample_table_data")
+            && Boolean(step.observation)
+            && !step.observation.startsWith("Tool error")
+            && !step.observation.startsWith("Tool blocked"),
+        );
+        const finishHasSql = (action: AIAgentFinishAction) =>
+          typeof action.args?.sql === "string" && Boolean(action.args.sql.trim());
+
+        const MAX_EVIDENCE_ROUNDS = 2;
+        let evidenceRoundsLeft = MAX_EVIDENCE_ROUNDS;
+        const wantsReportTable = /(báo cáo|bảng báo cáo|report|tổng hợp|summary|dashboard)/i.test(normalizedPrompt);
+        const responseHasMarkdownTable = (response: string | undefined) =>
+          typeof response === "string" && /\|[^\n]+\|\s*\n\|[ :-]+\|/.test(response);
+        const needsMoreEvidence = () => {
+          if (finalAction.action !== "finish") return false;
+          const missingData = !finishHasSql(finalAction) && !hasExecutedReadStep(finalSteps);
+          const response = typeof finalAction.args?.response === "string" ? finalAction.args.response : "";
+          const missingReportTable = wantsReportTable && !responseHasMarkdownTable(response);
+          return missingData || missingReportTable;
+        };
+        while (
+          workspaceToolsEnabled
+          && !endedWithAskUser
+          && evidenceRoundsLeft > 0
+          && needsMoreEvidence()
+          && isWorkspaceScopedIntent(assistIntent)
+        ) {
+          evidenceRoundsLeft -= 1;
+          const lastChance = evidenceRoundsLeft === 0;
+          const missingDataNow = !finishHasSql(finalAction) && !hasExecutedReadStep(finalSteps);
+          const composeOnly = !missingDataNow;
+          try {
+            const recoveryAction = await requestAgentAction(
+              buildControllerPrompt(
+                lastChance || composeOnly,
+                joinAgentInstructions(
+                  sharedAgentInstruction,
+                  composeOnly
+                    ? "The evidence is already gathered. Finish now: args.response MUST contain ONE complete markdown table — | header | row, |---| separator, then data rows — summarizing the verified data, followed by at most three short notes."
+                    : lastChance
+                      ? "This is the final round. Run the one read that answers the request, or finish with the complete answer built from the evidence already gathered. Do not end with a promise."
+                      : "Your previous finish returned no SQL and no executed query, but this request needs real workspace data. Either call sample_table_data, describe_tables, or run_readonly_sql now, or if that is genuinely impossible, finish again with a complete explanation instead of a promise.",
+                ),
+                finalSteps,
+              ),
+              false,
+            );
+            if (recoveryAction.action === "finish") {
+              if (finishHasSql(recoveryAction)) {
+                finalAction = recoveryAction;
+                break;
+              }
+              finalAction = recoveryAction;
+              continue;
+            }
+            publishAgentProgress({
+              action: recoveryAction.action,
+              message: recoveryAction.message || "Gathering the missing data.",
+            });
+            const observation = await runAgentTool(recoveryAction);
+            finalSteps = [
+              ...finalSteps,
+              {
+                step: finalSteps.length + 1,
+                action: recoveryAction.action,
+                message: recoveryAction.message || "No message provided.",
+                observation,
+              },
+            ];
+            agentTraceSteps = finalSteps.map((step) => ({ ...step }));
+            publishAgentProgress();
+            const closingAction = await requestAgentAction(
+              buildControllerPrompt(
+                true,
+                joinAgentInstructions(
+                  sharedAgentInstruction,
+                  "You now have fresh evidence. Finish now and summarize the actual results for the user.",
+                ),
+                finalSteps,
+              ),
+              false,
+            );
+            finalAction = closingAction.action === "finish"
+              ? closingAction
+              : await recoverAgentFinishAction("The agent could not conclude after its final data step.");
+          } catch (errorValue) {
+            if (isSupersededAIRequestError(errorValue)) throw errorValue;
+            // The gate is best-effort; fall back to the current finish.
+            break;
+          }
+        }
+
         const finalization = await finalizeAgentResult({
           availableSchemaTables,
           buildControllerPrompt,
-          initialAction: agentRunnerResult.finalAction,
-          initialSteps: agentRunnerResult.steps,
+          initialAction: finalAction,
+          initialSteps: finalSteps,
           recoverFinishAction: recoverAgentFinishAction,
           requestAgentAction,
           sharedAgentInstruction,
@@ -804,7 +1278,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         setIsGenerating(false);
       }
     }
-  }, [activeProvider, aiConfigs, askAI, connectionId, currentDatabase, fetchTables, getTableColumnsPreview, getTableStructure, isLocalProvider, saveAIConfigs]);
+  }, [activeProvider, aiConfigs, askAI, connectionId, currentDatabase, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
 
   const copyText = useCallback(async (text: string) => {
     await navigator.clipboard.writeText(text);

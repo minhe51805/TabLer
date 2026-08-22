@@ -65,6 +65,28 @@ export function buildAgentFinalRecoveryPrompt(params: {
     .join("\n");
 }
 
+/** One compact, human-readable line per trace step for degraded-answer fallbacks. */
+function buildFallbackEvidenceDigest(steps: AgentTraceStep[]) {
+  const lines: string[] = [];
+  for (const step of steps) {
+    if (lines.length >= 6) {
+      lines[5] = `${lines[5]}\n... (${steps.length - 5} more steps)`;
+      break;
+    }
+    const observation = step.observation ?? "";
+    let detail: string;
+    const describedTable = observation.match(/^TABLE=\S+/m);
+    const rowCount = observation.match(/"rowCount":\s*(\d+)/);
+    if (describedTable) detail = describedTable[0];
+    else if (/^Tool (error|blocked|notice)/.test(observation)) detail = observation.split("\n")[0].slice(0, 90);
+    else if (rowCount) detail = `read ${rowCount[1]} rows`;
+    else if (observation.includes('"matches"')) detail = "schema search completed";
+    else detail = observation.replace(/\s+/g, " ").slice(0, 80);
+    lines.push(`- ${step.action}: ${detail || "completed"}`);
+  }
+  return lines.join("\n");
+}
+
 export function buildLocalAgentFallbackResponse(params: {
   language: AIResponseLanguage;
   currentDatabase: string | null;
@@ -83,11 +105,13 @@ export function buildLocalAgentFallbackResponse(params: {
   const lastStep = steps[steps.length - 1];
   const lastStepLabel = lastStep ? `${lastStep.action}` : "";
   const hasMoreTables = availableTableNames.length > 8;
+  const evidenceDigest = buildFallbackEvidenceDigest(steps);
 
   if (language === "vi") {
     return [
       `Mình đã thu thập được evidence có kiểm chứng từ DB "${currentDatabase || "Default"}", nhưng agent chưa kịp tự chốt câu trả lời cuối.`,
       tablePreview ? `Các bảng đã xác minh: ${tablePreview}${hasMoreTables ? ", ..." : ""}.` : "",
+      evidenceDigest ? `Đã ghi nhận:\n${evidenceDigest}` : "",
       lastStepLabel ? `Bước gần nhất của agent: ${lastStepLabel}.` : "",
       wantsVisualization
         ? "Thử lại một lần nữa là được; mình sẽ ưu tiên câu trả lời có kèm SQL dạng chart-friendly để bạn chạy xong chuyển sang Chart view."
@@ -99,6 +123,7 @@ export function buildLocalAgentFallbackResponse(params: {
     return [
       `我已经从数据库“${currentDatabase || "Default"}”收集到经过验证的证据，但 agent 还没来得及整理成最终答复。`,
       tablePreview ? `已验证的表：${tablePreview}${hasMoreTables ? ", ..." : ""}。` : "",
+      evidenceDigest ? `已记录：\n${evidenceDigest}` : "",
       lastStepLabel ? `agent 最近一步：${lastStepLabel}。` : "",
       wantsVisualization
         ? "再试一次即可；我会优先返回适合切换到 Chart view 的图表型 SQL。"
@@ -109,6 +134,7 @@ export function buildLocalAgentFallbackResponse(params: {
   return [
     `The agent gathered verified evidence from database "${currentDatabase || "Default"}" but did not finish composing the final answer in time.`,
     tablePreview ? `Verified tables: ${tablePreview}${hasMoreTables ? ", ..." : ""}.` : "",
+    evidenceDigest ? `Evidence captured:\n${evidenceDigest}` : "",
     lastStepLabel ? `Last agent step: ${lastStepLabel}.` : "",
     wantsVisualization
       ? "Try again and the agent will prioritize a chart-friendly SQL result that can be switched into Chart view."

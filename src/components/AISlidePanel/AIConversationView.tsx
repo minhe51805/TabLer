@@ -76,7 +76,11 @@ export function AIConversationView({
                 && (bubble.agentSteps?.length ?? 0) > 0;
               const recordLinks = extractAgentRecordLinks(bubble.agentSteps);
               const agentReadLiveData = bubble.interactionMode === "agent"
-                && bubble.agentSteps?.some((step) => step.action === "run_readonly_sql" && step.status === "done") === true;
+                && bubble.agentSteps?.some(
+                  (step) =>
+                    (step.action === "run_readonly_sql" || step.action === "sample_table_data")
+                    && step.status === "done",
+                ) === true;
               const canShowDetail = !agentReadLiveData
                 && bubble.status !== "loading"
                 && Boolean(bubble.detail || bubble.preview || bubble.sql);

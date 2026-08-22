@@ -39,7 +39,7 @@ const TerminalDock = lazy(() =>
 import type { Tab } from "../types";
 import type { ConnectionConfig } from "../types/database";
 import type { QueryEditorSessionState } from "./SQLEditor";
-import { useI18n } from "../i18n";
+import { formatCountLabel, useI18n } from "../i18n";
 import { useEvent } from "../stores/event-center";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useUIStore } from "../stores/uiStore";
@@ -1072,8 +1072,13 @@ export function AppWorkspacePanel({
                   {typeof activeQueryChrome.rowCount === "number" &&
                     activeQueryChrome.rowCount > 0 && (
                       <span className="workspace-toolbar-status-pill">
-                        {t("workspace.status.rows", {
-                          count: activeQueryChrome.rowCount,
+                        {formatCountLabel(language, activeQueryChrome.rowCount, {
+                          one: "row",
+                          other: "rows",
+                          vi: "dòng",
+                          zh: "行",
+                          tr: "satir",
+                          ko: "개 행",
                         })}
                       </span>
                     )}

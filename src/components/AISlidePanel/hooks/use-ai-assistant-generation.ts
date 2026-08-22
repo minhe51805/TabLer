@@ -572,9 +572,9 @@ export function useAIAssistantGeneration({
       // In agent mode, any grounded SQL the agent produced is eligible to auto-run;
       // the autonomy level + risk classification decide whether it actually runs.
       // Do not run a second workspace query when the agent already inspected live
-      // rows through its internal, read-only tool.
+      // rows through its internal, read-only tools.
       const agentAlreadyReadLiveData = result.agentSteps?.some(
-        (step) => step.action === "run_readonly_sql" && step.status === "done",
+        (step) => (step.action === "run_readonly_sql" || step.action === "sample_table_data") && step.status === "done",
       );
       const agentCanAutoRun =
         interactionMode === "agent" &&

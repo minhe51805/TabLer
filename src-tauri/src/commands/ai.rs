@@ -9,6 +9,7 @@ use reqwest::{Client, StatusCode, Url};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::fs;
 use std::net::IpAddr;
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter, State};
@@ -1286,10 +1287,16 @@ async fn execute_ai_stream_request(
     cancellation_token: CancellationToken,
 ) -> Result<(), String> {
     let storage = storage.clone();
+    let override_provider_id = request.provider_id.clone();
     let (config, api_key) = run_blocking_storage_task(move || {
-        let config = storage
-            .get_active_provider_config()
-            .map_err(|_| ai_provider_config_error())?;
+        let config = match override_provider_id.as_deref() {
+            Some(provider_id) if !provider_id.trim().is_empty() => storage
+                .get_enabled_provider_config_by_id(provider_id.trim())
+                .map_err(|_| ai_provider_config_error())?,
+            _ => storage
+                .get_active_provider_config()
+                .map_err(|_| ai_provider_config_error())?,
+        };
         let api_key = if provider_requires_api_key(&config.provider_type) {
             Some(
                 storage
@@ -1453,10 +1460,16 @@ async fn execute_ai_request(
 
     let client = ai_http_client();
     let storage = storage.clone();
+    let override_provider_id = request.provider_id.clone();
     let (config, api_key) = run_blocking_storage_task(move || {
-        let config = storage
-            .get_active_provider_config()
-            .map_err(|_| ai_provider_config_error())?;
+        let config = match override_provider_id.as_deref() {
+            Some(provider_id) if !provider_id.trim().is_empty() => storage
+                .get_enabled_provider_config_by_id(provider_id.trim())
+                .map_err(|_| ai_provider_config_error())?,
+            _ => storage
+                .get_active_provider_config()
+                .map_err(|_| ai_provider_config_error())?,
+        };
         let api_key = if provider_requires_api_key(&config.provider_type) {
             Some(
                 storage
@@ -1795,6 +1808,22 @@ async fn execute_ai_request(
             ))
         }
     }
+}
+
+/// Persists an agent run trace as JSONL under <data_dir>/traces/ so failed or
+/// surprising runs can be replayed offline. Best-effort debugging artifact.
+#[tauri::command]
+pub fn save_agent_trace(request_id: String, content: String) -> Result<String, String> {
+    let safe_name: String = request_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let data_dir = crate::utils::paths::resolve_data_dir().map_err(|e| e.to_string())?;
+    let traces_dir = data_dir.join("traces");
+    fs::create_dir_all(&traces_dir).map_err(|e| format!("Failed to create traces directory: {e}"))?;
+    let path = traces_dir.join(format!("{safe_name}.jsonl"));
+    fs::write(&path, content).map_err(|e| format!("Failed to write agent trace: {e}"))?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 #[cfg(test)]

@@ -45,6 +45,10 @@ export interface AIWorkspaceCopy {
     reasoningHide: string;
     agentStepsLabel: string;
     agentActionPlan: string;
+    agentActionThink: string;
+    agentActionRememberTerm: string;
+    agentActionPreviewWrite: string;
+    agentActionAskUser: string;
     agentActionListTables: string;
     agentActionDescribeTable: string;
     agentActionRunSql: string;
@@ -178,6 +182,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       reasoningHide: "Hide reasoning",
       agentStepsLabel: "Agent steps",
       agentActionPlan: "Understanding the request",
+      agentActionThink: "Thinking",
+      agentActionAskUser: "Asking you",
+      agentActionRememberTerm: "Learning",
+      agentActionPreviewWrite: "Previewing changes",
       agentActionListTables: "Listing tables",
       agentActionDescribeTable: "Inspecting schema",
       agentActionRunSql: "Reading data",
@@ -330,6 +338,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       reasoningHide: "Ẩn suy luận",
       agentStepsLabel: "Các bước của agent",
       agentActionPlan: "Hi?u y?u c?u",
+      agentActionThink: "Đang suy nghĩ",
+      agentActionAskUser: "Đang hỏi bạn",
+      agentActionRememberTerm: "Đang ghi nhớ",
+      agentActionPreviewWrite: "Xem trước thay đổi",
       agentActionListTables: "Liệt kê bảng",
       agentActionDescribeTable: "Xem cấu trúc",
       agentActionRunSql: "Đọc dữ liệu",
@@ -480,6 +492,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       reasoningHide: "隐藏推理",
       agentStepsLabel: "Agent 步骤",
       agentActionPlan: "????",
+      agentActionThink: "思考中",
+      agentActionAskUser: "询问中",
+      agentActionRememberTerm: "学习中",
+      agentActionPreviewWrite: "预览变更",
       agentActionListTables: "列出表",
       agentActionDescribeTable: "查看结构",
       agentActionRunSql: "读取数据",
@@ -630,6 +646,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       reasoningHide: "Muhakemeyi gizle",
       agentStepsLabel: "Agent adımları",
       agentActionPlan: "?ste?i anl?yor",
+      agentActionThink: "Düşünüyor",
+      agentActionAskUser: "Sana soruyorum",
+      agentActionRememberTerm: "Öğreniyor",
+      agentActionPreviewWrite: "Değişiklik önizleme",
       agentActionListTables: "Tablolar listeleniyor",
       agentActionDescribeTable: "Şema inceleniyor",
       agentActionRunSql: "Veri okunuyor",
@@ -765,6 +785,10 @@ const COPY: Record<AppLanguage, AIWorkspaceCopy> = {
       reasoningHide: "추론 숨기기",
       agentStepsLabel: "에이전트 단계",
       agentActionPlan: "?? ??",
+      agentActionThink: "생각 중",
+      agentActionAskUser: "질문 중",
+      agentActionRememberTerm: "학습 중",
+      agentActionPreviewWrite: "변경 미리보기",
       agentActionListTables: "테이블 목록",
       agentActionDescribeTable: "스키마 확인",
       agentActionRunSql: "데이터 읽기",

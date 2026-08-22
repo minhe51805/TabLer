@@ -489,6 +489,19 @@
   background: var(--mm-surface-0);
 }
 
+.erd-edge-label.is-selected {
+  border-color: var(--mm-accent);
+}
+
+.erd-edge-label.is-selected .erd-edge-label-text {
+  color: var(--mm-accent);
+}
+
+.erd-edge-label.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .erd-edge-label-text {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3849,7 +3862,7 @@ body {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  --workspace-ai-sidebar-width: min(clamp(468px, 35vw, 560px), 100vw);
+  --workspace-ai-sidebar-width: min(clamp(420px, 33vw, 560px), calc(100vw - 620px));
   background: var(--mm-surface-1);
 }
 
@@ -20046,6 +20059,85 @@ body {
   word-break: break-word;
 }
 
+.ai-workspace-markdown-hr {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--mm-border);
+}
+
+.ai-workspace-markdown-code-frame {
+  overflow: hidden;
+  border-radius: 15px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-0);
+}
+
+.ai-workspace-markdown-code-frame .ai-workspace-markdown-code {
+  border: 0;
+  border-radius: 0;
+}
+
+.ai-workspace-markdown-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 7px 5px 13px;
+  border-bottom: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+}
+
+.ai-workspace-markdown-code-lang {
+  color: var(--text-secondary);
+  font-family: var(--mm-font-mono);
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ai-workspace-markdown-code-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ai-workspace-markdown-code-copy:hover {
+  background: var(--mm-surface-2);
+  color: var(--text-primary);
+}
+
+/* SQL token colors mirror the Monaco MiniMax editor syntax palette */
+.ai-workspace-markdown-code .tok-kw {
+  color: #0a49a5;
+  font-weight: 650;
+}
+
+.ai-workspace-markdown-code .tok-str {
+  color: #c41a16;
+}
+
+.ai-workspace-markdown-code .tok-num {
+  color: #6c36a9;
+}
+
+.ai-workspace-markdown-code .tok-com {
+  color: #007400;
+  font-style: italic;
+}
+
+.ai-workspace-markdown-code .tok-fn {
+  color: #326d74;
+}
+
 .ai-workspace-markdown-table-wrap {
   overflow-x: auto;
   border-radius: 14px;
@@ -20514,11 +20606,26 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
   font-size: var(--mm-fs-caption);
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--mm-accent);
   margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.ai-agent-steps-head:hover {
+  text-decoration: underline;
+}
+
+.ai-agent-steps.is-collapsed .ai-agent-steps-head {
+  color: var(--text-secondary);
+  margin-bottom: 0;
 }
 
 .ai-agent-steps-list {
@@ -23158,9 +23265,17 @@ body {
   background: var(--accent-hover);
 }
 
-@media (max-width: 1240px) {
+@media (min-width: 961px) and (max-width: 1240px) {
   .app-root {
-    --workspace-ai-sidebar-width: min(clamp(420px, 40vw, 512px), 100vw);
+    --workspace-ai-sidebar-width: min(clamp(380px, 42vw, 512px), calc(100vw - 520px));
+  }
+}
+
+@media (max-width: 960px) {
+  /* Overlay mode: the panel floats above the workspace, so it keeps a usable
+     width instead of following the side-by-side shrinking formula. */
+  .app-root {
+    --workspace-ai-sidebar-width: min(420px, calc(100vw - 12px));
   }
 }
 
@@ -28220,7 +28335,7 @@ body {
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-command-dropdown {
-  flex: 1 1 132px;
+  flex: 1 1 152px;
 }
 
 .app-root
@@ -28386,10 +28501,12 @@ body {
   .ai-workspace-stage--sidebar
   .ai-workspace-command-dropdown--provider
   .ai-workspace-command-popover {
+  /* The provider dropdown spans the full command bar row, so stretching the
+     popover across it can never overflow the panel edge. */
+  left: 0;
   right: 0;
-  left: auto;
-  width: min(356px, calc(100vw - 40px));
-  min-width: 260px;
+  width: auto;
+  min-width: 0;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-command-popover-head {
@@ -28560,8 +28677,8 @@ body {
     .ai-workspace-command-dropdown--provider
     .ai-workspace-command-popover {
     left: 0;
-    right: auto;
-    width: min(100%, calc(100vw - 40px));
+    right: 0;
+    width: auto;
   }
 }
 
@@ -28777,13 +28894,10 @@ body {
   .ai-workspace-commandbar--dock
   .ai-workspace-command-dropdown--provider
   .ai-workspace-command-popover {
-  left: auto;
+  left: 0;
   right: 0;
-  width: min(
-    320px,
-    calc(var(--workspace-ai-sidebar-width) - 48px),
-    calc(100vw - 40px)
-  );
+  width: auto;
+  min-width: 0;
 }
 
 .app-root

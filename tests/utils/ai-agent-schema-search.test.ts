@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   findAgentSchemaMatches,
   isAgentRecordLookupRequest,
+  prioritizeSchemaScanCandidates,
 } from "@/components/AISlidePanel/ai-agent-schema-search";
 import type { ColumnDetail } from "@/types";
 
@@ -37,5 +38,35 @@ describe("findAgentSchemaMatches", () => {
     expect(findAgentSchemaMatches("email", [
       { identifier: "public.audit_logs", columns: [column("id"), column("event_type")] },
     ])).toEqual([]);
+  });
+});
+
+describe("prioritizeSchemaScanCandidates", () => {
+  it("returns the catalog untouched when it already fits the scan budget", () => {
+    const identifiers = ["public.users", "public.orders"];
+    expect(prioritizeSchemaScanCandidates(identifiers, "email address", 10)).toEqual(identifiers);
+  });
+
+  it("puts name matches first and caps the scan on large catalogs", () => {
+    const identifiers = [
+      "public.audit_logs",
+      "public.user_emails",
+      "public.sessions",
+      "public.email_domains",
+      "public.metrics",
+    ];
+    const prioritized = prioritizeSchemaScanCandidates(identifiers, "email", 2);
+
+    expect(prioritized).toHaveLength(2);
+    expect(prioritized).toContain("public.user_emails");
+    expect(prioritized).toContain("public.email_domains");
+  });
+
+  it("falls back to the first tables in catalog order when nothing matches", () => {
+    const identifiers = ["a_logs", "b_sessions", "c_metrics"];
+    expect(prioritizeSchemaScanCandidates(identifiers, "zzz_unrelated", 2)).toEqual([
+      "a_logs",
+      "b_sessions",
+    ]);
   });
 });

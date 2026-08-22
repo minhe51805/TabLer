@@ -9,13 +9,50 @@ import { getAgentSqlSchemaRequirements } from "@/components/AISlidePanel/ai-agen
 describe("AI agent tool contract", () => {
   it("exposes only executable controller actions", () => {
     expect(AI_AGENT_TOOL_NAMES).toEqual([
+      "ask_user",
       "list_tables",
       "search_schema",
       "describe_table",
+      "describe_tables",
+      "sample_table_data",
       "run_readonly_sql",
+      "preview_write",
+      "remember_term",
       "finish",
     ]);
     expect(AI_AGENT_TOOL_NAMES).not.toContain("plan");
+  });
+
+  it("parses ask_user questions with bounded, cleaned options", () => {
+    expect(parseAIAgentToolAction(
+      '{"action":"ask_user","message":"Need direction","args":{"question":" Which report? ","options":["Revenue","Revenue","  ","Users by role"],"multiple":true}}',
+    )).toEqual({
+      action: "ask_user",
+      message: "Need direction",
+      args: { question: "Which report?", options: ["Revenue", "Users by role"], multiple: true },
+    });
+
+    expect(() => parseAIAgentToolAction('{"action":"ask_user","message":"Bad","args":{}}'))
+      .toThrow("non-empty args.question");
+  });
+
+  it("parses describe_tables batches, dedupes names, and caps the batch size", () => {
+    const parsed = parseAIAgentToolAction(
+      '{"action":"describe_tables","message":"Inspect report tables","args":{"tables":["public.bots","public.bots"," public.users ","42"]}}',
+    );
+    expect(parsed).toEqual({
+      action: "describe_tables",
+      message: "Inspect report tables",
+      args: { tables: ["public.bots", "public.users", "42"] },
+    });
+
+    expect(parseAIAgentToolAction(
+      '{"action":"describe_tables","message":"Numeric ids","args":{"tables":["bots",123]}}',
+    ).args).toEqual({ tables: ["bots", "123"] });
+
+    expect(() => parseAIAgentToolAction(
+      '{"action":"describe_tables","message":"Bad","args":{"tables":[]}}',
+    )).toThrow("non-empty args.tables array");
   });
 
   it("parses a fenced action and normalizes optional fields", () => {
@@ -51,11 +88,85 @@ line two","args":{"response":"done"}}\nThanks`;
     });
   });
 
+  it("parses remember_term entries and rejects blanks", () => {
+    expect(parseAIAgentToolAction(
+      '{"action":"remember_term","message":"Learning revenue","args":{"term":" revenue ","definition":"sum(amount) where paid","kind":"metric"}}',
+    )).toEqual({
+      action: "remember_term",
+      message: "Learning revenue",
+      args: { term: "revenue", definition: "sum(amount) where paid", kind: "metric" },
+    });
+
+    expect(parseAIAgentToolAction(
+      '{"action":"remember_term","message":"Default kind","args":{"term":"campaigns","definition":"marketing groups"}}',
+    ).args).toEqual({ term: "campaigns", definition: "marketing groups" });
+
+    expect(() => parseAIAgentToolAction(
+      '{"action":"remember_term","message":"Bad","args":{"term":"","definition":"x"}}',
+    )).toThrow("non-empty args.term and args.definition");
+  });
+
+  it("parses preview_write statements and caps the batch", () => {
+    expect(parseAIAgentToolAction(
+      `{"action":"preview_write","message":"Fix status","args":{"statements":["UPDATE orders SET status = 'cancelled' WHERE id = 42","  ","DELETE FROM logs WHERE old = true"]}}`,
+    )).toEqual({
+      action: "preview_write",
+      message: "Fix status",
+      args: { statements: ["UPDATE orders SET status = 'cancelled' WHERE id = 42", "DELETE FROM logs WHERE old = true"] },
+    });
+
+    expect(() => parseAIAgentToolAction('{"action":"preview_write","message":"Bad","args":{}}'))
+      .toThrow("non-empty args.statements array");
+  });
+
   it("rejects unsupported actions and non-object arguments", () => {
     expect(() => parseAIAgentToolAction('{"action":"plan"}'))
       .toThrow("unsupported action");
     expect(() => parseAIAgentToolAction('{"action":"finish","args":[]}'))
       .toThrow("invalid tool arguments");
+  });
+
+  it("parses list_tables catalog filters and drops invalid argument types", () => {
+    expect(parseAIAgentToolAction(
+      '{"action":"list_tables","message":"Find sales tables","args":{"schema":"Sales","pattern":"orders","limit":"all"}}',
+    )).toEqual({
+      action: "list_tables",
+      message: "Find sales tables",
+      args: { schema: "Sales", pattern: "orders" },
+    });
+
+    expect(parseAIAgentToolAction(
+      '{"action":"list_tables","message":"Catalog","args":{"limit":500}}',
+    )).toEqual({
+      action: "list_tables",
+      message: "Catalog",
+      args: { limit: 200 },
+    });
+
+    expect(parseAIAgentToolAction(
+      '{"action":"list_tables","message":"Only populated tables","args":{"minRows":1}}',
+    )).toEqual({
+      action: "list_tables",
+      message: "Only populated tables",
+      args: { minRows: 1 },
+    });
+  });
+
+  it("parses sample_table_data and clamps the row limit", () => {
+    expect(parseAIAgentToolAction(
+      '{"action":"sample_table_data","message":"Peek users","args":{"table":"public.users","limit":500}}',
+    )).toEqual({
+      action: "sample_table_data",
+      message: "Peek users",
+      args: { table: "public.users", limit: 50 },
+    });
+
+    expect(parseAIAgentToolAction(
+      '{"action":"sample_table_data","message":"Peek users","args":{"table":"public.users"}}',
+    ).args).toEqual({ table: "public.users" });
+
+    expect(() => parseAIAgentToolAction('{"action":"sample_table_data","message":"Peek","args":{}}'))
+      .toThrow("requires a non-empty args.table");
   });
 
   it("validates and normalizes action-specific arguments", () => {

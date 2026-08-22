@@ -319,6 +319,84 @@ pub async fn execute_parameterized_query(
     Ok(result)
 }
 
+/// Result of a write preview: per-statement outcomes plus the guarantee flag.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewWriteResult {
+    pub results: Vec<QueryResult>,
+    pub rolled_back: bool,
+}
+
+const MAX_PREVIEW_STATEMENTS: usize = 10;
+
+/// Runs the agent's proposed mutating statements inside one transaction and
+/// ALWAYS rolls back, so the caller sees affected rows without persisting
+/// anything. The human still applies real changes through the approval flow.
+#[tauri::command]
+pub async fn preview_write_transaction(
+    connection_id: String,
+    statements: Vec<String>,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<PreviewWriteResult, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::Query)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    if statements.is_empty() || statements.len() > MAX_PREVIEW_STATEMENTS {
+        return Err(format!(
+            "Write preview accepts between 1 and {MAX_PREVIEW_STATEMENTS} statements."
+        ));
+    }
+    validate_sandbox_batch(&statements, false)?;
+    let has_mutating = statements
+        .iter()
+        .any(|statement| !classify_sql(statement).read_only);
+    if !has_mutating {
+        return Err(
+            "Write preview requires at least one data- or schema-changing statement.".to_string(),
+        );
+    }
+
+    let operation_id = Uuid::new_v4();
+    log::info!(
+        "operation_id={operation_id} operation=query.preview_write status=started connection_id={} statements_count={}",
+        connection_id,
+        statements.len()
+    );
+
+    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(format_query_connection_error)?;
+
+    let preview = timeout(timeout_window, driver.preview_write_transaction(&statements))
+        .await
+        .map_err(|_| {
+            format!(
+                "Write preview timed out after {} seconds.",
+                timeout_window.as_secs()
+            )
+        })?
+        .map_err(|error| {
+            let formatted = format_query_runtime_error(error);
+            log::error!(
+                "operation_id={operation_id} operation=query.preview_write status=failed error={formatted}"
+            );
+            formatted
+        })?;
+
+    log::info!(
+        "operation_id={operation_id} operation=query.preview_write status=rolled_back statements_count={}",
+        preview.len()
+    );
+    Ok(PreviewWriteResult {
+        results: preview,
+        rolled_back: true,
+    })
+}
+
 #[tauri::command]
 pub async fn execute_sandboxed_query(
     connection_id: String,

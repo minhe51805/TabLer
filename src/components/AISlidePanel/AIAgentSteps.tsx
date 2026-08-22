@@ -1,5 +1,6 @@
-import { Brain, CheckCircle2, Database, ListTree, Loader2, Search, Sparkles, AlertCircle } from "lucide-react";
+import { BookOpen, PenLine, Brain, CheckCircle2, ChevronDown, ChevronRight, Database, HelpCircle, ListTree, Loader2, Search, Sparkles, AlertCircle } from "lucide-react";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
@@ -14,14 +15,23 @@ interface AIAgentStepsProps {
 function getActionIcon(action: AIWorkspaceAgentActionName): ReactNode {
   switch (action) {
     case "plan":
+    case "think":
       return <Brain className="w-3.5 h-3.5" />;
+    case "ask_user":
+      return <HelpCircle className="w-3.5 h-3.5" />;
     case "list_tables":
       return <ListTree className="w-3.5 h-3.5" />;
     case "search_schema":
     case "describe_table":
+    case "describe_tables":
       return <Search className="w-3.5 h-3.5" />;
+    case "sample_table_data":
     case "run_readonly_sql":
       return <Database className="w-3.5 h-3.5" />;
+    case "remember_term":
+      return <BookOpen className="w-3.5 h-3.5" />;
+    case "preview_write":
+      return <PenLine className="w-3.5 h-3.5" />;
     case "finish":
     default:
       return <Sparkles className="w-3.5 h-3.5" />;
@@ -35,13 +45,23 @@ function getActionLabel(
   switch (action) {
     case "plan":
       return copy.modal.agentActionPlan;
+    case "think":
+      return copy.modal.agentActionThink;
+    case "ask_user":
+      return copy.modal.agentActionAskUser;
     case "list_tables":
       return copy.modal.agentActionListTables;
     case "search_schema":
     case "describe_table":
+    case "describe_tables":
       return copy.modal.agentActionDescribeTable;
+    case "sample_table_data":
     case "run_readonly_sql":
       return copy.modal.agentActionRunSql;
+    case "remember_term":
+      return copy.modal.agentActionRememberTerm;
+    case "preview_write":
+      return copy.modal.agentActionPreviewWrite;
     case "finish":
     default:
       return copy.modal.agentActionFinish;
@@ -58,14 +78,33 @@ function peekObservation(observation: string): string {
 export function AIAgentSteps({ steps, compact = false }: AIAgentStepsProps) {
   const { language } = useI18n();
   const copy = getAIWorkspaceCopy(language);
+  const runSettled = steps.length > 0 && steps.every((step) => step.status !== "running");
+  const [expanded, setExpanded] = useState(!runSettled);
+
+  // Collapse automatically once the run finishes so the final report is the
+  // visible content; live runs stay open until the last step settles.
+  useEffect(() => {
+    setExpanded(!runSettled);
+  }, [runSettled]);
+
   if (steps.length === 0) return null;
 
   return (
-    <div className={`ai-agent-steps ${compact ? "is-compact" : ""}`}>
-      <div className="ai-agent-steps-head">
+    <div className={`ai-agent-steps ${compact ? "is-compact" : ""} ${expanded ? "" : "is-collapsed"}`}>
+      <button
+        type="button"
+        className="ai-agent-steps-head"
+        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={expanded}
+        title={expanded ? copy.modal.agentStatusDone : undefined}
+      >
         <Sparkles className="w-3.5 h-3.5" />
-        <span>{copy.modal.agentStepsLabel}</span>
-      </div>
+        <span>{copy.modal.agentStepsLabel} ({steps.length})</span>
+        {expanded
+          ? <ChevronDown className="w-3.5 h-3.5 ai-agent-steps-chevron" />
+          : <ChevronRight className="w-3.5 h-3.5 ai-agent-steps-chevron" />}
+      </button>
+      {expanded && (
       <ol className="ai-agent-steps-list">
         {steps.map((step) => {
           const statusLabel =
@@ -128,6 +167,7 @@ export function AIAgentSteps({ steps, compact = false }: AIAgentStepsProps) {
           );
         })}
       </ol>
+      )}
     </div>
   );
 }

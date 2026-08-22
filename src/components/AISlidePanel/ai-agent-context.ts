@@ -18,6 +18,24 @@ export interface AgentTraceStep {
 const AI_SCHEMA_CODEC_LEGEND = "Legend T=table C=col:type!flags I=index F=fk flags=pk|nn|df|ai";
 const MAX_SCHEMA_CAPSULE_PREVIEW_TABLES = 4;
 const MAX_AGENT_PROMPT_CHARS = 48_000;
+/** Pre-inspected summaries injected into the controller prompt to save describe_table steps. */
+const MAX_PRE_INSPECTED_TABLE_SUMMARIES = 6;
+/**
+ * Table NAMES are tiny compared to schema capsules, so the controller prompt
+ * carries the full catalog up to this bound — agents must not burn tool steps
+ * re-listing what they can already see.
+ */
+const AGENT_FULL_CATALOG_NAME_LIMIT = 400;
+/** Recent observations render in full up to this per-step character budget. */
+const RECENT_OBSERVATION_CHAR_BUDGET = 2_000;
+/** Older observations keep a condensed peek instead of disappearing entirely. */
+const OLDER_OBSERVATION_PEEK_CHARS = 400;
+
+function clampObservationText(text: string, budget: number) {
+  const flat = text.trim();
+  if (flat.length <= budget) return flat;
+  return `${flat.slice(0, budget)}\n[observation truncated]`;
+}
 
 function normalizeName(value: string) {
   return value
@@ -173,6 +191,8 @@ export function buildAgentControllerPrompt(params: {
   workspaceToolStatus?: string;
   forceFinish?: boolean;
   extraInstruction?: string;
+  cachedTableSummaries?: string[];
+  glossaryLines?: string[];
 }) {
   const {
     userPrompt,
@@ -184,8 +204,13 @@ export function buildAgentControllerPrompt(params: {
     workspaceToolStatus,
     forceFinish,
     extraInstruction,
+    cachedTableSummaries,
+    glossaryLines,
   } = params;
-  const visibleTables = availableTableNames.slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
+  const visibleTables = availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT
+    ? availableTableNames
+    : availableTableNames.slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
+  const catalogComplete = availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT;
   const toolSteps = steps.filter((step) => step.action !== "plan");
   const recentFullObservations = 4;
   const priorSteps = toolSteps.length === 0
@@ -196,27 +221,50 @@ export function buildAgentControllerPrompt(params: {
           `Step ${step.step}`,
           `Action: ${step.action}`,
           `Message: ${step.message || "No message provided."}`,
-          isRecent ? `Observation:\n${step.observation}` : "Observation: (older step, omitted to save space)",
+          isRecent
+            ? `Observation:\n${clampObservationText(step.observation, RECENT_OBSERVATION_CHAR_BUDGET)}`
+            : `Observation (older, condensed):\n${clampObservationText(step.observation, OLDER_OBSERVATION_PEEK_CHARS)}`,
         ].join("\n");
       }).join("\n\n");
+  const preInspectedSummaries = (cachedTableSummaries ?? []).slice(0, MAX_PRE_INSPECTED_TABLE_SUMMARIES);
   const availableActions = workspaceToolsEnabled
     ? [
-        '1. {"action":"list_tables","message":"short reason","args":{}}',
-        '2. {"action":"search_schema","message":"short reason","args":{"query":"column or concept to find"}}',
-        '3. {"action":"describe_table","message":"short reason","args":{"table":"exact_table_name"}}',
-        '4. {"action":"run_readonly_sql","message":"short reason","args":{"sql":"SELECT ..."}}',
-        '5. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval","metricsWidgets":[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ...","dimension":"verified label column","measures":["verified numeric alias"],"transforms":["group/sort operation"],"limit":100}]}}',
+        '1. {"action":"ask_user","message":"short reason","args":{"question":"one concise question","options":["option A","option B"],"multiple":optional boolean}}',
+        '2. {"action":"list_tables","message":"short reason","args":{"schema":"optional schema filter","pattern":"optional name substring","limit":optional count,"minRows":optional minimum row count}}',
+        '3. {"action":"search_schema","message":"short reason","args":{"query":"column or concept to find"}}',
+        '4. {"action":"describe_table","message":"short reason","args":{"table":"exact_table_name"}}',
+        '5. {"action":"describe_tables","message":"short reason","args":{"tables":["table_a","table_b"]}}',
+        '6. {"action":"sample_table_data","message":"short reason","args":{"table":"exact_table_name","limit":optional rows up to 50}}',
+        '7. {"action":"run_readonly_sql","message":"short reason","args":{"sql":"SELECT ..."}}',
+        '8. {"action":"remember_term","message":"short reason","args":{"term":"campaign","definition":"marketing content group; status draft means unpublished","kind":"term|metric|relationship|alias"}}',
+        `9. {"action":"preview_write","message":"short reason","args":{"statements":["UPDATE orders SET status = 'cancelled' WHERE id = 42"]}}`,
+        '10. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval","metricsWidgets":[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ...","dimension":"verified label column","measures":["verified numeric alias"],"transforms":["group/sort operation"],"limit":100}]}}',
       ]
-    : ['1. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval"}}'];
+    : [
+        '1. {"action":"ask_user","message":"short reason","args":{"question":"one concise question","options":["option A","option B"]}}',
+        '2. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval"}}',
+      ];
 
   const assembled = [
     "Work as an autonomous workspace agent.",
     `Goal type: ${assistIntent}.`,
     `Current database: ${currentDatabase || "Default"}.`,
     workspaceToolsEnabled
-      ? `Known tables: ${visibleTables.join(", ")}${availableTableNames.length > visibleTables.length ? ", ..." : ""}`
+      ? `Known tables (${availableTableNames.length}${catalogComplete ? ", complete list below" : ", truncated"}): ${visibleTables.join(", ")}${availableTableNames.length > visibleTables.length ? ", ..." : ""}`
       : "Known tables: unavailable for this turn unless the user explicitly provides them.",
     workspaceToolStatus ? `Workspace tools status: ${workspaceToolStatus}` : "",
+    preInspectedSummaries.length > 0
+      ? [
+          "Pre-inspected tables (schemas already verified below — do NOT call describe_table for these):",
+          ...preInspectedSummaries,
+        ].join("\n")
+      : "",
+    (glossaryLines ?? []).length > 0
+      ? [
+          "Business glossary (verified semantics — treat as source of truth, never contradict these):",
+          ...(glossaryLines ?? []),
+        ].join("\n")
+      : "",
     "",
     "Available actions:",
     ...availableActions,
@@ -225,15 +273,32 @@ export function buildAgentControllerPrompt(params: {
     "- Return exactly one JSON object and nothing else.",
     "- Write the message field as a short first-person thought that narrates your reasoning.",
     "- Use only the action names above.",
+    "- If the request is ambiguous about which table, metric, or meaning is intended, call ask_user once with one short question and up to 4 concrete options instead of guessing.",
+    workspaceToolsEnabled
+      ? "- Tables can be EMPTY. Before building any report, overview, or dashboard, prefer tables whose rowCount is greater than zero in list_tables output (or pass args {\"minRows\":1}), confirm with sample_table_data when unsure, and skip zero-row tables instead of presenting them as content."
+      : "",
+    workspaceToolsEnabled
+      ? "- To propose data or schema changes, run preview_write with the mutating statements: it executes them inside one transaction and always rolls back, showing real affected rows. NEVER claim a change was persisted; the human applies the final SQL through the approval flow."
+      : "",
+    workspaceToolsEnabled
+      ? "- When you discover a durable, non-obvious semantic fact (what a metric means, what an alias maps to, a hidden relationship), call remember_term once so every future run for this database inherits it."
+      : "",
+    "- When the user asks for a report, bảng, tổng hợp, summary, or dashboard: finish.args.response MUST contain ONE complete markdown table — a | header | row, a |---|---| separator, then one | row | per item — built from verified data, followed by at most three short note lines.",
     "- General conversation, writing, planning, coding advice, translation, brainstorming, or reasoning should finish directly.",
     workspaceToolsEnabled
       ? "- Use database tools only for current workspace schema/data or direct workspace evidence."
       : "- Database tools are not available for this turn, so respond with action=finish.",
+    workspaceToolsEnabled && catalogComplete
+      ? "- The Known tables list above is the COMPLETE catalog. Never call list_tables just to enumerate table names — pick relevant names from the list and describe_table them directly. list_tables is only for row counts or filtered lookups."
+      : "",
+    workspaceToolsEnabled
+      ? "- sample_table_data returns a few live rows from one verified table without writing SQL; it does not require describe_table first."
+      : "",
     workspaceToolsEnabled
       ? "- run_readonly_sql accepts only SELECT, SHOW, EXPLAIN, DESCRIBE, WITH, or read-only PRAGMA."
       : "",
     workspaceToolsEnabled
-      ? "- Before run_readonly_sql, call describe_table for every table in FROM or JOIN. Use only the exact columns reported by the latest describe_table observation; never guess columns such as name, content, title, or value."
+      ? "- Before run_readonly_sql, every table in FROM or JOIN must be inspected: use one describe_tables call for several tables at once, or rely on tables already listed under Pre-inspected tables. Use only the exact columns reported by the latest describe observation; never guess columns such as name, content, title, or value."
       : "",
     workspaceToolsEnabled
       ? "- When the user identifies data by a field or concept but does not name the exact table, call search_schema first. Trust its catalog-wide column matches instead of guessing from table names."

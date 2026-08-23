@@ -62,7 +62,7 @@ import type {
   TableSchema,
   ERRelationship,
 } from "../../types/database";
-import { ERDCompactSelect, type ERDSelectOption } from "./ERDCompactSelect";
+import { ERDCompactSelect } from "./ERDCompactSelect";
 import {
   ERDContextMenu,
   type ERDContextMenuState,
@@ -84,6 +84,15 @@ import {
   getTableColor,
 } from "./erd-graph";
 import {
+  dedupeRelationships,
+  getColumnSelectOption,
+  getPreferredRelationshipDraft,
+  getQualifiedTableName,
+  persistCustomRelationships,
+  readCustomRelationships,
+  sanitizeFileName,
+} from "./erd-ui-helpers";
+import {
   ER_DIAGRAM_STRUCTURE_BATCH_SIZE,
   erDiagramSchemaRequests,
   getCachedERDiagramSchema,
@@ -91,10 +100,6 @@ import {
   invalidateCachedERDiagramSchema,
   setCachedERDiagramSchema,
 } from "./erd-schema-cache";
-import {
-  readCustomERDRelationships,
-  writeCustomERDRelationships,
-} from "../../utils/erd-custom-relationships";
 import { EditableRelationEdge } from "./EditableRelationEdge";
 import {
   TableNode,
@@ -122,7 +127,7 @@ interface Props {
   database?: string;
 }
 
-interface PendingRelationshipDraft {
+export interface PendingRelationshipDraft {
   sourceTable: string;
   targetTable: string;
   sourceColumn: string;
@@ -152,91 +157,6 @@ const DIAGRAM_INITIAL_FIT_MAX_ZOOM = 0.86;
 const DIAGRAM_MIN_ZOOM = 0.1;
 const DIAGRAM_MAX_ZOOM = 1.5;
 const DIAGRAM_RECOMMENDED_TABLE_COUNT = 12;
-function readCustomRelationships(
-  connectionId: string,
-  database?: string,
-): ERRelationship[] {
-  return readCustomERDRelationships(connectionId, database);
-}
-
-function persistCustomRelationships(
-  connectionId: string,
-  database: string | undefined,
-  relationships: ERRelationship[],
-) {
-  writeCustomERDRelationships(connectionId, database, relationships);
-}
-
-function dedupeRelationships(relationships: ERRelationship[]) {
-  const unique = new Map<string, ERRelationship>();
-
-  relationships.forEach((relationship) => {
-    unique.set(getRelationshipSignature(relationship), relationship);
-  });
-
-  return [...unique.values()];
-}
-
-function getPreferredRelationshipDraft(
-  sourceTable: TableSchema,
-  targetTable: TableSchema,
-): Pick<PendingRelationshipDraft, "sourceColumn" | "targetColumn"> {
-  const preferredSource =
-    sourceTable.columns.find((column) => column.is_primary_key) ||
-    sourceTable.columns[0];
-  const preferredNames = new Set(
-    [
-      preferredSource?.name,
-      `${sourceTable.name}_id`,
-      `${sourceTable.name.replace(/\s+/g, "_")}_id`,
-    ]
-      .filter(Boolean)
-      .map((value) => value.toLowerCase()),
-  );
-
-  const preferredTarget =
-    targetTable.columns.find((column) =>
-      preferredNames.has(column.name.toLowerCase()),
-    ) ||
-    targetTable.columns.find((column) => !column.is_primary_key) ||
-    targetTable.columns[0];
-
-  return {
-    sourceColumn: preferredSource?.name || "",
-    targetColumn: preferredTarget?.name || "",
-  };
-}
-
-function getColumnOptionLabel(column: ColumnDetail) {
-  const parts = [column.data_type];
-
-  if (column.is_primary_key) parts.push("PK");
-  if (!column.is_nullable) parts.push("NOT NULL");
-
-  return parts.join(" / ");
-}
-
-function getColumnSelectOption(column: ColumnDetail): ERDSelectOption {
-  return {
-    value: column.name,
-    label: column.name,
-    meta: getColumnOptionLabel(column),
-  };
-}
-
-function sanitizeFileName(value: string) {
-  return value
-    .trim()
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-function getQualifiedTableName(table: Pick<TableSchema, "name" | "schema">) {
-  return table.schema ? `${table.schema}.${table.name}` : table.name;
-}
-
 async function fetchSchema(
   connectionId: string,
   database?: string,

@@ -1,9 +1,14 @@
 import { useCallback, type Dispatch, type FormEvent, type RefObject, type SetStateAction } from "react";
 import type { ColumnDetail } from "../../../types";
-import { parseEditorValue, type ResolvedColumn } from "./useDataGrid";
-import { computeNewRowPlan } from "./useInsertColumnPlan";
+import {
+    parseEditorValue,
+    buildRowPrimaryKeys,
+    type ResolvedColumn,
+  } from "./useDataGrid";
+import { computeNewRowPlan, computeColumnPlan } from "./useInsertColumnPlan";
 import { type CsvFileSelection } from "../dialogs/PasteRowsDialog";
 import type { PastePreview } from "../../../utils/clipboard-parser";
+import type { QueryResult } from "../../../types";
 
 interface DataGridRowMutationsParams {
   tableName?: string;
@@ -11,6 +16,9 @@ interface DataGridRowMutationsParams {
   connectionId: string;
   resolvedColumns: ResolvedColumn[];
   structureColumns: ColumnDetail[];
+  data: QueryResult | null;
+  selectedRows: Set<number>;
+  primaryKeyColumns: ResolvedColumn[];
 
   // Insert dialog state
   insertDialogBaseValues: [string, unknown][];
@@ -42,6 +50,17 @@ interface DataGridRowMutationsParams {
     totalBytes: number;
   } | null>>;
   setError: (message: string) => void;
+  setSelectedRows: Dispatch<SetStateAction<Set<number>>>;
+  setSelectedCell: (cell: { row: number; col: number } | null) => void;
+  cancelEditingCell: () => void;
+  setData: Dispatch<SetStateAction<QueryResult | null>>;
+  setIsDeletingRows: Dispatch<SetStateAction<boolean>>;
+  setTotalRows: Dispatch<SetStateAction<number>>;
+  rowSelectionAnchorRef: RefObject<string | null>;
+  deleteTableRows: (
+    connectionId: string,
+    request: { table: string; database?: string; rows: Array<Array<{ column: string; value: string | number | boolean | null }>> },
+  ) => Promise<number>;
 
   csvImportOperationIdRef: RefObject<string | null>;
 
@@ -86,6 +105,9 @@ export function useDataGridRowMutations({
   connectionId,
   resolvedColumns,
   structureColumns,
+  data,
+  selectedRows,
+  primaryKeyColumns,
 
   insertDialogBaseValues,
   insertDialogColumns,
@@ -111,6 +133,14 @@ export function useDataGridRowMutations({
   setIsCancellingPaste,
   setCsvImportProgress,
   setError,
+  setSelectedRows,
+  setSelectedCell,
+  cancelEditingCell,
+  setIsDeletingRows,
+  setTotalRows,
+  setData,
+  rowSelectionAnchorRef,
+  deleteTableRows,
 
   csvImportOperationIdRef,
 
@@ -341,6 +371,137 @@ export function useDataGridRowMutations({
     }
   }, [cancelCsvImport, isCancellingPaste, setError]);
 
+
+// ---- Duplicate flows (insert dialog prefilled from an existing row)
+  const handleDuplicateRowByIndex = useCallback(async (rowIndex: number) => {
+    if (!tableName || structureColumns.length === 0) return;
+
+    const sourceRow = data?.rows[rowIndex];
+    if (!sourceRow) return;
+
+    const { baseValues, promptColumns } = computeColumnPlan(structureColumns, sourceRow);
+
+    setInsertDialogColumns(promptColumns);
+    setInsertDialogBaseValues(baseValues);
+    setInsertDraft(
+      Object.fromEntries(
+        promptColumns.map((column) => {
+          const colIdx = structureColumns.indexOf(column);
+          const val = sourceRow[colIdx];
+          return [column.name, val !== null ? String(val) : ""];
+        }),
+      ),
+    );
+    setInsertDialogError(null);
+    setIsInsertDialogOpen(true);
+  }, [tableName, structureColumns, data]);
+
+/** Delete all selected rows after confirmation. */
+  const handleDeleteSelectedRows = useCallback(async () => {
+    if (!tableName || !data || selectedRows.size === 0 || primaryKeyColumns.length === 0) {
+      return;
+    }
+
+    const shouldDelete = window.confirm(
+      `Delete ${selectedRows.size} selected row${selectedRows.size === 1 ? "" : "s"} from ${tableName}? This cannot be undone.`,
+    );
+    if (!shouldDelete) return;
+
+    const sortedRows = Array.from(selectedRows).sort((left, right) => left - right);
+
+    setIsDeletingRows(true);
+    try {
+      const rows = sortedRows.map((rowIndex) => {
+        const rowValues = data.rows[rowIndex];
+        if (!rowValues) {
+          throw new Error("One of the selected rows no longer exists in the current page.");
+        }
+        return buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns);
+      });
+
+      const affectedRows = await deleteTableRows(connectionId, {
+        table: tableName,
+        database,
+        rows,
+      });
+
+      if (affectedRows === 0) {
+        throw new Error("Database did not delete any rows for the current selection.");
+      }
+
+      const deletedRowSet = new Set(sortedRows);
+      setData((previous) => {
+        if (!previous) return previous;
+        return {
+          ...previous,
+          rows: previous.rows.filter((_, index) => !deletedRowSet.has(index)),
+        };
+      });
+      setTotalRows((previous) => Math.max(0, previous - sortedRows.length));
+      setSelectedRows(new Set());
+      rowSelectionAnchorRef.current = null;
+      cancelEditingCell();
+      setSelectedCell(null);
+
+      invalidateTableCaches(connectionId, tableName, database);
+      window.dispatchEvent(
+        new CustomEvent("table-data-updated", {
+          detail: {
+            connectionId,
+            database,
+            tableName,
+            sourceId: dataGridInstanceIdRef.current,
+          },
+        }),
+      );
+
+      await refreshTableFromStart();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setError(`Delete rows failed: ${message}`);
+    } finally {
+      setIsDeletingRows(false);
+    }
+  }, [
+    cancelEditingCell,
+    connectionId,
+    data,
+    database,
+    deleteTableRows,
+    refreshTableFromStart,
+    primaryKeyColumns,
+    resolvedColumns,
+    selectedRows,
+    setSelectedCell,
+    setError,
+    setSelectedRows,
+    tableName,
+  ]);
+
+  const handleDuplicateRow = useCallback(async () => {
+    if (!tableName || structureColumns.length === 0 || selectedRows.size === 0) return;
+
+    const firstSelectedIndex = Math.min(...Array.from(selectedRows));
+    const sourceRow = data?.rows[firstSelectedIndex];
+    if (!sourceRow) return;
+
+    const { baseValues, promptColumns } = computeColumnPlan(structureColumns, sourceRow ?? null);
+
+    setInsertDialogColumns(promptColumns);
+    setInsertDialogBaseValues(baseValues);
+    setInsertDraft(
+      Object.fromEntries(
+        promptColumns.map((column) => {
+          const colIdx = structureColumns.indexOf(column);
+          const val = sourceRow ? sourceRow[colIdx] : null;
+          return [column.name, val !== null ? String(val) : ""];
+        }),
+      ),
+    );
+    setInsertDialogError(null);
+    setIsInsertDialogOpen(true);
+  }, [tableName, structureColumns, selectedRows, data]);
+
   return {
     closeInsertDialog,
     closePasteDialog,
@@ -351,5 +512,8 @@ export function useDataGridRowMutations({
     handleSubmitInsertDialog,
     handleSubmitPasteDialog,
     handleCancelPasteImport,
+    handleDuplicateRowByIndex,
+    handleDeleteSelectedRows,
+    handleDuplicateRow,
   };
 }

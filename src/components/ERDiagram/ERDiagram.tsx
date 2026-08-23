@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import {
@@ -26,17 +25,12 @@ import {
 import "@xyflow/react/dist/style.css";
 
 import {
-  Search,
   Database,
   RefreshCw,
   Download,
   FileText,
-  CheckCheck,
-  Square,
   GitBranch,
   Link2,
-  PanelLeftClose,
-  PanelLeftOpen,
   LayoutGrid,
   ScanSearch,
   Map as MapIcon,
@@ -45,6 +39,7 @@ import {
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { createPortal } from "react-dom";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useQueryStore } from "../../stores/queryStore";
@@ -69,6 +64,7 @@ import {
   type ERDContextMenuItem,
 } from "./ERDContextMenu";
 import { ERDQuickColumnModal } from "./ERDQuickColumnModal";
+import { ERDSidePanel } from "./ERDSidePanel";
 import { buildERDiagramSqlExport } from "./erd-sql-export";
 import {
   buildDrawioDiagramXml,
@@ -101,6 +97,7 @@ import {
   setCachedERDiagramSchema,
 } from "./erd-schema-cache";
 import { EditableRelationEdge } from "./EditableRelationEdge";
+import { ERDZoomLabelController } from "./ERDZoomLabelController";
 import {
   TableNode,
   type ERDNodeContextPayload,
@@ -142,16 +139,6 @@ interface QuickColumnEditorState {
   editor: ColumnEditorState;
 }
 
-const TABLE_COLORS = [
-  "#6366F1",
-  "#8B5CF6",
-  "#EC4899",
-  "#F59E0B",
-  "#10B981",
-  "#3B82F6",
-  "#EF4444",
-  "#14B8A6",
-];
 const DIAGRAM_INITIAL_FIT_PADDING = 0.14;
 const DIAGRAM_INITIAL_FIT_MAX_ZOOM = 0.86;
 const DIAGRAM_MIN_ZOOM = 0.1;
@@ -282,7 +269,7 @@ export function ERDiagram({ connectionId, database }: Props) {
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
   const [showMinimap, setShowMinimap] = useState(false);
   const [showControls, setShowControls] = useState(true);
-  const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false);
+  const [isSidePanelCollapsed] = useState(false);
   const [exportFormat, setExportFormat] = useState<"png" | "drawio" | null>(
     null,
   );
@@ -303,6 +290,20 @@ export function ERDiagram({ connectionId, database }: Props) {
   >(null);
   const [isApplyingQuickColumnEdit, setIsApplyingQuickColumnEdit] =
     useState(false);
+  const [sidebarHost, setSidebarHost] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const syncSidebarHost = () => {
+      setSidebarHost(
+        document.querySelector<HTMLElement>("[data-erd-sidebar-host]"),
+      );
+    };
+
+    syncSidebarHost();
+    const observer = new MutationObserver(syncSidebarHost);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
 
   const nodeTypes = useMemo<NodeTypes>(() => ({ tableNode: TableNode }), []);
   const edgeTypes = useMemo<EdgeTypes>(
@@ -1404,25 +1405,6 @@ export function ERDiagram({ connectionId, database }: Props) {
         >
           <button
             type="button"
-            onClick={() => setIsSidePanelCollapsed((value) => !value)}
-            className={`erd-toolbar-button is-icon-only ${!isSidePanelCollapsed ? "is-active" : ""}`}
-            title={
-              isSidePanelCollapsed ? "Show table browser" : "Hide table browser"
-            }
-            aria-label={
-              isSidePanelCollapsed ? "Show table browser" : "Hide table browser"
-            }
-            aria-pressed={!isSidePanelCollapsed}
-          >
-            {isSidePanelCollapsed ? (
-              <PanelLeftOpen className="erd-toolbar-icon" />
-            ) : (
-              <PanelLeftClose className="erd-toolbar-icon" />
-            )}
-          </button>
-
-          <button
-            type="button"
             onClick={() => setShowMinimap((value) => !value)}
             className={`erd-toolbar-button is-icon-only ${showMinimap ? "is-active" : ""}`}
             title={showMinimap ? "Hide minimap" : "Show minimap"}
@@ -1506,130 +1488,23 @@ export function ERDiagram({ connectionId, database }: Props) {
       )}
 
       {!loading && schema && (
-        <div
-          className={`erd-workspace ${isSidePanelCollapsed ? "is-sidebar-collapsed" : ""}`}
-        >
-          <aside
-            className={`erd-sidepanel ${isSidePanelCollapsed ? "is-collapsed" : ""}`}
-          >
-            <div className="erd-sidepanel-header">
-              <div className="erd-sidepanel-copy">
-                <strong className="erd-sidepanel-title">Tables</strong>
-                <span className="erd-sidepanel-meta">
-                  {selectedTables.size} selected
-                </span>
-              </div>
-
-              <button
-                type="button"
-                className="erd-sidepanel-collapse"
-                aria-label={
-                  isSidePanelCollapsed
-                    ? "Expand tables panel"
-                    : "Collapse tables panel"
-                }
-                onClick={() => setIsSidePanelCollapsed((value) => !value)}
-              >
-                {isSidePanelCollapsed ? (
-                  <PanelLeftOpen className="erd-sidepanel-collapse-icon" />
-                ) : (
-                  <PanelLeftClose className="erd-sidepanel-collapse-icon" />
-                )}
-              </button>
-            </div>
-
-            <div className="erd-sidepanel-actions">
-              <button
-                type="button"
-                onClick={handleRecommendedSelection}
-                className="erd-sidepanel-action is-recommended"
-                title="Show the most connected tables"
-              >
-                <Sparkles className="erd-sidepanel-action-icon" />
-                Overview
-              </button>
-              <button
-                type="button"
-                onClick={handleSelectAll}
-                className="erd-sidepanel-action"
-              >
-                <CheckCheck className="erd-sidepanel-action-icon" />
-                All
-              </button>
-              <button
-                type="button"
-                onClick={handleClearAll}
-                className="erd-sidepanel-action"
-              >
-                <Square className="erd-sidepanel-action-icon" />
-                None
-              </button>
-            </div>
-
-            <label className="erd-filter">
-              <Search className="erd-filter-icon" />
-              <input
-                type="text"
-                value={tableFilter}
-                onChange={(event) => setTableFilter(event.target.value)}
-                placeholder="Find a table"
-                className="erd-filter-input"
-              />
-            </label>
-
-            <div className="erd-table-list custom-scrollbar">
-              {filteredTables.length === 0 ? (
-                <div className="erd-empty-list">
-                  <Search className="erd-empty-list-icon" />
-                  {!isSidePanelCollapsed && (
-                    <>
-                      <strong>No matching tables</strong>
-                      <span>Clear the search and try again.</span>
-                    </>
-                  )}
-                </div>
-              ) : (
-                filteredTables.map((table) => {
-                  const checked = selectedTables.has(table.name);
-                  const accent =
-                    tableColorMap.get(table.name) || TABLE_COLORS[0];
-
-                  return (
-                    <button
-                      key={table.name}
-                      type="button"
-                      onClick={() => handleTableToggle(table.name)}
-                      aria-pressed={checked}
-                      aria-label={table.name}
-                      title={table.name}
-                      className={`erd-table-toggle ${checked ? "is-active" : ""}`}
-                      style={{ "--erd-table-accent": accent } as CSSProperties}
-                    >
-                      <span className="erd-table-toggle-check" />
-                      {!isSidePanelCollapsed && (
-                        <>
-                          <div className="erd-table-toggle-copy">
-                            <span className="erd-table-toggle-name">
-                              {table.name}
-                            </span>
-                            <span className="erd-table-toggle-meta">
-                              {table.schema || "Table"}
-                            </span>
-                          </div>
-                          <span
-                            className="erd-table-toggle-count"
-                            title={`${table.columns.length} columns`}
-                          >
-                            {table.columns.length}
-                          </span>
-                        </>
-                      )}
-                    </button>
-                  );
-                })
-              )}
-            </div>
-          </aside>
+        <div className="erd-workspace">
+          {sidebarHost &&
+            createPortal(
+              <ERDSidePanel
+                isSidePanelCollapsed={isSidePanelCollapsed}
+                selectedTables={selectedTables}
+                filteredTables={filteredTables}
+                tableColorMap={tableColorMap}
+                tableFilter={tableFilter}
+                setTableFilter={setTableFilter}
+                handleRecommendedSelection={handleRecommendedSelection}
+                handleSelectAll={handleSelectAll}
+                handleClearAll={handleClearAll}
+                handleTableToggle={handleTableToggle}
+              />,
+              sidebarHost,
+            )}
 
           <main className="erd-canvas">
             <ReactFlow
@@ -1654,12 +1529,15 @@ export function ERDiagram({ connectionId, database }: Props) {
               proOptions={{ hideAttribution: true }}
               onlyRenderVisibleElements
               selectionOnDrag
+              edgesFocusable={false}
             >
+              <ERDZoomLabelController />
+
               {showMinimap && (
                 <MiniMap
                   className="erd-minimap"
                   nodeColor={(node) =>
-                    (node.data as { color?: string }).color || "#60A5FA"
+                    (node.data as { color?: string }).color || "#84a3cd"
                   }
                   maskColor="rgba(248, 250, 252, 0.74)"
                   pannable
@@ -1668,7 +1546,11 @@ export function ERDiagram({ connectionId, database }: Props) {
               )}
 
               {showControls && (
-                <Controls className="erd-controls" showInteractive={false} />
+                <Controls
+                  className="erd-controls"
+                  showInteractive={false}
+                  position="bottom-right"
+                />
               )}
 
               <Background

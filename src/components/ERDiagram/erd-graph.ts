@@ -24,15 +24,15 @@ const DIAGRAM_HORIZONTAL_GAP = 42;
 const DIAGRAM_VERTICAL_GAP = 42;
 const DIAGRAM_RECOMMENDED_TABLE_COUNT = 12;
 
-const TABLE_COLORS = [
-  "#6366F1",
-  "#8B5CF6",
-  "#EC4899",
-  "#F59E0B",
-  "#10B981",
-  "#3B82F6",
-  "#EF4444",
-  "#14B8A6",
+export const TABLE_COLORS = [
+  "#84a3cd", // steel blue
+  "#d0b37f", // clay
+  "#81bb94", // sage
+  "#c08686", // dusty rose
+  "#8fb078", // moss
+  "#a690cb", // lavender
+  "#7fb3bd", // slate cyan
+  "#848cc2", // periwinkle
 ];
 
 export function getTableColor(index: number): string {
@@ -236,7 +236,7 @@ export function buildEdges(
           targetCardinality: notation.target,
         },
         style: {
-          stroke: "#7BB1FF",
+          stroke: "#84a3cd",
           strokeWidth: 1.7,
         },
       };

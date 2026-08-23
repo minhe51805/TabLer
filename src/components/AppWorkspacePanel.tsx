@@ -1005,21 +1005,24 @@ export function AppWorkspacePanel({
           className={`sidebar ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isERDiagramWorkspace ? "sidebar-er-focus" : ""}`}
           style={{
             width: isSidebarCollapsed
-              ? 64
+              ? 50
               : isERDiagramWorkspace
-                ? 72
+                ? 296
                 : sidebarWidth,
           }}
         >
           {isSidebarCollapsed ? (
             renderSidebarNav(true)
           ) : (
-            <div
-              className={`workspace-sidebar-shell ${isERDiagramWorkspace ? "workspace-sidebar-shell--rail-only" : ""}`}
-            >
+            <div className="workspace-sidebar-shell">
               {renderSidebarNav(false)}
 
-              {!isERDiagramWorkspace && (
+              {isERDiagramWorkspace ? (
+                <div
+                  className="workspace-sidebar-panel erd-sidebar-host"
+                  data-erd-sidebar-host
+                />
+              ) : (
                 <div className="workspace-sidebar-panel">
                   <ErrorBoundary>
                     {leftPanel === "metrics" ? (
@@ -1044,6 +1047,7 @@ export function AppWorkspacePanel({
         )}
 
         <main className="main-content">
+          {!isERDiagramWorkspace && (
           <div className="workspace-toolbar">
             <div className="workspace-toolbar-main">
               <span
@@ -1244,6 +1248,7 @@ export function AppWorkspacePanel({
               )}
             </div>
           </div>
+          )}
 
           <TabBar
             queryChrome={activeQueryChrome}

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
+import { repositoryName, repositoryOwner } from "@/lib/site";
 
-const releaseBase =
-  "https://github.com/minhe51805/TabLer/releases/download";
+const releaseBase = `https://github.com/${repositoryOwner}/${repositoryName}/releases/download`;
 const tagPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const filenamePattern = /^TableR[A-Za-z0-9._-]{1,179}$/i;
 

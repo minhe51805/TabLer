@@ -18,7 +18,7 @@ export default async function DownloadPage() {
   const latestRelease = releases[0];
 
   return (
-    <main className="download-page">
+    <main className="download-page" id="main">
       <header className="site-header">
         <div className="shell header-inner">
           <Link className="brand" href="/" aria-label="TableR home">

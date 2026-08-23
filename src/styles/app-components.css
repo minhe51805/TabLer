@@ -1095,7 +1095,7 @@
 }
 
 .erd-table-toggle {
-  --erd-table-accent: #7bb1ff;
+  --erd-table-accent: #84a3cd;
   position: relative;
   display: flex;
   align-items: center;
@@ -1285,7 +1285,7 @@
 }
 
 .erd-node {
-  --erd-node-accent: #7bb1ff;
+  --erd-node-accent: #84a3cd;
   position: relative;
   min-width: 216px;
   max-width: 216px;

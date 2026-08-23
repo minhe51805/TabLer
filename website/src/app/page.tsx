@@ -1,16 +1,19 @@
 import Image from "next/image";
 import {
   ArrowRight,
+  BookMarked,
   Bot,
   Check,
   Code2,
   Database,
   Download,
+  Eye,
   GitBranch,
   GitFork,
   KeyRound,
   Layers3,
   Network,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   Terminal,
@@ -18,9 +21,9 @@ import {
   Zap,
 } from "lucide-react";
 import { getTableRReleases } from "@/lib/github-releases";
+import { repositoryUrl } from "@/lib/site";
 
 const downloadUrl = "/download";
-const repositoryUrl = "https://github.com/minhe51805/TabLer";
 
 export const revalidate = 300;
 
@@ -83,6 +86,29 @@ const workflowItems = [
   },
 ];
 
+const agentItems = [
+  {
+    icon: Eye,
+    title: "Shows its work",
+    copy: "Every step the agent takes lands in a live trace you can expand, and each run is recorded for replay. No silent decisions.",
+  },
+  {
+    icon: BookMarked,
+    title: "Learns your business",
+    copy: "Verified metric definitions and aliases are remembered per database, so next week's analysis uses what you taught it this week.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Proposes, never surprises",
+    copy: "Write previews execute inside a transaction and always roll back. You review the affected rows, then apply the final SQL yourself.",
+  },
+  {
+    icon: RefreshCw,
+    title: "Stays online",
+    copy: "If an AI endpoint rate-limits or drops, the agent fails over to your next configured provider and keeps the run alive.",
+  },
+];
+
 const engines = [
   "PostgreSQL",
   "MySQL",
@@ -118,7 +144,7 @@ export default async function Home() {
   const latestVersion = releases[0]?.tag ?? "latest";
 
   return (
-    <main>
+    <main id="main">
       <header className="site-header">
         <div className="shell header-inner">
           <a className="brand" href="#top" aria-label="TableR home">
@@ -135,6 +161,7 @@ export default async function Home() {
           <nav className="main-nav" aria-label="Main navigation">
             <a href="#features">Features</a>
             <a href="#workflow">Workflow</a>
+            <a href="#agent">Agent</a>
             <a href="#engines">Engines</a>
             <a href="#open-source">Open source</a>
           </nav>
@@ -295,6 +322,35 @@ export default async function Home() {
                       sizes="(max-width: 900px) 94vw, 58vw"
                     />
                   </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section className="section features-section" id="agent">
+        <div className="shell">
+          <div className="section-heading">
+            <p className="eyebrow">THE AGENT</p>
+            <h2>An assistant that shows its work.</h2>
+            <p>
+              The built-in agent can inspect your schema, read data safely, and
+              draft reports on its own — with every step visible, verified
+              figures, and nothing persisted without your approval.
+            </p>
+          </div>
+
+          <div className="feature-grid">
+            {agentItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <article className="feature-card" key={item.title}>
+                  <span className="feature-icon">
+                    <Icon size={21} strokeWidth={1.8} aria-hidden="true" />
+                  </span>
+                  <h3>{item.title}</h3>
+                  <p>{item.copy}</p>
                 </article>
               );
             })}

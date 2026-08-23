@@ -1,3 +1,4 @@
+import { repositoryName, repositoryOwner } from "./site";
 import type {
   DownloadAsset,
   DownloadRelease,
@@ -22,8 +23,7 @@ type GitHubRelease = {
   assets: GitHubAsset[];
 };
 
-const releasesApi =
-  "https://api.github.com/repos/minhe51805/TableR/releases?per_page=20";
+const releasesApi = `https://api.github.com/repos/${repositoryOwner}/${repositoryName}/releases?per_page=20`;
 
 function platformFor(filename: string): PlatformId | null {
   const value = filename.toLowerCase();
@@ -110,11 +110,20 @@ function describeAsset(filename: string) {
     };
   }
 
+  if (value.endsWith(".rpm")) {
+    return {
+      name: "RPM package",
+      detail: `Fedora, RHEL and derivatives - ${architecture}`,
+      recommended: false,
+      order: 2,
+    };
+  }
+
   return {
-    name: "RPM package",
-    detail: `Fedora, RHEL and derivatives - ${architecture}`,
+    name: "Package",
+    detail: architecture,
     recommended: false,
-    order: 2,
+    order: 3,
   };
 }
 

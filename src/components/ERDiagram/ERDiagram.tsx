@@ -31,8 +31,6 @@ import {
   FileText,
   GitBranch,
   Link2,
-  PanelLeftClose,
-  PanelLeftOpen,
   LayoutGrid,
   ScanSearch,
   Map as MapIcon,
@@ -41,6 +39,7 @@ import {
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
+import { createPortal } from "react-dom";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useQueryStore } from "../../stores/queryStore";
@@ -98,6 +97,7 @@ import {
   setCachedERDiagramSchema,
 } from "./erd-schema-cache";
 import { EditableRelationEdge } from "./EditableRelationEdge";
+import { ERDZoomLabelController } from "./ERDZoomLabelController";
 import {
   TableNode,
   type ERDNodeContextPayload,
@@ -269,7 +269,7 @@ export function ERDiagram({ connectionId, database }: Props) {
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
   const [showMinimap, setShowMinimap] = useState(false);
   const [showControls, setShowControls] = useState(true);
-  const [isSidePanelCollapsed, setIsSidePanelCollapsed] = useState(false);
+  const [isSidePanelCollapsed] = useState(false);
   const [exportFormat, setExportFormat] = useState<"png" | "drawio" | null>(
     null,
   );
@@ -290,6 +290,20 @@ export function ERDiagram({ connectionId, database }: Props) {
   >(null);
   const [isApplyingQuickColumnEdit, setIsApplyingQuickColumnEdit] =
     useState(false);
+  const [sidebarHost, setSidebarHost] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const syncSidebarHost = () => {
+      setSidebarHost(
+        document.querySelector<HTMLElement>("[data-erd-sidebar-host]"),
+      );
+    };
+
+    syncSidebarHost();
+    const observer = new MutationObserver(syncSidebarHost);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
 
   const nodeTypes = useMemo<NodeTypes>(() => ({ tableNode: TableNode }), []);
   const edgeTypes = useMemo<EdgeTypes>(
@@ -1391,25 +1405,6 @@ export function ERDiagram({ connectionId, database }: Props) {
         >
           <button
             type="button"
-            onClick={() => setIsSidePanelCollapsed((value) => !value)}
-            className={`erd-toolbar-button is-icon-only ${!isSidePanelCollapsed ? "is-active" : ""}`}
-            title={
-              isSidePanelCollapsed ? "Show table browser" : "Hide table browser"
-            }
-            aria-label={
-              isSidePanelCollapsed ? "Show table browser" : "Hide table browser"
-            }
-            aria-pressed={!isSidePanelCollapsed}
-          >
-            {isSidePanelCollapsed ? (
-              <PanelLeftOpen className="erd-toolbar-icon" />
-            ) : (
-              <PanelLeftClose className="erd-toolbar-icon" />
-            )}
-          </button>
-
-          <button
-            type="button"
             onClick={() => setShowMinimap((value) => !value)}
             className={`erd-toolbar-button is-icon-only ${showMinimap ? "is-active" : ""}`}
             title={showMinimap ? "Hide minimap" : "Show minimap"}
@@ -1493,22 +1488,23 @@ export function ERDiagram({ connectionId, database }: Props) {
       )}
 
       {!loading && schema && (
-        <div
-          className={`erd-workspace ${isSidePanelCollapsed ? "is-sidebar-collapsed" : ""}`}
-        >
-          <ERDSidePanel
-            isSidePanelCollapsed={isSidePanelCollapsed}
-            setIsSidePanelCollapsed={setIsSidePanelCollapsed}
-            selectedTables={selectedTables}
-            filteredTables={filteredTables}
-            tableColorMap={tableColorMap}
-            tableFilter={tableFilter}
-            setTableFilter={setTableFilter}
-            handleRecommendedSelection={handleRecommendedSelection}
-            handleSelectAll={handleSelectAll}
-            handleClearAll={handleClearAll}
-            handleTableToggle={handleTableToggle}
-          />
+        <div className="erd-workspace">
+          {sidebarHost &&
+            createPortal(
+              <ERDSidePanel
+                isSidePanelCollapsed={isSidePanelCollapsed}
+                selectedTables={selectedTables}
+                filteredTables={filteredTables}
+                tableColorMap={tableColorMap}
+                tableFilter={tableFilter}
+                setTableFilter={setTableFilter}
+                handleRecommendedSelection={handleRecommendedSelection}
+                handleSelectAll={handleSelectAll}
+                handleClearAll={handleClearAll}
+                handleTableToggle={handleTableToggle}
+              />,
+              sidebarHost,
+            )}
 
           <main className="erd-canvas">
             <ReactFlow
@@ -1533,12 +1529,15 @@ export function ERDiagram({ connectionId, database }: Props) {
               proOptions={{ hideAttribution: true }}
               onlyRenderVisibleElements
               selectionOnDrag
+              edgesFocusable={false}
             >
+              <ERDZoomLabelController />
+
               {showMinimap && (
                 <MiniMap
                   className="erd-minimap"
                   nodeColor={(node) =>
-                    (node.data as { color?: string }).color || "#60A5FA"
+                    (node.data as { color?: string }).color || "#84a3cd"
                   }
                   maskColor="rgba(248, 250, 252, 0.74)"
                   pannable
@@ -1547,7 +1546,11 @@ export function ERDiagram({ connectionId, database }: Props) {
               )}
 
               {showControls && (
-                <Controls className="erd-controls" showInteractive={false} />
+                <Controls
+                  className="erd-controls"
+                  showInteractive={false}
+                  position="bottom-right"
+                />
               )}
 
               <Background

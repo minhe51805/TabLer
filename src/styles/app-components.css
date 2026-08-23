@@ -481,6 +481,7 @@
   box-shadow: 0 10px 20px rgba(0, 0, 0, 0.24);
   cursor: move;
   user-select: none;
+  transition: opacity 140ms ease;
 }
 
 .erd-edge-label:hover,
@@ -497,7 +498,7 @@
   color: var(--mm-accent);
 }
 
-.erd-edge-label.is-hidden {
+.erd-flow.is-far-zoom .erd-edge-label {
   opacity: 0;
   pointer-events: none;
 }
@@ -7520,7 +7521,7 @@ body {
 }
 
 .sidebar-collapsed {
-  width: 76px !important;
+  width: 50px !important;
 }
 
 .sidebar-rail {
@@ -23626,7 +23627,7 @@ body {
 }
 
 .sidebar-collapsed {
-  width: 64px !important;
+  width: 50px !important;
 }
 
 .resize-handle {
@@ -26046,10 +26047,7 @@ body {
   background:
     linear-gradient(180deg, rgba(0, 122, 255, 0.026), rgba(0, 122, 255, 0.015)),
     var(--mm-surface-1);
-  backdrop-filter: blur(18px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 18px 40px rgba(0, 0, 0, 0.24);
+  box-shadow: none;
 }
 
 .metrics-board-sidebar-standalone {
@@ -29180,13 +29178,11 @@ body {
   color: var(--text-primary) !important;
 }
 
-/* Inputs and search inputs must have square corners, height 40px, default white bg, focus border stone gray */
+/* Legacy flat-form fields keep their square white look; bare type selectors removed so themed search bars stay clean */
 .datagrid-settings-input,
 .sidebar-search-input,
 .datagrid-insert-field-input,
-.connection-group-rename-input,
-input[type="text"],
-input[type="search"] {
+.connection-group-rename-input {
   background: #ffffff !important;
   border: 1px solid var(--mm-border) !important;
   border-radius: 0px !important;
@@ -29195,11 +29191,8 @@ input[type="search"] {
 }
 
 .datagrid-settings-input:focus,
-.sidebar-search-input:focus,
 .datagrid-insert-field-input:focus,
-.connection-group-rename-input:focus,
-input[type="text"]:focus,
-input[type="search"]:focus {
+.connection-group-rename-input:focus {
   border: 1px solid #707071 !important;
   outline: none !important;
   box-shadow: none !important;
@@ -31091,7 +31084,7 @@ input[type="search"]:focus {
   max-height: none;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
   margin: 0;
   padding: 0 6px 12px;
   overflow-y: auto;
@@ -31223,6 +31216,294 @@ input[type="search"]:focus {
   display: block;
 }
 
+.erd-virtual-list {
+  position: relative;
+  width: 100%;
+}
+
+.erd-virtual-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.erd-virtual-row.is-centered {
+  justify-content: center;
+}
+
+.erd-virtual-row .erd-table-toggle {
+  min-width: 0;
+  min-height: 0;
+}
+
+.erd-virtual-row:not(.is-centered) .erd-table-toggle {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+/* ===== ERD side panel v3 (soft-card list) ===== */
+.erd-sidepanel-header {
+  min-height: 42px;
+  flex: 0 0 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 4px 12px;
+}
+
+.erd-sidepanel-title {
+  font-size: 12.5px;
+  line-height: 1;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+}
+
+.erd-sidepanel-meta {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--mm-surface-1));
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.erd-sidepanel-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  margin: 0 8px 8px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--mm-surface-2);
+}
+
+.erd-sidepanel-action {
+  height: 26px;
+  min-height: 26px;
+  justify-content: center;
+  padding: 0 6px;
+  gap: 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.erd-sidepanel-action:hover {
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.erd-sidepanel-action.is-recommended,
+.erd-sidepanel-action.is-recommended:hover {
+  justify-content: center;
+  border: 0;
+  background: var(--mm-surface-1);
+  color: var(--accent);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.erd-sidepanel-action-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.erd-filter {
+  display: flex;
+  align-items: center;
+  flex: 0 0 34px;
+  height: 34px;
+  min-width: 0;
+  margin: 0 8px 10px;
+  padding: 0 11px;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid var(--mm-border);
+  border-radius: 9px;
+  background: var(--mm-surface-1);
+  transition:
+    border-color var(--transition),
+    box-shadow var(--transition);
+}
+
+.erd-filter:hover {
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--mm-border));
+}
+
+.erd-filter:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--mm-border));
+  background: var(--mm-surface-1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.erd-filter-icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+  color: var(--text-muted);
+}
+
+.erd-filter-input {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  color: var(--text-primary);
+  font-size: var(--mm-fs-small);
+}
+
+.erd-filter-input::placeholder {
+  color: var(--text-muted);
+}
+
+.erd-table-list {
+  padding: 0 8px 14px;
+}
+
+.erd-table-toggle::before {
+  content: none;
+}
+
+.erd-virtual-row .erd-table-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  min-height: 0;
+  padding: 0 8px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  transition:
+    background-color var(--transition),
+    border-color var(--transition);
+}
+
+.erd-virtual-row .erd-table-toggle:hover {
+  background: var(--mm-surface-2);
+}
+
+.erd-virtual-row .erd-table-toggle.is-active,
+.erd-virtual-row .erd-table-toggle.is-active:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--erd-table-accent) 28%,
+    transparent
+  );
+  background: color-mix(
+    in srgb,
+    var(--erd-table-accent) 10%,
+    var(--mm-surface-1)
+  );
+  box-shadow: none;
+}
+
+.erd-virtual-row .erd-table-toggle-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 999px;
+  background: var(--erd-table-accent);
+  filter: none;
+  transition: box-shadow var(--transition);
+}
+
+.erd-virtual-row .erd-table-toggle.is-active .erd-table-toggle-dot {
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--erd-table-accent) 22%, transparent);
+}
+
+.erd-virtual-row .erd-table-toggle-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text-secondary);
+}
+
+.erd-virtual-row .erd-table-toggle.is-active .erd-table-toggle-name {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.erd-virtual-row .erd-table-toggle-schema {
+  flex: 0 0 auto;
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--mm-surface-2);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.erd-virtual-row .erd-table-toggle-count {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: var(--mm-surface-2);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.erd-virtual-row .erd-table-toggle.is-active .erd-table-toggle-count {
+  background: color-mix(
+    in srgb,
+    var(--erd-table-accent) 16%,
+    var(--mm-surface-1)
+  );
+  color: color-mix(in srgb, var(--erd-table-accent) 55%, var(--text-primary));
+}
+
+.erd-sidepanel.is-collapsed .erd-virtual-row .erd-table-toggle {
+  width: 28px;
+  height: 28px;
+  min-height: 0;
+  flex: 0 0 28px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border-radius: 8px;
+}
+
+.erd-sidepanel.is-collapsed .erd-virtual-row .erd-table-toggle:hover {
+  background: var(--mm-surface-2);
+}
+
 .erd-canvas {
   position: relative;
   min-width: 0;
@@ -31258,7 +31539,7 @@ input[type="search"]:focus {
 }
 
 .erd-flow .react-flow__controls {
-  left: 12px;
+  right: 12px;
   bottom: 12px;
 }
 
@@ -31272,7 +31553,7 @@ input[type="search"]:focus {
 
 .erd-flow .react-flow__minimap {
   right: 12px;
-  bottom: 12px;
+  bottom: 136px;
   width: 184px;
   height: 124px;
 }
@@ -33080,4 +33361,84 @@ input[type="search"]:focus {
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+/* ===== ERD side panel search: hard containment (final override) ===== */
+.erd-sidepanel .erd-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.erd-sidepanel .erd-filter-icon {
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+}
+
+.erd-sidepanel .erd-filter-input {
+  display: block;
+  flex: 1 1 0 !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 100%;
+  height: auto;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  outline: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  appearance: none !important;
+}
+
+/* ===== ERD tables hosted inside the app sidebar ===== */
+.erd-sidebar-host {
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.erd-sidebar-host .erd-sidepanel {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  border-right: 0;
+  background: var(--mm-surface-1);
+  box-shadow: none;
+  transition: none;
+}
+
+.erd-sidebar-host .erd-sidepanel.is-collapsed {
+  width: 100%;
+  flex-basis: auto;
+}
+
+/* ===== Sidebar rail card-style buttons (expanded + collapsed alike) ===== */
+.workspace-sidebar-rail-btn,
+.workspace-sidebar-rail--compact .workspace-sidebar-rail-btn {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border: 1px solid var(--mm-border);
+  border-radius: 9px;
+  background: var(--mm-surface-1);
+  color: var(--text-secondary);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+.workspace-sidebar-rail-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--mm-border));
+  background: var(--mm-surface-1);
+  color: var(--text-primary);
+  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.08);
 }

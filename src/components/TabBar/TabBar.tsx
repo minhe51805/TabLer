@@ -52,6 +52,7 @@ export function TabBar({ queryChrome, onRunActiveQuery, onCancelActiveQuery, onC
 
   if (visibleTabs.length === 0) return null;
   if (activeTab?.type === "metrics") return null;
+  if (activeTab?.type === "er-diagram") return null;
 
   const showClearButton = visibleTabs.length > 1;
   const showRunButton = activeTab?.type === "query";

@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo } from "react";
-import { BaseEdge, EdgeLabelRenderer, useReactFlow, useStore, type Edge, type EdgeProps, type XYPosition } from "@xyflow/react";
+import { BaseEdge, EdgeLabelRenderer, useReactFlow, type Edge, type EdgeProps, type XYPosition } from "@xyflow/react";
 import type { TableNodeData } from "./TableNode";
 import {
   DIAGRAM_NODE_WIDTH,
@@ -26,8 +26,6 @@ export type EditableRelationEdgeData = Record<string, unknown> & {
 
 export type EditableRelationEdgeType = Edge<EditableRelationEdgeData, "editableRelationEdge">;
 
-const EDGE_LABEL_MIN_ZOOM = 0.7;
-
 function buildEditablePath(points: XYPosition[]) {
   return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
 }
@@ -46,8 +44,6 @@ export const EditableRelationEdge = memo(function EditableRelationEdge({
   selected,
 }: EdgeProps<EditableRelationEdgeType>) {
   const { getNode, setEdges, screenToFlowPosition } = useReactFlow();
-  const zoom = useStore((state) => state.transform[2]);
-  const showLabel = Boolean(selected) || zoom >= EDGE_LABEL_MIN_ZOOM;
 
   const sourceFrame = useMemo(() => {
     const node = getNode(source);
@@ -130,7 +126,7 @@ export const EditableRelationEdge = memo(function EditableRelationEdge({
 
   const path = useMemo(() => buildEditablePath(edgePoints), [edgePoints]);
 
-  const strokeColor = typeof style?.stroke === "string" ? style.stroke : "#7BB1FF";
+  const strokeColor = typeof style?.stroke === "string" ? style.stroke : "#84a3cd";
 
   const sourceMarker = useMemo(() => {
     if (!data?.sourceCardinality || edgePoints.length < 2) return null;
@@ -250,11 +246,10 @@ export const EditableRelationEdge = memo(function EditableRelationEdge({
       </g>
       <EdgeLabelRenderer>
         <div
-          className={`erd-edge-label nopan ${selected ? "is-selected" : ""} ${showLabel ? "" : "is-hidden"}`}
+          className={`erd-edge-label nopan ${selected ? "is-selected" : ""}`}
           style={{
             transform: `translate(-50%, -50%) translate(${bendPoint.x}px, ${bendPoint.y}px)`,
           }}
-          aria-hidden={!showLabel}
           onMouseDown={handleMouseDown}
           onDoubleClick={handleReset}
           title={relationshipTitle}

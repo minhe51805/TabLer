@@ -236,7 +236,7 @@ export function buildEdges(
           targetCardinality: notation.target,
         },
         style: {
-          stroke: "#7BB1FF",
+          stroke: "#84a3cd",
           strokeWidth: 1.7,
         },
       };

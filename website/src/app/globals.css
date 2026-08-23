@@ -1090,6 +1090,136 @@ footer {
   gap: 9px;
 }
 
+/* Changelog entries — mirrors the download release-card language */
+.changelog-entry {
+  padding: 20px 24px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+
+.changelog-entry + .changelog-entry {
+  margin-top: 14px;
+}
+
+.changelog-entry.is-latest {
+  border-color: #9acaff;
+  box-shadow: 0 10px 32px rgba(8, 126, 252, 0.08);
+}
+
+.changelog-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--soft-line);
+}
+
+.changelog-date {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.release-notes-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.release-notes-body h3,
+.release-notes-body h4,
+.release-notes-body h5,
+.release-notes-body h6 {
+  margin: 8px 0 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 720;
+}
+
+.release-notes-body ul {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.release-notes-body p {
+  margin: 0;
+}
+
+.release-notes-body a {
+  color: var(--blue-dark);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.release-notes-body a:hover {
+  text-decoration: underline;
+}
+
+.release-notes-body code {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--canvas);
+  border: 1px solid var(--soft-line);
+  font-family: var(--font-geist-mono), Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.release-notes-body blockquote {
+  margin: 0;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+/* Language toggle */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lang-toggle {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+
+.lang-option {
+  padding: 7px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.lang-option + .lang-option {
+  border-left: 1px solid var(--line);
+}
+
+.lang-option.is-active {
+  color: white;
+  background: var(--blue);
+}
+
+.lang-option:not(.is-active):hover {
+  color: var(--ink);
+  background: var(--canvas);
+}
+
 .download-option {
   min-width: 0;
   min-height: 72px;

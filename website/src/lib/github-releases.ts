@@ -20,6 +20,7 @@ type GitHubRelease = {
   draft: boolean;
   prerelease: boolean;
   html_url: string;
+  body: string | null;
   assets: GitHubAsset[];
 };
 
@@ -196,6 +197,7 @@ function mapRelease(release: GitHubRelease): DownloadRelease | null {
     publishedAt: release.published_at,
     prerelease: release.prerelease,
     htmlUrl: release.html_url,
+    body: release.body ?? "",
     platforms,
   };
 }

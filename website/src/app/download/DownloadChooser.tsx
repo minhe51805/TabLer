@@ -17,6 +17,7 @@ import type {
   PlatformDownload,
   PlatformId,
 } from "@/lib/release-types";
+import { getDictionary, type SiteLanguage } from "@/lib/i18n";
 
 type Platform = PlatformId | "unknown";
 
@@ -72,11 +73,14 @@ function optionIcon(option: DownloadAsset, index: number) {
 function PlatformSection({
   item,
   detected,
+  lang,
 }: {
   item: PlatformDownload;
   detected: boolean;
+  lang: SiteLanguage;
 }) {
   const PlatformIcon = platformIcons[item.id];
+  const t = getDictionary(lang).download;
 
   return (
     <section
@@ -92,7 +96,7 @@ function PlatformSection({
             {detected ? (
               <span className="detected-label">
                 <Check size={13} aria-hidden="true" />
-                Your device
+                {t.yourDevice}
               </span>
             ) : null}
           </div>
@@ -118,7 +122,7 @@ function PlatformSection({
                 <small>{option.detail}</small>
               </span>
               <span className="download-option-meta">
-                {option.recommended ? <em>Recommended</em> : null}
+                {option.recommended ? <em>{t.recommended}</em> : null}
                 <small>{formatBytes(option.size)}</small>
               </span>
               <Download
@@ -136,9 +140,12 @@ function PlatformSection({
 
 export default function DownloadChooser({
   releases,
+  lang,
 }: {
   releases: DownloadRelease[];
+  lang: SiteLanguage;
 }) {
+  const t = getDictionary(lang).download;
   const platform = useSyncExternalStore(
     subscribeToPlatform,
     detectPlatform,
@@ -147,10 +154,7 @@ export default function DownloadChooser({
 
   if (!releases.length) {
     return (
-      <div className="release-empty">
-        Release information is temporarily unavailable. Please try again in a
-        few minutes.
-      </div>
+      <div className="release-empty">{t.empty}</div>
     );
   }
 
@@ -176,9 +180,9 @@ export default function DownloadChooser({
                 <span className="release-version">
                   {release.tag}
                   {releaseIndex === 0 ? (
-                    <em>Latest</em>
+                    <em>{t.latest}</em>
                   ) : release.prerelease ? (
-                    <em>Pre-release</em>
+                    <em>{t.preRelease}</em>
                   ) : null}
                 </span>
                 <span>
@@ -190,7 +194,7 @@ export default function DownloadChooser({
                   (count, item) => count + item.options.length,
                   0,
                 )}{" "}
-                files
+                {t.files}
                 <ChevronDown size={18} aria-hidden="true" />
               </span>
             </summary>
@@ -202,6 +206,7 @@ export default function DownloadChooser({
                     detected={item.id === platform}
                     item={item}
                     key={item.id}
+                    lang={lang}
                   />
                 ))}
               </div>
@@ -211,7 +216,7 @@ export default function DownloadChooser({
                 target="_blank"
                 rel="noreferrer"
               >
-                View release notes for {release.tag}
+                {t.viewNotes} {release.tag}
               </a>
             </div>
           </details>

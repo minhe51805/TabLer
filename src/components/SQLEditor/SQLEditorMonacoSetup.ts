@@ -4,6 +4,8 @@ import { analyzeSqlContext, getCteScopes, getTablesInScope, type SQLTableScope }
 import { getCompletionSet } from "../../utils/sql-completions";
 import type { DatabaseType } from "../../types/database";
 
+export { defineTableRTheme } from "./SQLEditorTheme";
+
 // Type for column objects from the table structure API
 type TableColumn = TableStructure["columns"][number];
 type CompletionColumn = Pick<TableColumn, "name" | "data_type" | "is_primary_key">;
@@ -19,40 +21,6 @@ type CompletionItem = {
   range: Monaco.IRange;
 };
 
-// Theme definition matching Monaco's IStandaloneThemeData shape
-// Light SQL theme matching the MiniMax palette
-// (editor.syntax in MINIMAX_THEME). The id is kept as "tabler-dark" for
-// backward compatibility with callers, but the base is "vs" (light) so the
-// editor chrome matches the white #FFFFFF canvas.
-const TABLER_DARK_THEME = {
-  base: "vs",
-  inherit: true,
-  rules: [
-    { token: "keyword", foreground: "0A49A5", fontStyle: "bold" },
-    { token: "string", foreground: "C41A16" },
-    { token: "number", foreground: "6C36A9" },
-    { token: "comment", foreground: "007400", fontStyle: "italic" },
-    { token: "operator", foreground: "000000" },
-    { token: "delimiter", foreground: "000000" },
-    { token: "identifier", foreground: "000000" },
-    { token: "type", foreground: "3F6E74" },
-  ],
-  colors: {
-    "editor.background": "#FFFFFF",
-    "editor.foreground": "#000000",
-    "editor.selectionBackground": "#B4D8FD",
-    "editor.lineHighlightBackground": "#007AFF14",
-    "editorCursor.foreground": "#007AFF",
-    "editorLineNumber.foreground": "#8E8E93",
-    "editorLineNumber.activeForeground": "#000000",
-  },
-};
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function defineTableRTheme(monaco: any) {
-  monaco.editor.defineTheme("tabler-dark", TABLER_DARK_THEME);
-}
-
 export interface CompletionProviderDeps {
   /** All available tables */
   getTables: () => Array<{ name: string; schema?: string }>;
@@ -62,15 +30,8 @@ export interface CompletionProviderDeps {
   dbType: DatabaseType | undefined;
 }
 
-/**
- * Schema-aware SQL completion provider.
- *
- * Detects the SQL context (SELECT/FROM/WHERE/JOIN/ON/etc.) at the cursor and
- * provides appropriate completions: table names, column names with types,
- * SQL keywords, functions, and operators.
- */
 export function registerSchemaCompletionProvider(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   monaco: any,
   deps: CompletionProviderDeps,
   _onDispose?: () => void
@@ -104,7 +65,7 @@ export function registerSchemaCompletionProvider(
     return col.data_type + pk + prefix;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   async function provideCompletionItems(model: any, position: any): Promise<any> {
     const analysis = analyzeSqlContext(model, position);
     const word = model.getWordUntilPosition(position);
@@ -574,13 +535,13 @@ export function registerSchemaCompletionProvider(
 
 /** Legacy completion provider providing only table names + basic SQL keywords. */
 export function registerStandardCompletionProvider(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   monaco: any,
   getTables: () => Array<{ name: string }>,
   _onDispose?: () => void
 ): { dispose: () => void } {
   return monaco.languages.registerCompletionItemProvider("sql", {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     provideCompletionItems: (model: any, position: any) => {
       const word = model.getWordUntilPosition(position);
       const range = {

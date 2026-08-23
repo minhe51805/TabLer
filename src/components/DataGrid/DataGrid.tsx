@@ -11,7 +11,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Copy, Loader2, Plus, X, ClipboardPaste } from "lucide-react";
+import { Copy, Loader2 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import { useChangeTrackingStore } from "../../stores/change-tracking-store";
@@ -55,8 +55,8 @@ import {
   type StructureStatus,
   type EditingCell,
 } from "./hooks/useDataGrid";
-import { clearColumnWidths, getColumnWidths, saveColumnWidth } from "../../stores/column-width-store";
-import { clearColumnLayout, getColumnLayout, saveColumnLayout } from "../../stores/column-layout-store";
+import { getColumnWidths, saveColumnWidth } from "../../stores/column-width-store";
+import { getColumnLayout, saveColumnLayout } from "../../stores/column-layout-store";
 import { useDateFormatStore } from "../../stores/dateFormatStore";
 import { filterAndSortLocalRows, filterRowsWithSourceIndices } from "./local-result-operations";
 import { resolveDataWindowColumns } from "./data-window";
@@ -76,6 +76,16 @@ const TABLE_COUNT_CACHE_TTL_MS = 600_000;
 import { DataGridToolbar } from "./DataGridToolbar";
 import { ChangeTrackingPreviewModal } from "./components/ChangeTrackingPreviewModal";
 import { buildDataGridColumns, editingDraftRef } from "./DataGridColumns";
+import { PasteRowsDialog } from "./dialogs/PasteRowsDialog";
+import { buildRowFocusFilter } from "./row-focus";
+import {
+  MAX_INLINE_STRUCTURE_CACHE_ENTRIES,
+  MAX_TABLE_COUNT_CACHE_ENTRIES,
+  MAX_TABLE_PAGE_CACHE_ENTRIES,
+} from "./grid-cache-policy";
+import { InsertRowDialog } from "./dialogs/InsertRowDialog";
+import { FkPreviewPopover } from "./dialogs/FkPreviewPopover";
+import { DataGridContextMenu } from "./dialogs/DataGridContextMenu";
 import type { ColumnDisplayFormat } from "./editors";
 import {
   generateInsertSql,
@@ -95,22 +105,6 @@ interface Props {
   initialViewMode?: "table" | "chart";
   onViewModeChange?: (mode: "table" | "chart") => void;
   rowFocus?: TableRowFocus;
-}
-
-const MAX_TABLE_PAGE_CACHE_ENTRIES = 48;
-const MAX_TABLE_COUNT_CACHE_ENTRIES = 24;
-const MAX_INLINE_STRUCTURE_CACHE_ENTRIES = 48;
-
-function buildRowFocusFilter(rowFocus: TableRowFocus | undefined) {
-  if (!rowFocus) return "";
-  const clauses = Object.entries(rowFocus.values).flatMap(([column, value]) => {
-    if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(column)) return [];
-    if (value === null) return [`${column} IS NULL`];
-    if (typeof value === "number") return [Number.isFinite(value) ? `${column} = ${value}` : ""];
-    if (typeof value === "boolean") return [`${column} = ${value ? "TRUE" : "FALSE"}`];
-    return [`${column} = '${value.replace(/'/g, "''")}'`];
-  }).filter(Boolean);
-  return clauses.join(" AND ");
 }
 
 export function DataGrid({
@@ -2419,143 +2413,19 @@ export function DataGrid({
   const insertDialogModal =
     isInsertDialogOpen && typeof document !== "undefined"
       ? createPortal(
-          <div className="datagrid-insert-dialog-backdrop" onClick={closeInsertDialog}>
-            <div
-              className="datagrid-insert-dialog"
-              onClick={(event) => event.stopPropagation()}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="datagrid-insert-dialog-title"
-            >
-              <div className="datagrid-insert-dialog-header">
-                <div className="datagrid-insert-dialog-copy">
-                  <span className="datagrid-insert-dialog-kicker">Insert row</span>
-                  <h3 id="datagrid-insert-dialog-title" className="datagrid-insert-dialog-title">
-                    {tableName ? `Add row to ${tableName.split(".").pop() || tableName}` : "Add row"}
-                  </h3>
-                  <p className="datagrid-insert-dialog-description">
-                    Enter the required values below. Columns with database defaults are handled automatically.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="datagrid-insert-dialog-close"
-                  onClick={closeInsertDialog}
-                  aria-label="Close insert dialog"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form className="datagrid-insert-dialog-form" onSubmit={handleSubmitInsertDialog}>
-                <div className="datagrid-insert-dialog-fields">
-                  {insertDialogColumns.map((column, index) => {
-                    const normalizedType = (column.column_type || column.data_type || "").toLowerCase();
-                    const usesTextarea =
-                      normalizedType.includes("json") ||
-                      normalizedType.includes("text") ||
-                      normalizedType.includes("blob");
-                    const isBooleanInput = isBooleanColumn(column as ResolvedColumn);
-                    const placeholder = isBooleanInput
-                      ? "true / false"
-                      : normalizedType.includes("uuid")
-                        ? "UUID value"
-                        : normalizedType.includes("int") || normalizedType.includes("numeric")
-                          ? "Numeric value"
-                          : column.is_nullable
-                            ? "Leave blank for NULL"
-                            : "Required value";
-
-                    return (
-                      <label key={column.name} className="datagrid-insert-field">
-                        <span className="datagrid-insert-field-head">
-                          <span className="datagrid-insert-field-name">{column.name}</span>
-                          {!column.is_nullable && (
-                            <span className="datagrid-insert-field-required">Required</span>
-                          )}
-                        </span>
-                        <span className="datagrid-insert-field-meta">
-                          {column.column_type || column.data_type}
-                        </span>
-                        {isBooleanInput ? (
-                          <select
-                            className="datagrid-insert-field-input"
-                            value={insertDraft[column.name] ?? ""}
-                            onChange={(event) =>
-                              handleInsertDraftChange(column.name, event.currentTarget.value)
-                            }
-                            autoFocus={index === 0}
-                          >
-                            {column.is_nullable && <option value="">NULL</option>}
-                            <option value="true">true</option>
-                            <option value="false">false</option>
-                          </select>
-                        ) : usesTextarea ? (
-                          <textarea
-                            className="datagrid-insert-field-input datagrid-insert-field-input-textarea"
-                            value={insertDraft[column.name] ?? ""}
-                            onChange={(event) =>
-                              handleInsertDraftChange(column.name, event.currentTarget.value)
-                            }
-                            placeholder={placeholder}
-                            autoFocus={index === 0}
-                            rows={4}
-                          />
-                        ) : (
-                          <input
-                            className="datagrid-insert-field-input"
-                            type="text"
-                            value={insertDraft[column.name] ?? ""}
-                            onChange={(event) =>
-                              handleInsertDraftChange(column.name, event.currentTarget.value)
-                            }
-                            placeholder={placeholder}
-                            autoFocus={index === 0}
-                          />
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-
-                {insertDialogError && (
-                  <div className="datagrid-insert-dialog-error">{insertDialogError}</div>
-                )}
-
-                <div className="datagrid-insert-dialog-actions">
-                  <button
-                    type="button"
-                    className="datagrid-insert-dialog-btn"
-                    onClick={closeInsertDialog}
-                    disabled={isSubmittingInsert}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="datagrid-insert-dialog-btn is-primary"
-                    disabled={isSubmittingInsert}
-                  >
-                    {isSubmittingInsert ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Inserting...
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="w-4 h-4" />
-                        Insert row
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>,
+          <InsertRowDialog
+            tableName={tableName}
+            columns={insertDialogColumns}
+            draft={insertDraft}
+            error={insertDialogError}
+            isSubmitting={isSubmittingInsert}
+            onClose={closeInsertDialog}
+            onSubmit={handleSubmitInsertDialog}
+            onDraftChange={handleInsertDraftChange}
+          />,
           document.body,
         )
       : null;
-
   if (!data && !isLoading) {
     return (
       <div className="datagrid-blank-state">
@@ -2871,280 +2741,41 @@ export function DataGrid({
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          className="datagrid-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          {contextMenu.type === "header" && contextMenu.colName && (
-            <>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  handleSortAsc(contextMenu.colName!);
-                  setContextMenu(null);
-                }}
-              >
-                Sort ascending
-              </button>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  handleSortDesc(contextMenu.colName!);
-                  setContextMenu(null);
-                }}
-              >
-                Sort descending
-              </button>
-              <div className="datagrid-context-menu-separator" />
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  void navigator.clipboard.writeText(contextMenu.colName!);
-                  setContextMenu(null);
-                }}
-              >
-                Copy column name
-              </button>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  const sql = tableName
-                    ? `SELECT ${contextMenu.colName} FROM ${tableName};`
-                    : `SELECT ${contextMenu.colName};`;
-                  void navigator.clipboard.writeText(sql);
-                  setContextMenu(null);
-                }}
-              >
-                Copy as SELECT
-              </button>
-              <div className="datagrid-context-menu-separator" />
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  handleColumnAutoFit(contextMenu.colName!);
-                  setContextMenu(null);
-                }}
-              >
-                Auto-fit column
-              </button>
-              {contextMenu.colName !== "_row_num" && (
-                <>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      table.getColumn(contextMenu.colName!)?.pin("left");
-                      setContextMenu(null);
-                    }}
-                  >
-                    Pin left
-                  </button>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      table.getColumn(contextMenu.colName!)?.pin("right");
-                      setContextMenu(null);
-                    }}
-                  >
-                    Pin right
-                  </button>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      table.getColumn(contextMenu.colName!)?.pin(false);
-                      setContextMenu(null);
-                    }}
-                  >
-                    Unpin
-                  </button>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      const columnId = contextMenu.colName!;
-                      setColumnOrder((previous) => {
-                        const allIds = table.getAllLeafColumns().map((column) => column.id);
-                        const order = previous.length > 0
-                          ? [...previous, ...allIds.filter((id) => !previous.includes(id))]
-                          : allIds;
-                        const index = order.indexOf(columnId);
-                        if (index <= 1) return order;
-                        [order[index - 1], order[index]] = [order[index], order[index - 1]];
-                        return order;
-                      });
-                      setContextMenu(null);
-                    }}
-                  >
-                    Move left
-                  </button>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      const columnId = contextMenu.colName!;
-                      setColumnOrder((previous) => {
-                        const allIds = table.getAllLeafColumns().map((column) => column.id);
-                        const order = previous.length > 0
-                          ? [...previous, ...allIds.filter((id) => !previous.includes(id))]
-                          : allIds;
-                        const index = order.indexOf(columnId);
-                        if (index < 0 || index >= order.length - 1) return order;
-                        [order[index], order[index + 1]] = [order[index + 1], order[index]];
-                        return order;
-                      });
-                      setContextMenu(null);
-                    }}
-                  >
-                    Move right
-                  </button>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      table.getColumn(contextMenu.colName!)?.toggleVisibility(false);
-                      setContextMenu(null);
-                    }}
-                  >
-                    Hide column
-                  </button>
-                </>
-              )}
-              {table.getAllLeafColumns().some((column) => !column.getIsVisible()) && (
-                <button
-                  className="datagrid-context-menu-item"
-                  onClick={() => {
-                    table.toggleAllColumnsVisible(true);
-                    setContextMenu(null);
-                  }}
-                >
-                  Show all columns
-                </button>
-              )}
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  if (tableName) {
-                    clearColumnLayout(connectionId, tableName, database);
-                    clearColumnWidths(connectionId, tableName, database);
-                  }
-                  setColumnOrder([]);
-                  setColumnVisibility({});
-                  setColumnPinning({ left: ["_row_num"], right: [] });
-                  setColumnSizes({});
-                  setSortColumn(null);
-                  setSortDir("ASC");
-                  setFilterDraft("");
-                  setTableFilter("");
-                  setContextMenu(null);
-                }}
-              >
-                Reset table layout
-              </button>
-              <div className="datagrid-context-menu-separator" />
-              <div className="datagrid-context-menu-label" style={{ padding: "4px 12px", fontSize: "11px", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Display As</div>
-              {(["default", "uuid", "hex", "text", "json"] as ColumnDisplayFormat[]).map((fmt) => (
-                <button
-                  key={fmt}
-                  className="datagrid-context-menu-item"
-                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-                  onClick={() => {
-                     setColumnDisplayFormats(prev => ({ ...prev, [contextMenu.colName!]: fmt }));
-                     setContextMenu(null);
-                  }}
-                >
-                  <span style={{ textTransform: "capitalize" }}>{fmt}</span>
-                  {(columnDisplayFormats[contextMenu.colName!] || "default") === fmt && (
-                    <span style={{ color: "var(--accent)" }}>✓</span>
-                  )}
-                </button>
-              ))}
-            </>
-          )}
-          {contextMenu.type === "row" && (
-            <>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  handleOpenRowInspector(contextMenu.rowIndex ?? 0);
-                  setContextMenu(null);
-                }}
-              >
-                Inspect row
-              </button>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  void handleDuplicateRowByIndex(contextMenu.rowIndex ?? 0);
-                  setContextMenu(null);
-                }}
-              >
-                Duplicate row
-              </button>
-            </>
-          )}
-          {contextMenu.type === "cell" && (
-            <>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  handleInsertRow();
-                  setContextMenu(null);
-                }}
-              >
-                Add row
-              </button>
-            </>
-          )}
-        </div>
+        <DataGridContextMenu
+          menu={contextMenu}
+          connectionId={connectionId}
+          database={database}
+          tableName={tableName}
+          columnDisplayFormats={columnDisplayFormats}
+          table={table}
+          onClose={() => setContextMenu(null)}
+          onSortAsc={handleSortAsc}
+          onSortDesc={handleSortDesc}
+          onInsertRow={handleInsertRow}
+          onDuplicateRowByIndex={handleDuplicateRowByIndex}
+          onOpenRowInspector={handleOpenRowInspector}
+          onColumnAutoFit={handleColumnAutoFit}
+          setColumnOrder={setColumnOrder}
+          setColumnPinning={setColumnPinning}
+          setColumnSizes={setColumnSizes}
+          setColumnVisibility={setColumnVisibility}
+          setFilterDraft={setFilterDraft}
+          setTableFilter={setTableFilter}
+          setSortColumn={setSortColumn}
+          setSortDir={setSortDir}
+          setColumnDisplayFormats={setColumnDisplayFormats}
+        />
       )}
 
       {/* FK Preview Popover */}
       {fkPreview && (
-        <div className="datagrid-fk-preview">
-          <div className="datagrid-fk-preview-header">
-            <span className="datagrid-fk-preview-title">
-              FK Preview: {fkPreview.table}.{fkPreview.column}
-            </span>
-            <span className="datagrid-fk-preview-value">
-              = {String(fkPreview.value)}
-            </span>
-            <button
-              type="button"
-              className="datagrid-fk-preview-close"
-              onClick={() => setFkPreview(null)}
-            >
-              ×
-            </button>
-          </div>
-          <div className="datagrid-fk-preview-body">
-            {isLoadingFkPreview ? (
-              <div className="datagrid-fk-preview-loading">Loading...</div>
-            ) : fkPreviewData ? (
-              fkPreviewData.rows.length > 0 ? (
-                <table className="datagrid-fk-preview-table">
-                  <thead>
-                    <tr>
-                      {fkPreviewData.columns.map((col) => (
-                        <th key={col.name}>{col.name}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {fkPreviewData.rows.slice(0, 3).map((row, i) => (
-                      <tr key={i}>
-                        {row.map((cell, j) => (
-                          <td key={j}>{cell === null ? "NULL" : String(cell)}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <div className="datagrid-fk-preview-empty">No matching row found</div>
-              )
-            ) : (
-              <div className="datagrid-fk-preview-empty">Press Ctrl+Enter on an FK cell to preview</div>
-            )}
-          </div>
-        </div>
+        <FkPreviewPopover
+          fkPreview={fkPreview}
+          isLoadingFkPreview={isLoadingFkPreview}
+          fkPreviewData={fkPreviewData}
+          onClose={() => setFkPreview(null)}
+        />
       )}
-
       {!externalResult && (
         <div className="datagrid-footer">
           <div className="datagrid-footer-meta">
@@ -3204,129 +2835,18 @@ export function DataGrid({
       {/* Paste Rows Dialog */}
       {isPasteDialogOpen && pastePreview && typeof document !== "undefined"
         ? createPortal(
-            <div className="datagrid-insert-dialog-backdrop" onClick={() => closePasteDialog()}>
-              <div
-                className="datagrid-insert-dialog"
-                onClick={(event) => event.stopPropagation()}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="datagrid-paste-dialog-title"
-              >
-                <div className="datagrid-insert-dialog-header">
-                  <div className="datagrid-insert-dialog-copy">
-                    <span className="datagrid-insert-dialog-kicker">{pasteSourceLabel}</span>
-                    <h3 id="datagrid-paste-dialog-title" className="datagrid-insert-dialog-title">
-                      {csvFileSelection
-                        ? `Import full file into ${tableName?.split(".").pop() || tableName || "table"}`
-                        : tableName ? `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""} into ${tableName.split(".").pop() || tableName}` : `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""}`}
-                    </h3>
-                    <p className="datagrid-insert-dialog-description">
-                      Column mappings from clipboard ({pastePreview.firstRowWasHeader ? "headers detected" : "positional mapping"}):
-                      {pastePreview.nullColumns.length > 0 && ` Unmapped table columns are omitted so database defaults can apply: ${pastePreview.nullColumns.join(", ")}`}
-                      {pastePreview.skippedColumns.length > 0 && ` Skipped clipboard columns: ${pastePreview.skippedColumns.map((c) => `"${c.header}"`).join(", ")}`}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="datagrid-insert-dialog-close"
-                    onClick={() => closePasteDialog()}
-                    aria-label="Close paste dialog"
-                    disabled={isSubmittingPaste}
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="datagrid-paste-preview">
-                  {pastePreview.mappings.length > 0 && (
-                    <div className="datagrid-paste-mappings">
-                      <p className="datagrid-paste-section-label">Column mappings</p>
-                      <table className="datagrid-paste-mapping-table">
-                        <thead>
-                          <tr>
-                            <th>Clipboard column</th>
-                            <th></th>
-                            <th>Table column</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {pastePreview.mappings.map((m) => (
-                            <tr key={m.tableColumnIndex}>
-                              <td><code>{m.clipboardHeader}</code></td>
-                              <td style={{ textAlign: "center" }}>→</td>
-                              <td><code>{m.tableColumnName}</code></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  {pastePreview.skippedColumns.length > 0 && (
-                    <div className="datagrid-paste-section">
-                      <p className="datagrid-paste-section-label">Skipped clipboard columns (no matching table column)</p>
-                      <div className="datagrid-paste-chip-list">
-                        {pastePreview.skippedColumns.map((c) => (
-                          <span key={c.index} className="datagrid-paste-chip skipped">{c.header || `Column ${c.index + 1}`}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <div className="datagrid-paste-summary">
-                    <strong>{pastePreview.rowCount}</strong> {csvFileSelection?.isTruncated ? "preview rows checked; the full file will stream" : `row${pastePreview.rowCount !== 1 ? "s" : ""} to insert`}
-                    {pastePreview.nullColumns.length > 0 && `, <strong>${pastePreview.nullColumns.length}</strong> column(s) use database defaults`}
-                  </div>
-                  {isSubmittingPaste && csvFileSelection && csvImportProgress && (
-                    <div className="datagrid-import-progress" aria-live="polite">
-                      <progress
-                        max={Math.max(1, csvImportProgress.totalBytes)}
-                        value={csvImportProgress.processedBytes}
-                      />
-                      <span>
-                        {csvImportProgress.processedRows.toLocaleString()} rows processed
-                        {csvImportProgress.totalBytes > 0
-                          ? ` (${Math.min(100, Math.round((csvImportProgress.processedBytes / csvImportProgress.totalBytes) * 100))}%)`
-                          : ""}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="datagrid-insert-dialog-actions">
-                  <button
-                    type="button"
-                    className="datagrid-insert-dialog-btn"
-                    onClick={() => {
-                      if (isSubmittingPaste) {
-                        void handleCancelPasteImport();
-                      } else {
-                        closePasteDialog();
-                      }
-                    }}
-                    disabled={isCancellingPaste}
-                  >
-                    {isSubmittingPaste ? (isCancellingPaste ? "Cancelling..." : "Cancel import") : "Cancel"}
-                  </button>
-                  <button
-                    type="button"
-                    className="datagrid-insert-dialog-btn is-primary"
-                    onClick={() => void handleSubmitPasteDialog()}
-                    disabled={isSubmittingPaste}
-                  >
-                    {isSubmittingPaste ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        {csvFileSelection ? "Streaming file in one transaction..." : `Importing ${pastePreview.rowCount} rows atomically...`}
-                      </>
-                    ) : (
-                      <>
-                        <ClipboardPaste className="w-4 h-4" />
-                        {csvFileSelection ? "Import full file" : `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""}`}
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>,
+            <PasteRowsDialog
+              tableName={tableName}
+              pasteSourceLabel={pasteSourceLabel}
+              csvFileSelection={csvFileSelection}
+              isSubmittingPaste={isSubmittingPaste}
+              isCancellingPaste={isCancellingPaste}
+              csvImportProgress={csvImportProgress}
+              pastePreview={pastePreview}
+              onClose={() => closePasteDialog()}
+              onSubmit={() => void handleSubmitPasteDialog()}
+              onCancel={() => void handleCancelPasteImport()}
+ />,
             document.body,
           )
         : null}

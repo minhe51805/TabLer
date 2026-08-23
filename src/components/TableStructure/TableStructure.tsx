@@ -67,10 +67,11 @@ interface StructureToast {
 const DEFAULT_SECTION_STATE = new Set<SectionKey>(["columns"]);
 const METADATA_LOAD_TIMEOUT_MS = 8000;
 
-const columnCache = new Map<string, ColumnDetail[]>();
-const fullStructureCache = new Map<string, TableStructureType>();
-const schemaSnapshotPrefix = "tabler.schema-snapshot.v1";
-
+import {
+  columnCache,
+  fullStructureCache,
+  schemaSnapshotPrefix,
+} from "./structure-cache";
 export function TableStructure({
   connectionId,
   tableName,

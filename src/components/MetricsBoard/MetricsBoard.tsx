@@ -4,10 +4,11 @@ import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useI18n } from "../../i18n";
 import { buildMetricsBoardAttachmentSnapshot } from "./metrics-board-attachment";
+import { useMetricsBoardWidgets, type CanvasContextMenuState } from "./hooks/useMetricsBoardWidgets";
 import type {
   MetricsBoardDefinition,
   MetricsWidgetDefinition,
-  MetricsWidgetType,
+
   QueryResult,
 } from "../../types";
 import type {
@@ -22,8 +23,6 @@ import {
   colSpanToWidthPx,
   compactMetricsLabel,
   createBoardDefinition,
-  createWidgetDefinition,
-  findFirstAvailablePosition,
   getLastPathSegment,
   getWidgetLibrary as _getWidgetLibrary,
   getWidgetLibraryItem as _getWidgetLibraryItem,
@@ -42,7 +41,6 @@ import {
   rowSpanToHeightPx,
   widthPxToColSpan,
   writeStoredBoards,
-  type GridPosition,
 } from "./utils/query-builder";
 import { MetricsWidgetCard as _MetricsWidgetCard } from "./components/MetricsWidget";
 import { MetricsEditor as _MetricsEditor } from "./components/MetricsEditor";
@@ -85,13 +83,6 @@ type ResizeState = {
   previewHeightPx: number;
 };
 
-type CanvasContextMenuState = {
-  left: number;
-  top: number;
-  grid_x: number;
-  grid_y: number;
-  submenuOpen: boolean;
-};
 
 // ---------------------------------------------------------------------------
 // Component
@@ -494,57 +485,24 @@ export function MetricsBoard({
     );
   }, [activeBoard, dragState, resizeState]);
 
-  const updateActiveBoard = useCallback(
-    (updater: (board: MetricsBoardDefinition) => MetricsBoardDefinition) => {
-      if (!activeBoard) return;
-      const nextBoards = boards.map((board) =>
-        board.id === activeBoard.id
-          ? { ...updater(board), updated_at: Date.now() }
-          : board,
-      );
-      persistBoards(nextBoards);
-    },
-    [activeBoard, boards, persistBoards],
-  );
-
-  const updateWidgetLayout = useCallback(
-    (widgetId: string, updates: Partial<MetricsWidgetDefinition>) => {
-      if (!activeBoard) return;
-
-      updateActiveBoard((board) => {
-        const currentWidget = board.widgets.find(
-          (widget) => widget.id === widgetId,
-        );
-        if (!currentWidget) return board;
-
-        const others = board.widgets.filter((widget) => widget.id !== widgetId);
-        const candidate = normalizeWidgetLayout({
-          ...currentWidget,
-          ...updates,
-        });
-        const positioned = canPlaceWidget(others, candidate, widgetId)
-          ? candidate
-          : { ...candidate, ...findFirstAvailablePosition(others, candidate) };
-
-        return {
-          ...board,
-          widgets: board.widgets.map((widget) =>
-            widget.id === widgetId ? positioned : widget,
-          ),
-        };
-      });
-    },
-    [activeBoard, updateActiveBoard],
-  );
-
-  const createBoard = useCallback(() => {
-    const nextBoard = createBoardDefinition(connectionId, database, boards);
-    const nextBoards = [nextBoard, ...boards];
-    persistBoards(nextBoards);
-    setActiveBoardId(nextBoard.id);
-    setActiveWidgetId(null);
-    setEditingWidgetId(null);
-  }, [boards, connectionId, database, persistBoards]);
+  const {
+    updateWidgetLayout,
+    createBoard,
+    addWidget,
+    updateSelectedWidget,
+    deleteSelectedWidget,
+  } = useMetricsBoardWidgets({
+    connectionId,
+    database: database || undefined,
+    boards,
+    activeBoard,
+    editingWidget,
+    persistBoards,
+    setActiveBoardId,
+    setActiveWidgetId,
+    setEditingWidgetId,
+    setCanvasContextMenu,
+  });
 
   const handleOpenDatabaseSidebar = useCallback(() => {
     window.dispatchEvent(
@@ -619,58 +577,6 @@ export function MetricsBoard({
     },
     [activeBoard?.database, addTab, connectionId, database, setActiveTab],
   );
-
-  const addWidget = useCallback(
-    (type: MetricsWidgetType, preferredPosition?: Partial<GridPosition>) => {
-      if (!activeBoard) return;
-      const nextWidget = createWidgetDefinition(
-        type,
-        activeBoard.widgets,
-        preferredPosition,
-      );
-      updateActiveBoard((board) => ({
-        ...board,
-        widgets: [...board.widgets, nextWidget],
-      }));
-      setActiveWidgetId(nextWidget.id);
-      setEditingWidgetId(nextWidget.id);
-      setCanvasContextMenu(null);
-    },
-    [activeBoard, updateActiveBoard],
-  );
-
-  const updateSelectedWidget = useCallback(
-    (updates: Partial<MetricsWidgetDefinition>) => {
-      if (!editingWidget) return;
-      if (
-        "col_span" in updates ||
-        "row_span" in updates ||
-        "grid_x" in updates ||
-        "grid_y" in updates
-      ) {
-        updateWidgetLayout(editingWidget.id, updates);
-        return;
-      }
-
-      updateActiveBoard((board) => ({
-        ...board,
-        widgets: board.widgets.map((widget) =>
-          widget.id === editingWidget.id ? { ...widget, ...updates } : widget,
-        ),
-      }));
-    },
-    [editingWidget, updateActiveBoard, updateWidgetLayout],
-  );
-
-  const deleteSelectedWidget = useCallback(() => {
-    if (!editingWidget) return;
-    updateActiveBoard((board) => ({
-      ...board,
-      widgets: board.widgets.filter((widget) => widget.id !== editingWidget.id),
-    }));
-    setActiveWidgetId(null);
-    setEditingWidgetId(null);
-  }, [editingWidget, updateActiveBoard]);
 
   useEffect(() => {
     if (!canvasContextMenu) return;

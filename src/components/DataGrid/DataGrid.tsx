@@ -27,7 +27,6 @@ import {
 import type { ColumnDetail, ConnectionConfig, QueryResult, TableRowFocus } from "../../types";
 import { devLogError } from "../../utils/logger";
 import { invokeMutation } from "../../utils/tauri-utils";
-import { computeColumnPlan } from "./hooks/useInsertColumnPlan";
 import { lazy, Suspense } from "react";
 import "./DataChart.css";
 
@@ -73,6 +72,7 @@ import { useDataGridRowSelection } from "./hooks/useDataGridRowSelection";
 import { useDataGridDragReorder } from "./hooks/useDataGridDragReorder";
 import { useDataGridTableFetcher } from "./hooks/useDataGridTableFetcher";
 import { useDataGridRowMutations } from "./hooks/useDataGridRowMutations";
+import { useDataGridTableExport } from "./hooks/useDataGridTableExport";
 import { PasteRowsDialog } from "./dialogs/PasteRowsDialog";
 import { buildRowFocusFilter } from "./row-focus";
 import { InsertRowDialog } from "./dialogs/InsertRowDialog";
@@ -249,7 +249,6 @@ export function DataGrid({
     editorRef.current = element;
   }, []);
 
-;
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
@@ -589,58 +588,7 @@ export function DataGrid({
     if (!rowFocus || !data?.rows.length || externalResult) return;
     setSelectedRows(new Set([0]));
   }, [data, externalResult, rowFocus, setSelectedRows]);
-  const {
-    closeInsertDialog,
-    closePasteDialog,
-    handleInsertRow,
-    handleInsertDraftChange,
-    handleSubmitInsertDialog,
-    handleSubmitPasteDialog,
-    handleCancelPasteImport,
-  } = useDataGridRowMutations({
-    tableName,
-    database: database || undefined,
-    connectionId,
-    resolvedColumns,
-    structureColumns,
-
-    insertDialogBaseValues,
-    insertDialogColumns,
-    insertDraft,
-    setInsertDialogColumns,
-    setInsertDialogBaseValues,
-    setInsertDraft,
-    setInsertDialogError,
-    setIsInsertDialogOpen,
-    setIsSubmittingInsert,
-
-    pastePreview,
-    isSubmittingPaste,
-    csvFileSelection,
-    isCancellingPaste,
-    setPastePreview,
-    setCsvFileSelection,
-    setPasteSourceLabel,
-    setDragSourceIndex,
-    setDropTargetIndex,
-    setIsPasteDialogOpen,
-    setIsSubmittingPaste,
-    setIsCancellingPaste,
-    setCsvImportProgress,
-    setError,
-
-    csvImportOperationIdRef,
-
-    insertTableRow,
-    insertTableRowsAtomically,
-    importCsvFileAtomically,
-    cancelCsvImport,
-
-    invalidateTableCaches,
-    refreshTableFromStart,
-
-    dataGridInstanceIdRef,
-  });
+;
 
   const handlePasteRowsFromClipboard = useCallback(async () => {
     if (!tableName || resolvedColumns.length === 0) return;
@@ -675,38 +623,6 @@ export function DataGrid({
     setIsPasteDialogOpen(true);
   }, [tableName, resolvedColumns, setError]);
 
-  const handleImportCsv = useCallback(async () => {
-    if (!tableName || resolvedColumns.length === 0) return;
-    try {
-      const file = await invokeMutation<{
-        fileName: string;
-        content: string;
-        byteSize: number;
-        filePath: string;
-        isTruncated: boolean;
-        delimiter: "csv" | "tsv";
-      }>("read_csv_file", {});
-      const parsed = parseClipboardText(file.content);
-      if (!parsed) throw new Error("The selected file does not contain valid CSV or TSV data.");
-      const preview = buildPastePreview(parsed, resolvedColumns.map((column) => column.name));
-      if (preview.mappings.length === 0) throw new Error("No CSV headers match columns in the selected table.");
-      setPastePreview(preview);
-      setCsvFileSelection({
-        filePath: file.filePath,
-        delimiter: file.delimiter,
-        byteSize: file.byteSize,
-        isTruncated: file.isTruncated,
-      });
-      const sizeLabel = file.byteSize >= 1024 * 1024
-        ? `${(file.byteSize / (1024 * 1024)).toFixed(1)} MB`
-        : `${Math.max(1, Math.round(file.byteSize / 1024))} KB`;
-      setPasteSourceLabel(`${file.fileName} (${sizeLabel}, streaming import)`);
-      setIsPasteDialogOpen(true);
-    } catch (errorValue) {
-      setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
-    }
-  }, [resolvedColumns, setError, tableName]);
-
   // Ctrl+Shift+V: paste rows from clipboard (in DataGrid, not in insert mode)
   useEffect(() => {
     if (!isActive || !tableName || externalResult) return;
@@ -737,37 +653,8 @@ export function DataGrid({
     setOrderColumn(found?.name ?? null);
   }, [structureColumns]);
 
-  useEffect(() => {
-    if (!isInsertDialogOpen) return;
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeInsertDialog();
-      }
-    };
 
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeInsertDialog, isInsertDialogOpen]);
-
-  useEffect(() => {
-    if (!isPasteDialogOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closePasteDialog();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closePasteDialog, isPasteDialogOpen]);
-
-  useEffect(() => {
-    closeInsertDialog();
-  }, [closeInsertDialog, connectionId, database, tableName]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -870,30 +757,6 @@ export function DataGrid({
   }, [tableName, connectionId, database, externalResult]);
 
   /** Duplicate selected row(s) — opens insert dialog pre-filled with source row values. */
-  const handleDuplicateRow = useCallback(async () => {
-    if (!tableName || structureColumns.length === 0 || selectedRows.size === 0) return;
-
-    const firstSelectedIndex = Math.min(...Array.from(selectedRows));
-    const sourceRow = data?.rows[firstSelectedIndex];
-    if (!sourceRow) return;
-
-    const { baseValues, promptColumns } = computeColumnPlan(structureColumns, sourceRow ?? null);
-
-    setInsertDialogColumns(promptColumns);
-    setInsertDialogBaseValues(baseValues);
-    setInsertDraft(
-      Object.fromEntries(
-        promptColumns.map((column) => {
-          const colIdx = structureColumns.indexOf(column);
-          const val = sourceRow ? sourceRow[colIdx] : null;
-          return [column.name, val !== null ? String(val) : ""];
-        }),
-      ),
-    );
-    setInsertDialogError(null);
-    setIsInsertDialogOpen(true);
-  }, [tableName, structureColumns, selectedRows, data]);
-
   useEffect(() => {
     if (!editingCell) return;
 
@@ -994,29 +857,6 @@ export function DataGrid({
     setFilterDraft,
   });
 
-  /** Duplicate a specific row by its page index (used by row context menu). */
-  const handleDuplicateRowByIndex = useCallback(async (rowIndex: number) => {
-    if (!tableName || structureColumns.length === 0) return;
-
-    const sourceRow = data?.rows[rowIndex];
-    if (!sourceRow) return;
-
-    const { baseValues, promptColumns } = computeColumnPlan(structureColumns, sourceRow);
-
-    setInsertDialogColumns(promptColumns);
-    setInsertDialogBaseValues(baseValues);
-    setInsertDraft(
-      Object.fromEntries(
-        promptColumns.map((column) => {
-          const colIdx = structureColumns.indexOf(column);
-          const val = sourceRow[colIdx];
-          return [column.name, val !== null ? String(val) : ""];
-        }),
-      ),
-    );
-    setInsertDialogError(null);
-    setIsInsertDialogOpen(true);
-  }, [tableName, structureColumns, data]);
 
   const handleCopyValue = useCallback((value: GridCellValue, cellKey: string) => {
     navigator.clipboard.writeText(value === null ? "NULL" : String(value));
@@ -1154,6 +994,72 @@ export function DataGrid({
     editorRef,
   });
   const {
+    closeInsertDialog,
+    closePasteDialog,
+    handleInsertRow,
+    handleInsertDraftChange,
+    handleSubmitInsertDialog,
+    handleSubmitPasteDialog,
+    handleCancelPasteImport,
+    handleDuplicateRowByIndex,
+    handleDeleteSelectedRows,
+    handleDuplicateRow,
+  } = useDataGridRowMutations({
+    tableName,
+    database: database || undefined,
+    connectionId,
+    resolvedColumns,
+    structureColumns,
+    data,
+    selectedRows,
+    primaryKeyColumns,
+
+    insertDialogBaseValues,
+    insertDialogColumns,
+    insertDraft,
+    setInsertDialogColumns,
+    setInsertDialogBaseValues,
+    setInsertDraft,
+    setInsertDialogError,
+    setIsInsertDialogOpen,
+    setIsSubmittingInsert,
+
+    pastePreview,
+    isSubmittingPaste,
+    csvFileSelection,
+    isCancellingPaste,
+    setPastePreview,
+    setCsvFileSelection,
+    setPasteSourceLabel,
+    setDragSourceIndex,
+    setDropTargetIndex,
+    setIsPasteDialogOpen,
+    setIsSubmittingPaste,
+    setIsCancellingPaste,
+    setCsvImportProgress,
+    setError,
+    setSelectedRows,
+    setSelectedCell,
+    cancelEditingCell,
+    setIsDeletingRows,
+    deleteTableRows,
+    setData,
+    setTotalRows,
+    rowSelectionAnchorRef,
+
+    csvImportOperationIdRef,
+
+    insertTableRow,
+    insertTableRowsAtomically,
+    importCsvFileAtomically,
+    cancelCsvImport,
+
+    invalidateTableCaches,
+    refreshTableFromStart,
+
+    dataGridInstanceIdRef,
+  })
+  const {
     handleDragStart,
     handleDragOver,
     handleDrop,
@@ -1176,6 +1082,70 @@ export function DataGrid({
     refreshTableFromStart,
     dataGridInstanceIdRef,
   });
+  useEffect(() => {
+    if (!isInsertDialogOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeInsertDialog();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [closeInsertDialog, isInsertDialogOpen]);
+
+  useEffect(() => {
+    if (!isPasteDialogOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePasteDialog();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [closePasteDialog, isPasteDialogOpen]);
+
+
+  useEffect(() => {
+    closeInsertDialog();
+  }, [closeInsertDialog, connectionId, database, tableName]);
+  const handleImportCsv = useCallback(async () => {
+    if (!tableName || resolvedColumns.length === 0) return;
+    try {
+      const file = await invokeMutation<{
+        fileName: string;
+        content: string;
+        byteSize: number;
+        filePath: string;
+        isTruncated: boolean;
+        delimiter: "csv" | "tsv";
+      }>("read_csv_file", {});
+      const parsed = parseClipboardText(file.content);
+      if (!parsed) throw new Error("The selected file does not contain valid CSV or TSV data.");
+      const preview = buildPastePreview(parsed, resolvedColumns.map((column) => column.name));
+      if (preview.mappings.length === 0) throw new Error("No CSV headers match columns in the selected table.");
+      setPastePreview(preview);
+      setCsvFileSelection({
+        filePath: file.filePath,
+        delimiter: file.delimiter,
+        byteSize: file.byteSize,
+        isTruncated: file.isTruncated,
+      });
+      const sizeLabel = file.byteSize >= 1024 * 1024
+        ? `${(file.byteSize / (1024 * 1024)).toFixed(1)} MB`
+        : `${Math.max(1, Math.round(file.byteSize / 1024))} KB`;
+      setPasteSourceLabel(`${file.fileName} (${sizeLabel}, streaming import)`);
+      setIsPasteDialogOpen(true);
+    } catch (errorValue) {
+      setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
+    }
+  }, [resolvedColumns, setError, tableName]);
+
 
 
   /** Apply all staged changes to the database (commit) */
@@ -1191,122 +1161,26 @@ export function DataGrid({
     rowSelectionAnchorRef,
   });
 
-  const handleDeleteSelectedRows = useCallback(async () => {
-    if (!tableName || !data || selectedRows.size === 0 || primaryKeyColumns.length === 0) {
-      return;
-    }
 
-    const shouldDelete = window.confirm(
-      `Delete ${selectedRows.size} selected row${selectedRows.size === 1 ? "" : "s"} from ${tableName}? This cannot be undone.`,
-    );
-    if (!shouldDelete) return;
 
-    const sortedRows = Array.from(selectedRows).sort((left, right) => left - right);
-
-    setIsDeletingRows(true);
-    try {
-      const rows = sortedRows.map((rowIndex) => {
-        const rowValues = data.rows[rowIndex];
-        if (!rowValues) {
-          throw new Error("One of the selected rows no longer exists in the current page.");
-        }
-        return buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns);
-      });
-
-      const affectedRows = await deleteTableRows(connectionId, {
-        table: tableName,
-        database,
-        rows,
-      });
-
-      if (affectedRows === 0) {
-        throw new Error("Database did not delete any rows for the current selection.");
-      }
-
-      const deletedRowSet = new Set(sortedRows);
-      setData((previous) => {
-        if (!previous) return previous;
-        return {
-          ...previous,
-          rows: previous.rows.filter((_, index) => !deletedRowSet.has(index)),
-        };
-      });
-      setTotalRows((previous) => Math.max(0, previous - sortedRows.length));
-      setSelectedRows(new Set());
-      rowSelectionAnchorRef.current = null;
-      cancelEditingCell();
-      setSelectedCell(null);
-
-      invalidateTableCaches(connectionId, tableName, database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: {
-            connectionId,
-            database,
-            tableName,
-            sourceId: dataGridInstanceIdRef.current,
-          },
-        }),
-      );
-
-      await refreshTableFromStart();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setError(`Delete rows failed: ${message}`);
-    } finally {
-      setIsDeletingRows(false);
-    }
-  }, [
-    cancelEditingCell,
-    connectionId,
-    data,
-    database,
-    deleteTableRows,
-    refreshTableFromStart,
-    primaryKeyColumns,
-    resolvedColumns,
-    selectedRows,
-    setSelectedCell,
-    setError,
-    setSelectedRows,
+  const {
+    handleFullTableExport,
+    handleCancelFullTableExport,
+  } = useDataGridTableExport({
     tableName,
-  ]);
-
-;
-
-  const handleFullTableExport = useCallback(async (format: "csv" | "jsonl") => {
-    if (!tableName || isExportingFull) return;
-    const operationId = `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    tableExportOperationIdRef.current = operationId;
-    setExportedRowCount(0);
-    setIsExportingFull(true);
-    try {
-      await exportTableData(connectionId, {
-        table: tableName,
-        database,
-        format,
-        orderBy: sortColumn ?? undefined,
-        orderDir: sortColumn ? sortDir : undefined,
-        filter: rowFocusFilter || undefined,
-      }, operationId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/cancel/i.test(message)) setError(`Full table export failed: ${message}`);
-    } finally {
-      tableExportOperationIdRef.current = null;
-      setIsExportingFull(false);
-    }
-  }, [connectionId, database, exportTableData, isExportingFull, rowFocusFilter, setError, sortColumn, sortDir, tableName]);
-
-  const handleCancelFullTableExport = useCallback(async () => {
-    const operationId = tableExportOperationIdRef.current;
-    if (!operationId) return;
-    try {
-      await cancelTableExport(operationId);
-    } catch (error) {
-      setError(`Could not cancel table export: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [cancelTableExport, setError]);
+    database: database || undefined,
+    connectionId,
+    sortColumn,
+    sortDir,
+    rowFocusFilter,
+    isExportingFull,
+    setIsExportingFull,
+    setExportedRowCount,
+    setError,
+    exportTableData,
+    cancelTableExport,
+    tableExportOperationIdRef,
+  });
 
   const {
     handleCopyAsInsert,

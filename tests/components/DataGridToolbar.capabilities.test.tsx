@@ -16,10 +16,6 @@ describe("DataGridToolbar capability enforcement", () => {
   it("does not expose unsupported import and disables unsupported export", () => {
     render(<DataGridToolbar
       tableName="public.users"
-      columnCount={1}
-      visibleRowCount={1}
-      sortColumn={null}
-      sortDir="ASC"
       selectedRowCount={0}
       isDeletingRows={false}
       handleDeleteSelectedRows={noop}

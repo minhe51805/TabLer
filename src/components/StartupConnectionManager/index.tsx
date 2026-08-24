@@ -31,6 +31,7 @@ import {
   buildEndpointLabel,
 } from "./types";
 import { ConnectionListView } from "./ConnectionListView";
+import { StartupBrandingPanel } from "./StartupBrandingPanel";
 import { HoverPopover } from "./HoverPopover";
 
 interface Props {
@@ -393,6 +394,7 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
         </div>
 
         <div className="startup-manager-body">
+          <StartupBrandingPanel />
           <ConnectionListView
             search={search}
             onSearchChange={setSearch}

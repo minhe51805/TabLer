@@ -16,6 +16,8 @@ import {
   Cloud,
   AlertCircle,
   LoaderCircle,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { APP_VERSION } from "../constants/version";
@@ -253,6 +255,27 @@ export function AppWorkspacePanel({
     useState(showTerminalPanel);
   const [showToolbarMore, setShowToolbarMore] = useState(false);
   const [showWorkspaceSync, setShowWorkspaceSync] = useState(false);
+  const [showStatusbarShortcuts, setShowStatusbarShortcuts] = useState(() => {
+    try {
+      return window.localStorage.getItem("tabler.statusbar.shortcutsHidden.v1") !== "1";
+    } catch {
+      return true;
+    }
+  });
+  const toggleStatusbarShortcuts = () => {
+    setShowStatusbarShortcuts((value) => {
+      const next = !value;
+      try {
+        window.localStorage.setItem(
+          "tabler.statusbar.shortcutsHidden.v1",
+          next ? "0" : "1",
+        );
+      } catch {
+        /* storage unavailable — state still toggles for this session */
+      }
+      return next;
+    });
+  };
   const toolbarMoreRef = useRef<HTMLDivElement | null>(null);
   const workspaceBundleInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1313,12 +1336,30 @@ export function AppWorkspacePanel({
         </div>
 
         <div className="statusbar-right">
-          <span className="statusbar-shortcuts">
-            <kbd className="kbd">Ctrl+N</kbd>
-            <kbd className="kbd">Ctrl+B</kbd>
-            <kbd className="kbd">Ctrl+`</kbd>
-            <kbd className="kbd">Ctrl+Shift+P</kbd>
-          </span>
+          {/* Data grid footer pills portal in here (table workspace) */}
+          <span className="statusbar-grid-pills-slot" id="datagrid-footer-slot" />
+          <button
+            type="button"
+            className={`statusbar-shortcuts-toggle${showStatusbarShortcuts ? " is-active" : ""}`}
+            onClick={toggleStatusbarShortcuts}
+            title={showStatusbarShortcuts ? "Hide shortcuts" : "Show shortcuts"}
+            aria-pressed={showStatusbarShortcuts}
+            aria-label={showStatusbarShortcuts ? "Hide shortcuts" : "Show shortcuts"}
+          >
+            {showStatusbarShortcuts ? (
+              <ChevronRight className="w-3 h-3" />
+            ) : (
+              <ChevronLeft className="w-3 h-3" />
+            )}
+          </button>
+          {showStatusbarShortcuts && (
+            <span className="statusbar-shortcuts">
+              <kbd className="kbd">Ctrl+N</kbd>
+              <kbd className="kbd">Ctrl+B</kbd>
+              <kbd className="kbd">Ctrl+`</kbd>
+              <kbd className="kbd">Ctrl+Shift+P</kbd>
+            </span>
+          )}
           <span>TableR v{APP_VERSION}</span>
         </div>
       </footer>

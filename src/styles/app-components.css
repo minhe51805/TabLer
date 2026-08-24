@@ -473,7 +473,7 @@
   align-items: center;
   justify-content: center;
   max-width: 156px;
-  min-height: 17px;
+  min-height: 20px;
   padding: 0 6px;
   border-radius: 999px;
   border: 1px solid var(--mm-border);
@@ -1410,7 +1410,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 17px;
+  min-height: 20px;
   padding: 0 6px;
   border-radius: 999px;
   border: 1px solid var(--mm-border);
@@ -5661,8 +5661,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 16px;
-  min-height: 44px;
+  padding: 4px 16px;
+  min-height: 36px;
   border-bottom: 1px solid var(--mm-border);
   background: var(--mm-surface-1);
   flex-shrink: 0;
@@ -5904,6 +5904,31 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.statusbar-shortcuts-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.statusbar-shortcuts-toggle:hover {
+  color: var(--text-primary);
+  background: var(--mm-surface-2);
+}
+
+.statusbar-shortcuts-toggle.is-active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .statusbar-indicator {
@@ -11026,8 +11051,8 @@ body {
 }
 
 .connection-db-brand-sm {
-  width: 17px;
-  height: 17px;
+  width: 20px;
+  height: 20px;
 }
 
 .connection-picker-overlay {
@@ -14830,8 +14855,8 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 26px;
-  padding: 0 9px;
+  min-height: 22px;
+  padding: 0 8px;
   border-radius: 8px;
   background: rgba(0, 122, 255, 0.05);
   border: 1px solid rgba(0, 122, 255, 0.1);
@@ -14861,7 +14886,9 @@ body {
 }
 
 .tabbar-shell.has-trailing .tabbar-list {
-  padding-right: 10px;
+  /* Keep the scroll area (and its scrollbar) inside the visible segment,
+     clear of the absolutely-positioned Clear/Run overlay. */
+  margin-right: 200px;
 }
 
 .tabbar-list::-webkit-scrollbar {
@@ -14892,20 +14919,15 @@ body {
 
 .tabbar-trailing {
   position: absolute;
-  top: 7px;
-  right: 12px;
-  bottom: 6px;
+  top: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  padding-left: 28px;
-  background: linear-gradient(
-    90deg,
-    var(--mm-surface-2) 0%,
-    var(--mm-surface-1) 30%,
-    var(--mm-surface-1) 100%
-  );
+  padding: 0 12px 0 12px;
+  background: none;
   pointer-events: none;
   z-index: 2;
 }
@@ -15046,7 +15068,7 @@ body {
   position: relative;
   min-width: 0;
   max-width: 260px;
-  height: 33px;
+  height: 28px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -15193,66 +15215,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--mm-border);
-  background: var(--mm-surface-0);
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   flex-shrink: 0;
   box-shadow: none;
-}
-
-.datagrid-topbar-copy {
-  min-width: 0;
-}
-
-.datagrid-topbar-kicker {
-  display: inline-flex;
-  color: var(--text-muted);
-  font-size: var(--mm-fs-micro);
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.datagrid-topbar-title-row {
-  margin-top: 2px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.datagrid-topbar-title {
-  color: var(--text-primary);
-  font-size: var(--mm-fs-body);
-  line-height: 1.15;
-  font-weight: 700;
-  min-width: 0;
-  letter-spacing: -0.02em;
-  font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.datagrid-topbar-subtitle {
-  margin-top: 2px;
-  max-width: 540px;
-  color: var(--text-secondary);
-  font-size: var(--mm-fs-micro);
-  line-height: 1.35;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.datagrid-topbar-stats {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  flex-shrink: 0;
 }
 
 .datagrid-topbar-side {
@@ -15262,7 +15232,8 @@ body {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-  flex-shrink: 0;
+  flex: 1 1 460px;
+  min-width: 0;
 }
 
 .datagrid-topbar-actions {
@@ -15271,6 +15242,7 @@ body {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 
 .datagrid-stat-pill {
@@ -15848,8 +15820,9 @@ body {
 .datagrid-filter-control {
   display: inline-flex;
   align-items: center;
-  min-width: 154px;
-  height: 30px;
+  min-width: min(154px, 100%);
+  max-width: 100%;
+  height: 24px;
   gap: 6px;
   padding: 0 7px;
   border: 1px solid var(--mm-border);
@@ -15870,6 +15843,19 @@ body {
   background: transparent;
   color: var(--text-primary);
   font-size: var(--mm-fs-micro);
+}
+
+/* Filter input lives on the left of the grid toolbar — let it grow with
+   free space (up to a cap) and shrink on narrow windows. */
+.datagrid-topbar > .datagrid-filter-control {
+  flex: 1 1 240px;
+  min-width: 150px;
+  max-width: min(440px, 42%);
+}
+
+.datagrid-topbar > .datagrid-filter-control input {
+  flex: 1 1 auto;
+  width: auto;
 }
 
 .datagrid-filter-control input::placeholder {
@@ -15893,6 +15879,7 @@ body {
   background: var(--mm-surface-2);
 }
 
+/* Slot in the workspace toolbar that hosts the portaled grid filter control */
 .datagrid-virtual-spacer td {
   border: 0;
   background: transparent;
@@ -18703,10 +18690,6 @@ body {
     align-items: flex-start;
   }
 
-  .datagrid-topbar-stats {
-    justify-content: flex-start;
-  }
-
   .datagrid-topbar-actions {
     justify-content: flex-start;
   }
@@ -19183,20 +19166,11 @@ body {
   }
 
   .tabbar-trailing {
-    right: 10px;
     padding-left: 16px;
   }
 
   .datagrid-shell {
     padding: 8px;
-  }
-
-  .datagrid-topbar {
-    padding: 12px 13px;
-  }
-
-  .datagrid-topbar-title {
-    font-size: var(--mm-fs-subheading);
   }
 
   .structure-shell {
@@ -23642,7 +23616,7 @@ body {
 .workspace-toolbar {
   align-items: center;
   gap: 10px;
-  padding: 10px 12px 9px;
+  padding: 4px 12px;
 }
 
 .workspace-toolbar-main {
@@ -23697,18 +23671,18 @@ body {
 }
 
 .toolbar-btn {
-  height: 28px;
-  gap: 4px;
-  padding: 0 10px;
-  border-radius: 8px;
+  height: 20px;
+  gap: 3px;
+  padding: 0 9px;
+  border-radius: 6px;
   font-size: var(--mm-fs-micro);
 }
 
 .toolbar-btn.icon-only {
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 6px;
 }
 
 .sidebar-rail {
@@ -24189,7 +24163,7 @@ body {
 
 .workspace-toolbar {
   gap: 8px;
-  padding: 8px 10px;
+  padding: 4px 10px;
 }
 
 .workspace-toolbar-kicker {
@@ -24214,18 +24188,18 @@ body {
 }
 
 .toolbar-btn {
-  height: 26px;
-  gap: 4px;
+  height: 20px;
+  gap: 3px;
   padding: 0 9px;
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: var(--mm-fs-micro);
 }
 
 .toolbar-btn.icon-only {
-  width: 26px;
-  min-width: 26px;
-  height: 26px;
-  border-radius: 7px;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 6px;
 }
 
 .sidebar-rail {
@@ -24554,8 +24528,8 @@ body {
 }
 
 .tabbar-shell {
-  min-height: 34px;
-  padding: 5px 8px;
+  min-height: 28px;
+  padding: 3px 8px;
 }
 
 .tabbar-summary {
@@ -24577,8 +24551,8 @@ body {
 
 .tabbar-clear-btn,
 .tabbar-run-btn {
-  height: 26px;
-  gap: 4px;
+  height: 20px;
+  gap: 3px;
   padding: 0 9px;
   border-radius: 7px;
   font-size: var(--mm-fs-micro);
@@ -25404,42 +25378,12 @@ body {
 
 .datagrid-topbar {
   gap: 12px;
-  padding: 12px 13px;
-  border-radius: 16px;
-  border-color: rgba(0, 122, 255, 0.08);
-  background:
-    radial-gradient(
-      ellipse 220px 150px at 100% 0%,
-      rgba(0, 122, 255, 0.055),
-      transparent 72%
-    ),
-    linear-gradient(180deg, rgba(0, 122, 255, 0.028), rgba(0, 122, 255, 0.016)),
-    var(--mm-surface-1);
-  backdrop-filter: blur(16px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
-}
-
-.datagrid-topbar-kicker {
-  color: var(--fintech-cyan);
-  text-shadow: 0 0 8px rgba(0, 122, 255, 0.18);
-}
-
-.datagrid-topbar-title {
-  font-size: var(--mm-fs-body);
-  background: linear-gradient(
-    135deg,
-    var(--mm-surface-3),
-    rgba(0, 122, 255, 0.84)
-  );
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.datagrid-topbar-subtitle {
-  margin-top: 5px;
-  color: var(--text-muted);
-  font-size: var(--mm-fs-micro);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
 }
 
 .datagrid-topbar-actions {
@@ -25944,7 +25888,6 @@ body {
     align-items: flex-start;
   }
 
-  .datagrid-topbar-stats,
   .datagrid-topbar-actions {
     justify-content: flex-start;
   }
@@ -27707,12 +27650,24 @@ body {
 .app-root
   .ai-workspace-stage--sidebar
   .ai-workspace-panel-header.workspace-toolbar {
-  gap: 10px;
-  padding: 9px 12px 8px;
+  gap: 8px;
+  padding: 6px 10px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-panel-header-main {
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The "WORKSPACE AI" kicker is redundant inside the AI sidebar — hide it so
+   the header stays a clean single row instead of wrapping onto two lines. */
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-panel-header-main
+  > .workspace-toolbar-kicker {
+  display: none;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-panel-header-topline {
@@ -27724,7 +27679,12 @@ body {
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-panel-header-row {
-  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-panel-header-title {
@@ -27732,7 +27692,26 @@ body {
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-panel-header-status {
-  gap: 5px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-panel-header-status
+  .workspace-toolbar-status-pill {
+  min-height: 20px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-panel-header
+  .workspace-toolbar-actions {
+  flex-shrink: 0;
+  gap: 4px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-panel-header-utility {
@@ -31470,7 +31449,7 @@ body {
   align-items: center;
   justify-content: center;
   min-width: 22px;
-  height: 17px;
+  height: 20px;
   padding: 0 5px;
   border-radius: 5px;
   background: var(--mm-surface-2);
@@ -32236,7 +32215,7 @@ body {
 
 .startup-connection-env-badge,
 .startup-connection-tag-pill {
-  min-height: 17px;
+  min-height: 20px;
   max-width: 88px;
   padding: 0 5px;
   overflow: hidden;
@@ -33808,3 +33787,416 @@ body {
 .startup-manager-content {
   background: transparent;
 }
+
+/* ===== Connection launcher v4 (list refinement) ===== */
+.startup-manager-content {
+  margin: 0 2px 2px;
+  padding: 6px;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-1);
+}
+
+.startup-manager-list {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 32%, transparent)
+    transparent;
+}
+
+.startup-manager-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.startup-manager-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 28%, transparent);
+}
+
+.startup-manager-list::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+}
+
+.startup-manager-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.startup-manager-list.stacked {
+  gap: 2px;
+}
+
+.startup-manager-list.stacked .startup-connection-row {
+  min-height: 48px;
+  height: 48px;
+  gap: 10px;
+  padding: 4px 10px 4px 8px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.startup-manager-list.stacked .startup-connection-row:hover {
+  border-color: transparent;
+  background: var(--mm-surface-2);
+  box-shadow: none;
+}
+
+.startup-manager-list.stacked .startup-connection-row.active,
+.startup-manager-list.stacked .startup-connection-row.active:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--mm-border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--mm-surface-1));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.startup-connection-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  filter: saturate(0.92);
+}
+
+.startup-connection-title {
+  font-size: 12.5px;
+}
+
+.startup-manager-list.grid {
+  gap: 8px;
+  padding: 2px;
+}
+
+.startup-manager-list.grid .startup-connection-row {
+  border-color: var(--mm-border);
+  border-radius: 10px;
+  background: var(--mm-surface-1);
+  box-shadow: none;
+}
+
+.startup-manager-list.grid .startup-connection-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--mm-border));
+  background: var(--mm-surface-2);
+  box-shadow: 0 4px 14px -6px rgba(15, 23, 42, 0.16);
+}
+
+.startup-connection-delete {
+  visibility: hidden;
+}
+
+.startup-connection-row:hover .startup-connection-delete,
+.startup-connection-row.active .startup-connection-delete,
+.startup-connection-row:focus-within .startup-connection-delete,
+.startup-connection-delete:focus-visible {
+  visibility: visible;
+  opacity: 1;
+}
+
+.startup-connection-open-icon {
+  visibility: hidden;
+}
+
+.startup-connection-row:hover .startup-connection-open-icon,
+.startup-connection-row.active .startup-connection-open-icon,
+.startup-connection-row:focus-within .startup-connection-open-icon {
+  visibility: visible;
+}
+
+/* ===== Launcher split layout: branding rail + list ===== */
+.startup-manager-body {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  background: var(--mm-surface-1);
+}
+
+.startup-manager-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 18px 18px;
+  border-right: 1px solid var(--mm-border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 4%, transparent), transparent 42%),
+    var(--mm-surface-2);
+  backdrop-filter: none;
+  overflow: hidden;
+}
+
+.startup-manager-hero::after,
+.startup-hero-glow,
+.startup-hero-glow::after {
+  content: none;
+  display: none;
+}
+
+.startup-manager-hero-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.startup-manager-brand-icon {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--mm-border));
+  background: color-mix(in srgb, var(--accent) 9%, var(--mm-surface-1));
+  box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.startup-manager-brand-icon::before,
+.startup-manager-brand-icon::after {
+  content: none;
+}
+
+.startup-manager-brand-icon > img {
+  width: 26px;
+  height: 26px;
+}
+
+.startup-manager-brand-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.startup-manager-app-name {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.startup-manager-app-version,
+.startup-manager-app-developer {
+  font-size: var(--mm-fs-micro);
+  color: var(--text-muted);
+}
+
+.startup-manager-app-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.startup-manager-pill {
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+  color: var(--text-muted);
+  backdrop-filter: none;
+}
+
+.startup-manager-pill.accent {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--mm-border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--mm-surface-1));
+  color: var(--accent);
+}
+
+.startup-manager-hero .startup-hero-chart {
+  margin-top: auto;
+  opacity: 0.85;
+}
+
+.startup-manager-hero .startup-manager-kicker {
+  color: var(--accent);
+  text-shadow: none;
+}
+
+.startup-hero-chart::before {
+  content: none;
+}
+
+@media (max-width: 760px) {
+  .startup-manager-body {
+    grid-template-columns: 1fr;
+  }
+
+  .startup-manager-hero {
+    display: none;
+  }
+}
+
+/* ===== Connection form overlay: dark backdrop, centered modal ===== */
+.connection-form-overlay {
+  background: rgba(9, 12, 18, 0.45);
+  backdrop-filter: blur(6px);
+}
+
+.connection-form-modal {
+  margin: auto;
+  box-shadow:
+    var(--mm-shadow-3),
+    0 24px 64px rgba(9, 12, 18, 0.35);
+}
+
+.connection-form-shell-frame,
+.connection-picker-shell-frame {
+  width: 100%;
+  max-width: 1080px;
+  margin-inline: auto;
+}
+/* ============================================================
+   AI sidebar redesign — flush-bottom docked panel
+   Panel reaches the window bottom so its composer footer lines
+   up with the app statusbar instead of floating above it.
+   ============================================================ */
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-sidebar {
+  top: 44px;
+  bottom: 0;
+  border: 0;
+  border-left: 1px solid var(--mm-border);
+  border-radius: 0;
+  box-shadow: -16px 0 36px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-composer.is-docked {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--mm-surface-0);
+  box-shadow: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-composer-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* -- Header strip -- */
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-panel-header.workspace-toolbar {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+}
+
+/* -- Thread / history strip -- */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-tab {
+  min-width: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -- Conversation area fills the middle and scrolls -- */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-surface {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+/* -- Composer docked flush at the bottom, statusbar-style strip -- */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-compose-dock {
+  flex-shrink: 0;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-compose-box {
+  border: 1px solid var(--mm-border);
+  border-radius: 10px;
+  background: var(--mm-surface-0);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-composer-footer {
+  background: transparent;
+  padding-top: 6px;
+}
+
+
+/* ============================================================
+   Compact action buttons — final override (wins the theme-light
+   36px pass above): New Query, workspace icon buttons, tabbar
+   Clear/Run. The "Filter rows" input is intentionally untouched.
+   ============================================================ */
+
+.app-root .workspace-toolbar .toolbar-btn,
+.app-root .workspace-toolbar .toolbar-btn.primary,
+.app-root .workspace-toolbar .toolbar-btn.icon-only,
+.app-root .tabbar-clear-btn,
+.app-root .tabbar-run-btn {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 9px;
+  border-radius: 6px;
+}
+
+.app-root .workspace-toolbar .toolbar-btn.icon-only {
+  width: 22px;
+  min-width: 22px;
+  padding: 0;
+}
+
+/* ============================================================
+   Data grid footer pills — portaled into the statusbar
+   (slot before the shortcuts toggle). Compact sizing to fit
+   the 28px statusbar strip.
+   ============================================================ */
+
+.statusbar-grid-pills-slot {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.statusbar-grid-pills-slot .datagrid-footer {
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.statusbar-grid-pills-slot .datagrid-footer-meta {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.statusbar-grid-pills-slot .datagrid-footer-pill {
+  min-height: 16px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.statusbar-grid-pills-slot .datagrid-sort-clear-btn {
+  min-height: 16px;
+  width: 16px;
+}
+

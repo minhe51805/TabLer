@@ -11,7 +11,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Copy, Loader2 } from "lucide-react";
+import { Copy, Loader2, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import { useChangeTrackingStore } from "../../stores/change-tracking-store";
@@ -1427,7 +1427,6 @@ export function DataGrid({
     (c) => c.tableName === tableName && c.database === database,
   ).length;
   const visibleRowCount = tableData.length;
-  const columnCount = resolvedColumns.length;
   const insertDialogModal =
     isInsertDialogOpen && typeof document !== "undefined"
       ? createPortal(
@@ -1444,6 +1443,16 @@ export function DataGrid({
           document.body,
         )
       : null;
+  // Footer pills portal into the app statusbar slot when available
+  // (table workspace); fall back to the in-grid footer otherwise.
+  const [footerPortalTarget, setFooterPortalTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (externalResult) {
+      setFooterPortalTarget(null);
+      return;
+    }
+    setFooterPortalTarget(document.getElementById("datagrid-footer-slot"));
+  }, [externalResult]);
   if (!data && !isLoading) {
     return (
       <div className="datagrid-blank-state">
@@ -1452,6 +1461,61 @@ export function DataGrid({
       </div>
     );
   }
+
+  const gridFooter = (
+    <div className="datagrid-footer">
+      <div className="datagrid-footer-meta">
+        {data && (
+          <>
+            <span className="datagrid-footer-pill strong">
+              {visibleRowCount} row{visibleRowCount !== 1 ? "s" : ""}
+            </span>
+            {totalRows > 0 && (
+              <span className="datagrid-footer-pill">of {totalRows.toLocaleString()} total</span>
+            )}
+            <span
+              className={`datagrid-footer-pill${sortColumn || multiSort.length > 0 ? " info" : ""}`}
+              title="Row sort order"
+            >
+              {sortColumn
+                ? `${sortColumn} ${sortDir}`
+                : multiSort.length > 0
+                  ? multiSort
+                      .map((s) => `${s.priority}.${s.column} ${s.direction}`)
+                      .join(", ")
+                  : "Natural order"}
+            </span>
+            {multiSort.length > 0 && (
+              <button
+                type="button"
+                className="datagrid-sort-clear-btn"
+                onClick={handleMultiSortClear}
+                title="Clear all sorts"
+              >
+                <X className="w-3! h-3!" />
+              </button>
+            )}
+            {tableName && (
+              <span className={`datagrid-footer-pill ${isTableEditable ? "info" : ""}`}>
+                {isTableEditable
+                  ? "Inline edit ready"
+                  : structureStatus === "loading"
+                    ? "Loading edit metadata..."
+                    : structureStatus === "idle"
+                      ? "Edit on demand"
+                      : "Retry edit load"}
+              </span>
+            )}
+            {selectedRowCount > 0 && (
+              <span className="datagrid-footer-pill warning">
+                {selectedRowCount} selected
+              </span>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -1462,11 +1526,6 @@ export function DataGrid({
         tableName={tableName}
         database={database}
         externalResult={externalResult}
-        columnCount={columnCount}
-        visibleRowCount={visibleRowCount}
-        executionTimeMs={data?.execution_time_ms ?? 0}
-        sortColumn={sortColumn}
-        sortDir={sortDir}
         filterValue={filterDraft}
         onFilterChange={handleFilterChange}
         selectedRowCount={selectedRowCount}
@@ -1481,9 +1540,6 @@ export function DataGrid({
         handleCopyAsUpdateParam={handleCopyAsUpdateParam}
         handleCopyAsDeleteParam={handleCopyAsDeleteParam}
         isTableEditable={isTableEditable}
-        editUnavailableReason={capabilityProfile && !allowsInlineEdit
-          ? `${capabilityProfile.label} is read-only in TableR; editing actions are unavailable.`
-          : undefined}
         canExportData={allowsDataExport}
         onExportFull={tableName && !externalResult ? handleFullTableExport : undefined}
         isExportingFull={isExportingFull}
@@ -1494,8 +1550,6 @@ export function DataGrid({
         resolvedColumns={resolvedColumns}
         dataRows={tableData}
         undoableChanges={undoableChanges}
-        multiSort={multiSort}
-        onClearMultiSort={handleMultiSortClear}
         stagedChangeCount={tableName ? getChangeCount(tableName) : 0}
         onApplyChanges={applyStagedChanges}
         onDiscardChanges={discardStagedChanges}
@@ -1794,45 +1848,12 @@ export function DataGrid({
           onClose={() => setFkPreview(null)}
         />
       )}
-      {!externalResult && (
-        <div className="datagrid-footer">
-          <div className="datagrid-footer-meta">
-            {data && (
-              <>
-                <span className="datagrid-footer-pill strong">
-                  {visibleRowCount} row{visibleRowCount !== 1 ? "s" : ""}
-                </span>
-                {totalRows > 0 && (
-                  <span className="datagrid-footer-pill">of {totalRows.toLocaleString()} total</span>
-                )}
-                {data.execution_time_ms > 0 && (
-                  <span className="datagrid-footer-pill success">{data.execution_time_ms}ms</span>
-                )}
-                {tableName && (
-                  <span className={`datagrid-footer-pill ${isTableEditable ? "info" : ""}`}>
-                    {isTableEditable
-                      ? "Inline edit ready"
-                      : structureStatus === "loading"
-                        ? "Loading edit metadata..."
-                        : structureStatus === "idle"
-                          ? "Edit on demand"
-                          : "Retry edit load"}
-                  </span>
-                )}
-                {selectedRowCount > 0 && (
-                  <span className="datagrid-footer-pill warning">
-                    {selectedRowCount} selected
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-
-          {tableName && hasMoreTableRows && (
-            <span className="datagrid-footer-pill">Scroll to load more</span>
-          )}
-        </div>
-      )}
+      {!externalResult &&
+        (footerPortalTarget ? (
+          createPortal(gridFooter, footerPortalTarget)
+        ) : (
+          gridFooter
+        ))}
     </div>
     {insertDialogModal}
 

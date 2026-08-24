@@ -33808,3 +33808,250 @@ body {
 .startup-manager-content {
   background: transparent;
 }
+
+/* ===== Connection launcher v4 (list refinement) ===== */
+.startup-manager-content {
+  margin: 0 2px 2px;
+  padding: 6px;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-1);
+}
+
+.startup-manager-list {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 32%, transparent)
+    transparent;
+}
+
+.startup-manager-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.startup-manager-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 28%, transparent);
+}
+
+.startup-manager-list::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+}
+
+.startup-manager-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.startup-manager-list.stacked {
+  gap: 2px;
+}
+
+.startup-manager-list.stacked .startup-connection-row {
+  min-height: 48px;
+  height: 48px;
+  gap: 10px;
+  padding: 4px 10px 4px 8px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.startup-manager-list.stacked .startup-connection-row:hover {
+  border-color: transparent;
+  background: var(--mm-surface-2);
+  box-shadow: none;
+}
+
+.startup-manager-list.stacked .startup-connection-row.active,
+.startup-manager-list.stacked .startup-connection-row.active:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--mm-border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--mm-surface-1));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.startup-connection-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  filter: saturate(0.92);
+}
+
+.startup-connection-title {
+  font-size: 12.5px;
+}
+
+.startup-manager-list.grid {
+  gap: 8px;
+  padding: 2px;
+}
+
+.startup-manager-list.grid .startup-connection-row {
+  border-color: var(--mm-border);
+  border-radius: 10px;
+  background: var(--mm-surface-1);
+  box-shadow: none;
+}
+
+.startup-manager-list.grid .startup-connection-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--mm-border));
+  background: var(--mm-surface-2);
+  box-shadow: 0 4px 14px -6px rgba(15, 23, 42, 0.16);
+}
+
+.startup-connection-delete {
+  visibility: hidden;
+}
+
+.startup-connection-row:hover .startup-connection-delete,
+.startup-connection-row.active .startup-connection-delete,
+.startup-connection-row:focus-within .startup-connection-delete,
+.startup-connection-delete:focus-visible {
+  visibility: visible;
+  opacity: 1;
+}
+
+.startup-connection-open-icon {
+  visibility: hidden;
+}
+
+.startup-connection-row:hover .startup-connection-open-icon,
+.startup-connection-row.active .startup-connection-open-icon,
+.startup-connection-row:focus-within .startup-connection-open-icon {
+  visibility: visible;
+}
+
+/* ===== Launcher split layout: branding rail + list ===== */
+.startup-manager-body {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  background: var(--mm-surface-1);
+}
+
+.startup-manager-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 18px 18px;
+  border-right: 1px solid var(--mm-border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 4%, transparent), transparent 42%),
+    var(--mm-surface-2);
+  backdrop-filter: none;
+  overflow: hidden;
+}
+
+.startup-manager-hero::after,
+.startup-hero-glow,
+.startup-hero-glow::after {
+  content: none;
+  display: none;
+}
+
+.startup-manager-hero-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.startup-manager-brand-icon {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--mm-border));
+  background: color-mix(in srgb, var(--accent) 9%, var(--mm-surface-1));
+  box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.startup-manager-brand-icon::before,
+.startup-manager-brand-icon::after {
+  content: none;
+}
+
+.startup-manager-brand-icon > img {
+  width: 26px;
+  height: 26px;
+}
+
+.startup-manager-brand-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.startup-manager-app-name {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.startup-manager-app-version,
+.startup-manager-app-developer {
+  font-size: var(--mm-fs-micro);
+  color: var(--text-muted);
+}
+
+.startup-manager-app-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.startup-manager-pill {
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+  color: var(--text-muted);
+  backdrop-filter: none;
+}
+
+.startup-manager-pill.accent {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--mm-border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--mm-surface-1));
+  color: var(--accent);
+}
+
+.startup-manager-hero .startup-hero-chart {
+  margin-top: auto;
+  opacity: 0.85;
+}
+
+.startup-manager-hero .startup-manager-kicker {
+  color: var(--accent);
+  text-shadow: none;
+}
+
+.startup-hero-chart::before {
+  content: none;
+}
+
+@media (max-width: 760px) {
+  .startup-manager-body {
+    grid-template-columns: 1fr;
+  }
+
+  .startup-manager-hero {
+    display: none;
+  }
+}
+
+/* ===== Connection form overlay: dark backdrop, centered modal ===== */
+.connection-form-overlay {
+  background: rgba(9, 12, 18, 0.45);
+  backdrop-filter: blur(6px);
+}
+
+.connection-form-modal {
+  margin: auto;
+  box-shadow:
+    var(--mm-shadow-3),
+    0 24px 64px rgba(9, 12, 18, 0.35);
+}
+
+.connection-form-shell-frame,
+.connection-picker-shell-frame {
+  width: 100%;
+  max-width: 1080px;
+  margin-inline: auto;
+}

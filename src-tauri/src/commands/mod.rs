@@ -1,15 +1,18 @@
 pub mod ai;
 pub mod connection;
+mod connection_support;
 pub mod connection_export;
 pub mod data_export;
 pub mod deep_link;
 pub mod diagnostics;
 pub mod export;
+mod export_support;
 pub mod file;
 pub mod maintenance;
 pub mod mcp;
 pub mod operations;
 pub mod plugins;
+mod plugins_support;
 pub mod query;
 pub mod restore;
 pub mod table;

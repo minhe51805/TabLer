@@ -1,4 +1,5 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, type ReactNode, useState } from "react";
+import { Check, Copy } from "lucide-react";
 
 interface AIWorkspaceMarkdownProps {
   text?: string | null;
@@ -11,7 +12,128 @@ type MarkdownBlock =
   | { type: "paragraph"; lines: string[] }
   | { type: "list"; ordered: boolean; items: string[] }
   | { type: "code"; language?: string; code: string }
-  | { type: "table"; headers: string[]; rows: string[][] };
+  | { type: "table"; headers: string[]; rows: string[][] }
+  | { type: "thematic-break" };
+
+const SQL_LANGUAGE_PATTERN =
+  /^(sql|postgres(ql)?|mysql|maria(db)?|sqlite|mssql|tsql|plsql|pl\/sql|clickhouse|duckdb|snowflake|bigquery|libsql|redshift|vertica|cockroach(db)?)$/i;
+
+const SQL_KEYWORDS = new Set([
+  "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
+  "CREATE", "TABLE", "ALTER", "DROP", "TRUNCATE", "RENAME", "JOIN", "INNER", "LEFT",
+  "RIGHT", "FULL", "OUTER", "CROSS", "ON", "AS", "AND", "OR", "NOT", "NULL", "IS",
+  "IN", "BETWEEN", "LIKE", "ILIKE", "EXISTS", "GROUP", "BY", "ORDER", "HAVING",
+  "LIMIT", "OFFSET", "FETCH", "UNION", "ALL", "DISTINCT", "CASE", "WHEN", "THEN",
+  "ELSE", "END", "WITH", "RECURSIVE", "RETURNING", "PRIMARY", "KEY", "FOREIGN",
+  "REFERENCES", "CONSTRAINT", "DEFAULT", "UNIQUE", "INDEX", "VIEW", "ASC", "DESC",
+  "USING", "NATURAL", "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION", "EXPLAIN",
+  "ANALYZE", "VACUUM", "GRANT", "REVOKE", "CASCADE",
+]);
+
+const SQL_TOKEN_PATTERN =
+  /(--[^\n]*|\/\*[\s\S]*?\*\/)|('(?:[^']|'')*'|"(?:[^"]|"")*")|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][A-Za-z0-9_$]*)/g;
+
+function renderSqlCode(code: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let plainBuffer = "";
+  let cursor = 0;
+  let tokenIndex = 0;
+
+  const flushPlain = () => {
+    if (!plainBuffer) return;
+    nodes.push(
+      <Fragment key={`${keyPrefix}-plain-${tokenIndex}`}>{plainBuffer}</Fragment>,
+    );
+    plainBuffer = "";
+    tokenIndex += 1;
+  };
+
+  let match: RegExpExecArray | null;
+  while ((match = SQL_TOKEN_PATTERN.exec(code)) !== null) {
+    plainBuffer += code.slice(cursor, match.index);
+    cursor = match.index + match[0].length;
+
+    const [raw, comment, quoted, numeric, word] = match;
+    if (comment || quoted || numeric) {
+      flushPlain();
+      const className = comment ? "tok-com" : quoted ? "tok-str" : "tok-num";
+      nodes.push(
+        <span key={`${keyPrefix}-${className}-${tokenIndex}`} className={className}>
+          {raw}
+        </span>,
+      );
+      tokenIndex += 1;
+      continue;
+    }
+
+    if (word && SQL_KEYWORDS.has(word.toUpperCase())) {
+      flushPlain();
+      nodes.push(
+        <span key={`${keyPrefix}-kw-${tokenIndex}`} className="tok-kw">
+          {word}
+        </span>,
+      );
+      tokenIndex += 1;
+      continue;
+    }
+
+    if (word && /^\s*\(/.test(code.slice(cursor))) {
+      flushPlain();
+      nodes.push(
+        <span key={`${keyPrefix}-fn-${tokenIndex}`} className="tok-fn">
+          {word}
+        </span>,
+      );
+      tokenIndex += 1;
+      continue;
+    }
+
+    plainBuffer += raw;
+  }
+
+  plainBuffer += code.slice(cursor);
+  flushPlain();
+  return nodes;
+}
+
+function MarkdownCodeBlock({ language, code }: { language?: string; code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  const label = language ? language.toLowerCase() : "code";
+  const isSql = SQL_LANGUAGE_PATTERN.test(label);
+
+  return (
+    <div className="ai-workspace-markdown-code-frame">
+      <div className="ai-workspace-markdown-code-bar">
+        <span className="ai-workspace-markdown-code-lang">{label}</span>
+        <button
+          type="button"
+          className="ai-workspace-markdown-code-copy"
+          onClick={() => {
+            void handleCopy();
+          }}
+          title={copied ? "Copied" : "Copy"}
+          aria-label={copied ? "Copied" : "Copy code"}
+        >
+          {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+        </button>
+      </div>
+      <pre className="ai-workspace-markdown-code" data-language={language ?? ""}>
+        {isSql ? renderSqlCode(code, "sql") : code}
+      </pre>
+    </div>
+  );
+}
 
 function isTableSeparator(line: string) {
   return /^\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?$/.test(line.trim());
@@ -112,6 +234,12 @@ function parseMarkdownBlocks(text: string): MarkdownBlock[] {
       continue;
     }
 
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      blocks.push({ type: "thematic-break" });
+      index += 1;
+      continue;
+    }
+
     if (trimmed.startsWith("```")) {
       const language = trimmed.slice(3).trim() || undefined;
       const codeLines: string[] = [];
@@ -179,6 +307,7 @@ function parseMarkdownBlocks(text: string): MarkdownBlock[] {
         /^(#{1,3})\s+/.test(candidate) ||
         /^[-*]\s+/.test(candidate) ||
         /^\d+\.\s+/.test(candidate) ||
+        /^(-{3,}|\*{3,}|_{3,})$/.test(candidate) ||
         (candidate.includes("|") && index + 1 < lines.length && isTableSeparator(lines[index + 1]))
       ) {
         break;
@@ -222,11 +351,11 @@ export function AIWorkspaceMarkdown({ text, className, compact = false }: AIWork
         }
 
         if (block.type === "code") {
-          return (
-            <pre key={key} className="ai-workspace-markdown-code" data-language={block.language ?? ""}>
-              {block.code}
-            </pre>
-          );
+          return <MarkdownCodeBlock key={key} language={block.language} code={block.code} />;
+        }
+
+        if (block.type === "thematic-break") {
+          return <hr key={key} className="ai-workspace-markdown-hr" />;
         }
 
         if (block.type === "table") {

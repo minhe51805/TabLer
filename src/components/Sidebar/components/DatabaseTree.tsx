@@ -1,58 +1,17 @@
-import { Database, ChevronDown, ChevronRight, Columns, Eye, FileCode, GitBranch, Loader2, Table, Filter } from "lucide-react";
+import { memo, useCallback } from "react";
+import { Database, ChevronDown, ChevronRight, Loader2, Filter } from "lucide-react";
 import type { DatabaseInfo, SchemaObjectInfo, TableInfo } from "../../../types";
 import { formatCountLabel } from "../../../i18n";
 import type { AppLanguage } from "../../../i18n";
 import { getQualifiedTableName } from "../SidebarUtils";
 import type { ExplorerSchemaSection } from "../hooks/useTreeState";
 import type { MixedStateFilter, CheckboxFilterState } from "../hooks/use-sidebar";
-
-// ---------------------------------------------------------------------------
-// Mixed-state checkbox SVG icon
-// ---------------------------------------------------------------------------
-
-function MixedCheckbox({ state, onChange, title }: {
-  state: CheckboxFilterState;
-  onChange: (next: CheckboxFilterState) => void;
-  title?: string;
-}) {
-  const handleClick = () => {
-    if (state === "indeterminate") onChange("checked");
-    else if (state === "checked") onChange("unchecked");
-    else onChange("indeterminate");
-  };
-
-  return (
-    <button
-      type="button"
-      className={`mixed-checkbox mixed-checkbox--${state}`}
-      onClick={handleClick}
-      title={title ?? `State: ${state}. Click to cycle.`}
-      aria-label={`Filter: ${state}`}
-    >
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-        {state === "checked" ? (
-          // Checked: filled box with check
-          <>
-            <rect x="0.5" y="0.5" width="13" height="13" rx="3" fill="var(--accent)" stroke="var(--accent)" strokeWidth="1" />
-            <path d="M3.5 7L5.5 9L10.5 4" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </>
-        ) : state === "unchecked" ? (
-          // Unchecked: box with X
-          <>
-            <rect x="0.5" y="0.5" width="13" height="13" rx="3" fill="none" stroke="var(--border)" strokeWidth="1.5" />
-            <path d="M4 4L10 10M10 4L4 10" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round" />
-          </>
-        ) : (
-          // Indeterminate: filled box with dash
-          <>
-            <rect x="0.5" y="0.5" width="13" height="13" rx="3" fill="var(--bg-secondary)" stroke="var(--border)" strokeWidth="1.5" />
-            <path d="M3.5 7H10.5" stroke="var(--text-secondary)" strokeWidth="1.5" strokeLinecap="round" />
-          </>
-        )}
-      </svg>
-    </button>
-  );
-}
+import {
+  MixedCheckbox,
+  StaticObjectRow,
+  TableRow,
+  ViewRow,
+} from "./DatabaseTreeItems";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -103,6 +62,156 @@ function getLastPathSegment(value?: string | null) {
 }
 
 // ---------------------------------------------------------------------------
+// Memoized schema group section
+// ---------------------------------------------------------------------------
+
+interface SchemaGroupProps {
+  section: ExplorerSchemaSection;
+  mixedStateFilter: MixedStateFilter;
+  onMixedStateToggle: DatabaseTreeProps["onMixedStateToggle"];
+  getMixedStateFilterForTable: DatabaseTreeProps["getMixedStateFilterForTable"];
+  onTableClick: DatabaseTreeProps["onTableClick"];
+  onTableDoubleClick?: DatabaseTreeProps["onTableDoubleClick"];
+  onStructureClick: DatabaseTreeProps["onStructureClick"];
+  onObjectSqlClick: DatabaseTreeProps["onObjectSqlClick"];
+  onTableContextMenu: DatabaseTreeProps["onTableContextMenu"];
+  contextQualifiedName: string | null;
+  language: AppLanguage;
+  t: (key: import("../../../i18n").TranslationKey, opts?: Record<string, string | number>) => string;
+}
+
+const SchemaGroup = memo(function SchemaGroup({
+  section,
+  mixedStateFilter,
+  onMixedStateToggle,
+  getMixedStateFilterForTable,
+  onTableClick,
+  onTableDoubleClick,
+  onStructureClick,
+  onObjectSqlClick,
+  onTableContextMenu,
+  contextQualifiedName,
+  language,
+  t,
+}: SchemaGroupProps) {
+  const groupState = getSchemaGroupFilterState(section.schemaName, mixedStateFilter);
+
+  const handleGroupToggle = useCallback(
+    (next: CheckboxFilterState) => {
+      // Toggle all tables in this schema group
+      for (const item of section.tables) {
+        onMixedStateToggle(section.schemaName, item.name, next);
+      }
+    },
+    [onMixedStateToggle, section],
+  );
+
+  return (
+    <section className="explorer-schema-group">
+      {/* Schema group header with mixed-state checkbox */}
+      <div className="explorer-schema-head">
+        <MixedCheckbox
+          state={groupState}
+          onChange={handleGroupToggle}
+          title={`Schema filter: ${section.schemaName}`}
+        />
+        <span className="explorer-schema-name">{section.schemaName}</span>
+        <span className="explorer-schema-count">
+          {section.tables.length + section.views.length + section.triggers.length + section.routines.length}
+        </span>
+      </div>
+
+      <div className="explorer-schema-list">
+        {section.tables.length > 0 && (
+          <div className="explorer-object-group">
+            <div className="explorer-object-group-head">{t("explorer.tablesGroup")}</div>
+            {section.tables.map((table) => {
+              const tableFilter = getMixedStateFilterForTable(table.name, section.schemaName);
+              const itemState = getItemFilterState(table.name, section.schemaName, tableFilter);
+              const isContextActive =
+                contextQualifiedName !== null &&
+                contextQualifiedName === getQualifiedTableName(table);
+              return (
+                <TableRow
+                  key={`table-${section.schemaName}-${table.name}`}
+                  table={table}
+                  itemState={itemState}
+                  isContextActive={isContextActive}
+                  onTableClick={onTableClick}
+                  onTableDoubleClick={onTableDoubleClick}
+                  onStructureClick={onStructureClick}
+                  onTableContextMenu={onTableContextMenu}
+                  schemaName={section.schemaName}
+                  language={language}
+                  t={t}
+                  onMixedStateToggle={onMixedStateToggle}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {section.views.length > 0 && (
+          <div className="explorer-object-group">
+            <div className="explorer-object-group-head">{t("explorer.viewsGroup")}</div>
+            {section.views.map((view) => {
+              const tableFilter = getMixedStateFilterForTable(view.name, section.schemaName);
+              const itemState = getItemFilterState(view.name, section.schemaName, tableFilter);
+              return (
+                <ViewRow
+                  key={`view-${section.schemaName}-${view.name}`}
+                  view={view}
+                  itemState={itemState}
+                  onTableClick={onTableClick}
+                  onTableDoubleClick={onTableDoubleClick}
+                  onStructureClick={onStructureClick}
+                  schemaName={section.schemaName}
+                  language={language}
+                  t={t}
+                  onMixedStateToggle={onMixedStateToggle}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {section.triggers.length > 0 && (
+          <div className="explorer-object-group">
+            <div className="explorer-object-group-head">{t("explorer.triggersGroup")}</div>
+            {section.triggers.map((trigger) => (
+              <StaticObjectRow
+                key={`trigger-${section.schemaName}-${trigger.name}`}
+                object={trigger}
+                metaText={trigger.related_table || t("explorer.triggersGroup")}
+                icon="GitBranch"
+                onObjectSqlClick={onObjectSqlClick}
+                t={t}
+              />
+            ))}
+          </div>
+        )}
+
+        {section.routines.length > 0 && (
+          <div className="explorer-object-group">
+            <div className="explorer-object-group-head">{t("explorer.routinesGroup")}</div>
+            {section.routines.map((routine) => (
+              <StaticObjectRow
+                key={`routine-${section.schemaName}-${routine.name}`}
+                object={routine}
+                metaText={routine.object_type}
+                icon="FileCode"
+                onObjectSqlClick={onObjectSqlClick}
+                t={t}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -138,6 +247,10 @@ export function DatabaseTree({
   onMixedStateToggle,
   getMixedStateFilterForTable,
 }: DatabaseTreeProps) {
+  const contextQualifiedName = tableContextMenu
+    ? getQualifiedTableName(tableContextMenu.table)
+    : null;
+
   return (
     <div className="explorer-tree-scroll">
       {databases.map((db) => {
@@ -264,197 +377,21 @@ export function DatabaseTree({
                   </div>
                 ) : (
                   filteredSchemaSections.map((section) => (
-                    <section key={section.schemaName} className="explorer-schema-group">
-                      {/* Schema group header with mixed-state checkbox */}
-                      <div className="explorer-schema-head">
-                        <MixedCheckbox
-                          state={getSchemaGroupFilterState(section.schemaName, mixedStateFilter)}
-                          onChange={(next) => {
-                            // Toggle all tables in this schema group
-                            const items = section.tables.map((t) => t.name);
-                            items.forEach((itemName) => {
-                              onMixedStateToggle(section.schemaName, itemName, next);
-                            });
-                          }}
-                          title={`Schema filter: ${section.schemaName}`}
-                        />
-                        <span className="explorer-schema-name">{section.schemaName}</span>
-                        <span className="explorer-schema-count">
-                          {section.tables.length + section.views.length + section.triggers.length + section.routines.length}
-                        </span>
-                      </div>
-
-                      <div className="explorer-schema-list">
-                        {section.tables.length > 0 && (
-                          <div className="explorer-object-group">
-                            <div className="explorer-object-group-head">{t("explorer.tablesGroup")}</div>
-                            {section.tables.map((table) => {
-                              const tableFilter = getMixedStateFilterForTable(table.name, section.schemaName);
-                              const itemState = getItemFilterState(table.name, section.schemaName, tableFilter);
-                              return (
-                                <div
-                                  key={`table-${section.schemaName}-${table.name}`}
-                                  className={`explorer-table-row ${
-                                    tableContextMenu &&
-                                    getQualifiedTableName(tableContextMenu.table) === getQualifiedTableName(table)
-                                      ? "context-active"
-                                      : ""
-                                  }`}
-                                  onContextMenu={(event) => onTableContextMenu(event, table)}
-                                >
-                                  {/* Mixed-state checkbox */}
-                                  <MixedCheckbox
-                                    state={itemState}
-                                    onChange={(next) => {
-                                      onMixedStateToggle(section.schemaName, table.name, next);
-                                    }}
-                                    title={`Table filter: ${itemState} — checked=include, unchecked=exclude, indeterminate=no filter`}
-                                  />
-                                  <button
-                                    data-testid={`table-${section.schemaName}-${table.name}`}
-                                    onClick={() => onTableClick(table)}
-                                    onDoubleClick={(e) => { e.stopPropagation(); onTableDoubleClick?.(table); }}
-                                    className="explorer-table-main"
-                                  >
-                                    <div className="explorer-table-icon">
-                                      <Table className="w-3.5 h-3.5 shrink-0" />
-                                    </div>
-                                    <div className="explorer-table-copy">
-                                      <span className="explorer-table-name">{table.name}</span>
-                                      <span className="explorer-table-meta">
-                                        {t("explorer.openDataRows")}
-                                        {table.row_count != null
-                                          ? ` | ${table.row_count.toLocaleString()} ${formatCountLabel(language, table.row_count, {
-                                              one: "row",
-                                              other: "rows",
-                                              vi: "dòng",
-                                            }).replace(/^\d+\s+/, "")}`
-                                          : ""}
-                                      </span>
-                                    </div>
-                                  </button>
-                                  <button
-                                    onClick={(e) => onStructureClick(e, table)}
-                                    className="explorer-structure-btn explorer-structure-btn--icon"
-                                    title={t("explorer.viewStructure")}
-                                    aria-label={t("explorer.viewStructure")}
-                                  >
-                                    <Columns className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {section.views.length > 0 && (
-                          <div className="explorer-object-group">
-                            <div className="explorer-object-group-head">{t("explorer.viewsGroup")}</div>
-                            {section.views.map((view) => {
-                              const tableFilter = getMixedStateFilterForTable(view.name, section.schemaName);
-                              const itemState = getItemFilterState(view.name, section.schemaName, tableFilter);
-                              return (
-                                <div
-                                  key={`view-${section.schemaName}-${view.name}`}
-                                  className="explorer-table-row"
-                                >
-                                  <MixedCheckbox
-                                    state={itemState}
-                                    onChange={(next) => onMixedStateToggle(section.schemaName, view.name, next)}
-                                    title={`View filter: ${itemState}`}
-                                  />
-                                  <button
-                                    onClick={() => onTableClick({ name: view.name, schema: view.schema })}
-                                    onDoubleClick={(e) => { e.stopPropagation(); onTableDoubleClick?.({ name: view.name, schema: view.schema }); }}
-                                    className="explorer-table-main"
-                                  >
-                                    <div className="explorer-table-icon">
-                                      <Eye className="w-3.5 h-3.5 shrink-0" />
-                                    </div>
-                                    <div className="explorer-table-copy">
-                                      <span className="explorer-table-name">{view.name}</span>
-                                      <span className="explorer-table-meta">{t("explorer.viewsGroup")}</span>
-                                    </div>
-                                  </button>
-                                  <button
-                                    onClick={(e) =>
-                                      onStructureClick(e, { name: view.name, schema: view.schema })
-                                    }
-                                    className="explorer-structure-btn explorer-structure-btn--icon"
-                                    title={t("explorer.viewStructure")}
-                                    aria-label={t("explorer.viewStructure")}
-                                  >
-                                    <Columns className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {section.triggers.length > 0 && (
-                          <div className="explorer-object-group">
-                            <div className="explorer-object-group-head">{t("explorer.triggersGroup")}</div>
-                            {section.triggers.map((trigger) => (
-                              <div
-                                key={`trigger-${section.schemaName}-${trigger.name}`}
-                                className="explorer-table-row explorer-object-row"
-                              >
-                                <div className="explorer-table-main static">
-                                  <div className="explorer-table-icon">
-                                    <GitBranch className="w-3.5 h-3.5 shrink-0" />
-                                  </div>
-                                  <div className="explorer-table-copy">
-                                    <span className="explorer-table-name">{trigger.name}</span>
-                                    <span className="explorer-table-meta">
-                                      {trigger.related_table || t("explorer.triggersGroup")}
-                                    </span>
-                                  </div>
-                                </div>
-                                <button
-                                  onClick={(e) => onObjectSqlClick(e, trigger)}
-                                  className="explorer-structure-btn"
-                                  title={`${t("common.open")} SQL`}
-                                >
-                                  <FileCode className="w-3.5 h-3.5" />
-                                  <span>SQL</span>
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {section.routines.length > 0 && (
-                          <div className="explorer-object-group">
-                            <div className="explorer-object-group-head">{t("explorer.routinesGroup")}</div>
-                            {section.routines.map((routine) => (
-                              <div
-                                key={`routine-${section.schemaName}-${routine.name}`}
-                                className="explorer-table-row explorer-object-row"
-                              >
-                                <div className="explorer-table-main static">
-                                  <div className="explorer-table-icon">
-                                    <FileCode className="w-3.5 h-3.5 shrink-0" />
-                                  </div>
-                                  <div className="explorer-table-copy">
-                                    <span className="explorer-table-name">{routine.name}</span>
-                                    <span className="explorer-table-meta">{routine.object_type}</span>
-                                  </div>
-                                </div>
-                                <button
-                                  onClick={(e) => onObjectSqlClick(e, routine)}
-                                  className="explorer-structure-btn"
-                                  title={`${t("common.open")} SQL`}
-                                >
-                                  <FileCode className="w-3.5 h-3.5" />
-                                  <span>SQL</span>
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </section>
+                    <SchemaGroup
+                      key={section.schemaName}
+                      section={section}
+                      mixedStateFilter={mixedStateFilter}
+                      onMixedStateToggle={onMixedStateToggle}
+                      getMixedStateFilterForTable={getMixedStateFilterForTable}
+                      onTableClick={onTableClick}
+                      onTableDoubleClick={onTableDoubleClick}
+                      onStructureClick={onStructureClick}
+                      onObjectSqlClick={onObjectSqlClick}
+                      onTableContextMenu={onTableContextMenu}
+                      contextQualifiedName={contextQualifiedName}
+                      language={language}
+                      t={t}
+                    />
                   ))
                 )}
               </div>

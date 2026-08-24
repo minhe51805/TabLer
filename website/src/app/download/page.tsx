@@ -4,6 +4,10 @@ import Link from "next/link";
 import { ArrowLeft, RefreshCw, ShieldCheck } from "lucide-react";
 import DownloadChooser from "./DownloadChooser";
 import { getTableRReleases } from "@/lib/github-releases";
+import { getSiteLanguage } from "@/lib/language";
+import { getDictionary } from "@/lib/i18n";
+import { repositoryName, repositoryOwner } from "@/lib/site";
+import { LanguageToggle } from "../LanguageToggle";
 
 export const metadata: Metadata = {
   title: "Download TableR",
@@ -11,14 +15,19 @@ export const metadata: Metadata = {
     "Download current and previous TableR releases for Windows, macOS, and Linux.",
 };
 
-export const revalidate = 300;
+export const revalidate = 0;
+
+const macosQuarantineCommand =
+  "xattr -dr com.apple.quarantine /Applications/TableR.app";
 
 export default async function DownloadPage() {
+  const language = await getSiteLanguage();
+  const t = getDictionary(language);
   const releases = await getTableRReleases();
   const latestRelease = releases[0];
 
   return (
-    <main className="download-page">
+    <main className="download-page" id="main">
       <header className="site-header">
         <div className="shell header-inner">
           <Link className="brand" href="/" aria-label="TableR home">
@@ -31,11 +40,13 @@ export default async function DownloadPage() {
             />
             <span>TableR</span>
           </Link>
-
-          <Link className="button button-small button-secondary" href="/">
-            <ArrowLeft size={16} aria-hidden="true" />
-            Back to home
-          </Link>
+          <div className="header-actions">
+            <LanguageToggle current={language} />
+            <Link className="button button-small button-secondary" href="/">
+              <ArrowLeft size={16} aria-hidden="true" />
+              {t.download.back}
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -44,23 +55,20 @@ export default async function DownloadPage() {
           <div>
             <p className="eyebrow">
               {latestRelease
-                ? `LATEST RELEASE ${latestRelease.tag}`
-                : "TABLE R RELEASES"}
+                ? `${t.download.latestPrefix} ${latestRelease.tag}`
+                : t.download.fallbackPrefix}
             </p>
-            <h1>Download TableR</h1>
-            <p>
-              Choose a current or previous release. Each option starts the
-              installer download directly.
-            </p>
+            <h1>{t.download.heading}</h1>
+            <p>{t.download.chooseIntro}</p>
           </div>
           <div className="download-trust">
             <ShieldCheck size={20} aria-hidden="true" />
             <div>
-              <strong>Official release files</strong>
+              <strong>{t.download.trustTitle}</strong>
               <span>
                 {releases.length
-                  ? `${releases.length} versions available`
-                  : "GitHub Releases"}
+                  ? t.download.versionsAvailable(releases.length)
+                  : t.download.versionsFallback}
               </span>
             </div>
           </div>
@@ -68,39 +76,35 @@ export default async function DownloadPage() {
 
         <div className="release-sync-note">
           <RefreshCw size={15} aria-hidden="true" />
-          Synced automatically from GitHub Releases every 5 minutes.
+          {t.download.syncNote}
         </div>
 
-        <DownloadChooser releases={releases} />
+        <DownloadChooser lang={language} releases={releases} />
 
         <aside className="download-help">
-          <strong>Not sure which file to choose?</strong>
-          <span>
-            Open the latest release and use the option marked Recommended for
-            your operating system.
-          </span>
+          <strong>{t.download.helpChooseTitle}</strong>
+          <span>{t.download.helpChooseCopy}</span>
         </aside>
 
         <aside className="download-help">
-          <strong>Installing the unsigned macOS build</strong>
+          <strong>{t.download.helpMacosTitle}</strong>
           <span>
-            Move TableR to Applications, try to open it once, then choose Open
-            Anyway in System Settings &gt; Privacy &amp; Security. If Gatekeeper still
-            blocks it, run <code>xattr -dr com.apple.quarantine /Applications/TableR.app</code>
-            and open it again. This override does not mean the app is Apple-notarized.
+            {t.download.helpMacosCopyBefore}{" "}
+            <code>{macosQuarantineCommand}</code>{" "}
+            {t.download.helpMacosCopyAfter}
           </span>
         </aside>
       </div>
 
       <footer className="download-footer">
         <div className="shell">
-          <span>TableR is open source and licensed under GPL-3.0.</span>
+          <span>{t.download.footerLicense}</span>
           <a
-            href="https://github.com/minhe51805/TabLer/releases"
+            href={`https://github.com/${repositoryOwner}/${repositoryName}/releases`}
             target="_blank"
             rel="noreferrer"
           >
-            All releases on GitHub
+            {t.download.allReleases}
           </a>
         </div>
       </footer>

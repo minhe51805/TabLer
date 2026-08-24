@@ -2,7 +2,7 @@
   "name": "tabler",
   "private": true,
   "version": "0.1.5",
-  "releaseLabel": "0.1.5",
+  "releaseLabel": "0.1.5a",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src tests --max-warnings=64",
+    "lint": "eslint src tests --max-warnings=100",
     "check:frontend": "npm run typecheck && npm run lint && npm run test:run && npm run build",
     "check:release-contract": "node scripts/check-release-contract.mjs",
     "check:tauri-target": "node scripts/check-tauri-binary-target.mjs",

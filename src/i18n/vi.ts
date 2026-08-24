@@ -108,7 +108,6 @@ export const vi: Record<keyof typeof en, string> = {
   "workspace.kicker.structure": "Xem cấu trúc",
   "workspace.readyForQueries": "Sẵn sàng truy vấn",
   "workspace.status.success": "Thành công",
-  "workspace.status.rows": "{{count}} dòng",
   "workspace.status.affected": "{{count}} tác động",
   "workspace.status.batch": "lô {{count}}",
   "toolbar.closeAllTabs": "Đóng tất cả tab",

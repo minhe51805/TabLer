@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, type FormEvent } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   useReactTable,
@@ -11,7 +11,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Copy, Loader2, Plus, X, ClipboardPaste } from "lucide-react";
+import { Copy, Loader2, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import { useChangeTrackingStore } from "../../stores/change-tracking-store";
@@ -27,39 +27,28 @@ import {
 import type { ColumnDetail, ConnectionConfig, QueryResult, TableRowFocus } from "../../types";
 import { devLogError } from "../../utils/logger";
 import { invokeMutation } from "../../utils/tauri-utils";
-import { computeNewRowPlan, computeColumnPlan } from "./hooks/useInsertColumnPlan";
 import { lazy, Suspense } from "react";
 import "./DataChart.css";
 
 const DataChart = lazy(() => import("./DataChart").then((m) => ({ default: m.DataChart })));
 import {
   PAGE_SIZE,
-  buildTableScopeKey,
-  buildTableCacheKey,
-  isFreshCacheEntry,
-  setBoundedMapEntry,
   invalidateTableScopeCaches,
   invalidateTableCaches,
-  tablePageCache,
-  tableCountCache,
   inlineStructureCacheRef,
   buildColumnSignature,
   buildResolvedColumns,
   isBooleanColumn,
-  editorValueFromCell,
-  parseEditorValue,
-  areCellValuesEqual,
   buildRowPrimaryKeys,
   type ResolvedColumn,
   type GridCellValue,
   type StructureStatus,
   type EditingCell,
 } from "./hooks/useDataGrid";
-import { clearColumnWidths, getColumnWidths, saveColumnWidth } from "../../stores/column-width-store";
-import { clearColumnLayout, getColumnLayout, saveColumnLayout } from "../../stores/column-layout-store";
+import { getColumnWidths, saveColumnWidth } from "../../stores/column-width-store";
+import { getColumnLayout, saveColumnLayout } from "../../stores/column-layout-store";
 import { useDateFormatStore } from "../../stores/dateFormatStore";
 import { filterAndSortLocalRows, filterRowsWithSourceIndices } from "./local-result-operations";
-import { resolveDataWindowColumns } from "./data-window";
 import {
   createEmptyGridSelection,
   isGridCellSelected,
@@ -72,19 +61,24 @@ import { buildStableRowIdentity } from "./row-identity";
 import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
 import { isCapabilitySupported } from "../../types";
 
-const TABLE_COUNT_CACHE_TTL_MS = 600_000;
 import { DataGridToolbar } from "./DataGridToolbar";
 import { ChangeTrackingPreviewModal } from "./components/ChangeTrackingPreviewModal";
 import { buildDataGridColumns, editingDraftRef } from "./DataGridColumns";
+import { useDataGridCopySqlActions } from "./hooks/useDataGridCopySqlActions";
+import { useDataGridInlineEditing } from "./hooks/useDataGridInlineEditing";
+import { useDataGridStagedChanges } from "./hooks/useDataGridStagedChanges";
+import { useDataGridSortFilter } from "./hooks/useDataGridSortFilter";
+import { useDataGridRowSelection } from "./hooks/useDataGridRowSelection";
+import { useDataGridDragReorder } from "./hooks/useDataGridDragReorder";
+import { useDataGridTableFetcher } from "./hooks/useDataGridTableFetcher";
+import { useDataGridRowMutations } from "./hooks/useDataGridRowMutations";
+import { useDataGridTableExport } from "./hooks/useDataGridTableExport";
+import { PasteRowsDialog } from "./dialogs/PasteRowsDialog";
+import { buildRowFocusFilter } from "./row-focus";
+import { InsertRowDialog } from "./dialogs/InsertRowDialog";
+import { FkPreviewPopover } from "./dialogs/FkPreviewPopover";
+import { DataGridContextMenu } from "./dialogs/DataGridContextMenu";
 import type { ColumnDisplayFormat } from "./editors";
-import {
-  generateInsertSql,
-  generateUpdateSql,
-  generateInsertSqlParameterized,
-  generateUpdateSqlParameterized,
-  generateDeleteSqlParameterized,
-  copyToClipboard,
-} from "../../utils/sql-generator";
 
 interface Props {
   connectionId: string;
@@ -95,22 +89,6 @@ interface Props {
   initialViewMode?: "table" | "chart";
   onViewModeChange?: (mode: "table" | "chart") => void;
   rowFocus?: TableRowFocus;
-}
-
-const MAX_TABLE_PAGE_CACHE_ENTRIES = 48;
-const MAX_TABLE_COUNT_CACHE_ENTRIES = 24;
-const MAX_INLINE_STRUCTURE_CACHE_ENTRIES = 48;
-
-function buildRowFocusFilter(rowFocus: TableRowFocus | undefined) {
-  if (!rowFocus) return "";
-  const clauses = Object.entries(rowFocus.values).flatMap(([column, value]) => {
-    if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(column)) return [];
-    if (value === null) return [`${column} IS NULL`];
-    if (typeof value === "number") return [Number.isFinite(value) ? `${column} = ${value}` : ""];
-    if (typeof value === "boolean") return [`${column} = ${value ? "TRUE" : "FALSE"}`];
-    return [`${column} = '${value.replace(/'/g, "''")}'`];
-  }).filter(Boolean);
-  return clauses.join(" AND ");
 }
 
 export function DataGrid({
@@ -262,7 +240,6 @@ export function DataGrid({
   const isMountedRef = useRef(true);
   const isActiveRef = useRef(isActive);
   const editorRef = useRef<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>(null);
-  const editingOpenedAtRef = useRef(0);
   const rowSelectionAnchorRef = useRef<string | null>(null);
   const dataGridInstanceIdRef = useRef(`datagrid-${Math.random().toString(36).slice(2)}`);
   const csvImportOperationIdRef = useRef<string | null>(null);
@@ -271,6 +248,7 @@ export function DataGrid({
   const assignInputRef = useCallback((element: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null) => {
     editorRef.current = element;
   }, []);
+
 
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
@@ -381,204 +359,56 @@ export function DataGrid({
     return () => element.removeEventListener("keydown", handleGridKeyDown);
   }, [data?.columns.length, data?.rows.length, structureColumns.length, viewMode]);
 
-  const setLoadedTablePage = useCallback((page: number, result: QueryResult) => {
-    if (page === 0) loadedTablePagesRef.current.clear();
-    loadedTablePagesRef.current.set(page, result);
-    const rows: QueryResult["rows"] = [];
-    for (let index = 0; loadedTablePagesRef.current.has(index); index += 1) {
-      rows.push(...(loadedTablePagesRef.current.get(index)?.rows ?? []));
-    }
-    const canonicalColumns = loadedTablePagesRef.current.get(0)?.columns ?? [];
-    setData((previous) => ({
-      ...result,
-      columns: resolveDataWindowColumns(canonicalColumns, previous?.columns ?? [], result.columns),
-      rows,
-    }));
-    setHasMoreTableRows(result.rows.length === PAGE_SIZE);
-  }, []);
-
-  const patchLoadedTableCell = useCallback((rowIndex: number, columnIndex: number, value: GridCellValue) => {
-    const page = Math.floor(rowIndex / PAGE_SIZE);
-    const pageRowIndex = rowIndex % PAGE_SIZE;
-    const pageResult = loadedTablePagesRef.current.get(page);
-    if (!pageResult?.rows[pageRowIndex]) return;
-
-    const rows = pageResult.rows.map((row, index) => {
-      if (index !== pageRowIndex) return row;
-      const nextRow = [...row];
-      nextRow[columnIndex] = value;
-      return nextRow;
-    });
-    loadedTablePagesRef.current.set(page, { ...pageResult, rows });
-  }, []);
-
-  const fetchData = useCallback(
-    async (page: number) => {
-      if (!tableName || !isActive) return;
-
-      const dataScope = `${connectionId}|${database || ""}|${tableName}|${sortColumn || ""}|${sortDir}|${rowFocusFilter}`;
-      if (dataScopeRef.current !== dataScope) {
-        dataScopeRef.current = dataScope;
-        requestIdRef.current += 1;
-      }
-      const requestId = requestIdRef.current;
-      const tableCacheKey = buildTableCacheKey(
-        connectionId,
-        tableName,
-        database,
-        page,
-        sortColumn,
-        sortDir,
-        rowFocusFilter,
-      );
-      const cachedPage = tablePageCache.get(tableCacheKey);
-      const tableScopeKey = buildTableScopeKey(connectionId, tableName, database);
-      const cachedCount = tableCountCache.get(tableScopeKey);
-      const hasFreshCount = !tableFilter.trim() && !rowFocusFilter && Boolean(
-        cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS),
-      );
-
-      if (cachedPage && isFreshCacheEntry(cachedPage.cachedAt, 120_000)) {
-        setLoadedTablePage(page, cachedPage.result);
-        setTotalRows(cachedPage.totalRows);
-        setIsLoading(false);
-        return;
-      }
-
-      if (cachedPage) {
-        setLoadedTablePage(page, cachedPage.result);
-        setTotalRows(cachedPage.totalRows);
-      } else if (cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS)) {
-        setTotalRows(cachedCount.totalRows);
-      }
-
-      setIsLoading(true);
-
-      try {
-        const result = await getTableData(connectionId, tableName, {
-          database,
-          offset: page * PAGE_SIZE,
-          limit: PAGE_SIZE,
-          orderBy: sortColumn || undefined,
-          orderDir: sortColumn ? sortDir : undefined,
-          filter: rowFocusFilter || undefined,
-        });
-
-        if (!isMountedRef.current || requestId !== requestIdRef.current) return;
-
-        setLoadedTablePage(page, result);
-        setIsLoading(false);
-
-        if (result.execution_time_ms >= 0) {
-          window.dispatchEvent(
-            new CustomEvent("workspace-activity", {
-              detail: {
-                connectionId,
-                label: "Load",
-                durationMs: result.execution_time_ms,
-              },
-            }),
-          );
-        }
-
-        if (page === 0 && isActiveRef.current) {
-          const needsExactCount = !rowFocusFilter && result.rows.length === PAGE_SIZE;
-          const nextTotalRows = hasFreshCount
-            ? cachedCount!.totalRows
-            : needsExactCount
-              ? PAGE_SIZE + 1
-              : result.rows.length;
-          setTotalRows(nextTotalRows);
-          setBoundedMapEntry(
-            tablePageCache,
-            tableCacheKey,
-            { result, totalRows: nextTotalRows, cachedAt: Date.now() },
-            MAX_TABLE_PAGE_CACHE_ENTRIES,
-          );
-
-          if (needsExactCount && !hasFreshCount) {
-            const countRequestId = countRequestIdRef.current;
-            if (countTimeoutRef.current !== null) {
-              window.clearTimeout(countTimeoutRef.current);
-            }
-
-            countTimeoutRef.current = window.setTimeout(() => {
-              void countRows(connectionId, tableName, database)
-                .then((count) => {
-                  if (
-                    !isMountedRef.current ||
-                    countRequestId !== countRequestIdRef.current ||
-                    !isActiveRef.current
-                  ) {
-                    return;
-                  }
-
-                  setBoundedMapEntry(
-                    tableCountCache,
-                    tableScopeKey,
-                    { totalRows: count, cachedAt: Date.now() },
-                    MAX_TABLE_COUNT_CACHE_ENTRIES,
-                  );
-                  setBoundedMapEntry(
-                    tablePageCache,
-                    tableCacheKey,
-                    { result, totalRows: count, cachedAt: Date.now() },
-                    MAX_TABLE_PAGE_CACHE_ENTRIES,
-                  );
-                  setTotalRows(count);
-                })
-                .catch((error) => {
-                  devLogError("Failed to count table rows:", error);
-                });
-            }, 800);
-          } else if (!tableFilter.trim() && !rowFocusFilter) {
-            setBoundedMapEntry(
-              tableCountCache,
-              tableScopeKey,
-              { totalRows: nextTotalRows, cachedAt: Date.now() },
-              MAX_TABLE_COUNT_CACHE_ENTRIES,
-            );
-          }
-        } else {
-          const fallbackTotalRows = (!tableFilter.trim() && !rowFocusFilter ? cachedCount?.totalRows : undefined)
-            || page * PAGE_SIZE + result.rows.length;
-          setBoundedMapEntry(
-            tablePageCache,
-            tableCacheKey,
-            { result, totalRows: fallbackTotalRows, cachedAt: Date.now() },
-            MAX_TABLE_PAGE_CACHE_ENTRIES,
-          );
-        }
-      } catch (e) {
-        if (!isMountedRef.current || requestId !== requestIdRef.current) return;
-        devLogError("Failed to fetch table data:", e);
-        const message = e instanceof Error ? e.message : String(e);
-        setError(`Could not load table data for ${tableName}: ${message}`);
-        setIsLoading(false);
-      }
+  const {
+    patchLoadedTableCell,
+    fetchData,
+    refreshTableFromStart,
+    ensureStructureLoaded,
+  } = useDataGridTableFetcher({
+    connectionId,
+    tableName,
+    database: database || undefined,
+    sortColumn,
+    sortDir,
+    tableFilter,
+    rowFocusFilter,
+    isActive,
+    externalResult,
+    structureColumns,
+    structureStatus,
+    getTableData,
+    countRows,
+    getTableStructure,
+    setColumnNameMap,
+    setDbType,
+    connections,
+    setData,
+    setTotalRows,
+    setIsLoading,
+    setHasMoreTableRows,
+    setCurrentPage,
+    setStructureColumns,
+    setForeignKeys,
+    setStructureStatus,
+    setError,
+    refs: {
+      loadedTablePagesRef,
+      dataScopeRef,
+      requestIdRef,
+      isActiveRef,
+      isMountedRef,
+      countRequestIdRef,
+      countTimeoutRef,
+      structurePromiseRef,
+      structureRetryAttemptRef,
+      structureRetryTimeoutRef,
+      structureRequestIdRef,
+      inlineStructureCacheRef,
     },
-    [
-      connectionId,
-      tableName,
-      database,
-      sortColumn,
-      sortDir,
-      tableFilter,
-      rowFocusFilter,
-      getTableData,
-      countRows,
-      isActive,
-      setError,
-      setLoadedTablePage,
-    ],
-  );
+  });
+  const undoableChanges = history.length;
+  const redoableChanges = future.length;
 
-  const refreshTableFromStart = useCallback(async () => {
-    loadedTablePagesRef.current.clear();
-    setHasMoreTableRows(true);
-    setCurrentPage(0);
-    await fetchData(0);
-  }, [fetchData]);
 
   useEffect(() => {
     if (externalResult) {
@@ -667,107 +497,6 @@ export function DataGrid({
     return () => window.clearTimeout(timeoutId);
   }, [filterDraft, tableFilter]);
 
-  const ensureStructureLoaded = useCallback(async () => {
-    if (!tableName || externalResult) {
-      return [] as ColumnDetail[];
-    }
-
-    const structureCacheKey = `${connectionId}|${database || ""}|${tableName}`;
-    const cachedStructure = inlineStructureCacheRef.inlineStructureCache.get(structureCacheKey);
-    if (cachedStructure && cachedStructure.length > 0) {
-      setStructureColumns(cachedStructure);
-      setStructureStatus("ready");
-      return cachedStructure;
-    }
-
-    if (structureStatus === "ready" && structureColumns.length > 0) {
-      return structureColumns;
-    }
-
-    if (structurePromiseRef.current) {
-      return structurePromiseRef.current;
-    }
-
-    const requestId = ++structureRequestIdRef.current;
-    setStructureStatus("loading");
-
-    const structurePromise = getTableStructure(connectionId, tableName, database)
-      .then((structure) => {
-        if (!isMountedRef.current || requestId !== structureRequestIdRef.current) {
-          return [] as ColumnDetail[];
-        }
-
-        setBoundedMapEntry(
-          inlineStructureCacheRef.inlineStructureCache,
-          structureCacheKey,
-          structure.columns,
-          MAX_INLINE_STRUCTURE_CACHE_ENTRIES,
-        );
-        setStructureColumns(structure.columns);
-        setForeignKeys(structure.foreign_keys);
-        setStructureStatus("ready");
-        structureRetryAttemptRef.current = 0;
-        if (structureRetryTimeoutRef.current !== null) {
-          window.clearTimeout(structureRetryTimeoutRef.current);
-          structureRetryTimeoutRef.current = null;
-        }
-
-        // Setup change tracking column name map for SQL preview generation
-        if (tableName) {
-          const colNameMap: Record<number, string> = {};
-          structure.columns.forEach((col, idx) => {
-            colNameMap[idx] = col.name;
-          });
-          setColumnNameMap(tableName, colNameMap);
-
-          const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
-          setDbType(tableName, connection?.db_type);
-        }
-        return structure.columns;
-      })
-      .catch((error) => {
-        if (!isMountedRef.current || requestId !== structureRequestIdRef.current) {
-          return [] as ColumnDetail[];
-        }
-
-        devLogError("Failed to load table structure for inline edit:", error);
-        setStructureColumns([]);
-        const retryAttempt = ++structureRetryAttemptRef.current;
-        if (retryAttempt <= 3) {
-          const retryDelay = 300 * 2 ** (retryAttempt - 1);
-          setStructureStatus("loading");
-          if (structureRetryTimeoutRef.current !== null) {
-            window.clearTimeout(structureRetryTimeoutRef.current);
-          }
-          structureRetryTimeoutRef.current = window.setTimeout(() => {
-            if (isMountedRef.current && requestId === structureRequestIdRef.current) {
-              setStructureStatus("idle");
-            }
-            structureRetryTimeoutRef.current = null;
-          }, retryDelay);
-        } else {
-          setStructureStatus("failed");
-        }
-        throw error;
-      })
-      .finally(() => {
-        if (structurePromiseRef.current === structurePromise) {
-          structurePromiseRef.current = null;
-        }
-      });
-
-    structurePromiseRef.current = structurePromise;
-    return structurePromise;
-  }, [
-    connectionId,
-    database,
-    externalResult,
-    getTableStructure,
-    structureColumns,
-    structureStatus,
-    tableName,
-  ]);
-
   useEffect(() => {
     if (!tableName || externalResult || !isActive || !data) return;
     if (structureStatus !== "idle") return;
@@ -834,71 +563,32 @@ export function DataGrid({
     });
   }, [rowIdentities]);
 
-  const reconcileStagedChanges = useCallback((nextChanges: typeof stagedChanges) => {
-    const currentTableChanges = stagedChanges.filter(
-      (change) => change.tableName === tableName && change.database === database && change.type === "update",
-    );
-    const nextTableChanges = nextChanges.filter(
-      (change) => change.tableName === tableName && change.database === database && change.type === "update",
-    );
-
-    const applyChanges = (
-      rows: QueryResult["rows"],
-      changes: typeof stagedChanges,
-      direction: "old" | "new",
-    ) => {
-      for (const change of changes) {
-        const rowIndex = rows.findIndex((row) => Object.entries(change.rowKey).every(([columnName, value]) => {
-          const columnIndex = resolvedColumns.findIndex((column) => column.name === columnName);
-          return columnIndex >= 0 && Object.is(row[columnIndex], value);
-        }));
-        if (rowIndex < 0) continue;
-        for (const [columnName, diff] of Object.entries(change.columns)) {
-          const columnIndex = resolvedColumns.findIndex((column) => column.name === columnName);
-          if (columnIndex >= 0) rows[rowIndex][columnIndex] = diff[direction] as GridCellValue;
-        }
-      }
-    };
-
-    setData((previous) => {
-      if (!previous) return previous;
-      const rows = previous.rows.map((row) => [...row]);
-      applyChanges(rows, [...currentTableChanges].reverse(), "old");
-      applyChanges(rows, nextTableChanges, "new");
-      return { ...previous, rows };
-    });
-    setStagedRowIndices(new Set(nextTableChanges.map((change) => change.rowIndex)));
-  }, [database, resolvedColumns, stagedChanges, tableName]);
-
-  const undoableChanges = history.length;
-  const redoableChanges = future.length;
+  const {
+    reconcileStagedChanges,
+    applyStagedChanges,
+    discardStagedChanges,
+  } = useDataGridStagedChanges({
+    stagedChanges,
+    tableName,
+    database: database || undefined,
+    connectionId,
+    resolvedColumns,
+    setData,
+    setStagedRowIndices,
+    setIsLoading,
+    setError,
+    unstageChange,
+    applyTableUpdatesAtomically,
+    invalidateTableCaches,
+    refreshTableFromStart,
+    dataGridInstanceIdRef,
+  });
 
   useEffect(() => {
     if (!rowFocus || !data?.rows.length || externalResult) return;
     setSelectedRows(new Set([0]));
   }, [data, externalResult, rowFocus, setSelectedRows]);
-
-  const closeInsertDialog = useCallback(() => {
-    setIsInsertDialogOpen(false);
-    setInsertDialogColumns([]);
-    setInsertDialogBaseValues([]);
-    setInsertDraft({});
-    setInsertDialogError(null);
-    setIsSubmittingInsert(false);
-  }, []);
-
-  const closePasteDialog = useCallback((force = false) => {
-    if (isSubmittingPaste && !force) return;
-    setIsPasteDialogOpen(false);
-    setPastePreview(null);
-    setPasteSourceLabel("Clipboard data");
-    setCsvFileSelection(null);
-    setCsvImportProgress(null);
-    setIsSubmittingPaste(false);
-    setIsCancellingPaste(false);
-    setDragSourceIndex(null);
-    setDropTargetIndex(null);
-  }, [isSubmittingPaste]);
+;
 
   const handlePasteRowsFromClipboard = useCallback(async () => {
     if (!tableName || resolvedColumns.length === 0) return;
@@ -933,38 +623,6 @@ export function DataGrid({
     setIsPasteDialogOpen(true);
   }, [tableName, resolvedColumns, setError]);
 
-  const handleImportCsv = useCallback(async () => {
-    if (!tableName || resolvedColumns.length === 0) return;
-    try {
-      const file = await invokeMutation<{
-        fileName: string;
-        content: string;
-        byteSize: number;
-        filePath: string;
-        isTruncated: boolean;
-        delimiter: "csv" | "tsv";
-      }>("read_csv_file", {});
-      const parsed = parseClipboardText(file.content);
-      if (!parsed) throw new Error("The selected file does not contain valid CSV or TSV data.");
-      const preview = buildPastePreview(parsed, resolvedColumns.map((column) => column.name));
-      if (preview.mappings.length === 0) throw new Error("No CSV headers match columns in the selected table.");
-      setPastePreview(preview);
-      setCsvFileSelection({
-        filePath: file.filePath,
-        delimiter: file.delimiter,
-        byteSize: file.byteSize,
-        isTruncated: file.isTruncated,
-      });
-      const sizeLabel = file.byteSize >= 1024 * 1024
-        ? `${(file.byteSize / (1024 * 1024)).toFixed(1)} MB`
-        : `${Math.max(1, Math.round(file.byteSize / 1024))} KB`;
-      setPasteSourceLabel(`${file.fileName} (${sizeLabel}, streaming import)`);
-      setIsPasteDialogOpen(true);
-    } catch (errorValue) {
-      setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
-    }
-  }, [resolvedColumns, setError, tableName]);
-
   // Ctrl+Shift+V: paste rows from clipboard (in DataGrid, not in insert mode)
   useEffect(() => {
     if (!isActive || !tableName || externalResult) return;
@@ -995,124 +653,8 @@ export function DataGrid({
     setOrderColumn(found?.name ?? null);
   }, [structureColumns]);
 
-  const handleDragStart = useCallback((rowIndex: number) => {
-    setDragSourceIndex(rowIndex);
-  }, []);
 
-  const handleDragOver = useCallback((e: React.DragEvent, rowIndex: number) => {
-    e.preventDefault();
-    setDropTargetIndex(rowIndex);
-  }, []);
 
-  const handleDrop = useCallback(async (e: React.DragEvent, targetIndex: number) => {
-    e.preventDefault();
-    if (dragSourceIndex === null || dragSourceIndex === targetIndex) {
-      setDragSourceIndex(null);
-      setDropTargetIndex(null);
-      return;
-    }
-    if (!tableName || !data || primaryKeyColumns.length === 0 || !orderColumn) {
-      setError(
-        "Cannot reorder rows: table has no sequence column (e.g., row_order, sort_order, position, seq). Add one to enable drag-and-drop reordering.",
-      );
-      setDragSourceIndex(null);
-      setDropTargetIndex(null);
-      return;
-    }
-
-    const sourceRow = data.rows[dragSourceIndex];
-    const targetRow = data.rows[targetIndex];
-    if (!sourceRow || !targetRow) {
-      setDragSourceIndex(null);
-      setDropTargetIndex(null);
-      return;
-    }
-
-    // Build UPDATE statements to swap the order values
-    const sourcePk = buildRowPrimaryKeys(sourceRow, resolvedColumns, primaryKeyColumns);
-    const targetPk = buildRowPrimaryKeys(targetRow, resolvedColumns, primaryKeyColumns);
-
-    const sourceOrderValue = sourceRow[resolvedColumns.findIndex((c) => c.name === orderColumn)];
-    const targetOrderValue = targetRow[resolvedColumns.findIndex((c) => c.name === orderColumn)];
-
-    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
-    const dbType = connection?.db_type;
-
-    const needsQuoting =
-      (dbType === "mysql" || dbType === "postgresql" || dbType === "mariadb" || dbType === "sqlite") &&
-      typeof sourceOrderValue === "string";
-
-    const fmt = (v: unknown) =>
-      v === null ? "NULL" : typeof v === "number" ? String(v) : needsQuoting ? `'${String(v).replace(/'/g, "''")}'` : String(v);
-
-    const sql1 = `UPDATE ${tableName} SET ${orderColumn} = ${fmt(targetOrderValue)} WHERE ${sourcePk.map((pk) => `${pk.column} = ${fmt(pk.value)}`).join(" AND ")};`;
-    const sql2 = `UPDATE ${tableName} SET ${orderColumn} = ${fmt(sourceOrderValue)} WHERE ${targetPk.map((pk) => `${pk.column} = ${fmt(pk.value)}`).join(" AND ")};`;
-
-    const confirmed = window.confirm(
-      `Reorder rows?\n\nSource: ${tableName}[${orderColumn}] = ${sourceOrderValue}\nTarget: ${tableName}[${orderColumn}] = ${targetOrderValue}\n\nSQL to execute:\n${sql1}\n${sql2}`,
-    );
-    if (!confirmed) {
-      setDragSourceIndex(null);
-      setDropTargetIndex(null);
-      return;
-    }
-
-    try {
-      await executeQuery(connectionId, sql1);
-      await executeQuery(connectionId, sql2);
-
-      invalidateTableCaches(connectionId, tableName, database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
-        }),
-      );
-      await refreshTableFromStart();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(`Reorder failed: ${message}`);
-    } finally {
-      setDragSourceIndex(null);
-      setDropTargetIndex(null);
-    }
-  }, [dragSourceIndex, tableName, data, primaryKeyColumns, orderColumn, connections, connectionId, resolvedColumns, executeQuery, setError, invalidateTableCaches, database, refreshTableFromStart]);
-
-  const handleDragEnd = useCallback(() => {
-    setDragSourceIndex(null);
-    setDropTargetIndex(null);
-  }, []);
-
-  useEffect(() => {
-    if (!isInsertDialogOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeInsertDialog();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeInsertDialog, isInsertDialogOpen]);
-
-  useEffect(() => {
-    if (!isPasteDialogOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closePasteDialog();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closePasteDialog, isPasteDialogOpen]);
-
-  useEffect(() => {
-    closeInsertDialog();
-  }, [closeInsertDialog, connectionId, database, tableName]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -1215,30 +757,6 @@ export function DataGrid({
   }, [tableName, connectionId, database, externalResult]);
 
   /** Duplicate selected row(s) — opens insert dialog pre-filled with source row values. */
-  const handleDuplicateRow = useCallback(async () => {
-    if (!tableName || structureColumns.length === 0 || selectedRows.size === 0) return;
-
-    const firstSelectedIndex = Math.min(...Array.from(selectedRows));
-    const sourceRow = data?.rows[firstSelectedIndex];
-    if (!sourceRow) return;
-
-    const { baseValues, promptColumns } = computeColumnPlan(structureColumns, sourceRow ?? null);
-
-    setInsertDialogColumns(promptColumns);
-    setInsertDialogBaseValues(baseValues);
-    setInsertDraft(
-      Object.fromEntries(
-        promptColumns.map((column) => {
-          const colIdx = structureColumns.indexOf(column);
-          const val = sourceRow ? sourceRow[colIdx] : null;
-          return [column.name, val !== null ? String(val) : ""];
-        }),
-      ),
-    );
-    setInsertDialogError(null);
-    setIsInsertDialogOpen(true);
-  }, [tableName, structureColumns, selectedRows, data]);
-
   useEffect(() => {
     if (!editingCell) return;
 
@@ -1322,83 +840,23 @@ export function DataGrid({
     undoableChanges,
   ]);
 
-
   /** Server-side order is single-column so every loaded chunk uses one consistent order. */
-  const handleSort = useCallback((colName: string) => {
-    if (sortColumn === colName) {
-      setSortDir((prev) => (prev === "ASC" ? "DESC" : "ASC"));
-    } else {
-      setMultiSort([]);
-      setSortColumn(colName);
-      setSortDir("ASC");
-    }
-    setCurrentPage(0);
-  }, [sortColumn]);
+  const {
+    handleSort,
+    handleFilterChange,
+    handleMultiSortClear,
+    handleSortAsc,
+    handleSortDesc,
+  } = useDataGridSortFilter({
+    sortColumn,
+    multiSort,
+    setMultiSort,
+    setSortColumn,
+    setSortDir,
+    setCurrentPage,
+    setFilterDraft,
+  });
 
-  const handleFilterChange = useCallback((value: string) => {
-    setFilterDraft(value);
-  }, []);
-
-  /** Add column to multi-sort at specific priority position */
-  const handleMultiSortAdd = useCallback((colName: string, direction: "ASC" | "DESC") => {
-    setMultiSort((prev) => {
-      if (prev.some((s) => s.column === colName)) return prev;
-      return [...prev, { column: colName, direction, priority: prev.length + 1 }];
-    });
-    setCurrentPage(0);
-  }, []);
-
-  /** Clear all multi-sort columns */
-  const handleMultiSortClear = useCallback(() => {
-    setMultiSort([]);
-    setSortColumn(null);
-    setSortDir("ASC");
-    setCurrentPage(0);
-  }, []);
-
-  const handleSortAsc = useCallback((colName: string) => {
-    if (multiSort.length > 0) {
-      handleMultiSortAdd(colName, "ASC");
-    } else {
-      setSortColumn(colName);
-      setSortDir("ASC");
-      setCurrentPage(0);
-    }
-  }, [handleMultiSortAdd, multiSort.length]);
-
-  const handleSortDesc = useCallback((colName: string) => {
-    if (multiSort.length > 0) {
-      handleMultiSortAdd(colName, "DESC");
-    } else {
-      setSortColumn(colName);
-      setSortDir("DESC");
-      setCurrentPage(0);
-    }
-  }, [handleMultiSortAdd, multiSort.length]);
-
-  /** Duplicate a specific row by its page index (used by row context menu). */
-  const handleDuplicateRowByIndex = useCallback(async (rowIndex: number) => {
-    if (!tableName || structureColumns.length === 0) return;
-
-    const sourceRow = data?.rows[rowIndex];
-    if (!sourceRow) return;
-
-    const { baseValues, promptColumns } = computeColumnPlan(structureColumns, sourceRow);
-
-    setInsertDialogColumns(promptColumns);
-    setInsertDialogBaseValues(baseValues);
-    setInsertDraft(
-      Object.fromEntries(
-        promptColumns.map((column) => {
-          const colIdx = structureColumns.indexOf(column);
-          const val = sourceRow[colIdx];
-          return [column.name, val !== null ? String(val) : ""];
-        }),
-      ),
-    );
-    setInsertDialogError(null);
-    setIsInsertDialogOpen(true);
-  }, [tableName, structureColumns, data]);
 
   const handleCopyValue = useCallback((value: GridCellValue, cellKey: string) => {
     navigator.clipboard.writeText(value === null ? "NULL" : String(value));
@@ -1508,684 +966,238 @@ export function DataGrid({
       && filteredTableRowIndices.every((rowIndex) => selectedRows.has(rowIndex)),
   );
 
-  const startEditingCell = useCallback(
-    async (rowIndex: number, colIndex: number) => {
-      if (!canAttemptInlineEdit || !data || !tableName) return;
-
-      setSelectedCell({ row: rowIndex, col: colIndex });
-
-      let nextResolvedColumns = resolvedColumns;
-      if (structureStatus !== "ready") {
-        try {
-          const loadedStructure = await ensureStructureLoaded();
-          nextResolvedColumns = buildResolvedColumns(data.columns, loadedStructure);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          setError(`Inline edit unavailable: ${message}`);
-          return;
-        }
-      }
-
-      const primaryKeys = nextResolvedColumns.filter((column) => column.is_primary_key);
-      const column = nextResolvedColumns[colIndex];
-      const rowValues = data.rows[rowIndex];
-
-      if (!column || !rowValues) {
-        return;
-      }
-
-      if (primaryKeys.length === 0) {
-        setError(`Inline edit unavailable for ${tableName}: no primary key was detected.`);
-        return;
-      }
-
-      if (!buildStableRowIdentity(rowValues, nextResolvedColumns)) {
-        setError(`Inline edit unavailable for ${tableName}: this row has an incomplete primary key.`);
-        return;
-      }
-
-      if (column.is_primary_key) {
-        setError(`Primary key column "${column.name}" is read-only in inline edit mode.`);
-        return;
-      }
-
-      const seedValue = editorValueFromCell(rowValues[colIndex] as GridCellValue);
-      setEditingSeedValue(seedValue);
-      editingDraftRef.current = seedValue;
-      editingOpenedAtRef.current = Date.now();
-      setEditingCell({ row: rowIndex, col: colIndex });
-    },
-    [
-      canAttemptInlineEdit,
-      data,
-      ensureStructureLoaded,
-      resolvedColumns,
-      setSelectedCell,
-      setError,
-      structureStatus,
-      tableName,
-    ],
-  );
-
-  const cancelEditingCell = useCallback(() => {
-    setEditingCell(null);
-    setEditingSeedValue("");
-    editingDraftRef.current = "";
-    editingOpenedAtRef.current = 0;
-  }, []);
-
-  const commitEditingCell = useCallback(async () => {
-    if (!editingCell || !data || !tableName) return;
-
-    const targetColumn = resolvedColumns[editingCell.col];
-    const rowValues = data.rows[editingCell.row];
-    if (!targetColumn || !rowValues || targetColumn.is_primary_key || primaryKeyColumns.length === 0) {
-      cancelEditingCell();
-      return;
-    }
-
-    if (!buildStableRowIdentity(rowValues, resolvedColumns)) {
-      cancelEditingCell();
-      setError(`Inline edit unavailable for ${tableName}: this row has an incomplete primary key.`);
-      return;
-    }
-
-    try {
-      const nextValue = parseEditorValue(editingDraftRef.current, targetColumn);
-      const currentValue = rowValues[editingCell.col] as GridCellValue;
-
-      if (areCellValuesEqual(currentValue, nextValue)) {
-        cancelEditingCell();
-        return;
-      }
-
-      const primaryKeys = buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns);
-      const rowKeyRecord: Record<string, unknown> = {};
-      for (const pk of primaryKeys) {
-        rowKeyRecord[pk.column] = pk.value;
-      }
-
-      // Stage the change in the queue (change tracking)
-      stageChange({
-        type: "update",
-        tableName,
-        database,
-        rowIndex: editingCell.row,
-        rowKey: rowKeyRecord,
-        columns: {
-          [editingCell.col]: { old: currentValue, new: nextValue },
-        },
-        originalRow: rowValues as (string | number | boolean | null)[],
-      });
-
-      // Keep the authoritative chunk cache in sync before virtual scrolling loads another page.
-      patchLoadedTableCell(editingCell.row, editingCell.col, nextValue);
-      setData((previous) => {
-        if (!previous) return previous;
-        const nextRows = previous.rows.map((row, index) => {
-          if (index !== editingCell.row) return row;
-          const nextRow = [...row];
-          nextRow[editingCell.col] = nextValue;
-          return nextRow;
-        });
-        return { ...previous, rows: nextRows };
-      });
-
-      // Track staged row for visual indicator
-      setStagedRowIndices((prev) => new Set([...prev, editingCell.row]));
-      cancelEditingCell();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setError(`Failed to stage change: ${message}`);
-    } finally {
-      setSavingCell(null);
-    }
-  }, [
+  const {
+    startEditingCell,
     cancelEditingCell,
+    commitEditingCell,
+    handleEditorBlur,
+  } = useDataGridInlineEditing({
+    canAttemptInlineEdit,
     data,
-    database,
-    editingCell,
-    patchLoadedTableCell,
-    primaryKeyColumns,
-    resolvedColumns,
-    setError,
-    stageChange,
     tableName,
-  ]);
-
-  const handleEditorBlur = useCallback(() => {
-    if (Date.now() - editingOpenedAtRef.current < 160) {
-      window.setTimeout(() => {
-        editorRef.current?.focus();
-        if (editorRef.current && "select" in editorRef.current) {
-          editorRef.current.select();
-        }
-      }, 0);
-      return;
-    }
-
-    void commitEditingCell();
-  }, [commitEditingCell]);
-
-  /** Apply all staged changes to the database (commit) */
-  const applyStagedChanges = useCallback(async () => {
-    const tableChanges = stagedChanges.filter((c) => c.tableName === tableName && c.database === database);
-    if (tableChanges.length === 0) return;
-
-    const updates = tableChanges.flatMap((change) => {
-      if (change.type !== "update") return [];
-      const primaryKeys = Object.entries(change.rowKey).map(([column, value]) => ({
-        column,
-        value: value as string | number | boolean | null,
-      }));
-      return Object.entries(change.columns).map(([targetColumn, diff]) => ({
-        table: change.tableName,
-        database: change.database,
-        target_column: targetColumn,
-        value: diff.new as string | number | boolean | null,
-        primary_keys: primaryKeys,
-      }));
-    });
-    if (updates.length === 0 || tableChanges.some((change) => change.type !== "update")) {
-      setError("The edit queue contains an operation that cannot be committed atomically yet.");
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      await applyTableUpdatesAtomically(connectionId, updates);
-
-      // The optimistic queue changes only after the backend transaction commits.
-      for (const change of tableChanges) {
-        unstageChange(change.id);
-      }
-      setStagedRowIndices(new Set());
-
-      invalidateTableCaches(connectionId, tableName ?? "", database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
-        }),
-      );
-      await refreshTableFromStart();
-
-    } catch (errorValue) {
-      const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-      setError(`No queued edits were committed: ${message}`);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [applyTableUpdatesAtomically, stagedChanges, tableName, database, connectionId, unstageChange, invalidateTableCaches, refreshTableFromStart, setError]);
-
-  /** Discard all staged changes for this table */
-  const discardStagedChanges = useCallback(() => {
-    const tableChanges = stagedChanges.filter((c) => c.tableName === tableName && c.database === database);
-    for (const change of tableChanges) {
-      unstageChange(change.id);
-    }
-    setStagedRowIndices(new Set());
-    // Reload original data
-    if (tableName) {
-      void refreshTableFromStart();
-    }
-  }, [stagedChanges, tableName, database, unstageChange, refreshTableFromStart]);
-
-  const handleRowSelection = useCallback(
-    (rowIndex: number, event?: Pick<MouseEvent, "shiftKey" | "metaKey" | "ctrlKey">) => {
-      if (!canSelectRows || !data?.rows[rowIndex]) return;
-
-      setSelectedRows((previous) => {
-        const next = new Set(previous);
-        const rowIdentity = rowIdentities[rowIndex];
-        const anchor = rowSelectionAnchorRef.current
-          ? rowIdentities.indexOf(rowSelectionAnchorRef.current)
-          : -1;
-        if (!rowIdentity) return next;
-
-        if (event?.shiftKey && anchor >= 0) {
-          const start = Math.min(anchor, rowIndex);
-          const end = Math.max(anchor, rowIndex);
-          next.clear();
-          for (let index = start; index <= end; index += 1) {
-            next.add(index);
-          }
-        } else if (event?.metaKey || event?.ctrlKey) {
-          if (next.has(rowIndex)) {
-            next.delete(rowIndex);
-          } else {
-            next.add(rowIndex);
-          }
-          rowSelectionAnchorRef.current = rowIdentity;
-        } else {
-          const shouldClear = next.size === 1 && next.has(rowIndex);
-          next.clear();
-          if (!shouldClear) {
-            next.add(rowIndex);
-          }
-          rowSelectionAnchorRef.current = shouldClear ? null : rowIdentity;
-        }
-
-        return next;
-      });
-    },
-    [canSelectRows, data, rowIdentities, setSelectedRows],
-  );
-
-  const handleToggleSelectAllRows = useCallback(() => {
-    if (!canSelectRows || filteredTableRowIndices.length === 0) return;
-
-    setSelectedRows((previous) => {
-      if (filteredTableRowIndices.every((rowIndex) => previous.has(rowIndex))) {
-        rowSelectionAnchorRef.current = null;
-        const next = new Set(previous);
-        filteredTableRowIndices.forEach((rowIndex) => next.delete(rowIndex));
-        return next;
-      }
-
-      const next = new Set(previous);
-      filteredTableRowIndices.forEach((rowIndex) => next.add(rowIndex));
-      rowSelectionAnchorRef.current = rowIdentities[filteredTableRowIndices[0] ?? -1] ?? null;
-      return next;
-    });
-  }, [canSelectRows, filteredTableRowIndices, rowIdentities, setSelectedRows]);
-
-  const handleDeleteSelectedRows = useCallback(async () => {
-    if (!tableName || !data || selectedRows.size === 0 || primaryKeyColumns.length === 0) {
-      return;
-    }
-
-    const shouldDelete = window.confirm(
-      `Delete ${selectedRows.size} selected row${selectedRows.size === 1 ? "" : "s"} from ${tableName}? This cannot be undone.`,
-    );
-    if (!shouldDelete) return;
-
-    const sortedRows = Array.from(selectedRows).sort((left, right) => left - right);
-
-    setIsDeletingRows(true);
-    try {
-      const rows = sortedRows.map((rowIndex) => {
-        const rowValues = data.rows[rowIndex];
-        if (!rowValues) {
-          throw new Error("One of the selected rows no longer exists in the current page.");
-        }
-        return buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns);
-      });
-
-      const affectedRows = await deleteTableRows(connectionId, {
-        table: tableName,
-        database,
-        rows,
-      });
-
-      if (affectedRows === 0) {
-        throw new Error("Database did not delete any rows for the current selection.");
-      }
-
-      const deletedRowSet = new Set(sortedRows);
-      setData((previous) => {
-        if (!previous) return previous;
-        return {
-          ...previous,
-          rows: previous.rows.filter((_, index) => !deletedRowSet.has(index)),
-        };
-      });
-      setTotalRows((previous) => Math.max(0, previous - sortedRows.length));
-      setSelectedRows(new Set());
-      rowSelectionAnchorRef.current = null;
-      cancelEditingCell();
-      setSelectedCell(null);
-
-      invalidateTableCaches(connectionId, tableName, database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: {
-            connectionId,
-            database,
-            tableName,
-            sourceId: dataGridInstanceIdRef.current,
-          },
-        }),
-      );
-
-      await refreshTableFromStart();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setError(`Delete rows failed: ${message}`);
-    } finally {
-      setIsDeletingRows(false);
-    }
-  }, [
-    cancelEditingCell,
-    connectionId,
-    data,
-    database,
-    deleteTableRows,
-    refreshTableFromStart,
-    primaryKeyColumns,
+    database: database || undefined,
     resolvedColumns,
-    selectedRows,
+    primaryKeyColumns,
+    structureStatus,
+    editingCell,
+    setEditingCell,
+    setEditingSeedValue,
+    setSavingCell,
+    setStagedRowIndices,
+    setData,
     setSelectedCell,
     setError,
-    setSelectedRows,
+    stageChange,
+    patchLoadedTableCell,
+    ensureStructureLoaded,
+    editingDraftRef,
+    editorRef,
+  });
+  const {
+    closeInsertDialog,
+    closePasteDialog,
+    handleInsertRow,
+    handleInsertDraftChange,
+    handleSubmitInsertDialog,
+    handleSubmitPasteDialog,
+    handleCancelPasteImport,
+    handleDuplicateRowByIndex,
+    handleDeleteSelectedRows,
+    handleDuplicateRow,
+  } = useDataGridRowMutations({
     tableName,
-  ]);
+    database: database || undefined,
+    connectionId,
+    resolvedColumns,
+    structureColumns,
+    data,
+    selectedRows,
+    primaryKeyColumns,
 
-  const analyzeInsertPlan = useCallback(() => {
-    return computeNewRowPlan(structureColumns);
-  }, [structureColumns]);
+    insertDialogBaseValues,
+    insertDialogColumns,
+    insertDraft,
+    setInsertDialogColumns,
+    setInsertDialogBaseValues,
+    setInsertDraft,
+    setInsertDialogError,
+    setIsInsertDialogOpen,
+    setIsSubmittingInsert,
 
-  const performInsertRow = useCallback(async (values: [string, unknown][]) => {
-    if (!tableName) return;
-
-    await insertTableRow(connectionId, {
-      table: tableName,
-      database,
-      values,
-    });
-
-    invalidateTableCaches(connectionId, tableName, database);
-    window.dispatchEvent(
-      new CustomEvent("table-data-updated", {
-        detail: {
-          connectionId,
-          database,
-          tableName,
-          sourceId: dataGridInstanceIdRef.current,
-        },
-      }),
-    );
-    await refreshTableFromStart();
-  }, [connectionId, database, insertTableRow, refreshTableFromStart, tableName]);
-
-  const handleInsertRow = useCallback(async () => {
-    if (!tableName || structureColumns.length === 0) {
-      return;
-    }
-
-    const { baseValues, promptColumns } = analyzeInsertPlan();
-
-    if (promptColumns.length > 0) {
-      setInsertDialogColumns(promptColumns);
-      setInsertDialogBaseValues(baseValues);
-      setInsertDraft(
-        Object.fromEntries(promptColumns.map((column) => [column.name, ""])),
-      );
-      setInsertDialogError(null);
-      setIsInsertDialogOpen(true);
-      return;
-    }
-
-    try {
-      await performInsertRow(baseValues);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setError(`Insert row failed: ${message}`);
-    }
-  }, [
-    analyzeInsertPlan,
-    performInsertRow,
+    pastePreview,
+    isSubmittingPaste,
+    csvFileSelection,
+    isCancellingPaste,
+    setPastePreview,
+    setCsvFileSelection,
+    setPasteSourceLabel,
+    setDragSourceIndex,
+    setDropTargetIndex,
+    setIsPasteDialogOpen,
+    setIsSubmittingPaste,
+    setIsCancellingPaste,
+    setCsvImportProgress,
     setError,
-    structureColumns.length,
+    setSelectedRows,
+    setSelectedCell,
+    cancelEditingCell,
+    setIsDeletingRows,
+    deleteTableRows,
+    setData,
+    setTotalRows,
+    rowSelectionAnchorRef,
+
+    csvImportOperationIdRef,
+
+    insertTableRow,
+    insertTableRowsAtomically,
+    importCsvFileAtomically,
+    cancelCsvImport,
+
+    invalidateTableCaches,
+    refreshTableFromStart,
+
+    dataGridInstanceIdRef,
+  })
+  const {
+    handleDragStart,
+    handleDragOver,
+    handleDrop,
+    handleDragEnd,
+  } = useDataGridDragReorder({
     tableName,
-  ]);
+    database: database || undefined,
+    connectionId,
+    data,
+    resolvedColumns,
+    primaryKeyColumns,
+    orderColumn,
+    dragSourceIndex,
+    connections,
+    setDragSourceIndex,
+    setDropTargetIndex,
+    setError,
+    executeQuery,
+    invalidateTableCaches,
+    refreshTableFromStart,
+    dataGridInstanceIdRef,
+  });
+  useEffect(() => {
+    if (!isInsertDialogOpen) return;
 
-  const handleInsertDraftChange = useCallback((columnName: string, value: string) => {
-    setInsertDraft((previous) => ({
-      ...previous,
-      [columnName]: value,
-    }));
-  }, []);
-
-  const handleSubmitInsertDialog = useCallback(async (event?: FormEvent<HTMLFormElement>) => {
-    event?.preventDefault();
-
-    const missingColumns: string[] = [];
-    const nextValues: [string, unknown][] = [...insertDialogBaseValues];
-
-    for (const column of insertDialogColumns) {
-      const rawValue = insertDraft[column.name] ?? "";
-      const trimmed = rawValue.trim();
-
-      if (trimmed.length === 0) {
-        if (!column.is_nullable) {
-          missingColumns.push(column.name);
-        } else {
-          nextValues.push([column.name, null]);
-        }
-        continue;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeInsertDialog();
       }
+    };
 
-      try {
-        nextValues.push([column.name, parseEditorValue(rawValue, column as ResolvedColumn)]);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setInsertDialogError(`${column.name}: ${message}`);
-        return;
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [closeInsertDialog, isInsertDialogOpen]);
+
+  useEffect(() => {
+    if (!isPasteDialogOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePasteDialog();
       }
-    }
+    };
 
-    if (missingColumns.length > 0) {
-      setInsertDialogError(`Please enter values for: ${missingColumns.join(", ")}`);
-      return;
-    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [closePasteDialog, isPasteDialogOpen]);
 
-    setInsertDialogError(null);
-    setIsSubmittingInsert(true);
 
+  useEffect(() => {
+    closeInsertDialog();
+  }, [closeInsertDialog, connectionId, database, tableName]);
+  const handleImportCsv = useCallback(async () => {
+    if (!tableName || resolvedColumns.length === 0) return;
     try {
-      await performInsertRow(nextValues);
-      closeInsertDialog();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setInsertDialogError(`Insert row failed: ${message}`);
-    } finally {
-      setIsSubmittingInsert(false);
-    }
-  }, [closeInsertDialog, insertDialogBaseValues, insertDialogColumns, insertDraft, performInsertRow]);
-
-  const handleSubmitPasteDialog = useCallback(async () => {
-    if (!pastePreview || !tableName || !connectionId) return;
-
-    const columnsByName = new Map(resolvedColumns.map((column) => [column.name, column]));
-    let validatedRows: [string, unknown][][];
-    try {
-      validatedRows = pastePreview.insertRows.map((row, rowIndex) => row.map(([columnName, rawValue]) => {
-        const column = columnsByName.get(columnName);
-        if (!column || rawValue === null) return [columnName, rawValue];
-        try {
-          return [columnName, parseEditorValue(String(rawValue), column)];
-        } catch (errorValue) {
-          const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-          throw new Error(`CSV row ${rowIndex + 1}, column ${columnName}: ${message}`);
-        }
-      }));
+      const file = await invokeMutation<{
+        fileName: string;
+        content: string;
+        byteSize: number;
+        filePath: string;
+        isTruncated: boolean;
+        delimiter: "csv" | "tsv";
+      }>("read_csv_file", {});
+      const parsed = parseClipboardText(file.content);
+      if (!parsed) throw new Error("The selected file does not contain valid CSV or TSV data.");
+      const preview = buildPastePreview(parsed, resolvedColumns.map((column) => column.name));
+      if (preview.mappings.length === 0) throw new Error("No CSV headers match columns in the selected table.");
+      setPastePreview(preview);
+      setCsvFileSelection({
+        filePath: file.filePath,
+        delimiter: file.delimiter,
+        byteSize: file.byteSize,
+        isTruncated: file.isTruncated,
+      });
+      const sizeLabel = file.byteSize >= 1024 * 1024
+        ? `${(file.byteSize / (1024 * 1024)).toFixed(1)} MB`
+        : `${Math.max(1, Math.round(file.byteSize / 1024))} KB`;
+      setPasteSourceLabel(`${file.fileName} (${sizeLabel}, streaming import)`);
+      setIsPasteDialogOpen(true);
     } catch (errorValue) {
       setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
-      return;
     }
+  }, [resolvedColumns, setError, tableName]);
 
-    setIsSubmittingPaste(true);
-    setIsCancellingPaste(false);
-    setCsvImportProgress(null);
-    const operationId = `csv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    csvImportOperationIdRef.current = operationId;
-    try {
-      if (csvFileSelection) {
-        await importCsvFileAtomically(connectionId, {
-          filePath: csvFileSelection.filePath,
-          table: tableName,
-          database,
-          delimiter: csvFileSelection.delimiter,
-          hasHeaders: pastePreview.firstRowWasHeader,
-          mappings: pastePreview.mappings.map((mapping) => ({
-            sourceIndex: mapping.clipboardIndex,
-            targetColumn: mapping.tableColumnName,
-          })),
-        }, operationId);
-      } else {
-        await insertTableRowsAtomically(
-          connectionId,
-          validatedRows.map((values) => ({ table: tableName, database, values })),
-          operationId,
-        );
-      }
 
-      invalidateTableCaches(connectionId, tableName, database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
-        }),
-      );
-      await refreshTableFromStart();
-      closePasteDialog(true);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setError(`CSV import was rolled back: ${message}`);
-    } finally {
-      csvImportOperationIdRef.current = null;
-      setIsSubmittingPaste(false);
-      setIsCancellingPaste(false);
-      setCsvImportProgress(null);
-    }
-  }, [csvFileSelection, pastePreview, tableName, connectionId, database, importCsvFileAtomically, insertTableRowsAtomically, setError, invalidateTableCaches, refreshTableFromStart, closePasteDialog, resolvedColumns]);
 
-  const handleCancelPasteImport = useCallback(async () => {
-    const operationId = csvImportOperationIdRef.current;
-    if (!operationId || isCancellingPaste) return;
-    setIsCancellingPaste(true);
-    try {
-      const accepted = await cancelCsvImport(operationId);
-      if (!accepted) {
-        setError("The CSV import had already completed and could not be cancelled.");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setError(`Could not cancel CSV import: ${message}`);
-      setIsCancellingPaste(false);
-    }
-  }, [cancelCsvImport, isCancellingPaste, setError]);
-
-  const handleFullTableExport = useCallback(async (format: "csv" | "jsonl") => {
-    if (!tableName || isExportingFull) return;
-    const operationId = `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    tableExportOperationIdRef.current = operationId;
-    setExportedRowCount(0);
-    setIsExportingFull(true);
-    try {
-      await exportTableData(connectionId, {
-        table: tableName,
-        database,
-        format,
-        orderBy: sortColumn ?? undefined,
-        orderDir: sortColumn ? sortDir : undefined,
-        filter: rowFocusFilter || undefined,
-      }, operationId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/cancel/i.test(message)) setError(`Full table export failed: ${message}`);
-    } finally {
-      tableExportOperationIdRef.current = null;
-      setIsExportingFull(false);
-    }
-  }, [connectionId, database, exportTableData, isExportingFull, rowFocusFilter, setError, sortColumn, sortDir, tableName]);
-
-  const handleCancelFullTableExport = useCallback(async () => {
-    const operationId = tableExportOperationIdRef.current;
-    if (!operationId) return;
-    try {
-      await cancelTableExport(operationId);
-    } catch (error) {
-      setError(`Could not cancel table export: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [cancelTableExport, setError]);
-
-  const handleCopyAsInsert = useCallback(async () => {
-    if (selectedRows.size === 0 || !data || !tableName || resolvedColumns.length === 0) return;
-    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
-    const dbType = connection?.db_type;
-    const cols: string[] = resolvedColumns.map((c) => c.name);
-    const rows = Array.from(selectedRows)
-      .sort((a, b) => a - b)
-      .map((i) => data.rows[i] as (string | number | boolean | null)[]);
-    const sql = generateInsertSql(tableName, cols, rows, dbType);
-    const ok = await copyToClipboard(sql);
-    if (!ok) setError("Failed to copy SQL to clipboard.");
-  }, [
-    selectedRows,
+  /** Apply all staged changes to the database (commit) */
+  const {
+    handleRowSelection,
+    handleToggleSelectAllRows,
+  } = useDataGridRowSelection({
+    canSelectRows,
     data,
-    tableName,
-    resolvedColumns,
-    connections,
-    connectionId,
-    setError,
-  ]);
+    rowIdentities,
+    filteredTableRowIndices,
+    setSelectedRows,
+    rowSelectionAnchorRef,
+  });
 
-  const handleCopyAsUpdate = useCallback(async () => {
-    if (
-      selectedRows.size === 0 ||
-      !data ||
-      !tableName ||
-      resolvedColumns.length === 0 ||
-      primaryKeyColumns.length === 0
-    )
-      return;
-    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
-    const dbType = connection?.db_type;
-    const cols: string[] = resolvedColumns.map((c) => c.name);
-    const rows = Array.from(selectedRows)
-      .sort((a, b) => a - b)
-      .map((i) => data.rows[i] as (string | number | boolean | null)[]);
-    const sql = generateUpdateSql(tableName, cols, rows, primaryKeyColumns.map((c) => c.name), dbType);
-    const ok = await copyToClipboard(sql);
-    if (!ok) setError("Failed to copy SQL to clipboard.");
-  }, [
+
+
+  const {
+    handleFullTableExport,
+    handleCancelFullTableExport,
+  } = useDataGridTableExport({
+    tableName,
+    database: database || undefined,
+    connectionId,
+    sortColumn,
+    sortDir,
+    rowFocusFilter,
+    isExportingFull,
+    setIsExportingFull,
+    setExportedRowCount,
+    setError,
+    exportTableData,
+    cancelTableExport,
+    tableExportOperationIdRef,
+  });
+
+  const {
+    handleCopyAsInsert,
+    handleCopyAsUpdate,
+    handleCopyAsInsertParam,
+    handleCopyAsUpdateParam,
+    handleCopyAsDeleteParam,
+  } = useDataGridCopySqlActions({
     selectedRows,
     data,
     tableName,
     resolvedColumns,
     primaryKeyColumns,
     connections,
-    connectionId,
+    connectionId: connectionId ?? undefined,
     setError,
-  ]);
-
-  const handleCopyAsInsertParam = useCallback(async () => {
-    if (!tableName || resolvedColumns.length === 0) return;
-    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
-    const dbType = connection?.db_type;
-    const cols: string[] = resolvedColumns.map((c) => c.name);
-    const sql = generateInsertSqlParameterized(tableName, cols, dbType);
-    const ok = await copyToClipboard(sql);
-    if (!ok) setError("Failed to copy SQL to clipboard.");
-  }, [tableName, resolvedColumns, connections, connectionId, setError]);
-
-  const handleCopyAsUpdateParam = useCallback(async () => {
-    if (!tableName || resolvedColumns.length === 0 || primaryKeyColumns.length === 0) return;
-    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
-    const dbType = connection?.db_type;
-    const cols: string[] = resolvedColumns.map((c) => c.name);
-    const sql = generateUpdateSqlParameterized(
-      tableName,
-      cols,
-      primaryKeyColumns.map((c) => c.name),
-      dbType,
-    );
-    const ok = await copyToClipboard(sql);
-    if (!ok) setError("Failed to copy SQL to clipboard.");
-  }, [tableName, resolvedColumns, primaryKeyColumns, connections, connectionId, setError]);
-
-  const handleCopyAsDeleteParam = useCallback(async () => {
-    if (!tableName || primaryKeyColumns.length === 0) return;
-    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
-    const dbType = connection?.db_type;
-    const sql = generateDeleteSqlParameterized(
-      tableName,
-      primaryKeyColumns.map((c) => c.name),
-      dbType,
-    );
-    const ok = await copyToClipboard(sql);
-    if (!ok) setError("Failed to copy SQL to clipboard.");
-  }, [tableName, primaryKeyColumns, connections, connectionId, setError]);
+  });
 
   const filteredTableRows = useMemo(() => {
     if (!data || externalResult) return [];
@@ -2415,147 +1427,32 @@ export function DataGrid({
     (c) => c.tableName === tableName && c.database === database,
   ).length;
   const visibleRowCount = tableData.length;
-  const columnCount = resolvedColumns.length;
   const insertDialogModal =
     isInsertDialogOpen && typeof document !== "undefined"
       ? createPortal(
-          <div className="datagrid-insert-dialog-backdrop" onClick={closeInsertDialog}>
-            <div
-              className="datagrid-insert-dialog"
-              onClick={(event) => event.stopPropagation()}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="datagrid-insert-dialog-title"
-            >
-              <div className="datagrid-insert-dialog-header">
-                <div className="datagrid-insert-dialog-copy">
-                  <span className="datagrid-insert-dialog-kicker">Insert row</span>
-                  <h3 id="datagrid-insert-dialog-title" className="datagrid-insert-dialog-title">
-                    {tableName ? `Add row to ${tableName.split(".").pop() || tableName}` : "Add row"}
-                  </h3>
-                  <p className="datagrid-insert-dialog-description">
-                    Enter the required values below. Columns with database defaults are handled automatically.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="datagrid-insert-dialog-close"
-                  onClick={closeInsertDialog}
-                  aria-label="Close insert dialog"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <form className="datagrid-insert-dialog-form" onSubmit={handleSubmitInsertDialog}>
-                <div className="datagrid-insert-dialog-fields">
-                  {insertDialogColumns.map((column, index) => {
-                    const normalizedType = (column.column_type || column.data_type || "").toLowerCase();
-                    const usesTextarea =
-                      normalizedType.includes("json") ||
-                      normalizedType.includes("text") ||
-                      normalizedType.includes("blob");
-                    const isBooleanInput = isBooleanColumn(column as ResolvedColumn);
-                    const placeholder = isBooleanInput
-                      ? "true / false"
-                      : normalizedType.includes("uuid")
-                        ? "UUID value"
-                        : normalizedType.includes("int") || normalizedType.includes("numeric")
-                          ? "Numeric value"
-                          : column.is_nullable
-                            ? "Leave blank for NULL"
-                            : "Required value";
-
-                    return (
-                      <label key={column.name} className="datagrid-insert-field">
-                        <span className="datagrid-insert-field-head">
-                          <span className="datagrid-insert-field-name">{column.name}</span>
-                          {!column.is_nullable && (
-                            <span className="datagrid-insert-field-required">Required</span>
-                          )}
-                        </span>
-                        <span className="datagrid-insert-field-meta">
-                          {column.column_type || column.data_type}
-                        </span>
-                        {isBooleanInput ? (
-                          <select
-                            className="datagrid-insert-field-input"
-                            value={insertDraft[column.name] ?? ""}
-                            onChange={(event) =>
-                              handleInsertDraftChange(column.name, event.currentTarget.value)
-                            }
-                            autoFocus={index === 0}
-                          >
-                            {column.is_nullable && <option value="">NULL</option>}
-                            <option value="true">true</option>
-                            <option value="false">false</option>
-                          </select>
-                        ) : usesTextarea ? (
-                          <textarea
-                            className="datagrid-insert-field-input datagrid-insert-field-input-textarea"
-                            value={insertDraft[column.name] ?? ""}
-                            onChange={(event) =>
-                              handleInsertDraftChange(column.name, event.currentTarget.value)
-                            }
-                            placeholder={placeholder}
-                            autoFocus={index === 0}
-                            rows={4}
-                          />
-                        ) : (
-                          <input
-                            className="datagrid-insert-field-input"
-                            type="text"
-                            value={insertDraft[column.name] ?? ""}
-                            onChange={(event) =>
-                              handleInsertDraftChange(column.name, event.currentTarget.value)
-                            }
-                            placeholder={placeholder}
-                            autoFocus={index === 0}
-                          />
-                        )}
-                      </label>
-                    );
-                  })}
-                </div>
-
-                {insertDialogError && (
-                  <div className="datagrid-insert-dialog-error">{insertDialogError}</div>
-                )}
-
-                <div className="datagrid-insert-dialog-actions">
-                  <button
-                    type="button"
-                    className="datagrid-insert-dialog-btn"
-                    onClick={closeInsertDialog}
-                    disabled={isSubmittingInsert}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="datagrid-insert-dialog-btn is-primary"
-                    disabled={isSubmittingInsert}
-                  >
-                    {isSubmittingInsert ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Inserting...
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="w-4 h-4" />
-                        Insert row
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>,
+          <InsertRowDialog
+            tableName={tableName}
+            columns={insertDialogColumns}
+            draft={insertDraft}
+            error={insertDialogError}
+            isSubmitting={isSubmittingInsert}
+            onClose={closeInsertDialog}
+            onSubmit={handleSubmitInsertDialog}
+            onDraftChange={handleInsertDraftChange}
+          />,
           document.body,
         )
       : null;
-
+  // Footer pills portal into the app statusbar slot when available
+  // (table workspace); fall back to the in-grid footer otherwise.
+  const [footerPortalTarget, setFooterPortalTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (externalResult) {
+      setFooterPortalTarget(null);
+      return;
+    }
+    setFooterPortalTarget(document.getElementById("datagrid-footer-slot"));
+  }, [externalResult]);
   if (!data && !isLoading) {
     return (
       <div className="datagrid-blank-state">
@@ -2564,6 +1461,61 @@ export function DataGrid({
       </div>
     );
   }
+
+  const gridFooter = (
+    <div className="datagrid-footer">
+      <div className="datagrid-footer-meta">
+        {data && (
+          <>
+            <span className="datagrid-footer-pill strong">
+              {visibleRowCount} row{visibleRowCount !== 1 ? "s" : ""}
+            </span>
+            {totalRows > 0 && (
+              <span className="datagrid-footer-pill">of {totalRows.toLocaleString()} total</span>
+            )}
+            <span
+              className={`datagrid-footer-pill${sortColumn || multiSort.length > 0 ? " info" : ""}`}
+              title="Row sort order"
+            >
+              {sortColumn
+                ? `${sortColumn} ${sortDir}`
+                : multiSort.length > 0
+                  ? multiSort
+                      .map((s) => `${s.priority}.${s.column} ${s.direction}`)
+                      .join(", ")
+                  : "Natural order"}
+            </span>
+            {multiSort.length > 0 && (
+              <button
+                type="button"
+                className="datagrid-sort-clear-btn"
+                onClick={handleMultiSortClear}
+                title="Clear all sorts"
+              >
+                <X className="w-3! h-3!" />
+              </button>
+            )}
+            {tableName && (
+              <span className={`datagrid-footer-pill ${isTableEditable ? "info" : ""}`}>
+                {isTableEditable
+                  ? "Inline edit ready"
+                  : structureStatus === "loading"
+                    ? "Loading edit metadata..."
+                    : structureStatus === "idle"
+                      ? "Edit on demand"
+                      : "Retry edit load"}
+              </span>
+            )}
+            {selectedRowCount > 0 && (
+              <span className="datagrid-footer-pill warning">
+                {selectedRowCount} selected
+              </span>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -2574,11 +1526,6 @@ export function DataGrid({
         tableName={tableName}
         database={database}
         externalResult={externalResult}
-        columnCount={columnCount}
-        visibleRowCount={visibleRowCount}
-        executionTimeMs={data?.execution_time_ms ?? 0}
-        sortColumn={sortColumn}
-        sortDir={sortDir}
         filterValue={filterDraft}
         onFilterChange={handleFilterChange}
         selectedRowCount={selectedRowCount}
@@ -2593,9 +1540,6 @@ export function DataGrid({
         handleCopyAsUpdateParam={handleCopyAsUpdateParam}
         handleCopyAsDeleteParam={handleCopyAsDeleteParam}
         isTableEditable={isTableEditable}
-        editUnavailableReason={capabilityProfile && !allowsInlineEdit
-          ? `${capabilityProfile.label} is read-only in TableR; editing actions are unavailable.`
-          : undefined}
         canExportData={allowsDataExport}
         onExportFull={tableName && !externalResult ? handleFullTableExport : undefined}
         isExportingFull={isExportingFull}
@@ -2606,8 +1550,6 @@ export function DataGrid({
         resolvedColumns={resolvedColumns}
         dataRows={tableData}
         undoableChanges={undoableChanges}
-        multiSort={multiSort}
-        onClearMultiSort={handleMultiSortClear}
         stagedChangeCount={tableName ? getChangeCount(tableName) : 0}
         onApplyChanges={applyStagedChanges}
         onDiscardChanges={discardStagedChanges}
@@ -2871,319 +1813,47 @@ export function DataGrid({
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          className="datagrid-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          {contextMenu.type === "header" && contextMenu.colName && (
-            <>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  handleSortAsc(contextMenu.colName!);
-                  setContextMenu(null);
-                }}
-              >
-                Sort ascending
-              </button>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  handleSortDesc(contextMenu.colName!);
-                  setContextMenu(null);
-                }}
-              >
-                Sort descending
-              </button>
-              <div className="datagrid-context-menu-separator" />
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  void navigator.clipboard.writeText(contextMenu.colName!);
-                  setContextMenu(null);
-                }}
-              >
-                Copy column name
-              </button>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  const sql = tableName
-                    ? `SELECT ${contextMenu.colName} FROM ${tableName};`
-                    : `SELECT ${contextMenu.colName};`;
-                  void navigator.clipboard.writeText(sql);
-                  setContextMenu(null);
-                }}
-              >
-                Copy as SELECT
-              </button>
-              <div className="datagrid-context-menu-separator" />
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  handleColumnAutoFit(contextMenu.colName!);
-                  setContextMenu(null);
-                }}
-              >
-                Auto-fit column
-              </button>
-              {contextMenu.colName !== "_row_num" && (
-                <>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      table.getColumn(contextMenu.colName!)?.pin("left");
-                      setContextMenu(null);
-                    }}
-                  >
-                    Pin left
-                  </button>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      table.getColumn(contextMenu.colName!)?.pin("right");
-                      setContextMenu(null);
-                    }}
-                  >
-                    Pin right
-                  </button>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      table.getColumn(contextMenu.colName!)?.pin(false);
-                      setContextMenu(null);
-                    }}
-                  >
-                    Unpin
-                  </button>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      const columnId = contextMenu.colName!;
-                      setColumnOrder((previous) => {
-                        const allIds = table.getAllLeafColumns().map((column) => column.id);
-                        const order = previous.length > 0
-                          ? [...previous, ...allIds.filter((id) => !previous.includes(id))]
-                          : allIds;
-                        const index = order.indexOf(columnId);
-                        if (index <= 1) return order;
-                        [order[index - 1], order[index]] = [order[index], order[index - 1]];
-                        return order;
-                      });
-                      setContextMenu(null);
-                    }}
-                  >
-                    Move left
-                  </button>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      const columnId = contextMenu.colName!;
-                      setColumnOrder((previous) => {
-                        const allIds = table.getAllLeafColumns().map((column) => column.id);
-                        const order = previous.length > 0
-                          ? [...previous, ...allIds.filter((id) => !previous.includes(id))]
-                          : allIds;
-                        const index = order.indexOf(columnId);
-                        if (index < 0 || index >= order.length - 1) return order;
-                        [order[index], order[index + 1]] = [order[index + 1], order[index]];
-                        return order;
-                      });
-                      setContextMenu(null);
-                    }}
-                  >
-                    Move right
-                  </button>
-                  <button
-                    className="datagrid-context-menu-item"
-                    onClick={() => {
-                      table.getColumn(contextMenu.colName!)?.toggleVisibility(false);
-                      setContextMenu(null);
-                    }}
-                  >
-                    Hide column
-                  </button>
-                </>
-              )}
-              {table.getAllLeafColumns().some((column) => !column.getIsVisible()) && (
-                <button
-                  className="datagrid-context-menu-item"
-                  onClick={() => {
-                    table.toggleAllColumnsVisible(true);
-                    setContextMenu(null);
-                  }}
-                >
-                  Show all columns
-                </button>
-              )}
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  if (tableName) {
-                    clearColumnLayout(connectionId, tableName, database);
-                    clearColumnWidths(connectionId, tableName, database);
-                  }
-                  setColumnOrder([]);
-                  setColumnVisibility({});
-                  setColumnPinning({ left: ["_row_num"], right: [] });
-                  setColumnSizes({});
-                  setSortColumn(null);
-                  setSortDir("ASC");
-                  setFilterDraft("");
-                  setTableFilter("");
-                  setContextMenu(null);
-                }}
-              >
-                Reset table layout
-              </button>
-              <div className="datagrid-context-menu-separator" />
-              <div className="datagrid-context-menu-label" style={{ padding: "4px 12px", fontSize: "11px", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Display As</div>
-              {(["default", "uuid", "hex", "text", "json"] as ColumnDisplayFormat[]).map((fmt) => (
-                <button
-                  key={fmt}
-                  className="datagrid-context-menu-item"
-                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
-                  onClick={() => {
-                     setColumnDisplayFormats(prev => ({ ...prev, [contextMenu.colName!]: fmt }));
-                     setContextMenu(null);
-                  }}
-                >
-                  <span style={{ textTransform: "capitalize" }}>{fmt}</span>
-                  {(columnDisplayFormats[contextMenu.colName!] || "default") === fmt && (
-                    <span style={{ color: "var(--accent)" }}>✓</span>
-                  )}
-                </button>
-              ))}
-            </>
-          )}
-          {contextMenu.type === "row" && (
-            <>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  handleOpenRowInspector(contextMenu.rowIndex ?? 0);
-                  setContextMenu(null);
-                }}
-              >
-                Inspect row
-              </button>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  void handleDuplicateRowByIndex(contextMenu.rowIndex ?? 0);
-                  setContextMenu(null);
-                }}
-              >
-                Duplicate row
-              </button>
-            </>
-          )}
-          {contextMenu.type === "cell" && (
-            <>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  handleInsertRow();
-                  setContextMenu(null);
-                }}
-              >
-                Add row
-              </button>
-            </>
-          )}
-        </div>
+        <DataGridContextMenu
+          menu={contextMenu}
+          connectionId={connectionId}
+          database={database}
+          tableName={tableName}
+          columnDisplayFormats={columnDisplayFormats}
+          table={table}
+          onClose={() => setContextMenu(null)}
+          onSortAsc={handleSortAsc}
+          onSortDesc={handleSortDesc}
+          onInsertRow={handleInsertRow}
+          onDuplicateRowByIndex={handleDuplicateRowByIndex}
+          onOpenRowInspector={handleOpenRowInspector}
+          onColumnAutoFit={handleColumnAutoFit}
+          setColumnOrder={setColumnOrder}
+          setColumnPinning={setColumnPinning}
+          setColumnSizes={setColumnSizes}
+          setColumnVisibility={setColumnVisibility}
+          setFilterDraft={setFilterDraft}
+          setTableFilter={setTableFilter}
+          setSortColumn={setSortColumn}
+          setSortDir={setSortDir}
+          setColumnDisplayFormats={setColumnDisplayFormats}
+        />
       )}
 
       {/* FK Preview Popover */}
       {fkPreview && (
-        <div className="datagrid-fk-preview">
-          <div className="datagrid-fk-preview-header">
-            <span className="datagrid-fk-preview-title">
-              FK Preview: {fkPreview.table}.{fkPreview.column}
-            </span>
-            <span className="datagrid-fk-preview-value">
-              = {String(fkPreview.value)}
-            </span>
-            <button
-              type="button"
-              className="datagrid-fk-preview-close"
-              onClick={() => setFkPreview(null)}
-            >
-              ×
-            </button>
-          </div>
-          <div className="datagrid-fk-preview-body">
-            {isLoadingFkPreview ? (
-              <div className="datagrid-fk-preview-loading">Loading...</div>
-            ) : fkPreviewData ? (
-              fkPreviewData.rows.length > 0 ? (
-                <table className="datagrid-fk-preview-table">
-                  <thead>
-                    <tr>
-                      {fkPreviewData.columns.map((col) => (
-                        <th key={col.name}>{col.name}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {fkPreviewData.rows.slice(0, 3).map((row, i) => (
-                      <tr key={i}>
-                        {row.map((cell, j) => (
-                          <td key={j}>{cell === null ? "NULL" : String(cell)}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <div className="datagrid-fk-preview-empty">No matching row found</div>
-              )
-            ) : (
-              <div className="datagrid-fk-preview-empty">Press Ctrl+Enter on an FK cell to preview</div>
-            )}
-          </div>
-        </div>
+        <FkPreviewPopover
+          fkPreview={fkPreview}
+          isLoadingFkPreview={isLoadingFkPreview}
+          fkPreviewData={fkPreviewData}
+          onClose={() => setFkPreview(null)}
+        />
       )}
-
-      {!externalResult && (
-        <div className="datagrid-footer">
-          <div className="datagrid-footer-meta">
-            {data && (
-              <>
-                <span className="datagrid-footer-pill strong">
-                  {visibleRowCount} row{visibleRowCount !== 1 ? "s" : ""}
-                </span>
-                {totalRows > 0 && (
-                  <span className="datagrid-footer-pill">of {totalRows.toLocaleString()} total</span>
-                )}
-                {data.execution_time_ms > 0 && (
-                  <span className="datagrid-footer-pill success">{data.execution_time_ms}ms</span>
-                )}
-                {tableName && (
-                  <span className={`datagrid-footer-pill ${isTableEditable ? "info" : ""}`}>
-                    {isTableEditable
-                      ? "Inline edit ready"
-                      : structureStatus === "loading"
-                        ? "Loading edit metadata..."
-                        : structureStatus === "idle"
-                          ? "Edit on demand"
-                          : "Retry edit load"}
-                  </span>
-                )}
-                {selectedRowCount > 0 && (
-                  <span className="datagrid-footer-pill warning">
-                    {selectedRowCount} selected
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-
-          {tableName && hasMoreTableRows && (
-            <span className="datagrid-footer-pill">Scroll to load more</span>
-          )}
-        </div>
-      )}
+      {!externalResult &&
+        (footerPortalTarget ? (
+          createPortal(gridFooter, footerPortalTarget)
+        ) : (
+          gridFooter
+        ))}
     </div>
     {insertDialogModal}
 
@@ -3204,129 +1874,18 @@ export function DataGrid({
       {/* Paste Rows Dialog */}
       {isPasteDialogOpen && pastePreview && typeof document !== "undefined"
         ? createPortal(
-            <div className="datagrid-insert-dialog-backdrop" onClick={() => closePasteDialog()}>
-              <div
-                className="datagrid-insert-dialog"
-                onClick={(event) => event.stopPropagation()}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="datagrid-paste-dialog-title"
-              >
-                <div className="datagrid-insert-dialog-header">
-                  <div className="datagrid-insert-dialog-copy">
-                    <span className="datagrid-insert-dialog-kicker">{pasteSourceLabel}</span>
-                    <h3 id="datagrid-paste-dialog-title" className="datagrid-insert-dialog-title">
-                      {csvFileSelection
-                        ? `Import full file into ${tableName?.split(".").pop() || tableName || "table"}`
-                        : tableName ? `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""} into ${tableName.split(".").pop() || tableName}` : `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""}`}
-                    </h3>
-                    <p className="datagrid-insert-dialog-description">
-                      Column mappings from clipboard ({pastePreview.firstRowWasHeader ? "headers detected" : "positional mapping"}):
-                      {pastePreview.nullColumns.length > 0 && ` Unmapped table columns are omitted so database defaults can apply: ${pastePreview.nullColumns.join(", ")}`}
-                      {pastePreview.skippedColumns.length > 0 && ` Skipped clipboard columns: ${pastePreview.skippedColumns.map((c) => `"${c.header}"`).join(", ")}`}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="datagrid-insert-dialog-close"
-                    onClick={() => closePasteDialog()}
-                    aria-label="Close paste dialog"
-                    disabled={isSubmittingPaste}
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="datagrid-paste-preview">
-                  {pastePreview.mappings.length > 0 && (
-                    <div className="datagrid-paste-mappings">
-                      <p className="datagrid-paste-section-label">Column mappings</p>
-                      <table className="datagrid-paste-mapping-table">
-                        <thead>
-                          <tr>
-                            <th>Clipboard column</th>
-                            <th></th>
-                            <th>Table column</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {pastePreview.mappings.map((m) => (
-                            <tr key={m.tableColumnIndex}>
-                              <td><code>{m.clipboardHeader}</code></td>
-                              <td style={{ textAlign: "center" }}>→</td>
-                              <td><code>{m.tableColumnName}</code></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  {pastePreview.skippedColumns.length > 0 && (
-                    <div className="datagrid-paste-section">
-                      <p className="datagrid-paste-section-label">Skipped clipboard columns (no matching table column)</p>
-                      <div className="datagrid-paste-chip-list">
-                        {pastePreview.skippedColumns.map((c) => (
-                          <span key={c.index} className="datagrid-paste-chip skipped">{c.header || `Column ${c.index + 1}`}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  <div className="datagrid-paste-summary">
-                    <strong>{pastePreview.rowCount}</strong> {csvFileSelection?.isTruncated ? "preview rows checked; the full file will stream" : `row${pastePreview.rowCount !== 1 ? "s" : ""} to insert`}
-                    {pastePreview.nullColumns.length > 0 && `, <strong>${pastePreview.nullColumns.length}</strong> column(s) use database defaults`}
-                  </div>
-                  {isSubmittingPaste && csvFileSelection && csvImportProgress && (
-                    <div className="datagrid-import-progress" aria-live="polite">
-                      <progress
-                        max={Math.max(1, csvImportProgress.totalBytes)}
-                        value={csvImportProgress.processedBytes}
-                      />
-                      <span>
-                        {csvImportProgress.processedRows.toLocaleString()} rows processed
-                        {csvImportProgress.totalBytes > 0
-                          ? ` (${Math.min(100, Math.round((csvImportProgress.processedBytes / csvImportProgress.totalBytes) * 100))}%)`
-                          : ""}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="datagrid-insert-dialog-actions">
-                  <button
-                    type="button"
-                    className="datagrid-insert-dialog-btn"
-                    onClick={() => {
-                      if (isSubmittingPaste) {
-                        void handleCancelPasteImport();
-                      } else {
-                        closePasteDialog();
-                      }
-                    }}
-                    disabled={isCancellingPaste}
-                  >
-                    {isSubmittingPaste ? (isCancellingPaste ? "Cancelling..." : "Cancel import") : "Cancel"}
-                  </button>
-                  <button
-                    type="button"
-                    className="datagrid-insert-dialog-btn is-primary"
-                    onClick={() => void handleSubmitPasteDialog()}
-                    disabled={isSubmittingPaste}
-                  >
-                    {isSubmittingPaste ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        {csvFileSelection ? "Streaming file in one transaction..." : `Importing ${pastePreview.rowCount} rows atomically...`}
-                      </>
-                    ) : (
-                      <>
-                        <ClipboardPaste className="w-4 h-4" />
-                        {csvFileSelection ? "Import full file" : `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""}`}
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>,
+            <PasteRowsDialog
+              tableName={tableName}
+              pasteSourceLabel={pasteSourceLabel}
+              csvFileSelection={csvFileSelection}
+              isSubmittingPaste={isSubmittingPaste}
+              isCancellingPaste={isCancellingPaste}
+              csvImportProgress={csvImportProgress}
+              pastePreview={pastePreview}
+              onClose={() => closePasteDialog()}
+              onSubmit={() => void handleSubmitPasteDialog()}
+              onCancel={() => void handleCancelPasteImport()}
+ />,
             document.body,
           )
         : null}

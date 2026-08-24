@@ -126,7 +126,7 @@ export const EditableRelationEdge = memo(function EditableRelationEdge({
 
   const path = useMemo(() => buildEditablePath(edgePoints), [edgePoints]);
 
-  const strokeColor = typeof style?.stroke === "string" ? style.stroke : "#7BB1FF";
+  const strokeColor = typeof style?.stroke === "string" ? style.stroke : "#84a3cd";
 
   const sourceMarker = useMemo(() => {
     if (!data?.sourceCardinality || edgePoints.length < 2) return null;

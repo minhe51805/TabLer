@@ -4,5 +4,6 @@ pub mod file_storage;
 pub mod mcp_storage;
 pub mod migrations;
 pub mod plugin_storage;
+pub mod semantic_storage;
 pub mod sql_favorites;
 pub mod tab_persistence;

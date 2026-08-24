@@ -40,10 +40,15 @@ export const config = {
   mochaOpts: { ui: "bdd", timeout: 90_000 },
   afterTest: async function (test, _context, result) {
     const safeName = test.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase();
-    await browser.saveScreenshot(path.join(
-      artifacts,
-      `${safeName}-${result.passed ? "passed" : "failed"}.png`,
-    ));
+    try {
+      await browser.saveScreenshot(path.join(
+        artifacts,
+        `${safeName}-${result.passed ? "passed" : "failed"}.png`,
+      ));
+    } catch (error) {
+      // A crashed/hung webview session must not fail the hook itself.
+      console.warn(`[e2e] screenshot skipped for "${test.title}": ${error?.message ?? error}`);
+    }
     if (result.passed) return;
     fs.writeFileSync(
       path.join(artifacts, `${safeName}.json`),

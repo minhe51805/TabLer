@@ -1,4 +1,4 @@
-import { Database, FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Terminal, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search } from "lucide-react";
+import { FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { exportToCSV, exportToJSON } from "../../utils/export-utils";
@@ -19,11 +19,6 @@ interface DataGridToolbarProps {
   tableName?: string;
   database?: string;
   externalResult?: import("../../types").QueryResult;
-  columnCount: number;
-  visibleRowCount: number;
-  executionTimeMs?: number;
-  sortColumn: string | null;
-  sortDir: "ASC" | "DESC";
   selectedRowCount: number;
   isDeletingRows: boolean;
   handleDeleteSelectedRows: () => void;
@@ -58,7 +53,6 @@ interface DataGridToolbarProps {
   onDiscardChanges?: () => void;
   filterValue?: string;
   onFilterChange?: (value: string) => void;
-  editUnavailableReason?: string;
   canExportData?: boolean;
   canImportCsv?: boolean;
   onExportFull?: (format: "csv" | "jsonl") => void;
@@ -81,14 +75,7 @@ export function DataGridToolbar({
   tableName,
   database,
   externalResult,
-  columnCount,
-  visibleRowCount,
-  executionTimeMs = 0,
-  sortColumn,
-  sortDir,
   selectedRowCount,
-  multiSort = [],
-  onClearMultiSort,
   onPasteRows,
   onImportCsv,
   isDeletingRows,
@@ -110,7 +97,6 @@ export function DataGridToolbar({
   onDiscardChanges,
   filterValue = "",
   onFilterChange,
-  editUnavailableReason,
   canExportData = true,
   canImportCsv = true,
   onExportFull,
@@ -149,28 +135,31 @@ export function DataGridToolbar({
     window.addEventListener("mousedown", handlePointerDown, true);
     return () => window.removeEventListener("mousedown", handlePointerDown, true);
   }, [showExportMenu, showSettings]);
-  const compactQuery = externalResult?.query?.replace(/\s+/g, " ").trim() ?? "";
-  const dataViewTitle = tableName ? tableName.split(".").pop() || tableName : "Result set";
-  const dataViewSubtitle = tableName
-    ? isTableEditable
-      ? "Use # to select rows. Click a cell once to select, then click again or double-click to edit. Press Enter to save or type NULL to clear."
-      : editUnavailableReason
-        ? editUnavailableReason
-        : structureStatus === "loading"
-        ? "Loading inline edit metadata for this table..."
-        : structureStatus === "idle"
-          ? "Browsing table rows. Inline edit metadata loads the first time you edit a cell."
-          : "Browsing table rows. Inline edit metadata could not be loaded. Click a cell to retry."
-    : compactQuery
-      ? compactQuery
-      : "Rows returned from the latest SQL execution.";
-  const activeSortLabel = sortColumn
-    ? sortColumn + " " + sortDir
-    : multiSort.length > 0
-      ? multiSort
-          .map((s) => `${s.priority}.${s.column} ${s.direction}`)
-          .join(", ")
-      : "Natural order";
+
+  // Filter input: rendered on the left side of the grid toolbar.
+  const showFilter = Boolean((tableName || externalResult) && onFilterChange);
+
+  const filterControl = showFilter ? (
+    <label className="datagrid-filter-control">
+      <Search className="w-3.5 h-3.5" aria-hidden="true" />
+      <input
+        value={filterValue}
+        onChange={(event) => onFilterChange?.(event.target.value)}
+        placeholder="Filter rows"
+        aria-label="Filter loaded rows"
+      />
+      {filterValue && (
+        <button
+          type="button"
+          onClick={() => onFilterChange?.("")}
+          aria-label="Clear table filter"
+          title="Clear filter"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </label>
+  ) : null;
 
   const canExport = canExportData && resolvedColumns.length > 0 && (dataRows.length > 0 || Boolean(tableName && onExportFull));
   const exportFilenameBase = tableName
@@ -229,86 +218,14 @@ export function DataGridToolbar({
 
   return (
     <div className="datagrid-topbar">
-      <div className="datagrid-topbar-copy">
-        <span className="datagrid-topbar-kicker">{tableName ? "Workspace Data" : "Execution Result"}</span>
-        <div className="datagrid-topbar-title-row">
-          {tableName ? (
-            <Database className="w-4 h-4 text-[var(--fintech-green)]" />
-          ) : (
-            <Terminal className="w-4 h-4 text-[var(--fintech-cyan)]" />
-          )}
-          <h3 className="datagrid-topbar-title">{dataViewTitle}</h3>
-        </div>
-        <p className="datagrid-topbar-subtitle" title={dataViewSubtitle}>
-          {dataViewSubtitle}
-        </p>
-      </div>
+      {filterControl}
 
       <div className="datagrid-topbar-side">
-        <div className="datagrid-topbar-stats">
-          <span className="datagrid-stat-pill">{columnCount} columns</span>
-          <span className="datagrid-stat-pill">{visibleRowCount} loaded</span>
-          {executionTimeMs > 0 && (
-            <span className="datagrid-stat-pill">{executionTimeMs}ms</span>
-          )}
-          <span className={`datagrid-stat-pill ${sortColumn || multiSort.length > 0 ? "active" : ""}`}>
-            {activeSortLabel}
+        {stagedChangeCount > 0 && (
+          <span className="datagrid-stat-pill staged-change-badge" title="Staged changes pending">
+            {stagedChangeCount} staged
           </span>
-          {multiSort.length > 0 && onClearMultiSort && (
-            <button
-              type="button"
-              className="datagrid-sort-clear-btn"
-              onClick={onClearMultiSort}
-              title="Clear all sorts"
-            >
-              <X className="w-3! h-3!" />
-            </button>
-          )}
-          {stagedChangeCount > 0 && (
-            <span className="datagrid-stat-pill staged-change-badge" title="Staged changes pending">
-              {stagedChangeCount} staged
-            </span>
-          )}
-        </div>
-
-        {(tableName || externalResult) && onFilterChange && (
-          <label className="datagrid-filter-control">
-            <Search className="w-3.5 h-3.5" aria-hidden="true" />
-            <input
-              value={filterValue}
-              onChange={(event) => onFilterChange(event.target.value)}
-              placeholder="Filter rows"
-              aria-label="Filter loaded rows"
-            />
-            {filterValue && (
-              <button type="button" onClick={() => onFilterChange("")} aria-label="Clear table filter" title="Clear filter">
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </label>
         )}
-
-        {/* View mode toggle: Table / Chart */}
-        <div className="datachart-toggle-group datagrid-view-toggle">
-          <button
-            type="button"
-            className={`datachart-toggle-btn${viewMode === "table" ? " active" : ""}`}
-            onClick={() => onViewModeChange?.("table")}
-            title="Table view"
-          >
-            <List className="!w-3.5 !h-3.5" />
-            <span>Table</span>
-          </button>
-          <button
-            type="button"
-            className={`datachart-toggle-btn${viewMode === "chart" ? " active" : ""}`}
-            onClick={() => onViewModeChange?.("chart")}
-            title="Chart view"
-          >
-            <BarChart3 className="!w-3.5 !h-3.5" />
-            <span>Chart</span>
-          </button>
-        </div>
 
         <div className="datagrid-topbar-actions">
           {isTableEditable && structureStatus === "ready" && (
@@ -653,6 +570,28 @@ export function DataGridToolbar({
             );
             return createPortal(popoverContent, document.body);
           }, [showSettings, settings, updateSettings])}
+        </div>
+
+        {/* View mode toggle: Table / Chart (after the action buttons) */}
+        <div className="datachart-toggle-group datagrid-view-toggle">
+          <button
+            type="button"
+            className={`datachart-toggle-btn${viewMode === "table" ? " active" : ""}`}
+            onClick={() => onViewModeChange?.("table")}
+            title="Table view"
+          >
+            <List className="!w-3.5 !h-3.5" />
+            <span>Table</span>
+          </button>
+          <button
+            type="button"
+            className={`datachart-toggle-btn${viewMode === "chart" ? " active" : ""}`}
+            onClick={() => onViewModeChange?.("chart")}
+            title="Chart view"
+          >
+            <BarChart3 className="!w-3.5 !h-3.5" />
+            <span>Chart</span>
+          </button>
         </div>
       </div>
     </div>

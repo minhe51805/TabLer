@@ -134,6 +134,15 @@ pub trait DatabaseDriver: Send + Sync {
         Ok(total_affected)
     }
 
+    /// Executes mutating statements inside one transaction and ALWAYS rolls
+    /// back, returning the affected/returned rows as a preview. Engines that
+    /// cannot guarantee full rollback reject this operation.
+    async fn preview_write_transaction(&self, _statements: &[String]) -> Result<Vec<QueryResult>> {
+        Err(anyhow::anyhow!(
+            "Write preview transactions are not supported by this database driver yet"
+        ))
+    }
+
     /// Restore a reviewed SQL dump. Transaction-capable drivers override this
     /// so every statement is pinned to the same database transaction.
     async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {

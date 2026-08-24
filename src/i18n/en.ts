@@ -107,7 +107,6 @@ export const en = {
   "workspace.kicker.structure": "Structure View",
   "workspace.readyForQueries": "Ready for queries",
   "workspace.status.success": "Success",
-  "workspace.status.rows": "{{count}} rows",
   "workspace.status.affected": "{{count}} affected",
   "workspace.status.batch": "batch {{count}}",
   "toolbar.closeAllTabs": "Close all tabs",

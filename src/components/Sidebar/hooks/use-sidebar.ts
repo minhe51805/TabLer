@@ -8,11 +8,21 @@ import { useI18n } from "../../../i18n";
 import { useEvent, EventCenter } from "../../../stores/event-center";
 import {
   getQualifiedTableName,
-  getQuotedQualifiedTableName,
-  quoteIdentifier,
   normalizeObjectSql,
   copyToClipboard,
 } from "../SidebarUtils";
+import {
+  applyConditions,
+  applyCondition,
+  buildCloneScript,
+  buildDeleteTemplate,
+  buildDropScript,
+  buildInsertTemplate,
+  buildOverviewScript,
+  buildSelectScript,
+  buildTruncateScript,
+  buildUpdateTemplate,
+} from "./sidebar-filter-scripts";
 import { emitAppToast } from "../../../utils/app-toast";
 import {
   usePinnedTables,
@@ -28,168 +38,7 @@ import {
   DEFAULT_FILTER_OPERATOR,
 } from "../../../types/filter-presets";
 import { useFilterPresetsStore } from "../../../stores/filterPresetsStore";
-
-// ---------------------------------------------------------------------------
-// Script builders
-// ---------------------------------------------------------------------------
-
-function buildOverviewScript(
-  table: Pick<TableInfo, "name" | "schema">,
-  dbType?: string,
-) {
-  const qualified = getQuotedQualifiedTableName(table, dbType);
-  return `-- Overview for ${getQualifiedTableName(table)}
-SELECT COUNT(*) AS total_rows FROM ${qualified};
-
-SELECT *
-FROM ${qualified}
-LIMIT 100;`;
-}
-
-function buildSelectScript(table: Pick<TableInfo, "name" | "schema">, dbType?: string) {
-  const qualified = getQuotedQualifiedTableName(table, dbType);
-  return `SELECT *
-FROM ${qualified}
-LIMIT 1000;`;
-}
-
-function buildInsertTemplate(table: Pick<TableInfo, "name" | "schema">, dbType?: string) {
-  const qualified = getQuotedQualifiedTableName(table, dbType);
-  return `INSERT INTO ${qualified} (
-  -- columns
-)
-VALUES (
-  -- values
-);`;
-}
-
-function buildUpdateTemplate(table: Pick<TableInfo, "name" | "schema">, dbType?: string) {
-  const qualified = getQuotedQualifiedTableName(table, dbType);
-  return `UPDATE ${qualified}
-SET
-  -- column = value
-WHERE
-  -- condition
-;`;
-}
-
-function buildDeleteTemplate(table: Pick<TableInfo, "name" | "schema">, dbType?: string) {
-  const qualified = getQuotedQualifiedTableName(table, dbType);
-  return `DELETE FROM ${qualified}
-WHERE
-  -- condition
-;`;
-}
-
-function buildCloneScript(table: Pick<TableInfo, "name" | "schema">, dbType?: string) {
-  const source = getQuotedQualifiedTableName(table, dbType);
-  const cloneName = quoteIdentifier(`${table.name}_copy`, dbType);
-  return `-- Clone ${getQualifiedTableName(table)}
-CREATE TABLE ${cloneName} AS
-SELECT *
-FROM ${source};`;
-}
-
-function buildTruncateScript(table: Pick<TableInfo, "name" | "schema">, dbType?: string) {
-  const qualified = getQuotedQualifiedTableName(table, dbType);
-  if (dbType === "sqlite") {
-    return `DELETE FROM ${qualified};`;
-  }
-  return `TRUNCATE TABLE ${qualified};`;
-}
-
-function buildDropScript(table: Pick<TableInfo, "name" | "schema">, dbType?: string) {
-  const qualified = getQuotedQualifiedTableName(table, dbType);
-  return `DROP TABLE ${qualified};`;
-}
-
-// ---------------------------------------------------------------------------
-// Filter logic
-// ---------------------------------------------------------------------------
-
-/** Apply a single filter condition to a table name or schema name */
-function applyCondition(
-  value: string,
-  condition: FilterCondition
-): boolean {
-  if (!condition.operator) return true;
-  const needle = value.toLowerCase();
-
-  switch (condition.operator) {
-    case "equals":
-      return needle === condition.value.toLowerCase();
-    case "not_equals":
-      return needle !== condition.value.toLowerCase();
-    case "contains":
-      return needle.includes(condition.value.toLowerCase());
-    case "not_contains":
-      return !needle.includes(condition.value.toLowerCase());
-    case "starts_with":
-      return needle.startsWith(condition.value.toLowerCase());
-    case "ends_with":
-      return needle.endsWith(condition.value.toLowerCase());
-    case "is_empty":
-      return needle === "" || needle === "null";
-    case "is_not_empty":
-      return needle !== "" && needle !== "null";
-    case "like":
-      try {
-        const escaped = condition.value.replace(/%/g, ".*").replace(/_/g, ".");
-        return new RegExp(`^${escaped}$`, "i").test(value);
-      } catch {
-        return false;
-      }
-    case "not_like":
-      try {
-        const escaped = condition.value.replace(/%/g, ".*").replace(/_/g, ".");
-        return !new RegExp(`^${escaped}$`, "i").test(value);
-      } catch {
-        return false;
-      }
-    case "regex_match":
-      try {
-        return new RegExp(condition.value, "i").test(value);
-      } catch {
-        return false;
-      }
-    case "in_list": {
-      const items = condition.value.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-      return items.includes(needle);
-    }
-    case "not_in_list": {
-      const items = condition.value.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-      return !items.includes(needle);
-    }
-    case "greater_than":
-      return needle > condition.value.toLowerCase();
-    case "less_than":
-      return needle < condition.value.toLowerCase();
-    case "greater_or_equal":
-      return needle >= condition.value.toLowerCase();
-    case "less_or_equal":
-      return needle <= condition.value.toLowerCase();
-    case "raw_sql":
-      // raw_sql is applied separately; skip here
-      return true;
-    default:
-      return true;
-  }
-}
-
-/** Apply all conditions to a single value using AND/OR logic */
-function applyConditions(
-  value: string,
-  conditions: FilterCondition[],
-  logic: "AND" | "OR"
-): boolean {
-  if (conditions.length === 0) return true;
-  const results = conditions.map((c) => applyCondition(value, c));
-  return logic === "AND" ? results.every(Boolean) : results.some(Boolean);
-}
-
-// ---------------------------------------------------------------------------
-// Mixed-state checkbox filter
-// ---------------------------------------------------------------------------
+import { useTableFilterActions } from "./useTableFilterActions";
 
 export type CheckboxFilterState = "checked" | "unchecked" | "indeterminate";
 
@@ -522,129 +371,46 @@ export function useSidebar() {
   }, [activeConnectionId, disconnectFromDatabase]);
 
   // --- Filter preset actions ---
-  const handleSavePreset = useCallback(() => {
-    const name = presetNameInput.trim();
-    if (!name) return;
-    presetsStore.savePreset({
-      name,
-      tableFilter: search,
-      schemaFilter: activeSchemaFilter,
-      objectTypes: [],
-      tags: [],
-      columnFilter: columnModeActive
-        ? { pattern: columnPattern, operator: columnOperator }
-        : undefined,
-      conditions,
-      conditionLogic,
-      columnMode: columnModeActive,
-      tableOperator,
-      schemaOperator,
-    });
-    setSavePresetDialogOpen(false);
-    setPresetNameInput("");
-  }, [
-    presetNameInput, search, activeSchemaFilter, columnModeActive,
-    columnPattern, columnOperator, conditions, conditionLogic,
-    tableOperator, schemaOperator, presetsStore,
-  ]);
-
-  const handleLoadPreset = useCallback((presetId: string) => {
-    const preset = presetsStore.getPreset(presetId);
-    if (!preset) return;
-    setSearch(preset.tableFilter);
-    setActiveSchemaFilter(preset.schemaFilter);
-    setTableOperator(preset.tableOperator ?? DEFAULT_FILTER_OPERATOR);
-    setSchemaOperator(preset.schemaOperator ?? DEFAULT_FILTER_OPERATOR);
-    setColumnModeActive(preset.columnMode ?? false);
-    if (preset.columnFilter) {
-      setColumnPattern(preset.columnFilter.pattern);
-      setColumnOperator(preset.columnFilter.operator);
-    }
-    setConditions(preset.conditions ?? []);
-    setConditionLogic(preset.conditionLogic ?? "AND");
-    presetsStore.setActivePreset(presetId);
-    setFilterPresetMenuOpen(false);
-  }, [presetsStore]);
-
-  const handleDeletePreset = useCallback((presetId: string) => {
-    if (!window.confirm("Delete this filter preset?")) return;
-    presetsStore.deletePreset(presetId);
-  }, [presetsStore]);
-
-  const handleClearFilters = useCallback(() => {
-    setSearch("");
-    setActiveSchemaFilter("all");
-    setTableOperator(DEFAULT_FILTER_OPERATOR);
-    setSchemaOperator(DEFAULT_FILTER_OPERATOR);
-    setColumnModeActive(false);
-    setColumnPattern("");
-    setConditions([]);
-    setConditionLogic("AND");
-    setMixedStateFilter(EMPTY_MIXED_FILTER);
-    mixedFilterRef.current = EMPTY_MIXED_FILTER;
-    tableFilterStateRef.current = {};
-  }, []);
 
   // --- Mixed-state filter actions ---
-  const handleMixedStateToggle = useCallback((
-    schemaName: string,
-    itemName: string,
-    newState: CheckboxFilterState,
-  ) => {
-    setMixedStateFilter((prev) => {
-      const next: MixedStateFilter = {
-        checkedItems: { ...prev.checkedItems },
-        uncheckedItems: { ...prev.uncheckedItems },
-        isActive: true,
-      };
-      const schemaChecked = new Set(prev.checkedItems[schemaName] ?? []);
-      const schemaUnchecked = new Set(prev.uncheckedItems[schemaName] ?? []);
 
-      if (newState === "indeterminate") {
-        schemaChecked.delete(itemName);
-        schemaUnchecked.delete(itemName);
-      } else if (newState === "checked") {
-        schemaChecked.add(itemName);
-        schemaUnchecked.delete(itemName);
-      } else {
-        schemaChecked.delete(itemName);
-        schemaUnchecked.add(itemName);
-      }
-
-      if (schemaChecked.size > 0) {
-        next.checkedItems[schemaName] = schemaChecked;
-      }
-      if (schemaUnchecked.size > 0) {
-        next.uncheckedItems[schemaName] = schemaUnchecked;
-      }
-
-      // If nothing is filtered, deactivate
-      const hasAnyFilter =
-        Object.values(next.checkedItems).some((s) => s.size > 0) ||
-        Object.values(next.uncheckedItems).some((s) => s.size > 0);
-      next.isActive = hasAnyFilter;
-
-      return next;
-    });
-    mixedFilterRef.current = {
-      ...mixedStateFilter,
-      isActive: true,
-    };
-  }, [mixedStateFilter]);
-
-  const getMixedStateFilterForTable = useCallback((tableName: string, schemaName: string) => {
-    const key = `${schemaName}|${tableName}`;
-    return tableFilterStateRef.current[key] ?? mixedFilterRef.current;
-  }, []);
-
-  const persistMixedStateForTable = useCallback((
-    tableName: string,
-    schemaName: string,
-    filter: MixedStateFilter,
-  ) => {
-    const key = `${schemaName}|${tableName}`;
-    tableFilterStateRef.current[key] = filter;
-  }, []);
+  const {
+    handleSavePreset,
+    handleLoadPreset,
+    handleDeletePreset,
+    handleClearFilters,
+    handleMixedStateToggle,
+    getMixedStateFilterForTable,
+    persistMixedStateForTable,
+  } = useTableFilterActions({
+    presetNameInput,
+    search,
+    activeSchemaFilter,
+    columnModeActive,
+    columnPattern,
+    columnOperator,
+    conditions,
+    conditionLogic,
+    tableOperator,
+    schemaOperator,
+    presetsStore,
+    setSearch,
+    setActiveSchemaFilter,
+    setTableOperator,
+    setSchemaOperator,
+    setColumnModeActive,
+    setColumnPattern,
+    setColumnOperator,
+    setConditions,
+    setConditionLogic,
+    setSavePresetDialogOpen,
+    setPresetNameInput,
+    setFilterPresetMenuOpen,
+    mixedStateFilter,
+    setMixedStateFilter,
+    mixedFilterRef,
+    tableFilterStateRef,
+  });
 
   const closeTableContextMenu = useCallback(() => {
     setTableContextMenu(null);

@@ -103,11 +103,51 @@ describe("AI agent context builder", () => {
 
     expect(prompt).toContain('"action":"run_readonly_sql"');
     expect(prompt).toContain('"action":"search_schema"');
-    expect(prompt).toContain("describe_table for every table in FROM or JOIN");
+    expect(prompt).toContain('"action":"sample_table_data"');
+    expect(prompt).toContain('"action":"describe_tables"');
+    expect(prompt).toContain('"action":"ask_user"');
+    expect(prompt).toContain("every table in FROM or JOIN must be inspected");
+    expect(prompt).toContain("Observation (older, condensed)");
     expect(prompt).not.toContain("narration");
-    expect(prompt).not.toContain("schema-0");
-    expect(prompt).toContain("Observation: (older step, omitted to save space)");
     expect(prompt).toContain("schema-5");
+  });
+
+  it("truncates oversized recent observations instead of inlining them whole", () => {
+    const steps: AgentTraceStep[] = [
+      { step: 1, action: "run_readonly_sql", message: "Query", observation: "x".repeat(3_000) },
+    ];
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "Analyze",
+      assistIntent: "sql",
+      currentDatabase: null,
+      availableTableNames: [],
+      steps,
+      workspaceToolsEnabled: true,
+    });
+
+    expect(prompt).toContain("[observation truncated]");
+    expect(prompt).not.toContain("x".repeat(2_500));
+  });
+
+  it("injects pre-inspected summaries and caps them to save describe_table steps", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "Show recent orders",
+      assistIntent: "sql",
+      currentDatabase: "analytics",
+      availableTableNames: ["orders", "customers"],
+      steps: [],
+      workspaceToolsEnabled: true,
+      cachedTableSummaries: [
+        "T=orders|C:id:bigint!pk",
+        "T=customers|C:id:bigint!pk",
+        ...Array.from({ length: 8 }, (_, index) => `T=extra_${index}|C:id:bigint`),
+      ],
+    });
+
+    expect(prompt).toContain("Pre-inspected tables");
+    expect(prompt).toContain("T=orders|C:id:bigint!pk");
+    expect(prompt).toContain("do NOT call describe_table for these");
+    expect(prompt).not.toContain("T=extra_6");
   });
 
   it("caps oversized controller prompts and composes optional instructions", () => {

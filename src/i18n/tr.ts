@@ -108,7 +108,6 @@ export const tr: Record<keyof typeof en, string> = {
   "workspace.kicker.structure": "Yapi Gorunumu",
   "workspace.readyForQueries": "Sorgular icin hazir",
   "workspace.status.success": "Basarili",
-  "workspace.status.rows": "{{count}} satir",
   "workspace.status.affected": "{{count}} etkilenen",
   "workspace.status.batch": "toplu {{count}}",
   "toolbar.closeAllTabs": "Tum sekmeleri kapat",

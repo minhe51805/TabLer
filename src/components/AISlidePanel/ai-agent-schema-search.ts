@@ -96,3 +96,34 @@ export function findAgentSchemaMatches(
     .sort((left, right) => right.score - left.score || left.table.localeCompare(right.table))
     .slice(0, limit);
 }
+
+/**
+ * Orders table identifiers so the best name matches for a query come first,
+ * then caps the list. Used to bound search_schema column scans on large
+ * catalogs where scanning every table would take minutes.
+ */
+export function prioritizeSchemaScanCandidates(
+  identifiers: string[],
+  query: string,
+  limit: number,
+): string[] {
+  if (identifiers.length <= limit) return identifiers;
+
+  const terms = buildSearchTerms(query);
+  if (terms.length === 0) return identifiers.slice(0, limit);
+
+  return identifiers
+    .map((identifier, index) => {
+      const normalizedIdentifier = normalize(identifier);
+      let score = 0;
+      for (const term of terms) {
+        if (!normalizedIdentifier) continue;
+        if (normalizedIdentifier.includes(term)) score += 2;
+        else if (normalizedIdentifier.length >= 3 && term.includes(normalizedIdentifier)) score += 1;
+      }
+      return { identifier, index, score };
+    })
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, limit)
+    .map((entry) => entry.identifier);
+}

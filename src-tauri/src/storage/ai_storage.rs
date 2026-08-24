@@ -221,6 +221,15 @@ impl AIStorage {
             .ok_or_else(|| anyhow::anyhow!("No enabled AI provider found"))
     }
 
+    /// Resolves one specific enabled provider by id; used by the frontend
+    /// failover chain when the primary provider fails mid-run.
+    pub fn get_enabled_provider_config_by_id(&self, provider_id: &str) -> Result<AIProviderConfig> {
+        self.load_provider_configs()?
+            .into_iter()
+            .find(|provider| provider.is_enabled && provider.id == provider_id)
+            .ok_or_else(|| anyhow::anyhow!("Enabled AI provider '{}' not found", provider_id))
+    }
+
     pub fn get_api_key(&self, provider_id: &str) -> Result<String> {
         let entry = keyring::Entry::new("TableR_AI", provider_id)?;
         entry.get_password().map_err(|error| {

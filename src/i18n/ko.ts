@@ -108,7 +108,6 @@ export const ko: Record<keyof typeof en, string> = {
   "workspace.kicker.structure": "구조 보기",
   "workspace.readyForQueries": "쿼리 준비 완료",
   "workspace.status.success": "성공",
-  "workspace.status.rows": "{{count}}개 행",
   "workspace.status.affected": "{{count}}개 영향",
   "workspace.status.batch": "{{count}}개 일괄 처리",
   "toolbar.closeAllTabs": "모든 탭 닫기",

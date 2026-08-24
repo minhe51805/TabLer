@@ -24,5 +24,7 @@ export type DownloadRelease = {
   publishedAt: string;
   prerelease: boolean;
   htmlUrl: string;
+  /** Release notes markdown body from GitHub. */
+  body: string;
   platforms: PlatformDownload[];
 };

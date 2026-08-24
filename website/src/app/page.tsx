@@ -1,16 +1,20 @@
 import Image from "next/image";
+import Link from "next/link";
 import {
   ArrowRight,
+  BookMarked,
   Bot,
   Check,
   Code2,
   Database,
   Download,
+  Eye,
   GitBranch,
   GitFork,
   KeyRound,
   Layers3,
   Network,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   Terminal,
@@ -18,70 +22,42 @@ import {
   Zap,
 } from "lucide-react";
 import { getTableRReleases } from "@/lib/github-releases";
+import { getSiteLanguage } from "@/lib/language";
+import { getDictionary } from "@/lib/i18n";
+import { repositoryUrl } from "@/lib/site";
+import { LanguageToggle } from "./LanguageToggle";
 
 const downloadUrl = "/download";
-const repositoryUrl = "https://github.com/minhe51805/TabLer";
 
-export const revalidate = 300;
+export const revalidate = 0;
 
-const featureItems = [
-  {
-    icon: Database,
-    title: "One place for every database",
-    copy: "Save connections, browse schemas, inspect objects, and move between engines without rebuilding your workspace.",
-  },
-  {
-    icon: Code2,
-    title: "A query editor built for flow",
-    copy: "Write SQL in Monaco, keep multiple tabs open, review results, chart data, and export without leaving the query.",
-  },
-  {
-    icon: Bot,
-    title: "AI that knows the workspace",
-    copy: "Ask questions with schema context, generate SQL, explain queries, and keep the conversation beside the work.",
-  },
-  {
-    icon: Network,
-    title: "ER diagrams on demand",
-    copy: "Select the tables that matter, trace relationships, use the minimap, and export a diagram when the model is clear.",
-  },
-];
+const featureIcons = [Database, Code2, Bot, Network];
 
-const workflowItems = [
+const workflowMedia = [
   {
-    step: "01",
     icon: KeyRound,
-    eyebrow: "CONNECT",
-    title: "Start with a calmer connection launcher.",
-    copy: "Search saved profiles, create a connection, and jump back into recent work. Credentials stay in the operating system keyring instead of the interface.",
     image: "/screenshots/table-r-connection-launcher.png",
     alt: "TableR connection launcher showing saved PostgreSQL connections",
     width: 1176,
     height: 769,
   },
   {
-    step: "02",
     icon: Terminal,
-    eyebrow: "QUERY",
-    title: "Keep the editor, data, and tools in one workspace.",
-    copy: "Explore objects from the sidebar, write SQL with Monaco, inspect results, switch to charts, and use the terminal without breaking context.",
     image: "/screenshots/table-r-query-workspace.png",
     alt: "TableR query workspace with SQL editor and result table",
     width: 1296,
     height: 809,
   },
   {
-    step: "03",
     icon: Sparkles,
-    eyebrow: "UNDERSTAND",
-    title: "Bring AI close to the query, not over it.",
-    copy: "Use the assistant when it helps and collapse it when it does not. The workspace remains readable, with actions grouped around the conversation instead of scattered through it.",
     image: "/screenshots/table-r-ai-workspace.png",
     alt: "TableR AI workspace beside the SQL editor",
     width: 1296,
     height: 809,
   },
 ];
+
+const agentIcons = [Eye, BookMarked, ShieldCheck, RefreshCw];
 
 const engines = [
   "PostgreSQL",
@@ -104,21 +80,16 @@ const engines = [
   "Cloudflare D1",
 ];
 
-const architectureItems = [
-  { icon: Layers3, label: "Tauri 2 desktop shell" },
-  { icon: Workflow, label: "React 19 interface" },
-  { icon: ShieldCheck, label: "Rust backend" },
-  { icon: Code2, label: "Monaco editor" },
-  { icon: GitBranch, label: "GPL-3.0 licensed" },
-  { icon: Zap, label: "Local-first workflow" },
-];
+const architectureIcons = [Layers3, Workflow, ShieldCheck, Code2, GitBranch, Zap];
 
 export default async function Home() {
+  const language = await getSiteLanguage();
+  const t = getDictionary(language);
   const releases = await getTableRReleases();
   const latestVersion = releases[0]?.tag ?? "latest";
 
   return (
-    <main>
+    <main id="main">
       <header className="site-header">
         <div className="shell header-inner">
           <a className="brand" href="#top" aria-label="TableR home">
@@ -133,19 +104,24 @@ export default async function Home() {
           </a>
 
           <nav className="main-nav" aria-label="Main navigation">
-            <a href="#features">Features</a>
-            <a href="#workflow">Workflow</a>
-            <a href="#engines">Engines</a>
-            <a href="#open-source">Open source</a>
+            <a href="#features">{t.nav.features}</a>
+            <a href="#workflow">{t.nav.workflow}</a>
+            <a href="#agent">{t.nav.agent}</a>
+            <a href="#engines">{t.nav.engines}</a>
+            <a href="#open-source">{t.nav.openSource}</a>
+            <a href="/changelog">{t.nav.changelog}</a>
           </nav>
 
-          <a
-            className="button button-small button-primary"
-            href={downloadUrl}
-          >
-            <Download size={16} aria-hidden="true" />
-            Download
-          </a>
+          <div className="header-actions">
+            <LanguageToggle current={language} />
+            <a
+              className="button button-small button-primary"
+              href={downloadUrl}
+            >
+              <Download size={16} aria-hidden="true" />
+              {t.nav.download}
+            </a>
+          </div>
         </div>
       </header>
 
@@ -153,20 +129,14 @@ export default async function Home() {
         <div className="shell hero-copy">
           <div className="hero-kicker">
             <span className="status-dot" />
-            Open-source database workspace
+            {t.hero.kicker}
           </div>
           <h1>TableR</h1>
-          <p className="hero-lede">
-            Query, explore, visualize, and understand your databases from one
-            focused desktop workspace.
-          </p>
+          <p className="hero-lede">{t.hero.lede}</p>
           <div className="hero-actions">
-            <a
-              className="button button-primary"
-              href={downloadUrl}
-            >
+            <a className="button button-primary" href={downloadUrl}>
               <Download size={18} aria-hidden="true" />
-              Download {latestVersion}
+              {t.hero.download} {latestVersion}
             </a>
             <a
               className="button button-secondary"
@@ -175,10 +145,10 @@ export default async function Home() {
               rel="noreferrer"
             >
               <GitFork size={18} aria-hidden="true" />
-              View on GitHub
+              {t.hero.viewOnGitHub}
             </a>
           </div>
-          <p className="hero-note">Windows, macOS, and Linux</p>
+          <p className="hero-note">{t.hero.note}</p>
         </div>
 
         <div className="shell hero-media-wrap">
@@ -204,39 +174,26 @@ export default async function Home() {
 
       <section className="signal-strip" aria-label="Product highlights">
         <div className="shell signal-grid">
-          <div>
-            <strong>18</strong>
-            <span>database engines</span>
-          </div>
-          <div>
-            <strong>One</strong>
-            <span>unified workspace</span>
-          </div>
-          <div>
-            <strong>Local</strong>
-            <span>desktop experience</span>
-          </div>
-          <div>
-            <strong>GPLv3</strong>
-            <span>open-source license</span>
-          </div>
+          {t.signal.items.map((item) => (
+            <div key={item.span}>
+              <strong>{item.strong}</strong>
+              <span>{item.span}</span>
+            </div>
+          ))}
         </div>
       </section>
 
       <section className="section features-section" id="features">
         <div className="shell">
           <div className="section-heading">
-            <p className="eyebrow">THE WORKSPACE</p>
-            <h2>Less switching. More understanding.</h2>
-            <p>
-              TableR keeps the tools around your data close enough to be useful
-              and quiet enough to stay out of the way.
-            </p>
+            <p className="eyebrow">{t.features.eyebrow}</p>
+            <h2>{t.features.heading}</h2>
+            <p>{t.features.intro}</p>
           </div>
 
           <div className="feature-grid">
-            {featureItems.map((item) => {
-              const Icon = item.icon;
+            {t.features.cards.map((item, index) => {
+              const Icon = featureIcons[index];
               return (
                 <article className="feature-card" key={item.title}>
                   <span className="feature-icon">
@@ -254,29 +211,30 @@ export default async function Home() {
       <section className="section workflow-section" id="workflow">
         <div className="shell">
           <div className="section-heading section-heading-wide">
-            <p className="eyebrow">A COMPLETE LOOP</p>
-            <h2>From connection to answer, without losing the thread.</h2>
+            <p className="eyebrow">{t.workflow.eyebrow}</p>
+            <h2>{t.workflow.heading}</h2>
           </div>
 
           <div className="workflow-list">
-            {workflowItems.map((item, index) => {
-              const Icon = item.icon;
+            {t.workflow.steps.map((step, index) => {
+              const media = workflowMedia[index];
+              const Icon = media.icon;
               return (
                 <article
                   className={`workflow-row ${index % 2 === 1 ? "workflow-row-reverse" : ""}`}
-                  key={item.step}
+                  key={step.eyebrow}
                 >
                   <div className="workflow-copy">
                     <div className="workflow-label">
-                      <span>{item.step}</span>
+                      <span>{`0${index + 1}`}</span>
                       <Icon size={18} aria-hidden="true" />
-                      {item.eyebrow}
+                      {step.eyebrow}
                     </div>
-                    <h3>{item.title}</h3>
-                    <p>{item.copy}</p>
+                    <h3>{step.title}</h3>
+                    <p>{step.copy}</p>
                     <div className="workflow-check">
                       <Check size={16} aria-hidden="true" />
-                      Designed for repeated, everyday database work
+                      {t.workflow.check}
                     </div>
                   </div>
                   <div className="product-frame workflow-frame">
@@ -288,13 +246,38 @@ export default async function Home() {
                     </div>
                     <Image
                       className="product-image"
-                      src={item.image}
-                      width={item.width}
-                      height={item.height}
-                      alt={item.alt}
+                      src={media.image}
+                      width={media.width}
+                      height={media.height}
+                      alt={media.alt}
                       sizes="(max-width: 900px) 94vw, 58vw"
                     />
                   </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section className="section features-section" id="agent">
+        <div className="shell">
+          <div className="section-heading">
+            <p className="eyebrow">{t.agent.eyebrow}</p>
+            <h2>{t.agent.heading}</h2>
+            <p>{t.agent.intro}</p>
+          </div>
+
+          <div className="feature-grid">
+            {t.agent.cards.map((item, index) => {
+              const Icon = agentIcons[index];
+              return (
+                <article className="feature-card" key={item.title}>
+                  <span className="feature-icon">
+                    <Icon size={21} strokeWidth={1.8} aria-hidden="true" />
+                  </span>
+                  <h3>{item.title}</h3>
+                  <p>{item.copy}</p>
                 </article>
               );
             })}
@@ -306,13 +289,10 @@ export default async function Home() {
         <div className="shell">
           <div className="erd-heading">
             <div>
-              <p className="eyebrow">ENTITY RELATIONSHIPS</p>
-              <h2>See the shape of a database.</h2>
+              <p className="eyebrow">{t.erd.eyebrow}</p>
+              <h2>{t.erd.heading}</h2>
             </div>
-            <p>
-              Build an ER diagram from selected tables, navigate large schemas
-              with a minimap, and export the result for the next conversation.
-            </p>
+            <p>{t.erd.intro}</p>
           </div>
 
           <div className="product-frame erd-frame">
@@ -337,19 +317,16 @@ export default async function Home() {
       <section className="section engines-section" id="engines">
         <div className="shell engine-layout">
           <div className="section-heading engine-heading">
-            <p className="eyebrow">ENGINE COVERAGE</p>
-            <h2>Your database is probably already invited.</h2>
-            <p>
-              Use the same familiar workflow across relational, analytical,
-              document, cache, and cloud data platforms.
-            </p>
+            <p className="eyebrow">{t.engines.eyebrow}</p>
+            <h2>{t.engines.heading}</h2>
+            <p>{t.engines.intro}</p>
             <a
               className="text-link"
               href={`${repositoryUrl}#supported-databases`}
               target="_blank"
               rel="noreferrer"
             >
-              Explore support details
+              {t.engines.details}
               <ArrowRight size={17} aria-hidden="true" />
             </a>
           </div>
@@ -370,13 +347,9 @@ export default async function Home() {
       <section className="open-source-section" id="open-source">
         <div className="shell open-source-layout">
           <div className="open-source-copy">
-            <p className="eyebrow eyebrow-on-dark">BUILT IN THE OPEN</p>
-            <h2>A desktop tool you can inspect, shape, and trust.</h2>
-            <p>
-              TableR combines a Tauri shell, a React interface, and a Rust
-              backend. Read the code, open an issue, or contribute the database
-              workflow you wish existed.
-            </p>
+            <p className="eyebrow eyebrow-on-dark">{t.openSource.eyebrow}</p>
+            <h2>{t.openSource.heading}</h2>
+            <p>{t.openSource.intro}</p>
             <div className="open-source-actions">
               <a
                 className="button button-light"
@@ -385,7 +358,7 @@ export default async function Home() {
                 rel="noreferrer"
               >
                 <GitFork size={18} aria-hidden="true" />
-                Browse source
+                {t.openSource.browse}
               </a>
               <a
                 className="button button-dark-outline"
@@ -393,19 +366,19 @@ export default async function Home() {
                 target="_blank"
                 rel="noreferrer"
               >
-                Open an issue
+                {t.openSource.issue}
                 <ArrowRight size={17} aria-hidden="true" />
               </a>
             </div>
           </div>
 
           <div className="architecture-list">
-            {architectureItems.map((item) => {
-              const Icon = item.icon;
+            {t.arch.map((label, index) => {
+              const Icon = architectureIcons[index];
               return (
-                <div key={item.label}>
+                <div key={label}>
                   <Icon size={19} aria-hidden="true" />
-                  <span>{item.label}</span>
+                  <span>{label}</span>
                 </div>
               );
             })}
@@ -416,15 +389,12 @@ export default async function Home() {
       <section className="final-cta">
         <div className="shell final-cta-inner">
           <div>
-            <p className="eyebrow">READY TO EXPLORE?</p>
-            <h2>Give your databases a better workspace.</h2>
+            <p className="eyebrow">{t.cta.eyebrow}</p>
+            <h2>{t.cta.heading}</h2>
           </div>
-          <a
-            className="button button-primary"
-            href={downloadUrl}
-          >
+          <a className="button button-primary" href={downloadUrl}>
             <Download size={18} aria-hidden="true" />
-            Download TableR
+            {t.cta.download}
           </a>
         </div>
       </section>
@@ -440,18 +410,19 @@ export default async function Home() {
             />
             <span>TableR</span>
           </a>
-          <p>Built by the TableR Team. Licensed under GPL-3.0.</p>
+          <p>{t.footer.built}</p>
           <div className="footer-links">
             <a href={repositoryUrl} target="_blank" rel="noreferrer">
-              GitHub
+              {t.footer.github}
             </a>
-            <a href={downloadUrl}>Download</a>
+            <a href={downloadUrl}>{t.footer.download}</a>
+            <Link href="/changelog">{t.footer.changelog}</Link>
             <a
               href="https://buymeacoffee.com/minjev"
               target="_blank"
               rel="noreferrer"
             >
-              Support
+              {t.footer.support}
             </a>
           </div>
         </div>

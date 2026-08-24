@@ -3,18 +3,14 @@ import {
   useEffect,
   useRef,
   useCallback,
-  useMemo,
   lazy,
   Suspense,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import {
-  Copy,
-  Minus,
-  Square,
-  X,
-} from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
+import { AppStartupShell } from "./components/AppStartupShell";
+import { TitleBarWindowControls } from "./components/TitleBarWindowControls";
+import { useAppMenuActions } from "./hooks/useAppMenuActions";
 import { useConnectionStore } from "./stores/connectionStore";
 import { useGlobalErrorStore } from "./stores/globalErrorStore";
 import { useUIStore } from "./stores/uiStore";
@@ -601,52 +597,42 @@ function App() {
   }, []);
   useWindowMenuDismiss(isWindowMenuOpen, windowMenuRef, handleWindowMenuClose);
 
-  const menuActions = useMemo(() => ({
-    onNewConnection: handleOpenConnectionForm.bind(null, "connect"),
-    onOpenDatabaseFile: handleOpenDatabaseFile,
-    onImportSqlFile: handleImportSqlFile,
-    onImportSqlIntoCurrentDatabase: handleImportSqlIntoCurrentDatabase,
-    onExportDatabase: handleExportDatabase,
-    onOpenMetricsBoard: handleOpenMetricsBoard,
-    onCloseWindow: handleCloseWindow,
-    onNewQuery: handleNewQuery,
-    onToggleSidebar: handleToggleSidebar,
-    onToggleTerminalPanel: handleToggleTerminalPanel,
-    onToggleQueryResultsPane: () => {
-      if (activeTab?.type === "query") {
-        window.dispatchEvent(new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTab.id } }));
-      }
-    },
-    onToggleRightSidebar: () => setShowAISlidePanel((v) => !v),
-    onToggleBottomSidebar: () => {
-      if (activeTab?.type === "query") {
-        window.dispatchEvent(new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTab.id } }));
-      } else {
-        setShowTerminalPanel((v) => !v);
-      }
-    },
-    onFocusExplorerSearch: handleFocusExplorerSearch,
-    onShowDatabaseWorkspace: handleShowDatabaseWorkspace,
-    onRefreshWorkspace: handleRefreshWorkspace,
-    onSearchInDatabase: handleSearchInDatabaseFromMenu,
-    onSetFontSize: handleSetFontSizeFromMenu,
-    onIncreaseFontSize: handleIncreaseFontSizeInline,
-    onDecreaseFontSize: handleDecreaseFontSizeInline,
-    onActivateTheme: handleActivateThemeFromMenu,
-    onOpenUserManagement: () => setShowUserRoleManagement(true),
-    onOpenProcessList: () => handleOpenAdminQuery("process-list"),
-    onOpenAISettings: () => setShowAISettings(true),
-    onOpenAISlidePanel: () => handleOpenAISlidePanel(),
-    onOpenPluginManager: () => setShowPluginManager(true),
-    onOpenMcpIntegrations: () => setShowMcpIntegrations(true),
-    onOpenAboutModal: () => setShowAboutModal(true),
-    onOpenKeyboardShortcuts: () => setShowKeyboardShortcutsModal(true),
-    onToggleQueryHistory: () => setShowQueryHistory((v) => !v),
-    onOpenConnectionExporter: () => setShowConnectionExporter(true),
-    onOpenConnectionImporter: () => setShowConnectionImporter(true),
-    onChangeLanguage: handleChangeLanguage,
-    onWindowMenuClose: handleWindowMenuClose,
-  }), [activeTab, handleActivateThemeFromMenu, handleChangeLanguage, handleCloseWindow, handleFocusExplorerSearch, handleIncreaseFontSizeInline, handleNewQuery, handleOpenAdminQuery, handleOpenAISlidePanel, handleOpenConnectionForm, handleOpenDatabaseFile, handleOpenMetricsBoard, handleRefreshWorkspace, handleSearchInDatabaseFromMenu, handleSetFontSizeFromMenu, handleToggleTerminalPanel, handleWindowMenuClose, handleImportSqlFile, handleImportSqlIntoCurrentDatabase, handleExportDatabase, handleToggleSidebar, handleShowDatabaseWorkspace, handleDecreaseFontSizeInline, setShowMcpIntegrations, setShowUserRoleManagement]);
+  const menuActions = useAppMenuActions({
+    activeTab,
+    handleOpenConnectionForm,
+    handleOpenDatabaseFile,
+    handleImportSqlFile,
+    handleImportSqlIntoCurrentDatabase,
+    handleExportDatabase,
+    handleOpenMetricsBoard,
+    handleCloseWindow,
+    handleNewQuery,
+    handleToggleSidebar,
+    handleToggleTerminalPanel,
+    setShowTerminalPanel,
+    handleFocusExplorerSearch,
+    handleShowDatabaseWorkspace,
+    handleRefreshWorkspace,
+    handleSearchInDatabaseFromMenu,
+    handleSetFontSizeFromMenu,
+    handleIncreaseFontSizeInline,
+    handleDecreaseFontSizeInline,
+    handleActivateThemeFromMenu,
+    setShowUserRoleManagement,
+    handleOpenAdminQuery,
+    setShowAISettings,
+    setShowAISlidePanel,
+    handleOpenAISlidePanel,
+    setShowPluginManager,
+    setShowMcpIntegrations,
+    setShowAboutModal,
+    setShowKeyboardShortcutsModal,
+    setShowQueryHistory,
+    setShowConnectionExporter,
+    setShowConnectionImporter,
+    handleChangeLanguage,
+    handleWindowMenuClose,
+  });
 
   const { menuSections: windowMenuSections } = useWindowMenu({
     state: {
@@ -698,60 +684,28 @@ function App() {
 
   if (showStartupShell) {
     return (
-      <div className="app-root startup-shell-active">
-        {connectionFormIntent && (
+      <AppStartupShell
+        connectionFormIntent={connectionFormIntent ?? undefined}
+        showStartupConnectionManager={showStartupConnectionManager}
+        isConnected={isConnected}
+        isConnecting={isConnecting}
+        isWindowMaximized={isWindowMaximized}
+        connectionFormElement={
           <Suspense fallback={null}>
             <ConnectionForm
-              initialIntent={connectionFormIntent}
+              initialIntent={connectionFormIntent ?? undefined}
               embeddedInStartupShell
               onClose={handleCloseConnectionForm}
             />
           </Suspense>
-        )}
-
-        {showStartupConnectionManager && !isConnected && !isConnecting && !connectionFormIntent && (
-          <StartupConnectionManager
-            onNewConnection={() => handleOpenConnectionForm("connect")}
-            onOpenDatabaseFile={handleOpenDatabaseFile}
-            windowControls={
-              <div className="titlebar-window-controls startup-window-controls" data-no-window-drag="true">
-                <button
-                  type="button"
-                  onClick={handleMinimizeWindow}
-                  className="titlebar-window-btn"
-                  title={t("titlebar.minimize")}
-                  aria-label={t("titlebar.minimize")}
-                >
-                  <Minus className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleToggleMaximizeWindow}
-                  className="titlebar-window-btn"
-                  title={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
-                  aria-label={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
-                >
-                  {isWindowMaximized ? (
-                    <Copy className="w-3.5 h-3.5" />
-                  ) : (
-                    <Square className="w-3.5 h-3.5" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCloseWindow}
-                  className="titlebar-window-btn danger"
-                  title={t("titlebar.close")}
-                  aria-label={t("titlebar.close")}
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            }
-          />
-        )}
-        {globalToastMarkup}
-      </div>
+        }
+        onNewConnection={() => handleOpenConnectionForm("connect")}
+        onOpenDatabaseFile={handleOpenDatabaseFile}
+        onMinimizeWindow={handleMinimizeWindow}
+        onToggleMaximizeWindow={handleToggleMaximizeWindow}
+        onCloseWindow={handleCloseWindow}
+        globalToastMarkup={globalToastMarkup}
+      />
     );
   }
 
@@ -853,11 +807,11 @@ function App() {
 
       {connectionFormIntent && (
         <Suspense fallback={null}>
-          <ConnectionForm
-            initialIntent={connectionFormIntent}
-            embeddedInStartupShell={false}
-            onClose={handleCloseConnectionForm}
-          />
+            <ConnectionForm
+              initialIntent={connectionFormIntent ?? undefined}
+              embeddedInStartupShell={false}
+              onClose={handleCloseConnectionForm}
+            />
         </Suspense>
       )}
       {shouldRenderGlobalModals && (
@@ -898,39 +852,12 @@ function App() {
           onNewConnection={() => handleOpenConnectionForm("connect")}
           onOpenDatabaseFile={handleOpenDatabaseFile}
           windowControls={
-            <div className="titlebar-window-controls startup-window-controls" data-no-window-drag="true">
-              <button
-                type="button"
-                onClick={handleMinimizeWindow}
-                className="titlebar-window-btn"
-                title={t("titlebar.minimize")}
-                aria-label={t("titlebar.minimize")}
-              >
-                <Minus className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={handleToggleMaximizeWindow}
-                className="titlebar-window-btn"
-                title={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
-                aria-label={isWindowMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
-              >
-                {isWindowMaximized ? (
-                  <Copy className="w-3.5 h-3.5" />
-                ) : (
-                  <Square className="w-3.5 h-3.5" />
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={handleCloseWindow}
-                className="titlebar-window-btn danger"
-                title={t("titlebar.close")}
-                aria-label={t("titlebar.close")}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+            <TitleBarWindowControls
+              isWindowMaximized={isWindowMaximized}
+              onMinimize={handleMinimizeWindow}
+              onToggleMaximize={handleToggleMaximizeWindow}
+              onClose={handleCloseWindow}
+            />
           }
         />
       )}

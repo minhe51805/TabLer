@@ -54,22 +54,15 @@ interface Props {
   structureFocusToken?: string;
 }
 
-type StructureToastTone = "success" | "info" | "error";
-
-interface StructureToast {
-  id: number;
-  tone: StructureToastTone;
-  title: string;
-  description?: string;
-  isClosing: boolean;
-}
-
 const DEFAULT_SECTION_STATE = new Set<SectionKey>(["columns"]);
 const METADATA_LOAD_TIMEOUT_MS = 8000;
 
-const columnCache = new Map<string, ColumnDetail[]>();
-const fullStructureCache = new Map<string, TableStructureType>();
-const schemaSnapshotPrefix = "tabler.schema-snapshot.v1";
+import {
+  columnCache,
+  fullStructureCache,
+  schemaSnapshotPrefix,
+} from "./structure-cache";
+import { useStructureToasts } from "./hooks/useStructureToasts";
 
 export function TableStructure({
   connectionId,
@@ -92,6 +85,8 @@ export function TableStructure({
   const structureKey = `${connectionId}|${database || ""}|${tableName}`;
   const schemaSnapshotKey = `${schemaSnapshotPrefix}:${structureKey}`;
   const displayTableName = tableName.split(".").pop() || tableName;
+
+  const { toast, showToast, dismissToast, clearToastTimers } = useStructureToasts();
   const { schema: tableSchema } = splitQualifiedTableName(tableName);
 
   const [columns, setColumns] = useState<ColumnDetail[]>([]);
@@ -120,7 +115,6 @@ export function TableStructure({
   const [schemaDiff, setSchemaDiff] = useState<TableSchemaDiff | null>(null);
   const [schemaMigrationReview, setSchemaMigrationReview] = useState<SchemaMigrationReview | null>(null);
   const [isTopbarCondensed, setIsTopbarCondensed] = useState(false);
-  const [toast, setToast] = useState<StructureToast | null>(null);
   const metadataStatusCopy = hasLoadedMetadata
     ? "Metadata is loaded and ready to inspect."
     : isLoadingMetadata
@@ -139,9 +133,6 @@ export function TableStructure({
   const structureVersionRef = useRef(0);
   const columnsRequestIdRef = useRef(0);
   const metadataRequestIdRef = useRef(0);
-  const toastIdRef = useRef(0);
-  const toastHideTimeoutRef = useRef<number | null>(null);
-  const toastClearTimeoutRef = useRef<number | null>(null);
   const pendingExternalFocusRef = useRef<{
     token: string;
     section: StructureFocusSection;
@@ -198,52 +189,6 @@ export function TableStructure({
     columnCache.delete(structureKey);
     fullStructureCache.delete(structureKey);
   }, [structureKey]);
-
-  const clearToastTimers = useCallback(() => {
-    if (toastHideTimeoutRef.current !== null) {
-      window.clearTimeout(toastHideTimeoutRef.current);
-      toastHideTimeoutRef.current = null;
-    }
-    if (toastClearTimeoutRef.current !== null) {
-      window.clearTimeout(toastClearTimeoutRef.current);
-      toastClearTimeoutRef.current = null;
-    }
-  }, []);
-
-  const dismissToast = useCallback(() => {
-    clearToastTimers();
-    setToast((prev) => (prev ? { ...prev, isClosing: true } : prev));
-    toastClearTimeoutRef.current = window.setTimeout(() => {
-      setToast(null);
-      toastClearTimeoutRef.current = null;
-    }, 220);
-  }, [clearToastTimers]);
-
-  const showToast = useCallback(
-    (tone: StructureToastTone, title: string, description?: string) => {
-      clearToastTimers();
-      const toastId = ++toastIdRef.current;
-
-      setToast({
-        id: toastId,
-        tone,
-        title,
-        description,
-        isClosing: false,
-      });
-
-      toastHideTimeoutRef.current = window.setTimeout(() => {
-        setToast((prev) => (prev?.id === toastId ? { ...prev, isClosing: true } : prev));
-        toastHideTimeoutRef.current = null;
-      }, 3200);
-
-      toastClearTimeoutRef.current = window.setTimeout(() => {
-        setToast((prev) => (prev?.id === toastId ? null : prev));
-        toastClearTimeoutRef.current = null;
-      }, 3440);
-    },
-    [clearToastTimers]
-  );
 
   const loadColumns = useCallback(
     async (options: { force?: boolean } = {}) => {

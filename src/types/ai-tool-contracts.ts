@@ -16,6 +16,16 @@ export interface AIExecuteSandboxedQueryCommandArgs extends Record<string, unkno
   statements: string[];
 }
 
+export interface AIPreviewWriteTransactionCommandArgs extends Record<string, unknown> {
+  connectionId: string;
+  statements: string[];
+}
+
+export interface AIPreviewWriteTransactionResult {
+  results: QueryResult[];
+  rolledBack: boolean;
+}
+
 export interface AIWorkspaceToolCommandMap {
   list_tables: {
     args: AIListTablesCommandArgs;
@@ -28,6 +38,10 @@ export interface AIWorkspaceToolCommandMap {
   execute_sandboxed_query: {
     args: AIExecuteSandboxedQueryCommandArgs;
     result: QueryResult;
+  };
+  preview_write_transaction: {
+    args: AIPreviewWriteTransactionCommandArgs;
+    result: AIPreviewWriteTransactionResult;
   };
 }
 

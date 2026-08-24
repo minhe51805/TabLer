@@ -7,23 +7,20 @@ import { useQueryStore } from "../../../stores/queryStore";
 import { type AIConversationMessage, type AIRequestIntent, type AIRequestMode } from "../../../types";
 import { getActiveAIProvider, isLocalAIProvider } from "../../../utils/ai-provider-registry";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
-import { formatExecutionError } from "../../SQLEditor/SQLEditorUtils";
-import { analyzeGeneratedSql, MAX_TABLE_NAMES_IN_CONTEXT, type SqlRiskAnalysis } from "../AISlidePanelUtils";
+import { getSemanticGlossary } from "../../../utils/semantic-glossary";
+import { invokeMutation } from "../../../utils/tauri-utils";
+import { analyzeGeneratedSql, type SqlRiskAnalysis } from "../AISlidePanelUtils";
 import {
-  aiModeUsesSchemaContext,
   type AIWorkspaceAgentActionName,
   type AIWorkspaceAgentStep,
   type AIWorkspaceInteractionMode,
 } from "../ai-workspace-types";
 import {
-  parseAIAgentToolAction,
   type AIAgentFinishAction,
-  type AIAgentToolAction,
 } from "../ai-agent-tools";
 import {
   buildAgentControllerPrompt,
   buildAgentPlanPrompt,
-  buildWorkspaceTableIdentifier,
   joinAgentInstructions,
   type AgentTraceStep,
   type AssistIntent,
@@ -39,25 +36,27 @@ import {
 } from "../ai-assist-prompts";
 import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates";
 import {
-  inferAssistIntent,
-  isMetricsBoardRequest,
-  isVisualizationRequest,
-  isWorkspaceScopedIntent,
-} from "../ai-assist-intent";
-import {
   buildSchemaContextRequiredMessage,
-  findMatchingTableName,
-  getAgentSqlSchemaRequirements,
-  stringifyAgentObservation,
-  summarizeAgentQueryObservation,
-  summarizeAgentSchemaSummaryObservation,
-  summarizeAgentStructureObservation,
 } from "../ai-agent-grounding";
 import { finalizeAgentResult } from "../ai-agent-finalization";
 import { recoverNonAgentAssistResponse } from "../ai-assist-recovery";
-import { mapWithConcurrency, yieldToBrowserFrame } from "../ai-async-utils";
+import { yieldToBrowserFrame } from "../ai-async-utils";
 import { prepareAIWorkspaceSchemaContext } from "../ai-schema-context-loader";
-import { findAgentSchemaMatches, isAgentRecordLookupRequest } from "../ai-agent-schema-search";
+import { isAgentRecordLookupRequest } from "../ai-agent-schema-search";
+import { resolveAgentRequestContext } from "../ai-agent-request-context";
+import { createAgentToolExecutor } from "../ai-agent-tool-executor";
+import {
+  createAgentActionRequestor,
+  isSupersededAIRequestError,
+  AI_REQUEST_REPLACED_MESSAGE,
+} from "../ai-agent-action-requestor";
+import { runAgentEvidenceLoop } from "../ai-agent-evidence-loop";
+
+export { AI_REQUEST_REPLACED_MESSAGE, isSupersededAIRequestError };
+import {
+  buildRunnerInstructionForReason,
+  formatActionFailureReason,
+} from "../ai-agent-quality-gates";
 import {
   extractSqlFromResponse,
   hasSqlStartKeyword,
@@ -80,19 +79,13 @@ export interface AIGeneratedAssistResult {
 }
 
 const MAX_AGENT_STEPS = 10;
-const MAX_REMOTE_AGENT_STEPS = 6;
+const MAX_REMOTE_AGENT_STEPS = 8;
 const MAX_LOCAL_COMPLEX_AGENT_STEPS = 14;
-const MAX_REMOTE_COMPLEX_AGENT_STEPS = 8;
-const MAX_REMOTE_HISTORY_MESSAGES = 4;
-export const AI_REQUEST_REPLACED_MESSAGE = "This AI request was replaced by a newer one.";
+const MAX_REMOTE_COMPLEX_AGENT_STEPS = 10;
+/** Upper bound for tables scanned per search_schema call; large catalogs are prioritized, not fully scanned. */
+/** Pause before retrying a transient provider failure inside the agent loop. */
+/** Rate limits need a longer cooldown than blips; one patient retry still beats failing the run. */
 
-export function isSupersededAIRequestError(errorValue: unknown) {
-  if (errorValue instanceof Error) {
-    return errorValue.message === AI_REQUEST_REPLACED_MESSAGE;
-  }
-
-  return String(errorValue) === AI_REQUEST_REPLACED_MESSAGE;
-}
 
 export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
   const {
@@ -125,11 +118,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       currentDatabase: state.currentDatabase,
     })),
   );
-  const { getTableStructure, getTableColumnsPreview, executeSandboxQuery } = useQueryStore(
+  const { getTableStructure, getTableColumnsPreview, getTableData, executeSandboxQuery, previewWriteTransaction } = useQueryStore(
     useShallow((state) => ({
       getTableStructure: state.getTableStructure,
       getTableColumnsPreview: state.getTableColumnsPreview,
+      getTableData: state.getTableData,
       executeSandboxQuery: state.executeSandboxQuery,
+      previewWriteTransaction: state.previewWriteTransaction,
     })),
   );
 
@@ -201,9 +196,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     if (isOpen) {
       setError(null);
     } else {
+      // Closing the panel must also stop the backend stream; bumping the
+      // request id alone only silences the result, the provider keeps
+      // generating until it finishes on its own.
       requestIdRef.current += 1;
+      void cancelAIRequest();
     }
-  }, [isOpen]);
+  }, [isOpen, cancelAIRequest]);
 
   const cancelGeneration = useCallback(() => {
     if (!isGenerating) return;
@@ -239,27 +238,25 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     setError(null);
     const requestId = ++requestIdRef.current;
     lastReasoningRef.current = undefined;
-    const requestedInteractionMode = options?.interactionMode ?? "prompt";
     const requestDataReadConsent = options?.requestDataReadConsent;
     const onAgentProgress = options?.onAgentProgress;
-    const requestIntentPrompt = options?.userPrompt?.trim() || normalizedPrompt;
-    const assistIntent: AssistIntent = inferAssistIntent(requestIntentPrompt, requestedInteractionMode);
-    const wantsVisualization = isVisualizationRequest(requestIntentPrompt);
-    const wantsMetricsBoard = isMetricsBoardRequest(requestIntentPrompt);
-    const interactionMode = requestedInteractionMode;
-    // In agent mode, as long as there is a live connection we let the agent reach
-    // for workspace tools even when the intent looks general ? that is what makes
-    // it behave like a real autonomous agent instead of a plain chat reply.
-    const agentCanUseWorkspace = requestedInteractionMode === "agent" && Boolean(connectionId);
-    const needsWorkspaceContext = isWorkspaceScopedIntent(assistIntent) || agentCanUseWorkspace;
+    const {
+      assistIntent,
+      wantsVisualization,
+      wantsMetricsBoard,
+      interactionMode,
+      needsWorkspaceContext,
+      modeUsesSchemaContext,
+      requestHistory,
+    } = resolveAgentRequestContext({
+      prompt: normalizedPrompt,
+      userPrompt: options?.userPrompt,
+      interactionMode: options?.interactionMode ?? "prompt",
+      connectionId,
+      isLocalProvider,
+      history,
+    });
     const appLanguage = getCurrentAppLanguage();
-    const modeUsesSchemaContext = aiModeUsesSchemaContext(interactionMode);
-    const requestHistory =
-      assistIntent === "overview"
-        ? []
-        : isLocalProvider
-          ? history
-          : history.slice(-MAX_REMOTE_HISTORY_MESSAGES);
     const fastRemoteRecovery = !isLocalProvider && interactionMode !== "agent";
     try {
       await yieldToBrowserFrame();
@@ -403,8 +400,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 ? "Schema sharing is disabled for the current provider, so workspace tools are unavailable for this turn."
                 : "No verified schema snapshot is available for tool use on this turn.";
         const sharedAgentInstruction = joinAgentInstructions(
-          "You are an autonomous agent that takes action, not a consultant. Decide your own steps: locate unknown fields with search_schema, inspect the exact table with describe_table, then ACTUALLY run run_readonly_sql to gather the data needed to answer. Do not just suggest queries and do not ask the user which query to run first ? pick the most relevant one and run it yourself.",
-          "When the user asks to see data, charts, counts, samples, distributions, or 'show me' anything, you MUST run at least one run_readonly_sql before finishing. Finishing with only suggestions and no executed query is a failure.",
+          "You are an autonomous agent that takes action, not a consultant. Decide your own steps: locate unknown fields with search_schema, inspect the exact table with describe_table, then ACTUALLY gather data yourself with sample_table_data or run_readonly_sql. Do not just suggest queries and do not ask the user which query to run first ? pick the most relevant one and run it yourself.",
+          "When the user asks to see data, charts, counts, samples, distributions, or 'show me' anything, you MUST run at least one sample_table_data or run_readonly_sql before finishing. Finishing with only suggestions and no executed query is a failure.",
           "When you finish, put the single best runnable query in finish.args.sql (a real SELECT grounded in the verified schema) so it can be executed and shown to the user automatically.",
           !isLocalProvider
             ? "Be efficient: a few targeted tool calls are better than exploring every table, but never skip running the query that produces the answer."
@@ -416,6 +413,25 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
             : undefined
         );
+        // Summaries already fetched while preparing schema context are injected
+        // into every controller prompt so the agent does not spend tool steps
+        // re-describing tables it can already see.
+        const cachedTableSummaries = workspaceToolsEnabled && relationalSchemaSummaryByTable.size > 0
+          ? [...relationalSchemaSummaryByTable.entries()]
+              .filter(([tableName]) => availableSchemaTables.includes(tableName))
+              .map(([, summary]) => summary)
+          : undefined;
+
+        // Verified business semantics for this connection/database scope are
+        // injected so analyses never contradict curated definitions.
+        const glossaryLines = workspaceToolsEnabled && connectionId
+          ? await getSemanticGlossary(connectionId, currentDatabase || undefined)
+              .then((entries) => entries.slice(0, 24).map((entry) =>
+                `- ${entry.term}${entry.kind !== "term" ? ` (${entry.kind})` : ""}: ${entry.definition}`,
+              ))
+              .catch(() => [] as string[])
+          : undefined;
+
         const buildControllerPrompt = (
           forceFinish: boolean,
           extraInstruction?: string,
@@ -431,162 +447,36 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             workspaceToolStatus,
             forceFinish,
             extraInstruction,
+            cachedTableSummaries,
+            glossaryLines,
           });
 
-        const requestAgentAction = async (controllerPrompt: string, includeHistory: boolean, extraInstruction?: string) => {
-          let rawAgentResponse = await askAI(
-            extraInstruction
-              ? `${controllerPrompt}\n\nRepair note:\n${extraInstruction}`
-              : controllerPrompt,
-            strictRecoveryContext || context,
-            "panel",
-            "agent",
-            includeHistory ? requestHistory : []
-          );
-          if (requestId !== requestIdRef.current) {
-            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-          }
-
-          try {
-            return parseAIAgentToolAction(rawAgentResponse);
-          } catch {
-            rawAgentResponse = await askAI(
-              [
-                controllerPrompt,
-                "",
-                "The previous reply was not valid. Return the same next action again as valid JSON only.",
-                'Example shape: {"action":"describe_table","message":"Need the schema first.","args":{"table":"users"}}',
-              ].join("\n"),
-              strictRecoveryContext || context,
-              "panel",
-              "agent",
-              []
-            );
-            if (requestId !== requestIdRef.current) {
-              throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-            }
-            return parseAIAgentToolAction(rawAgentResponse);
-          }
-        };
-
-        const runAgentTool = async (action: AIAgentToolAction) => {
-          try {
-            if (action.action === "list_tables") {
-              return stringifyAgentObservation({
-                database: currentDatabase || "Default",
-                tableCount: latestTables.length,
-                tables: latestTables.slice(0, MAX_TABLE_NAMES_IN_CONTEXT).map((table) => ({
-                  name: table.name,
-                  schema: table.schema ?? null,
-                  identifier: buildWorkspaceTableIdentifier(table, currentDatabase),
-                  type: table.table_type,
-                  rowCount: table.row_count ?? null,
-                })),
-              });
-            }
-
-            if (action.action === "search_schema") {
-              const query = typeof action.args?.query === "string" ? action.args.query.trim() : "";
-              if (!query) {
-                return "Tool error: search_schema requires args.query.";
-              }
-
-              const scanned = await mapWithConcurrency(latestTables, 4, async (table) => {
-                const identifier = buildWorkspaceTableIdentifier(table, currentDatabase) || table.name;
-                try {
-                  const columns = await getTableColumnsPreview(
-                    connectionId!,
-                    identifier,
-                    currentDatabase || undefined,
-                  );
-                  return { identifier, columns, failed: false };
-                } catch {
-                  return { identifier, columns: [], failed: true };
-                }
-              });
-              if (requestId !== requestIdRef.current) {
-                throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-              }
-
-              const matches = findAgentSchemaMatches(query, scanned);
-              return stringifyAgentObservation({
-                query,
-                tablesScanned: scanned.length,
-                tablesFailed: scanned.filter((entry) => entry.failed).length,
-                matches,
-                next: matches.length > 0
-                  ? "Call describe_table for the best matching table, then read the requested row data."
-                  : "No matching columns were found in the scanned catalog. Do not claim a column is absent if tablesFailed is greater than zero.",
-              });
-            }
-
-            if (action.action === "describe_table") {
-              const requestedTable = typeof action.args?.table === "string" ? action.args.table.trim() : "";
-              if (!requestedTable) {
-                return "Tool error: describe_table requires args.table.";
-              }
-
-              const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
-              if (!matchedTable) {
-                return `Tool error: Table "${requestedTable}" is not present in the current workspace schema.`;
-              }
-
-              const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
-              if (cachedSummary) {
-                inspectedAgentTables.add(matchedTable);
-                return summarizeAgentSchemaSummaryObservation(matchedTable, cachedSummary);
-              }
-
-              const structure = await getTableStructure(connectionId!, matchedTable, currentDatabase || undefined);
-              if (requestId !== requestIdRef.current) {
-                throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-              }
-
-              inspectedAgentTables.add(matchedTable);
-              return summarizeAgentStructureObservation(matchedTable, structure);
-            }
-
-            if (action.action === "run_readonly_sql") {
-              const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
-              if (!sql) {
-                return "Tool error: run_readonly_sql requires args.sql.";
-              }
-
-              const schemaRequirements = getAgentSqlSchemaRequirements(
-                sql,
-                availableSchemaTables,
-                inspectedAgentTables,
-              );
-              if (schemaRequirements.unknown.length > 0) {
-                return `Tool blocked: SQL references unknown table(s): ${schemaRequirements.unknown.join(", ")}. Use list_tables and describe_table first.`;
-              }
-              if (schemaRequirements.uninspected.length > 0) {
-                return `Tool blocked: Inspect the schema before reading rows. Call describe_table for: ${schemaRequirements.uninspected.join(", ")}.`;
-              }
-
-              if (requestDataReadConsent) {
-                const approved = await requestDataReadConsent();
-                if (!approved) {
-                  return "Tool blocked: The user did not grant permission to read live database rows for this request.";
-                }
-              }
-
-              const queryResult = await executeSandboxQuery(connectionId!, [sql], true);
-              if (requestId !== requestIdRef.current) {
-                throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-              }
-
-              return summarizeAgentQueryObservation(queryResult);
-            }
-
-            return "Tool error: finish does not execute a tool observation.";
-          } catch (errorValue) {
-            if (isSupersededAIRequestError(errorValue)) {
-              throw errorValue;
-            }
-            return `Tool error: ${formatExecutionError(errorValue)}`;
-          }
-        };
+        // Model-call layer: transient retry + parse-repair (extracted).
+        const { requestAgentAction } = createAgentActionRequestor({
+          askAI,
+          context,
+          strictRecoveryContext,
+          requestId,
+          requestIdRef,
+          requestHistory,
+        });
+        const { runAgentTool } = createAgentToolExecutor({
+          connectionId,
+          currentDatabase,
+          latestTables,
+          availableSchemaTables,
+          relationalSchemaSummaryByTable,
+          inspectedAgentTables,
+          requestId,
+          requestIdRef,
+          requestDataReadConsent,
+          publishAgentProgress,
+          getTableColumnsPreview,
+          getTableStructure,
+          getTableData,
+          executeSandboxQuery,
+          previewWriteTransaction,
+        });
 
         const recoverAgentFinishAction = async (reason: string): Promise<AIAgentFinishAction> => {
           const allowedTables = agentPromptTableNames.length > 0 ? agentPromptTableNames : availableSchemaTables;
@@ -684,27 +574,17 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           }
         }
 
-        const instructionForRunnerRequest = (reason: AIAgentActionRequestReason) => {
-          if (reason === "direct") {
-            return joinAgentInstructions(
-              sharedAgentInstruction,
-              "Respond as a general-purpose assistant unless the user explicitly needs current workspace evidence."
-            );
-          }
-          if (reason === "budget") {
-            return joinAgentInstructions(
-              sharedAgentInstruction,
-              "You have reached the tool budget. Finish with the best grounded answer you can."
-            );
-          }
-          return sharedAgentInstruction;
-        };
+        const instructionForRunnerRequest = (reason: AIAgentActionRequestReason) =>
+          buildRunnerInstructionForReason(reason, sharedAgentInstruction);
+
+        let consecutiveActionFailures = 0;
+        let endedWithAskUser = false;
 
         const agentRunnerResult = await runAIAgentToolLoop({
           workspaceToolsEnabled,
           stepBudget: agentStepBudget,
           initialSteps: agentTraceSteps,
-          requestAction: ({ forceFinish, includeHistory, iteration, reason, steps }) => {
+          requestAction: async ({ forceFinish, includeHistory, iteration, reason, steps }) => {
             const completedToolSteps = steps.filter((step) => step.action !== "plan");
             if (recordLookupRequest && iteration === 1 && completedToolSteps.length === 0) {
               return Promise.resolve({
@@ -714,10 +594,64 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               });
             }
 
-            return requestAgentAction(
-              buildControllerPrompt(forceFinish, instructionForRunnerRequest(reason), steps),
-              includeHistory,
+            const controllerPrompt = buildControllerPrompt(
+              forceFinish,
+              instructionForRunnerRequest(reason),
+              steps,
             );
+            try {
+              const action = await requestAgentAction(controllerPrompt, includeHistory);
+              consecutiveActionFailures = 0;
+              if (action.action === "ask_user") {
+                // The harness runs one agent turn per user message, so a
+                // clarifying question ends the turn: the reply arrives as the
+                // next message with full history attached.
+                endedWithAskUser = true;
+                const optionsBlock = action.args.options?.length
+                  ? `\n\n${action.args.options.map((option, index) => `${index + 1}. ${option}`).join("\n")}`
+                  : "";
+                const suffix = appLanguage === "vi"
+                  ? "\n\n_(Trả lời bằng số thứ tự hoặc nội dung của bạn.)_"
+                  : "\n\n_(Reply with an option number or your own answer.)_";
+                agentTraceSteps = [
+                  ...steps,
+                  {
+                    step: steps.length + 1,
+                    action: "ask_user",
+                    message: action.args.question,
+                    observation: "",
+                  },
+                ];
+                publishAgentProgress();
+                return {
+                  action: "finish" as const,
+                  message: action.message || "Asking the user for clarification.",
+                  args: { response: `${action.args.question}${optionsBlock}${suffix}` },
+                };
+              }
+              return action;
+            } catch (errorValue) {
+              if (isSupersededAIRequestError(errorValue)) throw errorValue;
+              // One bad model turn must not discard the evidence already
+              // gathered: retry the same prompt once, then salvage the run
+              // through the finish-recovery path instead of failing outright.
+              consecutiveActionFailures += 1;
+              if (consecutiveActionFailures >= 2) {
+                return recoverAgentFinishAction(
+                  `The agent could not return a valid action: ${formatActionFailureReason(errorValue)}`,
+                );
+              }
+              try {
+                const retriedAction = await requestAgentAction(controllerPrompt, false);
+                consecutiveActionFailures = 0;
+                return retriedAction;
+              } catch (retryError) {
+                if (isSupersededAIRequestError(retryError)) throw retryError;
+                return recoverAgentFinishAction(
+                  `The agent could not return a valid action: ${formatActionFailureReason(retryError)}`,
+                );
+              }
+            }
           },
           runTool: runAgentTool,
           recoverFinish: recoverAgentFinishAction,
@@ -730,15 +664,96 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               });
             } else if (snapshot.phase === "tool-completed") {
               publishAgentProgress();
+            } else if (snapshot.phase === "requesting-action") {
+              // The model call is the longest part of every step; show it
+              // explicitly so the trace never looks frozen between tools.
+              publishAgentProgress({
+                action: "think",
+                message:
+                  snapshot.requestReason === "budget"
+                    ? "Tool budget reached — wrapping up with the evidence gathered."
+                    : snapshot.requestReason === "direct"
+                      ? "Composing response."
+                      : `Deciding next action (step ${Math.min(snapshot.iteration, snapshot.stepBudget)}/${snapshot.stepBudget}).`,
+              });
+            } else if (snapshot.phase === "recovering-finish") {
+              publishAgentProgress({ action: "think", message: "Finalizing answer." });
             }
           },
         });
         agentTraceSteps = agentRunnerResult.steps;
+        let finalAction = agentRunnerResult.finalAction;
+        let finalSteps = agentRunnerResult.steps;
+        if (endedWithAskUser && typeof finalAction.args?.response === "string") {
+          const askStep: AgentTraceStep = {
+            step: finalSteps.length + 1,
+            action: "ask_user",
+            message: finalAction.args.response,
+            observation: "",
+          };
+          finalSteps = [...finalSteps, askStep];
+          agentTraceSteps = [...agentTraceSteps, askStep];
+        }
+
+        // Quality gate: a data-seeking request must not end in a finish that
+        // neither executed a read nor proposed SQL — that is how runs used to
+        // stop with "I have enough data" and no deliverable. The gate retries
+        // a bounded number of rounds, then accepts the best available answer.
+        // Quality gate: bounded evidence-recovery rounds via ai-agent-evidence-loop.
+        const wantsReportTable = /(báo cáo|bảng báo cáo|report|tổng hợp|summary|dashboard)/i.test(normalizedPrompt);
+
+        ({ finalAction, finalSteps } = await runAgentEvidenceLoop({
+          workspaceToolsEnabled,
+          endedWithAskUser,
+          assistIntent,
+          wantsReportTable,
+          sharedAgentInstruction,
+          initialAction: finalAction,
+          initialSteps: finalSteps,
+          requestAgentAction,
+          buildControllerPrompt,
+          isSupersededAIRequestError,
+          runAgentTool,
+          publishAgentProgress,
+          recoverAgentFinishAction,
+        }));
+
+        // Best-effort debug artifact: persist the full snapshot stream so
+        // failed or surprising runs can be replayed offline.
+        try {
+          const traceLines = [
+            JSON.stringify({
+              kind: "meta",
+              at: new Date().toISOString(),
+              prompt: normalizedPrompt,
+              intent: assistIntent,
+              connectionId,
+              database: currentDatabase,
+              workspaceToolsEnabled,
+            }),
+            ...agentRunnerResult.snapshots.map((snapshot) =>
+              JSON.stringify({
+                kind: "snapshot",
+                phase: snapshot.phase,
+                iteration: snapshot.iteration,
+                action: snapshot.action ?? null,
+                steps: snapshot.steps,
+              }),
+            ),
+            JSON.stringify({ kind: "final", steps: finalSteps }),
+          ].join("\n");
+          void invokeMutation<string>("save_agent_trace", { requestId, content: traceLines }).catch(
+            () => undefined,
+          );
+        } catch {
+          // Tracing must never break the run.
+        }
+
         const finalization = await finalizeAgentResult({
           availableSchemaTables,
           buildControllerPrompt,
-          initialAction: agentRunnerResult.finalAction,
-          initialSteps: agentRunnerResult.steps,
+          initialAction: finalAction,
+          initialSteps: finalSteps,
           recoverFinishAction: recoverAgentFinishAction,
           requestAgentAction,
           sharedAgentInstruction,
@@ -804,7 +819,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         setIsGenerating(false);
       }
     }
-  }, [activeProvider, aiConfigs, askAI, connectionId, currentDatabase, fetchTables, getTableColumnsPreview, getTableStructure, isLocalProvider, saveAIConfigs]);
+  }, [activeProvider, aiConfigs, askAI, connectionId, currentDatabase, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
 
   const copyText = useCallback(async (text: string) => {
     await navigator.clipboard.writeText(text);

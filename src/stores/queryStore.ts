@@ -21,6 +21,10 @@ export interface QueryState {
     statements: string[],
     requireReadOnly?: boolean,
   ) => Promise<QueryResult>;
+  previewWriteTransaction: (connectionId: string, statements: string[]) => Promise<{
+    results: QueryResult[];
+    rolledBack: boolean;
+  }>;
   getTableData: (
     connectionId: string,
     table: string,
@@ -135,6 +139,18 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     } catch (e) {
       set({ isExecutingQuery: false });
       throw e;
+    }
+  },
+
+  previewWriteTransaction: async (connectionId, statements) => {
+    set({ isExecutingQuery: true });
+    try {
+      return await invokeAIWorkspaceToolMutation(
+        "preview_write_transaction",
+        { connectionId, statements },
+      );
+    } finally {
+      set({ isExecutingQuery: false });
     }
   },
 

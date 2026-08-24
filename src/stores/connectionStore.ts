@@ -3,12 +3,10 @@ import { create } from "zustand";
 import type {
   ConnectionConfig,
   DatabaseInfo,
-  QueryResult,
   SchemaObjectInfo,
   TableInfo,
 } from "../types";
 import { invokeAIWorkspaceToolWithTimeout } from "../utils/ai-tool-command-client";
-import { resolveEnvVars } from "../utils/env-resolve";
 import { invokeMutation, invokeWithTimeout } from "../utils/tauri-utils";
 import {
   getOrLoadSchemaObjects,
@@ -18,99 +16,20 @@ import {
 import { useGlobalErrorStore } from "./globalErrorStore";
 import { useUIStore } from "./uiStore";
 import { invalidateConnectionCapabilities } from "../hooks/useConnectionCapabilities";
+import {
+  disconnectedPatch,
+  executeStartupCommands,
+  FRONTEND_TIMEOUTS,
+  inFlightSchemaObjectFetches,
+  inFlightTableFetches,
+  isMissingConnectionError,
+  metadataFetchKey,
+  resolveConnectionConfig,
+  runWithInFlight,
+  sanitizeConnectionConfig,
+} from "./connectionStoreHelpers";
 
-const FRONTEND_TIMEOUTS = {
-  connection: 30_000,
-  metadata: 15_000,
-} as const;
-
-const MISSING_CONNECTION_ERROR_PATTERNS = [/please connect first/i];
-const inFlightTableFetches = new Map<string, Promise<void>>();
-const inFlightSchemaObjectFetches = new Map<string, Promise<void>>();
-
-const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig => ({
-  ...config,
-  password: undefined,
-  ssh_config: config.ssh_config
-    ? {
-        ...config.ssh_config,
-        password: undefined,
-        privateKey: undefined,
-        passphrase: undefined,
-      }
-    : undefined,
-});
-
-export function deriveConnectionName(config: ConnectionConfig): string {
-  const explicitName = config.name.trim();
-  if (explicitName) return explicitName;
-
-  if (config.db_type === "sqlite" || config.db_type === "duckdb") {
-    const filePath = (config.file_path || "").trim();
-    if (filePath) {
-      const normalizedPath = filePath.replace(/\\/g, "/");
-      const fileName = normalizedPath.split("/").filter(Boolean).pop() || filePath;
-      return `${config.db_type === "duckdb" ? "DuckDB" : "SQLite"} ${fileName}`;
-    }
-    return config.db_type === "duckdb" ? "DuckDB local" : "SQLite local";
-  }
-
-  const host = (config.host || "").trim();
-  const database = (config.database || "").trim();
-  const dbLabel = config.db_type.toUpperCase();
-  if (host && database) return `${dbLabel} ${host} / ${database}`;
-  if (database) return `${dbLabel} ${database}`;
-  if (host) return `${dbLabel} ${host}`;
-  return `${dbLabel} connection`;
-}
-
-function resolveConnectionConfig(config: ConnectionConfig): ConnectionConfig {
-  const resolvedConfig = {
-    ...config,
-    host: config.host ? resolveEnvVars(config.host) : config.host,
-    username: config.username ? resolveEnvVars(config.username) : config.username,
-    password: config.password ? resolveEnvVars(config.password) : config.password,
-    database: config.database ? resolveEnvVars(config.database) : config.database,
-    file_path: config.file_path ? resolveEnvVars(config.file_path) : config.file_path,
-    additional_fields: config.additional_fields
-      ? Object.fromEntries(
-          Object.entries(config.additional_fields).map(([key, value]) => [
-            key,
-            typeof value === "string" ? resolveEnvVars(value) : value,
-          ]),
-        )
-      : config.additional_fields,
-  };
-
-  return {
-    ...resolvedConfig,
-    name: deriveConnectionName(resolvedConfig),
-  };
-}
-
-function metadataFetchKey(connectionId: string, database?: string): string {
-  return `${connectionId}:${database ?? ""}`;
-}
-
-function isMissingConnectionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return MISSING_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message));
-}
-
-async function executeStartupCommands(connectionId: string, commands: string): Promise<void> {
-  const statements = commands
-    .split(";")
-    .map((statement) => statement.trim())
-    .filter(Boolean);
-
-  for (const sql of statements) {
-    try {
-      await invokeMutation<QueryResult>("execute_query", { connectionId, sql });
-    } catch (error) {
-      console.warn("[StartupCommands] Failed to execute:", sql, error);
-    }
-  }
-}
+export { deriveConnectionName } from "./connectionStoreHelpers";
 
 export interface ConnectionState {
   connections: ConnectionConfig[];
@@ -148,24 +67,57 @@ export interface ConnectionState {
   pickSqliteDatabasePath: (databaseName: string) => Promise<string | null>;
 }
 
-function disconnectedPatch(
-  state: Pick<ConnectionState, "activeConnectionId" | "connectedIds">,
-  connectionId: string,
-): Partial<ConnectionState> {
-  const connectedIds = new Set(state.connectedIds);
-  connectedIds.delete(connectionId);
-  if (state.activeConnectionId !== connectionId) return { connectedIds };
-  return {
-    connectedIds,
-    activeConnectionId: null,
-    currentDatabase: null,
-    databases: [],
-    tables: [],
-    schemaObjects: [],
-  };
-}
+export const useConnectionStore = create<ConnectionState>((set, get) => {
+  type ConnectSnapshot = Pick<
+    ConnectionState,
+    "activeConnectionId" | "currentDatabase" | "tables" | "schemaObjects"
+  >;
 
-export const useConnectionStore = create<ConnectionState>((set, get) => ({
+  const snapshotForRestore = (): ConnectSnapshot => ({
+    activeConnectionId: get().activeConnectionId,
+    currentDatabase: get().currentDatabase,
+    tables: get().tables,
+    schemaObjects: get().schemaObjects,
+  });
+
+  const markConnected = (
+    connectionId: string,
+    database: string | null | undefined,
+    connectionsPatch?: { connections: ConnectionConfig[] },
+  ) => {
+    const connectedIds = new Set(get().connectedIds);
+    connectedIds.add(connectionId);
+    set({
+      ...(connectionsPatch ?? {}),
+      connectedIds,
+      activeConnectionId: connectionId,
+      currentDatabase: database ?? null,
+      schemaObjects: [],
+      ...(database ? {} : { tables: [] }),
+      isConnecting: false,
+    });
+  };
+
+  const restoreOrClearOnConnectError = (error: unknown, targetId: string, previousState: ConnectSnapshot) => {
+    if (get().activeConnectionId === targetId) {
+      set({ ...previousState, isConnecting: false });
+    } else {
+      set({ isConnecting: false });
+    }
+    useGlobalErrorStore.getState().setError(`Connection to target failed: ${error}`);
+    throw error;
+  };
+
+  const loadMetadataAfterConnect = (connectionId: string, database: string | null | undefined) => {
+    void get().fetchDatabases(connectionId);
+    if (database) {
+      void get().fetchTables(connectionId, database);
+      void get().fetchSchemaObjects(connectionId, database);
+    }
+  };
+
+  return {
+
   connections: [],
   activeConnectionId: null,
   connectedIds: new Set(),
@@ -181,6 +133,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   isLoadingSchemaObjects: false,
 
   setConnectionHealth: (connectionId, healthy) => {
+    // Skip identical writes so subscribers are not notified needlessly.
+    if (get().connectionHealth[connectionId] === healthy) return;
     set((state) => ({
       connectionHealth: { ...state.connectionHealth, [connectionId]: healthy },
     }));
@@ -202,12 +156,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   connectToDatabase: async (config) => {
     if (get().isConnecting) return;
-    const previousState = {
-      activeConnectionId: get().activeConnectionId,
-      currentDatabase: get().currentDatabase,
-      tables: get().tables,
-      schemaObjects: get().schemaObjects,
-    };
+    const previousState = snapshotForRestore();
     const normalizedConfig = resolveConnectionConfig(config);
     set({
       isConnecting: true,
@@ -233,51 +182,26 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       );
       invalidateConnectionCapabilities(normalizedConfig.id);
 
-      const connectedIds = new Set(get().connectedIds);
-      connectedIds.add(normalizedConfig.id);
       const savedConfig = sanitizeConnectionConfig(normalizedConfig);
-      const nextConnections = connections.some((item) => item.id === normalizedConfig.id)
-        ? connections.map((item) => (item.id === normalizedConfig.id ? savedConfig : item))
-        : [...connections, savedConfig];
-
-      set({
-        connectedIds,
-        activeConnectionId: normalizedConfig.id,
-        connections: nextConnections,
-        currentDatabase: normalizedConfig.database ?? null,
-        schemaObjects: [],
-        ...(normalizedConfig.database ? {} : { tables: [] }),
-        isConnecting: false,
+      markConnected(normalizedConfig.id, normalizedConfig.database, {
+        connections: connections.some((item) => item.id === normalizedConfig.id)
+          ? connections.map((item) => (item.id === normalizedConfig.id ? savedConfig : item))
+          : [...connections, savedConfig],
       });
 
       await executeStartupCommands(
         normalizedConfig.id,
         normalizedConfig.startupCommands ?? "",
       );
-      void get().fetchDatabases(normalizedConfig.id);
-      if (normalizedConfig.database) {
-        void get().fetchTables(normalizedConfig.id, normalizedConfig.database);
-        void get().fetchSchemaObjects(normalizedConfig.id, normalizedConfig.database);
-      }
+      loadMetadataAfterConnect(normalizedConfig.id, normalizedConfig.database);
     } catch (error) {
-      if (get().activeConnectionId === normalizedConfig.id) {
-        set({ ...previousState, isConnecting: false });
-      } else {
-        set({ isConnecting: false });
-      }
-      useGlobalErrorStore.getState().setError(`Connection to target failed: ${error}`);
-      throw error;
+      restoreOrClearOnConnectError(error, normalizedConfig.id, previousState);
     }
   },
 
   connectSavedConnection: async (connectionId) => {
     if (get().isConnecting) return;
-    const previousState = {
-      activeConnectionId: get().activeConnectionId,
-      currentDatabase: get().currentDatabase,
-      tables: get().tables,
-      schemaObjects: get().schemaObjects,
-    };
+    const previousState = snapshotForRestore();
     const connection = get().connections.find((item) => item.id === connectionId);
     set({
       isConnecting: true,
@@ -290,31 +214,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     try {
       await invokeMutation("connect_saved_connection", { connectionId });
       invalidateConnectionCapabilities(connectionId);
-      const connectedIds = new Set(get().connectedIds);
-      connectedIds.add(connectionId);
-      set({
-        connectedIds,
-        activeConnectionId: connectionId,
-        currentDatabase: connection?.database ?? null,
-        schemaObjects: [],
-        ...(connection?.database ? {} : { tables: [] }),
-        isConnecting: false,
-      });
+      markConnected(connectionId, connection?.database);
 
       await executeStartupCommands(connectionId, connection?.startupCommands ?? "");
-      void get().fetchDatabases(connectionId);
-      if (connection?.database) {
-        void get().fetchTables(connectionId, connection.database);
-        void get().fetchSchemaObjects(connectionId, connection.database);
-      }
+      loadMetadataAfterConnect(connectionId, connection?.database);
     } catch (error) {
-      if (get().activeConnectionId === connectionId) {
-        set({ ...previousState, isConnecting: false });
-      } else {
-        set({ isConnecting: false });
-      }
-      useGlobalErrorStore.getState().setError(`Connection to target failed: ${error}`);
-      throw error;
+      restoreOrClearOnConnectError(error, connectionId, previousState);
     }
   },
 
@@ -394,12 +299,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
 
-  fetchTables: async (connectionId, database) => {
-    const key = metadataFetchKey(connectionId, database);
-    const pending = inFlightTableFetches.get(key);
-    if (pending) return pending;
-
-    const request = (async () => {
+  fetchTables: async (connectionId, database) =>
+    runWithInFlight(inFlightTableFetches, metadataFetchKey(connectionId, database), async () => {
       set({ isLoadingTables: true });
       try {
         const tables = await getOrLoadSchemaTables(
@@ -421,22 +322,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           .getState()
           .setError(`Failed to list tables: ${error}`);
       }
-    })();
+    }),
 
-    inFlightTableFetches.set(key, request);
-    try {
-      await request;
-    } finally {
-      inFlightTableFetches.delete(key);
-    }
-  },
-
-  fetchSchemaObjects: async (connectionId, database) => {
-    const key = metadataFetchKey(connectionId, database);
-    const pending = inFlightSchemaObjectFetches.get(key);
-    if (pending) return pending;
-
-    const request = (async () => {
+  fetchSchemaObjects: async (connectionId, database) =>
+    runWithInFlight(inFlightSchemaObjectFetches, metadataFetchKey(connectionId, database), async () => {
       set({ isLoadingSchemaObjects: true });
       try {
         const schemaObjects = await getOrLoadSchemaObjects(
@@ -458,15 +347,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           .getState()
           .setError(`Failed to list schema objects: ${error}`);
       }
-    })();
-
-    inFlightSchemaObjectFetches.set(key, request);
-    try {
-      await request;
-    } finally {
-      inFlightSchemaObjectFetches.delete(key);
-    }
-  },
+    }),
 
   invalidateSchemaMetadata: (connectionId, database) => {
     invalidateSchemaCache(connectionId, database);
@@ -515,4 +396,5 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       FRONTEND_TIMEOUTS.metadata,
       "Opening SQLite save dialog",
     ),
-}));
+  };
+});

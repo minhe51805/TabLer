@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Sparkles } from "lucide-react";
+import { Plus, Sparkles, ChevronDown, LayoutGrid } from "lucide-react";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useI18n } from "../../i18n";
+import { buildMetricsBoardAttachmentSnapshot } from "./metrics-board-attachment";
+import { useMetricsBoardWidgets, type CanvasContextMenuState } from "./hooks/useMetricsBoardWidgets";
 import type {
   MetricsBoardDefinition,
   MetricsWidgetDefinition,
-  MetricsWidgetType,
+
   QueryResult,
 } from "../../types";
 import type {
@@ -21,8 +23,6 @@ import {
   colSpanToWidthPx,
   compactMetricsLabel,
   createBoardDefinition,
-  createWidgetDefinition,
-  findFirstAvailablePosition,
   getLastPathSegment,
   getWidgetLibrary as _getWidgetLibrary,
   getWidgetLibraryItem as _getWidgetLibraryItem,
@@ -41,7 +41,6 @@ import {
   rowSpanToHeightPx,
   widthPxToColSpan,
   writeStoredBoards,
-  type GridPosition,
 } from "./utils/query-builder";
 import { MetricsWidgetCard as _MetricsWidgetCard } from "./components/MetricsWidget";
 import { MetricsEditor as _MetricsEditor } from "./components/MetricsEditor";
@@ -84,64 +83,6 @@ type ResizeState = {
   previewHeightPx: number;
 };
 
-type CanvasContextMenuState = {
-  left: number;
-  top: number;
-  grid_x: number;
-  grid_y: number;
-  submenuOpen: boolean;
-};
-
-const MAX_AI_BOARD_ATTACHMENT_WIDGETS = 16;
-const MAX_AI_BOARD_ATTACHMENT_QUERY_CHARS = 420;
-
-function compactWidgetQueryForAI(query: string) {
-  const compact = query.replace(/\s+/g, " ").trim();
-  if (compact.length <= MAX_AI_BOARD_ATTACHMENT_QUERY_CHARS) {
-    return compact;
-  }
-  return `${compact.slice(0, MAX_AI_BOARD_ATTACHMENT_QUERY_CHARS - 3).trimEnd()}...`;
-}
-
-function buildMetricsBoardAttachmentSnapshot(args: {
-  board: MetricsBoardDefinition;
-  connectionLabel: string;
-  databaseLabel: string;
-}) {
-  const { board, connectionLabel, databaseLabel } = args;
-  const visibleWidgets = board.widgets.slice(
-    0,
-    MAX_AI_BOARD_ATTACHMENT_WIDGETS,
-  );
-  const hiddenWidgetCount = Math.max(
-    0,
-    board.widgets.length - visibleWidgets.length,
-  );
-
-  return [
-    "Metrics dashboard snapshot:",
-    `Board: ${board.name}`,
-    `Connection: ${connectionLabel}`,
-    `Database: ${databaseLabel}`,
-    `Widget count: ${board.widgets.length}`,
-    "",
-    "Widgets:",
-    ...visibleWidgets.map((widget, index) =>
-      [
-        `${index + 1}. [${widget.type}] ${widget.title}`,
-        `   layout: x=${widget.grid_x}, y=${widget.grid_y}, w=${widget.col_span}, h=${widget.row_span}, refresh=${widget.refresh_seconds}s`,
-        `   query: ${compactWidgetQueryForAI(widget.query)}`,
-      ].join("\n"),
-    ),
-    hiddenWidgetCount > 0
-      ? `... ${hiddenWidgetCount} more widget(s) are present on this dashboard but omitted from this compact snapshot.`
-      : "",
-    "",
-    "Use this dashboard snapshot as the source of truth when recommending edits, removing redundant charts, renaming widgets, or proposing replacements.",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -161,6 +102,8 @@ export function MetricsBoard({
   const connections = useConnectionStore((state) => state.connections);
   const [boards, setBoards] = useState<MetricsBoardDefinition[]>([]);
   const [boardSearch, setBoardSearch] = useState("");
+  const [isWidgetMenuOpen, setIsWidgetMenuOpen] = useState(false);
+  const widgetMenuRef = useRef<HTMLDivElement | null>(null);
   const [activeBoardId, setActiveBoardId] = useState<string | null>(
     boardId ?? null,
   );
@@ -347,6 +290,27 @@ export function MetricsBoard({
       shouldKeepWidgetSelection,
     ],
   );
+
+  useEffect(() => {
+    if (!isWidgetMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (
+        widgetMenuRef.current &&
+        !widgetMenuRef.current.contains(event.target as Node)
+      ) {
+        setIsWidgetMenuOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsWidgetMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [isWidgetMenuOpen]);
 
   useEffect(() => {
     if (!activeBoard) return;
@@ -544,57 +508,24 @@ export function MetricsBoard({
     );
   }, [activeBoard, dragState, resizeState]);
 
-  const updateActiveBoard = useCallback(
-    (updater: (board: MetricsBoardDefinition) => MetricsBoardDefinition) => {
-      if (!activeBoard) return;
-      const nextBoards = boards.map((board) =>
-        board.id === activeBoard.id
-          ? { ...updater(board), updated_at: Date.now() }
-          : board,
-      );
-      persistBoards(nextBoards);
-    },
-    [activeBoard, boards, persistBoards],
-  );
-
-  const updateWidgetLayout = useCallback(
-    (widgetId: string, updates: Partial<MetricsWidgetDefinition>) => {
-      if (!activeBoard) return;
-
-      updateActiveBoard((board) => {
-        const currentWidget = board.widgets.find(
-          (widget) => widget.id === widgetId,
-        );
-        if (!currentWidget) return board;
-
-        const others = board.widgets.filter((widget) => widget.id !== widgetId);
-        const candidate = normalizeWidgetLayout({
-          ...currentWidget,
-          ...updates,
-        });
-        const positioned = canPlaceWidget(others, candidate, widgetId)
-          ? candidate
-          : { ...candidate, ...findFirstAvailablePosition(others, candidate) };
-
-        return {
-          ...board,
-          widgets: board.widgets.map((widget) =>
-            widget.id === widgetId ? positioned : widget,
-          ),
-        };
-      });
-    },
-    [activeBoard, updateActiveBoard],
-  );
-
-  const createBoard = useCallback(() => {
-    const nextBoard = createBoardDefinition(connectionId, database, boards);
-    const nextBoards = [nextBoard, ...boards];
-    persistBoards(nextBoards);
-    setActiveBoardId(nextBoard.id);
-    setActiveWidgetId(null);
-    setEditingWidgetId(null);
-  }, [boards, connectionId, database, persistBoards]);
+  const {
+    updateWidgetLayout,
+    createBoard,
+    addWidget,
+    updateSelectedWidget,
+    deleteSelectedWidget,
+  } = useMetricsBoardWidgets({
+    connectionId,
+    database: database || undefined,
+    boards,
+    activeBoard,
+    editingWidget,
+    persistBoards,
+    setActiveBoardId,
+    setActiveWidgetId,
+    setEditingWidgetId,
+    setCanvasContextMenu,
+  });
 
   const handleOpenDatabaseSidebar = useCallback(() => {
     window.dispatchEvent(
@@ -669,58 +600,6 @@ export function MetricsBoard({
     },
     [activeBoard?.database, addTab, connectionId, database, setActiveTab],
   );
-
-  const addWidget = useCallback(
-    (type: MetricsWidgetType, preferredPosition?: Partial<GridPosition>) => {
-      if (!activeBoard) return;
-      const nextWidget = createWidgetDefinition(
-        type,
-        activeBoard.widgets,
-        preferredPosition,
-      );
-      updateActiveBoard((board) => ({
-        ...board,
-        widgets: [...board.widgets, nextWidget],
-      }));
-      setActiveWidgetId(nextWidget.id);
-      setEditingWidgetId(nextWidget.id);
-      setCanvasContextMenu(null);
-    },
-    [activeBoard, updateActiveBoard],
-  );
-
-  const updateSelectedWidget = useCallback(
-    (updates: Partial<MetricsWidgetDefinition>) => {
-      if (!editingWidget) return;
-      if (
-        "col_span" in updates ||
-        "row_span" in updates ||
-        "grid_x" in updates ||
-        "grid_y" in updates
-      ) {
-        updateWidgetLayout(editingWidget.id, updates);
-        return;
-      }
-
-      updateActiveBoard((board) => ({
-        ...board,
-        widgets: board.widgets.map((widget) =>
-          widget.id === editingWidget.id ? { ...widget, ...updates } : widget,
-        ),
-      }));
-    },
-    [editingWidget, updateActiveBoard, updateWidgetLayout],
-  );
-
-  const deleteSelectedWidget = useCallback(() => {
-    if (!editingWidget) return;
-    updateActiveBoard((board) => ({
-      ...board,
-      widgets: board.widgets.filter((widget) => widget.id !== editingWidget.id),
-    }));
-    setActiveWidgetId(null);
-    setEditingWidgetId(null);
-  }, [editingWidget, updateActiveBoard]);
 
   useEffect(() => {
     if (!canvasContextMenu) return;
@@ -1163,22 +1042,62 @@ export function MetricsBoard({
               <span>{t("metrics.createBoard")}</span>
             </button>
 
-            {widgetLibrary.map((item) => {
-              const Icon = item.icon;
-              return (
+            {widgetLibrary.length > 0 && (
+              <div
+                className="metrics-board-widget-menu"
+                ref={widgetMenuRef}
+              >
                 <button
-                  key={item.type}
                   type="button"
                   className="metrics-board-topbar-action"
-                  onClick={() => addWidget(item.type)}
+                  onClick={() => setIsWidgetMenuOpen((value) => !value)}
                   disabled={!activeBoard}
-                  title={item.description}
+                  aria-haspopup="menu"
+                  aria-expanded={isWidgetMenuOpen}
+                  title={
+                    language === "vi"
+                      ? "Them widget moi vao bang"
+                      : "Add a new widget to the board"
+                  }
                 >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{item.label}</span>
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>
+                    {language === "vi" ? "Them widget" : "Add widget"}
+                  </span>
+                  <ChevronDown className="w-3 h-3 metrics-board-widget-menu-caret" />
                 </button>
-              );
-            })}
+
+                {isWidgetMenuOpen && (
+                  <div
+                    className="metrics-board-widget-menu-list"
+                    role="menu"
+                  >
+                    {widgetLibrary.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.type}
+                          type="button"
+                          role="menuitem"
+                          className="metrics-board-widget-menu-item"
+                          onClick={() => {
+                            addWidget(item.type);
+                            setIsWidgetMenuOpen(false);
+                          }}
+                          disabled={!activeBoard}
+                        >
+                          <Icon className="w-3.5 h-3.5 metrics-board-widget-menu-icon" />
+                          <span className="metrics-board-widget-menu-copy">
+                            <strong>{item.label}</strong>
+                            <small>{item.description}</small>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

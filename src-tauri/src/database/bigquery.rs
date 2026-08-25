@@ -91,7 +91,6 @@ impl BigQueryDriver {
             .ok()
             .and_then(|guard| guard.clone())
     }
-
 }
 
 #[async_trait]

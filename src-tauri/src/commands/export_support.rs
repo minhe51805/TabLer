@@ -1,3 +1,8 @@
+use super::export::{
+    DatabaseExportFormat, DatabaseExportSnapshot, DatabaseExportSnapshotMeta,
+    DatabaseExportSnapshotTable, ExportTableBundle, SqlExportPayload, EXPORT_BATCH_SIZE,
+    EXPORT_BATCH_TIMEOUT, EXPORT_METADATA_TIMEOUT,
+};
 use crate::database::driver::DatabaseDriver;
 use crate::database::models::{
     ColumnDetail, ColumnInfo, DatabaseType, ForeignKeyInfo, SchemaObjectInfo, TableInfo,
@@ -7,11 +12,6 @@ use crate::database::safety::{
     quote_bigquery_identifier, quote_cassandra_identifier, quote_clickhouse_identifier,
     quote_mssql_identifier, quote_mysql_identifier, quote_postgres_identifier,
     quote_snowflake_identifier, quote_sqlite_identifier,
-};
-use super::export::{
-    DatabaseExportFormat, DatabaseExportSnapshot, DatabaseExportSnapshotMeta,
-    DatabaseExportSnapshotTable, ExportTableBundle, SqlExportPayload, EXPORT_BATCH_SIZE,
-    EXPORT_BATCH_TIMEOUT, EXPORT_METADATA_TIMEOUT,
 };
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
@@ -419,7 +419,10 @@ pub(super) fn order_tables_for_export(tables: &[ExportTableBundle]) -> Vec<&Expo
         .collect()
 }
 
-pub(super) fn normalize_referenced_table_name(table: &TableInfo, foreign_key: &ForeignKeyInfo) -> String {
+pub(super) fn normalize_referenced_table_name(
+    table: &TableInfo,
+    foreign_key: &ForeignKeyInfo,
+) -> String {
     let referenced = foreign_key.referenced_table.trim();
     if referenced.contains('.') {
         referenced.to_string()
@@ -476,7 +479,10 @@ pub(super) fn build_create_table_statement(
     ))
 }
 
-pub(super) fn build_column_definition(db_type: DatabaseType, column: &ColumnDetail) -> Result<String> {
+pub(super) fn build_column_definition(
+    db_type: DatabaseType,
+    column: &ColumnDetail,
+) -> Result<String> {
     let mut parts = vec![
         quote_identifier_for(db_type, &column.name)?,
         normalized_column_type(column),
@@ -814,7 +820,10 @@ pub(super) fn render_sql_string(value: &str, _column: &ColumnInfo) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-pub(super) fn row_to_object(columns: &[ColumnInfo], row: &[JsonValue]) -> JsonMap<String, JsonValue> {
+pub(super) fn row_to_object(
+    columns: &[ColumnInfo],
+    row: &[JsonValue],
+) -> JsonMap<String, JsonValue> {
     let mut object = JsonMap::new();
     for (index, column) in columns.iter().enumerate() {
         object.insert(

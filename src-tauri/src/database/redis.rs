@@ -174,7 +174,6 @@ impl RedisDriver {
     fn database_label(db_index: i64) -> String {
         format!("db{db_index}")
     }
-
 }
 
 #[async_trait]

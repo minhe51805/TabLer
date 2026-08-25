@@ -16,9 +16,8 @@ use super::errors::{
     ai_provider_response_error_with_preview,
 };
 use super::extraction::{
-    extract_anthropic_response_text, extract_gemini_response_text,
-    extract_openai_like_reasoning, extract_openai_like_response_text, publish_stream_payload,
-    split_think_block,
+    extract_anthropic_response_text, extract_gemini_response_text, extract_openai_like_reasoning,
+    extract_openai_like_response_text, publish_stream_payload, split_think_block,
 };
 use super::prompt::build_ai_prompt;
 use super::providers::{build_provider_request_body, streaming_endpoint, streaming_request_body};

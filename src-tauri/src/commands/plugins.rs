@@ -1,3 +1,5 @@
+pub(crate) use super::plugins_support::resolve_active_plugin_driver;
+use super::plugins_support::*;
 use crate::database::manager::DatabaseManager;
 use crate::storage::plugin_storage::{InstalledPluginRecord, PluginManifest, PluginStorage};
 use rfd::FileDialog;
@@ -5,8 +7,6 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use super::plugins_support::*;
-pub(crate) use super::plugins_support::resolve_active_plugin_driver;
 use tauri::State;
 use uuid::Uuid;
 
@@ -97,7 +97,6 @@ pub struct PluginUpdateCandidate {
     pub available_version: String,
     pub package: PluginRegistryPackage,
 }
-
 
 #[tauri::command]
 pub async fn get_plugin_registry(

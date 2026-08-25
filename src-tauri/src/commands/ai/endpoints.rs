@@ -33,7 +33,10 @@ fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
-pub(crate) fn validate_ai_endpoint(config: &AIProviderConfig, endpoint: &str) -> Result<(), String> {
+pub(crate) fn validate_ai_endpoint(
+    config: &AIProviderConfig,
+    endpoint: &str,
+) -> Result<(), String> {
     let url = Url::parse(endpoint).map_err(|error| format!("Invalid AI endpoint URL: {error}"))?;
 
     match url.scheme() {

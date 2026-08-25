@@ -13,6 +13,6 @@ pub use requests::{
     TableRowDeleteRequest, TableRowInsertRequest,
 };
 pub use schema::{
-    ColumnDetail, DatabaseInfo, ForeignKeyInfo, IndexInfo, LookupValue, SchemaObjectInfo, TableInfo,
-    TableStructure, TriggerInfo,
+    ColumnDetail, DatabaseInfo, ForeignKeyInfo, IndexInfo, LookupValue, SchemaObjectInfo,
+    TableInfo, TableStructure, TriggerInfo,
 };

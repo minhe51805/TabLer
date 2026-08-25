@@ -1,9 +1,7 @@
 use super::models::*;
 use super::query_common::MAX_QUERY_RESULT_ROWS;
 use super::safety::{quote_snowflake_identifier, quote_snowflake_order_by};
-use super::snowflake::{
-    SnowflakeDriver, SNOWFLAKE_POLL_ATTEMPTS, SNOWFLAKE_POLL_INTERVAL_MS,
-};
+use super::snowflake::{SnowflakeDriver, SNOWFLAKE_POLL_ATTEMPTS, SNOWFLAKE_POLL_INTERVAL_MS};
 use anyhow::{anyhow, bail, Context, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};

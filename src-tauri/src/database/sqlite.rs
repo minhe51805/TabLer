@@ -212,7 +212,6 @@ impl SqliteDriver {
             file_path: file_path.to_string(),
         })
     }
-
 }
 
 #[async_trait]
@@ -353,10 +352,15 @@ impl DatabaseDriver for SqliteDriver {
             for statement in statements {
                 let start = Instant::now();
                 if Self::query_returns_rows(statement) {
-                    let (rows, truncated) =
-                        Self::fetch_rows_limited(&mut *tx, statement).await?;
-                    let mut result =
-                        Self::build_result_from_rows(&rows, 0, statement.clone(), 0, false, truncated);
+                    let (rows, truncated) = Self::fetch_rows_limited(&mut *tx, statement).await?;
+                    let mut result = Self::build_result_from_rows(
+                        &rows,
+                        0,
+                        statement.clone(),
+                        0,
+                        false,
+                        truncated,
+                    );
                     result.execution_time_ms = start.elapsed().as_millis();
                     results.push(result);
                 } else {

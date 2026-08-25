@@ -807,9 +807,7 @@ impl BigQueryDriver {
         }
     }
 
-    pub(super) fn qualify_table_name(
-        table_reference: &BigQueryTableReference,
-    ) -> Result<String> {
+    pub(super) fn qualify_table_name(table_reference: &BigQueryTableReference) -> Result<String> {
         super::safety::quote_bigquery_identifier(&format!(
             "{}.{}.{}",
             table_reference.project_id, table_reference.dataset_id, table_reference.table_id

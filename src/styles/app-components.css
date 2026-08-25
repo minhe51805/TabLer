@@ -13812,7 +13812,7 @@ body {
 /* ─── MiniMax Design System Overrides ────────────────────────────────────── */
 
 .tabbar-tab {
-  padding: 0px 16px !important;
+  padding: 0px 5px !important;
 }
 .tabbar-tab.active {
   border-bottom: 2px solid var(--accent) !important;
@@ -15067,12 +15067,12 @@ body {
 .tabbar-tab {
   position: relative;
   min-width: 0;
-  max-width: 260px;
+  max-width: 180px;
   height: 28px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 11px 0 12px;
+  gap: 5px;
+  padding: 0 8px 0 9px;
   border-radius: 8px;
   border: 1px solid rgba(0, 122, 255, 0.06);
   background: rgba(0, 122, 255, 0.02);
@@ -34034,11 +34034,6 @@ body {
   max-width: 1080px;
   margin-inline: auto;
 }
-/* ============================================================
-   AI sidebar redesign — flush-bottom docked panel
-   Panel reaches the window bottom so its composer footer lines
-   up with the app statusbar instead of floating above it.
-   ============================================================ */
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-sidebar {
   top: 44px;
@@ -34135,13 +34130,6 @@ body {
   padding-top: 6px;
 }
 
-
-/* ============================================================
-   Compact action buttons — final override (wins the theme-light
-   36px pass above): New Query, workspace icon buttons, tabbar
-   Clear/Run. The "Filter rows" input is intentionally untouched.
-   ============================================================ */
-
 .app-root .workspace-toolbar .toolbar-btn,
 .app-root .workspace-toolbar .toolbar-btn.primary,
 .app-root .workspace-toolbar .toolbar-btn.icon-only,
@@ -34200,3 +34188,71 @@ body {
   width: 16px;
 }
 
+.app-root .tabbar-tab {
+  height: 24px;
+  min-height: 24px;
+  max-width: 160px;
+  gap: 5px;
+  padding: 0 6px 0 7px;
+  border-radius: 6px;
+}
+
+.app-root .tabbar-tab .tabbar-tab-title {
+  flex: 0 1 auto;
+}
+
+.app-root .explorer-header-btn {
+  height: 24px;
+  min-height: 24px;
+  width: 24px;
+  min-width: 24px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border-radius: 6px;
+}
+
+.app-root .explorer-header-btn.danger {
+  border-color: var(--mm-border);
+  background: var(--mm-surface-1);
+  color: var(--text-secondary);
+}
+
+.app-root .explorer-header-btn.danger:hover {
+  border-color: color-mix(in srgb, var(--error) 32%, var(--mm-border));
+  background: var(--mm-error-soft);
+  color: var(--error);
+}
+
+/* ============================================================
+   Tab width tightening — the close button occupies no space while
+   hidden; it expands only on tab hover or for the active tab.
+   ============================================================ */
+
+.app-root .tabbar-tab {
+  max-width: 150px;
+  gap: 4px;
+}
+
+.app-root .tabbar-close-btn {
+  width: 0;
+  min-width: 0;
+  height: 16px;
+  padding: 0;
+  margin: 0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.app-root .tabbar-tab:hover .tabbar-close-btn,
+.app-root .tabbar-close-btn.visible {
+  width: 16px;
+  min-width: 16px;
+}
+
+/* Tab drag-to-reorder feedback */
+.app-root .tabbar-tab.drag-over {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}

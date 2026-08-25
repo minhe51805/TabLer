@@ -12,6 +12,7 @@ export interface UIState {
   setActiveTab: (tabId: string) => void;
   updateTab: (tabId: string, updates: Partial<Tab>) => void;
   pinTab: (tabId: string) => void;
+  moveTab: (tabId: string, targetId: string) => void;
   removeTabsForConnection: (connectionId: string) => void;
   setError: (error: string | null) => void;
   clearError: () => void;
@@ -93,6 +94,19 @@ export const useUIStore = create<UIState>((set, get) => ({
         tab.id === tabId ? { ...tab, isPreview: false } : tab,
       ),
     }));
+  },
+
+  moveTab: (tabId: string, targetId: string) => {
+    if (tabId === targetId) return;
+    set((state) => {
+      const next = [...state.tabs];
+      const from = next.findIndex((tab) => tab.id === tabId);
+      const to = next.findIndex((tab) => tab.id === targetId);
+      if (from === -1 || to === -1) return {};
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return { tabs: next };
+    });
   },
 
   removeTabsForConnection: (connectionId: string) => {

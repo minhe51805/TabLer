@@ -1,4 +1,5 @@
 import { X, Table, Code, Columns, Play, Square, BarChart3, Terminal } from "lucide-react";
+import { useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
@@ -18,15 +19,18 @@ interface Props {
 
 export function TabBar({ queryChrome, onRunActiveQuery, onCancelActiveQuery, onClearVisibleTabs }: Props) {
   const { t } = useI18n();
-  const { tabs, activeTabId, setActiveTab, removeTab, pinTab } = useUIStore(
+  const { tabs, activeTabId, setActiveTab, removeTab, pinTab, moveTab } = useUIStore(
     useShallow((state) => ({
       tabs: state.tabs,
       activeTabId: state.activeTabId,
       setActiveTab: state.setActiveTab,
       removeTab: state.removeTab,
       pinTab: state.pinTab,
+      moveTab: state.moveTab,
     }))
   );
+  const dragTabIdRef = useRef<string | null>(null);
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const connections = useConnectionStore((state) => state.connections);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) || null;
   const visibleTabs = tabs.filter((tab) => tab.type !== "metrics");
@@ -75,7 +79,34 @@ export function TabBar({ queryChrome, onRunActiveQuery, onCancelActiveQuery, onC
                 "tabbar-tab",
                 isActive ? "active" : "",
                 tab.isPreview ? "preview" : "",
+                dragOverTabId === tab.id ? "drag-over" : "",
               ].join(" ")}
+              draggable
+              onDragStart={(event) => {
+                dragTabIdRef.current = tab.id;
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", tab.id);
+              }}
+              onDragOver={(event) => {
+                if (dragTabIdRef.current == null || dragTabIdRef.current === tab.id) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                setDragOverTabId(tab.id);
+              }}
+              onDragLeave={() => {
+                setDragOverTabId((current) => (current === tab.id ? null : current));
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const sourceId = dragTabIdRef.current;
+                if (sourceId && sourceId !== tab.id) moveTab(sourceId, tab.id);
+                dragTabIdRef.current = null;
+                setDragOverTabId(null);
+              }}
+              onDragEnd={() => {
+                dragTabIdRef.current = null;
+                setDragOverTabId(null);
+              }}
               onClick={() => setActiveTab(tab.id)}
               onDoubleClick={() => pinTab(tab.id)}
             >

@@ -11,8 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::task;
 use uuid::Uuid;
 
-use super::plugins::{ActivePluginDriver,
-    PluginRegistryIndex, PluginRegistryPackage, ValidatedBundle,
+use super::plugins::{
+    ActivePluginDriver, PluginRegistryIndex, PluginRegistryPackage, ValidatedBundle,
     ALLOWED_CAPABILITIES, ALLOWED_KINDS, ALLOWED_PERMISSIONS, DEFAULT_PLUGIN_REGISTRY_URL,
     MAX_PLUGIN_BYTES, MAX_PLUGIN_FILES, MAX_REGISTRY_BYTES, PLUGIN_API_VERSION,
 };
@@ -180,7 +180,10 @@ pub(super) fn validate_manifest_metadata(manifest: &PluginManifest) -> Result<()
     Ok(())
 }
 
-pub(super) fn validate_manifest(manifest: &PluginManifest, bundle_dir: &Path) -> Result<(), String> {
+pub(super) fn validate_manifest(
+    manifest: &PluginManifest,
+    bundle_dir: &Path,
+) -> Result<(), String> {
     validate_manifest_metadata(manifest)?;
     validate_compatibility(manifest)?;
     if let Some(entry) = manifest.entry.as_deref() {
@@ -410,7 +413,10 @@ pub(super) fn collect_bundle_files(
     Ok(())
 }
 
-pub(super) fn compute_bundle_digest(bundle_dir: &Path, manifest: &PluginManifest) -> Result<String, String> {
+pub(super) fn compute_bundle_digest(
+    bundle_dir: &Path,
+    manifest: &PluginManifest,
+) -> Result<String, String> {
     let mut files = Vec::new();
     collect_bundle_files(bundle_dir, bundle_dir, &mut files)?;
     files.sort_by(|left, right| left.to_string_lossy().cmp(&right.to_string_lossy()));
@@ -556,7 +562,9 @@ pub(super) fn verify_installed_record(mut record: InstalledPluginRecord) -> Inst
     record
 }
 
-pub(super) fn sync_installed_plugins(storage: &PluginStorage) -> Result<Vec<InstalledPluginRecord>, String> {
+pub(super) fn sync_installed_plugins(
+    storage: &PluginStorage,
+) -> Result<Vec<InstalledPluginRecord>, String> {
     let records = storage
         .load_plugins()
         .map_err(|e| format!("Failed to load installed plugins: {e}"))?;
@@ -835,7 +843,9 @@ pub(super) fn validate_registry(index: &PluginRegistryIndex) -> Result<(), Strin
     Ok(())
 }
 
-pub(super) async fn fetch_registry_index(registry_url: Option<String>) -> Result<PluginRegistryIndex, String> {
+pub(super) async fn fetch_registry_index(
+    registry_url: Option<String>,
+) -> Result<PluginRegistryIndex, String> {
     let raw_url = registry_url
         .as_deref()
         .unwrap_or(DEFAULT_PLUGIN_REGISTRY_URL);

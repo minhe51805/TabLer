@@ -54,7 +54,8 @@ pub struct SemanticStorage {
 impl SemanticStorage {
     pub fn new() -> Result<Self, String> {
         let data_dir = crate::utils::paths::resolve_data_dir().map_err(|e| e.to_string())?;
-        fs::create_dir_all(&data_dir).map_err(|e| format!("Failed to create data directory: {e}"))?;
+        fs::create_dir_all(&data_dir)
+            .map_err(|e| format!("Failed to create data directory: {e}"))?;
 
         let file_path = data_dir.join("semantic_glossary.json");
         if !file_path.exists() {
@@ -67,11 +68,15 @@ impl SemanticStorage {
     }
 
     fn load_from_file(path: &PathBuf) -> Result<HashMap<String, SemanticEntry>, String> {
-        let file = File::open(path).map_err(|e| format!("Failed to open semantic glossary file: {e}"))?;
+        let file =
+            File::open(path).map_err(|e| format!("Failed to open semantic glossary file: {e}"))?;
         let reader = BufReader::new(file);
         let items: Vec<SemanticEntry> = serde_json::from_reader(reader)
             .map_err(|e| format!("Failed to parse semantic glossary: {e}"))?;
-        Ok(items.into_iter().map(|entry| (entry.id.clone(), entry)).collect())
+        Ok(items
+            .into_iter()
+            .map(|entry| (entry.id.clone(), entry))
+            .collect())
     }
 
     fn persist(&self) -> Result<(), String> {
@@ -216,7 +221,9 @@ mod tests {
     fn scope_lookup_includes_connection_wide_entries_and_exact_database_matches() {
         let mut storage = temp_storage();
         let wide = storage.save(entry("revenue", "sum(amount)", None)).unwrap();
-        let scoped = storage.save(entry("campaign", "marketing table", Some("ant_language"))).unwrap();
+        let scoped = storage
+            .save(entry("campaign", "marketing table", Some("ant_language")))
+            .unwrap();
         let other_conn = storage.save(entry("other", "other conn", None)).unwrap();
         storage.cache.get_mut(&other_conn.id).unwrap().connection_id = Some("conn-2".to_string());
 
@@ -232,12 +239,15 @@ mod tests {
         let mut storage = temp_storage();
         assert!(storage.save(entry("  ", "def", None)).is_err());
 
-        let saved = storage.save(entry("users", "end-user accounts", None)).unwrap();
-        let updated = storage.save(SemanticEntry {
-            definition: "registered end users only".to_string(),
-            ..saved.clone()
-        })
-        .unwrap();
+        let saved = storage
+            .save(entry("users", "end-user accounts", None))
+            .unwrap();
+        let updated = storage
+            .save(SemanticEntry {
+                definition: "registered end users only".to_string(),
+                ..saved.clone()
+            })
+            .unwrap();
         assert_eq!(updated.id, saved.id);
         assert_eq!(storage.cache.len(), 1);
         assert_eq!(updated.definition, "registered end users only");

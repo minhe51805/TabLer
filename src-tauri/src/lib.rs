@@ -14,7 +14,7 @@ mod watcher;
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
-    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_ai_configs, save_agent_trace,
+    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_agent_trace, save_ai_configs,
     AIRequestCancellationState,
 };
 use commands::connection::*;

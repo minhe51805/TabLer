@@ -9,8 +9,6 @@ use sqlx::{ConnectOptions, Connection, Executor};
 use std::path::PathBuf;
 use tokio::task;
 
-
-
 pub(super) async fn run_blocking_storage_task<T, F>(operation: F) -> Result<T, String>
 where
     T: Send + 'static,

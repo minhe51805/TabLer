@@ -168,8 +168,8 @@ pub(crate) fn sample_provider(provider_type: AIProviderType) -> AIProviderConfig
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::extraction::take_visible_stream_delta;
+    use super::*;
 
     #[test]
     fn streaming_body_is_enabled_and_think_chunks_stay_private() {

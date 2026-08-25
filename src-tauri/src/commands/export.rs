@@ -2,10 +2,7 @@ use super::export_support::*;
 use crate::database::capabilities::DriverCapability;
 use crate::database::driver::DatabaseDriver;
 use crate::database::manager::DatabaseManager;
-use crate::database::models::{
-    DatabaseType, SchemaObjectInfo, TableInfo,
-    TableStructure,
-};
+use crate::database::models::{DatabaseType, SchemaObjectInfo, TableInfo, TableStructure};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -154,7 +151,6 @@ pub async fn export_database(
         row_count,
     })
 }
-
 
 #[cfg(test)]
 mod tests {

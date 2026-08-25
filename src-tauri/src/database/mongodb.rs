@@ -226,7 +226,6 @@ impl MongoDbDriver {
         }
         Ok(self.database_handle(database).await.collection(table_name))
     }
-
 }
 
 #[async_trait]

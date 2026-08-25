@@ -1,3 +1,4 @@
+use super::connection_support::*;
 use crate::database::capabilities::DriverCapabilityProfile;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{ConnectionConfig, DatabaseInfo, DatabaseType, ParsedConnectionUrl};
@@ -6,7 +7,6 @@ use crate::utils::rate_limiter::ConnectionAttemptLimiter;
 use rfd::FileDialog;
 use std::collections::HashMap;
 use tauri::{AppHandle, State};
-use super::connection_support::*;
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
@@ -72,7 +72,6 @@ pub async fn get_connection_capabilities(
         .map_err(|error| error.to_string())
 }
 
-
 #[cfg(test)]
 mod connection_diagnostic_tests {
     use super::{
@@ -117,7 +116,6 @@ mod connection_diagnostic_tests {
         assert!(!state.cancel("connect-1").await);
     }
 }
-
 
 #[tauri::command]
 pub async fn connect_database(

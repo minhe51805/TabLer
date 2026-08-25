@@ -344,9 +344,7 @@ mod tests {
 
     #[test]
     fn split_think_block_extracts_leading_reasoning() {
-        let input = format!(
-            "{THINK_OPEN_TAG}step one\nstep two{THINK_CLOSE_TAG}\nSELECT 1;"
-        );
+        let input = format!("{THINK_OPEN_TAG}step one\nstep two{THINK_CLOSE_TAG}\nSELECT 1;");
         let (reasoning, cleaned) = split_think_block(&input);
         assert_eq!(reasoning.as_deref(), Some("step one\nstep two"));
         assert_eq!(cleaned, "SELECT 1;");

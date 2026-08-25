@@ -1,7 +1,7 @@
 pub mod ai;
 pub mod connection;
-mod connection_support;
 pub mod connection_export;
+mod connection_support;
 pub mod data_export;
 pub mod deep_link;
 pub mod diagnostics;

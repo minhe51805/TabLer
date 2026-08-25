@@ -178,7 +178,6 @@ impl SnowflakeDriver {
             format!("{}/{}", self.root_url.trim_end_matches('/'), trimmed)
         }
     }
-
 }
 
 #[async_trait]

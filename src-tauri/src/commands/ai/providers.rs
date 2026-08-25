@@ -195,7 +195,7 @@ mod tests {
         );
         assert_eq!(
             take_visible_stream_delta(
-                &format!("nk>private scratch\u{3c}/think\u{3e}Hello"),
+                "nk>private scratch\u{3c}/think\u{3e}Hello",
                 &mut pending,
                 &mut visible,
             ),

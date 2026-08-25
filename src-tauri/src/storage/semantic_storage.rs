@@ -116,7 +116,7 @@ impl SemanticStorage {
             })
             .cloned()
             .collect();
-        items.sort_by(|a, b| a.term.to_lowercase().cmp(&b.term.to_lowercase()));
+        items.sort_by_key(|item| item.term.to_lowercase());
         items
     }
 

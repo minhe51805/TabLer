@@ -419,7 +419,6 @@ export function Sidebar() {
     activeConnectionId,
     connectedIds,
     activeConnection,
-    compactDatabaseName,
     supportsCreateWizard,
     databases,
     currentDatabase,
@@ -520,13 +519,6 @@ export function Sidebar() {
                 <Database className="w-4 h-4" />
               </span>
               <h2 className="explorer-header-title">{t("explorer.title")}</h2>
-            </div>
-
-            <div className="explorer-header-context">
-              <div className="explorer-workspace-status" title={currentDatabase || undefined}>
-                <span className="explorer-workspace-dot" />
-                <span className="explorer-workspace-label">{compactDatabaseName || t("explorer.workspace")}</span>
-              </div>
             </div>
           </div>
 

@@ -1082,12 +1082,6 @@ export function AppWorkspacePanel({
                     ? t("workspace.readyForQueries")
                     : t("titlebar.noActiveConnection"))}
               </span>
-              {isConnected && activeConn && (
-                <span className="workspace-toolbar-chip">
-                  {activeConn.name || activeConn.host}
-                  {activeDatabaseLabel ? ` / ${activeDatabaseLabel}` : ""}
-                </span>
-              )}
               {activeQueryChrome?.executionTimeMs !== undefined && (
                 <div className="workspace-toolbar-status">
                   <span className="workspace-toolbar-status-pill success">

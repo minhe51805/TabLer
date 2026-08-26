@@ -119,6 +119,12 @@ export function useSQLEditor({
   const [explainPlan, setExplainPlan] = useState<ParsedExplainPlan | undefined>(() => initialState?.explainPlan);
   const [isRunningExplain, setIsRunningExplain] = useState(false);
 
+  // Surface execution errors: auto-expand the results pane so the user
+  // actually sees the error instead of it only landing in the app logs.
+  useEffect(() => {
+    if (error) setShowResultsPane(true);
+  }, [error]);
+
   const flushPersistedContent = useCallback(() => {
     if (!tabId) return;
     if (contentPersistTimerRef.current !== null) {

@@ -1,4 +1,5 @@
 import Editor from "@monaco-editor/react";
+import "../../utils/monaco-bundle";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSQLEditor } from "./hooks/use-sql-editor";
 import type { QueryEditorSessionState, QueryChromeState } from "./hooks/use-sql-editor";
@@ -116,6 +117,9 @@ export function SQLEditor({
               fontSize: 12,
               fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
               lineNumbers: "on",
+              lineNumbersMinChars: 3,
+              lineDecorationsWidth: 8,
+              glyphMargin: false,
               scrollBeyondLastLine: false,
               wordWrap: "on",
               padding: { top: 8, bottom: 6 },
@@ -212,19 +216,6 @@ export function SQLEditor({
           onSplitDrag={handleSplitDrag}
           onToggleResultsPane={() => setShowResultsPane((current) => !current)}
         />
-        {!showResultsPane && (
-          <button
-            type="button"
-            className="sql-results-collapsed-bar"
-            onClick={() => setShowResultsPane(true)}
-            title={t("tabs.showResults")}
-            aria-label={t("tabs.showResults")}
-          >
-            <Terminal className="w-3 h-3 opacity-60" />
-            <span>{t("tabs.results")}</span>
-            <kbd className="kbd kbd-sm">Ctrl+Shift+`</kbd>
-          </button>
-        )}
       </div>
     </div>
   );

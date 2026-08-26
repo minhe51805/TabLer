@@ -1,4 +1,5 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
+import "../../../utils/monaco-bundle";
 import type * as Monaco from "monaco-editor";
 import { Trash2 } from "lucide-react";
 import { useEffect, useRef } from "react";

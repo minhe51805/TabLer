@@ -32,6 +32,7 @@ docs/*
 !docs/DEEP_LINKS.md
 !docs/MCP.md
 !docs/PLUGIN_COMPATIBILITY.md
+!docs/driver-integration.md
 !docs/PLUGINS.md
 !docs/RELEASE_SIGNING.md
 !docs/SMOKE_TEST_CHECKLIST.md

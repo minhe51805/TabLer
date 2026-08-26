@@ -20,6 +20,8 @@
     "build:release": "tauri build --config src-tauri/tauri.release.conf.json",
     "build:e2e": "tauri build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
     "test:e2e": "node e2e/run.mjs",
+    "test:integration:drivers": "node scripts/run-driver-integration.mjs",
+    "test:integration:heavy": "node scripts/run-driver-integration.mjs --heavy",
     "test:performance": "vitest run tests/performance/v015-performance.test.ts",
     "check:secrets": "node scripts/check-secret-leaks.mjs"
   },

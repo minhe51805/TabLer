@@ -74,3 +74,6 @@ sqlparser = "0.58"
 
 [dev-dependencies]
 sysinfo = "0.30"
+# Integration tests (src-tauri/tests) build their own binary and need the
+# tokio macros directly; they must not rely on dependency features leaking.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

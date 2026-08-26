@@ -80,11 +80,23 @@ impl PostgresDriver {
     where
         E: Executor<'a, Database = Postgres>,
     {
+        Self::fetch_rows_capped(executor, sql, MAX_QUERY_RESULT_ROWS).await
+    }
+
+    pub(super) async fn fetch_rows_capped<'a, E>(
+        executor: E,
+        sql: &'a str,
+        max_rows: usize,
+    ) -> Result<(Vec<PgRow>, bool)>
+    where
+        E: Executor<'a, Database = Postgres>,
+    {
+        let max_rows = max_rows.max(1);
         let mut stream = sqlx::query(sql).fetch(executor);
         let mut rows = Vec::new();
 
         while let Some(row) = stream.try_next().await? {
-            if rows.len() == MAX_QUERY_RESULT_ROWS {
+            if rows.len() == max_rows {
                 return Ok((rows, true));
             }
             rows.push(row);
@@ -136,7 +148,7 @@ impl PostgresDriver {
         parameters: &[QueryParameter],
     ) -> Result<(Vec<PgRow>, bool)> {
         let mut stream =
-            Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&self.pool);
+            Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&self.pool());
         let mut rows = Vec::new();
         while let Some(row) = stream.try_next().await? {
             if rows.len() == MAX_QUERY_RESULT_ROWS {
@@ -257,7 +269,7 @@ impl PostgresDriver {
              WHERE table_schema NOT IN ('pg_catalog', 'information_schema') \
              ORDER BY table_schema, table_name",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.pool())
         .await?;
 
         objects.extend(view_rows.iter().map(|row| SchemaObjectInfo {
@@ -276,7 +288,7 @@ impl PostgresDriver {
              GROUP BY trigger_schema, trigger_name, event_object_schema, event_object_table, action_timing, action_statement \
              ORDER BY trigger_schema, event_object_table, trigger_name",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.pool())
         .await?;
 
         objects.extend(trigger_rows.iter().map(|row| {
@@ -317,7 +329,7 @@ impl PostgresDriver {
              WHERE routine_schema NOT IN ('pg_catalog', 'information_schema') \
              ORDER BY routine_schema, routine_type, routine_name",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.pool())
         .await?;
 
         objects.extend(routine_rows.iter().map(|row| SchemaObjectInfo {
@@ -371,7 +383,7 @@ impl PostgresDriver {
             )
             .bind(&table_name)
             .bind(&schema)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.pool())
             .await
         })
         .await
@@ -411,7 +423,7 @@ impl PostgresDriver {
             )
             .bind(&table_name)
             .bind(&schema)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.pool())
             .await
         };
 
@@ -452,7 +464,7 @@ impl PostgresDriver {
             )
             .bind(&table_name)
             .bind(&schema)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.pool())
             .await
         };
 
@@ -536,7 +548,7 @@ impl PostgresDriver {
         )
         .bind(&schema)
         .bind(&table_name)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.pool())
         .await?
         .and_then(|row| row.try_get::<String, _>(0).ok());
 
@@ -548,7 +560,7 @@ impl PostgresDriver {
         )
         .bind(&schema)
         .bind(&table_name)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.pool())
         .await?
         .and_then(|row| row.try_get::<String, _>(0).ok());
 
@@ -563,7 +575,7 @@ impl PostgresDriver {
         )
         .bind(&schema)
         .bind(&table_name)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.pool())
         .await?;
 
         let triggers = trigger_rows
@@ -625,7 +637,7 @@ impl PostgresDriver {
         )
         .bind(&table_name)
         .bind(&schema)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.pool())
         .await?;
 
         Ok(rows
@@ -666,7 +678,7 @@ impl PostgresDriver {
         };
 
         // Build the query - we always need the WHERE for search, so build the right query
-        let pool = &self.pool;
+        let pool = self.pool();
 
         if let Some(search_term) = search {
             let like_pattern = format!("%{}%", search_term);
@@ -686,7 +698,7 @@ impl PostgresDriver {
             );
             let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql)
                 .bind(&like_pattern)
-                .fetch_all(pool)
+                .fetch_all(&pool)
                 .await?;
             return Ok(rows
                 .into_iter()
@@ -701,7 +713,7 @@ impl PostgresDriver {
              LIMIT {}",
             referenced_column, label_expr, schema, table_name, referenced_column, limit
         );
-        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql).fetch_all(pool).await?;
+        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql).fetch_all(&pool).await?;
         Ok(rows
             .into_iter()
             .map(|(value, label)| LookupValue { value, label })

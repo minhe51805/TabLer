@@ -14,6 +14,7 @@ export interface UIState {
   pinTab: (tabId: string) => void;
   moveTab: (tabId: string, targetId: string) => void;
   removeTabsForConnection: (connectionId: string) => void;
+  removeTabsForStaleCatalog: (connectionId: string, database: string) => void;
   setError: (error: string | null) => void;
   clearError: () => void;
 }
@@ -115,6 +116,39 @@ export const useUIStore = create<UIState>((set, get) => ({
     const tabs = state.tabs.filter((tab) => tab.connectionId !== connectionId);
     const visibleTabs = tabs.filter((tab) => tab.type !== "metrics");
     const activeTabWasRemoved = removedTabs.some((tab) => tab.id === state.activeTabId);
+
+    for (const tab of removedTabs) {
+      if (tab.type !== "table") continue;
+      import("../components/DataGrid/hooks/useDataGrid")
+        .then((module) => {
+          module.invalidateTableScopeCaches(tab.connectionId, tab.database, tab.tableName);
+        })
+        .catch((error) => console.error("Cache eviction error:", error));
+    }
+
+    set({
+      tabs,
+      activeTabId: activeTabWasRemoved
+        ? visibleTabs[visibleTabs.length - 1]?.id ?? null
+        : state.activeTabId,
+    });
+  },
+
+  removeTabsForStaleCatalog: (connectionId, database) => {
+    const state = get();
+    const catalogBound = new Set(["table", "structure", "er-diagram"]);
+    const removedTabs = state.tabs.filter(
+      (tab) =>
+        tab.connectionId === connectionId &&
+        catalogBound.has(tab.type) &&
+        (tab.database || "") !== (database || ""),
+    );
+    if (removedTabs.length === 0) return;
+
+    const removedIds = new Set(removedTabs.map((tab) => tab.id));
+    const tabs = state.tabs.filter((tab) => !removedIds.has(tab.id));
+    const visibleTabs = tabs.filter((tab) => tab.type !== "metrics");
+    const activeTabWasRemoved = removedIds.has(state.activeTabId ?? "");
 
     for (const tab of removedTabs) {
       if (tab.type !== "table") continue;

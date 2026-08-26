@@ -394,9 +394,11 @@ pub async fn get_saved_connections(
 #[tauri::command]
 pub async fn connect_saved_connection(
     connection_id: String,
+    request_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
+    cancellation_state: State<'_, ConnectionAttemptCancellationState>,
 ) -> Result<String, String> {
     let storage = conn_storage.inner().clone();
     let requested_connection_id = connection_id.clone();
@@ -411,10 +413,25 @@ pub async fn connect_saved_connection(
         .check(&format!("saved|{}", connection_rate_limit_key(&config)))
         .await?;
 
-    timeout(CONNECTION_TIMEOUT, db_manager.connect(&config))
-        .await
-        .map_err(|_| "Connection attempt timed out after 45 seconds.".to_string())?
-        .map_err(|e| format_connection_runtime_error(&config, e))?;
+    let request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let token = CancellationToken::new();
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.register(request_id, token.clone()).await;
+    }
+    let connect_result = tokio::select! {
+        _ = token.cancelled() => Err("Connection attempt cancelled.".to_string()),
+        result = timeout(CONNECTION_TIMEOUT, db_manager.connect(&config)) => result
+            .map_err(|_| "Connection attempt timed out after 45 seconds.".to_string())
+            .and_then(|result| result.map_err(|e| format_connection_runtime_error(&config, e))),
+    };
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.finish(request_id).await;
+    }
+    connect_result?;
 
     Ok(config.id)
 }

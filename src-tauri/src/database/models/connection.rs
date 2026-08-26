@@ -22,6 +22,7 @@ pub enum DatabaseType {
     ClickHouse,
     BigQuery,
     LibSQL,
+    #[serde(rename = "cloudflare_d1", alias = "cloudflared1")]
     CloudflareD1,
     OpenSearch,
 }
@@ -55,18 +56,21 @@ pub struct ConnectionConfig {
     /// Shell command to execute locally before connecting.
     pub pre_connect_script: Option<String>,
     /// SQL commands to execute after connecting.
+    #[serde(default, alias = "startupCommands")]
     pub startup_commands: Option<String>,
     /// SSH connection config
     pub ssh_config: Option<crate::ssh::ssh_tunnel::SshConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum SslMode {
     Disable,
     Prefer,
     Require,
+    #[serde(alias = "verifyca")]
     VerifyCa,
+    #[serde(alias = "verifyfull")]
     VerifyFull,
 }
 
@@ -256,7 +260,7 @@ fn resolve_env_in_string(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConnectionConfig, DatabaseType};
+    use super::{ConnectionConfig, DatabaseType, SslMode};
     use crate::mcp_security::ExternalAccessPolicy;
 
     #[test]
@@ -286,7 +290,34 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_string(&DatabaseType::CloudflareD1).unwrap(),
-            "\"cloudflared1\""
+            "\"cloudflare_d1\""
         );
+        assert_eq!(
+            serde_json::from_str::<DatabaseType>("\"cloudflared1\"").unwrap(),
+            DatabaseType::CloudflareD1
+        );
+        assert_eq!(
+            serde_json::from_str::<DatabaseType>("\"cloudflare_d1\"").unwrap(),
+            DatabaseType::CloudflareD1
+        );
+    }
+
+    #[test]
+    fn accepts_frontend_camel_case_startup_commands_and_ssl_mode() {
+        let config: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": "c1",
+            "name": "local",
+            "db_type": "postgresql",
+            "use_ssl": true,
+            "ssl_mode": "verify_ca",
+            "startupCommands": "SET timezone TO 'UTC'",
+            "additional_fields": {}
+        }))
+        .unwrap();
+        assert_eq!(config.startup_commands.as_deref(), Some("SET timezone TO 'UTC'"));
+        assert_eq!(config.ssl_mode, Some(SslMode::VerifyCa));
+
+        let legacy: SslMode = serde_json::from_str("\"verifyca\"").unwrap();
+        assert_eq!(legacy, SslMode::VerifyCa);
     }
 }

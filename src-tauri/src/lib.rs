@@ -39,6 +39,7 @@ use commands::plugins::{
     uninstall_plugin_bundle,
 };
 use commands::query::*;
+use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
 use commands::restore::{preview_database_restore, restore_database_sql};
 use commands::table::*;
 use commands::tabs::{delete_tabs, load_tabs, save_tabs};
@@ -175,6 +176,7 @@ pub fn run() {
     let csv_import_cancellation_state = CsvImportCancellationState::default();
     let table_export_cancellation_state = TableExportCancellationState::default();
     let query_cancellation_state = QueryCancellationState::default();
+    let safe_mode_state = SafeModeState::default();
     let connection_attempt_cancellation_state = ConnectionAttemptCancellationState::default();
     let terminal_manager = TerminalManager::default();
 
@@ -202,6 +204,7 @@ pub fn run() {
         .manage(csv_import_cancellation_state)
         .manage(table_export_cancellation_state)
         .manage(query_cancellation_state)
+        .manage(safe_mode_state)
         .manage(connection_attempt_cancellation_state)
         .manage(DiagnosticReviewState::default())
         .setup(|app| {
@@ -265,6 +268,7 @@ pub fn run() {
             // Query commands
             execute_query,
             classify_sql_safety,
+            set_safe_mode_policy,
             cancel_query,
             execute_parameterized_query,
             execute_sandboxed_query,

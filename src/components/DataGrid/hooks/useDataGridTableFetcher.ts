@@ -347,7 +347,7 @@ export function useDataGridTableFetcher({
       return [] as ColumnDetail[];
     }
 
-    const structureCacheKey = `${connectionId}|${database || ""}|${tableName}`;
+    const structureCacheKey = buildTableScopeKey(connectionId, tableName, database);
     const cachedStructure = inlineStructureCacheRef.inlineStructureCache.get(structureCacheKey);
     if (cachedStructure && cachedStructure.length > 0) {
       setStructureColumns(cachedStructure);

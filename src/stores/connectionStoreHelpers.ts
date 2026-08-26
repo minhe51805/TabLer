@@ -5,7 +5,7 @@ import type { ConnectionState } from "./connectionStore";
 
 /** Frontend-side timeouts (ms) for backend metadata and connection calls. */
 export const FRONTEND_TIMEOUTS = {
-  connection: 30_000,
+  connection: 45_000,
   metadata: 15_000,
 } as const;
 
@@ -33,18 +33,22 @@ export async function runWithInFlight(
   }
 }
 
-export const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig => ({
-  ...config,
-  password: undefined,
-  ssh_config: config.ssh_config
-    ? {
-        ...config.ssh_config,
-        password: undefined,
-        privateKey: undefined,
-        passphrase: undefined,
-      }
-    : undefined,
-});
+export const sanitizeConnectionConfig = (config: ConnectionConfig): ConnectionConfig => {
+  const raw = config as ConnectionConfig & { startup_commands?: string };
+  return {
+    ...config,
+    startupCommands: config.startupCommands ?? raw.startup_commands,
+    password: undefined,
+    ssh_config: config.ssh_config
+      ? {
+          ...config.ssh_config,
+          password: undefined,
+          privateKey: undefined,
+          passphrase: undefined,
+        }
+      : undefined,
+  };
+};
 
 export function deriveConnectionName(config: ConnectionConfig): string {
   const explicitName = config.name.trim();

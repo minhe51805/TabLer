@@ -1,23 +1,24 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
 use super::pgpass::read_pgpass;
-use super::query_common::statement_returns_rows;
+use super::query_common::{statement_returns_rows, MAX_TABLE_PAGE_ROWS};
 use super::safety::{
     normalize_order_dir, qualify_postgres_table_name, quote_postgres_identifier,
     quote_postgres_order_by, sanitize_postgres_filter_clause,
 };
 use crate::utils::sql::split_sql_statements;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
 use sqlx::{ConnectOptions, Postgres, QueryBuilder, Row};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Instant;
 use tokio::sync::RwLock;
 
 pub struct PostgresDriver {
-    pub(super) pool: PgPool,
+    pub(super) pool: StdRwLock<PgPool>,
+    connect_options: PgConnectOptions,
     pub(super) current_db: Arc<RwLock<Option<String>>>,
 }
 
@@ -94,7 +95,22 @@ impl PostgresDriver {
                 .ssl_client_key(std::path::Path::new(key_path));
         }
 
-        // Try to connect with retry logic
+        let pool = Self::open_pool(options.clone()).await?;
+        Ok(Self {
+            pool: StdRwLock::new(pool),
+            connect_options: options,
+            current_db: Arc::new(RwLock::new(Some(database.to_string()))),
+        })
+    }
+
+    pub(super) fn pool(&self) -> PgPool {
+        self.pool
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    async fn open_pool(options: PgConnectOptions) -> Result<PgPool> {
         let mut last_error = None;
         for attempt in 1..=3 {
             let pool_opts = PgPoolOptions::new()
@@ -108,10 +124,7 @@ impl PostgresDriver {
                 .test_before_acquire(false);
 
             match pool_opts.connect_with(options.clone()).await {
-                Ok(pool) => {
-                    let current_db = Arc::new(RwLock::new(Some(database.to_string())));
-                    return Ok(Self { pool, current_db });
-                }
+                Ok(pool) => return Ok(pool),
                 Err(e) => {
                     last_error = Some(e);
                     if attempt < 3 {
@@ -147,14 +160,14 @@ impl PostgresDriver {
 impl DatabaseDriver for PostgresDriver {
     async fn ping(&self) -> Result<()> {
         sqlx::query("SELECT 1")
-            .execute(&self.pool)
+            .execute(&self.pool())
             .await
             .context("PostgreSQL ping failed")?;
         Ok(())
     }
 
     async fn disconnect(&self) -> Result<()> {
-        self.pool.close().await;
+        self.pool().close().await;
         Ok(())
     }
 
@@ -162,7 +175,7 @@ impl DatabaseDriver for PostgresDriver {
         let rows: Vec<PgRow> = sqlx::query(
             "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.pool())
         .await?;
 
         Ok(rows
@@ -181,7 +194,7 @@ impl DatabaseDriver for PostgresDriver {
              WHERE table_schema NOT IN ('pg_catalog', 'information_schema') \
              ORDER BY table_schema, table_name",
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&self.pool())
         .await?;
 
         Ok(rows
@@ -223,7 +236,7 @@ impl DatabaseDriver for PostgresDriver {
         let statements = split_sql_statements(sql);
 
         if statements.len() <= 1 && Self::query_returns_rows(sql) {
-            let (rows, truncated) = Self::fetch_rows_limited(&self.pool, sql).await?;
+            let (rows, truncated) = Self::fetch_rows_limited(&self.pool(), sql).await?;
             let mut result =
                 Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
             result.execution_time_ms = start.elapsed().as_millis();
@@ -236,7 +249,7 @@ impl DatabaseDriver for PostgresDriver {
                 for statement in &statements {
                     if Self::query_returns_rows(statement) {
                         let (rows, truncated) =
-                            Self::fetch_rows_limited(&self.pool, statement).await?;
+                            Self::fetch_rows_limited(&self.pool(), statement).await?;
                         last_result = Some(Self::build_result_from_rows(
                             &rows,
                             0,
@@ -246,13 +259,13 @@ impl DatabaseDriver for PostgresDriver {
                             truncated,
                         ));
                     } else {
-                        let result = sqlx::query(statement).execute(&self.pool).await?;
+                        let result = sqlx::query(statement).execute(&self.pool()).await?;
                         total_affected += result.rows_affected();
                     }
                 }
             } else if let Some(statement) = statements.first() {
                 if Self::query_returns_rows(statement) {
-                    let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
+                    let (rows, truncated) = Self::fetch_rows_limited(&self.pool(), statement).await?;
                     last_result = Some(Self::build_result_from_rows(
                         &rows,
                         0,
@@ -262,7 +275,7 @@ impl DatabaseDriver for PostgresDriver {
                         truncated,
                     ));
                 } else {
-                    let result = sqlx::query(statement).execute(&self.pool).await?;
+                    let result = sqlx::query(statement).execute(&self.pool()).await?;
                     total_affected += result.rows_affected();
                 }
             }
@@ -287,7 +300,7 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool().begin().await?;
         let mut results = Vec::new();
 
         // Every statement runs inside one transaction; any failure stops the
@@ -345,7 +358,7 @@ impl DatabaseDriver for PostgresDriver {
             return Ok(result);
         }
         let outcome = Self::bind_parameterized_query(sqlx::query(sql), parameters)?
-            .execute(&self.pool)
+            .execute(&self.pool())
             .await?;
         Ok(QueryResult {
             columns: Vec::new(),
@@ -384,9 +397,22 @@ impl DatabaseDriver for PostgresDriver {
                 dir
             ));
         }
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+        let fetch_limit = limit.max(1).min(MAX_TABLE_PAGE_ROWS);
+        sql.push_str(&format!(" LIMIT {} OFFSET {}", fetch_limit, offset));
 
-        self.execute_query(&sql).await
+        let start = Instant::now();
+        let (rows, truncated) =
+            Self::fetch_rows_capped(&self.pool(), &sql, fetch_limit as usize).await?;
+        let mut result = Self::build_result_from_rows(
+            &rows,
+            start.elapsed().as_millis(),
+            sql,
+            0,
+            false,
+            truncated || limit > fetch_limit,
+        );
+        result.execution_time_ms = start.elapsed().as_millis();
+        Ok(result)
     }
 
     async fn count_rows(&self, table: &str, _database: Option<&str>) -> Result<i64> {
@@ -394,7 +420,7 @@ impl DatabaseDriver for PostgresDriver {
             "SELECT COUNT(*) FROM {}",
             qualify_postgres_table_name(table, "public")?
         );
-        let row: PgRow = sqlx::query(&sql).fetch_one(&self.pool).await?;
+        let row: PgRow = sqlx::query(&sql).fetch_one(&self.pool()).await?;
         Ok(row.get(0))
     }
 
@@ -409,7 +435,7 @@ impl DatabaseDriver for PostgresDriver {
             qualify_postgres_table_name(table, "public")?,
             quote_postgres_order_by(column)?,
         );
-        let row: PgRow = sqlx::query(&sql).fetch_one(&self.pool).await?;
+        let row: PgRow = sqlx::query(&sql).fetch_one(&self.pool()).await?;
         Ok(row.get(0))
     }
 
@@ -442,12 +468,12 @@ impl DatabaseDriver for PostgresDriver {
             }
         }
 
-        let result = builder.build().execute(&self.pool).await?;
+        let result = builder.build().execute(&self.pool()).await?;
         Ok(result.rows_affected())
     }
 
     async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.pool().begin().await?;
         let mut total_affected = 0;
         for statement in statements {
             total_affected += sqlx::query(statement)
@@ -463,7 +489,7 @@ impl DatabaseDriver for PostgresDriver {
         &self,
         updates: &[TableCellUpdateRequest],
     ) -> Result<u64> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.pool().begin().await?;
         let mut affected_rows = 0;
         for request in updates {
             if request.primary_keys.is_empty() {
@@ -509,7 +535,7 @@ impl DatabaseDriver for PostgresDriver {
             ));
         }
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool().begin().await?;
         let mut total_affected = 0u64;
 
         for row_keys in &request.rows {
@@ -546,8 +572,25 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {
-        let mut db = self.current_db.write().await;
-        *db = Some(database.to_string());
+        let database = database.trim();
+        if database.is_empty() {
+            return Err(anyhow!("Database name is required"));
+        }
+        if self.current_database().as_deref() == Some(database) {
+            return Ok(());
+        }
+
+        let options = self.connect_options.clone().database(database);
+        let new_pool = Self::open_pool(options).await?;
+        let old_pool = {
+            let mut guard = self
+                .pool
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            std::mem::replace(&mut *guard, new_pool)
+        };
+        old_pool.close().await;
+        *self.current_db.write().await = Some(database.to_string());
         Ok(())
     }
 
@@ -564,7 +607,7 @@ impl DatabaseDriver for PostgresDriver {
                 "INSERT INTO {} DEFAULT VALUES",
                 qualify_postgres_table_name(&request.table, "public")?
             );
-            let result = sqlx::query(&sql).execute(&self.pool).await?;
+            let result = sqlx::query(&sql).execute(&self.pool()).await?;
             return Ok(result.rows_affected());
         }
 
@@ -594,7 +637,7 @@ impl DatabaseDriver for PostgresDriver {
 
         builder.push(")");
 
-        let result = builder.build().execute(&self.pool).await?;
+        let result = builder.build().execute(&self.pool()).await?;
         Ok(result.rows_affected())
     }
 
@@ -607,7 +650,7 @@ impl DatabaseDriver for PostgresDriver {
             return Err(anyhow::anyhow!("CSV import requires at least one row"));
         }
 
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.pool().begin().await?;
         let mut affected_rows = 0;
         for request in requests {
             if cancelled.load(Ordering::Relaxed) {
@@ -654,7 +697,7 @@ impl DatabaseDriver for PostgresDriver {
         mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
         cancelled: Arc<AtomicBool>,
     ) -> Result<u64> {
-        let mut transaction = self.pool.begin().await?;
+        let mut transaction = self.pool().begin().await?;
         let mut affected_rows = 0;
         while let Some(request) = rows.recv().await {
             if cancelled.load(Ordering::Relaxed) {

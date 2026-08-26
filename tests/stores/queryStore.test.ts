@@ -72,6 +72,28 @@ describe("queryStore", () => {
       useQueryStore.getState().executeSandboxQuery("connection-1", ["select 1"]),
     ).rejects.toThrow("database unavailable");
     expect(useQueryStore.getState().isExecutingQuery).toBe(false);
+    expect(useQueryStore.getState().activeQueryRequestId).toBeNull();
+  });
+
+  it("sends a request id for sandbox queries and blocks writes in Safe Mode", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+
+    await useQueryStore.getState().executeSandboxQuery("connection-1", ["select 1"]);
+    expect(invokeMutationMock).toHaveBeenCalledWith(
+      "execute_sandboxed_query",
+      expect.objectContaining({
+        connectionId: "connection-1",
+        statements: ["select 1"],
+        requireReadOnly: false,
+        requestId: expect.any(String),
+      }),
+    );
+
+    invokeMutationMock.mockClear();
+    await expect(
+      useQueryStore.getState().executeSandboxQuery("connection-1", ["DELETE FROM users"]),
+    ).rejects.toThrow("Safe Mode level 1");
+    expect(invokeMutationMock).not.toHaveBeenCalled();
   });
 
   it("normalizes optional table-data arguments for the Tauri command", async () => {

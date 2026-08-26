@@ -1,5 +1,5 @@
 import type { ColumnDetail, QueryResult, RowKeyValue } from "../../../types";
-import { buildDatabaseObjectKey, buildQualifiedObjectIdentity } from "../../../utils/database-object-identity";
+import { buildQualifiedObjectIdentity } from "../../../utils/database-object-identity";
 
 // ─── Cache types ───────────────────────────────────────────────────────────────
 
@@ -30,7 +30,13 @@ export { PAGE_SIZE };
 // ─── Cache helpers ─────────────────────────────────────────────────────────────
 
 export function buildTableScopeKey(connectionId: string, tableName: string, database?: string) {
-  return buildDatabaseObjectKey(buildQualifiedObjectIdentity(connectionId, tableName, database));
+  const identity = buildQualifiedObjectIdentity(connectionId, tableName, database);
+  return JSON.stringify({
+    connectionId: identity.connectionId,
+    database: identity.database ?? "",
+    schema: identity.schema ?? "",
+    object: identity.object,
+  });
 }
 
 export function buildTableCacheKey(
@@ -42,13 +48,17 @@ export function buildTableCacheKey(
   sortDir?: "ASC" | "DESC",
   filter?: string,
 ) {
-  return [
-    buildTableScopeKey(connectionId, tableName, database),
-    page ?? 0,
-    sortColumn || "",
-    sortDir || "",
-    filter || "",
-  ].join("|");
+  const identity = buildQualifiedObjectIdentity(connectionId, tableName, database);
+  return JSON.stringify({
+    connectionId: identity.connectionId,
+    database: identity.database ?? "",
+    schema: identity.schema ?? "",
+    object: identity.object,
+    page: page ?? 0,
+    sortColumn: sortColumn || "",
+    sortDir: sortDir || "",
+    filter: filter || "",
+  });
 }
 
 export function isFreshCacheEntry(cachedAt: number, ttlMs: number) {
@@ -74,10 +84,24 @@ export function matchesCacheScope(
   database?: string,
   tableName?: string,
 ) {
-  const [cachedConnectionId, cachedDatabase = "", cachedTableName] = key.split("|", 3);
-  if (cachedConnectionId !== connectionId) return false;
-  if (database !== undefined && cachedDatabase !== (database || "")) return false;
-  if (tableName !== undefined && cachedTableName !== tableName) return false;
+  let parsed: {
+    connectionId?: string;
+    database?: string;
+    schema?: string;
+    object?: string;
+  };
+  try {
+    parsed = JSON.parse(key) as typeof parsed;
+  } catch {
+    return false;
+  }
+  if (parsed.connectionId !== connectionId) return false;
+  if (database !== undefined && (parsed.database || "") !== (database || "")) return false;
+  if (tableName !== undefined) {
+    const requested = buildQualifiedObjectIdentity(connectionId, tableName, database);
+    if ((parsed.schema || "") !== (requested.schema ?? "")) return false;
+    if (parsed.object !== requested.object) return false;
+  }
   return true;
 }
 

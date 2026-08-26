@@ -1,3 +1,4 @@
+use crate::commands::safe_mode::SafeModeState;
 use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::DatabaseType;
@@ -72,7 +73,9 @@ pub async fn restore_database_sql(
     sql: String,
     db_type: DatabaseType,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<RestoreResult, String> {
+    safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::BackupRestore)
         .await

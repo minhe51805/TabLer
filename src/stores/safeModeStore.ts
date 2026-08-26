@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { ConnectionEnvironment, SafeModeLevel, SafeModeSettings } from "../types/safe-mode";
 import { isBlockedAtLevel, requiresConfirmationAtLevel } from "../types/safe-mode";
+import { invokeMutation } from "../utils/tauri-utils";
 
 const STORAGE_KEY = "tabler.safe-mode.v1";
 
@@ -28,6 +29,27 @@ function saveSettings(s: SafeModeSettings) {
   } catch {
     // ignore
   }
+  syncSafeModePolicy(s);
+}
+
+function isDesktopRuntime() {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function syncSafeModePolicy(settings: SafeModeSettings) {
+  if (!isDesktopRuntime()) return;
+  const productionConnectionIds = Object.entries(settings.connectionEnvironments ?? {})
+    .filter(([, environment]) => environment === "production")
+    .map(([connectionId]) => connectionId);
+  void invokeMutation("set_safe_mode_policy", {
+    globalLevel: settings.globalLevel,
+    connectionOverrides: settings.connectionOverrides,
+    productionConnectionIds,
+  }).catch(() => undefined);
+}
+
+export function pushSafeModePolicyToBackend() {
+  syncSafeModePolicy(useSafeModeStore.getState().settings);
 }
 
 /** Simple hash for admin password (not cryptographic — just a deterrent). */

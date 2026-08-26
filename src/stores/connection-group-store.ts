@@ -71,32 +71,48 @@ export function changeGroupColor(id: string, color: string): ConnectionGroup | n
 
 export function deleteGroup(id: string): void {
   saveGroups(loadGroups().filter((g) => g.id !== id));
-  // Unassign connections in this group
-  const connections = getAllConnections();
-  const updated = connections.map((c) =>
-    c.groupId === id ? { ...c, groupId: undefined } : c,
+  const groups = loadGroupAssignments();
+  for (const [connectionId, groupId] of Object.entries(groups)) {
+    if (groupId === id) delete groups[connectionId];
+  }
+  saveGroupAssignments(groups);
+  patchLiveConnections((connection) =>
+    connection.groupId === id ? { ...connection, groupId: undefined } : connection,
   );
-  saveAllConnections(updated);
-  // Remove from collapsed
   const collapsed = loadCollapsed();
   collapsed.delete(id);
   saveCollapsed(collapsed);
 }
 
 export function assignConnectionToGroup(connectionId: string, groupId: string | null): void {
-  const connections = getAllConnections();
-  const updated = connections.map((c) =>
-    c.id === connectionId ? { ...c, groupId: groupId ?? undefined } : c,
+  const groups = loadGroupAssignments();
+  if (groupId) groups[connectionId] = groupId;
+  else delete groups[connectionId];
+  saveGroupAssignments(groups);
+  patchLiveConnections((connection) =>
+    connection.id === connectionId ? { ...connection, groupId: groupId ?? undefined } : connection,
   );
-  saveAllConnections(updated);
 }
 
 export function assignConnectionToTag(connectionId: string, tagId: string | null): void {
-  const connections = getAllConnections();
-  const updated = connections.map((c) =>
-    c.id === connectionId ? { ...c, tagId: tagId ?? undefined } : c,
+  const tags = loadTagAssignments();
+  if (tagId) tags[connectionId] = tagId;
+  else delete tags[connectionId];
+  saveTagAssignments(tags);
+  patchLiveConnections((connection) =>
+    connection.id === connectionId ? { ...connection, tagId: tagId ?? undefined } : connection,
   );
-  saveAllConnections(updated);
+}
+
+export function applyConnectionAssignments(connections: ConnectionConfig[]): ConnectionConfig[] {
+  migrateLegacyConnectionAssignments();
+  const groups = loadGroupAssignments();
+  const tags = loadTagAssignments();
+  return connections.map((connection) => ({
+    ...connection,
+    groupId: groups[connection.id] ?? connection.groupId,
+    tagId: tags[connection.id] ?? connection.tagId,
+  }));
 }
 
 // ─── Collapse state ───────────────────────────────────────────────────────────
@@ -127,17 +143,75 @@ export function setGroupCollapsed(id: string, collapsed: boolean): void {
   saveCollapsed(ids);
 }
 
-// ─── Connection storage access ────────────────────────────────────────────────
+// ─── Connection assignment storage ────────────────────────────────────────────
 
-function getAllConnections(): ConnectionConfig[] {
+const GROUP_ASSIGNMENT_KEY = "tabler.connectionGroupAssignments";
+const TAG_ASSIGNMENT_KEY = "tabler.connectionTagAssignments";
+const LEGACY_CONNECTIONS_KEY = "tabler.connections";
+
+type AssignmentMap = Record<string, string>;
+
+function readAssignmentMap(key: string): AssignmentMap {
   try {
-    const raw = window.localStorage.getItem("tabler.connections");
-    return raw ? JSON.parse(raw) : [];
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as AssignmentMap).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0,
+      ),
+    );
   } catch {
-    return [];
+    return {};
   }
 }
 
-function saveAllConnections(connections: ConnectionConfig[]): void {
-  window.localStorage.setItem("tabler.connections", JSON.stringify(connections));
+function loadGroupAssignments(): AssignmentMap {
+  return readAssignmentMap(GROUP_ASSIGNMENT_KEY);
+}
+
+function saveGroupAssignments(assignments: AssignmentMap): void {
+  window.localStorage.setItem(GROUP_ASSIGNMENT_KEY, JSON.stringify(assignments));
+}
+
+function loadTagAssignments(): AssignmentMap {
+  return readAssignmentMap(TAG_ASSIGNMENT_KEY);
+}
+
+function saveTagAssignments(assignments: AssignmentMap): void {
+  window.localStorage.setItem(TAG_ASSIGNMENT_KEY, JSON.stringify(assignments));
+}
+
+function migrateLegacyConnectionAssignments(): void {
+  if (typeof window === "undefined") return;
+  if (window.localStorage.getItem(GROUP_ASSIGNMENT_KEY) || window.localStorage.getItem(TAG_ASSIGNMENT_KEY)) {
+    return;
+  }
+  try {
+    const raw = window.localStorage.getItem(LEGACY_CONNECTIONS_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Array<{ id?: string; groupId?: string; tagId?: string }>;
+    if (!Array.isArray(parsed)) return;
+    const groups: AssignmentMap = {};
+    const tags: AssignmentMap = {};
+    for (const connection of parsed) {
+      if (!connection?.id) continue;
+      if (connection.groupId) groups[connection.id] = connection.groupId;
+      if (connection.tagId) tags[connection.id] = connection.tagId;
+    }
+    if (Object.keys(groups).length > 0) saveGroupAssignments(groups);
+    if (Object.keys(tags).length > 0) saveTagAssignments(tags);
+  } catch {
+    // ignore corrupt legacy payloads
+  }
+}
+
+function patchLiveConnections(
+  update: (connection: ConnectionConfig) => ConnectionConfig,
+): void {
+  void import("./connectionStore").then(({ useConnectionStore }) => {
+    const { connections } = useConnectionStore.getState();
+    useConnectionStore.setState({ connections: connections.map(update) });
+  });
 }

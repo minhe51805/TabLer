@@ -285,6 +285,20 @@ impl DatabaseManager {
         }
     }
 
+    pub async fn connection_database_type(&self, connection_id: &str) -> Result<DatabaseType> {
+        self.connection_types
+            .read()
+            .await
+            .get(connection_id)
+            .copied()
+            .ok_or_else(|| {
+                anyhow!(
+                    "Connection '{}' not found. Please connect first.",
+                    connection_id
+                )
+            })
+    }
+
     pub async fn get_connection_capabilities(
         &self,
         connection_id: &str,

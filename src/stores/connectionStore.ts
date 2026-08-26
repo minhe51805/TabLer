@@ -16,6 +16,7 @@ import {
 import { useGlobalErrorStore } from "./globalErrorStore";
 import { useUIStore } from "./uiStore";
 import { invalidateConnectionCapabilities } from "../hooks/useConnectionCapabilities";
+import { applyConnectionAssignments } from "./connection-group-store";
 import {
   disconnectedPatch,
   executeStartupCommands,
@@ -50,7 +51,7 @@ export interface ConnectionState {
   loadSavedConnections: () => Promise<void>;
   connectToDatabase: (config: ConnectionConfig) => Promise<void>;
   connectSavedConnection: (connectionId: string) => Promise<void>;
-  disconnectFromDatabase: (connectionId: string) => Promise<void>;
+  disconnectFromDatabase: (connectionId: string, options?: { keepTabs?: boolean }) => Promise<void>;
   testConnection: (config: ConnectionConfig) => Promise<string>;
   deleteSavedConnection: (connectionId: string) => Promise<void>;
   fetchDatabases: (connectionId: string) => Promise<void>;
@@ -148,7 +149,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         FRONTEND_TIMEOUTS.metadata,
         "Loading saved connections",
       );
-      set({ connections: connections.map(sanitizeConnectionConfig) });
+      set({
+        connections: applyConnectionAssignments(connections.map(sanitizeConnectionConfig)),
+      });
     } catch (error) {
       useGlobalErrorStore.getState().setError(`Failed to load connections: ${error}`);
     }
@@ -175,9 +178,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         FRONTEND_TIMEOUTS.connection,
         "Connecting to database",
         {
-          onTimeout: () => {
-            void invokeMutation("cancel_connection_attempt", { requestId });
-          },
+          onTimeout: () => invokeMutation("cancel_connection_attempt", { requestId }),
         },
       );
       invalidateConnectionCapabilities(normalizedConfig.id);
@@ -212,7 +213,16 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     });
 
     try {
-      await invokeMutation("connect_saved_connection", { connectionId });
+      const requestId = crypto.randomUUID();
+      await invokeWithTimeout(
+        "connect_saved_connection",
+        { connectionId, requestId },
+        FRONTEND_TIMEOUTS.connection,
+        "Connecting to database",
+        {
+          onTimeout: () => invokeMutation("cancel_connection_attempt", { requestId }),
+        },
+      );
       invalidateConnectionCapabilities(connectionId);
       markConnected(connectionId, connection?.database);
 
@@ -223,12 +233,14 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     }
   },
 
-  disconnectFromDatabase: async (connectionId) => {
+  disconnectFromDatabase: async (connectionId, options) => {
     try {
       await invokeMutation("disconnect_database", { connectionId });
       invalidateConnectionCapabilities(connectionId);
       set(disconnectedPatch(get(), connectionId));
-      useUIStore.getState().removeTabsForConnection(connectionId);
+      if (!options?.keepTabs) {
+        useUIStore.getState().removeTabsForConnection(connectionId);
+      }
     } catch (error) {
       useGlobalErrorStore.getState().setError(`Disconnect failed: ${error}`);
     }
@@ -242,9 +254,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       FRONTEND_TIMEOUTS.connection,
       "Testing database connection",
       {
-        onTimeout: () => {
-          void invokeMutation("cancel_connection_attempt", { requestId });
-        },
+        onTimeout: () => invokeMutation("cancel_connection_attempt", { requestId }),
       },
     );
   },
@@ -286,6 +296,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     try {
       await invokeMutation("use_database", { connectionId, database });
       set({ currentDatabase: database, schemaObjects: [], isSwitchingDatabase: false });
+      useUIStore.getState().removeTabsForStaleCatalog(connectionId, database);
       await Promise.all([
         get().fetchTables(connectionId, database),
         get().fetchSchemaObjects(connectionId, database),

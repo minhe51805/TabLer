@@ -80,11 +80,23 @@ impl SqliteDriver {
     where
         E: Executor<'a, Database = Sqlite>,
     {
+        Self::fetch_rows_capped(executor, sql, MAX_QUERY_RESULT_ROWS).await
+    }
+
+    pub(super) async fn fetch_rows_capped<'a, E>(
+        executor: E,
+        sql: &'a str,
+        max_rows: usize,
+    ) -> Result<(Vec<SqliteRow>, bool)>
+    where
+        E: Executor<'a, Database = Sqlite>,
+    {
+        let max_rows = max_rows.max(1);
         let mut stream = sqlx::query(sql).fetch(executor);
         let mut rows = Vec::new();
 
         while let Some(row) = stream.try_next().await? {
-            if rows.len() == MAX_QUERY_RESULT_ROWS {
+            if rows.len() == max_rows {
                 return Ok((rows, true));
             }
             rows.push(row);

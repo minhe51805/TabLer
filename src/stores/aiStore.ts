@@ -240,9 +240,8 @@ export const useAIStore = create<AIState>((set, get) => ({
             timeoutMs,
             "AI request",
             {
-              onTimeout: () => {
-                void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
-              },
+              onTimeout: () =>
+                invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false),
             },
           );
           return { text: streamedText };
@@ -265,9 +264,8 @@ export const useAIStore = create<AIState>((set, get) => ({
           timeoutMs,
           "AI request",
           {
-            onTimeout: () => {
-              void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
-            },
+            onTimeout: () =>
+              invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false),
           },
         );
         if (resp.error) throw new Error(resp.error);

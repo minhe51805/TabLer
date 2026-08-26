@@ -12,6 +12,7 @@ import { AppStartupShell } from "./components/AppStartupShell";
 import { TitleBarWindowControls } from "./components/TitleBarWindowControls";
 import { useAppMenuActions } from "./hooks/useAppMenuActions";
 import { useConnectionStore } from "./stores/connectionStore";
+import { pushSafeModePolicyToBackend } from "./stores/safeModeStore";
 import { useGlobalErrorStore } from "./stores/globalErrorStore";
 import { useUIStore } from "./stores/uiStore";
 import { EventCenter } from "./stores/event-center";
@@ -313,20 +314,22 @@ function App() {
 
   const handleGoToLauncher = useCallback(() => {
     const currentState = useConnectionStore.getState();
-    const nextConnectedIds = new Set(currentState.connectedIds);
-    if (currentState.activeConnectionId) {
-      nextConnectedIds.delete(currentState.activeConnectionId);
-    }
+    const leavingConnectionId = currentState.activeConnectionId;
 
     useConnectionStore.setState({
       activeConnectionId: null,
-      connectedIds: nextConnectedIds,
+      connectedIds: leavingConnectionId
+        ? new Set([...currentState.connectedIds].filter((id) => id !== leavingConnectionId))
+        : currentState.connectedIds,
       currentDatabase: null,
       databases: [],
       tables: [],
       schemaObjects: [],
       isConnecting: false,
     });
+    if (leavingConnectionId && currentState.connectedIds.has(leavingConnectionId)) {
+      void currentState.disconnectFromDatabase(leavingConnectionId, { keepTabs: true });
+    }
     clearError();
 
     setShowStartupConnectionManager(true);
@@ -650,6 +653,10 @@ function App() {
   useEffect(() => {
     void loadSavedConnections();
   }, [loadSavedConnections]);
+
+  useEffect(() => {
+    pushSafeModePolicyToBackend();
+  }, []);
 
   useTabPersistence(activeConnectionId, connectedIds);
 

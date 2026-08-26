@@ -2,7 +2,10 @@ use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryParameter;
 use crate::database::models::QueryResult;
-use crate::database::parameterized_query::{compile_parameterized_query, PlaceholderStyle};
+use crate::commands::safe_mode::SafeModeState;
+use crate::database::parameterized_query::{
+    compile_parameterized_query, placeholder_style_for_database,
+};
 use crate::utils::sql::{classify_sql, split_sql_statements, SqlSafetyDecision, SqlStatementKind};
 use std::collections::HashMap;
 use tauri::State;
@@ -185,7 +188,9 @@ pub async fn execute_query(
     request_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, String> {
+    safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
     let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
@@ -274,24 +279,26 @@ pub async fn execute_parameterized_query(
     connection_id: String,
     sql: String,
     parameters: Vec<QueryParameter>,
+    request_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, QueryCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, String> {
+    safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
     let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::PreparedParameters)
         .await
         .map_err(|error| error.to_string())?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(format_query_connection_error)?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
         .map_err(format_query_connection_error)?;
-    let style = match driver.driver_name() {
-        "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica" => {
-            PlaceholderStyle::DollarNumber
-        }
-        "mssql" => PlaceholderStyle::AtNumber,
-        _ => PlaceholderStyle::QuestionMark,
-    };
+    let style = placeholder_style_for_database(database_type);
     let compiled = compile_parameterized_query(&sql, &parameters, style)
         .map_err(format_query_runtime_error)?;
     log::info!(
@@ -303,13 +310,34 @@ pub async fn execute_parameterized_query(
     if split_sql_statements(&compiled.sql).len() != 1 {
         return Err("Prepared parameters only support one SQL statement at a time.".to_string());
     }
-    let result = timeout(
-        Duration::from_secs(30),
-        driver.execute_parameterized_query(&compiled.sql, &compiled.parameters),
-    )
-    .await
-    .map_err(|_| "Parameterized query timed out after 30 seconds.".to_string())?
-    .map_err(format_query_runtime_error)?;
+    let request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let cancellation_token = CancellationToken::new();
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state
+            .register(request_id, cancellation_token.clone())
+            .await;
+    }
+    let timeout_window = timeout_for_statements(std::iter::once(compiled.sql.as_str()));
+    let result = tokio::select! {
+        _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
+        result = timeout(
+            timeout_window,
+            driver.execute_parameterized_query(&compiled.sql, &compiled.parameters),
+        ) => result
+            .map_err(|_| format!(
+                "Parameterized query timed out after {} seconds.",
+                timeout_window.as_secs()
+            ))
+            .and_then(|result| result.map_err(format_query_runtime_error)),
+    };
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.finish(request_id).await;
+    }
+    let result = result?;
     log::info!(
         "operation_id={} operation=query.execute_parameterized status=succeeded columns={} rows={}",
         operation_id,
@@ -402,8 +430,14 @@ pub async fn execute_sandboxed_query(
     connection_id: String,
     statements: Vec<String>,
     require_read_only: Option<bool>,
+    request_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, QueryCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, String> {
+    safe_mode
+        .assert_sql_allowed(&connection_id, &statements.join(";\n"))
+        .await?;
     let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
@@ -435,29 +469,46 @@ pub async fn execute_sandboxed_query(
     })?;
     let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
     let combined_query = statements.join(";\n");
-    let mut result = timeout(timeout_window, driver.execute_query(&combined_query))
-        .await
-        .map_err(|_| {
-            let err_msg = format!(
-                "Sandbox query timed out after {} seconds.",
-                timeout_window.as_secs()
-            );
-            log::error!(
-                "operation_id={} operation=query.execute_sandboxed status=failed stage=timeout error={}",
-                operation_id,
+    let request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let cancellation_token = CancellationToken::new();
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state
+            .register(request_id, cancellation_token.clone())
+            .await;
+    }
+    let result = tokio::select! {
+        _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
+        result = timeout(timeout_window, driver.execute_query(&combined_query)) => result
+            .map_err(|_| {
+                let err_msg = format!(
+                    "Sandbox query timed out after {} seconds.",
+                    timeout_window.as_secs()
+                );
+                log::error!(
+                    "operation_id={} operation=query.execute_sandboxed status=failed stage=timeout error={}",
+                    operation_id,
+                    err_msg
+                );
                 err_msg
-            );
-            err_msg
-        })?
-        .map_err(|e| {
-            let formatted = format_query_runtime_error(e);
-            log::error!(
-                "operation_id={} operation=query.execute_sandboxed status=failed stage=runtime error={}",
-                operation_id,
+            })
+            .and_then(|result| result.map_err(|e| {
+                let formatted = format_query_runtime_error(e);
+                log::error!(
+                    "operation_id={} operation=query.execute_sandboxed status=failed stage=runtime error={}",
+                    operation_id,
+                    formatted
+                );
                 formatted
-            );
-            formatted
-        })?;
+            })),
+    };
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.finish(request_id).await;
+    }
+    let mut result = result?;
     result.sandboxed = true;
     log::info!(
         "operation_id={} operation=query.execute_sandboxed status=succeeded columns={} rows={}",

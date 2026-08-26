@@ -15,6 +15,7 @@ pub mod plugins;
 mod plugins_support;
 pub mod query;
 pub mod restore;
+pub mod safe_mode;
 pub mod table;
 pub mod tabs;
 pub mod terminal;

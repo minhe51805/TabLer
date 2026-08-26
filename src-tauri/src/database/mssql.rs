@@ -234,9 +234,42 @@ impl MssqlDriver {
     }
 
     async fn execute_statement(&self, sql: &str) -> Result<u64> {
+        self.execute_bound(sql, &[]).await
+    }
+
+    fn bind_json_value(query: &mut TiberiusQuery<'_>, value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Null => {
+                query.bind(Option::<String>::None);
+            }
+            serde_json::Value::Bool(value) => {
+                query.bind(*value);
+            }
+            serde_json::Value::Number(value) => {
+                if let Some(integer) = value.as_i64() {
+                    query.bind(integer);
+                } else if let Some(float) = value.as_f64() {
+                    query.bind(float);
+                } else {
+                    query.bind(value.to_string());
+                }
+            }
+            serde_json::Value::String(value) => {
+                query.bind(value.clone());
+            }
+            other => {
+                query.bind(other.to_string());
+            }
+        }
+    }
+
+    async fn execute_bound(&self, sql: &str, values: &[serde_json::Value]) -> Result<u64> {
         let mut client = self.client.lock().await;
-        let result = client.execute(sql, &[]).await?;
-        Ok(result.total())
+        let mut query = TiberiusQuery::new(sql);
+        for value in values {
+            Self::bind_json_value(&mut query, value);
+        }
+        Ok(query.execute(&mut *client).await?.total())
     }
 
     async fn query_parameterized_rows(
@@ -318,22 +351,6 @@ impl MssqlDriver {
             }
         }
         Ok(query.execute(&mut *client).await?.total())
-    }
-
-    fn quote_literal(value: &serde_json::Value) -> Result<String> {
-        Ok(match value {
-            serde_json::Value::Null => "NULL".to_string(),
-            serde_json::Value::Bool(v) => {
-                if *v {
-                    "1".to_string()
-                } else {
-                    "0".to_string()
-                }
-            }
-            serde_json::Value::Number(v) => v.to_string(),
-            serde_json::Value::String(v) => format!("N'{}'", v.replace('\'', "''")),
-            other => format!("N'{}'", other.to_string().replace('\'', "''")),
-        })
     }
 }
 
@@ -614,6 +631,8 @@ impl DatabaseDriver for MssqlDriver {
             ));
         }
 
+        let mut values = Vec::new();
+        values.push(request.value.clone());
         let mut where_clause = String::new();
         for (index, primary_key) in request.primary_keys.iter().enumerate() {
             if index > 0 {
@@ -624,20 +643,19 @@ impl DatabaseDriver for MssqlDriver {
             if primary_key.value.is_null() {
                 where_clause.push_str(" IS NULL");
             } else {
-                where_clause.push_str(" = ");
-                where_clause.push_str(&Self::quote_literal(&primary_key.value)?);
+                values.push(primary_key.value.clone());
+                where_clause.push_str(&format!(" = @P{}", values.len()));
             }
         }
 
         let sql = format!(
-            "UPDATE {} SET {} = {} WHERE {}",
+            "UPDATE {} SET {} = @P1 WHERE {}",
             Self::qualify_table_name(&request.table, request.database.as_deref())?,
             quote_mssql_order_by(&request.target_column)?,
-            Self::quote_literal(&request.value)?,
             where_clause
         );
 
-        self.execute_statement(&sql).await
+        self.execute_bound(&sql, &values).await
     }
 
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
@@ -645,6 +663,7 @@ impl DatabaseDriver for MssqlDriver {
             return Err(anyhow!("Deleting rows requires at least one selected row"));
         }
 
+        let mut values = Vec::new();
         let mut predicates = Vec::new();
         for row in &request.rows {
             if row.is_empty() {
@@ -656,10 +675,11 @@ impl DatabaseDriver for MssqlDriver {
                 if key.value.is_null() {
                     parts.push(format!("{} IS NULL", quote_mssql_order_by(&key.column)?));
                 } else {
+                    values.push(key.value.clone());
                     parts.push(format!(
-                        "{} = {}",
+                        "{} = @P{}",
                         quote_mssql_order_by(&key.column)?,
-                        Self::quote_literal(&key.value)?,
+                        values.len(),
                     ));
                 }
             }
@@ -681,7 +701,7 @@ impl DatabaseDriver for MssqlDriver {
             predicates.join(" OR "),
         );
 
-        self.execute_statement(&sql).await
+        self.execute_bound(&sql, &values).await
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {
@@ -701,20 +721,22 @@ impl DatabaseDriver for MssqlDriver {
         }
 
         let mut cols = Vec::new();
-        let mut vals = Vec::new();
+        let mut placeholders = Vec::new();
+        let mut values = Vec::new();
         for (col, value) in &request.values {
             cols.push(quote_mssql_identifier(col)?.to_string());
-            vals.push(Self::quote_literal(value)?.to_string());
+            values.push(value.clone());
+            placeholders.push(format!("@P{}", values.len()));
         }
 
         let sql = format!(
             "INSERT INTO {} ({}) VALUES ({})",
             Self::qualify_table_name(&request.table, request.database.as_deref())?,
             cols.join(", "),
-            vals.join(", "),
+            placeholders.join(", "),
         );
 
-        self.execute_statement(&sql).await
+        self.execute_bound(&sql, &values).await
     }
 
     fn driver_name(&self) -> &str {

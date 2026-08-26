@@ -9,6 +9,7 @@ vi.mock("@/utils/tauri-utils", () => ({
 }));
 
 import { deriveConnectionName, useConnectionStore } from "@/stores/connectionStore";
+import { sanitizeConnectionConfig } from "@/stores/connectionStoreHelpers";
 import { useGlobalErrorStore } from "@/stores/globalErrorStore";
 import { useUIStore } from "@/stores/uiStore";
 import type { ConnectionConfig } from "@/types";
@@ -19,6 +20,19 @@ const connection = (updates: Partial<ConnectionConfig> = {}): ConnectionConfig =
   db_type: "postgresql",
   use_ssl: false,
   ...updates,
+});
+
+describe("sanitizeConnectionConfig", () => {
+  it("maps persisted startup_commands onto the frontend field", () => {
+    const sanitized = sanitizeConnectionConfig(
+      connection({
+        password: "secret",
+        startup_commands: "SET timezone TO 'UTC'",
+      } as ConnectionConfig & { startup_commands: string }),
+    );
+    expect(sanitized.password).toBeUndefined();
+    expect(sanitized.startupCommands).toBe("SET timezone TO 'UTC'");
+  });
 });
 
 describe("deriveConnectionName", () => {
@@ -124,7 +138,7 @@ describe("connectionStore", () => {
         }),
         requestId: expect.any(String),
       }),
-      30_000,
+      45_000,
       "Connecting to database",
       expect.objectContaining({ onTimeout: expect.any(Function) }),
     );
@@ -143,6 +157,36 @@ describe("connectionStore", () => {
     expect(useConnectionStore.getState().activeConnectionId).toBeNull();
     expect(useConnectionStore.getState().connectedIds.size).toBe(0);
     expect(useGlobalErrorStore.getState().error).toContain("Failed to list tables");
+  });
+
+  it("closes catalog-bound tabs when switching databases", async () => {
+    invokeMutationMock.mockResolvedValue(undefined);
+    invokeWithTimeoutMock.mockResolvedValue([]);
+    useConnectionStore.setState({
+      activeConnectionId: "connection-1",
+      connectedIds: new Set(["connection-1"]),
+      currentDatabase: "app",
+    });
+    useUIStore.getState().addTab({
+      id: "table-users",
+      type: "table",
+      title: "users",
+      connectionId: "connection-1",
+      database: "app",
+      tableName: "users",
+    });
+    useUIStore.getState().addTab({
+      id: "query-1",
+      type: "query",
+      title: "Query",
+      connectionId: "connection-1",
+      database: "app",
+    });
+
+    await useConnectionStore.getState().switchDatabase("connection-1", "analytics");
+
+    expect(useUIStore.getState().tabs.map((tab) => tab.id)).toEqual(["query-1"]);
+    expect(useConnectionStore.getState().currentDatabase).toBe("analytics");
   });
 
   it("removes connection tabs after a successful disconnect", async () => {

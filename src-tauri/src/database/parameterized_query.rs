@@ -1,4 +1,4 @@
-use super::models::QueryParameter;
+use super::models::{DatabaseType, QueryParameter};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 
@@ -7,6 +7,18 @@ pub enum PlaceholderStyle {
     QuestionMark,
     DollarNumber,
     AtNumber,
+}
+
+pub fn placeholder_style_for_database(database_type: DatabaseType) -> PlaceholderStyle {
+    match database_type {
+        DatabaseType::PostgreSQL
+        | DatabaseType::CockroachDB
+        | DatabaseType::Greenplum
+        | DatabaseType::Redshift
+        | DatabaseType::Vertica => PlaceholderStyle::DollarNumber,
+        DatabaseType::MSSQL => PlaceholderStyle::AtNumber,
+        _ => PlaceholderStyle::QuestionMark,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -256,5 +268,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(compiled.sql, "SELECT $body$ :ignored $body$, $1");
+    }
+
+    #[test]
+    fn placeholder_style_follows_database_type_not_driver_display_name() {
+        use super::placeholder_style_for_database;
+        use crate::database::models::DatabaseType;
+
+        assert_eq!(
+            placeholder_style_for_database(DatabaseType::PostgreSQL),
+            PlaceholderStyle::DollarNumber
+        );
+        assert_eq!(
+            placeholder_style_for_database(DatabaseType::CockroachDB),
+            PlaceholderStyle::DollarNumber
+        );
+        assert_eq!(
+            placeholder_style_for_database(DatabaseType::MSSQL),
+            PlaceholderStyle::AtNumber
+        );
+        assert_eq!(
+            placeholder_style_for_database(DatabaseType::MySQL),
+            PlaceholderStyle::QuestionMark
+        );
+        assert_eq!(
+            placeholder_style_for_database(DatabaseType::SQLite),
+            PlaceholderStyle::QuestionMark
+        );
     }
 }

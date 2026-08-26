@@ -1,26 +1,3 @@
-/* Collapsible results panel — collapsed bar */
-.sql-results-collapsed-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 12px;
-  height: 32px;
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border);
-  color: var(--text-secondary);
-  font-size: var(--mm-fs-caption);
-  cursor: pointer;
-  width: 100%;
-  text-align: left;
-  transition: background 0.15s, color 0.15s;
-  flex-shrink: 0;
-}
-
-.sql-results-collapsed-bar:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
 /* Multi-column sort priority badge */
 .datagrid-sort-priority {
   display: inline-flex;

@@ -96,4 +96,7 @@ export interface AIWorkspaceBubbleData {
   /** Stable request failure category used for retry and status presentation. */
   requestErrorCode?: AIRequestErrorCode;
   retryable?: boolean;
+  /** Set once this SQL has been pushed to a Query tab; further "Duyệt chạy"
+   *  clicks keep the button but must not spawn another tab. */
+  openedInWorkspace?: boolean;
 }

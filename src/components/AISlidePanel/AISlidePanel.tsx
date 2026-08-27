@@ -940,6 +940,32 @@ export function AISlidePanel({
       }
     }
 
+    // Approved SQL should run where the user can see it: push it into a
+    // Query tab in the workspace and execute there, instead of only running
+    // inside the AI sandbox. Safe read-only SQL auto-runs; mutating or
+    // dangerous SQL opens ready-to-run so the user presses Chạy themselves.
+    // The Duyệt chạy button itself never disappears — but a bubble that was
+    // already opened in the workspace must not spawn yet another tab.
+    if (bubble.openedInWorkspace) {
+      return;
+    }
+    const approvedRiskLevel = bubble.risk?.level;
+    const workspaceOpened = openSqlInWorkspace(bubble.sql, {
+      title: "AI Query",
+      autoRun: approvedRiskLevel === "safe",
+      focusWorkspace: true,
+    });
+    if (workspaceOpened) {
+      setBubbles((current) =>
+        current.map((currentBubble) =>
+          currentBubble.id === bubble.id
+            ? { ...currentBubble, openedInWorkspace: true }
+            : currentBubble
+        )
+      );
+      return;
+    }
+
     try {
       const result = await runSql(bubble.sql);
       setBubbles((current) =>

@@ -38,6 +38,11 @@ import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates
 import {
   buildSchemaContextRequiredMessage,
 } from "../ai-agent-grounding";
+import {
+  formatExecutionError,
+  isHighRiskStatement,
+  isMutatingStatement,
+} from "../../SQLEditor/SQLEditorUtils";
 import { finalizeAgentResult } from "../ai-agent-finalization";
 import { recoverNonAgentAssistResponse } from "../ai-assist-recovery";
 import { yieldToBrowserFrame } from "../ai-async-utils";
@@ -757,6 +762,32 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           recoverFinishAction: recoverAgentFinishAction,
           requestAgentAction,
           sharedAgentInstruction,
+          validateSql: async (proposedSql) => {
+            // Mutating proposals are already guarded by preview/confirmation
+            // flows; the pre-flight only verifies read-only SQL.
+            if (isMutatingStatement(proposedSql) || isHighRiskStatement(proposedSql)) {
+              return null;
+            }
+            if (!connectionId || requestId !== requestIdRef.current) {
+              return null;
+            }
+            if (requestDataReadConsent) {
+              const approved = await requestDataReadConsent();
+              if (!approved) return null;
+            }
+            if (requestId !== requestIdRef.current) {
+              return null;
+            }
+            try {
+              await executeSandboxQuery(connectionId, [proposedSql], true);
+              return null;
+            } catch (errorValue) {
+              if (isSupersededAIRequestError(errorValue)) {
+                throw errorValue;
+              }
+              return formatExecutionError(errorValue);
+            }
+          },
         });
         const hasValidSql = Boolean(finalization.sql);
 

@@ -72,6 +72,7 @@ export async function runAgentEvidenceLoop(params: {
       const recoveryInstruction = buildAgentRecoveryInstruction({
         lastChance,
         composeOnly,
+        falseSuccessClaim: gateNow.falseSuccessClaim,
         verification: gateNow.verification,
       });
       const recoveryAction = await requestAgentAction(

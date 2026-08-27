@@ -25,6 +25,31 @@ export function finishHasSql(action: AIAgentFinishAction): boolean {
   return typeof action.args?.sql === "string" && Boolean(action.args.sql.trim());
 }
 
+/**
+ * Matches claims that a query/sandbox run executed successfully (covering the
+ * UI languages). Used to catch finishes that celebrate a run which actually
+ * failed — the trace, not the model, is the source of truth.
+ */
+const SUCCESS_CLAIM_PATTERN =
+  /(?:successfully\s+(?:ran|executed)|ran\s+successfully|executed\s+successfully|(?:query|sql|sandbox)\s+(?:ran|executed|works?)\s+(?:fine|ok|correctly|well)|th\u1ef1c\s*thi\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang|\u1ed5n)|\u0111\u00fang\s*th\u1ef1c\s*thi|ch\u1ea1y\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang|\u1ed5n)|\u0111\u00e3\s*ch\u1ea1y\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang)|沙箱?运行成功|执行成功|성공적으로\s*실행)/i;
+
+/** True when the response asserts a successful execution. */
+export function responseClaimsSuccessfulExecution(response: string | undefined): boolean {
+  return typeof response === "string" && SUCCESS_CLAIM_PATTERN.test(response);
+}
+
+/** True when at least one read observation proves a real, error-free run. */
+export function hasSuccessfulReadStep(steps: AgentTraceStep[]): boolean {
+  return steps.some(
+    (step) =>
+      (step.action === "run_readonly_sql" || step.action === "sample_table_data")
+      && Boolean(step.observation)
+      && !step.observation.startsWith("Tool error")
+      && !step.observation.startsWith("Tool blocked")
+      && (step.action === "sample_table_data" || /"sandboxed"/.test(step.observation)),
+  );
+}
+
 /** True when the response text contains a markdown table block. */
 export function responseHasMarkdownTable(response: string | undefined): boolean {
   return typeof response === "string" && /\|[^\n]+\|\s*\n\|[ :-]+\|/.test(response);
@@ -43,6 +68,7 @@ export interface EvidenceGateEvaluation {
   missingData: boolean;
   response: string;
   missingReportTable: boolean;
+  falseSuccessClaim: boolean;
   verification: ReturnType<typeof verifyAgentResponseAgainstEvidence>;
   composeOnly: boolean;
   needsMoreEvidence: boolean;
@@ -65,6 +91,7 @@ export function evaluateEvidenceGate(params: {
       missingData: false,
       response: "",
       missingReportTable: false,
+      falseSuccessClaim: false,
       verification: { ok: true, unsupported: [] } as ReturnType<typeof verifyAgentResponseAgainstEvidence>,
       composeOnly: false,
       needsMoreEvidence: false,
@@ -75,14 +102,16 @@ export function evaluateEvidenceGate(params: {
     typeof finalAction.args?.response === "string" ? finalAction.args.response : "";
   const missingReportTable = wantsReportTable && !responseHasMarkdownTable(response);
   const verification = verifyAgentResponseAgainstEvidence(response, steps);
-  const needsMoreEvidence = missingData || missingReportTable || !verification.ok;
+  const falseSuccessClaim = responseClaimsSuccessfulExecution(response) && !hasSuccessfulReadStep(steps);
+  const needsMoreEvidence = missingData || missingReportTable || falseSuccessClaim || !verification.ok;
   return {
     isFinish,
     missingData,
     response,
     missingReportTable,
+    falseSuccessClaim,
     verification,
-    composeOnly: !missingData && verification.ok,
+    composeOnly: !missingData && !falseSuccessClaim && verification.ok,
     needsMoreEvidence,
   };
 }
@@ -91,9 +120,17 @@ export function evaluateEvidenceGate(params: {
 export function buildAgentRecoveryInstruction(params: {
   lastChance: boolean;
   composeOnly: boolean;
+  falseSuccessClaim?: boolean;
   verification: ReturnType<typeof verifyAgentResponseAgainstEvidence>;
 }): string {
-  const { lastChance, composeOnly, verification } = params;
+  const { lastChance, composeOnly, falseSuccessClaim, verification } = params;
+  if (falseSuccessClaim) {
+    return [
+      "Your previous answer claimed the query/sandbox ran successfully, but the trace shows the run FAILED (see the Tool error steps).",
+      "Never report success for a failed execution.",
+      "Read the actual error, fix the cause (for column errors: re-check describe_table output and use only verified column names; for row counts use list_tables rowCount), re-run run_readonly_sql, then finish with the truthful result.",
+    ].join(" ");
+  }
   return composeOnly
     ? "The evidence is already gathered. Finish now: args.response MUST contain ONE complete markdown table — | header | row, |---| separator, then data rows — summarizing the verified data, followed by at most three short notes."
     : lastChance

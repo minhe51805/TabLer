@@ -154,6 +154,29 @@ export function extractReferencedTableNamesFromSql(sql: string) {
   return [...candidates];
 }
 
+const SYSTEM_BARE_NAME_PATTERN =
+  /^(?:sqlite_master|sqlite_schema|sqlite_sequence|sqlite_temp_master|pg_class|pg_attribute|pg_constraint|pg_namespace|pg_index|pg_indexes|pg_stat_\w+)$/i;
+const QUALIFIED_CATALOG_REF_PATTERN =
+  /\b(?:from|join)\s+"?(?:information_schema|pg_catalog|pg_temp_\d+)"?\s*\.\s*"?[a-z_]\w*"?/gi;
+
+/**
+ * Returns the system-catalog references embedded in a SQL string, if any.
+ * Works on the raw SQL because dotted catalog refs lose their schema prefix
+ * once table names are extracted.
+ */
+export function findSystemCatalogReferences(sql: string): string[] {
+  const refs = new Set<string>();
+  for (const match of sql.matchAll(QUALIFIED_CATALOG_REF_PATTERN)) {
+    refs.add(match[0].replace(/^\s*(?:from|join)\s+/i, "").toLowerCase());
+  }
+  for (const raw of extractReferencedTableNamesFromSql(sql)) {
+    if (SYSTEM_BARE_NAME_PATTERN.test(raw)) {
+      refs.add(raw.toLowerCase());
+    }
+  }
+  return [...refs];
+}
+
 export function getAgentSqlSchemaRequirements(
   sql: string,
   availableTableNames: string[],
@@ -165,7 +188,16 @@ export function getAgentSqlSchemaRequirements(
   const unknown: string[] = [];
   const uninspected: string[] = [];
 
-  for (const referencedTable of extractReferencedTableNamesFromSql(sql)) {
+  // System catalog refs (information_schema.tables, pg_catalog.pg_class, …)
+  // are engine internals, not workspace tables: swap them for a sentinel so
+  // the schema requirement ignores them. The dedicated catalog guard in the
+  // run_readonly_sql tool decides whether they are allowed.
+  const sanitizedSql = sql.replace(QUALIFIED_CATALOG_REF_PATTERN, " catalog_ref");
+
+  for (const referencedTable of extractReferencedTableNamesFromSql(sanitizedSql)) {
+    if (referencedTable === "catalog_ref" || SYSTEM_BARE_NAME_PATTERN.test(referencedTable)) {
+      continue;
+    }
     const matchedTable = findMatchingTableName(referencedTable, availableTableNames);
     if (!matchedTable) {
       unknown.push(referencedTable);

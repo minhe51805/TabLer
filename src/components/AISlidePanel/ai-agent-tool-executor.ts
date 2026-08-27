@@ -5,6 +5,7 @@ import { findAgentSchemaMatches, prioritizeSchemaScanCandidates } from "./ai-age
 import { formatExecutionError, isHighRiskStatement, isMutatingStatement, isSessionSwitchStatement } from "../SQLEditor/SQLEditorUtils";
 import {
   findMatchingTableName,
+  findSystemCatalogReferences,
   getAgentSqlSchemaRequirements,
   stringifyAgentObservation,
   summarizeAgentExplainPlan,
@@ -312,6 +313,14 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
       if (!sql) {
         return "Tool error: run_readonly_sql requires args.sql.";
+      }
+
+      // System catalogs have engine-specific columns and are the #1 source of
+      // hallucinated SQL (e.g. information_schema.tables has no row_count).
+      // The workspace tools already provide everything the catalogs would.
+      const catalogRefs = findSystemCatalogReferences(sql);
+      if (catalogRefs.length > 0) {
+        return `Tool blocked: SQL references system catalog objects (${catalogRefs.join(", ")}). Do not query information_schema/pg_catalog/sqlite_master — their columns vary per engine. For table lists and row counts use list_tables (each entry carries rowCount); for columns use search_schema or describe_table.`;
       }
 
       const schemaRequirements = getAgentSqlSchemaRequirements(

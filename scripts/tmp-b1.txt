@@ -1,0 +1,85 @@
+  bubbleRef,
+  compact = false,
+  isGenerating,
+  isRunning,
+  onOpenDetail,
+  onStartDrag,
+  onStartPointerDrag,
+  onResetPointer,
+  onCopy,
+  onInsert,
+  onRun,
+  onDismiss,
+}: AIWorkspaceBubbleProps) {
+  const { language } = useI18n();
+  const copy = getAIWorkspaceCopy(language);
+  const tone = getBubbleTone(bubble);
+  const codePreview = getBubbleCodePreview(bubble.sql);
+  const showMutationActions = bubble.kind === "assistant" && bubble.status === "ready";
+  const showInsert = showMutationActions && Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
+  const showRun = showMutationActions && Boolean(bubble.sql) && aiModeAllowsRun(bubble.interactionMode);
+  const reasoningText = bubble.reasoning?.trim();
+  const showReasoning = bubble.status === "ready" && Boolean(reasoningText);
+  const agentSteps = bubble.agentSteps ?? [];
+  const showAgentSteps = bubble.interactionMode === "agent" && agentSteps.length > 0;
+
+  return (
+    <div
+      ref={bubbleRef}
+      className={`ai-workspace-bubble ai-workspace-bubble--${tone} ${bubble.status === "loading" ? "is-loading" : ""} ${compact ? "is-compact" : ""}`}
+      style={{ transform: `translate3d(${bubble.x}px, ${bubble.y}px, 0)` }}
+      onDoubleClick={() => onOpenDetail(bubble)}
+    >
+      <div className="ai-workspace-bubble-header" onMouseDown={(event) => onStartDrag(bubble.id, event)}>
+        <button type="button" className="ai-workspace-bubble-grab" title={copy.bubbleActions.dragBubble}>
+          <GripHorizontal className="w-3.5 h-3.5" />
+        </button>
+
+        <div className="ai-workspace-bubble-copy">
+          <span className="ai-workspace-bubble-kicker">{getBubbleMetaLabel(bubble, copy)}</span>
+          <strong className="ai-workspace-bubble-title">
+            {getBubbleIcon(bubble)}
+            {bubble.title}
+          </strong>
+          <span className="ai-workspace-bubble-subtitle">{bubble.subtitle}</span>
+        </div>
+
+        <div className="ai-workspace-bubble-head-actions">
+          <button
+            type="button"
+            className="ai-workspace-pointer-handle"
+            title={copy.bubbleActions.dragPointer}
+            onMouseDown={(event) => onStartPointerDrag(bubble.id, event)}
+            onDoubleClick={(event) => {
+              event.stopPropagation();
+              onResetPointer(bubble.id);
+            }}
+===
+72:export interface AIWorkspaceBubbleData {
+73-  id: string;
+74-  threadId: string;
+75-  workspaceKey: string;
+76-  interactionMode: AIWorkspaceInteractionMode;
+77-  kind: AIWorkspaceBubbleKind;
+78-  status: AIWorkspaceBubbleStatus;
+79-  title: string;
+80-  subtitle: string;
+81-  prompt: string;
+82-  promptSummary?: string;
+83-  preview: string;
+84-  detail: string;
+85-  sql?: string;
+86-  risk?: SqlRiskAnalysis;
+87-  x: number;
+88-  y: number;
+89-  pointer: AIWorkspacePointerState;
+90-  createdAt: number;
+91-  autoDismissAt?: number;
+92-  /** Real model reasoning text; undefined when the model returns none. */
+93-  reasoning?: string;
+94-  /** Live trace of autonomous agent tool steps; undefined outside agent mode. */
+95-  agentSteps?: AIWorkspaceAgentStep[];
+96-  /** Stable request failure category used for retry and status presentation. */
+97-  requestErrorCode?: AIRequestErrorCode;
+98-  retryable?: boolean;
+99-}

@@ -222,3 +222,46 @@ describe("buildRunnerInstructionForReason", () => {
     expect(buildRunnerInstructionForReason("iterate", shared)).toBe(shared);
   });
 });
+
+describe("false-success gate", () => {
+  it("flags a success claim when every read step failed", () => {
+    const evaluation = evaluateEvidenceGate({
+      finalAction: finishAction({
+        response: "Sandbox đã đúng thực thi, dữ liệu sẵn sàng.",
+        sql: "SELECT 1 FROM users",
+      }),
+      steps: [step({ action: "run_readonly_sql", observation: "Tool error: column \"row_count\" does not exist" })],
+      wantsReportTable: false,
+    });
+    expect(evaluation.falseSuccessClaim).toBe(true);
+    expect(evaluation.needsMoreEvidence).toBe(true);
+    expect(evaluation.composeOnly).toBe(false);
+  });
+
+  it("does not flag a success claim backed by a real sandbox read", () => {
+    const evaluation = evaluateEvidenceGate({
+      finalAction: finishAction({
+        response: "The query executed successfully — 120 rows total.",
+        sql: "SELECT count(*) FROM users",
+      }),
+      steps: [step({
+        action: "run_readonly_sql",
+        observation: "{\"rowCount\":120,\"sandboxed\":true,\"columns\":[\"count:int8\"]}",
+      })],
+      wantsReportTable: false,
+    });
+    expect(evaluation.falseSuccessClaim).toBe(false);
+    expect(evaluation.needsMoreEvidence).toBe(false);
+  });
+
+  it("recovery instruction for a false success tells the model to fix and re-run", () => {
+    const instruction = buildAgentRecoveryInstruction({
+      lastChance: false,
+      composeOnly: false,
+      falseSuccessClaim: true,
+      verification: { ok: true, unsupported: [] },
+    });
+    expect(instruction).toContain("FAILED");
+    expect(instruction).toContain("list_tables rowCount");
+  });
+});

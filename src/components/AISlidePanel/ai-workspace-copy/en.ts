@@ -56,6 +56,7 @@ export const EN_COPY: AIWorkspaceCopy = {
       alertDismiss: "Dismiss",
       inspectOnTitle: "Inspect mode is on. Select something and press Enter.",
       inspectOffTitle: "Open the AI assistant rail. Use Inspect to capture context from the workspace.",
+      resizeHandleTitle: "Drag to resize the AI panel. Double-click to reset.",
       inspectHint: "Select text, then press Enter.",
       capturedLabel: "Captured",
       selectionReady: "Selection ready",

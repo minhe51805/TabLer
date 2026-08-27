@@ -56,6 +56,7 @@ export const VI_COPY: AIWorkspaceCopy = {
       alertDismiss: "Đóng",
       inspectOnTitle: "Đang bật chế độ inspect. Bôi đen nội dung rồi nhấn Enter.",
       inspectOffTitle: "Mở khung AI. Dùng Inspect để lấy ngữ cảnh từ workspace.",
+      resizeHandleTitle: "Kéo để đổi độ rộng khung AI. Nhấp đúp để đặt lại.",
       inspectHint: "Bôi đen nội dung rồi nhấn Enter.",
       capturedLabel: "Đã bắt",
       selectionReady: "Đã chọn xong",

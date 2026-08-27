@@ -5,6 +5,7 @@ import {
   useCallback,
   lazy,
   Suspense,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -152,6 +153,7 @@ function App() {
     leftPanel, setLeftPanel,
     isSidebarCollapsed, setIsSidebarCollapsed,
     sidebarWidth, setSidebarWidth,
+    aiPanelWidth,
     isWindowMaximized,
     isWindowFocused,
     forceLauncherVisible, setForceLauncherVisible
@@ -719,6 +721,7 @@ function App() {
   return (
     <div
       className={`app-root ${isWindowMaximized ? "window-maximized" : ""} ${showAISlidePanel ? "workspace-ai-open" : ""}`}
+      style={{ "--workspace-ai-sidebar-width": `${aiPanelWidth}px` } as CSSProperties}
     >
       <AppTitleBar
         titlebarContextTitle={titlebarContextTitle}

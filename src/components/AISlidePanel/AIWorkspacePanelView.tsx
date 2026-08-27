@@ -1,5 +1,12 @@
 import { History, Plus, RotateCcw, Target, Trash2, X } from "lucide-react";
 import type { KeyboardEventHandler, RefObject } from "react";
+import {
+  AI_PANEL_DEFAULT_WIDTH,
+  AI_PANEL_MAX_WIDTH,
+  AI_PANEL_MIN_WIDTH,
+  useAIPanelResize,
+} from "../../hooks/useAIPanelResize";
+import { useAppLayoutStore } from "../../stores/appLayoutStore";
 import type { AIProviderConfig } from "../../types";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { AIBubbleDetailModal } from "./AIBubbleDetailModal";
@@ -35,11 +42,18 @@ export interface AIWorkspacePanelViewModel {
 
 export function AIWorkspacePanelView({ model }: { model: AIWorkspacePanelViewModel }) {
   const m = model;
+  const panelWidth = useAppLayoutStore((state) => state.aiPanelWidth);
+  const setPanelWidth = useAppLayoutStore((state) => state.setAIPanelWidth);
+  const onResizeHandleMouseDown = useAIPanelResize({
+    enabled: true,
+    width: panelWidth,
+    setWidth: setPanelWidth,
+  });
   return <div className="ai-workspace-overlay">
     {m.visibleError && <div className="ai-workspace-alert"><span>{m.visibleError}</span><button type="button" className="ai-workspace-alert-dismiss" onClick={m.dismissError}>{m.aiCopy.composer.alertDismiss}</button></div>}
     <div className="ai-workspace-stage ai-workspace-stage--sidebar">
       {m.isInspectMode && m.selectionContext?.rect && <><div className="ai-workspace-selection-highlight" style={{ left: m.selectionContext.rect.x, top: m.selectionContext.rect.y, width: m.selectionContext.rect.width, height: m.selectionContext.rect.height }} /><div className="ai-workspace-selection-badge" style={{ left: m.selectionContext.rect.x + 8, top: Math.max(12, m.selectionContext.rect.y - 30) }}><Target className="w-3 h-3" /><span>{m.aiCopy.composer.selectionReady}</span></div></>}
-      <aside className={`ai-workspace-sidebar ${m.isLongformComposer ? "is-longform" : ""}`}><div ref={m.composerRef} className={`ai-workspace-composer is-docked ${m.isLongformComposer ? "is-longform" : ""} ${m.activeInteractionMode === "agent" ? "is-agent" : ""}`}><div className="ai-workspace-composer-body">
+      <aside className={`ai-workspace-sidebar ${m.isLongformComposer ? "is-longform" : ""}`} style={{ width: panelWidth }}><div className="ai-workspace-resize-handle" role="separator" aria-orientation="vertical" aria-valuenow={panelWidth} aria-valuemin={AI_PANEL_MIN_WIDTH} aria-valuemax={AI_PANEL_MAX_WIDTH} aria-label={m.aiCopy.composer.resizeHandleTitle} title={m.aiCopy.composer.resizeHandleTitle} onMouseDown={onResizeHandleMouseDown} onDoubleClick={() => setPanelWidth(AI_PANEL_DEFAULT_WIDTH)}><div className="ai-workspace-resize-handle-line" /></div><div ref={m.composerRef} className={`ai-workspace-composer is-docked ${m.isLongformComposer ? "is-longform" : ""} ${m.activeInteractionMode === "agent" ? "is-agent" : ""}`}><div className="ai-workspace-composer-body">
         <header className="ai-workspace-panel-header workspace-toolbar"><div className="workspace-toolbar-main ai-workspace-panel-header-main"><span className="workspace-toolbar-kicker">{m.aiCopy.composer.kicker}</span><div className="workspace-toolbar-title-row ai-workspace-panel-header-row"><span className="workspace-toolbar-title">{m.aiCopy.composer.title}</span></div></div><div className="workspace-toolbar-actions"><button type="button" className={`toolbar-btn icon-only ${m.isInspectMode ? "is-active" : ""}`} onClick={() => m.setInspectMode((value) => !value)} title={m.aiCopy.composer.inspectOffTitle}><Target className="w-3.5 h-3.5" /></button><button type="button" className="toolbar-btn icon-only" onClick={m.reset} title="Reset"><RotateCcw className="w-3.5 h-3.5" /></button><button type="button" className="toolbar-btn icon-only is-close" onClick={m.close} title={m.aiCopy.composer.alertDismiss}><X className="w-3.5 h-3.5" /></button></div></header>
         <div className="ai-workspace-chat-tabs"><span className="ai-workspace-chat-tab ai-workspace-chat-tab-current is-active">{m.currentThread?.label || "#1"}</span><div className="ai-workspace-chat-toolbar-actions"><div ref={m.historyPanelRef} className={`ai-workspace-history-dropdown ${m.isHistoryOpen ? "is-open" : ""}`}><button type="button" className="ai-workspace-history-toggle" onClick={() => m.setHistoryOpen((value) => !value)}><History className="w-3.5 h-3.5" /><span>{m.aiCopy.composer.historyTitle}</span><span>{m.recentWorkspaceThreads.length}</span></button>{m.isHistoryOpen && <div className="ai-workspace-history-popover"><div className="ai-workspace-history-list">{m.recentWorkspaceThreads.map((thread) => <div key={thread.id} className={`ai-workspace-history-item ${thread.id === m.currentThread?.id ? "is-active" : ""}`}><button type="button" className="ai-workspace-history-item-select" onClick={() => m.selectThread(thread.id)}><strong>{thread.label}</strong><span>{formatThreadTimestamp(thread.updatedAt || thread.createdAt, m.language)}</span></button><button type="button" className="ai-workspace-history-item-delete" onClick={(event) => m.requestDeleteThread(thread.id, event)}><Trash2 className="w-3.5 h-3.5" /></button><span>{m.bubbleCountByThread.get(thread.id) || 0}</span></div>)}</div></div>}</div><button type="button" className="ai-workspace-chat-tab-add" onClick={m.createThread}><Plus className="w-3.5 h-3.5" /></button></div></div>
         <AIConversationView bubbles={m.conversationBubbles} copy={m.aiCopy} showThinking={m.showThinking} threadRef={m.chatThreadRef} onOpenDetail={(bubble) => m.setDetailBubbleId(bubble.id)} onInsert={m.insertBubble} onRun={m.runBubble} onRetry={m.retryBubble} onOpenRecord={m.openAgentRecord} onUseSuggestion={(prompt) => m.setPromptDraft(prompt)} />

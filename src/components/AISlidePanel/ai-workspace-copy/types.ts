@@ -59,6 +59,7 @@ export interface AIWorkspaceCopy {
     alertDismiss: string;
     inspectOnTitle: string;
     inspectOffTitle: string;
+    resizeHandleTitle: string;
       inspectHint: string;
       capturedLabel: string;
       selectionReady: string;

@@ -56,6 +56,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
       alertDismiss: "关闭",
       inspectOnTitle: "Inspect 模式已开启。选中文本后按 Enter。",
       inspectOffTitle: "打开 AI 侧边助手。使用 Inspect 从工作区获取上下文。",
+      resizeHandleTitle: "拖动以调整 AI 面板宽度。双击可重置。",
       inspectHint: "选中内容后按 Enter。",
       capturedLabel: "已捕获",
       selectionReady: "已选中",

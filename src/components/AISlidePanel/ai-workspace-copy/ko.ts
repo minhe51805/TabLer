@@ -56,6 +56,7 @@ export const KO_COPY: AIWorkspaceCopy = {
       alertDismiss: "닫기",
       inspectOnTitle: "inspect 모드가 켜져 있습니다. 무언가를 선택하고 Enter를 누르세요.",
       inspectOffTitle: "AI 어시스턴트 레일을 열세요. Inspect를 사용하여 워크스페이스에서 컨텍스트를 캡처하세요.",
+      resizeHandleTitle: "드래그하여 AI 패널 너비를 조절하세요. 더블 클릭하면 초기화됩니다.",
       inspectHint: "텍스트를 선택한 다음 Enter를 누르세요.",
       capturedLabel: "캡처됨",
       selectionReady: "선택 준비 완료",

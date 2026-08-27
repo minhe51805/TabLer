@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { RowInspectorData } from "../components/RowInspector/RowInspector";
+import { persistAIPanelWidth, readStoredAIPanelWidth } from "../hooks/useAIPanelResize";
 
 interface AppLayoutState {
   showTerminalPanel: boolean;
@@ -18,6 +19,8 @@ interface AppLayoutState {
   setIsSidebarCollapsed: (collapsed: boolean | ((current: boolean) => boolean)) => void;
   sidebarWidth: number;
   setSidebarWidth: (width: number | ((current: number) => number)) => void;
+  aiPanelWidth: number;
+  setAIPanelWidth: (width: number | ((current: number) => number)) => void;
   isWindowMaximized: boolean;
   setIsWindowMaximized: (maximized: boolean | ((current: boolean) => boolean)) => void;
   isWindowFocused: boolean;
@@ -43,6 +46,12 @@ export const useAppLayoutStore = create<AppLayoutState>((set) => ({
   setIsSidebarCollapsed: (collapsed) => set((state) => ({ isSidebarCollapsed: typeof collapsed === 'function' ? collapsed(state.isSidebarCollapsed) : collapsed })),
   sidebarWidth: 320,
   setSidebarWidth: (width) => set((state) => ({ sidebarWidth: typeof width === 'function' ? width(state.sidebarWidth) : width })),
+  aiPanelWidth: readStoredAIPanelWidth(),
+  setAIPanelWidth: (width) => set((state) => {
+    const requested = typeof width === "function" ? width(state.aiPanelWidth) : width;
+    const next = persistAIPanelWidth(requested);
+    return next === state.aiPanelWidth ? state : { aiPanelWidth: next };
+  }),
   isWindowMaximized: false,
   setIsWindowMaximized: (maximized) => set((state) => ({ isWindowMaximized: typeof maximized === 'function' ? maximized(state.isWindowMaximized) : maximized })),
   isWindowFocused: true,

@@ -56,6 +56,7 @@ export const TR_COPY: AIWorkspaceCopy = {
       alertDismiss: "Kapat",
       inspectOnTitle: "İnceleme modu açık. Bir şey seçin ve Enter'a basın.",
       inspectOffTitle: "AI asistan panelini açın. Bağlamı almak için İnceleme'yi kullanın.",
+      resizeHandleTitle: "AI panelini yeniden boyutlandırmak için sürükleyin. Sıfırlamak için çift tıklayın.",
       inspectHint: "Metin seçin, ardından Enter'a basın.",
       capturedLabel: "Yakalandı",
       selectionReady: "Seçim hazır",

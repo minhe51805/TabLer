@@ -3886,6 +3886,17 @@ body {
   transition: margin-right var(--transition);
 }
 
+body.is-ai-panel-resizing,
+body.is-ai-panel-resizing * {
+  cursor: col-resize !important;
+}
+
+body.is-ai-panel-resizing .app-root.workspace-ai-open .error-bar,
+body.is-ai-panel-resizing .app-root.workspace-ai-open .main-container,
+body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
+  transition: none;
+}
+
 .titlebar {
   position: relative;
   z-index: 80;
@@ -33716,6 +33727,36 @@ body {
   border-radius: 0;
   box-shadow: -16px 0 36px rgba(0, 0, 0, 0.16);
   overflow: hidden;
+}
+
+.ai-workspace-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 8;
+  width: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.ai-workspace-resize-handle-line {
+  width: 2px;
+  height: 38px;
+  border-radius: 7px;
+  background: var(--mm-border-strong);
+  transition: all var(--transition);
+}
+
+.ai-workspace-resize-handle:hover .ai-workspace-resize-handle-line,
+.ai-workspace-resize-handle:focus-visible .ai-workspace-resize-handle-line,
+body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
+  width: 3px;
+  background: var(--mm-amber);
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-composer.is-docked {

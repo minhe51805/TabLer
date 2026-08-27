@@ -22,6 +22,7 @@
     "test:e2e": "node e2e/run.mjs",
     "test:integration:drivers": "node scripts/run-driver-integration.mjs",
     "test:integration:heavy": "node scripts/run-driver-integration.mjs --heavy",
+    "dev:debug": "node scripts/dev-with-debug-port.mjs",
     "test:performance": "vitest run tests/performance/v015-performance.test.ts",
     "check:secrets": "node scripts/check-secret-leaks.mjs"
   },

@@ -93,10 +93,9 @@ async fn sqlite_file_round_trip_lifecycle() {
     }
 
     let path = std::env::temp_dir().join(format!("tabler-it-sqlite-{}.db", std::process::id()));
-    let driver =
-        tabler_lib::database::sqlite::SqliteDriver::connect(path.to_str().unwrap())
-            .await
-            .expect("SQLite connect");
+    let driver = tabler_lib::database::sqlite::SqliteDriver::connect(path.to_str().unwrap())
+        .await
+        .expect("SQLite connect");
     driver.ping().await.expect("SQLite ping");
 
     driver
@@ -114,7 +113,10 @@ async fn sqlite_file_round_trip_lifecycle() {
             .expect("insert");
     }
     assert_eq!(
-        driver.count_rows("tabler_it_sqlite", None).await.expect("count"),
+        driver
+            .count_rows("tabler_it_sqlite", None)
+            .await
+            .expect("count"),
         3
     );
 
@@ -127,7 +129,10 @@ async fn sqlite_file_round_trip_lifecycle() {
         .await
         .expect("delete");
     assert_eq!(
-        driver.count_rows("tabler_it_sqlite", None).await.expect("count after delete"),
+        driver
+            .count_rows("tabler_it_sqlite", None)
+            .await
+            .expect("count after delete"),
         2
     );
 
@@ -145,8 +150,7 @@ async fn duckdb_file_round_trip_lifecycle() {
         return;
     }
 
-    let path =
-        std::env::temp_dir().join(format!("tabler-it-duckdb-{}.duckdb", std::process::id()));
+    let path = std::env::temp_dir().join(format!("tabler-it-duckdb-{}.duckdb", std::process::id()));
     let mut config = base_config(DatabaseType::DuckDB);
     config.file_path = Some(path.to_string_lossy().into_owned());
 
@@ -156,16 +160,20 @@ async fn duckdb_file_round_trip_lifecycle() {
     driver.ping().await.expect("DuckDB ping");
 
     driver
-        .execute_query(
-            "CREATE OR REPLACE TABLE tabler_it_duck (id INTEGER, name VARCHAR)",
-        )
+        .execute_query("CREATE OR REPLACE TABLE tabler_it_duck (id INTEGER, name VARCHAR)")
         .await
         .expect("create");
     driver
         .execute_query("INSERT INTO tabler_it_duck VALUES (1,'a'),(2,'b'),(3,'c')")
         .await
         .expect("insert");
-    assert_eq!(driver.count_rows("tabler_it_duck", None).await.expect("count"), 3);
+    assert_eq!(
+        driver
+            .count_rows("tabler_it_duck", None)
+            .await
+            .expect("count"),
+        3
+    );
 
     let _ = driver.disconnect().await;
     let _ = std::fs::remove_file(&path);
@@ -198,14 +206,23 @@ async fn sql_lifecycle(
         ),
     };
 
-    connect_driver.ping().await.unwrap_or_else(|e| panic!("{engine} ping: {e}"));
+    connect_driver
+        .ping()
+        .await
+        .unwrap_or_else(|e| panic!("{engine} ping: {e}"));
 
     connect_driver
         .execute_query(&format!("DROP TABLE IF EXISTS {table}"))
         .await
         .unwrap_or_else(|e| panic!("{engine} drop: {e}"));
-    connect_driver.execute_query(create_sql).await.unwrap_or_else(|e| panic!("{engine} create: {e}"));
-    connect_driver.execute_query(insert_sql).await.unwrap_or_else(|e| panic!("{engine} insert: {e}"));
+    connect_driver
+        .execute_query(create_sql)
+        .await
+        .unwrap_or_else(|e| panic!("{engine} create: {e}"));
+    connect_driver
+        .execute_query(insert_sql)
+        .await
+        .unwrap_or_else(|e| panic!("{engine} insert: {e}"));
     assert_eq!(
         connect_driver.count_rows(table, None).await.expect("count"),
         3,
@@ -301,7 +318,13 @@ async fn clickhouse_round_trip_lifecycle() {
         .execute_query("INSERT INTO tabler_it_ch VALUES (1,'a'),(2,'b'),(3,'c')")
         .await
         .expect("insert");
-    assert_eq!(driver.count_rows("tabler_it_ch", None).await.expect("count"), 3);
+    assert_eq!(
+        driver
+            .count_rows("tabler_it_ch", None)
+            .await
+            .expect("count"),
+        3
+    );
 
     let _ = driver.disconnect().await;
 }
@@ -389,7 +412,13 @@ async fn mssql_round_trip_lifecycle() {
         .execute_query("INSERT INTO tabler_it_mssql VALUES (1,'a'),(2,'b'),(3,'c')")
         .await
         .expect("insert");
-    assert_eq!(driver.count_rows("tabler_it_mssql", None).await.expect("count"), 3);
+    assert_eq!(
+        driver
+            .count_rows("tabler_it_mssql", None)
+            .await
+            .expect("count"),
+        3
+    );
 
     let _ = driver.disconnect().await;
 }
@@ -420,7 +449,10 @@ async fn cassandra_round_trip_lifecycle() {
         .execute_query("SELECT cluster_name FROM system.local")
         .await
         .expect("CQL round trip");
-    assert!(!result.rows.is_empty(), "system.local must answer a cluster name");
+    assert!(
+        !result.rows.is_empty(),
+        "system.local must answer a cluster name"
+    );
 
     let _ = driver.disconnect().await;
 }

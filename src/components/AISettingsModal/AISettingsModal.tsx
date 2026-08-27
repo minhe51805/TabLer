@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Plus, Trash2, Brain, Sparkles, Loader2, Check, Download } from "lucide-react";
+import { Plus, Trash2, Brain, Loader2, Check, Download, Pencil } from "lucide-react";
 import { useAIStore } from "../../stores/aiStore";
 import { invokeWithTimeout } from "../../utils/tauri-utils";
 import { getCurrentAppLanguage } from "../../i18n";
@@ -48,6 +48,8 @@ export function AISettingsModal({ onClose }: Props) {
     const [localOllamaConsentNotice, setLocalOllamaConsentNotice] = useState<string | null>(null);
     const [localOllamaConsentTone, setLocalOllamaConsentTone] = useState<"info" | "success" | "error">("info");
     const providerMenuRef = useRef<HTMLDivElement | null>(null);
+    const [isLocalSelected, setIsLocalSelected] = useState(false);
+    const [isEditingName, setIsEditingName] = useState(false);
 
     useEffect(() => {
         let isMounted = true;
@@ -256,8 +258,6 @@ export function AISettingsModal({ onClose }: Props) {
 
     const activeConfig = configs.find(c => c.id === editingId);
     const endpointFieldCopy = activeConfig ? getAIProviderEndpointFieldCopy(activeConfig) : null;
-    const enabledCount = configs.filter((config) => config.is_enabled).length;
-    const inUseCount = configs.filter((config) => config.is_enabled && config.is_primary).length;
     const hasStoredKey = activeConfig ? storedKeyStatus[activeConfig.id] && !clearedKeyIds.includes(activeConfig.id) : false;
     const isActiveProviderInUse = !!activeConfig?.is_enabled && !!activeConfig?.is_primary;
     const connectionStatusLabel =
@@ -382,7 +382,6 @@ export function AISettingsModal({ onClose }: Props) {
                 {/* Header */}
                 <header className="ai-settings-header">
                     <div className="ai-settings-header-copy">
-                        <span className="ai-settings-kicker">AI WORKSPACE</span>
                         <h2 className="ai-settings-title">Provider Settings</h2>
                         <p className="ai-settings-subtitle">
                             Manage model providers, credentials, and which assistant is active inside the editor.
@@ -410,201 +409,205 @@ export function AISettingsModal({ onClose }: Props) {
                 )}
 
                 <div className="ai-settings-body">
-                    {/* Left Sidebar - Provider List */}
+                    {/* Provider list (master pane) */}
                     <aside className="ai-settings-sidebar">
-                        <div className="ai-settings-sidebar-header">
-                            <h3 className="ai-settings-sidebar-title">AI Providers</h3>
-                            <div className="ai-settings-sidebar-pills">
-                                <span className="ai-settings-pill">{configs.length} CONFIGURED</span>
-                                <span className="ai-settings-pill">{enabledCount} ENABLED</span>
-                                <span className="ai-settings-pill ai-settings-pill-active">{inUseCount} IN USE</span>
-                            </div>
-                            <button type="button" onClick={handleAdd} className="ai-settings-add-btn" disabled={isSettingUpLocalOllama}>
-                                <Plus className="w-3.5 h-3.5" />
-                                <span>Add</span>
-                            </button>
+                        <div className="ai-settings-sidebar-group-label">Providers</div>
+                        <div className="ai-settings-sidebar-list">
+                            {configs.map((config) => (
+                                <button
+                                    key={config.id}
+                                    type="button"
+                                    onClick={() => {
+                                        setEditingId(config.id);
+                                        setIsLocalSelected(false);
+                                        setIsEditingName(false);
+                                    }}
+                                    className={`ai-settings-sidebar-item ${!isLocalSelected && editingId === config.id ? "active" : ""}`}
+                                    disabled={isSettingUpLocalOllama}
+                                >
+                                    <span className="ai-settings-sidebar-item-icon" aria-hidden="true">
+                                        {formatAIProviderTypeLabel(config.provider_type).charAt(0).toUpperCase()}
+                                    </span>
+                                    <span className="ai-settings-sidebar-item-name">
+                                        {config.name || formatAIProviderTypeLabel(config.provider_type) || "Unnamed"}
+                                    </span>
+                                    <span
+                                        className={`ai-provider-dot ${config.is_enabled ? "is-on" : "is-off"}`}
+                                        title={config.is_enabled ? "Enabled" : "Disabled"}
+                                    />
+                                </button>
+                            ))}
                         </div>
 
-                        {configs.length === 0 ? (
+                        <div className="ai-settings-sidebar-group-label">Local</div>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsLocalSelected(true);
+                                setIsEditingName(false);
+                            }}
+                            className={`ai-settings-sidebar-item ${isLocalSelected ? "active" : ""}`}
+                            disabled={isSettingUpLocalOllama}
+                        >
+                            <Download className="w-4 h-4" />
+                            <span className="ai-settings-sidebar-item-name">Local AI setup</span>
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={handleAdd}
+                            className="ai-settings-sidebar-item ai-settings-sidebar-add"
+                            disabled={isSettingUpLocalOllama}
+                        >
+                            <Plus className="w-4 h-4" />
+                            <span className="ai-settings-sidebar-item-name">Add provider</span>
+                        </button>
+                    </aside>
+
+                    {/* Detail pane */}
+                    <section className="ai-settings-detail">
+                        {isLocalSelected ? (
+                            <div className="ai-settings-local-card">
+                                <div className="ai-settings-local-copy">
+                                    <span className="ai-settings-local-kicker">LOCAL AI QUICK SETUP</span>
+                                    <h3 className="ai-settings-local-title">Ollama + Gemma 4 E2B on this machine</h3>
+                                    <p className="ai-settings-local-description">
+                                        One click will install Ollama if needed, download <code>gemma4:e2b</code> locally,
+                                        and switch TableR to use that model first for workspace AI.
+                                    </p>
+                                    <div className="ai-settings-local-badges">
+                                        <span className="ai-settings-chip">
+                                            {isLoadingLocalOllamaStatus
+                                                ? "Checking local status..."
+                                                : localOllamaStatus?.isInstalled
+                                                    ? "Ollama installed"
+                                                    : "Ollama missing"}
+                                        </span>
+                                        <span className="ai-settings-chip">
+                                            {localOllamaStatus?.isRunning ? "Service running" : "Service offline"}
+                                        </span>
+                                        <span className="ai-settings-chip">
+                                            {localOllamaStatus?.hasRecommendedModel ? "Model ready" : "Model not downloaded"}
+                                        </span>
+                                        <span className="ai-settings-chip">{localOllamaPrimaryText}</span>
+                                    </div>
+                                    <div className="ai-settings-local-meta">
+                                        <span>Model size: ~7.2 GB</span>
+                                        {localOllamaStatus?.version && <span>Ollama {localOllamaStatus.version}</span>}
+                                        <span>Endpoint: {localOllamaStatus?.endpoint || "http://localhost:11434/v1/chat/completions"}</span>
+                                    </div>
+                                    {localOllamaStatusError && (
+                                        <div className="ai-settings-local-inline-error">{localOllamaStatusError}</div>
+                                    )}
+                                </div>
+                                <div className="ai-settings-local-actions">
+                                    <button
+                                        type="button"
+                                        className="ai-settings-btn-quick-setup"
+                                        onClick={() => {
+                                            setShowLocalOllamaConsent(true);
+                                            setLocalOllamaConsentNotice(null);
+                                            setLocalOllamaConsentTone("info");
+                                        }}
+                                        disabled={isSettingUpLocalOllama || localOllamaStatus?.supported === false}
+                                    >
+                                        {isSettingUpLocalOllama ? (
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                        ) : (
+                                            <Download className="w-4 h-4" />
+                                        )}
+                                        <span>{localOllamaButtonLabel}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="ai-settings-btn-check"
+                                        onClick={() => void refreshLocalOllamaStatus()}
+                                        disabled={isLoadingLocalOllamaStatus || isSettingUpLocalOllama}
+                                    >
+                                        {isLoadingLocalOllamaStatus ? "Refreshing..." : "Refresh status"}
+                                    </button>
+                                    <div className="ai-settings-local-progress">
+                                        <div className="ai-settings-progress-meta">
+                                            <span>{isSettingUpLocalOllama ? localOllamaProgress.message : "Windows setup uses the official Ollama installer."}</span>
+                                            <strong>{localOllamaProgressLabel}</strong>
+                                        </div>
+                                        <div className="ai-settings-progress-track">
+                                            <div
+                                                className={`ai-settings-progress-fill ${localOllamaProgress.isEstimated ? "is-estimated" : ""}`}
+                                                style={{ width: localOllamaProgressWidth }}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : configs.length === 0 ? (
                             <div className="ai-settings-empty">
                                 <Brain className="w-10 h-10" />
                                 <h4>No providers yet</h4>
                                 <p>Add your first model provider to enable AI chat.</p>
                                 <button type="button" onClick={handleAdd} className="ai-settings-btn-primary" disabled={isSettingUpLocalOllama}>
                                     <Plus className="w-4 h-4" />
-                                    Create Provider
+                                    <span>Create Provider</span>
                                 </button>
                             </div>
-                        ) : (
-                            <div className="ai-provider-list">
-                                {configs.map((config) => (
+                        ) : !activeConfig ? null : (
+                            <>
+                                {/* Detail header */}
+                                <header className="ai-settings-detail-header">
+                                    {isEditingName ? (
+                                        <input
+                                            type="text"
+                                            autoFocus
+                                            value={activeConfig.name}
+                                            onChange={(e) => updateConfig(activeConfig.id, { name: e.target.value })}
+                                            onBlur={() => setIsEditingName(false)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter" || e.key === "Escape") setIsEditingName(false);
+                                            }}
+                                            className="ai-settings-input ai-settings-detail-name-input"
+                                            disabled={isSettingUpLocalOllama}
+                                        />
+                                    ) : (
+                                        <h3 className="ai-settings-detail-title" title={activeConfig.name}>
+                                            {activeConfig.name || formatAIProviderTypeLabel(activeConfig.provider_type) || "Unnamed"}
+                                        </h3>
+                                    )}
                                     <button
-                                        key={config.id}
                                         type="button"
-                                        onClick={() => setEditingId(config.id)}
-                                        className={`ai-provider-card ${editingId === config.id ? "active" : ""} ${config.is_enabled && config.is_primary ? "in-use" : ""}`}
+                                        className="ai-settings-icon-btn"
+                                        onClick={() => setIsEditingName((prev) => !prev)}
+                                        title="Rename"
                                         disabled={isSettingUpLocalOllama}
                                     >
-                                        <div className="ai-provider-card-avatar" aria-hidden="true">
-                                            {formatAIProviderTypeLabel(config.provider_type).charAt(0).toUpperCase()}
-                                        </div>
-                                        <div className="ai-provider-card-main">
-                                            <div className="ai-provider-card-name">
-                                                {config.name || formatAIProviderTypeLabel(config.provider_type) || "Unnamed"}
-                                            </div>
-                                            <div className="ai-provider-card-model">
-                                                {config.model || "No model selected"}
-                                            </div>
-                                            <div className="ai-provider-card-badges">
-                                                <span className={`ai-provider-dot ${config.is_enabled ? "is-on" : "is-off"}`} aria-hidden="true" />
-                                                <span className="ai-provider-card-status">
-                                                    {config.is_enabled ? "Enabled" : "Disabled"}
-                                                </span>
-                                                {config.is_enabled && config.is_primary && (
-                                                    <span className="ai-provider-badge ai-provider-badge-inuse">In use</span>
-                                                )}
-                                            </div>
-                                        </div>
+                                        <Pencil className="w-3.5 h-3.5" />
                                     </button>
-                                ))}
-                            </div>
-                        )}
-                    </aside>
-
-                    {/* Main Content */}
-                    <section className="ai-settings-content">
-                        <div className="ai-settings-local-card">
-                            <div className="ai-settings-local-copy">
-                                <span className="ai-settings-local-kicker">LOCAL AI QUICK SETUP</span>
-                                <h3 className="ai-settings-local-title">Ollama + Gemma 4 E2B on this machine</h3>
-                                <p className="ai-settings-local-description">
-                                    One click will install Ollama if needed, download <code>gemma4:e2b</code> locally,
-                                    and switch TableR to use that model first for workspace AI.
-                                </p>
-                                <div className="ai-settings-local-badges">
-                                    <span className="ai-settings-chip">
-                                        {isLoadingLocalOllamaStatus
-                                            ? "Checking local status..."
-                                            : localOllamaStatus?.isInstalled
-                                                ? "Ollama installed"
-                                                : "Ollama missing"}
+                                    <span className={`ai-settings-status-pill ${activeConfig.is_enabled ? "is-on" : "is-off"}`}>
+                                        {activeConfig.is_enabled ? "Enabled" : "Disabled"}
                                     </span>
-                                    <span className="ai-settings-chip">
-                                        {localOllamaStatus?.isRunning ? "Service running" : "Service offline"}
-                                    </span>
-                                    <span className="ai-settings-chip">
-                                        {localOllamaStatus?.hasRecommendedModel ? "Model ready" : "Model not downloaded"}
-                                    </span>
-                                    <span className="ai-settings-chip">{localOllamaPrimaryText}</span>
-                                </div>
-                                <div className="ai-settings-local-meta">
-                                    <span>Model size: ~7.2 GB</span>
-                                    {localOllamaStatus?.version && <span>Ollama {localOllamaStatus.version}</span>}
-                                    <span>Endpoint: {localOllamaStatus?.endpoint || "http://localhost:11434/v1/chat/completions"}</span>
-                                </div>
-                                {localOllamaStatusError && (
-                                    <div className="ai-settings-local-inline-error">{localOllamaStatusError}</div>
-                                )}
-                            </div>
-                            <div className="ai-settings-local-actions">
-                                <button
-                                    type="button"
-                                    className="ai-settings-btn-quick-setup"
-                                    onClick={() => {
-                                        setShowLocalOllamaConsent(true);
-                                        setLocalOllamaConsentNotice(null);
-                                        setLocalOllamaConsentTone("info");
-                                    }}
-                                    disabled={isSettingUpLocalOllama || localOllamaStatus?.supported === false}
-                                >
-                                    {isSettingUpLocalOllama ? (
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                    ) : (
-                                        <Download className="w-4 h-4" />
-                                    )}
-                                    <span>{localOllamaButtonLabel}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    className="ai-settings-btn-check"
-                                    onClick={() => void refreshLocalOllamaStatus()}
-                                    disabled={isLoadingLocalOllamaStatus || isSettingUpLocalOllama}
-                                >
-                                    {isLoadingLocalOllamaStatus ? "Refreshing..." : "Refresh status"}
-                                </button>
-                                <div className="ai-settings-local-progress">
-                                    <div className="ai-settings-progress-meta">
-                                        <span>{isSettingUpLocalOllama ? localOllamaProgress.message : "Windows setup uses the official Ollama installer."}</span>
-                                        <strong>{localOllamaProgressLabel}</strong>
-                                    </div>
-                                    <div className="ai-settings-progress-track">
-                                        <div
-                                            className={`ai-settings-progress-fill ${localOllamaProgress.isEstimated ? "is-estimated" : ""}`}
-                                            style={{ width: localOllamaProgressWidth }}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Workspace AI Card */}
-                        {activeConfig && (
-                            <div className="ai-settings-workspace-card">
-                                <div className="ai-settings-workspace-info">
-                                    <div className="ai-settings-workspace-icon">
-                                        <Sparkles className="w-5 h-5" />
-                                    </div>
-                                    <div className="ai-settings-workspace-text">
-                                        <span className="ai-settings-workspace-label">WORKSPACE AI</span>
-                                        <strong>{activeConfig.name || formatAIProviderTypeLabel(activeConfig.provider_type)}</strong>
-                                        <p className="ai-settings-workspace-desc">
-                                            {formatAIProviderTypeLabel(activeConfig.provider_type)} {activeConfig.model && `| ${activeConfig.model}`}
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="ai-settings-workspace-chips">
-                                    <span className="ai-settings-chip">{formatAIProviderTypeLabel(activeConfig.provider_type)}</span>
-                                    <span className="ai-settings-chip">{activeConfig.model || "No model"}</span>
-                                    {activeConfig.allow_schema_context && (
-                                        <span className="ai-settings-chip">Schema sharing on</span>
-                                    )}
-                                </div>
-                                <div className="ai-settings-workspace-actions">
-                                    <span className={connectionStatusClass} title={connectionCheckMessage || undefined}>
-                                        {connectionStatusLabel}
-                                    </span>
-                                    <button type="button" onClick={handleCheckConnection} className="ai-settings-btn-check" disabled={connectionCheckStatus === "checking" || disableModalActions}>
-                                        {connectionCheckStatus === "checking" ? "Checking..." : "Check connection"}
-                                    </button>
-                                    {!isActiveProviderInUse && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setPrimaryProvider(activeConfig.id)}
-                                            className="ai-settings-btn-use"
-                                            disabled={isSettingUpLocalOllama}
-                                        >
-                                            Use for AI
-                                        </button>
-                                    )}
                                     <button
                                         type="button"
+                                        className="ai-settings-btn-toggle"
+                                        onClick={() => updateConfig(activeConfig.id, {
+                                            is_enabled: !activeConfig.is_enabled,
+                                            is_primary: !activeConfig.is_enabled ? activeConfig.is_primary : false,
+                                        })}
+                                        disabled={isSettingUpLocalOllama}
+                                    >
+                                        {activeConfig.is_enabled ? "Disable" : "Enable"}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="ai-settings-icon-btn ai-settings-icon-btn-danger"
                                         onClick={() => handleDelete(activeConfig.id)}
-                                        className="ai-settings-btn-delete"
                                         title="Delete Provider"
                                         disabled={isSettingUpLocalOllama}
                                     >
                                         <Trash2 className="w-4 h-4" />
                                     </button>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Provider Configuration Panels */}
-                        {activeConfig && (
-                            <div className="ai-settings-panels">
-                                {/* Identity Panel */}
-                                <div className="ai-settings-panel">
-                                    <h4 className="ai-settings-panel-title">Identity</h4>
+                                </header>
+                                {/* Connection */}
+                                <div className="ai-settings-section">
+                                    <div className="ai-settings-section-label">Connection</div>
                                     <div className="ai-settings-fields">
                                         <div className="ai-settings-field">
                                             <label className="ai-settings-label">Provider</label>
@@ -636,16 +639,6 @@ export function AISettingsModal({ onClose }: Props) {
                                                     </div>
                                                 )}
                                             </div>
-                                        </div>
-                                        <div className="ai-settings-field">
-                                            <label className="ai-settings-label">Name</label>
-                                            <input
-                                                type="text"
-                                                value={activeConfig.name}
-                                                onChange={(e) => updateConfig(activeConfig.id, { name: e.target.value })}
-                                                className="ai-settings-input"
-                                                disabled={isSettingUpLocalOllama}
-                                            />
                                         </div>
                                         <div className="ai-settings-field">
                                             <label className="ai-settings-label">Model Name</label>
@@ -715,10 +708,44 @@ export function AISettingsModal({ onClose }: Props) {
                                         </div>
                                     </div>
                                 </div>
-
-                                {/* Access Panel */}
-                                <div className="ai-settings-panel">
-                                    <h4 className="ai-settings-panel-title">Workspace Access</h4>
+                                {/* Workspace */}
+                                <div className="ai-settings-section">
+                                    <div className="ai-settings-section-label">Workspace</div>
+                                    <div className="ai-settings-primary-row">
+                                        <span className={connectionStatusClass} title={connectionCheckMessage || undefined}>
+                                            {connectionStatusLabel}
+                                        </span>
+                                        {!isActiveProviderInUse && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setPrimaryProvider(activeConfig.id)}
+                                                className="ai-settings-btn-use"
+                                                disabled={isSettingUpLocalOllama}
+                                            >
+                                                Use for AI
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={handleCheckConnection}
+                                            className="ai-settings-btn-check"
+                                            disabled={connectionCheckStatus === "checking" || disableModalActions}
+                                        >
+                                            {connectionCheckStatus === "checking" ? "Checking..." : "Check connection"}
+                                        </button>
+                                    </div>
+                                    {connectionCheckMessage && connectionCheckStatus !== "idle" && (
+                                        <p className={`ai-settings-check-message ${connectionCheckStatus}`}>
+                                            {connectionCheckMessage}
+                                        </p>
+                                    )}
+                                    <p className="ai-settings-field-hint">
+                                        "Use for AI" makes this provider the active assistant for chat and SQL completion.
+                                    </p>
+                                </div>
+                                {/* Access */}
+                                <div className="ai-settings-section">
+                                    <div className="ai-settings-section-label">Access</div>
                                     <div className="ai-settings-toggles">
                                         <div className="ai-settings-toggle-row">
                                             <div className="ai-settings-toggle-info">
@@ -770,15 +797,7 @@ export function AISettingsModal({ onClose }: Props) {
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        )}
-
-                        {!activeConfig && configs.length > 0 && (
-                            <div className="ai-settings-empty-state">
-                                <Brain className="w-12 h-12" />
-                                <h3>Select a provider</h3>
-                                <p>Pick one from the left to edit it.</p>
-                            </div>
+                            </>
                         )}
                     </section>
                 </div>

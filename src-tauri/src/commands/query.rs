@@ -1,8 +1,8 @@
+use crate::commands::safe_mode::SafeModeState;
 use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryParameter;
 use crate::database::models::QueryResult;
-use crate::commands::safe_mode::SafeModeState;
 use crate::database::parameterized_query::{
     compile_parameterized_query, placeholder_style_for_database,
 };

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSQLEditor } from "./hooks/use-sql-editor";
 import type { QueryEditorSessionState, QueryChromeState } from "./hooks/use-sql-editor";
 import { SQLEditorResultsPane } from "./SQLEditorResultsPane";
-import { AlignLeft, Keyboard, Terminal, GitBranch, Loader2 } from "lucide-react";
+import { AlignLeft, Keyboard, Terminal, GitBranch, Loader2, Eye, EyeOff } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useEditorPreferencesStore } from "../../stores/editorPreferencesStore";
@@ -61,6 +61,24 @@ export function SQLEditor({
     language === "vi" ? "Bat/tat vung ket qua (Ctrl+Shift+`)" : "Toggle results pane (Ctrl+Shift+`)";
   const vimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
   const toggleVimMode = useEditorPreferencesStore((state) => state.toggleVimMode);
+  const toolsStorageKey = "tabler.editor-floating-tools-visible";
+  const [toolsVisible, setToolsVisible] = useState(() => {
+    try {
+      return window.localStorage.getItem(toolsStorageKey) !== "0";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(toolsStorageKey, toolsVisible ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+  }, [toolsVisible]);
+  const toggleToolsTitle = language === "vi"
+    ? toolsVisible ? "Ẩn thanh công cụ" : "Hiện thanh công cụ"
+    : toolsVisible ? "Hide toolbar" : "Show toolbar";
   const connections = useConnectionStore((state) => state.connections);
   const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
   const queryProfile = getQueryProfile(dbType);
@@ -140,7 +158,7 @@ export function SQLEditor({
             drafts={parameterDrafts}
             onChange={(name, next) => setParameterDrafts((current) => ({ ...current, [name]: next }))}
           />
-          <div className="sql-editor-floating-tools">
+          <div className={`sql-editor-floating-tools ${toolsVisible ? "" : "collapsed"}`}>
             <button
               type="button"
               onClick={() => setShowResultsPane((current) => !current)}
@@ -189,6 +207,18 @@ export function SQLEditor({
               )}
               <span>EXPLAIN</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => setToolsVisible((current) => !current)}
+              title={toggleToolsTitle}
+              aria-label={toggleToolsTitle}
+              aria-expanded={toolsVisible}
+              className="sql-editor-tool-btn icon-only sql-editor-tools-toggle"
+            >
+              {toolsVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+
             <div
               ref={vimStatusRef}
               className={`sql-editor-vim-status ${vimModeEnabled ? "visible" : ""}`}

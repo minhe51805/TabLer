@@ -1552,9 +1552,10 @@
   pointer-events: none;
   overflow: hidden;
   border-top: 0 solid rgba(0, 122, 255, 0.08);
-  background:
-    linear-gradient(180deg, rgba(0, 122, 255, 0.02), rgba(0, 122, 255, 0)),
-    var(--mm-surface-0);
+  /* Fixed dark surface matching the xterm palette: a light app theme used
+     to flash a gray translucent band over the grid while the open
+     transition faded the dock in. */
+  background: #0b1220;
   transition:
     max-height 180ms ease,
     opacity 160ms ease,
@@ -1575,10 +1576,10 @@
   gap: 12px;
   min-height: 42px;
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(0, 122, 255, 0.08);
-  background:
-    linear-gradient(180deg, rgba(0, 122, 255, 0.025), rgba(0, 122, 255, 0)),
-    var(--mm-surface-0);
+  border-bottom: 1px solid var(--mm-border);
+  /* Theme-aware chrome: white surface with charcoal text in the light
+     theme, matching the app instead of forcing a dark strip. */
+  background: var(--mm-surface-0);
 }
 
 .workspace-terminal-meta,
@@ -1601,10 +1602,11 @@
   min-height: 28px;
   padding: 0 10px;
   border-radius: 10px;
-  border: 1px solid rgba(0, 122, 255, 0.12);
-  background: rgba(0, 122, 255, 0.045);
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
   color: var(--text-primary);
-  font-size: var(--mm-fs-micro);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
   line-height: 1;
 }
 
@@ -1629,12 +1631,14 @@
 
 .workspace-terminal-copy strong {
   color: var(--text-primary);
-  font-size: var(--mm-fs-caption);
+  font-size: var(--mm-fs-body);
+  font-weight: 700;
 }
 
 .workspace-terminal-copy span {
   color: var(--text-primary);
-  font-size: var(--mm-fs-micro);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
 }
 
 .workspace-terminal-state {
@@ -1642,9 +1646,9 @@
 }
 
 .workspace-terminal-state.is-exited {
-  color: var(--text-primary);
-  border-color: var(--mm-border);
-  background: var(--mm-surface-2);
+  color: #c9d7e6;
+  border-color: rgba(140, 160, 185, 0.35);
+  background: rgba(140, 160, 185, 0.12);
 }
 
 .workspace-terminal-actions {
@@ -1657,8 +1661,8 @@
 }
 
 .workspace-terminal-btn:hover {
-  border-color: rgba(0, 122, 255, 0.18);
-  background: rgba(0, 122, 255, 0.08);
+  border-color: var(--mm-border);
+  background: var(--mm-surface-2);
   color: var(--text-primary);
 }
 
@@ -1669,29 +1673,52 @@
 }
 
 .workspace-terminal-body {
-  height: 272px;
-  padding: 8px;
-  background:
-    radial-gradient(circle at 50% 0%, rgba(0, 122, 255, 0.05), transparent 38%),
-    var(--mm-surface-0);
+  /* 320px dock max-height minus the 42px header: the canvas fills the
+     remaining space edge-to-edge with no visible frame. */
+  height: 278px;
+  padding: 0;
+  background: #0b1220;
 }
 
 .workspace-terminal-viewport {
   height: 100%;
   width: 100%;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid rgba(0, 122, 255, 0.08);
-  background:
-    linear-gradient(180deg, rgba(0, 122, 255, 0.018), rgba(0, 122, 255, 0)),
-    var(--mm-surface-0);
+  background: #0b1220;
 }
 
 .workspace-terminal-viewport .xterm {
   height: 100%;
-  padding: 10px 10px 8px;
+  padding: 8px 10px 8px 12px;
 }
 
+/* Slim auto-hide scrollbar: transparent until the pointer enters the
+   terminal, so the white native track never shows over the dark canvas. */
 .workspace-terminal-viewport .xterm-viewport {
-  background: transparent !important;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.workspace-terminal-viewport:hover .xterm-viewport {
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+.workspace-terminal-viewport .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.workspace-terminal-viewport .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.workspace-terminal-viewport .xterm-viewport::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+
+.workspace-terminal-viewport:hover .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.workspace-terminal-viewport .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.38);
 }

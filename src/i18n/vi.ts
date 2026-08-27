@@ -288,7 +288,7 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.context.add": "Thêm",
   "metrics.editor.kicker": "Widget",
   "metrics.editor.refreshRate": "Tần suất làm mới",
-  "metrics.editor.widgetType": "Lo?i bi?u ??",
+  "metrics.editor.widgetType": "Loại biểu đồ",
   "metrics.editor.help":
     "Kéo để di chuyển, đổi kích thước từ góc phải dưới, và giữ query ở chế độ chỉ đọc.",
   "tabs.tab": "tab",

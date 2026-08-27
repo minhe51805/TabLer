@@ -50,12 +50,7 @@ impl SafeModeState {
             .connection_overrides
             .into_iter()
             .filter(|entry| !entry.connection_id.trim().is_empty())
-            .map(|entry| {
-                (
-                    entry.connection_id,
-                    clamp_safe_mode_level(entry.level),
-                )
-            })
+            .map(|entry| (entry.connection_id, clamp_safe_mode_level(entry.level)))
             .collect();
         policy.production_ids = payload
             .production_connection_ids

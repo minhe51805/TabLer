@@ -39,8 +39,8 @@ use commands::plugins::{
     uninstall_plugin_bundle,
 };
 use commands::query::*;
-use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
 use commands::restore::{preview_database_restore, restore_database_sql};
+use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
 use commands::table::*;
 use commands::tabs::{delete_tabs, load_tabs, save_tabs};
 use commands::terminal::{

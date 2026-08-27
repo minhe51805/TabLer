@@ -292,7 +292,7 @@ export const tr: Record<keyof typeof en, string> = {
   "metrics.context.add": "Ekle",
   "metrics.editor.kicker": "Widget",
   "metrics.editor.refreshRate": "Yenileme sıklığı",
-  "metrics.editor.widgetType": "Grafik t?r?",
+  "metrics.editor.widgetType": "Grafik türü",
   "metrics.editor.help":
     "Tasımak icin surukleyin, sag alt koseden boyutlandirin ve sorgulari salt okunur tutun.",
   "tabs.tab": "sekme",

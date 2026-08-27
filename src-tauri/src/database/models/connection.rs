@@ -314,7 +314,10 @@ mod tests {
             "additional_fields": {}
         }))
         .unwrap();
-        assert_eq!(config.startup_commands.as_deref(), Some("SET timezone TO 'UTC'"));
+        assert_eq!(
+            config.startup_commands.as_deref(),
+            Some("SET timezone TO 'UTC'")
+        );
         assert_eq!(config.ssl_mode, Some(SslMode::VerifyCa));
 
         let legacy: SslMode = serde_json::from_str("\"verifyca\"").unwrap();

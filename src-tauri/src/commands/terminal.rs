@@ -65,6 +65,10 @@ struct TerminalSession {
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     child: Arc<Mutex<Box<dyn portable_pty::Child + Send>>>,
     info: TerminalSessionInfo,
+    /// Last size applied to the ConPTY. Windows PowerShell's PSReadLine
+    /// mis-renders its prompt on every ResizePseudoConsole call — even a
+    /// same-size one — so identical resizes are dropped here.
+    last_size: Arc<Mutex<(u16, u16)>>,
 }
 
 #[derive(Clone)]
@@ -261,6 +265,7 @@ pub fn open_terminal(
         master: Arc::new(Mutex::new(pair.master)),
         child: Arc::new(Mutex::new(child)),
         info: info.clone(),
+        last_size: Arc::new(Mutex::new((cols, rows))),
     };
 
     {
@@ -275,6 +280,10 @@ pub fn open_terminal(
     let sessions_for_thread = sessions.clone();
     std::thread::spawn(move || {
         let mut buffer = [0u8; 8192];
+        // Carry incomplete multi-byte UTF-8 sequences across reads so a
+        // chunk boundary can never split a character into a replacement
+        // glyph (the prompt-garbling bug).
+        let mut pending: Vec<u8> = Vec::new();
 
         loop {
             match reader.read(&mut buffer) {
@@ -288,7 +297,22 @@ pub fn open_terminal(
                     break;
                 }
                 Ok(read_len) => {
-                    let output = String::from_utf8_lossy(&buffer[..read_len]).to_string();
+                    pending.extend_from_slice(&buffer[..read_len]);
+                    // Emit only the longest valid UTF-8 prefix; keep any
+                    // incomplete sequence tail for the next read. Truly
+                    // invalid bytes are replaced by the lossy conversion
+                    // and consumed.
+                    let (output, remainder_start) = match std::str::from_utf8(&pending) {
+                        Ok(text) => (text.to_string(), pending.len()),
+                        Err(error) => (
+                            String::from_utf8_lossy(&pending[..error.valid_up_to()]).to_string(),
+                            error.valid_up_to(),
+                        ),
+                    };
+                    pending.drain(..remainder_start);
+                    if output.is_empty() {
+                        continue;
+                    }
                     if app_handle
                         .emit(
                             TERMINAL_OUTPUT_EVENT,
@@ -360,6 +384,19 @@ pub fn resize_terminal(
     let session = sessions
         .get(&session_id)
         .ok_or_else(|| "Terminal session not found".to_string())?;
+
+    {
+        let mut last_size = session
+            .last_size
+            .lock()
+            .map_err(|_| "Terminal size tracker is unavailable".to_string())?;
+        if *last_size == (cols, rows) {
+            // Same size: resizing again would only break PSReadLine's render.
+            return Ok(());
+        }
+        *last_size = (cols, rows);
+    }
+
     let master = session
         .master
         .lock()

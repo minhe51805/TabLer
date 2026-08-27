@@ -265,7 +265,8 @@ impl DatabaseDriver for PostgresDriver {
                 }
             } else if let Some(statement) = statements.first() {
                 if Self::query_returns_rows(statement) {
-                    let (rows, truncated) = Self::fetch_rows_limited(&self.pool(), statement).await?;
+                    let (rows, truncated) =
+                        Self::fetch_rows_limited(&self.pool(), statement).await?;
                     last_result = Some(Self::build_result_from_rows(
                         &rows,
                         0,

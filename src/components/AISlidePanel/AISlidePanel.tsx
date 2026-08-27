@@ -14,6 +14,12 @@ import { useAIWorkspaceEffects } from "./hooks/use-ai-workspace-effects";
 import { useAIPanelPreferences } from "./hooks/use-ai-panel-preferences";
 import { AI_REQUEST_REPLACED_MESSAGE, useAISlidePanel } from "./hooks/use-ai-slide-panel";
 import {
+  approveDataRead,
+  dataReadScopeKey,
+  isDataReadApproved,
+  revokeDataRead,
+} from "./ai-data-read-approvals";
+import {
   aiModeAllowsInsert,
   aiModeAllowsRun,
   getDefaultAIWorkspaceInteractionMode,
@@ -260,23 +266,23 @@ export function AISlidePanel({
       : "";
 
   const sessionDataReadButtonLabel = language === "vi"
-    ? (isSessionDataReadEnabled ? "Data: Bat" : "Data: Hoi")
+    ? (isSessionDataReadEnabled ? "Data: Bật" : "Data: Hỏi")
     : (isSessionDataReadEnabled ? "Data: On" : "Data: Ask");
   const sessionDataReadButtonTitle = !connectionId
     ? (
       language === "vi"
-        ? "Hay ket noi database truoc khi bat quyen doc live data theo session."
+        ? "Hãy kết nối database trước khi bật quyền đọc live data."
         : "Connect to a database before enabling session-wide live data reads."
     )
     : isSessionDataReadEnabled
       ? (
         language === "vi"
-          ? `Dang cho phep doc live data lien tuc trong session AI nay cho ${currentDatabase || "database hien tai"}. Bam de quay lai che do hoi quyen tung lan.`
+          ? `Đang cho phép đọc live data liên tục cho ${currentDatabase || "database hiện tại"}. Bấm để quay lại chế độ hỏi từng lần.`
           : `Live data reads are allowed for this AI session on ${currentDatabase || "the current database"}. Click to go back to ask-per-request mode.`
       )
       : (
         language === "vi"
-          ? `Dang o che do hoi quyen tung lan cho ${currentDatabase || "database hien tai"}. Bam de cho phep doc live data lien tuc trong session AI nay.`
+          ? `Đang ở chế độ hỏi từng lần cho ${currentDatabase || "database hiện tại"}. Bấm để cho phép đọc live data liên tục (sẽ hiện modal xác nhận).`
           : `The AI will ask before each live data read on ${currentDatabase || "the current database"}. Click to allow session-wide live data reads.`
       );
 
@@ -324,7 +330,10 @@ export function AISlidePanel({
   }, []);
 
   const getCurrentVisualizationApprovalScope = useCallback(
-    () => `${openSessionRef.current}:${connectionId || "no-connection"}:${currentDatabase || "no-database"}`,
+    // Persistent scope: connection + database only. Once a database is
+    // approved the prompt stays quiet across app launches and AI sessions
+    // (see ai-data-read-approvals.ts).
+    () => dataReadScopeKey(connectionId, currentDatabase),
     [connectionId, currentDatabase]
   );
 
@@ -333,14 +342,16 @@ export function AISlidePanel({
     visualizationConsentResolverRef.current = null;
     setVisualizationConsentPending(null);
     if (approved) {
+      approveDataRead(connectionId, currentDatabase);
       visualizationApprovalScopeRef.current = getCurrentVisualizationApprovalScope();
       setIsSessionDataReadEnabled(true);
     } else if (visualizationApprovalScopeRef.current === getCurrentVisualizationApprovalScope()) {
+      revokeDataRead(connectionId, currentDatabase);
       visualizationApprovalScopeRef.current = null;
       setIsSessionDataReadEnabled(false);
     }
     resolver?.(approved);
-  }, [getCurrentVisualizationApprovalScope]);
+  }, [connectionId, currentDatabase, getCurrentVisualizationApprovalScope]);
 
   const requestVisualizationReadConsent = useCallback(async (promptText: string) => {
     if (!connectionId) {
@@ -364,28 +375,53 @@ export function AISlidePanel({
       visualizationConsentResolverRef.current = resolve;
       setVisualizationConsentPending({
         title: isVietnamese
-          ? (isVisualization ? "Cap quyen doc data de ve bieu do?" : "Cap quyen doc data cho Agent?")
+          ? (isVisualization ? "Cấp quyền đọc data để vẽ biểu đồ?" : "Cấp quyền đọc data cho Agent?")
           : (isVisualization ? "Allow AI to read data for charts?" : "Allow Agent to read live data?"),
         message: isVietnamese
           ? (isVisualization
-            ? `Model hien da co schema capsule de hieu cau truc DB. Buoc tiep theo can doc du lieu chi-doc trong ${databaseLabel} de tao chart/dashboard. TableR se chi cho phep doc du lieu trong session AI hien tai. Ban co muon tiep tuc khong?`
-            : `Agent da co schema de hieu cau truc DB. Buoc tiep theo can doc du lieu chi-doc trong ${databaseLabel} de tra loi. TableR chi cho phep doc trong session AI hien tai. Ban co muon tiep tuc khong?`)
+            ? `Model đã có schema để hiểu cấu trúc DB. Bước tiếp theo cần đọc dữ liệu chỉ-đọc trong ${databaseLabel} để tạo chart/dashboard. Quyền sẽ được ghi nhớ cho database này, không hỏi lại. Bạn có muốn tiếp tục không?`
+            : `Agent đã có schema để hiểu cấu trúc DB. Bước tiếp theo cần đọc dữ liệu chỉ-đọc trong ${databaseLabel} để trả lời. Quyền sẽ được ghi nhớ cho database này, không hỏi lại. Bạn có muốn tiếp tục không?`)
           : (isVisualization
-            ? `The model already has a schema capsule for structure. The next step needs read-only access to live data in ${databaseLabel} to build charts or dashboards. TableR will scope this to the current AI session only. Continue?`
-            : `The agent already has the database schema. The next step needs read-only access to live data in ${databaseLabel} to answer your request. TableR scopes this to the current AI session only. Continue?`),
-        confirmText: isVietnamese ? "Cho phep doc data" : "Allow data read",
-        cancelText: isVietnamese ? "Khong cho phep" : "Deny",
+            ? `The model already has a schema capsule for structure. The next step needs read-only access to live data in ${databaseLabel} to build charts or dashboards. The grant is remembered for this database and will not be asked again. Continue?`
+            : `The agent already has the database schema. The next step needs read-only access to live data in ${databaseLabel} to answer your request. The grant is remembered for this database and will not be asked again. Continue?`),
+        confirmText: isVietnamese ? "Cho phép đọc data" : "Allow data read",
+        cancelText: isVietnamese ? "Không cho phép" : "Deny",
       });
     });
   }, [connectionId, currentDatabase, getCurrentVisualizationApprovalScope, language]);
 
+  // Clicking the Data toggle only OPENS the confirmation dialog; the grant
+  // happens in resolveVisualizationConsent once the user confirms, so no
+  // permission is ever remembered from a single click.
+  const confirmSessionDataReadEnable = useCallback(() => {
+    if (!connectionId) {
+      return;
+    }
+    if (visualizationApprovalScopeRef.current === getCurrentVisualizationApprovalScope()) {
+      return;
+    }
+    if (visualizationConsentResolverRef.current) {
+      visualizationConsentResolverRef.current(false);
+      visualizationConsentResolverRef.current = null;
+    }
+    const isVietnamese = language === "vi";
+    const databaseLabel = currentDatabase || (isVietnamese ? "database hiện tại" : "the current database");
+    visualizationConsentResolverRef.current = (approved: boolean) => {
+      resolveVisualizationConsent(approved);
+    };
+    setVisualizationConsentPending({
+      title: isVietnamese ? "Cho phép AI đọc live data?" : "Allow AI to read live data?",
+      message: isVietnamese
+        ? `TableR sẽ cho AI đọc dữ liệu chỉ-đọc trong ${databaseLabel} cho đến khi bạn tắt quyền này hoặc đổi sang database khác. Quyền được ghi nhớ, không hỏi lại. Tiếp tục?`
+        : `TableR will let the AI read read-only data in ${databaseLabel} until you turn this off or switch databases. The grant is remembered and will not be asked again. Continue?`,
+      confirmText: isVietnamese ? "Cho phép đọc data" : "Allow data read",
+      cancelText: isVietnamese ? "Không cho phép" : "Deny",
+    });
+  }, [connectionId, currentDatabase, getCurrentVisualizationApprovalScope, language, resolveVisualizationConsent, visualizationApprovalScopeRef, visualizationConsentResolverRef]);
+
   const setSessionDataReadEnabled = useCallback((enabled: boolean) => {
     if (enabled) {
-      visualizationApprovalScopeRef.current = getCurrentVisualizationApprovalScope();
-      setIsSessionDataReadEnabled(true);
-      if (visualizationConsentResolverRef.current) {
-        resolveVisualizationConsent(true);
-      }
+      confirmSessionDataReadEnable();
       return;
     }
 
@@ -393,10 +429,13 @@ export function AISlidePanel({
       visualizationConsentResolverRef.current(false);
       visualizationConsentResolverRef.current = null;
     }
+    // An explicit toggle back to Ask re-arms the prompt for this database
+    // only; approvals for other databases stay remembered.
+    revokeDataRead(connectionId, currentDatabase);
     visualizationApprovalScopeRef.current = null;
     setVisualizationConsentPending(null);
     setIsSessionDataReadEnabled(false);
-  }, [getCurrentVisualizationApprovalScope, resolveVisualizationConsent]);
+  }, [confirmSessionDataReadEnable, connectionId, currentDatabase, visualizationApprovalScopeRef, visualizationConsentResolverRef]);
 
   useAIWorkspaceEffects({
     historyHydrated, isOpen, setChatThreads, setBubbles, setWorkspaceInteractionModes, setActiveThreadIdsByWorkspace,
@@ -409,6 +448,26 @@ export function AISlidePanel({
     composerTextareaRef, initialAttachmentNonce, initialAttachment, detailBubbleId, onClose, historySaveTimerRef,
     bubbleDismissTimersRef, bubbles, chatThreads, workspaceInteractionModes, persistHistoryState,
   });
+
+  // Restore remembered data-read consent whenever the panel opens or the
+  // target database changes. Must run AFTER useAIWorkspaceEffects (whose
+  // open-reset clears the approval) so a remembered approval survives
+  // opening the panel and app restarts; a database without a stored
+  // approval re-arms the consent prompt.
+  useEffect(() => {
+    if (!connectionId) {
+      visualizationApprovalScopeRef.current = null;
+      setIsSessionDataReadEnabled(false);
+      return;
+    }
+    if (isDataReadApproved(connectionId, currentDatabase)) {
+      visualizationApprovalScopeRef.current = getCurrentVisualizationApprovalScope();
+      setIsSessionDataReadEnabled(true);
+    } else {
+      visualizationApprovalScopeRef.current = null;
+      setIsSessionDataReadEnabled(false);
+    }
+  }, [isOpen, connectionId, currentDatabase, getCurrentVisualizationApprovalScope, visualizationApprovalScopeRef]);
 
   const buildLoadingBubble = useCallback((
     prompt: string,
@@ -473,7 +532,7 @@ export function AISlidePanel({
     if (!connectionId) {
       setError(
         language === "vi"
-          ? "Hay ket noi database truoc khi mo query AI trong workspace."
+          ? "Hãy kết nối database trước khi mở query AI trong workspace."
           : "Connect to a database before opening an AI query in the workspace.",
       );
       return false;
@@ -512,7 +571,7 @@ export function AISlidePanel({
     if (!connectionId) {
       setError(
         language === "vi"
-          ? "Hay ket noi database truoc khi mo dashboard AI trong workspace."
+          ? "Hãy kết nối database trước khi mở dashboard AI trong workspace."
           : "Connect to a database before opening an AI dashboard in the workspace.",
       );
       return {
@@ -818,7 +877,7 @@ export function AISlidePanel({
         if (!visualizationReadApproved) {
           setError(
             prefersVietnameseSystemReply(bubbleIntentPrompt, language)
-              ? "Ban chua cap quyen doc data trong DB cho yeu cau visualization nay."
+              ? "Bạn chưa cấp quyền đọc data trong DB cho yêu cầu visualization này."
               : "Visualization data access was not approved for this request."
           );
           return;
@@ -862,7 +921,7 @@ export function AISlidePanel({
         if (!visualizationReadApproved) {
           setError(
             prefersVietnameseSystemReply(bubbleIntentPrompt, language)
-              ? "Ban chua cap quyen doc data trong DB cho yeu cau visualization nay."
+              ? "Bạn chưa cấp quyền đọc data trong DB cho yêu cầu visualization này."
               : "Visualization data access was not approved for this request."
           );
           return;

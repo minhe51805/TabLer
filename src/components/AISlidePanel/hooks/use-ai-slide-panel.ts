@@ -4,7 +4,7 @@ import { getCurrentAppLanguage } from "../../../i18n";
 import { useAIStore } from "../../../stores/aiStore";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useQueryStore } from "../../../stores/queryStore";
-import { type AIConversationMessage, type AIRequestIntent, type AIRequestMode } from "../../../types";
+import { type AIConversationMessage, type AIProviderConfig, type AIRequestIntent, type AIRequestMode } from "../../../types";
 import { getActiveAIProvider, isLocalAIProvider } from "../../../utils/ai-provider-registry";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { getSemanticGlossary } from "../../../utils/semantic-glossary";
@@ -92,6 +92,31 @@ const MAX_AGENT_STEPS = 10;
 const MAX_REMOTE_AGENT_STEPS = 8;
 const MAX_LOCAL_COMPLEX_AGENT_STEPS = 14;
 const MAX_REMOTE_COMPLEX_AGENT_STEPS = 10;
+
+/**
+ * How many times a provider-caused action failure may promote the next
+ * configured provider and re-run the step before the run falls back to the
+ * canned recovery answer. Bounded so a fully dead configuration still ends.
+ */
+const MAX_PROVIDER_RETRY_ROUNDS = 2;
+const PROVIDER_RETRY_DELAY_MS = 1_200;
+
+function formatProviderFailoverNote(
+  language: string,
+  failed: AIProviderConfig | undefined,
+  promoted: AIProviderConfig | null,
+) {
+  const failedLabel = failed?.name?.trim() || failed?.model || "AI provider";
+  if (!promoted) {
+    return language === "vi"
+      ? `Provider "${failedLabel}" đang lỗi — đã tự thử lại. Bạn chỉ cấu hình một provider nên chưa có provider nào để chuyển sang.`
+      : `Provider "${failedLabel}" failed — retried automatically. Only one provider is configured, so there is nothing to switch to.`;
+  }
+  const nextLabel = promoted.name?.trim() || promoted.model;
+  return language === "vi"
+    ? `Provider "${failedLabel}" đang lỗi — đã tự chuyển sang provider "${nextLabel}" và chạy lại.`
+    : `Provider "${failedLabel}" failed — switched to provider "${nextLabel}" and re-ran automatically.`;
+}
 /** Upper bound for tables scanned per search_schema call; large catalogs are prioritized, not fully scanned. */
 /** Pause before retrying a transient provider failure inside the agent loop. */
 /** Rate limits need a longer cooldown than blips; one patient retry still beats failing the run. */
@@ -532,13 +557,18 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             }
 
             const trimmedResponse = recoveredResponse.trim() || fallbackResponse;
-            const recoveredSql = extractSqlFromResponse(trimmedResponse);
+            // When providers died mid-run, surface the automatic switch right
+            // under the recovery answer in a quiet, italic side note.
+            const responseWithFailoverNote = providerFailoverNote
+              ? `${trimmedResponse}\n\n_${providerFailoverNote}_`
+              : trimmedResponse;
+            const recoveredSql = extractSqlFromResponse(responseWithFailoverNote);
 
             return {
               action: "finish",
               message: reason,
               args: {
-                response: trimmedResponse,
+                response: responseWithFailoverNote,
                 ...(recoveredSql ? { sql: recoveredSql } : {}),
               },
             };
@@ -551,7 +581,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               action: "finish",
               message: reason,
               args: {
-                response: fallbackResponse,
+                response: providerFailoverNote
+                  ? `${fallbackResponse}\n\n_${providerFailoverNote}_`
+                  : fallbackResponse,
               },
             };
           }
@@ -602,6 +634,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
         let consecutiveActionFailures = 0;
         let endedWithAskUser = false;
+        let providerRetryRounds = 0;
+        let providerFailoverNote: string | null = null;
 
         const agentRunnerResult = await runAIAgentToolLoop({
           workspaceToolsEnabled,
@@ -660,6 +694,39 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               return action;
             } catch (errorValue) {
               if (isSupersededAIRequestError(errorValue)) throw errorValue;
+              const requestError = normalizeAIRequestError(errorValue);
+              const failoverEligible =
+                requestError.code === "timeout" || requestError.code === "provider";
+
+              // A dead or rate-limited provider must not end the run: promote
+              // the next configured provider, tell the user inline, wait out
+              // the transient window, then re-run this same step.
+              if (failoverEligible && providerRetryRounds < MAX_PROVIDER_RETRY_ROUNDS) {
+                providerRetryRounds += 1;
+                const failedProvider = getActiveAIProvider(useAIStore.getState().aiConfigs);
+                const promoted = useAIStore.getState().promoteNextEnabledProvider();
+                providerFailoverNote = formatProviderFailoverNote(
+                  appLanguage,
+                  failedProvider,
+                  promoted,
+                );
+                publishAgentProgress({
+                  action: "think",
+                  message: providerFailoverNote,
+                });
+                await new Promise((resolve) =>
+                  setTimeout(resolve, PROVIDER_RETRY_DELAY_MS),
+                );
+                try {
+                  const promotedRetryAction = await requestAgentAction(controllerPrompt, false);
+                  consecutiveActionFailures = 0;
+                  return promotedRetryAction;
+                } catch (promotedRetryError) {
+                  if (isSupersededAIRequestError(promotedRetryError)) throw promotedRetryError;
+                  // Fall through to the standard same-provider retry below.
+                }
+              }
+
               // One bad model turn must not discard the evidence already
               // gathered: retry the same prompt once, then salvage the run
               // through the finish-recovery path instead of failing outright.

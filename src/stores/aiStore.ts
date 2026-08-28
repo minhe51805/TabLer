@@ -90,6 +90,13 @@ export interface AIState {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[]
   ) => Promise<{ text: string; reasoning?: string }>;
+  /**
+   * Promotes the next enabled provider (cyclic list order, skipping the
+   * current primary) so a dead or rate-limited endpoint stops being tried
+   * first. Persists the switch best-effort. Returns the promoted provider,
+   * or `null` when no other provider is enabled.
+   */
+  promoteNextEnabledProvider: () => AIProviderConfig | null;
 }
 
 /**
@@ -158,6 +165,25 @@ export const useAIStore = create<AIState>((set, get) => ({
       useGlobalErrorStore.getState().setError(`Failed to save AI configs: ${e}`);
       throw e;
     }
+  },
+
+  promoteNextEnabledProvider: () => {
+    const configs = get().aiConfigs;
+    const active = getActiveAIProvider(configs);
+    if (!active) return null;
+    const activeIndex = configs.findIndex((config) => config.id === active.id);
+    // Cyclic scan starting after the current primary, so repeated calls walk
+    // through every enabled provider instead of flipping between two.
+    const rotated = [
+      ...configs.slice(activeIndex + 1),
+      ...configs.slice(0, activeIndex + 1),
+    ];
+    const next = rotated.find(
+      (config) => config.is_enabled && config.id !== active.id,
+    );
+    if (!next) return null;
+    switchActiveProvider(configs, next, active, set);
+    return next;
   },
 
   getLocalOllamaStatus: async () => {

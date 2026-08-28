@@ -181,6 +181,40 @@ describe("aiStore", () => {
     );
   });
 
+  it("promotes the next enabled provider cyclically or returns null when alone", () => {
+    const second: AIProviderConfig = {
+      ...provider,
+      id: "provider-2",
+      name: "Claude",
+      provider_type: "anthropic",
+      is_primary: false,
+    };
+    const third: AIProviderConfig = {
+      ...provider,
+      id: "provider-3",
+      name: "Gemini",
+      provider_type: "gemini",
+      is_primary: false,
+    };
+    invokeMutationMock.mockImplementation(async (command: string, args?: { providers?: AIProviderConfig[] }) => {
+      if (command === "save_ai_configs") return [args?.providers ?? [], {}];
+      return null;
+    });
+    useAIStore.setState({ aiConfigs: [provider, second, third] });
+
+    const promoted = useAIStore.getState().promoteNextEnabledProvider();
+    expect(promoted?.id).toBe("provider-2");
+    expect(useAIStore.getState().aiConfigs.find((c) => c.id === "provider-2")?.is_primary).toBe(true);
+
+    // A second promotion walks past the new primary to the next enabled one.
+    const again = useAIStore.getState().promoteNextEnabledProvider();
+    expect(again?.id).toBe("provider-3");
+
+    // A lone provider has nowhere to go.
+    useAIStore.setState({ aiConfigs: [provider] });
+    expect(useAIStore.getState().promoteNextEnabledProvider()).toBeNull();
+  });
+
   it("promotes the next provider to active and announces the failover", async () => {
     const fallback: AIProviderConfig = {
       ...provider,

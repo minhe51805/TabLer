@@ -226,9 +226,16 @@ pub async fn execute_query(
             .register(request_id, cancellation_token.clone())
             .await;
     }
+    let exec = async {
+        if let Some(ref id) = request_id {
+            driver.execute_query_for_request(id, &sql).await
+        } else {
+            driver.execute_query(&sql).await
+        }
+    };
     let result = tokio::select! {
         _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
-        result = timeout(timeout_window, driver.execute_query(&sql)) => result
+        result = timeout(timeout_window, exec) => result
             .map_err(|_| {
             let err_msg = format!(
                 "Query timed out after {} seconds.",
@@ -267,13 +274,29 @@ pub async fn execute_query(
 #[tauri::command]
 pub async fn cancel_query(
     request_id: String,
+    connection_id: Option<String>,
+    db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
 ) -> Result<bool, String> {
     let request_id = request_id.trim();
     if request_id.is_empty() {
         return Err("Request ID cannot be empty.".to_string());
     }
-    Ok(cancellation_state.cancel(request_id).await)
+    let token_cancelled = cancellation_state.cancel(request_id).await;
+    let mut server_cancelled = false;
+    if let Some(connection_id) = connection_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Ok(driver) = db_manager.get_driver(connection_id).await {
+            server_cancelled = driver
+                .cancel_query_request(request_id)
+                .await
+                .unwrap_or(false);
+        }
+    }
+    Ok(token_cancelled || server_cancelled)
 }
 
 #[tauri::command]
@@ -324,12 +347,20 @@ pub async fn execute_parameterized_query(
             .await;
     }
     let timeout_window = timeout_for_statements(std::iter::once(compiled.sql.as_str()));
+    let exec = async {
+        if let Some(ref id) = request_id {
+            driver
+                .execute_parameterized_query_for_request(id, &compiled.sql, &compiled.parameters)
+                .await
+        } else {
+            driver
+                .execute_parameterized_query(&compiled.sql, &compiled.parameters)
+                .await
+        }
+    };
     let result = tokio::select! {
         _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
-        result = timeout(
-            timeout_window,
-            driver.execute_parameterized_query(&compiled.sql, &compiled.parameters),
-        ) => result
+        result = timeout(timeout_window, exec) => result
             .map_err(|_| format!(
                 "Parameterized query timed out after {} seconds.",
                 timeout_window.as_secs()
@@ -489,9 +520,16 @@ pub async fn execute_sandboxed_query(
             .register(request_id, cancellation_token.clone())
             .await;
     }
+    let exec = async {
+        if let Some(ref id) = request_id {
+            driver.execute_query_for_request(id, &combined_query).await
+        } else {
+            driver.execute_query(&combined_query).await
+        }
+    };
     let result = tokio::select! {
         _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
-        result = timeout(timeout_window, driver.execute_query(&combined_query)) => result
+        result = timeout(timeout_window, exec) => result
             .map_err(|_| {
                 let err_msg = format!(
                     "Sandbox query timed out after {} seconds.",
@@ -570,7 +608,10 @@ pub async fn execute_agent_readonly_query(
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_sandbox_batch, validate_sandbox_statement, QueryCancellationState};
+    use super::{
+        timeout_for_statements, validate_sandbox_batch, validate_sandbox_statement,
+        QueryCancellationState, MUTATING_QUERY_TIMEOUT, READ_ONLY_QUERY_TIMEOUT,
+    };
     use tokio_util::sync::CancellationToken;
 
     #[test]
@@ -635,7 +676,11 @@ mod tests {
             );
         }
         assert!(validate_sandbox_batch(&["SELECT 1".to_string()], true).is_ok());
-        assert!(validate_sandbox_batch(&["WITH x AS (SELECT 1) SELECT * FROM x".to_string()], true).is_ok());
+        assert!(validate_sandbox_batch(
+            &["WITH x AS (SELECT 1) SELECT * FROM x".to_string()],
+            true
+        )
+        .is_ok());
     }
 
     #[tokio::test]
@@ -653,5 +698,32 @@ mod tests {
         assert!(second.is_cancelled());
         state.finish("query-1").await;
         assert!(!state.cancel("query-1").await);
+    }
+
+    #[test]
+    fn timeout_uses_read_only_window_only_for_read_batches() {
+        assert_eq!(
+            timeout_for_statements(["SELECT 1"].into_iter()),
+            READ_ONLY_QUERY_TIMEOUT
+        );
+        assert_eq!(
+            timeout_for_statements(["SELECT 1", "SELECT 2"].into_iter()),
+            READ_ONLY_QUERY_TIMEOUT
+        );
+        assert_eq!(
+            timeout_for_statements(["UPDATE users SET name = 'x'"].into_iter()),
+            MUTATING_QUERY_TIMEOUT
+        );
+        assert_eq!(
+            timeout_for_statements(["SELECT 1", "DELETE FROM users"].into_iter()),
+            MUTATING_QUERY_TIMEOUT
+        );
+        assert_eq!(
+            timeout_for_statements(
+                ["WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed"]
+                    .into_iter()
+            ),
+            MUTATING_QUERY_TIMEOUT
+        );
     }
 }

@@ -8,7 +8,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "supported",
@@ -20,7 +20,6 @@
       "administration": "supported"
     },
     "limitations": [
-      "Query timeout does not yet guarantee server-side cancellation.",
       "Restore can retain earlier statements after a failure."
     ]
   },
@@ -33,7 +32,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "supported",
@@ -45,7 +44,6 @@
       "administration": "supported"
     },
     "limitations": [
-      "Query timeout does not yet guarantee server-side cancellation.",
       "MariaDB currently shares the MySQL driver and capability tests."
     ]
   },
@@ -58,7 +56,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "supported",
@@ -69,9 +67,7 @@
       "backupRestore": "supported",
       "administration": "supported"
     },
-    "limitations": [
-      "Query timeout does not yet guarantee server-side cancellation."
-    ]
+    "limitations": []
   },
   {
     "key": "cockroachdb",
@@ -166,7 +162,7 @@
       "administration": "not_applicable"
     },
     "limitations": [
-      "Query timeout does not interrupt every SQLite operation.",
+      "Local engine: cancel stops waiting; the embedded engine finishes the statement in the background.",
       "Direct column schema changes are not wired into TableR actions yet."
     ]
   },

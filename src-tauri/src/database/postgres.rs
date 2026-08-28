@@ -1,6 +1,7 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
 use super::pgpass::read_pgpass;
+use super::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry};
 use super::query_common::{statement_returns_rows, MAX_TABLE_PAGE_ROWS};
 use super::safety::{
     normalize_order_dir, qualify_postgres_table_name, quote_postgres_identifier,
@@ -9,17 +10,21 @@ use super::safety::{
 use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow};
+use futures_util::TryStreamExt;
+use sqlx::postgres::{PgConnectOptions, PgConnection, PgPool, PgPoolOptions, PgRow};
 use sqlx::{ConnectOptions, Postgres, QueryBuilder, Row};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Instant;
 use tokio::sync::RwLock;
 
+const POOL_MAX_CONNECTIONS: u32 = 8;
+
 pub struct PostgresDriver {
     pub(super) pool: StdRwLock<PgPool>,
     connect_options: PgConnectOptions,
     pub(super) current_db: Arc<RwLock<Option<String>>>,
+    cancel_registry: StdRwLock<QueryCancelRegistry>,
 }
 
 impl PostgresDriver {
@@ -100,6 +105,7 @@ impl PostgresDriver {
             pool: StdRwLock::new(pool),
             connect_options: options,
             current_db: Arc::new(RwLock::new(Some(database.to_string()))),
+            cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
         })
     }
 
@@ -115,6 +121,7 @@ impl PostgresDriver {
         for attempt in 1..=3 {
             let pool_opts = PgPoolOptions::new()
                 .min_connections(1)
+                .max_connections(POOL_MAX_CONNECTIONS)
                 .max_lifetime(std::time::Duration::from_secs(1800))
                 .acquire_timeout(std::time::Duration::from_secs(30))
                 .idle_timeout(std::time::Duration::from_secs(600))
@@ -153,6 +160,61 @@ impl PostgresDriver {
 
     fn query_returns_rows(sql: &str) -> bool {
         statement_returns_rows(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH"])
+    }
+
+    async fn execute_query_on_conn(conn: &mut PgConnection, sql: &str) -> Result<QueryResult> {
+        let start = Instant::now();
+        let statements = split_sql_statements(sql);
+
+        if statements.len() <= 1 && Self::query_returns_rows(sql) {
+            let (rows, truncated) = Self::fetch_rows_limited(&mut *conn, sql).await?;
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            result.execution_time_ms = start.elapsed().as_millis();
+            return Ok(result);
+        }
+
+        let mut total_affected: u64 = 0;
+        let mut last_result: Option<QueryResult> = None;
+        let iterable: Vec<&String> = if statements.len() > 1 {
+            statements.iter().collect()
+        } else {
+            statements.first().into_iter().collect()
+        };
+
+        for statement in iterable {
+            if Self::query_returns_rows(statement) {
+                let (rows, truncated) = Self::fetch_rows_limited(&mut *conn, statement).await?;
+                last_result = Some(Self::build_result_from_rows(
+                    &rows,
+                    0,
+                    sql.to_string(),
+                    total_affected,
+                    false,
+                    truncated,
+                ));
+            } else {
+                let result = sqlx::query(statement).execute(&mut *conn).await?;
+                total_affected += result.rows_affected();
+            }
+        }
+
+        let elapsed = start.elapsed().as_millis();
+        if let Some(mut result) = last_result {
+            result.execution_time_ms = elapsed;
+            result.affected_rows = total_affected;
+            return Ok(result);
+        }
+
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: total_affected,
+            execution_time_ms: elapsed,
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
     }
 }
 
@@ -229,6 +291,40 @@ impl DatabaseDriver for PostgresDriver {
         database: Option<&str>,
     ) -> Result<Vec<ColumnDetail>> {
         PostgresDriver::get_table_columns_preview(self, table, database).await
+    }
+
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
+        }
+        let pool = self.pool();
+        let mut conn = pool.acquire().await.context("PostgreSQL acquire failed")?;
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *conn)
+            .await
+            .context("PostgreSQL backend pid lookup failed")?;
+        if guard.register_backend(i64::from(pid)) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = Self::execute_query_on_conn(&mut conn, sql).await;
+        drop(guard);
+        result
+    }
+
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(pid) => {
+                let cancelled: bool = sqlx::query_scalar("SELECT pg_cancel_backend($1)")
+                    .bind(pid as i32)
+                    .fetch_one(&self.pool())
+                    .await
+                    .context("PostgreSQL pg_cancel_backend failed")?;
+                Ok(cancelled)
+            }
+        }
     }
 
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
@@ -372,6 +468,60 @@ impl DatabaseDriver for PostgresDriver {
         })
     }
 
+    async fn execute_parameterized_query_for_request(
+        &self,
+        request_id: &str,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_parameterized_query(sql, parameters).await;
+        }
+        let pool = self.pool();
+        let mut conn = pool.acquire().await.context("PostgreSQL acquire failed")?;
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *conn)
+            .await
+            .context("PostgreSQL backend pid lookup failed")?;
+        if guard.register_backend(i64::from(pid)) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let start = Instant::now();
+        let result = if Self::query_returns_rows(sql) {
+            let mut stream =
+                Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&mut *conn);
+            let mut rows = Vec::new();
+            let mut truncated = false;
+            while let Some(row) = stream.try_next().await? {
+                if rows.len() == super::query_common::MAX_QUERY_RESULT_ROWS {
+                    truncated = true;
+                    break;
+                }
+                rows.push(row);
+            }
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            result.execution_time_ms = start.elapsed().as_millis();
+            Ok(result)
+        } else {
+            let outcome = Self::bind_parameterized_query(sqlx::query(sql), parameters)?
+                .execute(&mut *conn)
+                .await?;
+            Ok(QueryResult {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                affected_rows: outcome.rows_affected(),
+                execution_time_ms: start.elapsed().as_millis(),
+                query: sql.to_string(),
+                sandboxed: false,
+                truncated: false,
+            })
+        };
+        drop(guard);
+        result
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -398,7 +548,7 @@ impl DatabaseDriver for PostgresDriver {
                 dir
             ));
         }
-        let fetch_limit = limit.max(1).min(MAX_TABLE_PAGE_ROWS);
+        let fetch_limit = limit.clamp(1, MAX_TABLE_PAGE_ROWS);
         sql.push_str(&format!(" LIMIT {} OFFSET {}", fetch_limit, offset));
 
         let start = Instant::now();

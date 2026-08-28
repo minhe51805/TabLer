@@ -12,6 +12,7 @@ import {
 export interface QueryState {
   isExecutingQuery: boolean;
   activeQueryRequestId: string | null;
+  activeQueryConnectionId: string | null;
 
   executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
   cancelQuery: () => Promise<boolean>;
@@ -95,11 +96,16 @@ export interface QueryState {
 export const useQueryStore = create<QueryState>((set, get) => ({
   isExecutingQuery: false,
   activeQueryRequestId: null,
+  activeQueryConnectionId: null,
 
   executeQuery: async (connectionId: string, sql: string) => {
     const safety = await assertQueryAllowed(sql, connectionId);
     const requestId = crypto.randomUUID();
-    set({ isExecutingQuery: true, activeQueryRequestId: requestId });
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
     try {
       const result = await invokeMutation<QueryResult>("execute_query", {
         connectionId,
@@ -110,12 +116,12 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
         : state);
       return result;
     } catch (e) {
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
         : state);
       throw e;
     }
@@ -123,8 +129,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
   cancelQuery: async () => {
     const requestId = get().activeQueryRequestId;
+    const connectionId = get().activeQueryConnectionId;
     if (!requestId) return false;
-    return invokeMutation<boolean>("cancel_query", { requestId });
+    return invokeMutation<boolean>("cancel_query", { requestId, connectionId });
   },
 
   executeSandboxQuery: async (
@@ -134,7 +141,11 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   ) => {
     const safety = await assertQueryAllowed(statements.join(";\n"), connectionId);
     const requestId = crypto.randomUUID();
-    set({ isExecutingQuery: true, activeQueryRequestId: requestId });
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
     try {
       const result = await invokeAIWorkspaceToolMutation(
         "execute_sandboxed_query",
@@ -144,12 +155,12 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
         : state);
       return result;
     } catch (e) {
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
         : state);
       throw e;
     }
@@ -164,7 +175,11 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     // safe-mode guard first so blocked policies fail fast with a clear message.
     const safety = await assertQueryAllowed(statements.join(";\n"), connectionId);
     const requestId = crypto.randomUUID();
-    set({ isExecutingQuery: true, activeQueryRequestId: requestId });
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
     try {
       const result = await invokeAIWorkspaceToolMutation(
         "execute_agent_readonly_query",
@@ -174,12 +189,12 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
         : state);
       return result;
     } catch (e) {
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
         : state);
       throw e;
     }
@@ -332,7 +347,11 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   executeParameterizedQuery: async (connectionId, sql, parameters) => {
     const safety = await assertQueryAllowed(sql, connectionId);
     const requestId = crypto.randomUUID();
-    set({ isExecutingQuery: true, activeQueryRequestId: requestId });
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
     try {
       const result = await invokeMutation<QueryResult>("execute_parameterized_query", {
         connectionId,
@@ -344,12 +363,12 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
         : state);
       return result;
     } catch (error) {
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
         : state);
       throw error;
     }

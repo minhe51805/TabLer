@@ -350,11 +350,9 @@ pub(crate) fn extract_tool_call_as_action_json(
 ) -> Option<String> {
     let (name, arguments) = match provider {
         AIProviderType::Anthropic => {
-            let block = payload
-                .get("content")?
-                .as_array()?
-                .iter()
-                .find(|item| item.get("type").and_then(|value| value.as_str()) == Some("tool_use"))?;
+            let block = payload.get("content")?.as_array()?.iter().find(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("tool_use")
+            })?;
             let name = block.get("name")?.as_str()?.to_string();
             let arguments = block
                 .get("input")
@@ -441,7 +439,8 @@ mod tests {
                 { "type": "tool_use", "name": "list_tables", "input": { "limit": 5 } }
             ]
         });
-        let action = extract_tool_call_as_action_json(&AIProviderType::Anthropic, &payload).unwrap();
+        let action =
+            extract_tool_call_as_action_json(&AIProviderType::Anthropic, &payload).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
         assert_eq!(parsed["action"], "list_tables");
         assert_eq!(parsed["args"]["limit"], 5);

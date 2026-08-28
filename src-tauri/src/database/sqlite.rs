@@ -432,7 +432,7 @@ impl DatabaseDriver for SqliteDriver {
             let dir = normalize_order_dir(order_dir)?;
             sql.push_str(&format!(" ORDER BY {} {}", quote_sqlite_order_by(ob)?, dir));
         }
-        let fetch_limit = limit.max(1).min(MAX_TABLE_PAGE_ROWS);
+        let fetch_limit = limit.clamp(1, MAX_TABLE_PAGE_ROWS);
         sql.push_str(&format!(" LIMIT {} OFFSET {}", fetch_limit, offset));
 
         let start = Instant::now();

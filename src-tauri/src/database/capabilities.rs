@@ -249,24 +249,24 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "mysql",
             "MySQL",
             DriverTier::Core,
-            S, S, S, L, S, S, S, S, S, S, S, L, S,
-            &["Query timeout does not yet guarantee server-side cancellation.", "Restore can retain earlier statements after a failure."],
+            S, S, S, S, S, S, S, S, S, S, S, L, S,
+            &["Restore can retain earlier statements after a failure."],
         ),
         DatabaseType::MariaDB => profile(
             database_type,
             "mariadb",
             "MariaDB",
             DriverTier::Core,
-            S, S, S, L, S, S, S, S, S, S, S, L, S,
-            &["Query timeout does not yet guarantee server-side cancellation.", "MariaDB currently shares the MySQL driver and capability tests."],
+            S, S, S, S, S, S, S, S, S, S, S, L, S,
+            &["MariaDB currently shares the MySQL driver and capability tests."],
         ),
         DatabaseType::PostgreSQL => profile(
             database_type,
             "postgresql",
             "PostgreSQL",
             DriverTier::Core,
-            S, S, S, L, S, S, S, S, S, S, S, S, S,
-            &["Query timeout does not yet guarantee server-side cancellation."],
+            S, S, S, S, S, S, S, S, S, S, S, S, S,
+            &[],
         ),
         DatabaseType::CockroachDB => profile(
             database_type,
@@ -298,7 +298,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "SQLite",
             DriverTier::Core,
             S, S, S, L, S, S, S, S, S, S, U, S, N,
-            &["Query timeout does not interrupt every SQLite operation.", "Direct column schema changes are not wired into TableR actions yet."],
+            &["Local engine: cancel stops waiting; the embedded engine finishes the statement in the background.", "Direct column schema changes are not wired into TableR actions yet."],
         ),
         DatabaseType::DuckDB => profile(
             database_type,
@@ -473,7 +473,10 @@ mod tests {
         assert_eq!(query_model_for(DatabaseType::Cassandra), QueryModel::Cql);
         assert_eq!(query_model_for(DatabaseType::MongoDB), QueryModel::Document);
         assert_eq!(query_model_for(DatabaseType::Redis), QueryModel::Kv);
-        assert_eq!(query_model_for(DatabaseType::OpenSearch), QueryModel::Search);
+        assert_eq!(
+            query_model_for(DatabaseType::OpenSearch),
+            QueryModel::Search
+        );
 
         assert!(agent_allows_sql_read(DatabaseType::ClickHouse));
         assert!(agent_allows_sql_read(DatabaseType::Cassandra));
@@ -503,12 +506,18 @@ mod tests {
                 }
                 QueryModel::Cql => {
                     assert!(read, "{database_type:?} cql must allow SELECT-shaped reads");
-                    assert!(!write, "{database_type:?} cql must not allow SQL write previews");
+                    assert!(
+                        !write,
+                        "{database_type:?} cql must not allow SQL write previews"
+                    );
                     assert!(agent_sql_write_preview_unsupported_error(database_type).is_some());
                 }
                 QueryModel::Document | QueryModel::Kv | QueryModel::Search => {
                     assert!(!read, "{database_type:?} must not allow SQL reads");
-                    assert!(!write, "{database_type:?} must not allow SQL write previews");
+                    assert!(
+                        !write,
+                        "{database_type:?} must not allow SQL write previews"
+                    );
                     let err = agent_sql_read_unsupported_error(database_type).expect("error");
                     assert!(err.contains("does not support SQL observations"));
                 }

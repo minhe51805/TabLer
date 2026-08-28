@@ -555,10 +555,10 @@ export function AIComposerDock({
             }
           >
             {isCancelling
-              ? <Loader2 className="w-4 h-4 animate-spin" />
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
               : isGenerating
-                ? <Square className="w-4 h-4" />
-              : <ArrowUp className="w-4 h-4" />}
+                ? <Square className="w-3.5 h-3.5" />
+              : <ArrowUp className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>

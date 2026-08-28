@@ -32846,21 +32846,22 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   box-shadow: 0 10px 22px color-mix(in srgb, var(--error) 26%, transparent);
 }
 
-/* The generate button is icon-only now: a compact rounded square that
-   matches the neighboring chat-tools button (36×44, radius 12). */
+/* The generate button is icon-only now and matches the dock's chat-tools
+   button exactly (28×28, radius 9, 14px glyph — see the
+   .ai-workspace-command-settings-btn--dock rule). */
 .app-root .ai-workspace-stage--sidebar .ai-workspace-generate-btn {
-  width: 36px;
-  height: 44px;
-  min-width: 36px;
-  min-height: 44px;
-  flex: 0 0 36px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  flex: 0 0 28px;
   padding: 0;
-  border-radius: 12px;
+  border-radius: 9px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-generate-btn svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 .app-mcp-integrations-modal {

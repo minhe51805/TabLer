@@ -123,7 +123,7 @@ function formatProviderFailoverNote(
  */
 function formatProviderFollowUpNote(
   language: string,
-  provider: AIProviderConfig | null,
+  provider: AIProviderConfig | null | undefined,
   rawReason: string,
 ) {
   const label = provider?.name?.trim()
@@ -552,10 +552,6 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             wantsVisualization,
             steps: agentTraceSteps,
           });
-          const failoverNoteLines = [
-            providerFailoverNote,
-            providerFailoverFollowUpNote,
-          ].filter((line): line is string => Boolean(line));
           const failoverNoteSuffix = failoverNoteLines.length > 0
             ? `\n\n*${failoverNoteLines.join(" ")}*`
             : "";
@@ -654,13 +650,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
         let consecutiveActionFailures = 0;
         let endedWithAskUser = false;
-        // Promote the provider at most ONCE per run: the first failure moves
-        // the selector to the next enabled provider and every later failure
-        // retries there instead of rotating providers again.
-        let providerPromoted = false;
-        let promotedProvider: AIProviderConfig | null = null;
-        let providerFailoverNote: string | null = null;
-        let providerFailoverFollowUpNote: string | null = null;
+        // Provider failover: each failure promotes the NEXT enabled provider
+        // (selector follows, note line recorded) and re-runs the step, until
+        // every enabled provider has had a turn as primary. Only then does the
+        // run fall back to the canned recovery answer.
+        const failedProviderIds = new Set<string>();
+        const failoverNoteLines: string[] = [];
+        let providerRetryCount = 0;
 
         const agentRunnerResult = await runAIAgentToolLoop({
           workspaceToolsEnabled,
@@ -731,19 +727,23 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               // user inline, wait out the transient window, then re-run this
               // same step. Later failures retry on the promoted provider
               // instead of rotating providers again.
-              if (failoverEligible && !providerPromoted) {
-                providerPromoted = true;
+              const enabledProviderCount = useAIStore
+                .getState()
+                .aiConfigs.filter((config) => config.is_enabled).length;
+              const canPromoteFurther =
+                providerRetryCount < Math.max(0, enabledProviderCount - 1);
+
+              if (failoverEligible && canPromoteFurther) {
+                providerRetryCount += 1;
                 const failedProvider = getActiveAIProvider(useAIStore.getState().aiConfigs);
+                if (failedProvider) failedProviderIds.add(failedProvider.id);
                 const promoted = useAIStore.getState().promoteNextEnabledProvider();
-                promotedProvider = promoted;
-                providerFailoverNote = formatProviderFailoverNote(
-                  appLanguage,
-                  failedProvider,
-                  promoted,
+                failoverNoteLines.push(
+                  formatProviderFailoverNote(appLanguage, failedProvider, promoted),
                 );
                 publishAgentProgress({
                   action: "think",
-                  message: providerFailoverNote,
+                  message: failoverNoteLines[failoverNoteLines.length - 1],
                 });
                 await new Promise((resolve) =>
                   setTimeout(resolve, PROVIDER_RETRY_DELAY_MS),
@@ -754,12 +754,17 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                   return promotedRetryAction;
                 } catch (promotedRetryError) {
                   if (isSupersededAIRequestError(promotedRetryError)) throw promotedRetryError;
+                  const promotedFailedProvider = getActiveAIProvider(
+                    useAIStore.getState().aiConfigs,
+                  );
                   // The promoted provider also failed - keep its REAL reason so
                   // the recovery note can tell the user what to go fix.
-                  providerFailoverFollowUpNote = formatProviderFollowUpNote(
-                    appLanguage,
-                    promotedProvider,
-                    formatActionFailureReason(promotedRetryError),
+                  failoverNoteLines.push(
+                    formatProviderFollowUpNote(
+                      appLanguage,
+                      promotedFailedProvider,
+                      formatActionFailureReason(promotedRetryError),
+                    ),
                   );
                   // Fall through to the standard same-provider retry below.
                 }
@@ -780,13 +785,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 return retriedAction;
               } catch (retryError) {
                 if (isSupersededAIRequestError(retryError)) throw retryError;
-                if (!providerFailoverFollowUpNote) {
-                  providerFailoverFollowUpNote = formatProviderFollowUpNote(
+                failoverNoteLines.push(
+                  formatProviderFollowUpNote(
                     appLanguage,
-                    promotedProvider,
+                    getActiveAIProvider(useAIStore.getState().aiConfigs),
                     formatActionFailureReason(retryError),
-                  );
-                }
+                  ),
+                );
                 return recoverAgentFinishAction(
                   `The agent could not return a valid action: ${formatActionFailureReason(retryError)}`,
                 );

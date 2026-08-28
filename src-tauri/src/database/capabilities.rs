@@ -528,7 +528,12 @@ mod tests {
     #[test]
     fn committed_json_matrix_matches_the_rust_catalog() {
         let expected = serde_json::to_string_pretty(&all_driver_capabilities()).unwrap() + "\n";
-        let committed = include_str!("../../../docs/generated/driver-capabilities.json");
+        // include_str! embeds the file as it exists on disk at compile time, so
+        // a Windows checkout (core.autocrlf) would otherwise compare CRLF text
+        // against LF expectations. Normalize before comparing; the committed
+        // blob itself is always LF (enforced by .gitattributes).
+        let committed =
+            include_str!("../../../docs/generated/driver-capabilities.json").replace("\r\n", "\n");
         assert_eq!(committed, expected, "regenerate the capability matrix");
     }
 }

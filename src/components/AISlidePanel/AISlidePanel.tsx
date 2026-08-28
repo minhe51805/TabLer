@@ -246,7 +246,9 @@ export function AISlidePanel({
     [conversationBubbles],
   );
   const switchableProviders = useMemo(() => {
-    const normalized = normalizeAIProviderConfigs(aiConfigs);
+    // Disabled providers are managed in the settings modal only; the composer
+    // switcher lists enabled providers (each expandable into its models).
+    const normalized = normalizeAIProviderConfigs(aiConfigs).filter((config) => config.is_enabled);
     return [...normalized].sort((left, right) => {
       const leftScore =
         (left.id === activeProvider?.id ? 4 : 0) +

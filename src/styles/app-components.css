@@ -28278,6 +28278,47 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   gap: 4px;
 }
 
+/* Nested model rows inside the provider switcher accordion. */
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-command-model-item {
+  margin-left: 16px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  font-size: var(--mm-fs-small);
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-command-model-chevron {
+  transition: transform 140ms ease;
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-command-model-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+/* Long model names must ellipsize instead of wrapping the popover apart. */
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-command-item-copy {
+  min-width: 0;
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-command-item-copy strong,
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-command-item-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-root .ai-workspace-stage--sidebar .ai-workspace-command-item {
   width: 100%;
   display: flex;

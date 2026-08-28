@@ -15,7 +15,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEventHandler, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, type KeyboardEventHandler, type RefObject } from "react";
 import type { AIProviderConfig } from "../../types";
 import { formatAIProviderTypeLabel } from "../../utils/ai-provider-registry";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
@@ -131,6 +131,7 @@ export function AIComposerDock({
   onCancelGeneration,
 }: AIComposerDockProps) {
   const [openMenu, setOpenMenu] = useState<ComposerMenu | null>(null);
+  const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
   const commandBarRef = useRef<HTMLDivElement>(null);
   const activeProviderValue = activeProvider?.model?.trim()
     || activeProvider?.name?.trim()
@@ -166,6 +167,15 @@ export function AIComposerDock({
     onCloseHistory();
     setOpenMenu((current) => current === menu ? null : menu);
   };
+
+  // The model submenu defaults to the active provider and collapses with the menu.
+  useEffect(() => {
+    if (openMenu !== "provider") {
+      setExpandedProviderId(null);
+      return;
+    }
+    setExpandedProviderId((current) => current ?? activeProvider?.id ?? null);
+  }, [openMenu, activeProvider?.id]);
 
   return (
     <div className="ai-workspace-compose-dock">
@@ -276,7 +286,7 @@ export function AIComposerDock({
                       <span>Switch the active AI provider without leaving the chat panel.</span>
                     </div>
                     <div className="ai-workspace-command-provider-list">
-                      {providers.length > 0 ? providers.flatMap((config) => {
+                      {providers.length > 0 ? providers.map((config) => {
                         const models = (config.models?.length
                           ? config.models
                           : (config.model?.trim() ? [config.model.trim()] : []))
@@ -284,33 +294,68 @@ export function AIComposerDock({
                           .filter(Boolean);
                         const typeLabel = formatAIProviderTypeLabel(config.provider_type);
                         const providerLabel = config.name?.trim() || typeLabel;
-                        // One row per model so a single provider (one key/URL)
-                        // can expose its whole catalog right in the composer.
-                        return (models.length > 0 ? models : [""]).map((model) => {
-                          const isActive = config.id === activeProvider?.id && (!model || config.model === model);
-                          return (
+                        const isActiveProvider = config.id === activeProvider?.id;
+                        const isExpanded = expandedProviderId === config.id;
+                        const hasMultipleModels = models.length > 1;
+                        const activeModelCaption = models.length === 0
+                          ? typeLabel
+                          : models.length === 1
+                            ? models[0]
+                            : models.includes(config.model)
+                              ? config.model
+                              : `${models.length} models`;
+                        // Two-level menu: the provider row expands into its own
+                        // model list instead of dumping every model in one flat wall.
+                        return (
+                          <Fragment key={config.id}>
                             <button
-                              key={`${config.id}:${model}`}
                               type="button"
-                              role="menuitemradio"
-                              aria-checked={isActive}
-                              className={`ai-workspace-command-item ai-workspace-command-item--provider ${isActive ? "is-active" : ""}`}
+                              role="menuitem"
+                              aria-expanded={hasMultipleModels ? isExpanded : undefined}
+                              className={`ai-workspace-command-item ai-workspace-command-item--provider ${isActiveProvider ? "is-active" : ""}`}
                               onClick={() => {
+                                if (hasMultipleModels) {
+                                  setExpandedProviderId(isExpanded ? null : config.id);
+                                  return;
+                                }
                                 setOpenMenu(null);
-                                onActivateProvider(config.id, model || undefined);
+                                onActivateProvider(config.id, models[0] || undefined);
                               }}
                             >
                               <span className="ai-workspace-command-item-copy">
-                                <strong>{model || typeLabel}</strong>
-                                <span>{providerLabel}</span>
+                                <strong>{providerLabel}</strong>
+                                <span>{activeModelCaption}</span>
                               </span>
                               <span className="ai-workspace-command-provider-meta">
-                                {!config.is_enabled && <span className="ai-workspace-command-provider-tag">Disabled</span>}
-                                {isActive && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
+                                {hasMultipleModels && (
+                                  <ChevronDown className={`w-3.5 h-3.5 ai-workspace-command-model-chevron ${isExpanded ? "is-open" : ""}`} />
+                                )}
+                                {isActiveProvider && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
                               </span>
                             </button>
-                          );
-                        });
+                            {hasMultipleModels && isExpanded ? models.map((model) => {
+                              const isActiveModel = isActiveProvider && config.model === model;
+                              return (
+                                <button
+                                  key={`${config.id}:${model}`}
+                                  type="button"
+                                  role="menuitemradio"
+                                  aria-checked={isActiveModel}
+                                  className={`ai-workspace-command-item ai-workspace-command-model-item ${isActiveModel ? "is-active" : ""}`}
+                                  onClick={() => {
+                                    setOpenMenu(null);
+                                    onActivateProvider(config.id, model);
+                                  }}
+                                >
+                                  <span className="ai-workspace-command-item-copy">
+                                    <strong>{model}</strong>
+                                  </span>
+                                  {isActiveModel && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
+                                </button>
+                              );
+                            }) : null}
+                          </Fragment>
+                        );
                       }) : (
                         <button type="button" className="ai-workspace-command-empty" onClick={onOpenSettings}>
                           No provider configured yet. Open settings

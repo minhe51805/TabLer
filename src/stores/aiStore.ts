@@ -355,13 +355,10 @@ export const useAIStore = create<AIState>((set, get) => ({
         if (!canFailOver || index === chain.length - 1) throw requestError;
         // Stop the superseded backend request before switching endpoints.
         void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
-        // Promote the next provider to active so the provider selector follows
-        // the switch and later requests in this session start on the healthy
-        // provider instead of paying another failed attempt on this one.
-        const nextAttempt = chain[index + 1];
-        if (nextAttempt) {
-          switchActiveProvider(get().aiConfigs, nextAttempt.config, config, set);
-        }
+        // Deliberately no primary change here: the request-level chain tries
+        // the remaining providers silently, and the single visible promotion
+        // is owned by the agent hook (promoteNextEnabledProvider) so the
+        // selector moves exactly once per run instead of flip-flopping.
         console.warn(
           `[AI] Provider "${config.name || config.id}" failed (${requestError.code}); failing over to the next enabled provider.`,
         );

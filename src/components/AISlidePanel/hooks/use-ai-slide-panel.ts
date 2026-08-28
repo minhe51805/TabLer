@@ -94,11 +94,9 @@ const MAX_LOCAL_COMPLEX_AGENT_STEPS = 14;
 const MAX_REMOTE_COMPLEX_AGENT_STEPS = 10;
 
 /**
- * How many times a provider-caused action failure may promote the next
- * configured provider and re-run the step before the run falls back to the
- * canned recovery answer. Bounded so a fully dead configuration still ends.
+ * Wait window before a promoted re-run, so a rate-limited endpoint has a
+ * moment to recover before the next provider serves the step.
  */
-const MAX_PROVIDER_RETRY_ROUNDS = 2;
 const PROVIDER_RETRY_DELAY_MS = 1_200;
 
 function formatProviderFailoverNote(
@@ -634,7 +632,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
         let consecutiveActionFailures = 0;
         let endedWithAskUser = false;
-        let providerRetryRounds = 0;
+        // Promote the provider at most ONCE per run: the first failure moves
+        // the selector to the next enabled provider and every later failure
+        // retries there instead of rotating providers again.
+        let providerPromoted = false;
         let providerFailoverNote: string | null = null;
 
         const agentRunnerResult = await runAIAgentToolLoop({
@@ -701,11 +702,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               // refusing to retry on those was exactly the silent-stop bug.
               const failoverEligible = requestError.code !== "cancelled";
 
-              // A dead or rate-limited provider must not end the run: promote
-              // the next configured provider, tell the user inline, wait out
-              // the transient window, then re-run this same step.
-              if (failoverEligible && providerRetryRounds < MAX_PROVIDER_RETRY_ROUNDS) {
-                providerRetryRounds += 1;
+              // A dead or rate-limited provider must not end the run: exactly
+              // once per run, promote the next configured provider, tell the
+              // user inline, wait out the transient window, then re-run this
+              // same step. Later failures retry on the promoted provider
+              // instead of rotating providers again.
+              if (failoverEligible && !providerPromoted) {
+                providerPromoted = true;
                 const failedProvider = getActiveAIProvider(useAIStore.getState().aiConfigs);
                 const promoted = useAIStore.getState().promoteNextEnabledProvider();
                 providerFailoverNote = formatProviderFailoverNote(

@@ -215,7 +215,7 @@ describe("aiStore", () => {
     expect(useAIStore.getState().promoteNextEnabledProvider()).toBeNull();
   });
 
-  it("promotes the next provider to active and announces the failover", async () => {
+  it("fails over to the next enabled provider for the retry without moving the primary", async () => {
     const fallback: AIProviderConfig = {
       ...provider,
       id: "provider-2",
@@ -224,50 +224,42 @@ describe("aiStore", () => {
       is_primary: false,
     };
     useAIStore.setState({ aiConfigs: [provider, fallback] });
-    invokeMutationMock.mockImplementation(async (command: string, args?: { providers?: AIProviderConfig[] }) => {
+    invokeMutationMock.mockImplementation(async (command: string) => {
       if (command === "cancel_ai_request") return true;
-      if (command === "save_ai_configs") return [args?.providers ?? [], {}];
       return null;
     });
     let streamAttempts = 0;
-    invokeWithTimeoutMock.mockImplementation(async (command: string) => {
+    invokeWithTimeoutMock.mockImplementation(async (command: string, args?: {
+      request?: { provider_id?: string | null };
+    }) => {
       if (command === "ask_ai_stream") {
         streamAttempts += 1;
         if (streamAttempts === 1) {
           throw new Error("HTTP 429 Too Many Requests: rate limit exceeded");
         }
+        failoverProviderIds.push(args?.request?.provider_id ?? null);
         return undefined;
       }
       return null;
     });
+    const failoverProviderIds: Array<string | null> = [];
 
-    const toastSpy = vi.fn();
-    window.addEventListener("app-toast", toastSpy);
-    try {
-      await expect(
-        useAIStore.getState().askAI("prompt", "context", "panel", "sql"),
-      ).resolves.toBe("");
-    } finally {
-      window.removeEventListener("app-toast", toastSpy);
-    }
+    await expect(
+      useAIStore.getState().askAI("prompt", "context", "panel", "sql"),
+    ).resolves.toBe("");
 
-    // The healthy provider becomes active so the selector follows the switch.
+    // The retry went to the next enabled provider...
+    expect(streamAttempts).toBe(2);
+    expect(failoverProviderIds).toEqual(["provider-2"]);
+    // ...but the configured primary is deliberately left untouched: the single
+    // visible promotion is owned by the agent run, not by every transport
+    // retry, so the selector never flip-flops between providers.
     const configs = useAIStore.getState().aiConfigs;
-    expect(configs.find((config) => config.id === "provider-2")?.is_primary).toBe(true);
-    expect(configs.find((config) => config.id === "provider-1")?.is_primary).toBe(false);
-    // The switch is persisted so it survives an app restart.
-    expect(invokeMutationMock).toHaveBeenCalledWith(
+    expect(configs.find((config) => config.id === "provider-1")?.is_primary).toBe(true);
+    expect(configs.find((config) => config.id === "provider-2")?.is_primary).toBe(false);
+    expect(invokeMutationMock).not.toHaveBeenCalledWith(
       "save_ai_configs",
-      expect.objectContaining({ providers: expect.any(Array) }),
+      expect.anything(),
     );
-    // The user is told which provider failed and which one took over.
-    expect(toastSpy).toHaveBeenCalledTimes(1);
-    const detail = (toastSpy.mock.calls[0][0] as CustomEvent).detail as {
-      title: string;
-      tone: string;
-    };
-    expect(detail.tone).toBe("info");
-    expect(detail.title).toContain("OpenAI");
-    expect(detail.title).toContain("Claude");
   });
 });

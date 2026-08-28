@@ -28395,13 +28395,13 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   gap: 4px;
 }
 
-/* Nested model rows inside the provider switcher accordion. */
+/* Nested model rows inside the provider switcher accordion. Selector pairs
+   both classes so this beats the width:100% in `.ai-workspace-command-item`
+   further down the file — otherwise the 16px left indent pushes the card
+   past the popover's right edge. */
 .app-root
   .ai-workspace-stage--sidebar
-  .ai-workspace-command-model-item {
-  /* width:auto + margins so the indented cards sit INSIDE the popover edge
-     (width:100% + margin-left made them poke out 16px to the right). The
-     right edge stays flush with the provider row above. */
+  .ai-workspace-command-item.ai-workspace-command-model-item {
   width: auto;
   margin: 0 0 0 16px;
   min-height: 28px;

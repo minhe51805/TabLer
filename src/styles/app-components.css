@@ -28289,13 +28289,15 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   min-width: 0;
 }
 
-/* The model switcher anchors to the right edge of the command bar with a
-   floor of 320px so long model IDs never wrap, regardless of viewport. */
+/* The model switcher needs more room than its trigger: give it a 320px
+   floor growing rightward so long model IDs never wrap. Specificity must
+   stay above the .dropdown--provider .popover span rule above it. */
 .app-root
   .ai-workspace-stage--sidebar
+  .ai-workspace-command-dropdown--provider
   .ai-workspace-command-popover--provider {
-  left: auto;
-  right: 0;
+  left: 0;
+  right: auto;
   width: min(320px, calc(100vw - 32px));
   min-width: 0;
 }
@@ -28741,6 +28743,24 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   left: 0;
   right: 0;
   width: auto;
+  min-width: 0;
+}
+
+/* ...except the model switcher, which gets a 320px floor (capped to the AI
+   sidebar width) so long model IDs stay on one line. Placed after the span
+   rule above so it wins the cascade. */
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-commandbar--dock
+  .ai-workspace-command-dropdown--provider
+  .ai-workspace-command-popover--provider {
+  left: 0;
+  right: auto;
+  width: min(
+    320px,
+    calc(var(--workspace-ai-sidebar-width, 100vw) - 48px),
+    calc(100vw - 40px)
+  );
   min-width: 0;
 }
 

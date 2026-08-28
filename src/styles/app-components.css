@@ -28289,17 +28289,13 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   min-width: 0;
 }
 
-/* The model switcher needs more room than its trigger: give it a 320px
-   floor growing rightward so long model IDs never wrap. Specificity must
-   stay above the .dropdown--provider .popover span rule above it. */
+/* The provider switcher spans the entire command bar: its trigger container
+   goes static so the popover anchors to the commandbar (position:relative
+   above) and can never overflow the panel edge. */
 .app-root
   .ai-workspace-stage--sidebar
-  .ai-workspace-command-dropdown--provider
-  .ai-workspace-command-popover--provider {
-  left: 0;
-  right: auto;
-  width: min(320px, calc(100vw - 32px));
-  min-width: 0;
+  .ai-workspace-command-dropdown--provider {
+  position: static;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-command-popover-head {
@@ -28746,22 +28742,42 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   min-width: 0;
 }
 
-/* ...except the model switcher, which gets a 320px floor (capped to the AI
-   sidebar width) so long model IDs stay on one line. Placed after the span
-   rule above so it wins the cascade. */
+/* ...except the model switcher, which spans the command bar and scrolls its
+   provider list internally, so nothing can overflow the panel edge. */
 .app-root
   .ai-workspace-stage--sidebar
   .ai-workspace-commandbar--dock
   .ai-workspace-command-dropdown--provider
   .ai-workspace-command-popover--provider {
-  left: 0;
-  right: auto;
-  width: min(
-    320px,
-    calc(var(--workspace-ai-sidebar-width, 100vw) - 48px),
-    calc(100vw - 40px)
-  );
-  min-width: 0;
+  overflow: visible;
+  overflow-x: visible;
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-commandbar--dock
+  .ai-workspace-command-dropdown--provider
+  .ai-workspace-command-popover--provider
+  .ai-workspace-command-provider-list {
+  max-height: min(340px, 44vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Flat Cherry-style rows: quiet by default, highlighted on hover. */
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-commandbar--dock
+  .ai-workspace-command-item--provider {
+  min-height: 38px;
+  background: transparent;
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-commandbar--dock
+  .ai-workspace-command-item--provider:hover:not(:disabled) {
+  background: var(--mm-surface-1);
 }
 
 .app-root

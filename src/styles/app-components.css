@@ -32854,13 +32854,20 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 /* The generate button is icon-only now and matches the dock's chat-tools
    button exactly (28×28, radius 9, 14px glyph — see the
-   .ai-workspace-command-settings-btn--dock rule). */
+   .ai-workspace-command-settings-btn--dock rule). It must also stay
+   vertically centered on the footer row: the footer's legacy align-items:end
+   and a <=560px align-self:flex-end rule made it ride high. */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-composer-footer {
+  align-items: center;
+}
+
 .app-root .ai-workspace-stage--sidebar .ai-workspace-generate-btn {
   width: 28px;
   height: 28px;
   min-width: 28px;
   min-height: 28px;
   flex: 0 0 28px;
+  align-self: center;
   padding: 0;
   border-radius: 9px;
 }

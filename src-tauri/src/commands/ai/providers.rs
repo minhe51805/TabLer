@@ -117,6 +117,41 @@ pub(crate) fn build_provider_request_body(
     prompt: &str,
     mode: &AIRequestMode,
 ) -> serde_json::Value {
+    // An explicit API format wins over URL sniffing so users can point a
+    // Custom provider at any path (e.g. an Ollama server behind a proxy).
+    if matches!(config.provider_type, AIProviderType::Ollama | AIProviderType::Custom) {
+        match super::endpoints::explicit_api_format(config) {
+            Some("ollama-chat") => {
+                return json!({
+                    "model": config.model,
+                    "messages": [
+                        { "role": "system", "content": system_prompt },
+                        { "role": "user", "content": prompt }
+                    ],
+                    "stream": false
+                });
+            }
+            Some("ollama-generate") => {
+                return json!({
+                    "model": config.model,
+                    "system": system_prompt,
+                    "prompt": prompt,
+                    "stream": false
+                });
+            }
+            Some("chat-completions") => {
+                return build_openai_like_body(
+                    &config.model,
+                    system_prompt,
+                    prompt,
+                    mode,
+                    endpoint,
+                );
+            }
+            _ => {}
+        }
+    }
+
     match config.provider_type {
         AIProviderType::Ollama | AIProviderType::Custom => {
             if is_ollama_native_chat_endpoint(endpoint) {
@@ -202,6 +237,8 @@ pub(crate) fn sample_provider(provider_type: AIProviderType) -> AIProviderConfig
         is_primary: true,
         allow_schema_context: true,
         allow_inline_completion: true,
+        api_format: None,
+        models: Vec::new(),
     }
 }
 
@@ -227,6 +264,74 @@ mod tests {
         assert_eq!(before, after);
         assert!(after.get("tools").is_none());
         assert!(after.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn explicit_ollama_formats_skip_openai_path_append() {
+        let mut provider = sample_provider(AIProviderType::Custom);
+        provider.endpoint = "http://10.0.0.5:11434/api/chat".to_string();
+        provider.api_format = Some("ollama-chat".to_string());
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "http://10.0.0.5:11434/api/chat"
+        );
+
+        // Empty endpoint falls back to the local Ollama default for the format.
+        provider.api_format = Some("ollama-generate".to_string());
+        provider.endpoint = String::new();
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "http://localhost:11434/api/generate"
+        );
+
+        // Auto (None) keeps the legacy behavior: bare host gets /chat/completions.
+        provider.api_format = None;
+        provider.endpoint = "http://10.0.0.5:11434".to_string();
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "http://10.0.0.5:11434/chat/completions"
+        );
+    }
+
+    #[test]
+    fn explicit_api_format_controls_request_body_shape() {
+        let mut provider = sample_provider(AIProviderType::Custom);
+        provider.endpoint = "http://10.0.0.5:11434/api/chat".to_string();
+
+        provider.api_format = Some("ollama-chat".to_string());
+        let body = build_provider_request_body(
+            &provider,
+            &provider.endpoint,
+            "sys",
+            "usr",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["stream"], json!(false));
+
+        provider.api_format = Some("ollama-generate".to_string());
+        let body = build_provider_request_body(
+            &provider,
+            &provider.endpoint,
+            "sys",
+            "usr",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(body["system"], "sys");
+        assert_eq!(body["prompt"], "usr");
+        assert!(body.get("messages").is_none());
+
+        // Chat completions wins even on an Ollama-style URL.
+        provider.api_format = Some("chat-completions".to_string());
+        let body = build_provider_request_body(
+            &provider,
+            &provider.endpoint,
+            "sys",
+            "usr",
+            &AIRequestMode::Panel,
+        );
+        assert!(body.get("messages").is_some());
+        assert!(body.get("prompt").is_none());
     }
 
     #[test]

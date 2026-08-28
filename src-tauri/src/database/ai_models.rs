@@ -68,6 +68,14 @@ pub struct AIProviderConfig {
     pub allow_schema_context: bool,
     #[serde(default)]
     pub allow_inline_completion: bool,
+    /// Explicit API wire format for Custom providers ("chat-completions",
+    /// "ollama-chat", "ollama-generate"). `None`/"auto" keeps URL sniffing.
+    #[serde(default)]
+    pub api_format: Option<String>,
+    /// Model catalog offered by this provider. Empty = legacy single-model
+    /// config, where `model` alone is the truth.
+    #[serde(default)]
+    pub models: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

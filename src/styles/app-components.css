@@ -14254,6 +14254,82 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   color: var(--error);
 }
 
+/* --- Provider model list (multi-model per provider) --- */
+.ai-settings-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-settings-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--mm-border);
+  border-radius: 8px;
+  background: var(--mm-surface-1);
+}
+
+.ai-settings-model-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--mm-fs-small);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-settings-model-name.is-active {
+  font-weight: 600;
+}
+
+.ai-settings-model-active {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  background: var(--mm-success-soft);
+  color: var(--success);
+}
+
+.ai-settings-model-empty {
+  margin: 0;
+  font-size: var(--mm-fs-small);
+  color: var(--text-muted);
+}
+
+.ai-settings-model-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.ai-settings-model-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(420px, 90vw);
+  padding: 18px;
+  border: 1px solid var(--mm-border);
+  border-radius: 14px;
+  background: var(--mm-surface-0);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+
+.ai-settings-model-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
 .ai-settings-status-pill {
   display: inline-flex;
   align-items: center;

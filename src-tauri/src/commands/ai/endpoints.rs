@@ -123,6 +123,28 @@ pub(crate) fn resolve_provider_endpoint(config: &AIProviderConfig) -> String {
         config.endpoint.trim().to_string()
     };
 
+    // Explicit Ollama wire formats resolve as-is (or to the local default)
+    // instead of getting an OpenAI-style path appended.
+    if matches!(
+        config.provider_type,
+        AIProviderType::Ollama | AIProviderType::Custom
+    ) {
+        match explicit_api_format(config) {
+            Some(format @ ("ollama-chat" | "ollama-generate")) => {
+                if !endpoint.trim().is_empty() {
+                    return endpoint;
+                }
+                let action = if format == "ollama-generate" {
+                    "generate"
+                } else {
+                    "chat"
+                };
+                return format!("http://localhost:11434/api/{action}");
+            }
+            _ => {}
+        }
+    }
+
     let path = endpoint_path(&endpoint).unwrap_or_default();
 
     match config.provider_type {
@@ -153,6 +175,16 @@ pub(crate) fn resolve_provider_endpoint(config: &AIProviderConfig) -> String {
 
 pub(crate) fn is_ollama_native_chat_endpoint(endpoint: &str) -> bool {
     endpoint_path(endpoint).is_some_and(|path| path.ends_with("/api/chat"))
+}
+
+/// Explicit wire format chosen in settings ("chat-completions",
+/// "ollama-chat", "ollama-generate"). `None` keeps URL sniffing, which is the
+/// legacy behavior for configs saved before the selector existed.
+pub(crate) fn explicit_api_format(config: &AIProviderConfig) -> Option<&str> {
+    match config.api_format.as_deref()?.trim() {
+        "" | "auto" | "auto-detect" => None,
+        other => Some(other),
+    }
 }
 
 pub(crate) fn is_ollama_native_generate_endpoint(endpoint: &str) -> bool {

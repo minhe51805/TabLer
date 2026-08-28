@@ -48,7 +48,7 @@ interface AIComposerDockProps {
   onDismissSelection: () => void;
   onSelectInteractionMode: (mode: AIWorkspaceInteractionMode) => void;
   onSelectAgentAutonomy: (autonomy: AIWorkspaceAgentAutonomy) => void;
-  onActivateProvider: (providerId: string) => void;
+  onActivateProvider: (providerId: string, model?: string) => void;
   onSetSessionDataReadEnabled: (enabled: boolean) => void;
   onSetShowThinking: (show: boolean) => void;
   onOpenSettings: () => void;
@@ -276,35 +276,41 @@ export function AIComposerDock({
                       <span>Switch the active AI provider without leaving the chat panel.</span>
                     </div>
                     <div className="ai-workspace-command-provider-list">
-                      {providers.length > 0 ? providers.map((config) => {
-                        const providerValue = config.model?.trim()
-                          || config.name?.trim()
-                          || formatAIProviderTypeLabel(config.provider_type);
-                        const providerCaption = config.name?.trim() && config.name.trim() !== providerValue
-                          ? `${config.name.trim()} / ${formatAIProviderTypeLabel(config.provider_type)}`
-                          : formatAIProviderTypeLabel(config.provider_type);
-                        return (
-                          <button
-                            key={config.id}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={config.id === activeProvider?.id}
-                            className={`ai-workspace-command-item ai-workspace-command-item--provider ${config.id === activeProvider?.id ? "is-active" : ""}`}
-                            onClick={() => {
-                              setOpenMenu(null);
-                              onActivateProvider(config.id);
-                            }}
-                          >
-                            <span className="ai-workspace-command-item-copy">
-                              <strong>{providerValue}</strong>
-                              <span>{providerCaption}</span>
-                            </span>
-                            <span className="ai-workspace-command-provider-meta">
-                              {!config.is_enabled && <span className="ai-workspace-command-provider-tag">Disabled</span>}
-                              {config.id === activeProvider?.id && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
-                            </span>
-                          </button>
-                        );
+                      {providers.length > 0 ? providers.flatMap((config) => {
+                        const models = (config.models?.length
+                          ? config.models
+                          : (config.model?.trim() ? [config.model.trim()] : []))
+                          .map((entry) => entry.trim())
+                          .filter(Boolean);
+                        const typeLabel = formatAIProviderTypeLabel(config.provider_type);
+                        const providerLabel = config.name?.trim() || typeLabel;
+                        // One row per model so a single provider (one key/URL)
+                        // can expose its whole catalog right in the composer.
+                        return (models.length > 0 ? models : [""]).map((model) => {
+                          const isActive = config.id === activeProvider?.id && (!model || config.model === model);
+                          return (
+                            <button
+                              key={`${config.id}:${model}`}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={isActive}
+                              className={`ai-workspace-command-item ai-workspace-command-item--provider ${isActive ? "is-active" : ""}`}
+                              onClick={() => {
+                                setOpenMenu(null);
+                                onActivateProvider(config.id, model || undefined);
+                              }}
+                            >
+                              <span className="ai-workspace-command-item-copy">
+                                <strong>{model || typeLabel}</strong>
+                                <span>{providerLabel}</span>
+                              </span>
+                              <span className="ai-workspace-command-provider-meta">
+                                {!config.is_enabled && <span className="ai-workspace-command-provider-tag">Disabled</span>}
+                                {isActive && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
+                              </span>
+                            </button>
+                          );
+                        });
                       }) : (
                         <button type="button" className="ai-workspace-command-empty" onClick={onOpenSettings}>
                           No provider configured yet. Open settings

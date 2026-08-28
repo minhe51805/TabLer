@@ -30,6 +30,8 @@ export function AISettingsModal({ onClose }: Props) {
     const [clearedKeyIds, setClearedKeyIds] = useState<string[]>([]);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [saveError, setSaveError] = useState<string | null>(null);
+    const [modelDialog, setModelDialog] = useState<{ index: number; value: string } | null>(null);
+    const [modelDialogError, setModelDialogError] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [connectionCheckStatus, setConnectionCheckStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
     const [connectionCheckMessage, setConnectionCheckMessage] = useState<string | null>(null);
@@ -175,6 +177,46 @@ export function AISettingsModal({ onClose }: Props) {
         }
     };
 
+    const handleDeleteModel = (index: number) => {
+        if (!activeConfig) return;
+        const models = [...activeConfigModels];
+        const removed = models.splice(index, 1)[0];
+        if (removed === undefined) return;
+        // Removing the active model promotes the first remaining one so the
+        // provider never points at a model that no longer exists.
+        const nextModel = activeConfig.model === removed ? (models[0] ?? "") : activeConfig.model;
+        updateConfig(activeConfig.id, { models, model: nextModel });
+    };
+
+    const handleSaveModelDialog = () => {
+        if (!activeConfig || !modelDialog) return;
+        const value = modelDialog.value.trim();
+        if (!value) {
+            setModelDialogError("Model ID cannot be empty.");
+            return;
+        }
+        const duplicateIndex = activeConfigModels.findIndex(
+            (entry, entryIndex) => entryIndex !== modelDialog.index && entry.toLowerCase() === value.toLowerCase(),
+        );
+        if (duplicateIndex !== -1) {
+            setModelDialogError("That model ID already exists for this provider.");
+            return;
+        }
+        const models = [...activeConfigModels];
+        const wasActiveModel = modelDialog.index >= 0 && models[modelDialog.index] === activeConfig.model;
+        if (modelDialog.index >= 0) {
+            models[modelDialog.index] = value;
+        } else {
+            models.push(value);
+        }
+        // A brand-new first model, or a rename of the active model, keeps the
+        // provider pointing at something that exists.
+        const nextModel = wasActiveModel || !activeConfig.model?.trim() ? value : activeConfig.model;
+        updateConfig(activeConfig.id, { models, model: nextModel });
+        setModelDialog(null);
+        setModelDialogError(null);
+    };
+
     const handleSave = async () => {
         const apiKeyUpdates = Object.fromEntries(
             Object.entries(keyDrafts).filter(([, value]) => value.trim().length > 0)
@@ -257,6 +299,11 @@ export function AISettingsModal({ onClose }: Props) {
     };
 
     const activeConfig = configs.find(c => c.id === editingId);
+    const activeConfigModels = activeConfig
+        ? (activeConfig.models?.length
+            ? activeConfig.models
+            : (activeConfig.model?.trim() ? [activeConfig.model.trim()] : []))
+        : [];
     const endpointFieldCopy = activeConfig ? getAIProviderEndpointFieldCopy(activeConfig) : null;
     const hasStoredKey = activeConfig ? storedKeyStatus[activeConfig.id] && !clearedKeyIds.includes(activeConfig.id) : false;
     const isActiveProviderInUse = !!activeConfig?.is_enabled && !!activeConfig?.is_primary;
@@ -641,16 +688,80 @@ export function AISettingsModal({ onClose }: Props) {
                                             </div>
                                         </div>
                                         <div className="ai-settings-field">
-                                            <label className="ai-settings-label">Model Name</label>
-                                            <input
-                                                type="text"
-                                                value={activeConfig.model}
-                                                onChange={(e) => updateConfig(activeConfig.id, { model: e.target.value })}
-                                                placeholder="e.g. gpt-4o-mini"
-                                                className="ai-settings-input"
-                                                disabled={isSettingUpLocalOllama}
-                                            />
+                                            <label className="ai-settings-label">Models</label>
+                                            <div className="ai-settings-model-list">
+                                                {activeConfigModels.length > 0 ? activeConfigModels.map((modelName, index) => (
+                                                    <div key={`${modelName}-${index}`} className="ai-settings-model-row">
+                                                        <span className={`ai-settings-model-name ${modelName === activeConfig.model ? "is-active" : ""}`}>{modelName}</span>
+                                                        {modelName === activeConfig.model ? <span className="ai-settings-model-active">Active</span> : null}
+                                                        <button
+                                                            type="button"
+                                                            className="ai-settings-icon-btn"
+                                                            title="Edit model"
+                                                            disabled={isSettingUpLocalOllama}
+                                                            onClick={() => setModelDialog({ index, value: modelName })}
+                                                        >
+                                                            <Pencil className="w-3.5 h-3.5" />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="ai-settings-icon-btn ai-settings-icon-btn-danger"
+                                                            title="Delete model"
+                                                            disabled={isSettingUpLocalOllama}
+                                                            onClick={() => handleDeleteModel(index)}
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                )) : (
+                                                    <p className="ai-settings-model-empty">No models yet — add one below.</p>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    className="ai-settings-btn-toggle"
+                                                    disabled={isSettingUpLocalOllama}
+                                                    onClick={() => setModelDialog({ index: -1, value: "" })}
+                                                >
+                                                    + Add model
+                                                </button>
+                                            </div>
                                         </div>
+                                        {activeConfig.provider_type === "custom" ? (
+                                            <div className="ai-settings-field">
+                                                <label className="ai-settings-label">API format</label>
+                                                <select
+                                                    className="ai-settings-input"
+                                                    value={activeConfig.api_format || "auto"}
+                                                    onChange={(e) => updateConfig(activeConfig.id, { api_format: e.target.value === "auto" ? null : e.target.value })}
+                                                    disabled={isSettingUpLocalOllama}
+                                                >
+                                                    <option value="auto">Auto-detect from URL</option>
+                                                    <option value="chat-completions">Chat completions (/chat/completions)</option>
+                                                    <option value="ollama-chat">Ollama /api/chat</option>
+                                                    <option value="ollama-generate">Ollama /api/generate</option>
+                                                </select>
+                                            </div>
+                                        ) : null}
+                                        {modelDialog ? (
+                                            <div className="ai-settings-model-dialog-backdrop" role="dialog" aria-label="Edit model">
+                                                <div className="ai-settings-model-dialog">
+                                                    <label className="ai-settings-label">Model ID</label>
+                                                    <input
+                                                        autoFocus
+                                                        type="text"
+                                                        className="ai-settings-input"
+                                                        value={modelDialog.value}
+                                                        onChange={(e) => setModelDialog({ ...modelDialog, value: e.target.value })}
+                                                        placeholder="e.g. deepseek-v4-flash"
+                                                    />
+                                                    {modelDialogError ? <div className="ai-settings-error">{modelDialogError}</div> : null}
+                                                    <div className="ai-settings-model-dialog-actions">
+                                                        <button type="button" className="ai-settings-btn-cancel" onClick={() => setModelDialog(null)}>Cancel</button>
+                                                        <button type="button" className="ai-settings-btn-save" onClick={handleSaveModelDialog}>Save model</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ) : null}
                                         <div className="ai-settings-field">
                                             <label className="ai-settings-label">
                                                 {activeConfig.provider_type === "ollama" || activeConfig.provider_type === "custom"

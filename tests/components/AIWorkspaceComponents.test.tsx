@@ -80,7 +80,7 @@ describe("AI workspace components", () => {
 
     await user.click(screen.getByTitle("gpt-test"));
     await user.click(screen.getByRole("menuitemradio", { name: /gpt-test/i }));
-    expect(props.onActivateProvider).toHaveBeenCalledWith("provider-1");
+    expect(props.onActivateProvider).toHaveBeenCalledWith("provider-1", "gpt-test");
     expect(props.onCloseHistory).toHaveBeenCalled();
   });
 

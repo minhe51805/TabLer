@@ -41,12 +41,12 @@ export function useAIPanelPreferences(options: UseAIPanelPreferencesOptions) {
     setIsHistoryOpen(false);
     window.dispatchEvent(new CustomEvent("open-ai-settings"));
   }, [setIsHistoryOpen]);
-  const activateProvider = useCallback(async (providerId: string) => {
+  const activateProvider = useCallback(async (providerId: string, model?: string) => {
     const target = aiConfigs.find((config) => config.id === providerId);
-    if (!target || (target.id === activeProvider?.id && target.is_enabled && target.is_primary)) return;
+    if (!target || (target.id === activeProvider?.id && target.is_enabled && target.is_primary && (!model || target.model === model))) return;
     const nextConfigs = normalizeAIProviderConfigs(aiConfigs.map((config) => (
       config.id === providerId
-        ? { ...config, is_enabled: true, is_primary: true }
+        ? { ...config, is_enabled: true, is_primary: true, ...(model ? { model } : {}) }
         : { ...config, is_primary: false }
     )));
     setIsSwitchingProvider(true);

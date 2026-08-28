@@ -558,7 +558,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             // When providers died mid-run, surface the automatic switch right
             // under the recovery answer in a quiet, italic side note.
             const responseWithFailoverNote = providerFailoverNote
-              ? `${trimmedResponse}\n\n_${providerFailoverNote}_`
+              ? `${trimmedResponse}\n\n*${providerFailoverNote}*`
               : trimmedResponse;
             const recoveredSql = extractSqlFromResponse(responseWithFailoverNote);
 
@@ -580,7 +580,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               message: reason,
               args: {
                 response: providerFailoverNote
-                  ? `${fallbackResponse}\n\n_${providerFailoverNote}_`
+                  ? `${fallbackResponse}\n\n*${providerFailoverNote}*`
                   : fallbackResponse,
               },
             };

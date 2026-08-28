@@ -19673,6 +19673,13 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   font-size: 0.92em;
 }
 
+/* Quiet side notes (e.g. provider-failover notices) rendered as *emphasis*. */
+.ai-workspace-markdown-em {
+  font-style: italic;
+  opacity: 0.62;
+  font-size: 0.92em;
+}
+
 .ai-workspace-markdown-code {
   margin: 0;
   padding: 12px 13px;

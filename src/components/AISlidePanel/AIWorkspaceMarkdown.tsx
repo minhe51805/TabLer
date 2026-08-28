@@ -191,6 +191,26 @@ function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
       }
     }
 
+    if (text[cursor] === "*") {
+      const closingIndex = text.indexOf("*", cursor + 1);
+      if (closingIndex !== -1 && text.slice(cursor + 1, closingIndex).trim()) {
+        flushBuffer();
+        nodes.push(
+          <em
+            key={`${keyPrefix}-em-${nodes.length}`}
+            className="ai-workspace-markdown-em"
+          >
+            {renderInlineMarkdown(
+              text.slice(cursor + 1, closingIndex),
+              `${keyPrefix}-em-${nodes.length}`,
+            )}
+          </em>,
+        );
+        cursor = closingIndex + 1;
+        continue;
+      }
+    }
+
     if (text[cursor] === "`") {
       const closingIndex = text.indexOf("`", cursor + 1);
       if (closingIndex !== -1) {

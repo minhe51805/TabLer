@@ -14,6 +14,14 @@ export interface AIGetTableStructureCommandArgs extends Record<string, unknown> 
 export interface AIExecuteSandboxedQueryCommandArgs extends Record<string, unknown> {
   connectionId: string;
   statements: string[];
+  requireReadOnly?: boolean;
+  requestId?: string;
+}
+
+export interface AIExecuteAgentReadonlyQueryCommandArgs extends Record<string, unknown> {
+  connectionId: string;
+  statements: string[];
+  requestId?: string;
 }
 
 export interface AIPreviewWriteTransactionCommandArgs extends Record<string, unknown> {
@@ -37,6 +45,10 @@ export interface AIWorkspaceToolCommandMap {
   };
   execute_sandboxed_query: {
     args: AIExecuteSandboxedQueryCommandArgs;
+    result: QueryResult;
+  };
+  execute_agent_readonly_query: {
+    args: AIExecuteAgentReadonlyQueryCommandArgs;
     result: QueryResult;
   };
   preview_write_transaction: {

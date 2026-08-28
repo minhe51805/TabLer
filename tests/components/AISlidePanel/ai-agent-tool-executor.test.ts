@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { agentToolAvailability } from "@/components/AISlidePanel/ai-agent-engine-gates";
 import { createAgentToolExecutor } from "@/components/AISlidePanel/ai-agent-tool-executor";
 import type { AgentToolExecutorDeps } from "@/components/AISlidePanel/ai-agent-tool-executor";
 import type { AIAgentToolAction } from "@/components/AISlidePanel/ai-agent-tools";
@@ -55,7 +56,7 @@ function mkDeps(overrides: Partial<AgentToolExecutorDeps> = {}) {
       sandboxed: false,
       truncated: false,
     }),
-    executeSandboxQuery: vi.fn().mockResolvedValue({
+    executeReadonlyQuery: vi.fn().mockResolvedValue({
       columns: [{ name: "count", data_type: "INT", is_nullable: true, is_primary_key: false }],
       rows: [[7]],
       affected_rows: 0,
@@ -100,8 +101,8 @@ describe("exploration de-dup guard", () => {
     const b = await exec.runAgentTool({ action: "run_readonly_sql", args: { sql: "select * from users limit 1" } } as AIAgentToolAction);
     expect(a).not.toContain("Tool notice:");
     expect(b).not.toContain("Tool notice:");
-    expect(deps.getTableData ?? deps.executeSandboxQuery).toBeDefined();
-    expect((deps.executeSandboxQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(deps.getTableData ?? deps.executeReadonlyQuery).toBeDefined();
+    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -261,8 +262,8 @@ describe("run_readonly_sql", () => {
       action: "run_readonly_sql",
       args: { sql: "SELECT * FROM users" },
     } as AIAgentToolAction);
-    expect((deps.executeSandboxQuery as ReturnType<typeof vi.fn>).mock.calls[0][1][0]).toMatch(/^EXPLAIN/i);
-    expect((deps.executeSandboxQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls[0][1][0]).toMatch(/^EXPLAIN/i);
+    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
   });
 
   it("skips EXPLAIN when a LIMIT clause exists", async () => {
@@ -271,11 +272,53 @@ describe("run_readonly_sql", () => {
       action: "run_readonly_sql",
       args: { sql: "SELECT * FROM users LIMIT 5" },
     } as AIAgentToolAction);
-    expect((deps.executeSandboxQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+  });
+
+  it("rejects SQL reads on non-SQL engines even if the backend mock would allow them", async () => {
+    const deps = depsWithInspected();
+    deps.toolAvailability = agentToolAvailability("redis");
+    const obs = await run(deps, {
+      action: "run_readonly_sql",
+      args: { sql: "SELECT * FROM users LIMIT 1" },
+    } as AIAgentToolAction);
+    expect(obs).toContain("Tool blocked:");
+    expect(obs).toContain("Redis");
+    expect(deps.executeReadonlyQuery).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "UPDATE users SET email = 'x'",
+    "DELETE FROM users",
+    "DROP TABLE users",
+    "INSERT INTO users(email) VALUES('x')",
+    "ALTER TABLE users ADD COLUMN x INT",
+    "WITH gone AS (DELETE FROM users RETURNING id) SELECT * FROM gone",
+  ])("blocks mutating SQL even if the backend mock would allow it: %s", async (sql) => {
+    const deps = depsWithInspected();
+    const obs = await run(deps, {
+      action: "run_readonly_sql",
+      args: { sql },
+    } as AIAgentToolAction);
+    expect(obs).toMatch(/^Tool error:/);
+    expect(obs).toMatch(/read-only|only allows/i);
+    expect(deps.executeReadonlyQuery).not.toHaveBeenCalled();
   });
 });
 
 describe("preview_write", () => {
+  it("rejects write previews on non-SQL engines even if the backend mock would allow them", async () => {
+    const deps = mkDeps();
+    deps.toolAvailability = agentToolAvailability("mongodb");
+    const obs = await run(deps, {
+      action: "preview_write",
+      args: { statements: ["DELETE FROM users WHERE id = 1"] },
+    } as AIAgentToolAction);
+    expect(obs).toContain("Tool blocked:");
+    expect(obs).toContain("MongoDB");
+    expect(deps.previewWriteTransaction).not.toHaveBeenCalled();
+  });
+
   it("rejects batches without mutating statements", async () => {
     const obs = await run(mkDeps(), {
       action: "preview_write",

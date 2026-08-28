@@ -4,8 +4,9 @@ import { getCurrentAppLanguage } from "../../../i18n";
 import { useAIStore } from "../../../stores/aiStore";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useQueryStore } from "../../../stores/queryStore";
-import { type AIConversationMessage, type AIRequestIntent, type AIRequestMode } from "../../../types";
+import { type AIConversationMessage, type AIProviderConfig, type AIRequestIntent, type AIRequestMode } from "../../../types";
 import { getActiveAIProvider, isLocalAIProvider } from "../../../utils/ai-provider-registry";
+import { getAIFailoverConsent, requestAIFailoverConsent } from "../../../utils/ai-failover-consent";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { getSemanticGlossary } from "../../../utils/semantic-glossary";
 import { invokeMutation } from "../../../utils/tauri-utils";
@@ -30,6 +31,10 @@ import {
   type AIAgentActionRequestReason,
 } from "../ai-agent-runner";
 import {
+  DEFAULT_AGENT_TOKEN_BUDGET,
+  extractAgentUsageTokens,
+} from "../ai-agent-cost";
+import {
   buildAgentEvidenceSummary,
   buildAgentFinalRecoveryPrompt,
   buildLocalAgentFallbackResponse,
@@ -38,12 +43,18 @@ import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates
 import {
   buildSchemaContextRequiredMessage,
 } from "../ai-agent-grounding";
+import {
+  formatExecutionError,
+  isHighRiskStatement,
+  isMutatingStatement,
+} from "../../SQLEditor/SQLEditorUtils";
 import { finalizeAgentResult } from "../ai-agent-finalization";
 import { recoverNonAgentAssistResponse } from "../ai-assist-recovery";
 import { yieldToBrowserFrame } from "../ai-async-utils";
 import { prepareAIWorkspaceSchemaContext } from "../ai-schema-context-loader";
 import { isAgentRecordLookupRequest } from "../ai-agent-schema-search";
 import { resolveAgentRequestContext } from "../ai-agent-request-context";
+import { agentToolAvailability, engineAwareDataPlaneHints } from "../ai-agent-engine-gates";
 import { createAgentToolExecutor } from "../ai-agent-tool-executor";
 import {
   createAgentActionRequestor,
@@ -82,6 +93,48 @@ const MAX_AGENT_STEPS = 10;
 const MAX_REMOTE_AGENT_STEPS = 8;
 const MAX_LOCAL_COMPLEX_AGENT_STEPS = 14;
 const MAX_REMOTE_COMPLEX_AGENT_STEPS = 10;
+
+/**
+ * Wait window before a promoted re-run, so a rate-limited endpoint has a
+ * moment to recover before the next provider serves the step.
+ */
+const PROVIDER_RETRY_DELAY_MS = 1_200;
+
+function formatProviderFailoverNote(
+  language: string,
+  failed: AIProviderConfig | undefined,
+  promoted: AIProviderConfig | null,
+) {
+  const failedLabel = failed?.name?.trim() || failed?.model || "AI provider";
+  if (!promoted) {
+    return language === "vi"
+      ? `Provider "${failedLabel}" đang lỗi — đã tự thử lại. Bạn chỉ cấu hình một provider nên chưa có provider nào để chuyển sang.`
+      : `Provider "${failedLabel}" failed — retried automatically. Only one provider is configured, so there is nothing to switch to.`;
+  }
+  const nextLabel = promoted.name?.trim() || promoted.model;
+  return language === "vi"
+    ? `Provider "${failedLabel}" đang lỗi — đã tự chuyển sang provider "${nextLabel}" và chạy lại.`
+    : `Provider "${failedLabel}" failed — switched to provider "${nextLabel}" and re-ran automatically.`;
+}
+
+/**
+ * Second line of the failover note: what happened when the promoted provider
+ * was actually tried, with the REAL underlying reason (HTTP status, bad key,
+ * connection refused...) so the user can go fix that provider's config.
+ */
+function formatProviderFollowUpNote(
+  language: string,
+  provider: AIProviderConfig | null | undefined,
+  rawReason: string,
+) {
+  const label = provider?.name?.trim()
+    || provider?.model
+    || (language === "vi" ? "provider hiện tại" : "the current provider");
+  const shortReason = rawReason.length > 180 ? `${rawReason.slice(0, 180)}…` : rawReason;
+  return language === "vi"
+    ? `Provider "${label}" cũng trả lời lỗi: ${shortReason}`
+    : `Provider "${label}" also failed: ${shortReason}`;
+}
 /** Upper bound for tables scanned per search_schema call; large catalogs are prioritized, not fully scanned. */
 /** Pause before retrying a transient provider failure inside the agent loop. */
 /** Rate limits need a longer cooldown than blips; one patient retry still beats failing the run. */
@@ -109,6 +162,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     switchDatabase,
     activeConnectionId: connectionId,
     currentDatabase,
+    activeDbType,
   } = useConnectionStore(
     useShallow((state) => ({
       tables: state.tables,
@@ -116,14 +170,16 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       switchDatabase: state.switchDatabase,
       activeConnectionId: state.activeConnectionId,
       currentDatabase: state.currentDatabase,
+      activeDbType: state.connections.find((connection) => connection.id === state.activeConnectionId)?.db_type,
     })),
   );
-  const { getTableStructure, getTableColumnsPreview, getTableData, executeSandboxQuery, previewWriteTransaction } = useQueryStore(
+  const { getTableStructure, getTableColumnsPreview, getTableData, executeSandboxQuery, executeAgentReadonlyQuery, previewWriteTransaction } = useQueryStore(
     useShallow((state) => ({
       getTableStructure: state.getTableStructure,
       getTableColumnsPreview: state.getTableColumnsPreview,
       getTableData: state.getTableData,
       executeSandboxQuery: state.executeSandboxQuery,
+      executeAgentReadonlyQuery: state.executeAgentReadonlyQuery,
       previewWriteTransaction: state.previewWriteTransaction,
     })),
   );
@@ -389,9 +445,12 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           schemaContextEnabled &&
           availableSchemaTables.length > 0 &&
           Boolean(connectionId);
+        const toolAvailability = agentToolAvailability(activeDbType);
         const recordLookupRequest = workspaceToolsEnabled && isAgentRecordLookupRequest(normalizedPrompt);
         const workspaceToolStatus = workspaceToolsEnabled
-              ? "Database tools are available if grounded workspace evidence is needed."
+              ? toolAvailability.sqlRead
+                ? "Database tools are available if grounded workspace evidence is needed."
+                : `Database tools are available on ${toolAvailability.engineLabel}, but SQL tools (run_readonly_sql, preview_write) are disabled for this engine.`
           : !connectionId
             ? "No active database connection is selected, so respond without workspace tools."
             : !needsWorkspaceContext
@@ -399,18 +458,23 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               : !schemaSharingEnabled
                 ? "Schema sharing is disabled for the current provider, so workspace tools are unavailable for this turn."
                 : "No verified schema snapshot is available for tool use on this turn.";
+        const dataPlaneHints = engineAwareDataPlaneHints(toolAvailability);
         const sharedAgentInstruction = joinAgentInstructions(
-          "You are an autonomous agent that takes action, not a consultant. Decide your own steps: locate unknown fields with search_schema, inspect the exact table with describe_table, then ACTUALLY gather data yourself with sample_table_data or run_readonly_sql. Do not just suggest queries and do not ask the user which query to run first ? pick the most relevant one and run it yourself.",
-          "When the user asks to see data, charts, counts, samples, distributions, or 'show me' anything, you MUST run at least one sample_table_data or run_readonly_sql before finishing. Finishing with only suggestions and no executed query is a failure.",
-          "When you finish, put the single best runnable query in finish.args.sql (a real SELECT grounded in the verified schema) so it can be executed and shown to the user automatically.",
+          dataPlaneHints.gather,
+          dataPlaneHints.mustRead,
+          dataPlaneHints.finishSql,
           !isLocalProvider
             ? "Be efficient: a few targeted tool calls are better than exploring every table, but never skip running the query that produces the answer."
             : undefined,
           wantsVisualization
-            ? "For a chart or visualization request, run a chart-friendly aggregate query (e.g. GROUP BY ... COUNT(*)) and return that exact SQL in finish.args.sql plus a short chart recommendation."
+            ? toolAvailability.sqlRead
+              ? "For a chart or visualization request, run a chart-friendly aggregate query (e.g. GROUP BY ... COUNT(*)) and return that exact SQL in finish.args.sql plus a short chart recommendation."
+              : "For a chart or visualization request, sample the relevant data and describe the chart in finish.args.response. Omit finish.args.sql."
             : undefined,
           wantsMetricsBoard
-            ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
+            ? toolAvailability.sqlRead
+              ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
+              : "This is a metrics/dashboard/summary request. Inspect the relevant tables with describe_table and sample_table_data, then summarize in finish.args.response. Omit SQL-shaped widget queries."
             : undefined
         );
         // Summaries already fetched while preparing schema context are injected
@@ -445,6 +509,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             steps,
             workspaceToolsEnabled,
             workspaceToolStatus,
+            toolAvailability,
             forceFinish,
             extraInstruction,
             cachedTableSummaries,
@@ -474,8 +539,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           getTableColumnsPreview,
           getTableStructure,
           getTableData,
-          executeSandboxQuery,
+          executeReadonlyQuery: executeAgentReadonlyQuery,
           previewWriteTransaction,
+          toolAvailability,
         });
 
         const recoverAgentFinishAction = async (reason: string): Promise<AIAgentFinishAction> => {
@@ -487,6 +553,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             wantsVisualization,
             steps: agentTraceSteps,
           });
+          const failoverNoteSuffix = failoverNoteLines.length > 0
+            ? `\n\n*${failoverNoteLines.join(" ")}*`
+            : "";
 
           try {
             const recoveredResponse = await askAI(
@@ -509,13 +578,16 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             }
 
             const trimmedResponse = recoveredResponse.trim() || fallbackResponse;
+            // When providers died mid-run, surface the automatic switch right
+            // under the recovery answer in a quiet, italic side note.
+            const responseWithFailoverNote = `${trimmedResponse}${failoverNoteSuffix}`;
             const recoveredSql = extractSqlFromResponse(trimmedResponse);
 
             return {
               action: "finish",
               message: reason,
               args: {
-                response: trimmedResponse,
+                response: responseWithFailoverNote,
                 ...(recoveredSql ? { sql: recoveredSql } : {}),
               },
             };
@@ -528,7 +600,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               action: "finish",
               message: reason,
               args: {
-                response: fallbackResponse,
+                response: `${fallbackResponse}${failoverNoteSuffix}`,
               },
             };
           }
@@ -579,10 +651,22 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
         let consecutiveActionFailures = 0;
         let endedWithAskUser = false;
+        // Provider failover: each failure promotes the NEXT enabled provider
+        // (selector follows, note line recorded) and re-runs the step, until
+        // every enabled provider has had a turn as primary. Only then does the
+        // run fall back to the canned recovery answer.
+        const failedProviderIds = new Set<string>();
+        const failoverNoteLines: string[] = [];
+        let providerRetryCount = 0;
 
         const agentRunnerResult = await runAIAgentToolLoop({
           workspaceToolsEnabled,
           stepBudget: agentStepBudget,
+          tokenBudget: DEFAULT_AGENT_TOKEN_BUDGET,
+          // streamingUsage holds the most recent model call's raw usage; the
+          // runner accumulates this after each action request.
+          getLastRequestTokens: () =>
+            extractAgentUsageTokens(useAIStore.getState().streamingUsage),
           initialSteps: agentTraceSteps,
           requestAction: async ({ forceFinish, includeHistory, iteration, reason, steps }) => {
             const completedToolSteps = steps.filter((step) => step.action !== "plan");
@@ -632,6 +716,72 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               return action;
             } catch (errorValue) {
               if (isSupersededAIRequestError(errorValue)) throw errorValue;
+              const requestError = normalizeAIRequestError(errorValue);
+              // Anything except a user-initiated cancel is worth a promoted
+              // re-run: rate limits surface as "provider", garbage bodies as
+              // "invalid-response", and odd transport failures as "unknown" -
+              // refusing to retry on those was exactly the silent-stop bug.
+              const failoverEligible = requestError.code !== "cancelled";
+
+              // A dead or rate-limited provider must not end the run: exactly
+              // once per run, promote the next configured provider, tell the
+              // user inline, wait out the transient window, then re-run this
+              // same step. Later failures retry on the promoted provider
+              // instead of rotating providers again.
+              const enabledProviderCount = useAIStore
+                .getState()
+                .aiConfigs.filter((config) => config.is_enabled).length;
+              const canPromoteFurther =
+                providerRetryCount < Math.max(0, enabledProviderCount - 1);
+
+              if (failoverEligible && canPromoteFurther) {
+                // The very first failure asks for permission before the agent
+                // ever switches providers on its own. An approval (or decline)
+                // is remembered, so the question never comes back.
+                let failoverAllowed = getAIFailoverConsent() === "approved";
+                if (!failoverAllowed && getAIFailoverConsent() === "unset") {
+                  failoverAllowed = await requestAIFailoverConsent();
+                }
+                if (failoverAllowed) {
+                  providerRetryCount += 1;
+                  const failedProvider = getActiveAIProvider(useAIStore.getState().aiConfigs);
+                  if (failedProvider) failedProviderIds.add(failedProvider.id);
+                  const promoted = useAIStore.getState().promoteNextEnabledProvider();
+                  failoverNoteLines.push(
+                    formatProviderFailoverNote(appLanguage, failedProvider, promoted),
+                  );
+                  publishAgentProgress({
+                    action: "think",
+                    message: failoverNoteLines[failoverNoteLines.length - 1],
+                  });
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, PROVIDER_RETRY_DELAY_MS),
+                  );
+                  try {
+                    const promotedRetryAction = await requestAgentAction(controllerPrompt, false);
+                    consecutiveActionFailures = 0;
+                    return promotedRetryAction;
+                  } catch (promotedRetryError) {
+                    if (isSupersededAIRequestError(promotedRetryError)) throw promotedRetryError;
+                    const promotedFailedProvider = getActiveAIProvider(
+                      useAIStore.getState().aiConfigs,
+                    );
+                    // The promoted provider also failed - keep its REAL reason so
+                    // the recovery note can tell the user what to go fix.
+                    failoverNoteLines.push(
+                      formatProviderFollowUpNote(
+                        appLanguage,
+                        promotedFailedProvider,
+                        formatActionFailureReason(promotedRetryError),
+                      ),
+                    );
+                    // Fall through to the standard same-provider retry below.
+                  }
+                }
+                // Declined: stay on the failing provider and fall through to
+                // the ordinary same-provider retry / recovery path below.
+              }
+
               // One bad model turn must not discard the evidence already
               // gathered: retry the same prompt once, then salvage the run
               // through the finish-recovery path instead of failing outright.
@@ -647,6 +797,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 return retriedAction;
               } catch (retryError) {
                 if (isSupersededAIRequestError(retryError)) throw retryError;
+                failoverNoteLines.push(
+                  formatProviderFollowUpNote(
+                    appLanguage,
+                    getActiveAIProvider(useAIStore.getState().aiConfigs),
+                    formatActionFailureReason(retryError),
+                  ),
+                );
                 return recoverAgentFinishAction(
                   `The agent could not return a valid action: ${formatActionFailureReason(retryError)}`,
                 );
@@ -757,6 +914,32 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           recoverFinishAction: recoverAgentFinishAction,
           requestAgentAction,
           sharedAgentInstruction,
+          validateSql: async (proposedSql) => {
+            // Mutating proposals are already guarded by preview/confirmation
+            // flows; the pre-flight only verifies read-only SQL.
+            if (isMutatingStatement(proposedSql) || isHighRiskStatement(proposedSql)) {
+              return null;
+            }
+            if (!connectionId || requestId !== requestIdRef.current) {
+              return null;
+            }
+            if (requestDataReadConsent) {
+              const approved = await requestDataReadConsent();
+              if (!approved) return null;
+            }
+            if (requestId !== requestIdRef.current) {
+              return null;
+            }
+            try {
+              await executeSandboxQuery(connectionId, [proposedSql], true);
+              return null;
+            } catch (errorValue) {
+              if (isSupersededAIRequestError(errorValue)) {
+                throw errorValue;
+              }
+              return formatExecutionError(errorValue);
+            }
+          },
         });
         const hasValidSql = Boolean(finalization.sql);
 
@@ -819,7 +1002,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         setIsGenerating(false);
       }
     }
-  }, [activeProvider, aiConfigs, askAI, connectionId, currentDatabase, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
+  }, [activeDbType, activeProvider, aiConfigs, askAI, connectionId, currentDatabase, executeAgentReadonlyQuery, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
 
   const copyText = useCallback(async (text: string) => {
     await navigator.clipboard.writeText(text);

@@ -68,6 +68,18 @@ pub struct AIProviderConfig {
     pub allow_schema_context: bool,
     #[serde(default)]
     pub allow_inline_completion: bool,
+    /// Explicit API wire format for Custom providers ("chat-completions",
+    /// "ollama-chat", "ollama-generate"). `None`/"auto" keeps URL sniffing.
+    #[serde(default)]
+    pub api_format: Option<String>,
+    /// Model catalog offered by this provider. Empty = legacy single-model
+    /// config, where `model` alone is the truth.
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// Models hidden from the composer switcher. They stay editable here in
+    /// storage so they can be re-enabled without retyping the ID.
+    #[serde(default)]
+    pub disabled_models: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -88,6 +100,16 @@ pub struct AIRequest {
     pub language: AIResponseLanguage,
     #[serde(default)]
     pub history: Vec<AIConversationMessage>,
+    /// Native function-calling tool definitions, already shaped for the target
+    /// provider's wire format on the frontend. `None` (the default) keeps the
+    /// classic text path with a byte-identical request body, so this field is
+    /// inert unless the frontend feature flag opts in.
+    #[serde(default)]
+    pub tools: Option<serde_json::Value>,
+    /// Provider-shaped tool selection hint (`tool_choice` for OpenAI-like and
+    /// Anthropic, `tool_config` for Gemini). Ignored when `tools` is `None`.
+    #[serde(default)]
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 fn default_ai_request_mode() -> AIRequestMode {
@@ -139,6 +161,14 @@ impl AIRequest {
             .sum::<usize>();
         if history_chars > 24_000 {
             return Err("Conversation history is too large (max 24,000 characters)".to_string());
+        }
+
+        // Native tool definitions are machine-generated on the frontend, so a
+        // huge payload signals abuse rather than a legitimate call.
+        if let Some(tools) = &self.tools {
+            if tools.to_string().len() > 20_000 {
+                return Err("Tool definitions are too large (max 20,000 characters)".to_string());
+            }
         }
 
         Ok(())

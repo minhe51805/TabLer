@@ -8,6 +8,12 @@ export interface AIProviderConfig {
     provider_type: AIProviderType;
     endpoint: string;
     model: string;
+    /** Explicit API wire format for Custom providers; undefined = auto-detect. */
+    api_format?: string | null;
+    /** Model catalog; empty = legacy single-model config. */
+    models?: string[];
+    /** Models hidden from the composer switcher; kept for easy re-enabling. */
+    disabled_models?: string[];
     is_enabled: boolean;
     is_primary?: boolean;
     allow_schema_context: boolean;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { agentToolAvailability } from "@/components/AISlidePanel/ai-agent-engine-gates";
 import {
   buildAgentControllerPrompt,
   buildAgentPlanPrompt,
@@ -127,6 +128,39 @@ describe("AI agent context builder", () => {
 
     expect(prompt).toContain("[observation truncated]");
     expect(prompt).not.toContain("x".repeat(2_500));
+  });
+
+  it("omits SQL tools and SQL-only rules on document/KV engines", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "Show recent orders",
+      assistIntent: "sql",
+      currentDatabase: "shop",
+      availableTableNames: ["orders"],
+      steps: [],
+      workspaceToolsEnabled: true,
+      toolAvailability: agentToolAvailability("mongodb"),
+    });
+
+    expect(prompt).toContain("Engine: MongoDB (document)");
+    expect(prompt).not.toContain('"action":"run_readonly_sql"');
+    expect(prompt).not.toContain('"action":"preview_write"');
+    expect(prompt).toContain('"action":"sample_table_data"');
+    expect(prompt).toContain("Omit finish.args.sql");
+    expect(prompt).not.toContain("run run_readonly_sql before finishing");
+  });
+
+  it("keeps SQL tools on ClickHouse", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "Count events",
+      assistIntent: "sql",
+      currentDatabase: "analytics",
+      availableTableNames: ["events"],
+      steps: [],
+      workspaceToolsEnabled: true,
+      toolAvailability: agentToolAvailability("clickhouse"),
+    });
+    expect(prompt).toContain('"action":"run_readonly_sql"');
+    expect(prompt).toContain('"action":"preview_write"');
   });
 
   it("injects pre-inspected summaries and caps them to save describe_table steps", () => {

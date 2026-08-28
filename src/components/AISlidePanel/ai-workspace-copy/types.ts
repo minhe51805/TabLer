@@ -59,6 +59,7 @@ export interface AIWorkspaceCopy {
     alertDismiss: string;
     inspectOnTitle: string;
     inspectOffTitle: string;
+    resizeHandleTitle: string;
       inspectHint: string;
       capturedLabel: string;
       selectionReady: string;
@@ -87,8 +88,10 @@ export interface AIWorkspaceCopy {
     thinkingToggleHint: string;
     thinkingOn: string;
     thinkingOff: string;
+    autoProviderSwitchLabel: string;
     modeNeedsSchemaHint: string;
     openSettings: string;
+    hiddenModelsToggle: string;
     switchToPrompt: string;
     historyTitle: string;
     historyHint: string;

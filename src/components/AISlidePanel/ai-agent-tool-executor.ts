@@ -5,6 +5,7 @@ import { findAgentSchemaMatches, prioritizeSchemaScanCandidates } from "./ai-age
 import { formatExecutionError, isHighRiskStatement, isMutatingStatement, isSessionSwitchStatement } from "../SQLEditor/SQLEditorUtils";
 import {
   findMatchingTableName,
+  findSystemCatalogReferences,
   getAgentSqlSchemaRequirements,
   stringifyAgentObservation,
   summarizeAgentExplainPlan,
@@ -14,8 +15,13 @@ import {
 } from "./ai-agent-grounding";
 import { mapWithConcurrency } from "./ai-async-utils";
 import {
+  agentSqlToolBlockedMessage,
+  type AgentToolAvailability,
+} from "./ai-agent-engine-gates";
+import {
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
   AI_AGENT_SAMPLE_MAX_ROWS,
+  validateAIAgentReadonlySql,
   type AIAgentToolAction,
 } from "./ai-agent-tools";
 import { saveSemanticGlossaryEntry } from "../../utils/semantic-glossary";
@@ -45,15 +51,15 @@ export interface AgentToolExecutorDeps {
     table: string,
     opts?: { database?: string; limit?: number },
   ) => Promise<QueryResult>;
-  executeSandboxQuery: (
+  executeReadonlyQuery: (
     connectionId: string,
     statements: string[],
-    sandboxed: boolean,
   ) => Promise<QueryResult>;
   previewWriteTransaction: (
     connectionId: string,
     statements: string[],
   ) => Promise<{ results: Array<{ affected_rows: number; rows: unknown[][]; truncated?: boolean }> }>;
+  toolAvailability?: AgentToolAvailability;
 }
 
 /**
@@ -78,8 +84,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     getTableColumnsPreview,
     getTableStructure,
     getTableData,
-    executeSandboxQuery,
+    executeReadonlyQuery,
     previewWriteTransaction,
+    toolAvailability,
   } = deps;
   let lastExplorationToolKey = "";
 
@@ -309,9 +316,30 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     }
 
     if (action.action === "run_readonly_sql") {
+      if (toolAvailability && !toolAvailability.sqlRead) {
+        return agentSqlToolBlockedMessage("run_readonly_sql", toolAvailability);
+      }
       const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
       if (!sql) {
         return "Tool error: run_readonly_sql requires args.sql.";
+      }
+
+      // First-line defense: reject mutations/session SQL before any backend
+      // call. The dedicated `execute_agent_readonly_query` command still pins
+      // read-only server-side; this is fail-fast UX, not the security boundary.
+      try {
+        validateAIAgentReadonlySql(sql);
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: ${errorValue instanceof Error ? errorValue.message : String(errorValue)}`;
+      }
+
+      // System catalogs have engine-specific columns and are the #1 source of
+      // hallucinated SQL (e.g. information_schema.tables has no row_count).
+      // The workspace tools already provide everything the catalogs would.
+      const catalogRefs = findSystemCatalogReferences(sql);
+      if (catalogRefs.length > 0) {
+        return `Tool blocked: SQL references system catalog objects (${catalogRefs.join(", ")}). Do not query information_schema/pg_catalog/sqlite_master — their columns vary per engine. For table lists and row counts use list_tables (each entry carries rowCount); for columns use search_schema or describe_table.`;
       }
 
       const schemaRequirements = getAgentSqlSchemaRequirements(
@@ -342,7 +370,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         && !/^EXPLAIN\b/i.test(sql)
       ) {
         try {
-          const plan = await executeSandboxQuery(connectionId!, [`EXPLAIN ${sql}`], true);
+          const plan = await executeReadonlyQuery(connectionId!, [`EXPLAIN ${sql}`]);
           const planText = summarizeAgentExplainPlan(plan);
           if (planText) {
             explainNote = `\n\nQuery plan (EXPLAIN, not executed):\n${planText}`;
@@ -356,7 +384,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         }
       }
 
-      const queryResult = await executeSandboxQuery(connectionId!, [sql], true);
+      const queryResult = await executeReadonlyQuery(connectionId!, [sql]);
       if (requestId !== requestIdRef.current) {
         throw new Error(AI_REQUEST_REPLACED_MESSAGE);
       }
@@ -365,6 +393,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     }
 
     if (action.action === "preview_write") {
+      if (toolAvailability && !toolAvailability.sqlWritePreview) {
+        return agentSqlToolBlockedMessage("preview_write", toolAvailability);
+      }
       const requested = Array.isArray(action.args?.statements) ? action.args.statements : [];
       const statements = requested
         .filter((value): value is string => typeof value === "string")

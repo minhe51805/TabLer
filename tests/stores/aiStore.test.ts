@@ -180,4 +180,86 @@ describe("aiStore", () => {
       "Failed to load AI configs",
     );
   });
+
+  it("promotes the next enabled provider cyclically or returns null when alone", () => {
+    const second: AIProviderConfig = {
+      ...provider,
+      id: "provider-2",
+      name: "Claude",
+      provider_type: "anthropic",
+      is_primary: false,
+    };
+    const third: AIProviderConfig = {
+      ...provider,
+      id: "provider-3",
+      name: "Gemini",
+      provider_type: "gemini",
+      is_primary: false,
+    };
+    invokeMutationMock.mockImplementation(async (command: string, args?: { providers?: AIProviderConfig[] }) => {
+      if (command === "save_ai_configs") return [args?.providers ?? [], {}];
+      return null;
+    });
+    useAIStore.setState({ aiConfigs: [provider, second, third] });
+
+    const promoted = useAIStore.getState().promoteNextEnabledProvider();
+    expect(promoted?.id).toBe("provider-2");
+    expect(useAIStore.getState().aiConfigs.find((c) => c.id === "provider-2")?.is_primary).toBe(true);
+
+    // A second promotion walks past the new primary to the next enabled one.
+    const again = useAIStore.getState().promoteNextEnabledProvider();
+    expect(again?.id).toBe("provider-3");
+
+    // A lone provider has nowhere to go.
+    useAIStore.setState({ aiConfigs: [provider] });
+    expect(useAIStore.getState().promoteNextEnabledProvider()).toBeNull();
+  });
+
+  it("fails over to the next enabled provider for the retry without moving the primary", async () => {
+    const fallback: AIProviderConfig = {
+      ...provider,
+      id: "provider-2",
+      name: "Claude",
+      provider_type: "anthropic",
+      is_primary: false,
+    };
+    useAIStore.setState({ aiConfigs: [provider, fallback] });
+    invokeMutationMock.mockImplementation(async (command: string) => {
+      if (command === "cancel_ai_request") return true;
+      return null;
+    });
+    let streamAttempts = 0;
+    invokeWithTimeoutMock.mockImplementation(async (command: string, args?: {
+      request?: { provider_id?: string | null };
+    }) => {
+      if (command === "ask_ai_stream") {
+        streamAttempts += 1;
+        if (streamAttempts === 1) {
+          throw new Error("HTTP 429 Too Many Requests: rate limit exceeded");
+        }
+        failoverProviderIds.push(args?.request?.provider_id ?? null);
+        return undefined;
+      }
+      return null;
+    });
+    const failoverProviderIds: Array<string | null> = [];
+
+    await expect(
+      useAIStore.getState().askAI("prompt", "context", "panel", "sql"),
+    ).resolves.toBe("");
+
+    // The retry went to the next enabled provider...
+    expect(streamAttempts).toBe(2);
+    expect(failoverProviderIds).toEqual(["provider-2"]);
+    // ...but the configured primary is deliberately left untouched: the single
+    // visible promotion is owned by the agent run, not by every transport
+    // retry, so the selector never flip-flops between providers.
+    const configs = useAIStore.getState().aiConfigs;
+    expect(configs.find((config) => config.id === "provider-1")?.is_primary).toBe(true);
+    expect(configs.find((config) => config.id === "provider-2")?.is_primary).toBe(false);
+    expect(invokeMutationMock).not.toHaveBeenCalledWith(
+      "save_ai_configs",
+      expect.anything(),
+    );
+  });
 });

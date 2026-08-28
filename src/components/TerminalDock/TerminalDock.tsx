@@ -42,29 +42,24 @@ interface TerminalExitPayload {
 }
 
 function getTerminalTheme() {
-  const styles = getComputedStyle(document.documentElement);
-  const background = styles.getPropertyValue("--bg-base").trim() || "#050b14";
-  const foreground =
-    styles.getPropertyValue("--text-primary").trim() ||
-    "rgba(255,255,255,0.88)";
-  const cursor = styles.getPropertyValue("--fintech-green").trim() || "#00d4aa";
-  const accent = styles.getPropertyValue("--fintech-cyan").trim() || "#22d3ee";
-
+  // Fixed dark palette, deliberately NOT derived from the app theme: a light
+  // app theme has a dark --text-primary, which made the PowerShell prompt
+  // blend into the terminal background. Terminals stay dark by convention.
   return {
-    background,
-    foreground,
-    cursor,
-    cursorAccent: background,
-    selectionBackground: "rgba(34, 211, 238, 0.24)",
-    black: "#08111d",
+    background: "#0b1220",
+    foreground: "#d7e4f1",
+    cursor: "#00d4aa",
+    cursorAccent: "#0b1220",
+    selectionBackground: "rgba(34, 211, 238, 0.28)",
+    black: "#0d1726",
     red: "#ff7a90",
-    green: cursor,
+    green: "#00d4aa",
     yellow: "#f4d35e",
-    blue: accent,
+    blue: "#22d3ee",
     magenta: "#8b8dff",
-    cyan: accent,
-    white: "#dce9f5",
-    brightBlack: "#6d7b8d",
+    cyan: "#22d3ee",
+    white: "#e6eef7",
+    brightBlack: "#8b9bb0",
     brightRed: "#ff98a9",
     brightGreen: "#4ef2c5",
     brightYellow: "#ffe08a",
@@ -150,6 +145,9 @@ export function TerminalDock({
       return;
 
     fitAddonRef.current.fit();
+    // The PTY does not exist before the session spawns; without this guard
+    // early fits only produce "session not found" noise in the console.
+    if (!hasStartedSessionRef.current) return;
     void invoke("resize_terminal", {
       sessionId: sessionIdRef.current,
       cols: terminalRef.current.cols,
@@ -158,6 +156,20 @@ export function TerminalDock({
       console.error("Failed to resize terminal", error);
     });
   }, [isOpen]);
+
+  // The dock animates open/closed, so the ResizeObserver fires a burst of
+  // resizes. Resizing ConPTY on every frame garbles PowerShell's render
+  // (PSReadLine redraws mid-resize), so coalesce them with a short debounce.
+  const resizeDebounceRef = useRef<number | null>(null);
+  const debouncedFitTerminal = useCallback(() => {
+    if (resizeDebounceRef.current !== null) {
+      window.clearTimeout(resizeDebounceRef.current);
+    }
+    resizeDebounceRef.current = window.setTimeout(() => {
+      resizeDebounceRef.current = null;
+      fitTerminal();
+    }, 120);
+  }, [fitTerminal]);
 
   const startTerminalSession = useCallback(
     async (forceRestart = false) => {
@@ -221,8 +233,21 @@ export function TerminalDock({
       return;
     }
 
+    let cancelled = false;
+    let initializationCleanup: (() => void) | null = null;
+
+    // Deferred until the dock finishes opening: initializing xterm and
+    // spawning the PTY mid-transition gave the shell a wrong size (PowerShell
+    // rendered no prompt) and a blurry, stretched renderer.
+    const runInitialization = () => {
+      if (cancelled || hasInitializedRef.current || !viewportRef.current) {
+        return;
+      }
+
     const terminal = new XTerm({
-      allowTransparency: true,
+      // Opaque background keeps glyph anti-aliasing crisp; transparency
+      // renders text without a solid backdrop and looks blurry.
+      allowTransparency: false,
       cursorBlink: true,
       convertEol: false,
       fontFamily:
@@ -265,7 +290,7 @@ export function TerminalDock({
     );
 
     const observer = new ResizeObserver(() => {
-      fitTerminal();
+      debouncedFitTerminal();
     });
     observer.observe(viewportRef.current);
     resizeObserverRef.current = observer;
@@ -311,6 +336,10 @@ export function TerminalDock({
 
     return () => {
       isMounted = false;
+      if (resizeDebounceRef.current !== null) {
+        window.clearTimeout(resizeDebounceRef.current);
+        resizeDebounceRef.current = null;
+      }
       resizeObserverRef.current?.disconnect();
       resizeObserverRef.current = null;
       terminalDisposablesRef.current.forEach((disposable) =>
@@ -328,7 +357,30 @@ export function TerminalDock({
         () => undefined,
       );
     };
-  }, [fitTerminal, hasBooted, startTerminalSession]);
+    };
+
+    // Kick off once the open transition (max-height) finishes, falling back
+    // to a timeout for first-open/no-transition and reduced-motion setups.
+    const shell = shellRef.current;
+    const settleTimer = window.setTimeout(() => {
+      initializationCleanup = runInitialization() ?? null;
+    }, 420);
+    const onDockTransitionEnd = (event: TransitionEvent) => {
+      if (event.target === shell && event.propertyName === "max-height") {
+        window.clearTimeout(settleTimer);
+        initializationCleanup = runInitialization() ?? null;
+      }
+    };
+    shell?.addEventListener("transitionend", onDockTransitionEnd);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(settleTimer);
+      shell?.removeEventListener("transitionend", onDockTransitionEnd);
+      initializationCleanup?.();
+      initializationCleanup = null;
+    };
+  }, [debouncedFitTerminal, fitTerminal, hasBooted, startTerminalSession]);
 
   useEffect(() => {
     if (!isOpen || !hasBooted) return;

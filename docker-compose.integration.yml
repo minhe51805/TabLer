@@ -1,0 +1,110 @@
+# Real-server harness proving every self-hostable engine connects.
+# Up:      docker compose -f docker-compose.integration.yml up -d --wait
+# Down:    docker compose -f docker-compose.integration.yml down -v
+# Heavy engines (MSSQL, ScyllaDB/Cassandra) live behind the "heavy" profile:
+#         docker compose -f docker-compose.integration.yml --profile heavy up -d --wait
+name: tabler-driver-integration
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tabler
+      POSTGRES_PASSWORD: tabler
+      POSTGRES_DB: tabler_test
+    ports:
+      - "15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tabler -d tabler_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_USER: tabler
+      MYSQL_PASSWORD: tabler
+      MYSQL_DATABASE: tabler_test
+      MYSQL_ROOT_PASSWORD: rootpw
+    ports:
+      - "13306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ptabler"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+
+  mariadb:
+    image: mariadb:11
+    environment:
+      MARIADB_USER: tabler
+      MARIADB_PASSWORD: tabler
+      MARIADB_DATABASE: tabler_test
+      MARIADB_ROOT_PASSWORD: rootpw
+    ports:
+      - "13307:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27027:27017"
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval 'db.adminCommand({ ping: 1 })' > /dev/null"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24
+    environment:
+      CLICKHOUSE_USER: tabler
+      CLICKHOUSE_PASSWORD: tabler
+    ports:
+      - "18123:8123"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- 'http://127.0.0.1:8123/ping' | grep -q Ok"]
+      interval: 2s
+      timeout: 3s
+      retries: 45
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    profiles: ["heavy"]
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "TablerIntegration!123"
+    ports:
+      - "11433:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'TablerIntegration!123' -C -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  scylla:
+    image: scylladb/scylla:5.2
+    profiles: ["heavy"]
+    command: --memory 512M --overprovisioned 1 --smp 1
+    ports:
+      - "19042:9042"
+    healthcheck:
+      test: ["CMD-SHELL", "nodetool status | grep -q '^UN'"]
+      interval: 5s
+      timeout: 5s
+      retries: 60

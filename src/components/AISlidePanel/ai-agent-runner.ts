@@ -28,6 +28,8 @@ export interface AIAgentRunnerSnapshot {
   phase: AIAgentRunnerPhase;
   iteration: number;
   stepBudget: number;
+  /** Cumulative model tokens spent so far in this run (0 when untracked). */
+  tokensUsed: number;
   requestReason?: AIAgentActionRequestReason;
   action?: AIAgentToolName;
   message?: string;
@@ -44,6 +46,18 @@ export interface AIAgentRunnerResult {
 export interface RunAIAgentToolLoopOptions {
   workspaceToolsEnabled: boolean;
   stepBudget: number;
+  /**
+   * Optional cumulative token ceiling. When set (> 0), the loop stops
+   * requesting new tools once spend reaches it and closes with a forced
+   * budget finish. Independent from stepBudget: either limit can end the run.
+   */
+  tokenBudget?: number;
+  /**
+   * Reads the token cost of the most recent model call. Invoked once after
+   * each action request; the runner accumulates the returned values. Omit to
+   * disable token accounting (spend stays 0, matching legacy behavior).
+   */
+  getLastRequestTokens?: () => number;
   initialSteps?: AgentTraceStep[];
   requestAction: (request: AIAgentActionRequest) => Promise<AIAgentToolAction>;
   runTool: (action: AIAgentToolAction) => Promise<string>;
@@ -66,18 +80,23 @@ export async function runAIAgentToolLoop(
   options: RunAIAgentToolLoopOptions,
 ): Promise<AIAgentRunnerResult> {
   const stepBudget = Math.max(1, Math.floor(options.stepBudget));
+  const tokenBudget = options.tokenBudget && options.tokenBudget > 0
+    ? Math.floor(options.tokenBudget)
+    : 0;
   let steps = cloneSteps(options.initialSteps || []);
   const snapshots: AIAgentRunnerSnapshot[] = [];
   let iteration = 0;
+  let tokensUsed = 0;
 
   const emit = (
     phase: AIAgentRunnerPhase,
-    details: Partial<Omit<AIAgentRunnerSnapshot, "phase" | "iteration" | "stepBudget" | "steps">> = {},
+    details: Partial<Omit<AIAgentRunnerSnapshot, "phase" | "iteration" | "stepBudget" | "tokensUsed" | "steps">> = {},
   ) => {
     const snapshot: AIAgentRunnerSnapshot = {
       phase,
       iteration,
       stepBudget,
+      tokensUsed,
       ...details,
       steps: cloneSteps(steps),
     };
@@ -91,14 +110,23 @@ export async function runAIAgentToolLoop(
     includeHistory: boolean,
   ) => {
     emit("requesting-action", { requestReason: reason });
-    return options.requestAction({
+    const action = await options.requestAction({
       forceFinish,
       includeHistory,
       iteration,
       reason,
       steps: cloneSteps(steps),
     });
+    if (options.getLastRequestTokens) {
+      const spent = options.getLastRequestTokens();
+      if (typeof spent === "number" && Number.isFinite(spent) && spent > 0) {
+        tokensUsed += Math.floor(spent);
+      }
+    }
+    return action;
   };
+
+  const tokenBudgetExhausted = () => tokenBudget > 0 && tokensUsed >= tokenBudget;
 
   emit("idle");
 
@@ -111,7 +139,7 @@ export async function runAIAgentToolLoop(
       for (iteration = 1; iteration <= stepBudget; iteration += 1) {
         const action = await requestAction(
           "iterate",
-          iteration === stepBudget,
+          iteration === stepBudget || tokenBudgetExhausted(),
           iteration === 1,
         );
 
@@ -138,6 +166,12 @@ export async function runAIAgentToolLoop(
           action: action.action,
           message: action.message || "No message provided.",
         });
+
+        // A token ceiling ends the tool phase early even with steps to spare,
+        // so a run can never keep spending after the budget is reached.
+        if (tokenBudgetExhausted()) {
+          break;
+        }
       }
 
       if (!finalAction) {

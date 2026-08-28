@@ -109,13 +109,27 @@ export function getAIProviderEndpointFieldCopy(
 }
 
 export function normalizeAIProviderConfigs(configs: AIProviderConfig[]) {
-  const normalized = configs.map((config) => ({
-    ...config,
-    is_enabled: config.is_enabled ?? true,
-    is_primary: config.is_primary ?? false,
-    allow_schema_context: config.allow_schema_context ?? false,
-    allow_inline_completion: config.allow_inline_completion ?? false,
-  }));
+  const normalized = configs.map((config) => {
+    const trimmedModel = config.model?.trim() ?? "";
+    // Legacy single-model configs seed the catalog from `model` so the list
+    // editor and the composer model entries always have something to show.
+    const models = (config.models ?? (trimmedModel ? [trimmedModel] : []))
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    const disabledModels = (config.disabled_models ?? [])
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    return {
+      ...config,
+      is_enabled: config.is_enabled ?? true,
+      is_primary: config.is_primary ?? false,
+      allow_schema_context: config.allow_schema_context ?? false,
+      allow_inline_completion: config.allow_inline_completion ?? false,
+      models,
+      disabled_models: disabledModels,
+    };
+  });
 
   const primaryIndex = normalized.findIndex((config) => config.is_enabled && config.is_primary);
   const enabledIndex = normalized.findIndex((config) => config.is_enabled);

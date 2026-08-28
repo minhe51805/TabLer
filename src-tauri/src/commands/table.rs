@@ -1,3 +1,4 @@
+use crate::commands::safe_mode::SafeModeState;
 use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{
@@ -315,7 +316,11 @@ pub async fn execute_structure_statements(
     connection_id: String,
     statements: Vec<String>,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<u64, String> {
+    safe_mode
+        .assert_sql_allowed(&connection_id, &statements.join(";\n"))
+        .await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::SchemaEdit)
         .await

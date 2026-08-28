@@ -1,4 +1,5 @@
 pub const MAX_QUERY_RESULT_ROWS: usize = 500;
+pub const MAX_TABLE_PAGE_ROWS: u64 = 5_000;
 
 fn strip_leading_sql_noise(sql: &str) -> &str {
     let mut remaining = sql;

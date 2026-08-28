@@ -1,8 +1,13 @@
-use crate::database::capabilities::DriverCapability;
+use crate::commands::safe_mode::SafeModeState;
+use crate::database::capabilities::{
+    agent_sql_read_unsupported_error, agent_sql_write_preview_unsupported_error, DriverCapability,
+};
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryParameter;
 use crate::database::models::QueryResult;
-use crate::database::parameterized_query::{compile_parameterized_query, PlaceholderStyle};
+use crate::database::parameterized_query::{
+    compile_parameterized_query, placeholder_style_for_database,
+};
 use crate::utils::sql::{classify_sql, split_sql_statements, SqlSafetyDecision, SqlStatementKind};
 use std::collections::HashMap;
 use tauri::State;
@@ -185,7 +190,9 @@ pub async fn execute_query(
     request_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, String> {
+    safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
     let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
@@ -219,9 +226,16 @@ pub async fn execute_query(
             .register(request_id, cancellation_token.clone())
             .await;
     }
+    let exec = async {
+        if let Some(ref id) = request_id {
+            driver.execute_query_for_request(id, &sql).await
+        } else {
+            driver.execute_query(&sql).await
+        }
+    };
     let result = tokio::select! {
         _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
-        result = timeout(timeout_window, driver.execute_query(&sql)) => result
+        result = timeout(timeout_window, exec) => result
             .map_err(|_| {
             let err_msg = format!(
                 "Query timed out after {} seconds.",
@@ -260,13 +274,29 @@ pub async fn execute_query(
 #[tauri::command]
 pub async fn cancel_query(
     request_id: String,
+    connection_id: Option<String>,
+    db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
 ) -> Result<bool, String> {
     let request_id = request_id.trim();
     if request_id.is_empty() {
         return Err("Request ID cannot be empty.".to_string());
     }
-    Ok(cancellation_state.cancel(request_id).await)
+    let token_cancelled = cancellation_state.cancel(request_id).await;
+    let mut server_cancelled = false;
+    if let Some(connection_id) = connection_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Ok(driver) = db_manager.get_driver(connection_id).await {
+            server_cancelled = driver
+                .cancel_query_request(request_id)
+                .await
+                .unwrap_or(false);
+        }
+    }
+    Ok(token_cancelled || server_cancelled)
 }
 
 #[tauri::command]
@@ -274,24 +304,26 @@ pub async fn execute_parameterized_query(
     connection_id: String,
     sql: String,
     parameters: Vec<QueryParameter>,
+    request_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, QueryCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, String> {
+    safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
     let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::PreparedParameters)
         .await
         .map_err(|error| error.to_string())?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(format_query_connection_error)?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
         .map_err(format_query_connection_error)?;
-    let style = match driver.driver_name() {
-        "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica" => {
-            PlaceholderStyle::DollarNumber
-        }
-        "mssql" => PlaceholderStyle::AtNumber,
-        _ => PlaceholderStyle::QuestionMark,
-    };
+    let style = placeholder_style_for_database(database_type);
     let compiled = compile_parameterized_query(&sql, &parameters, style)
         .map_err(format_query_runtime_error)?;
     log::info!(
@@ -303,13 +335,42 @@ pub async fn execute_parameterized_query(
     if split_sql_statements(&compiled.sql).len() != 1 {
         return Err("Prepared parameters only support one SQL statement at a time.".to_string());
     }
-    let result = timeout(
-        Duration::from_secs(30),
-        driver.execute_parameterized_query(&compiled.sql, &compiled.parameters),
-    )
-    .await
-    .map_err(|_| "Parameterized query timed out after 30 seconds.".to_string())?
-    .map_err(format_query_runtime_error)?;
+    let request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let cancellation_token = CancellationToken::new();
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state
+            .register(request_id, cancellation_token.clone())
+            .await;
+    }
+    let timeout_window = timeout_for_statements(std::iter::once(compiled.sql.as_str()));
+    let exec = async {
+        if let Some(ref id) = request_id {
+            driver
+                .execute_parameterized_query_for_request(id, &compiled.sql, &compiled.parameters)
+                .await
+        } else {
+            driver
+                .execute_parameterized_query(&compiled.sql, &compiled.parameters)
+                .await
+        }
+    };
+    let result = tokio::select! {
+        _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
+        result = timeout(timeout_window, exec) => result
+            .map_err(|_| format!(
+                "Parameterized query timed out after {} seconds.",
+                timeout_window.as_secs()
+            ))
+            .and_then(|result| result.map_err(format_query_runtime_error)),
+    };
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.finish(request_id).await;
+    }
+    let result = result?;
     log::info!(
         "operation_id={} operation=query.execute_parameterized status=succeeded columns={} rows={}",
         operation_id,
@@ -342,6 +403,13 @@ pub async fn preview_write_transaction(
         .require_capability(&connection_id, DriverCapability::Query)
         .await
         .map_err(|error| error.to_string())?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(message) = agent_sql_write_preview_unsupported_error(database_type) {
+        return Err(message);
+    }
 
     if statements.is_empty() || statements.len() > MAX_PREVIEW_STATEMENTS {
         return Err(format!(
@@ -402,8 +470,14 @@ pub async fn execute_sandboxed_query(
     connection_id: String,
     statements: Vec<String>,
     require_read_only: Option<bool>,
+    request_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, QueryCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, String> {
+    safe_mode
+        .assert_sql_allowed(&connection_id, &statements.join(";\n"))
+        .await?;
     let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
@@ -435,29 +509,53 @@ pub async fn execute_sandboxed_query(
     })?;
     let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
     let combined_query = statements.join(";\n");
-    let mut result = timeout(timeout_window, driver.execute_query(&combined_query))
-        .await
-        .map_err(|_| {
-            let err_msg = format!(
-                "Sandbox query timed out after {} seconds.",
-                timeout_window.as_secs()
-            );
-            log::error!(
-                "operation_id={} operation=query.execute_sandboxed status=failed stage=timeout error={}",
-                operation_id,
+    let request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let cancellation_token = CancellationToken::new();
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state
+            .register(request_id, cancellation_token.clone())
+            .await;
+    }
+    let exec = async {
+        if let Some(ref id) = request_id {
+            driver.execute_query_for_request(id, &combined_query).await
+        } else {
+            driver.execute_query(&combined_query).await
+        }
+    };
+    let result = tokio::select! {
+        _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
+        result = timeout(timeout_window, exec) => result
+            .map_err(|_| {
+                let err_msg = format!(
+                    "Sandbox query timed out after {} seconds.",
+                    timeout_window.as_secs()
+                );
+                log::error!(
+                    "operation_id={} operation=query.execute_sandboxed status=failed stage=timeout error={}",
+                    operation_id,
+                    err_msg
+                );
                 err_msg
-            );
-            err_msg
-        })?
-        .map_err(|e| {
-            let formatted = format_query_runtime_error(e);
-            log::error!(
-                "operation_id={} operation=query.execute_sandboxed status=failed stage=runtime error={}",
-                operation_id,
+            })
+            .and_then(|result| result.map_err(|e| {
+                let formatted = format_query_runtime_error(e);
+                log::error!(
+                    "operation_id={} operation=query.execute_sandboxed status=failed stage=runtime error={}",
+                    operation_id,
+                    formatted
+                );
                 formatted
-            );
-            formatted
-        })?;
+            })),
+    };
+    if let Some(request_id) = request_id.as_deref() {
+        cancellation_state.finish(request_id).await;
+    }
+    let mut result = result?;
     result.sandboxed = true;
     log::info!(
         "operation_id={} operation=query.execute_sandboxed status=succeeded columns={} rows={}",
@@ -468,9 +566,52 @@ pub async fn execute_sandboxed_query(
     Ok(result)
 }
 
+/// Read-only execution boundary for the AI agent's `run_readonly_sql` tool.
+///
+/// Unlike [`execute_sandboxed_query`], read-only enforcement is pinned
+/// server-side and cannot be lowered by the caller: there is no
+/// `require_read_only` flag to pass. Any mutating, session-control, or
+/// access-control statement is rejected by `validate_sandbox_batch` before it
+/// ever reaches the driver. This keeps the agent read tool safe even if a
+/// frontend caller forgets (or is manipulated) to request read-only mode.
+#[tauri::command]
+pub async fn execute_agent_readonly_query(
+    connection_id: String,
+    statements: Vec<String>,
+    request_id: Option<String>,
+    db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, QueryCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
+) -> Result<QueryResult, String> {
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(message) = agent_sql_read_unsupported_error(database_type) {
+        return Err(message);
+    }
+    // Pin is local to this command: callers have no `require_read_only` argument
+    // they could flip. Fail here first so a future change to the shared
+    // sandbox helper cannot silently lower the agent boundary.
+    validate_sandbox_batch(&statements, true)?;
+    execute_sandboxed_query(
+        connection_id,
+        statements,
+        Some(true),
+        request_id,
+        db_manager,
+        cancellation_state,
+        safe_mode,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{validate_sandbox_batch, validate_sandbox_statement, QueryCancellationState};
+    use super::{
+        timeout_for_statements, validate_sandbox_batch, validate_sandbox_statement,
+        QueryCancellationState, MUTATING_QUERY_TIMEOUT, READ_ONLY_QUERY_TIMEOUT,
+    };
     use tokio_util::sync::CancellationToken;
 
     #[test]
@@ -494,6 +635,54 @@ mod tests {
         assert!(validate_sandbox_batch(&mutating, false).is_ok());
     }
 
+    #[test]
+    fn agent_readonly_boundary_blocks_mutations_and_allows_reads() {
+        // `execute_agent_readonly_query` pins require_read_only = true, so the
+        // shared batch validator must accept plain reads while rejecting every
+        // mutating or schema-changing statement regardless of caller intent.
+        assert!(validate_sandbox_batch(&["SELECT 1".to_string()], true).is_ok());
+        assert!(validate_sandbox_batch(&["EXPLAIN SELECT 1".to_string()], true).is_ok());
+        assert!(
+            validate_sandbox_batch(&["UPDATE users SET name = 'x'".to_string()], true).is_err()
+        );
+        assert!(validate_sandbox_batch(&["DELETE FROM users".to_string()], true).is_err());
+        assert!(validate_sandbox_batch(&["DROP TABLE users".to_string()], true).is_err());
+        assert!(
+            validate_sandbox_batch(&["INSERT INTO users(name) VALUES('x')".to_string()], true)
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_readonly_command_rejects_mutating_sql_that_looks_harmless() {
+        // Same pin `execute_agent_readonly_query` hard-codes. These statements
+        // start like reads (WITH/SELECT-shaped) or look like "just SQL", but
+        // the boundary must still refuse them before a driver is involved.
+        let rejected = [
+            "UPDATE users SET name = 'x'",
+            "DELETE FROM users",
+            "DROP TABLE users",
+            "ALTER TABLE users ADD COLUMN x INT",
+            "INSERT INTO users(name) VALUES('x')",
+            "TRUNCATE TABLE users",
+            "CREATE TABLE x (id INT)",
+            "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed",
+            "SELECT 1; DELETE FROM users",
+        ];
+        for sql in rejected {
+            assert!(
+                validate_sandbox_batch(&[sql.to_string()], true).is_err(),
+                "agent read-only boundary must reject {sql}"
+            );
+        }
+        assert!(validate_sandbox_batch(&["SELECT 1".to_string()], true).is_ok());
+        assert!(validate_sandbox_batch(
+            &["WITH x AS (SELECT 1) SELECT * FROM x".to_string()],
+            true
+        )
+        .is_ok());
+    }
+
     #[tokio::test]
     async fn cancellation_registry_replaces_and_cancels_active_requests() {
         let state = QueryCancellationState::default();
@@ -509,5 +698,32 @@ mod tests {
         assert!(second.is_cancelled());
         state.finish("query-1").await;
         assert!(!state.cancel("query-1").await);
+    }
+
+    #[test]
+    fn timeout_uses_read_only_window_only_for_read_batches() {
+        assert_eq!(
+            timeout_for_statements(["SELECT 1"].into_iter()),
+            READ_ONLY_QUERY_TIMEOUT
+        );
+        assert_eq!(
+            timeout_for_statements(["SELECT 1", "SELECT 2"].into_iter()),
+            READ_ONLY_QUERY_TIMEOUT
+        );
+        assert_eq!(
+            timeout_for_statements(["UPDATE users SET name = 'x'"].into_iter()),
+            MUTATING_QUERY_TIMEOUT
+        );
+        assert_eq!(
+            timeout_for_statements(["SELECT 1", "DELETE FROM users"].into_iter()),
+            MUTATING_QUERY_TIMEOUT
+        );
+        assert_eq!(
+            timeout_for_statements(
+                ["WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed"]
+                    .into_iter()
+            ),
+            MUTATING_QUERY_TIMEOUT
+        );
     }
 }

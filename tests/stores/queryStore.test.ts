@@ -40,9 +40,28 @@ describe("queryStore", () => {
       if (command === "classify_sql_safety") return Promise.resolve(safetyDecision(args.sql || ""));
       return Promise.resolve(queryResult);
     });
-    useQueryStore.setState({ isExecutingQuery: false, activeQueryRequestId: null });
+    useQueryStore.setState({
+      isExecutingQuery: false,
+      activeQueryRequestId: null,
+      activeQueryConnectionId: null,
+    });
     useSafeModeStore.getState().setGlobalLevel(1);
     useSafeModeStore.getState().clearConnectionOverrides();
+  });
+
+  it("sends the active connection id when cancelling a query", async () => {
+    invokeMutationMock.mockResolvedValue(true);
+    useQueryStore.setState({
+      isExecutingQuery: true,
+      activeQueryRequestId: "req-1",
+      activeQueryConnectionId: "connection-1",
+    });
+
+    await expect(useQueryStore.getState().cancelQuery()).resolves.toBe(true);
+    expect(invokeMutationMock).toHaveBeenCalledWith("cancel_query", {
+      requestId: "req-1",
+      connectionId: "connection-1",
+    });
   });
 
   it("tracks query execution and returns the backend result", async () => {
@@ -72,6 +91,28 @@ describe("queryStore", () => {
       useQueryStore.getState().executeSandboxQuery("connection-1", ["select 1"]),
     ).rejects.toThrow("database unavailable");
     expect(useQueryStore.getState().isExecutingQuery).toBe(false);
+    expect(useQueryStore.getState().activeQueryRequestId).toBeNull();
+  });
+
+  it("sends a request id for sandbox queries and blocks writes in Safe Mode", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+
+    await useQueryStore.getState().executeSandboxQuery("connection-1", ["select 1"]);
+    expect(invokeMutationMock).toHaveBeenCalledWith(
+      "execute_sandboxed_query",
+      expect.objectContaining({
+        connectionId: "connection-1",
+        statements: ["select 1"],
+        requireReadOnly: false,
+        requestId: expect.any(String),
+      }),
+    );
+
+    invokeMutationMock.mockClear();
+    await expect(
+      useQueryStore.getState().executeSandboxQuery("connection-1", ["DELETE FROM users"]),
+    ).rejects.toThrow("Safe Mode level 1");
+    expect(invokeMutationMock).not.toHaveBeenCalled();
   });
 
   it("normalizes optional table-data arguments for the Tauri command", async () => {
@@ -151,6 +192,37 @@ describe("queryStore", () => {
       30_000,
       "Loading FK lookup values",
     );
+  });
+
+  it("routes agent read-only queries through the pinned backend command", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+
+    await useQueryStore.getState().executeAgentReadonlyQuery("connection-1", ["select 1"]);
+
+    // The agent read tool must call the dedicated command whose read-only
+    // boundary is pinned server-side. It must NOT send a `requireReadOnly`
+    // flag, since that flag can never be used to lower the boundary here.
+    expect(invokeMutationMock).toHaveBeenCalledWith(
+      "execute_agent_readonly_query",
+      expect.objectContaining({
+        connectionId: "connection-1",
+        statements: ["select 1"],
+        requestId: expect.any(String),
+      }),
+    );
+    const [, args] = invokeMutationMock.mock.calls[0];
+    expect(args).not.toHaveProperty("requireReadOnly");
+  });
+
+  it("blocks agent read-only writes in Safe Mode before reaching the backend", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+
+    await expect(
+      useQueryStore.getState().executeAgentReadonlyQuery("connection-1", ["DELETE FROM users"]),
+    ).rejects.toThrow("Safe Mode level 1");
+    expect(invokeMutationMock).not.toHaveBeenCalled();
+    expect(useQueryStore.getState().isExecutingQuery).toBe(false);
+    expect(useQueryStore.getState().activeQueryRequestId).toBeNull();
   });
 
   it("sends CSV imports as a single atomic backend request", async () => {

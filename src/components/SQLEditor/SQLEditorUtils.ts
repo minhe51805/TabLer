@@ -99,7 +99,8 @@ export function isMutatingStatement(statement: string) {
   const normalized = normalizeStatementForGuard(statement);
   if (!normalized) return false;
   if (normalized.startsWith("WITH")) {
-    return [" INSERT ", " UPDATE ", " DELETE ", " MERGE "].some((keyword) => normalized.includes(keyword));
+    // Match DML inside CTEs even when glued to punctuation: `(DELETE FROM ...`.
+    return /\b(INSERT|UPDATE|DELETE|MERGE)\b/.test(normalized);
   }
   return PROTECTED_RUN_MUTATING_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }

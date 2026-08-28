@@ -1,7 +1,6 @@
 import { memo, useCallback } from "react";
 import { Database, ChevronDown, ChevronRight, Loader2, Filter } from "lucide-react";
 import type { DatabaseInfo, SchemaObjectInfo, TableInfo } from "../../../types";
-import { formatCountLabel } from "../../../i18n";
 import type { AppLanguage } from "../../../i18n";
 import { getQualifiedTableName } from "../SidebarUtils";
 import type { ExplorerSchemaSection } from "../hooks/useTreeState";
@@ -227,8 +226,6 @@ export function DatabaseTree({
   schemaFilterOptions,
   activeConnectionDbType,
   hasSearch,
-  visibleTableCount,
-  visibleObjectCount,
   language,
   t,
   onToggleDb,
@@ -296,29 +293,6 @@ export function DatabaseTree({
 
             {isExpanded && isCurrent && (
               <div className="explorer-table-panel">
-                <div className="explorer-table-panel-head">
-                  <div className="explorer-table-panel-copy">
-                    <span>{t("explorer.databaseObjects")}</span>
-                  </div>
-                  <span className="explorer-table-panel-total">
-                    {hasSearch
-                      ? formatCountLabel(language, visibleTableCount + visibleObjectCount, {
-                          one: "shown",
-                          other: "shown",
-                          vi: "đang hiện",
-                        })
-                      : `${formatCountLabel(language, visibleTableCount, {
-                          one: "table",
-                          other: "tables",
-                          vi: "bảng",
-                        })} | ${formatCountLabel(language, visibleObjectCount, {
-                          one: "object",
-                          other: "objects",
-                          vi: "đối tượng",
-                        })}`}
-                  </span>
-                </div>
-
                 {availableSchemaNames.length > 1 && (
                   <div className="explorer-schema-toolbar">
                     <span className="explorer-schema-toolbar-label">{t("explorer.schema")}</span>

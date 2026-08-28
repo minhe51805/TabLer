@@ -6,6 +6,8 @@ import {
   buildSqlRegroundingPrompt,
   extractReferencedTableNamesFromSql,
   findMatchingTableName,
+  findSystemCatalogReferences,
+  getAgentSqlSchemaRequirements,
   isOverviewContextMissingResponse,
   mentionsUnknownSchemaNames,
   redactAgentSqlLiterals,
@@ -17,6 +19,49 @@ import {
   truncateAgentObservation,
 } from "@/components/AISlidePanel/ai-agent-grounding";
 import type { QueryResult } from "@/types";
+
+describe("findSystemCatalogReferences", () => {
+  it("detects information_schema refs (the row_count hallucination case)", () => {
+    const refs = findSystemCatalogReferences(
+      "SELECT table_name, row_count FROM information_schema.tables WHERE table_schema = 'public'",
+    );
+    expect(refs.length).toBeGreaterThan(0);
+    expect(refs[0]).toContain("information_schema");
+  });
+
+  it("detects pg_catalog and sqlite_master refs", () => {
+    const pgRefs = findSystemCatalogReferences("SELECT relname FROM pg_catalog.pg_class");
+    expect(pgRefs).toContain("pg_catalog.pg_class");
+    expect(findSystemCatalogReferences("SELECT name FROM sqlite_master")).toContain("sqlite_master");
+  });
+
+  it("ignores regular workspace tables", () => {
+    expect(findSystemCatalogReferences("SELECT * FROM users JOIN orders ON orders.user_id = users.id")).toEqual([]);
+  });
+});
+
+describe("getAgentSqlSchemaRequirements — catalog handling", () => {
+  const tables = ["users", "orders"];
+
+  it("does not report catalog refs as unknown tables", () => {
+    const requirements = getAgentSqlSchemaRequirements(
+      "SELECT table_name, row_count FROM information_schema.tables",
+      tables,
+      new Set<string>(),
+    );
+    expect(requirements.unknown).toEqual([]);
+  });
+
+  it("still reports genuinely unknown user tables", () => {
+    const requirements = getAgentSqlSchemaRequirements(
+      "SELECT * FROM invoices JOIN users ON users.id = invoices.user_id",
+      tables,
+      new Set(["users"]),
+    );
+    expect(requirements.unknown).toContain("invoices");
+    expect(requirements.uninspected).toEqual([]);
+  });
+});
 
 function makeQueryResult(overrides: Partial<QueryResult> = {}): QueryResult {
   return {

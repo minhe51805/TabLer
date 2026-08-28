@@ -8,7 +8,7 @@ export class TauriTimeoutError extends Error {
 }
 
 interface InvokeTimeoutOptions {
-  onTimeout?: () => void;
+  onTimeout?: () => unknown | Promise<unknown>;
 }
 
 export function invokeWithTimeout<T>(
@@ -19,15 +19,25 @@ export function invokeWithTimeout<T>(
   options?: InvokeTimeoutOptions,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      action();
+    };
     const timer = window.setTimeout(() => {
-      options?.onTimeout?.();
-      reject(new TauriTimeoutError(
-        `${label} timed out after ${Math.round(timeoutMs / 1000)}s. The request was cancelled and can be retried.`,
-      ));
+      void Promise.resolve(options?.onTimeout?.()).catch(() => undefined).finally(() => {
+        finish(() => {
+          reject(new TauriTimeoutError(
+            `${label} timed out after ${Math.round(timeoutMs / 1000)}s. The request was cancelled and can be retried.`,
+          ));
+        });
+      });
     }, timeoutMs);
     invoke<T>(command, args).then(
-      (value) => { window.clearTimeout(timer); resolve(value); },
-      (error) => { window.clearTimeout(timer); reject(error); }
+      (value) => { finish(() => resolve(value)); },
+      (error) => { finish(() => reject(error)); }
     );
   });
 }

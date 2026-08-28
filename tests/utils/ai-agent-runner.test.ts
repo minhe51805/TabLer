@@ -156,6 +156,59 @@ describe("AI agent tool runner", () => {
     expect(snapshots.find((snapshot) => snapshot.phase === "tool-completed")?.steps).toHaveLength(1);
   });
 
+  it("stops requesting tools once the token budget is exhausted", async () => {
+    // Each request reports 5000 tokens against a 4000 budget. After the first
+    // tool the run is over budget, so the tool loop ends early (no second
+    // iterate) and closes through the forced budget-finish request, even
+    // though the step budget still had room.
+    const requestAction = vi.fn()
+      .mockResolvedValueOnce(action("list_tables"))
+      .mockResolvedValueOnce(action("finish", "Wrapped up on budget"));
+    const runTool = vi.fn().mockResolvedValue("users, orders");
+
+    const result = await runAIAgentToolLoop({
+      workspaceToolsEnabled: true,
+      stepBudget: 5,
+      tokenBudget: 4000,
+      getLastRequestTokens: () => 5000,
+      requestAction,
+      runTool,
+      recoverFinish: vi.fn(),
+    });
+
+    expect(requestAction).toHaveBeenCalledTimes(2);
+    expect(runTool).toHaveBeenCalledTimes(1);
+    // The closing request is the forced budget finish, not another iterate.
+    expect(requestAction.mock.calls[1][0]).toMatchObject({
+      reason: "budget",
+      forceFinish: true,
+    });
+    expect(result.finalAction.message).toBe("Wrapped up on budget");
+    expect(result.snapshots[result.snapshots.length - 1].tokensUsed).toBe(10000);
+  });
+
+  it("ignores token accounting when no budget is configured", async () => {
+    const requestAction = vi.fn()
+      .mockResolvedValueOnce(action("list_tables"))
+      .mockResolvedValueOnce(action("list_tables"))
+      .mockResolvedValueOnce(action("finish", "Done"));
+
+    const result = await runAIAgentToolLoop({
+      workspaceToolsEnabled: true,
+      stepBudget: 5,
+      getLastRequestTokens: () => 999_999,
+      requestAction,
+      runTool: vi.fn().mockResolvedValue("obs"),
+      recoverFinish: vi.fn(),
+    });
+
+    // Without tokenBudget the run continues past the huge spend and finishes
+    // on its own; tokensUsed is still tracked for observability.
+    expect(requestAction).toHaveBeenCalledTimes(3);
+    expect(result.finalAction.message).toBe("Done");
+    expect(result.snapshots[result.snapshots.length - 1].tokensUsed).toBeGreaterThan(0);
+  });
+
   it("emits a failed state and preserves the original error", async () => {
     const snapshots: AIAgentRunnerSnapshot[] = [];
     const failure = new Error("provider unavailable");

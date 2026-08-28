@@ -561,7 +561,7 @@ impl DatabaseDriver for ClickHouseDriver {
             .data
             .first()
             .and_then(|row| row.get("count"))
-            .and_then(|value| value.as_i64())
+            .and_then(clickhouse_count_value)
             .ok_or_else(|| anyhow!("ClickHouse count query returned no rows"))
     }
 
@@ -582,7 +582,7 @@ impl DatabaseDriver for ClickHouseDriver {
             .data
             .first()
             .and_then(|row| row.get("count"))
-            .and_then(|value| value.as_i64())
+            .and_then(clickhouse_count_value)
             .ok_or_else(|| anyhow!("ClickHouse null-count query returned no rows"))
     }
 
@@ -773,5 +773,16 @@ impl DatabaseDriver for ClickHouseDriver {
             });
         }
         Ok(values)
+    }
+}
+
+/// ClickHouse quotes 64-bit integers inside JSON output by default
+/// (`output_format_json_quote_64bit_integers=1`), so counts can arrive as
+/// strings ("3") instead of numbers. Accept either shape.
+fn clickhouse_count_value(value: &serde_json::Value) -> Option<i64> {
+    match value {
+        serde_json::Value::Number(number) => number.as_i64(),
+        serde_json::Value::String(text) => text.trim().parse().ok(),
+        _ => None,
     }
 }

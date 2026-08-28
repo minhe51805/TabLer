@@ -50,4 +50,24 @@ describe("AI SQL response helpers", () => {
     expect(summarizeRunResult({ ...base, rows: [], affected_rows: 1 })).toBe("Applied changes to 1 row in 12 ms.");
     expect(summarizeRunResult({ ...base, rows: [] })).toBe("Execution completed in 12 ms.");
   });
+
+  it("cuts trailing prose after the last SQL terminator", () => {
+    const response = [
+      "Query để xem dữ liệu characters:",
+      "SELECT",
+      "id,",
+      "name",
+      "FROM public.characters",
+      "ORDER BY created_at DESC",
+      "LIMIT 50;",
+      "Chạy query này trong tab Query để xem toàn bộ characters.",
+    ].join("\n");
+    expect(extractSqlFromResponse(response)).toBe(
+      "SELECT\nid,\nname\nFROM public.characters\nORDER BY created_at DESC\nLIMIT 50;",
+    );
+  });
+
+  it("keeps SQL intact when no statement terminator exists", () => {
+    expect(extractSqlFromResponse("SELECT id FROM users")).toBe("SELECT id FROM users");
+  });
 });

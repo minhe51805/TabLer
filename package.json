@@ -2,7 +2,7 @@
   "name": "tabler",
   "private": true,
   "version": "0.1.5",
-  "releaseLabel": "0.1.5a",
+  "releaseLabel": "0.1.5b",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,6 +20,9 @@
     "build:release": "tauri build --config src-tauri/tauri.release.conf.json",
     "build:e2e": "tauri build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
     "test:e2e": "node e2e/run.mjs",
+    "test:integration:drivers": "node scripts/run-driver-integration.mjs",
+    "test:integration:heavy": "node scripts/run-driver-integration.mjs --heavy",
+    "dev:debug": "node scripts/dev-with-debug-port.mjs",
     "test:performance": "vitest run tests/performance/v015-performance.test.ts",
     "check:secrets": "node scripts/check-secret-leaks.mjs"
   },

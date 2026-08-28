@@ -12,6 +12,7 @@ import {
 export interface QueryState {
   isExecutingQuery: boolean;
   activeQueryRequestId: string | null;
+  activeQueryConnectionId: string | null;
 
   executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
   cancelQuery: () => Promise<boolean>;
@@ -20,6 +21,10 @@ export interface QueryState {
     connectionId: string,
     statements: string[],
     requireReadOnly?: boolean,
+  ) => Promise<QueryResult>;
+  executeAgentReadonlyQuery: (
+    connectionId: string,
+    statements: string[],
   ) => Promise<QueryResult>;
   previewWriteTransaction: (connectionId: string, statements: string[]) => Promise<{
     results: QueryResult[];
@@ -91,11 +96,16 @@ export interface QueryState {
 export const useQueryStore = create<QueryState>((set, get) => ({
   isExecutingQuery: false,
   activeQueryRequestId: null,
+  activeQueryConnectionId: null,
 
   executeQuery: async (connectionId: string, sql: string) => {
     const safety = await assertQueryAllowed(sql, connectionId);
     const requestId = crypto.randomUUID();
-    set({ isExecutingQuery: true, activeQueryRequestId: requestId });
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
     try {
       const result = await invokeMutation<QueryResult>("execute_query", {
         connectionId,
@@ -106,12 +116,12 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
         : state);
       return result;
     } catch (e) {
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
         : state);
       throw e;
     }
@@ -119,8 +129,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
   cancelQuery: async () => {
     const requestId = get().activeQueryRequestId;
+    const connectionId = get().activeQueryConnectionId;
     if (!requestId) return false;
-    return invokeMutation<boolean>("cancel_query", { requestId });
+    return invokeMutation<boolean>("cancel_query", { requestId, connectionId });
   },
 
   executeSandboxQuery: async (
@@ -128,16 +139,63 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     statements: string[],
     requireReadOnly = false,
   ) => {
-    set({ isExecutingQuery: true });
+    const safety = await assertQueryAllowed(statements.join(";\n"), connectionId);
+    const requestId = crypto.randomUUID();
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
     try {
       const result = await invokeAIWorkspaceToolMutation(
         "execute_sandboxed_query",
-        { connectionId, statements, requireReadOnly },
+        { connectionId, statements, requireReadOnly, requestId },
       );
-      set({ isExecutingQuery: false });
+      if (safety.hasSchemaMutation) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
       return result;
     } catch (e) {
-      set({ isExecutingQuery: false });
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      throw e;
+    }
+  },
+
+  executeAgentReadonlyQuery: async (
+    connectionId: string,
+    statements: string[],
+  ) => {
+    // Read-only is enforced by the backend `execute_agent_readonly_query`
+    // command, which pins the boundary server-side. We still run the local
+    // safe-mode guard first so blocked policies fail fast with a clear message.
+    const safety = await assertQueryAllowed(statements.join(";\n"), connectionId);
+    const requestId = crypto.randomUUID();
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
+    try {
+      const result = await invokeAIWorkspaceToolMutation(
+        "execute_agent_readonly_query",
+        { connectionId, statements, requestId },
+      );
+      if (safety.hasSchemaMutation) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      return result;
+    } catch (e) {
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
       throw e;
     }
   },
@@ -288,20 +346,30 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
   executeParameterizedQuery: async (connectionId, sql, parameters) => {
     const safety = await assertQueryAllowed(sql, connectionId);
-    set({ isExecutingQuery: true });
+    const requestId = crypto.randomUUID();
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
     try {
       const result = await invokeMutation<QueryResult>("execute_parameterized_query", {
         connectionId,
         sql,
         parameters,
+        requestId,
       });
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
-      set({ isExecutingQuery: false });
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
       return result;
     } catch (error) {
-      set({ isExecutingQuery: false });
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
       throw error;
     }
   },

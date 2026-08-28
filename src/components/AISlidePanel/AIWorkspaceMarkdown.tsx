@@ -139,6 +139,22 @@ function isTableSeparator(line: string) {
   return /^\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?$/.test(line.trim());
 }
 
+const SQL_BLOCK_START_PATTERN =
+  /^(?:SELECT|WITH|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+(?:TABLE|VIEW|INDEX|DATABASE|SCHEMA|TRIGGER|FUNCTION)|DROP\s+(?:TABLE|VIEW|INDEX|DATABASE|SCHEMA)|ALTER\s+TABLE|EXPLAIN|SHOW\s+(?:TABLES|DATABASES|COLUMNS)|DESCRIBE|PRAGMA)\b/i;
+const SQL_BLOCK_BODY_PATTERN = /\b(?:FROM|INTO|SET|VALUES|TABLE|JOIN)\b/i;
+
+/**
+ * Detects unfenced SQL paragraphs so they render as code frames. Kept
+ * conservative: a single line without a trailing ";" (e.g. "SELECT server as a
+ * concept?") is treated as prose, not SQL.
+ */
+function isLikelySqlParagraph(lines: string[]) {
+  if (!SQL_BLOCK_START_PATTERN.test(lines[0])) return false;
+  if (!SQL_BLOCK_BODY_PATTERN.test(lines.join("\n"))) return false;
+  if (lines.length === 1 && !/;\s*$/.test(lines[0])) return false;
+  return true;
+}
+
 function splitMarkdownTableRow(line: string) {
   return line
     .trim()
@@ -171,6 +187,26 @@ function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
           </strong>,
         );
         cursor = closingIndex + 2;
+        continue;
+      }
+    }
+
+    if (text[cursor] === "*") {
+      const closingIndex = text.indexOf("*", cursor + 1);
+      if (closingIndex !== -1 && text.slice(cursor + 1, closingIndex).trim()) {
+        flushBuffer();
+        nodes.push(
+          <em
+            key={`${keyPrefix}-em-${nodes.length}`}
+            className="ai-workspace-markdown-em"
+          >
+            {renderInlineMarkdown(
+              text.slice(cursor + 1, closingIndex),
+              `${keyPrefix}-em-${nodes.length}`,
+            )}
+          </em>,
+        );
+        cursor = closingIndex + 1;
         continue;
       }
     }
@@ -315,6 +351,16 @@ function parseMarkdownBlocks(text: string): MarkdownBlock[] {
       paragraphLines.push(candidate);
       index += 1;
     }
+
+    // Models often emit SQL without ```sql fences ("Query để xem dữ liệu:"
+    // followed by bare SELECT lines). Render those as proper code frames
+    // instead of plain paragraphs so they get the copy button and syntax
+    // highlighting like fenced blocks.
+    if (isLikelySqlParagraph(paragraphLines)) {
+      blocks.push({ type: "code", language: "sql", code: paragraphLines.join("\n").trimEnd() });
+      continue;
+    }
+
     blocks.push({ type: "paragraph", lines: paragraphLines });
   }
 

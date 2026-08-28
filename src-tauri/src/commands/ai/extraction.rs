@@ -337,10 +337,129 @@ pub(crate) fn take_visible_stream_delta(
     std::mem::take(pending_text)
 }
 
+/// Pulls the first native tool call out of a *non-streaming* provider response
+/// and re-serializes it into the controller-action contract
+/// (`{"action","args","message"}`) that the frontend `parseAIAgentToolAction`
+/// already consumes. Returns `None` when the payload carries no tool call, so
+/// the caller cleanly falls back to normal text extraction. Native calling
+/// only ever uses the non-streaming path, so streaming delta accumulation is
+/// intentionally not handled here.
+pub(crate) fn extract_tool_call_as_action_json(
+    provider: &AIProviderType,
+    payload: &serde_json::Value,
+) -> Option<String> {
+    let (name, arguments) = match provider {
+        AIProviderType::Anthropic => {
+            let block = payload.get("content")?.as_array()?.iter().find(|item| {
+                item.get("type").and_then(|value| value.as_str()) == Some("tool_use")
+            })?;
+            let name = block.get("name")?.as_str()?.to_string();
+            let arguments = block
+                .get("input")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            (name, arguments)
+        }
+        AIProviderType::Gemini => {
+            let call = payload
+                .pointer("/candidates/0/content/parts")?
+                .as_array()?
+                .iter()
+                .find_map(|part| part.get("functionCall"))?;
+            let name = call.get("name")?.as_str()?.to_string();
+            let arguments = call
+                .get("args")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            (name, arguments)
+        }
+        // OpenAI, OpenRouter, Ollama and Custom all follow the OpenAI chat shape.
+        _ => {
+            let call = payload.pointer("/choices/0/message/tool_calls/0/function")?;
+            let name = call.get("name")?.as_str()?.to_string();
+            // OpenAI encodes function arguments as a JSON *string*; parse it
+            // back into an object so the frontend normalizer sees real args.
+            let arguments = match call.get("arguments") {
+                Some(serde_json::Value::String(raw)) => {
+                    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::json!({}))
+                }
+                Some(other) => other.clone(),
+                None => serde_json::json!({}),
+            };
+            (name, arguments)
+        }
+    };
+
+    serde_json::to_string(&serde_json::json!({
+        "action": name,
+        "args": arguments,
+        "message": "",
+    }))
+    .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn tool_call_extraction_returns_none_without_a_call() {
+        let openai = json!({ "choices": [{ "message": { "content": "plain text" } }] });
+        assert!(extract_tool_call_as_action_json(&AIProviderType::OpenAI, &openai).is_none());
+    }
+
+    #[test]
+    fn tool_call_extraction_parses_openai_string_arguments() {
+        let payload = json!({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "type": "function",
+                        "function": {
+                            "name": "describe_table",
+                            "arguments": "{\"table\":\"users\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+        let action = extract_tool_call_as_action_json(&AIProviderType::OpenAI, &payload).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
+        assert_eq!(parsed["action"], "describe_table");
+        assert_eq!(parsed["args"]["table"], "users");
+        assert_eq!(parsed["message"], "");
+    }
+
+    #[test]
+    fn tool_call_extraction_reads_anthropic_tool_use() {
+        let payload = json!({
+            "content": [
+                { "type": "text", "text": "let me look" },
+                { "type": "tool_use", "name": "list_tables", "input": { "limit": 5 } }
+            ]
+        });
+        let action =
+            extract_tool_call_as_action_json(&AIProviderType::Anthropic, &payload).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
+        assert_eq!(parsed["action"], "list_tables");
+        assert_eq!(parsed["args"]["limit"], 5);
+    }
+
+    #[test]
+    fn tool_call_extraction_reads_gemini_function_call() {
+        let payload = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{ "functionCall": { "name": "search_schema", "args": { "query": "email" } } }]
+                }
+            }]
+        });
+        let action = extract_tool_call_as_action_json(&AIProviderType::Gemini, &payload).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
+        assert_eq!(parsed["action"], "search_schema");
+        assert_eq!(parsed["args"]["query"], "email");
+    }
 
     #[test]
     fn split_think_block_extracts_leading_reasoning() {

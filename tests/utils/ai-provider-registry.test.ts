@@ -70,6 +70,24 @@ describe("AI provider registry", () => {
     expect(getActiveAIProvider(configs)?.id).toBe("first-enabled");
   });
 
+  it("seeds the model catalog from the active model for legacy configs", () => {
+    const configs = normalizeAIProviderConfigs([
+      provider("legacy"),
+      provider("multi", { models: [" alpha ", "", "beta"] }),
+      provider("blank", { model: "  " }),
+      provider("partial-disable", { models: ["a", "b"], disabled_models: [" b ", "gone"] }),
+    ]);
+
+    // Legacy single-model config inherits `model` as its catalog.
+    expect(configs[0].models).toEqual(["test-model"]);
+    // Entries are trimmed and blanks dropped, keeping the active model intact.
+    expect(configs[1].models).toEqual(["alpha", "beta"]);
+    // A provider with no models at all stays empty.
+    expect(configs[2].models).toEqual([]);
+    // Disabled entries are trimmed but otherwise preserved as-is.
+    expect(configs[3].disabled_models).toEqual(["b", "gone"]);
+  });
+
   it("preserves the first valid primary and clears duplicate primaries", () => {
     const configs = normalizeAIProviderConfigs([
       provider("first", { is_primary: true }),

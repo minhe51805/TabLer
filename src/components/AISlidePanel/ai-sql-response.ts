@@ -41,13 +41,30 @@ export function hasSqlStartKeyword(sql: string) {
   return normalized.length > 0 && SQL_START_KEYWORDS.some((keyword) => normalized.startsWith(keyword));
 }
 
+/**
+ * Models often append prose after the statement ("…LIMIT 50;\nChạy query này
+ * để xem…"). If the SQL contains at least one ";"-terminated line, cut
+ * everything after the last terminator. SQL without any ";" is left intact.
+ */
+function trimTrailingProseAfterSql(sql: string) {
+  const lines = sql.split("\n");
+  let lastTerminator = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/;\s*$/.test(lines[i].trim())) lastTerminator = i;
+  }
+  if (lastTerminator < 0 || lastTerminator === lines.length - 1) {
+    return sql.trim();
+  }
+  return lines.slice(0, lastTerminator + 1).join("\n").trim();
+}
+
 export function extractSqlFromResponse(aiResponse: string) {
   let sqlResult = aiResponse.trim();
   const codeBlock = aiResponse.match(/```sql?([\s\S]*?)```/i);
   if (codeBlock?.[1]) {
     sqlResult = codeBlock[1].trim();
   } else {
-    if (hasSqlStartKeyword(sqlResult)) return sqlResult;
+    if (hasSqlStartKeyword(sqlResult)) return trimTrailingProseAfterSql(sqlResult);
 
     const lines = aiResponse.split("\n").map((line) => line.trimEnd());
     const sqlStartIndex = lines.findIndex((line) => hasSqlStartKeyword(line));
@@ -73,7 +90,7 @@ export function extractSqlFromResponse(aiResponse: string) {
     sqlResult = lines.slice(startIndex).join("\n").trim();
   }
 
-  return sqlResult;
+  return trimTrailingProseAfterSql(sqlResult);
 }
 
 export function stripSqlCodeBlocksFromResponse(aiResponse: string) {

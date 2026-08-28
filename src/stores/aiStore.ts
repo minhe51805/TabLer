@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
-import { getCurrentAppLanguage } from "../i18n";
+import { getCurrentAppLanguage, translateLanguage } from "../i18n";
 import {
   type AIConversationMessage,
   type AIProviderConfig,
@@ -10,8 +10,11 @@ import {
   type LocalOllamaSetupResult,
   type LocalOllamaStatus,
 } from "../types";
-import { getActiveAIProvider } from "../utils/ai-provider-registry";
+import { buildNativeToolPayload } from "../components/AISlidePanel/ai-agent-tool-schema";
+import { useConnectionStore } from "./connectionStore";
+import { getActiveAIProvider, normalizeAIProviderConfigs } from "../utils/ai-provider-registry";
 import { AIRequestError, normalizeAIRequestError } from "../utils/ai-request-errors";
+import { emitAppToast } from "../utils/app-toast";
 import { useGlobalErrorStore } from "./globalErrorStore";
 
 const AI_TIMEOUTS = {
@@ -87,6 +90,47 @@ export interface AIState {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[]
   ) => Promise<{ text: string; reasoning?: string }>;
+  /**
+   * Promotes the next enabled provider (cyclic list order, skipping the
+   * current primary) so a dead or rate-limited endpoint stops being tried
+   * first. Persists the switch best-effort. Returns the promoted provider,
+   * or `null` when no other provider is enabled.
+   */
+  promoteNextEnabledProvider: () => AIProviderConfig | null;
+}
+
+/**
+ * Promotes `next` to the active (primary) provider after `failed` broke a run.
+ * Updates the store so the provider selector in the AI panel follows, announces
+ * the switch through the global toast region, and persists the choice
+ * best-effort so the healthy provider survives an app restart.
+ */
+function switchActiveProvider(
+  configs: AIProviderConfig[],
+  next: AIProviderConfig,
+  failed: AIProviderConfig,
+  set: (partial: Partial<AIState>) => void,
+) {
+  const normalized = normalizeAIProviderConfigs(
+    configs.map((config) => ({ ...config, is_primary: config.id === next.id })),
+  );
+  set({ aiConfigs: normalized });
+  emitAppToast({
+    title: translateLanguage(getCurrentAppLanguage(), "ai.toast.providerFailover", {
+      failed: failed.name || failed.id,
+      next: next.name || next.id,
+    }),
+    tone: "info",
+    durationMs: 8_000,
+  });
+  // Best-effort persistence: the retried request must not wait on the disk
+  // write, and a failed save still leaves the runtime switch in place.
+  void invokeMutation<[AIProviderConfig[], Record<string, boolean>]>(
+    "save_ai_configs",
+    { providers: normalized, apiKeyUpdates: {}, clearedProviderIds: [] },
+  )
+    .then(([aiConfigs]) => set({ aiConfigs }))
+    .catch((error) => console.warn("[AI] Failed to persist provider failover:", error));
 }
 
 export const useAIStore = create<AIState>((set, get) => ({
@@ -121,6 +165,25 @@ export const useAIStore = create<AIState>((set, get) => ({
       useGlobalErrorStore.getState().setError(`Failed to save AI configs: ${e}`);
       throw e;
     }
+  },
+
+  promoteNextEnabledProvider: () => {
+    const configs = get().aiConfigs;
+    const active = getActiveAIProvider(configs);
+    if (!active) return null;
+    const activeIndex = configs.findIndex((config) => config.id === active.id);
+    // Cyclic scan starting after the current primary, so repeated calls walk
+    // through every enabled provider instead of flipping between two.
+    const rotated = [
+      ...configs.slice(activeIndex + 1),
+      ...configs.slice(0, activeIndex + 1),
+    ];
+    const next = rotated.find(
+      (config) => config.is_enabled && config.id !== active.id,
+    );
+    if (!next) return null;
+    switchActiveProvider(configs, next, active, set);
+    return next;
   },
 
   getLocalOllamaStatus: async () => {
@@ -194,6 +257,14 @@ export const useAIStore = create<AIState>((set, get) => ({
       const config = attempt.config;
       const timeoutMs = getAIRequestTimeout(config, mode, intent);
       const requestId = createAIRequestId();
+      // Native function-calling (off by default) rides the non-streaming path so
+      // the full tool_call JSON can be parsed at once; a null payload keeps the
+      // classic streaming text path exactly as before.
+      const connectionState = useConnectionStore.getState();
+      const engineKey = connectionState.connections.find(
+        (connection) => connection.id === connectionState.activeConnectionId,
+      )?.db_type;
+      const nativeToolPayload = buildNativeToolPayload(config.provider_type, intent, engineKey);
       set({
         activeAIRequestId: requestId,
         requestPhase: "requesting",
@@ -204,7 +275,7 @@ export const useAIStore = create<AIState>((set, get) => ({
 
       let unlisten: UnlistenFn | undefined;
       try {
-        if (mode === "panel") {
+        if (mode === "panel" && !nativeToolPayload) {
           let streamedText = "";
           unlisten = await listen<{
             requestId: string;
@@ -240,9 +311,8 @@ export const useAIStore = create<AIState>((set, get) => ({
             timeoutMs,
             "AI request",
             {
-              onTimeout: () => {
-                void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
-              },
+              onTimeout: () =>
+                invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false),
             },
           );
           return { text: streamedText };
@@ -260,14 +330,19 @@ export const useAIStore = create<AIState>((set, get) => ({
               intent,
               language: getCurrentAppLanguage(),
               history,
+              ...(nativeToolPayload
+                ? {
+                    tools: nativeToolPayload.tools,
+                    tool_choice: nativeToolPayload.tool_choice,
+                  }
+                : {}),
             },
           },
           timeoutMs,
           "AI request",
           {
-            onTimeout: () => {
-              void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
-            },
+            onTimeout: () =>
+              invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false),
           },
         );
         if (resp.error) throw new Error(resp.error);
@@ -280,6 +355,10 @@ export const useAIStore = create<AIState>((set, get) => ({
         if (!canFailOver || index === chain.length - 1) throw requestError;
         // Stop the superseded backend request before switching endpoints.
         void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
+        // Deliberately no primary change here: the request-level chain tries
+        // the remaining providers silently, and the single visible promotion
+        // is owned by the agent hook (promoteNextEnabledProvider) so the
+        // selector moves exactly once per run instead of flip-flopping.
         console.warn(
           `[AI] Provider "${config.name || config.id}" failed (${requestError.code}); failing over to the next enabled provider.`,
         );

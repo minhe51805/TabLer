@@ -1,0 +1,6 @@
+# Normalize all text files to LF in the repository and on every checkout.
+# Windows checkouts previously produced CRLF working trees (core.autocrlf),
+# which broke exact-string tests that read committed files via include_str!.
+# The repo contains no CRLF-required files (no .bat/.cmd/.ps1), so a global
+# LF policy is safe. Binary files are excluded automatically by text=auto.
+* text=auto eol=lf

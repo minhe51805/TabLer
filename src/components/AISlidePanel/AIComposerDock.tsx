@@ -1,8 +1,11 @@
 import {
+  ArrowLeftRight,
+  ArrowUp,
   Brain,
   Check,
   ChevronDown,
   Database,
+  Eye,
   Loader2,
   MessageSquare,
   PencilLine,
@@ -15,9 +18,10 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEventHandler, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, type KeyboardEventHandler, type RefObject } from "react";
 import type { AIProviderConfig } from "../../types";
 import { formatAIProviderTypeLabel } from "../../utils/ai-provider-registry";
+import { getAIFailoverConsent, setAIFailoverConsent } from "../../utils/ai-failover-consent";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import type {
   AIWorkspaceAgentAutonomy,
@@ -48,7 +52,8 @@ interface AIComposerDockProps {
   onDismissSelection: () => void;
   onSelectInteractionMode: (mode: AIWorkspaceInteractionMode) => void;
   onSelectAgentAutonomy: (autonomy: AIWorkspaceAgentAutonomy) => void;
-  onActivateProvider: (providerId: string) => void;
+  onActivateProvider: (providerId: string, model?: string) => void;
+  onToggleModelVisibility: (providerId: string, model: string) => void;
   onSetSessionDataReadEnabled: (enabled: boolean) => void;
   onSetShowThinking: (show: boolean) => void;
   onOpenSettings: () => void;
@@ -123,6 +128,7 @@ export function AIComposerDock({
   onSelectInteractionMode,
   onSelectAgentAutonomy,
   onActivateProvider,
+  onToggleModelVisibility,
   onSetSessionDataReadEnabled,
   onSetShowThinking,
   onOpenSettings,
@@ -131,6 +137,8 @@ export function AIComposerDock({
   onCancelGeneration,
 }: AIComposerDockProps) {
   const [openMenu, setOpenMenu] = useState<ComposerMenu | null>(null);
+  const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
+  const [showHiddenModels, setShowHiddenModels] = useState(false);
   const commandBarRef = useRef<HTMLDivElement>(null);
   const activeProviderValue = activeProvider?.model?.trim()
     || activeProvider?.name?.trim()
@@ -166,6 +174,34 @@ export function AIComposerDock({
     onCloseHistory();
     setOpenMenu((current) => current === menu ? null : menu);
   };
+
+  // The model submenu defaults to the active provider and collapses with the menu.
+  useEffect(() => {
+    if (openMenu !== "provider") {
+      setExpandedProviderId(null);
+      setShowHiddenModels(false);
+      return;
+    }
+    setExpandedProviderId((current) => current ?? activeProvider?.id ?? null);
+  }, [openMenu, activeProvider?.id]);
+
+  const hiddenModelEntries = providers.flatMap((config) => (
+    (config.disabled_models ?? [])
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((model) => ({ config, model }))
+  ));
+
+  // Mirrors the failover consent (localStorage) and stays in sync when the
+  // agent-side consent dialog records a decision.
+  const [autoSwitchEnabled, setAutoSwitchEnabled] = useState(
+    () => getAIFailoverConsent() === "approved",
+  );
+  useEffect(() => {
+    const sync = () => setAutoSwitchEnabled(getAIFailoverConsent() === "approved");
+    window.addEventListener("ai-failover-consent-change", sync);
+    return () => window.removeEventListener("ai-failover-consent-change", sync);
+  }, []);
 
   return (
     <div className="ai-workspace-compose-dock">
@@ -273,37 +309,81 @@ export function AIComposerDock({
                   <div className="ai-workspace-command-popover ai-workspace-command-popover--provider" role="menu" aria-label="Choose AI model">
                     <div className="ai-workspace-command-popover-head">
                       <strong>Switch model</strong>
-                      <span>Switch the active AI provider without leaving the chat panel.</span>
                     </div>
                     <div className="ai-workspace-command-provider-list">
                       {providers.length > 0 ? providers.map((config) => {
-                        const providerValue = config.model?.trim()
-                          || config.name?.trim()
-                          || formatAIProviderTypeLabel(config.provider_type);
-                        const providerCaption = config.name?.trim() && config.name.trim() !== providerValue
-                          ? `${config.name.trim()} / ${formatAIProviderTypeLabel(config.provider_type)}`
-                          : formatAIProviderTypeLabel(config.provider_type);
+                        const disabledModels = new Set(config.disabled_models ?? []);
+                        const models = (config.models?.length
+                          ? config.models
+                          : (config.model?.trim() ? [config.model.trim()] : []))
+                          .map((entry) => entry.trim())
+                          .filter((entry) => Boolean(entry) && !disabledModels.has(entry));
+                        // A provider whose whole catalog is disabled stays out of
+                        // the switcher; re-enable it in settings.
+                        if (models.length === 0 && (config.models?.length ?? 0) > 0) return null;
+                        const typeLabel = formatAIProviderTypeLabel(config.provider_type);
+                        const providerLabel = config.name?.trim() || typeLabel;
+                        const isActiveProvider = config.id === activeProvider?.id;
+                        const isExpanded = expandedProviderId === config.id;
+                        const hasMultipleModels = models.length > 1;
+                        const activeModelCaption = models.length === 0
+                          ? typeLabel
+                          : models.length === 1
+                            ? models[0]
+                            : models.includes(config.model)
+                              ? config.model
+                              : `${models.length} models`;
+                        // Two-level menu: the provider row expands into its own
+                        // model list instead of dumping every model in one flat wall.
                         return (
-                          <button
-                            key={config.id}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={config.id === activeProvider?.id}
-                            className={`ai-workspace-command-item ai-workspace-command-item--provider ${config.id === activeProvider?.id ? "is-active" : ""}`}
-                            onClick={() => {
-                              setOpenMenu(null);
-                              onActivateProvider(config.id);
-                            }}
-                          >
-                            <span className="ai-workspace-command-item-copy">
-                              <strong>{providerValue}</strong>
-                              <span>{providerCaption}</span>
-                            </span>
-                            <span className="ai-workspace-command-provider-meta">
-                              {!config.is_enabled && <span className="ai-workspace-command-provider-tag">Disabled</span>}
-                              {config.id === activeProvider?.id && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
-                            </span>
-                          </button>
+                          <Fragment key={config.id}>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              aria-expanded={hasMultipleModels ? isExpanded : undefined}
+                              className={`ai-workspace-command-item ai-workspace-command-item--provider ${isActiveProvider ? "is-active" : ""}`}
+                              onClick={() => {
+                                if (hasMultipleModels) {
+                                  setExpandedProviderId(isExpanded ? null : config.id);
+                                  return;
+                                }
+                                setOpenMenu(null);
+                                onActivateProvider(config.id, models[0] || undefined);
+                              }}
+                            >
+                              <span className="ai-workspace-command-item-copy">
+                                <strong>{providerLabel}</strong>
+                                <span>{activeModelCaption}</span>
+                              </span>
+                              <span className="ai-workspace-command-provider-meta">
+                                {hasMultipleModels && (
+                                  <ChevronDown className={`w-3.5 h-3.5 ai-workspace-command-model-chevron ${isExpanded ? "is-open" : ""}`} />
+                                )}
+                                {isActiveProvider && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
+                              </span>
+                            </button>
+                            {hasMultipleModels && isExpanded ? models.map((model) => {
+                              const isActiveModel = isActiveProvider && config.model === model;
+                              return (
+                                <button
+                                  key={`${config.id}:${model}`}
+                                  type="button"
+                                  role="menuitemradio"
+                                  aria-checked={isActiveModel}
+                                  className={`ai-workspace-command-item ai-workspace-command-model-item ${isActiveModel ? "is-active" : ""}`}
+                                  onClick={() => {
+                                    setOpenMenu(null);
+                                    onActivateProvider(config.id, model);
+                                  }}
+                                >
+                                  <span className="ai-workspace-command-item-copy">
+                                    <strong>{model}</strong>
+                                  </span>
+                                  {isActiveModel && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
+                                </button>
+                              );
+                            }) : null}
+                          </Fragment>
                         );
                       }) : (
                         <button type="button" className="ai-workspace-command-empty" onClick={onOpenSettings}>
@@ -311,6 +391,41 @@ export function AIComposerDock({
                         </button>
                       )}
                     </div>
+                    {hiddenModelEntries.length > 0 ? (
+                      <>
+                        <button
+                          type="button"
+                          role="menuitemcheckbox"
+                          aria-checked={showHiddenModels}
+                          className="ai-workspace-command-item ai-workspace-command-hidden-toggle"
+                          onClick={() => setShowHiddenModels((current) => !current)}
+                        >
+                          <span className="ai-workspace-command-item-copy">
+                            <strong>{copy.composer.hiddenModelsToggle}</strong>
+                          </span>
+                          <ChevronDown className={`w-3.5 h-3.5 ai-workspace-command-model-chevron ${showHiddenModels ? "is-open" : ""}`} />
+                        </button>
+                        {showHiddenModels ? (
+                          <div className="ai-workspace-command-hidden-list">
+                            {hiddenModelEntries.map(({ config, model }) => (
+                              <button
+                                key={`${config.id}:${model}`}
+                                type="button"
+                                role="menuitem"
+                                className="ai-workspace-command-item ai-workspace-command-model-item"
+                                onClick={() => onToggleModelVisibility(config.id, model)}
+                              >
+                                <span className="ai-workspace-command-item-copy">
+                                  <strong>{model}</strong>
+                                  <span>{config.name?.trim() || formatAIProviderTypeLabel(config.provider_type)}</span>
+                                </span>
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
                     <button type="button" className="ai-workspace-command-settings-link" onClick={onOpenSettings}>
                       {copy.composer.openSettings}
                     </button>
@@ -346,6 +461,20 @@ export function AIComposerDock({
                         <span>{sessionDataReadTitle}</span>
                       </span>
                       {isSessionDataReadEnabled && <Check className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={autoSwitchEnabled}
+                      className={`ai-workspace-command-utility-item ${autoSwitchEnabled ? "is-active" : ""}`}
+                      onClick={() => setAIFailoverConsent(autoSwitchEnabled ? "declined" : "approved")}
+                    >
+                      <span className="ai-workspace-command-utility-icon"><ArrowLeftRight className="w-3.5 h-3.5" /></span>
+                      <span className="ai-workspace-command-utility-copy">
+                        <strong>{copy.composer.autoProviderSwitchLabel}</strong>
+                        <span>{autoSwitchEnabled ? copy.composer.thinkingOn : copy.composer.thinkingOff}</span>
+                      </span>
+                      {autoSwitchEnabled && <Check className="w-3.5 h-3.5" />}
                     </button>
                     {interactionMode === "agent" && (
                       <>
@@ -410,16 +539,26 @@ export function AIComposerDock({
             className={`ai-workspace-generate-btn ${isGenerating || isCancelling ? "is-cancel" : ""}`}
             onClick={isGenerating ? onCancelGeneration : onGenerate}
             disabled={isCancelling || (!isGenerating && (!prompt.trim() && !hasAttachedSelectionText))}
+            aria-label={
+              isCancelling
+                ? copy.composer.cancelling
+                : isGenerating
+                  ? copy.composer.cancelGeneration
+                  : copy.composer.generateBubble
+            }
+            title={
+              isCancelling
+                ? copy.composer.cancelling
+                : isGenerating
+                  ? copy.composer.cancelGeneration
+                  : copy.composer.generateBubble
+            }
           >
             {isCancelling
-              ? <Loader2 className="w-4 h-4 animate-spin" />
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
               : isGenerating
-                ? <Square className="w-4 h-4" />
-              : <Sparkles className="w-4 h-4" />}
-            {isCancelling
-              ? copy.composer.cancelling
-              : isGenerating ? copy.composer.cancelGeneration
-              : copy.composer.generateBubble}
+                ? <Square className="w-3.5 h-3.5" />
+              : <ArrowUp className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>

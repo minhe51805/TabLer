@@ -1,5 +1,6 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_common::MAX_TABLE_PAGE_ROWS;
 use super::safety::{
     normalize_order_dir, quote_sqlite_identifier, quote_sqlite_order_by,
     sanitize_sqlite_filter_clause,
@@ -431,9 +432,22 @@ impl DatabaseDriver for SqliteDriver {
             let dir = normalize_order_dir(order_dir)?;
             sql.push_str(&format!(" ORDER BY {} {}", quote_sqlite_order_by(ob)?, dir));
         }
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+        let fetch_limit = limit.clamp(1, MAX_TABLE_PAGE_ROWS);
+        sql.push_str(&format!(" LIMIT {} OFFSET {}", fetch_limit, offset));
 
-        self.execute_query(&sql).await
+        let start = Instant::now();
+        let (rows, truncated) =
+            Self::fetch_rows_capped(&self.pool, &sql, fetch_limit as usize).await?;
+        let mut result = Self::build_result_from_rows(
+            &rows,
+            start.elapsed().as_millis(),
+            sql,
+            0,
+            false,
+            truncated || limit > fetch_limit,
+        );
+        result.execution_time_ms = start.elapsed().as_millis();
+        Ok(result)
     }
 
     async fn count_rows(&self, table: &str, _database: Option<&str>) -> Result<i64> {

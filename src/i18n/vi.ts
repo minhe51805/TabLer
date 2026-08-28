@@ -288,7 +288,7 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.context.add": "Thêm",
   "metrics.editor.kicker": "Widget",
   "metrics.editor.refreshRate": "Tần suất làm mới",
-  "metrics.editor.widgetType": "Lo?i bi?u ??",
+  "metrics.editor.widgetType": "Loại biểu đồ",
   "metrics.editor.help":
     "Kéo để di chuyển, đổi kích thước từ góc phải dưới, và giữ query ở chế độ chỉ đọc.",
   "tabs.tab": "tab",
@@ -305,4 +305,14 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.widget.openSourceSql": "Open source SQL",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
+  "ai.toast.providerFailover":
+    'Provider "{{failed}}" đang lỗi, sẽ chuyển sang provider "{{next}}", vui lòng đợi.',
+  "ai.failover.consentTitle":
+    "Provider đang lỗi",
+  "ai.failover.consentBody":
+    'Provider "{{failed}}" đang gặp lỗi liên tục. Cho phép TableR ghi nhớ và tự động chuyển sang provider khác khi gặp lỗi về sau không?',
+  "ai.failover.consentAllow":
+    "Cho phép tự chuyển",
+  "ai.failover.consentDeny":
+    "Không",
 };

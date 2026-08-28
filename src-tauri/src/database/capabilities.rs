@@ -18,6 +18,61 @@ pub enum CapabilitySupport {
     NotApplicable,
 }
 
+/// How the agent should talk to this engine. SQL-shaped tools
+/// (`run_readonly_sql`, `preview_write`) only apply to `Sql` (and CQL SELECT).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryModel {
+    Sql,
+    Cql,
+    Document,
+    Kv,
+    Search,
+}
+
+pub const fn query_model_for(database_type: DatabaseType) -> QueryModel {
+    match database_type {
+        DatabaseType::Redis => QueryModel::Kv,
+        DatabaseType::MongoDB => QueryModel::Document,
+        DatabaseType::OpenSearch => QueryModel::Search,
+        DatabaseType::Cassandra => QueryModel::Cql,
+        _ => QueryModel::Sql,
+    }
+}
+
+pub const fn agent_allows_sql_read(database_type: DatabaseType) -> bool {
+    matches!(
+        query_model_for(database_type),
+        QueryModel::Sql | QueryModel::Cql
+    )
+}
+
+pub const fn agent_allows_sql_write_preview(database_type: DatabaseType) -> bool {
+    matches!(query_model_for(database_type), QueryModel::Sql)
+}
+
+pub fn agent_sql_read_unsupported_error(database_type: DatabaseType) -> Option<String> {
+    if agent_allows_sql_read(database_type) {
+        return None;
+    }
+    let profile = driver_capabilities(database_type);
+    Some(format!(
+        "{} does not support SQL observations in the AI agent. Use table listing and sampling tools instead.",
+        profile.label
+    ))
+}
+
+pub fn agent_sql_write_preview_unsupported_error(database_type: DatabaseType) -> Option<String> {
+    if agent_allows_sql_write_preview(database_type) {
+        return None;
+    }
+    let profile = driver_capabilities(database_type);
+    Some(format!(
+        "{} does not support SQL write previews in the AI agent.",
+        profile.label
+    ))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverCapability {
     Query,
@@ -73,6 +128,7 @@ pub struct DriverCapabilityProfile {
     pub key: &'static str,
     pub label: &'static str,
     pub tier: DriverTier,
+    pub query_model: QueryModel,
     pub capabilities: DriverCapabilitySet,
     pub limitations: &'static [&'static str],
 }
@@ -162,6 +218,7 @@ const fn profile(
         key,
         label,
         tier,
+        query_model: query_model_for(database_type),
         capabilities: DriverCapabilitySet {
             connect,
             query,
@@ -192,24 +249,24 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "mysql",
             "MySQL",
             DriverTier::Core,
-            S, S, S, L, S, S, S, S, S, S, S, L, S,
-            &["Query timeout does not yet guarantee server-side cancellation.", "Restore can retain earlier statements after a failure."],
+            S, S, S, S, S, S, S, S, S, S, S, L, S,
+            &["Restore can retain earlier statements after a failure."],
         ),
         DatabaseType::MariaDB => profile(
             database_type,
             "mariadb",
             "MariaDB",
             DriverTier::Core,
-            S, S, S, L, S, S, S, S, S, S, S, L, S,
-            &["Query timeout does not yet guarantee server-side cancellation.", "MariaDB currently shares the MySQL driver and capability tests."],
+            S, S, S, S, S, S, S, S, S, S, S, L, S,
+            &["MariaDB currently shares the MySQL driver and capability tests."],
         ),
         DatabaseType::PostgreSQL => profile(
             database_type,
             "postgresql",
             "PostgreSQL",
             DriverTier::Core,
-            S, S, S, L, S, S, S, S, S, S, S, S, S,
-            &["Query timeout does not yet guarantee server-side cancellation."],
+            S, S, S, S, S, S, S, S, S, S, S, S, S,
+            &[],
         ),
         DatabaseType::CockroachDB => profile(
             database_type,
@@ -241,7 +298,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "SQLite",
             DriverTier::Core,
             S, S, S, L, S, S, S, S, S, S, U, S, N,
-            &["Query timeout does not interrupt every SQLite operation.", "Direct column schema changes are not wired into TableR actions yet."],
+            &["Local engine: cancel stops waiting; the embedded engine finishes the statement in the background.", "Direct column schema changes are not wired into TableR actions yet."],
         ),
         DatabaseType::DuckDB => profile(
             database_type,
@@ -410,9 +467,73 @@ mod tests {
     }
 
     #[test]
+    fn agent_sql_tools_follow_query_model() {
+        assert_eq!(query_model_for(DatabaseType::PostgreSQL), QueryModel::Sql);
+        assert_eq!(query_model_for(DatabaseType::ClickHouse), QueryModel::Sql);
+        assert_eq!(query_model_for(DatabaseType::Cassandra), QueryModel::Cql);
+        assert_eq!(query_model_for(DatabaseType::MongoDB), QueryModel::Document);
+        assert_eq!(query_model_for(DatabaseType::Redis), QueryModel::Kv);
+        assert_eq!(
+            query_model_for(DatabaseType::OpenSearch),
+            QueryModel::Search
+        );
+
+        assert!(agent_allows_sql_read(DatabaseType::ClickHouse));
+        assert!(agent_allows_sql_read(DatabaseType::Cassandra));
+        assert!(!agent_allows_sql_read(DatabaseType::Redis));
+        assert!(!agent_allows_sql_read(DatabaseType::MongoDB));
+        assert!(!agent_allows_sql_read(DatabaseType::OpenSearch));
+
+        assert!(agent_allows_sql_write_preview(DatabaseType::ClickHouse));
+        assert!(!agent_allows_sql_write_preview(DatabaseType::Cassandra));
+        assert!(!agent_allows_sql_write_preview(DatabaseType::Redis));
+        assert!(agent_sql_read_unsupported_error(DatabaseType::Redis).is_some());
+        assert!(agent_sql_read_unsupported_error(DatabaseType::PostgreSQL).is_none());
+    }
+
+    #[test]
+    fn every_engine_has_an_explicit_agent_sql_policy() {
+        for database_type in ALL_DATABASE_TYPES {
+            let model = query_model_for(database_type);
+            let read = agent_allows_sql_read(database_type);
+            let write = agent_allows_sql_write_preview(database_type);
+            match model {
+                QueryModel::Sql => {
+                    assert!(read, "{database_type:?} sql must allow reads");
+                    assert!(write, "{database_type:?} sql must allow write previews");
+                    assert!(agent_sql_read_unsupported_error(database_type).is_none());
+                    assert!(agent_sql_write_preview_unsupported_error(database_type).is_none());
+                }
+                QueryModel::Cql => {
+                    assert!(read, "{database_type:?} cql must allow SELECT-shaped reads");
+                    assert!(
+                        !write,
+                        "{database_type:?} cql must not allow SQL write previews"
+                    );
+                    assert!(agent_sql_write_preview_unsupported_error(database_type).is_some());
+                }
+                QueryModel::Document | QueryModel::Kv | QueryModel::Search => {
+                    assert!(!read, "{database_type:?} must not allow SQL reads");
+                    assert!(
+                        !write,
+                        "{database_type:?} must not allow SQL write previews"
+                    );
+                    let err = agent_sql_read_unsupported_error(database_type).expect("error");
+                    assert!(err.contains("does not support SQL observations"));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn committed_json_matrix_matches_the_rust_catalog() {
         let expected = serde_json::to_string_pretty(&all_driver_capabilities()).unwrap() + "\n";
-        let committed = include_str!("../../../docs/generated/driver-capabilities.json");
+        // include_str! embeds the file as it exists on disk at compile time, so
+        // a Windows checkout (core.autocrlf) would otherwise compare CRLF text
+        // against LF expectations. Normalize before comparing; the committed
+        // blob itself is always LF (enforced by .gitattributes).
+        let committed =
+            include_str!("../../../docs/generated/driver-capabilities.json").replace("\r\n", "\n");
         assert_eq!(committed, expected, "regenerate the capability matrix");
     }
 }

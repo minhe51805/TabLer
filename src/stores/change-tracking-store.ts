@@ -5,7 +5,6 @@
  */
 
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import type { StagedChange, ChangeTrackingState, ChangeTrackingActions } from "../types/change-tracking";
 import type { DatabaseType } from "../types/database";
 
@@ -98,9 +97,7 @@ interface ChangeTrackingStoreActions extends ChangeTrackingActions {
 
 export type FullChangeTrackingStore = ChangeTrackingStoreState & ChangeTrackingStoreActions;
 
-export const useChangeTrackingStore = create<FullChangeTrackingStore>()(
-  persist(
-    (set, get) => ({
+export const useChangeTrackingStore = create<FullChangeTrackingStore>()((set, get) => ({
       // State
       stagedChanges: [],
       history: [],
@@ -248,18 +245,7 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()(
           future: [],
         });
       },
-    }),
-    {
-      name: "tabler.change-tracking",
-      // Only persist non-preview state
-      partialize: (state) => ({
-        stagedChanges: state.stagedChanges,
-        history: state.history.slice(-10), // Keep last 10 history entries
-        future: state.future.slice(-10),
-      }),
-    },
-  ),
-);
+}));
 
 /** Hook to get change count for a specific table */
 export function useTableChangeCount(tableName: string): number {

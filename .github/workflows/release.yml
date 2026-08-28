@@ -251,7 +251,7 @@ jobs:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: "TableR ${{ env.RELEASE_TAG }}"
           releaseBody: |
-            TableR v0.1.5 focuses on dependable grid editing, streaming data movement, parser-backed SQL safety, recoverable connections, grounded AI, qualified workspace navigation, and release hardening.
+            TableR v0.1.5b focuses on dependable grid editing, streaming data movement, parser-backed SQL safety, recoverable connections, grounded AI, qualified workspace navigation, and release hardening.
 
             Download only the installer for your operating system from Assets. The macOS build is currently unsigned and not notarized; Gatekeeper may require Open Anyway in Privacy & Security on first launch.
           releaseDraft: true

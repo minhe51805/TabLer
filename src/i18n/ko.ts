@@ -304,4 +304,14 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.widget.openSourceSql": "Open source SQL",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
+  "ai.toast.providerFailover":
+    '"{{failed}}" 공급자에 오류가 발생했습니다. "{{next}}" 공급자로 전환 중입니다. 잠시만 기다려 주세요.',
+  "ai.failover.consentTitle":
+    "공급자 오류 발생",
+  "ai.failover.consentBody":
+    '"{{failed}}" 공급자에서 계속 오류가 발생합니다. TableR이 이를 기억하고 나중에 다시 발생할 때 다른 활성 공급자로 자동 전환하는 것을 허용하시겠습니까?',
+  "ai.failover.consentAllow":
+    "자동 전환 허용",
+  "ai.failover.consentDeny":
+    "나중에",
 };

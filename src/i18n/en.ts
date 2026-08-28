@@ -303,4 +303,14 @@ export const en = {
   "tabs.readyToExecute": "Press Ctrl+Enter to run",
   "tabs.noSqlToExecute":
     "Nothing to run yet. Type a query or command first, then press Ctrl+Enter.",
+  "ai.toast.providerFailover":
+    'Provider "{{failed}}" is failing — switching to provider "{{next}}", please wait.',
+  "ai.failover.consentTitle":
+    "Provider failing",
+  "ai.failover.consentBody":
+    'Provider "{{failed}}" keeps failing. Allow TableR to remember this and automatically switch to another enabled provider when it happens again?',
+  "ai.failover.consentAllow":
+    "Allow auto-switch",
+  "ai.failover.consentDeny":
+    "Not now",
 } as const;

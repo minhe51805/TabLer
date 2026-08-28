@@ -83,6 +83,15 @@ pub(crate) fn endpoint_host(endpoint: &str) -> Option<String> {
         .and_then(|url| url.host_str().map(|host| host.to_ascii_lowercase()))
 }
 
+/// A base URL the user pasted (e.g. `https://host/api/v1`, `/v1/`, or a bare
+/// host) that still needs the wire suffix (`chat/completions`, `messages`)
+/// appended. Any path ending in `/v1` is treated as a base, matching what
+/// other AI clients do with "base URL" fields.
+pub(crate) fn is_unwired_base_path(path: &str) -> bool {
+    let trimmed = path.trim_end_matches('/');
+    trimmed.is_empty() || trimmed.ends_with("/v1")
+}
+
 pub(crate) fn join_endpoint_suffix(endpoint: &str, suffix: &str) -> String {
     let Ok(mut url) = Url::parse(endpoint) else {
         return endpoint.to_string();
@@ -123,25 +132,48 @@ pub(crate) fn resolve_provider_endpoint(config: &AIProviderConfig) -> String {
         config.endpoint.trim().to_string()
     };
 
+    // Explicit Ollama wire formats resolve as-is (or to the local default)
+    // instead of getting an OpenAI-style path appended.
+    if matches!(
+        config.provider_type,
+        AIProviderType::Ollama | AIProviderType::Custom
+    ) {
+        match explicit_api_format(config) {
+            Some(format @ ("ollama-chat" | "ollama-generate")) => {
+                if !endpoint.trim().is_empty() {
+                    return endpoint;
+                }
+                let action = if format == "ollama-generate" {
+                    "generate"
+                } else {
+                    "chat"
+                };
+                return format!("http://localhost:11434/api/{action}");
+            }
+            _ => {}
+        }
+    }
+
     let path = endpoint_path(&endpoint).unwrap_or_default();
+    let needs_suffix = is_unwired_base_path(&path);
 
     match config.provider_type {
         AIProviderType::OpenAI | AIProviderType::OpenRouter | AIProviderType::Custom => {
-            if path.is_empty() || path == "/" || path == "/v1" {
+            if needs_suffix {
                 join_endpoint_suffix(&endpoint, "chat/completions")
             } else {
                 endpoint
             }
         }
         AIProviderType::Ollama => {
-            if path.is_empty() || path == "/" || path == "/v1" {
+            if needs_suffix {
                 join_endpoint_suffix(&endpoint, "chat/completions")
             } else {
                 endpoint
             }
         }
         AIProviderType::Anthropic => {
-            if path.is_empty() || path == "/" || path == "/v1" {
+            if needs_suffix {
                 join_endpoint_suffix(&endpoint, "messages")
             } else {
                 endpoint
@@ -153,6 +185,16 @@ pub(crate) fn resolve_provider_endpoint(config: &AIProviderConfig) -> String {
 
 pub(crate) fn is_ollama_native_chat_endpoint(endpoint: &str) -> bool {
     endpoint_path(endpoint).is_some_and(|path| path.ends_with("/api/chat"))
+}
+
+/// Explicit wire format chosen in settings ("chat-completions",
+/// "ollama-chat", "ollama-generate"). `None` keeps URL sniffing, which is the
+/// legacy behavior for configs saved before the selector existed.
+pub(crate) fn explicit_api_format(config: &AIProviderConfig) -> Option<&str> {
+    match config.api_format.as_deref()?.trim() {
+        "" | "auto" | "auto-detect" => None,
+        other => Some(other),
+    }
 }
 
 pub(crate) fn is_ollama_native_generate_endpoint(endpoint: &str) -> bool {
@@ -226,6 +268,31 @@ mod tests {
         assert_eq!(
             resolve_provider_endpoint(&custom),
             "https://example.com/v1/chat/completions"
+        );
+
+        // Base URLs like `.../api/v1` (KiraAI-style gateways) also get the
+        // wire suffix appended — this is how other AI clients treat them.
+        let mut custom = sample_provider(AIProviderType::Custom);
+        custom.endpoint = "https://kiraai.vn/api/v1".to_string();
+        assert_eq!(
+            resolve_provider_endpoint(&custom),
+            "https://kiraai.vn/api/v1/chat/completions"
+        );
+
+        // Trailing slash on the base does not produce a double slash.
+        let mut custom = sample_provider(AIProviderType::Custom);
+        custom.endpoint = "https://kiraai.vn/api/v1/".to_string();
+        assert_eq!(
+            resolve_provider_endpoint(&custom),
+            "https://kiraai.vn/api/v1/chat/completions"
+        );
+
+        // A full endpoint the user pasted is respected as-is.
+        let mut custom = sample_provider(AIProviderType::Custom);
+        custom.endpoint = "https://kiraai.vn/api/v1/chat/completions".to_string();
+        assert_eq!(
+            resolve_provider_endpoint(&custom),
+            "https://kiraai.vn/api/v1/chat/completions"
         );
 
         let gemini = sample_provider(AIProviderType::Gemini);

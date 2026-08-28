@@ -5,6 +5,7 @@ import {
   useCallback,
   lazy,
   Suspense,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -12,6 +13,7 @@ import { AppStartupShell } from "./components/AppStartupShell";
 import { TitleBarWindowControls } from "./components/TitleBarWindowControls";
 import { useAppMenuActions } from "./hooks/useAppMenuActions";
 import { useConnectionStore } from "./stores/connectionStore";
+import { pushSafeModePolicyToBackend } from "./stores/safeModeStore";
 import { useGlobalErrorStore } from "./stores/globalErrorStore";
 import { useUIStore } from "./stores/uiStore";
 import { EventCenter } from "./stores/event-center";
@@ -151,6 +153,7 @@ function App() {
     leftPanel, setLeftPanel,
     isSidebarCollapsed, setIsSidebarCollapsed,
     sidebarWidth, setSidebarWidth,
+    aiPanelWidth,
     isWindowMaximized,
     isWindowFocused,
     forceLauncherVisible, setForceLauncherVisible
@@ -313,20 +316,22 @@ function App() {
 
   const handleGoToLauncher = useCallback(() => {
     const currentState = useConnectionStore.getState();
-    const nextConnectedIds = new Set(currentState.connectedIds);
-    if (currentState.activeConnectionId) {
-      nextConnectedIds.delete(currentState.activeConnectionId);
-    }
+    const leavingConnectionId = currentState.activeConnectionId;
 
     useConnectionStore.setState({
       activeConnectionId: null,
-      connectedIds: nextConnectedIds,
+      connectedIds: leavingConnectionId
+        ? new Set([...currentState.connectedIds].filter((id) => id !== leavingConnectionId))
+        : currentState.connectedIds,
       currentDatabase: null,
       databases: [],
       tables: [],
       schemaObjects: [],
       isConnecting: false,
     });
+    if (leavingConnectionId && currentState.connectedIds.has(leavingConnectionId)) {
+      void currentState.disconnectFromDatabase(leavingConnectionId, { keepTabs: true });
+    }
     clearError();
 
     setShowStartupConnectionManager(true);
@@ -651,6 +656,10 @@ function App() {
     void loadSavedConnections();
   }, [loadSavedConnections]);
 
+  useEffect(() => {
+    pushSafeModePolicyToBackend();
+  }, []);
+
   useTabPersistence(activeConnectionId, connectedIds);
 
   useDeepLink(isDesktopWindow);
@@ -712,6 +721,7 @@ function App() {
   return (
     <div
       className={`app-root ${isWindowMaximized ? "window-maximized" : ""} ${showAISlidePanel ? "workspace-ai-open" : ""}`}
+      style={{ "--workspace-ai-sidebar-width": `${aiPanelWidth}px` } as CSSProperties}
     >
       <AppTitleBar
         titlebarContextTitle={titlebarContextTitle}

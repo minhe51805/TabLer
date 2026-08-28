@@ -16,7 +16,6 @@ import {
   extractLeadingUseDirective,
   isSessionSwitchStatement,
   isMutatingStatement,
-  isHighRiskStatement,
 } from "../SQLEditorUtils";
 import { registerInlineAICompletionProvider } from "../SQLEditorAICompletion";
 import { registerSchemaCompletionProvider, defineTableRTheme } from "../SQLEditorMonacoSetup";
@@ -302,7 +301,6 @@ export function useSQLEditor({
     }
 
     const hasMutatingStatements = statementsToExecute.some(isMutatingStatement);
-    const hasHighRiskStatements = statementsToExecute.some(isHighRiskStatement);
 
     setNotice(null);
     setError(null);
@@ -312,18 +310,6 @@ export function useSQLEditor({
       const activeDatabase = useConnectionStore.getState().currentDatabase;
       if (targetDatabaseFromUse && activeDatabase !== targetDatabaseFromUse) {
         await switchDatabase(connectionId, targetDatabaseFromUse);
-      }
-
-      if (hasHighRiskStatements) {
-        const confirmed = window.confirm(
-          "Sandbox gateway detected a high-risk SQL statement. TableR will send it through the protected execution boundary and it will apply real changes to the database. Continue?"
-        );
-        if (!confirmed) return;
-      } else if (hasMutatingStatements) {
-        const confirmed = window.confirm(
-          "Sandbox gateway will apply these SQL changes to the database for real after policy checks. Continue?"
-        );
-        if (!confirmed) return;
       }
 
       const queryResult = await executeSandboxQuery(connectionId, statementsToExecute);

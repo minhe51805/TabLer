@@ -1,5 +1,6 @@
 import {
   ArrowLeftRight,
+  ArrowUp,
   Brain,
   Check,
   ChevronDown,
@@ -538,16 +539,26 @@ export function AIComposerDock({
             className={`ai-workspace-generate-btn ${isGenerating || isCancelling ? "is-cancel" : ""}`}
             onClick={isGenerating ? onCancelGeneration : onGenerate}
             disabled={isCancelling || (!isGenerating && (!prompt.trim() && !hasAttachedSelectionText))}
+            aria-label={
+              isCancelling
+                ? copy.composer.cancelling
+                : isGenerating
+                  ? copy.composer.cancelGeneration
+                  : copy.composer.generateBubble
+            }
+            title={
+              isCancelling
+                ? copy.composer.cancelling
+                : isGenerating
+                  ? copy.composer.cancelGeneration
+                  : copy.composer.generateBubble
+            }
           >
             {isCancelling
-              ? <Loader2 className="w-4 h-4 animate-spin" />
+              ? <Loader2 className="w-[18px] h-[18px] animate-spin" />
               : isGenerating
-                ? <Square className="w-4 h-4" />
-              : <Sparkles className="w-4 h-4" />}
-            {isCancelling
-              ? copy.composer.cancelling
-              : isGenerating ? copy.composer.cancelGeneration
-              : copy.composer.generateBubble}
+                ? <Square className="w-[18px] h-[18px]" />
+              : <ArrowUp className="w-[18px] h-[18px]" />}
           </button>
         </div>
       </div>

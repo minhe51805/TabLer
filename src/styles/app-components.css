@@ -32846,6 +32846,23 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   box-shadow: 0 10px 22px color-mix(in srgb, var(--error) 26%, transparent);
 }
 
+/* The generate button is icon-only now: a compact rounded square, like a
+   chat send button (the label moved to aria-label / title). */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-generate-btn {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  flex: 0 0 40px;
+  padding: 0;
+  border-radius: 13px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-generate-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
 .app-mcp-integrations-modal {
   width: min(900px, calc(100vw - 32px));
   max-height: min(820px, calc(100vh - 32px));

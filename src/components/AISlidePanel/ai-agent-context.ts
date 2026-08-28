@@ -4,6 +4,8 @@ import {
   MAX_TABLE_NAMES_IN_CONTEXT,
   type AISchemaCodecMode,
 } from "./AISlidePanelUtils";
+import type { AgentToolAvailability } from "./ai-agent-engine-gates";
+import { formatAgentToolCatalog } from "./ai-agent-tool-schema";
 import type { AIWorkspaceAgentActionName } from "./ai-workspace-types";
 
 export type AssistIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error" | "general";
@@ -189,6 +191,7 @@ export function buildAgentControllerPrompt(params: {
   steps: AgentTraceStep[];
   workspaceToolsEnabled: boolean;
   workspaceToolStatus?: string;
+  toolAvailability?: AgentToolAvailability;
   forceFinish?: boolean;
   extraInstruction?: string;
   cachedTableSummaries?: string[];
@@ -202,6 +205,7 @@ export function buildAgentControllerPrompt(params: {
     steps,
     workspaceToolsEnabled,
     workspaceToolStatus,
+    toolAvailability,
     forceFinish,
     extraInstruction,
     cachedTableSummaries,
@@ -227,23 +231,12 @@ export function buildAgentControllerPrompt(params: {
         ].join("\n");
       }).join("\n\n");
   const preInspectedSummaries = (cachedTableSummaries ?? []).slice(0, MAX_PRE_INSPECTED_TABLE_SUMMARIES);
-  const availableActions = workspaceToolsEnabled
-    ? [
-        '1. {"action":"ask_user","message":"short reason","args":{"question":"one concise question","options":["option A","option B"],"multiple":optional boolean}}',
-        '2. {"action":"list_tables","message":"short reason","args":{"schema":"optional schema filter","pattern":"optional name substring","limit":optional count,"minRows":optional minimum row count}}',
-        '3. {"action":"search_schema","message":"short reason","args":{"query":"column or concept to find"}}',
-        '4. {"action":"describe_table","message":"short reason","args":{"table":"exact_table_name"}}',
-        '5. {"action":"describe_tables","message":"short reason","args":{"tables":["table_a","table_b"]}}',
-        '6. {"action":"sample_table_data","message":"short reason","args":{"table":"exact_table_name","limit":optional rows up to 50}}',
-        '7. {"action":"run_readonly_sql","message":"short reason","args":{"sql":"SELECT ..."}}',
-        '8. {"action":"remember_term","message":"short reason","args":{"term":"campaign","definition":"marketing content group; status draft means unpublished","kind":"term|metric|relationship|alias"}}',
-        `9. {"action":"preview_write","message":"short reason","args":{"statements":["UPDATE orders SET status = 'cancelled' WHERE id = 42"]}}`,
-        '10. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval","metricsWidgets":[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ...","dimension":"verified label column","measures":["verified numeric alias"],"transforms":["group/sort operation"],"limit":100}]}}',
-      ]
-    : [
-        '1. {"action":"ask_user","message":"short reason","args":{"question":"one concise question","options":["option A","option B"]}}',
-        '2. {"action":"finish","message":"short reason","args":{"response":"markdown for the user","sql":"optional grounded SQL for later human approval"}}',
-      ];
+  const sqlRead = toolAvailability?.sqlRead !== false;
+  const sqlWritePreview = toolAvailability?.sqlWritePreview !== false;
+  const availableActions = formatAgentToolCatalog({
+    workspaceToolsEnabled,
+    availability: toolAvailability,
+  });
 
   const assembled = [
     "Work as an autonomous workspace agent.",
@@ -253,6 +246,9 @@ export function buildAgentControllerPrompt(params: {
       ? `Known tables (${availableTableNames.length}${catalogComplete ? ", complete list below" : ", truncated"}): ${visibleTables.join(", ")}${availableTableNames.length > visibleTables.length ? ", ..." : ""}`
       : "Known tables: unavailable for this turn unless the user explicitly provides them.",
     workspaceToolStatus ? `Workspace tools status: ${workspaceToolStatus}` : "",
+    workspaceToolsEnabled && toolAvailability && !sqlRead
+      ? `Engine: ${toolAvailability.engineLabel} (${toolAvailability.queryModel}). SQL tools are disabled; do not call run_readonly_sql or preview_write.`
+      : "",
     preInspectedSummaries.length > 0
       ? [
           "Pre-inspected tables (schemas already verified below — do NOT call describe_table for these):",
@@ -277,7 +273,7 @@ export function buildAgentControllerPrompt(params: {
     workspaceToolsEnabled
       ? "- Tables can be EMPTY. Before building any report, overview, or dashboard, prefer tables whose rowCount is greater than zero in list_tables output (or pass args {\"minRows\":1}), confirm with sample_table_data when unsure, and skip zero-row tables instead of presenting them as content."
       : "",
-    workspaceToolsEnabled
+    workspaceToolsEnabled && sqlWritePreview
       ? "- To propose data or schema changes, run preview_write with the mutating statements: it executes them inside one transaction and always rolls back, showing real affected rows. NEVER claim a change was persisted; the human applies the final SQL through the approval flow."
       : "",
     workspaceToolsEnabled
@@ -294,13 +290,16 @@ export function buildAgentControllerPrompt(params: {
     workspaceToolsEnabled
       ? "- sample_table_data returns a few live rows from one verified table without writing SQL; it does not require describe_table first."
       : "",
-    workspaceToolsEnabled
+    workspaceToolsEnabled && sqlRead
       ? "- run_readonly_sql accepts only SELECT, SHOW, EXPLAIN, DESCRIBE, WITH, or read-only PRAGMA."
+      : "",
+    workspaceToolsEnabled && !sqlRead
+      ? "- Do not invent SQL, CQL, or engine-specific query languages. Read rows with sample_table_data after describing the collection/table."
       : "",
     workspaceToolsEnabled
       ? "- NEVER query system catalogs (information_schema.*, pg_catalog.*, sqlite_master) — their columns differ per engine and catalog guesses like information_schema.tables.row_count do not exist. Row counts come ONLY from the list_tables tool (rowCount field); column facts come ONLY from describe_table/search_schema."
       : "",
-    workspaceToolsEnabled
+    workspaceToolsEnabled && sqlRead
       ? "- Before run_readonly_sql, every table in FROM or JOIN must be inspected: use one describe_tables call for several tables at once, or rely on tables already listed under Pre-inspected tables. Use only the exact columns reported by the latest describe observation; never guess columns such as name, content, title, or value."
       : "",
     workspaceToolsEnabled
@@ -312,9 +311,14 @@ export function buildAgentControllerPrompt(params: {
     workspaceToolsEnabled
       ? "- Never execute INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, TRUNCATE, USE, ATTACH, DETACH, SET search_path, GRANT, or REVOKE."
       : "",
-    "- Final SQL must be grounded in verified context and ready for later human approval.",
-    workspaceToolsEnabled
+    sqlRead
+      ? "- Final SQL must be grounded in verified context and ready for later human approval."
+      : "- Omit finish.args.sql; this engine cannot run SQL through the agent.",
+    workspaceToolsEnabled && sqlRead
       ? "- If data answers the request, run run_readonly_sql before finishing; do not return only query ideas."
+      : "",
+    workspaceToolsEnabled && !sqlRead
+      ? "- If data answers the request, run sample_table_data before finishing; do not return only query ideas."
       : "",
     workspaceToolsEnabled
       ? "- For an individual-record lookup, include the verified primary key or id/*_id column in the SELECT result. TableR uses that stable key to provide a link that opens the exact row."
@@ -322,7 +326,9 @@ export function buildAgentControllerPrompt(params: {
     workspaceToolsEnabled
       ? "- After a successful read, give the user the factual result. Do not repeat the executed SQL in the final response; TableR keeps it in the private audit trace and will provide record links when available."
       : "",
-    "- For charts, run a chart-friendly aggregate and return that exact SQL in finish.args.sql.",
+    sqlRead
+      ? "- For charts, run a chart-friendly aggregate and return that exact SQL in finish.args.sql."
+      : "- For charts, sample the relevant data and describe the chart in finish.args.response. Omit finish.args.sql.",
     forceFinish
       ? "- You must finish now. Return action=finish."
       : workspaceToolsEnabled

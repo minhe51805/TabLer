@@ -175,6 +175,37 @@ describe("queryStore", () => {
     );
   });
 
+  it("routes agent read-only queries through the pinned backend command", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+
+    await useQueryStore.getState().executeAgentReadonlyQuery("connection-1", ["select 1"]);
+
+    // The agent read tool must call the dedicated command whose read-only
+    // boundary is pinned server-side. It must NOT send a `requireReadOnly`
+    // flag, since that flag can never be used to lower the boundary here.
+    expect(invokeMutationMock).toHaveBeenCalledWith(
+      "execute_agent_readonly_query",
+      expect.objectContaining({
+        connectionId: "connection-1",
+        statements: ["select 1"],
+        requestId: expect.any(String),
+      }),
+    );
+    const [, args] = invokeMutationMock.mock.calls[0];
+    expect(args).not.toHaveProperty("requireReadOnly");
+  });
+
+  it("blocks agent read-only writes in Safe Mode before reaching the backend", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+
+    await expect(
+      useQueryStore.getState().executeAgentReadonlyQuery("connection-1", ["DELETE FROM users"]),
+    ).rejects.toThrow("Safe Mode level 1");
+    expect(invokeMutationMock).not.toHaveBeenCalled();
+    expect(useQueryStore.getState().isExecutingQuery).toBe(false);
+    expect(useQueryStore.getState().activeQueryRequestId).toBeNull();
+  });
+
   it("sends CSV imports as a single atomic backend request", async () => {
     invokeMutationMock.mockResolvedValue(2);
 

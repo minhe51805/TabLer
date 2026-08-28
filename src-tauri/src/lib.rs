@@ -272,6 +272,7 @@ pub fn run() {
             cancel_query,
             execute_parameterized_query,
             execute_sandboxed_query,
+            execute_agent_readonly_query,
             preview_write_transaction,
             save_agent_trace,
             preview_database_restore,

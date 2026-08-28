@@ -10,6 +10,8 @@ import {
   type LocalOllamaSetupResult,
   type LocalOllamaStatus,
 } from "../types";
+import { buildNativeToolPayload } from "../components/AISlidePanel/ai-agent-tool-schema";
+import { useConnectionStore } from "./connectionStore";
 import { getActiveAIProvider } from "../utils/ai-provider-registry";
 import { AIRequestError, normalizeAIRequestError } from "../utils/ai-request-errors";
 import { useGlobalErrorStore } from "./globalErrorStore";
@@ -194,6 +196,14 @@ export const useAIStore = create<AIState>((set, get) => ({
       const config = attempt.config;
       const timeoutMs = getAIRequestTimeout(config, mode, intent);
       const requestId = createAIRequestId();
+      // Native function-calling (off by default) rides the non-streaming path so
+      // the full tool_call JSON can be parsed at once; a null payload keeps the
+      // classic streaming text path exactly as before.
+      const connectionState = useConnectionStore.getState();
+      const engineKey = connectionState.connections.find(
+        (connection) => connection.id === connectionState.activeConnectionId,
+      )?.db_type;
+      const nativeToolPayload = buildNativeToolPayload(config.provider_type, intent, engineKey);
       set({
         activeAIRequestId: requestId,
         requestPhase: "requesting",
@@ -204,7 +214,7 @@ export const useAIStore = create<AIState>((set, get) => ({
 
       let unlisten: UnlistenFn | undefined;
       try {
-        if (mode === "panel") {
+        if (mode === "panel" && !nativeToolPayload) {
           let streamedText = "";
           unlisten = await listen<{
             requestId: string;
@@ -259,6 +269,12 @@ export const useAIStore = create<AIState>((set, get) => ({
               intent,
               language: getCurrentAppLanguage(),
               history,
+              ...(nativeToolPayload
+                ? {
+                    tools: nativeToolPayload.tools,
+                    tool_choice: nativeToolPayload.tool_choice,
+                  }
+                : {}),
             },
           },
           timeoutMs,

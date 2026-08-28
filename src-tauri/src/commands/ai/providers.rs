@@ -151,6 +151,45 @@ pub(crate) fn build_provider_request_body(
     }
 }
 
+/// Injects native function-calling fields into an already-built request body.
+///
+/// This is a strict no-op when `tools` is `None`, so the classic text path
+/// keeps a byte-identical body and existing behavior is untouched. OpenAI-like
+/// providers and Anthropic share the top-level `tools`/`tool_choice` shape;
+/// Gemini nests declarations under `tools[].functionDeclarations` and uses
+/// `tool_config` for the selection hint.
+pub(crate) fn apply_native_tools(
+    body: &mut serde_json::Value,
+    provider_type: &AIProviderType,
+    tools: Option<&serde_json::Value>,
+    tool_choice: Option<&serde_json::Value>,
+) {
+    let Some(tools) = tools else {
+        return;
+    };
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+
+    match provider_type {
+        AIProviderType::Gemini => {
+            object.insert(
+                "tools".to_string(),
+                json!([{ "functionDeclarations": tools }]),
+            );
+            if let Some(choice) = tool_choice {
+                object.insert("tool_config".to_string(), choice.clone());
+            }
+        }
+        _ => {
+            object.insert("tools".to_string(), tools.clone());
+            if let Some(choice) = tool_choice {
+                object.insert("tool_choice".to_string(), choice.clone());
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn sample_provider(provider_type: AIProviderType) -> AIProviderConfig {
     AIProviderConfig {
@@ -170,6 +209,47 @@ pub(crate) fn sample_provider(provider_type: AIProviderType) -> AIProviderConfig
 mod tests {
     use super::super::extraction::take_visible_stream_delta;
     use super::*;
+
+    #[test]
+    fn apply_native_tools_is_a_noop_when_tools_absent() {
+        let provider = sample_provider(AIProviderType::OpenAI);
+        let endpoint = super::super::endpoints::resolve_provider_endpoint(&provider);
+        let before = build_provider_request_body(
+            &provider,
+            &endpoint,
+            "system",
+            "prompt",
+            &AIRequestMode::Panel,
+        );
+        let mut after = before.clone();
+        apply_native_tools(&mut after, &provider.provider_type, None, None);
+        // No tools => byte-identical body, so the classic text path is untouched.
+        assert_eq!(before, after);
+        assert!(after.get("tools").is_none());
+        assert!(after.get("tool_choice").is_none());
+    }
+
+    #[test]
+    fn apply_native_tools_injects_openai_shape() {
+        let mut body = json!({ "model": "m", "messages": [] });
+        let tools = json!([{ "type": "function", "function": { "name": "finish" } }]);
+        let choice = json!("auto");
+        apply_native_tools(&mut body, &AIProviderType::OpenAI, Some(&tools), Some(&choice));
+        assert_eq!(body["tools"], tools);
+        assert_eq!(body["tool_choice"], json!("auto"));
+    }
+
+    #[test]
+    fn apply_native_tools_nests_gemini_declarations_and_tool_config() {
+        let mut body = json!({ "contents": [] });
+        let tools = json!([{ "name": "finish", "parameters": {} }]);
+        let choice = json!({ "function_calling_config": { "mode": "AUTO" } });
+        apply_native_tools(&mut body, &AIProviderType::Gemini, Some(&tools), Some(&choice));
+        assert_eq!(body["tools"], json!([{ "functionDeclarations": tools }]));
+        assert_eq!(body["tool_config"], choice);
+        // Gemini must not receive the OpenAI-style top-level tool_choice key.
+        assert!(body.get("tool_choice").is_none());
+    }
 
     #[test]
     fn streaming_body_is_enabled_and_think_chunks_stay_private() {

@@ -21,6 +21,10 @@ export interface QueryState {
     statements: string[],
     requireReadOnly?: boolean,
   ) => Promise<QueryResult>;
+  executeAgentReadonlyQuery: (
+    connectionId: string,
+    statements: string[],
+  ) => Promise<QueryResult>;
   previewWriteTransaction: (connectionId: string, statements: string[]) => Promise<{
     results: QueryResult[];
     rolledBack: boolean;
@@ -135,6 +139,36 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       const result = await invokeAIWorkspaceToolMutation(
         "execute_sandboxed_query",
         { connectionId, statements, requireReadOnly, requestId },
+      );
+      if (safety.hasSchemaMutation) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        : state);
+      return result;
+    } catch (e) {
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null }
+        : state);
+      throw e;
+    }
+  },
+
+  executeAgentReadonlyQuery: async (
+    connectionId: string,
+    statements: string[],
+  ) => {
+    // Read-only is enforced by the backend `execute_agent_readonly_query`
+    // command, which pins the boundary server-side. We still run the local
+    // safe-mode guard first so blocked policies fail fast with a clear message.
+    const safety = await assertQueryAllowed(statements.join(";\n"), connectionId);
+    const requestId = crypto.randomUUID();
+    set({ isExecutingQuery: true, activeQueryRequestId: requestId });
+    try {
+      const result = await invokeAIWorkspaceToolMutation(
+        "execute_agent_readonly_query",
+        { connectionId, statements, requestId },
       );
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);

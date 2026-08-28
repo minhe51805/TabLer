@@ -5,24 +5,20 @@ import {
   isSessionSwitchStatement,
   normalizeStatementForGuard,
 } from "../SQLEditor/SQLEditorUtils";
+import {
+  AI_AGENT_TOOL_NAMES,
+  parseAgentToolArgs,
+  type AIAgentToolName,
+} from "./ai-agent-tool-schema";
 
-export const AI_AGENT_TOOL_NAMES = [
-  "ask_user",
-  "list_tables",
-  "search_schema",
-  "describe_table",
-  "describe_tables",
-  "sample_table_data",
-  "run_readonly_sql",
-  "preview_write",
-  "remember_term",
-  "finish",
-] as const;
-
-/** Max statements accepted in one preview_write call. */
-export const AI_AGENT_PREVIEW_STATEMENT_LIMIT = 10;
-
-export type AIAgentToolName = (typeof AI_AGENT_TOOL_NAMES)[number];
+export {
+  AI_AGENT_ASK_USER_OPTIONS_LIMIT,
+  AI_AGENT_BATCH_DESCRIBE_LIMIT,
+  AI_AGENT_PREVIEW_STATEMENT_LIMIT,
+  AI_AGENT_SAMPLE_MAX_ROWS,
+  AI_AGENT_TOOL_NAMES,
+} from "./ai-agent-tool-schema";
+export type { AIAgentToolName } from "./ai-agent-tool-schema";
 
 interface AIAgentToolActionBase<TAction extends AIAgentToolName, TArgs> {
   action: TAction;
@@ -126,25 +122,6 @@ export type AIAgentToolAction =
   | AIAgentPreviewWriteAction
   | AIAgentRememberTermAction
   | AIAgentFinishAction;
-
-/** Hard ceiling for sample_table_data so a peek can never become a full scan. */
-export const AI_AGENT_SAMPLE_MAX_ROWS = 50;
-/** Max tables accepted in one describe_tables call, to bound observation size. */
-export const AI_AGENT_BATCH_DESCRIBE_LIMIT = 8;
-
-function parseOptionalStringArgs(args: Record<string, unknown>, keys: string[]) {
-  const parsed: Record<string, string | undefined> = {};
-  for (const key of keys) {
-    const value = args[key];
-    parsed[key] = typeof value === "string" ? value.trim() || undefined : undefined;
-  }
-  return parsed;
-}
-
-function parseOptionalBoundedNumber(value: unknown, min: number, max: number) {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  return Math.min(max, Math.max(min, Math.floor(value)));
-}
 
 function stripOptionalCodeFence(text: string) {
   const trimmed = text.trim();
@@ -322,141 +299,11 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
   const args = (parsed.args as Record<string, unknown> | undefined) || {};
   const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
 
-  if (parsed.action === "ask_user") {
-    const question = typeof args.question === "string" ? args.question.trim() : "";
-    if (!question) {
-      throw new Error("The ask_user action requires a non-empty args.question.");
-    }
-    const rawOptions = Array.isArray(args.options) ? args.options : [];
-    const options = [...new Set(
-      rawOptions
-        .filter((value): value is string => typeof value === "string")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    )].slice(0, 6);
-    return {
-      action: parsed.action,
-      args: {
-        question,
-        ...(options.length > 0 ? { options } : {}),
-        ...(args.multiple === true ? { multiple: true } : {}),
-      },
-      message,
-    };
-  }
-
-  if (parsed.action === "list_tables") {
-    const { schema, pattern } = parseOptionalStringArgs(args, ["schema", "pattern"]);
-    const limit = parseOptionalBoundedNumber(args.limit, 1, 200);
-    const minRows = parseOptionalBoundedNumber(args.minRows, 1, 1_000_000_000);
-    return {
-      action: parsed.action,
-      args: {
-        ...(schema ? { schema } : {}),
-        ...(pattern ? { pattern } : {}),
-        ...(limit !== undefined ? { limit } : {}),
-        ...(minRows !== undefined ? { minRows } : {}),
-      },
-      message,
-    };
-  }
-
-  if (parsed.action === "search_schema") {
-    const query = typeof args.query === "string" ? args.query.trim() : "";
-    if (!query) {
-      throw new Error("The search_schema action requires a non-empty args.query.");
-    }
-    return { action: parsed.action, args: { query }, message };
-  }
-
-  if (parsed.action === "describe_table") {
-    const table = typeof args.table === "string" ? args.table.trim() : "";
-    if (!table) {
-      throw new Error("The describe_table action requires a non-empty args.table.");
-    }
-    return { action: parsed.action, args: { table }, message };
-  }
-
-  if (parsed.action === "describe_tables") {
-    const rawTables = Array.isArray(args.tables) ? args.tables : [];
-    const tables = [...new Set(
-      rawTables
-        .filter((value): value is string | number => typeof value === "string" || typeof value === "number")
-        .map((value) => String(value).trim())
-        .filter(Boolean),
-    )];
-    if (tables.length === 0) {
-      throw new Error("The describe_tables action requires a non-empty args.tables array.");
-    }
-    return {
-      action: parsed.action,
-      args: { tables: tables.slice(0, AI_AGENT_BATCH_DESCRIBE_LIMIT) },
-      message,
-    };
-  }
-
-  if (parsed.action === "sample_table_data") {
-    const table = typeof args.table === "string" ? args.table.trim() : "";
-    if (!table) {
-      throw new Error("The sample_table_data action requires a non-empty args.table.");
-    }
-    const limit = parseOptionalBoundedNumber(args.limit, 1, AI_AGENT_SAMPLE_MAX_ROWS);
-    return {
-      action: parsed.action,
-      args: {
-        table,
-        ...(limit !== undefined ? { limit } : {}),
-      },
-      message,
-    };
-  }
-
-  if (parsed.action === "run_readonly_sql") {
-    const sql = typeof args.sql === "string" ? args.sql.trim() : "";
-    if (!sql) {
-      throw new Error("The run_readonly_sql action requires a non-empty args.sql.");
-    }
-    return { action: parsed.action, args: { sql }, message };
-  }
-
-  if (parsed.action === "remember_term") {
-    const term = typeof args.term === "string" ? args.term.trim() : "";
-    const definition = typeof args.definition === "string" ? args.definition.trim() : "";
-    if (!term || !definition) {
-      throw new Error("The remember_term action requires non-empty args.term and args.definition.");
-    }
-    const allowedKinds = ["term", "metric", "relationship", "alias"] as const;
-    const kind = typeof args.kind === "string" && (allowedKinds as readonly string[]).includes(args.kind)
-      ? (args.kind as AIAgentRememberTermArgs["kind"])
-      : undefined;
-    return {
-      action: parsed.action,
-      args: { term, definition, ...(kind ? { kind } : {}) },
-      message,
-    };
-  }
-
-  if (parsed.action === "preview_write") {
-    const rawStatements = Array.isArray(args.statements) ? args.statements : [];
-    const statements = rawStatements
-      .filter((value): value is string => typeof value === "string")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    if (statements.length === 0) {
-      throw new Error("The preview_write action requires a non-empty args.statements array.");
-    }
-    return {
-      action: parsed.action,
-      args: { statements: statements.slice(0, AI_AGENT_PREVIEW_STATEMENT_LIMIT) },
-      message,
-    };
-  }
-
-  if (parsed.action === "finish") {
-    return { action: parsed.action, args, message };
-  }
-
-  return { action: parsed.action, args, message };
+  return {
+    action: parsed.action,
+    args: parseAgentToolArgs(parsed.action, args),
+    message,
+  } as AIAgentToolAction;
 }
 
 export function validateAIAgentReadonlySql(sql: string) {

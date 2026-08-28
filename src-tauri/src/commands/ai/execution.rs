@@ -17,10 +17,13 @@ use super::errors::{
 };
 use super::extraction::{
     extract_anthropic_response_text, extract_gemini_response_text, extract_openai_like_reasoning,
-    extract_openai_like_response_text, publish_stream_payload, split_think_block,
+    extract_openai_like_response_text, extract_tool_call_as_action_json, publish_stream_payload,
+    split_think_block,
 };
 use super::prompt::build_ai_prompt;
-use super::providers::{build_provider_request_body, streaming_endpoint, streaming_request_body};
+use super::providers::{
+    apply_native_tools, build_provider_request_body, streaming_endpoint, streaming_request_body,
+};
 use super::{ai_http_client, run_blocking_storage_task, AI_REQUEST_CANCELLED_ERROR};
 
 pub(crate) async fn execute_ai_stream_request(
@@ -251,12 +254,18 @@ pub(crate) async fn execute_ai_request(
         | AIProviderType::Custom => {
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
-            let body = build_provider_request_body(
+            let mut body = build_provider_request_body(
                 &config,
                 &endpoint,
                 &system_prompt,
                 &prompt,
                 &request.mode,
+            );
+            apply_native_tools(
+                &mut body,
+                &config.provider_type,
+                request.tools.as_ref(),
+                request.tool_choice.as_ref(),
             );
             let max_attempts = if is_nvidia_integrate_endpoint(&endpoint) {
                 3
@@ -338,6 +347,16 @@ pub(crate) async fn execute_ai_request(
                     return Err(ai_provider_api_error(&msg, api_key.as_deref()));
                 }
 
+                if let Some(action) =
+                    extract_tool_call_as_action_json(&config.provider_type, &resp_json)
+                {
+                    return Ok(AIResponse {
+                        text: action,
+                        reasoning: None,
+                        error: None,
+                    });
+                }
+
                 if let Some(text) = extract_openai_like_response_text(&resp_json) {
                     let field_reasoning = extract_openai_like_reasoning(&resp_json);
                     let (think_reasoning, cleaned) = split_think_block(&text);
@@ -362,12 +381,18 @@ pub(crate) async fn execute_ai_request(
         AIProviderType::Anthropic => {
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
-            let body = build_provider_request_body(
+            let mut body = build_provider_request_body(
                 &config,
                 &endpoint,
                 &system_prompt,
                 &prompt,
                 &request.mode,
+            );
+            apply_native_tools(
+                &mut body,
+                &config.provider_type,
+                request.tools.as_ref(),
+                request.tool_choice.as_ref(),
             );
 
             let response = client
@@ -434,6 +459,16 @@ pub(crate) async fn execute_ai_request(
                 return Err(ai_provider_api_error(&msg, api_key.as_deref()));
             }
 
+            if let Some(action) =
+                extract_tool_call_as_action_json(&config.provider_type, &resp_json)
+            {
+                return Ok(AIResponse {
+                    text: action,
+                    reasoning: None,
+                    error: None,
+                });
+            }
+
             if let Some(text) = extract_anthropic_response_text(&resp_json) {
                 let (reasoning, cleaned) = split_think_block(&text);
                 return Ok(AIResponse {
@@ -453,12 +488,18 @@ pub(crate) async fn execute_ai_request(
         AIProviderType::Gemini => {
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
-            let body = build_provider_request_body(
+            let mut body = build_provider_request_body(
                 &config,
                 &endpoint,
                 &system_prompt,
                 &prompt,
                 &request.mode,
+            );
+            apply_native_tools(
+                &mut body,
+                &config.provider_type,
+                request.tools.as_ref(),
+                request.tool_choice.as_ref(),
             );
 
             let response = client
@@ -522,6 +563,16 @@ pub(crate) async fn execute_ai_request(
                     err.to_string()
                 };
                 return Err(ai_provider_api_error(&msg, api_key.as_deref()));
+            }
+
+            if let Some(action) =
+                extract_tool_call_as_action_json(&config.provider_type, &resp_json)
+            {
+                return Ok(AIResponse {
+                    text: action,
+                    reasoning: None,
+                    error: None,
+                });
             }
 
             if let Some(text) = extract_gemini_response_text(&resp_json) {

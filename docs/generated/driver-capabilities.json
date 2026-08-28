@@ -3,6 +3,7 @@
     "key": "mysql",
     "label": "MySQL",
     "tier": "core",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -27,6 +28,7 @@
     "key": "mariadb",
     "label": "MariaDB",
     "tier": "core",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -51,6 +53,7 @@
     "key": "postgresql",
     "label": "PostgreSQL",
     "tier": "core",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -74,6 +77,7 @@
     "key": "cockroachdb",
     "label": "CockroachDB",
     "tier": "extended",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -97,6 +101,7 @@
     "key": "greenplum",
     "label": "Greenplum",
     "tier": "specialized",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -120,6 +125,7 @@
     "key": "redshift",
     "label": "Amazon Redshift",
     "tier": "specialized",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -143,6 +149,7 @@
     "key": "sqlite",
     "label": "SQLite",
     "tier": "core",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -167,6 +174,7 @@
     "key": "duckdb",
     "label": "DuckDB",
     "tier": "extended",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -191,6 +199,7 @@
     "key": "cassandra",
     "label": "Apache Cassandra",
     "tier": "specialized",
+    "queryModel": "cql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -214,6 +223,7 @@
     "key": "snowflake",
     "label": "Snowflake",
     "tier": "specialized",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -237,6 +247,7 @@
     "key": "mssql",
     "label": "SQL Server",
     "tier": "extended",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -260,6 +271,7 @@
     "key": "redis",
     "label": "Redis",
     "tier": "extended",
+    "queryModel": "kv",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -284,6 +296,7 @@
     "key": "mongodb",
     "label": "MongoDB",
     "tier": "extended",
+    "queryModel": "document",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -308,6 +321,7 @@
     "key": "vertica",
     "label": "Vertica",
     "tier": "specialized",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -331,6 +345,7 @@
     "key": "clickhouse",
     "label": "ClickHouse",
     "tier": "extended",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -354,6 +369,7 @@
     "key": "bigquery",
     "label": "Google BigQuery",
     "tier": "specialized",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -377,6 +393,7 @@
     "key": "libsql",
     "label": "LibSQL",
     "tier": "specialized",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -400,6 +417,7 @@
     "key": "cloudflare_d1",
     "label": "Cloudflare D1",
     "tier": "specialized",
+    "queryModel": "sql",
     "capabilities": {
       "connect": "supported",
       "query": "supported",
@@ -423,6 +441,7 @@
     "key": "opensearch",
     "label": "OpenSearch",
     "tier": "specialized",
+    "queryModel": "search",
     "capabilities": {
       "connect": "supported",
       "query": "supported",

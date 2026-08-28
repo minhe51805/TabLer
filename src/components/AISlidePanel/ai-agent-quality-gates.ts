@@ -128,7 +128,7 @@ export function buildAgentRecoveryInstruction(params: {
     return [
       "Your previous answer claimed the query/sandbox ran successfully, but the trace shows the run FAILED (see the Tool error steps).",
       "Never report success for a failed execution.",
-      "Read the actual error, fix the cause (for column errors: re-check describe_table output and use only verified column names; for row counts use list_tables rowCount), re-run run_readonly_sql, then finish with the truthful result.",
+      "Read the actual error, fix the cause (for column errors: re-check describe_table output and use only verified column names; for row counts use list_tables rowCount), re-run a read (sample_table_data, or run_readonly_sql on SQL engines), then finish with the truthful result.",
     ].join(" ");
   }
   return composeOnly

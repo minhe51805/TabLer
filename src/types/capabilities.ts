@@ -1,5 +1,7 @@
 export type CapabilitySupport = "supported" | "limited" | "unsupported" | "not_applicable";
 
+export type QueryModel = "sql" | "cql" | "document" | "kv" | "search";
+
 export interface DriverCapabilitySet {
   connect: CapabilitySupport;
   query: CapabilitySupport;
@@ -20,6 +22,7 @@ export interface DriverCapabilityProfile {
   key: string;
   label: string;
   tier: "core" | "extended" | "specialized";
+  queryModel: QueryModel;
   capabilities: DriverCapabilitySet;
   limitations: string[];
 }

@@ -30,6 +30,10 @@ import {
   type AIAgentActionRequestReason,
 } from "../ai-agent-runner";
 import {
+  DEFAULT_AGENT_TOKEN_BUDGET,
+  extractAgentUsageTokens,
+} from "../ai-agent-cost";
+import {
   buildAgentEvidenceSummary,
   buildAgentFinalRecoveryPrompt,
   buildLocalAgentFallbackResponse,
@@ -49,6 +53,7 @@ import { yieldToBrowserFrame } from "../ai-async-utils";
 import { prepareAIWorkspaceSchemaContext } from "../ai-schema-context-loader";
 import { isAgentRecordLookupRequest } from "../ai-agent-schema-search";
 import { resolveAgentRequestContext } from "../ai-agent-request-context";
+import { agentToolAvailability, engineAwareDataPlaneHints } from "../ai-agent-engine-gates";
 import { createAgentToolExecutor } from "../ai-agent-tool-executor";
 import {
   createAgentActionRequestor,
@@ -114,6 +119,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     switchDatabase,
     activeConnectionId: connectionId,
     currentDatabase,
+    activeDbType,
   } = useConnectionStore(
     useShallow((state) => ({
       tables: state.tables,
@@ -121,14 +127,16 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       switchDatabase: state.switchDatabase,
       activeConnectionId: state.activeConnectionId,
       currentDatabase: state.currentDatabase,
+      activeDbType: state.connections.find((connection) => connection.id === state.activeConnectionId)?.db_type,
     })),
   );
-  const { getTableStructure, getTableColumnsPreview, getTableData, executeSandboxQuery, previewWriteTransaction } = useQueryStore(
+  const { getTableStructure, getTableColumnsPreview, getTableData, executeSandboxQuery, executeAgentReadonlyQuery, previewWriteTransaction } = useQueryStore(
     useShallow((state) => ({
       getTableStructure: state.getTableStructure,
       getTableColumnsPreview: state.getTableColumnsPreview,
       getTableData: state.getTableData,
       executeSandboxQuery: state.executeSandboxQuery,
+      executeAgentReadonlyQuery: state.executeAgentReadonlyQuery,
       previewWriteTransaction: state.previewWriteTransaction,
     })),
   );
@@ -394,9 +402,12 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           schemaContextEnabled &&
           availableSchemaTables.length > 0 &&
           Boolean(connectionId);
+        const toolAvailability = agentToolAvailability(activeDbType);
         const recordLookupRequest = workspaceToolsEnabled && isAgentRecordLookupRequest(normalizedPrompt);
         const workspaceToolStatus = workspaceToolsEnabled
-              ? "Database tools are available if grounded workspace evidence is needed."
+              ? toolAvailability.sqlRead
+                ? "Database tools are available if grounded workspace evidence is needed."
+                : `Database tools are available on ${toolAvailability.engineLabel}, but SQL tools (run_readonly_sql, preview_write) are disabled for this engine.`
           : !connectionId
             ? "No active database connection is selected, so respond without workspace tools."
             : !needsWorkspaceContext
@@ -404,18 +415,23 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               : !schemaSharingEnabled
                 ? "Schema sharing is disabled for the current provider, so workspace tools are unavailable for this turn."
                 : "No verified schema snapshot is available for tool use on this turn.";
+        const dataPlaneHints = engineAwareDataPlaneHints(toolAvailability);
         const sharedAgentInstruction = joinAgentInstructions(
-          "You are an autonomous agent that takes action, not a consultant. Decide your own steps: locate unknown fields with search_schema, inspect the exact table with describe_table, then ACTUALLY gather data yourself with sample_table_data or run_readonly_sql. Do not just suggest queries and do not ask the user which query to run first ? pick the most relevant one and run it yourself.",
-          "When the user asks to see data, charts, counts, samples, distributions, or 'show me' anything, you MUST run at least one sample_table_data or run_readonly_sql before finishing. Finishing with only suggestions and no executed query is a failure.",
-          "When you finish, put the single best runnable query in finish.args.sql (a real SELECT grounded in the verified schema) so it can be executed and shown to the user automatically.",
+          dataPlaneHints.gather,
+          dataPlaneHints.mustRead,
+          dataPlaneHints.finishSql,
           !isLocalProvider
             ? "Be efficient: a few targeted tool calls are better than exploring every table, but never skip running the query that produces the answer."
             : undefined,
           wantsVisualization
-            ? "For a chart or visualization request, run a chart-friendly aggregate query (e.g. GROUP BY ... COUNT(*)) and return that exact SQL in finish.args.sql plus a short chart recommendation."
+            ? toolAvailability.sqlRead
+              ? "For a chart or visualization request, run a chart-friendly aggregate query (e.g. GROUP BY ... COUNT(*)) and return that exact SQL in finish.args.sql plus a short chart recommendation."
+              : "For a chart or visualization request, sample the relevant data and describe the chart in finish.args.response. Omit finish.args.sql."
             : undefined,
           wantsMetricsBoard
-            ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
+            ? toolAvailability.sqlRead
+              ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
+              : "This is a metrics/dashboard/summary request. Inspect the relevant tables with describe_table and sample_table_data, then summarize in finish.args.response. Omit SQL-shaped widget queries."
             : undefined
         );
         // Summaries already fetched while preparing schema context are injected
@@ -450,6 +466,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             steps,
             workspaceToolsEnabled,
             workspaceToolStatus,
+            toolAvailability,
             forceFinish,
             extraInstruction,
             cachedTableSummaries,
@@ -479,8 +496,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           getTableColumnsPreview,
           getTableStructure,
           getTableData,
-          executeSandboxQuery,
+          executeReadonlyQuery: executeAgentReadonlyQuery,
           previewWriteTransaction,
+          toolAvailability,
         });
 
         const recoverAgentFinishAction = async (reason: string): Promise<AIAgentFinishAction> => {
@@ -588,6 +606,11 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         const agentRunnerResult = await runAIAgentToolLoop({
           workspaceToolsEnabled,
           stepBudget: agentStepBudget,
+          tokenBudget: DEFAULT_AGENT_TOKEN_BUDGET,
+          // streamingUsage holds the most recent model call's raw usage; the
+          // runner accumulates this after each action request.
+          getLastRequestTokens: () =>
+            extractAgentUsageTokens(useAIStore.getState().streamingUsage),
           initialSteps: agentTraceSteps,
           requestAction: async ({ forceFinish, includeHistory, iteration, reason, steps }) => {
             const completedToolSteps = steps.filter((step) => step.action !== "plan");
@@ -850,7 +873,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         setIsGenerating(false);
       }
     }
-  }, [activeProvider, aiConfigs, askAI, connectionId, currentDatabase, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
+  }, [activeDbType, activeProvider, aiConfigs, askAI, connectionId, currentDatabase, executeAgentReadonlyQuery, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
 
   const copyText = useCallback(async (text: string) => {
     await navigator.clipboard.writeText(text);

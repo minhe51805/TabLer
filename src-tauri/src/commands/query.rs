@@ -1,5 +1,7 @@
 use crate::commands::safe_mode::SafeModeState;
-use crate::database::capabilities::DriverCapability;
+use crate::database::capabilities::{
+    agent_sql_read_unsupported_error, agent_sql_write_preview_unsupported_error, DriverCapability,
+};
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryParameter;
 use crate::database::models::QueryResult;
@@ -370,6 +372,13 @@ pub async fn preview_write_transaction(
         .require_capability(&connection_id, DriverCapability::Query)
         .await
         .map_err(|error| error.to_string())?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(message) = agent_sql_write_preview_unsupported_error(database_type) {
+        return Err(message);
+    }
 
     if statements.is_empty() || statements.len() > MAX_PREVIEW_STATEMENTS {
         return Err(format!(
@@ -519,6 +528,46 @@ pub async fn execute_sandboxed_query(
     Ok(result)
 }
 
+/// Read-only execution boundary for the AI agent's `run_readonly_sql` tool.
+///
+/// Unlike [`execute_sandboxed_query`], read-only enforcement is pinned
+/// server-side and cannot be lowered by the caller: there is no
+/// `require_read_only` flag to pass. Any mutating, session-control, or
+/// access-control statement is rejected by `validate_sandbox_batch` before it
+/// ever reaches the driver. This keeps the agent read tool safe even if a
+/// frontend caller forgets (or is manipulated) to request read-only mode.
+#[tauri::command]
+pub async fn execute_agent_readonly_query(
+    connection_id: String,
+    statements: Vec<String>,
+    request_id: Option<String>,
+    db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, QueryCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
+) -> Result<QueryResult, String> {
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(message) = agent_sql_read_unsupported_error(database_type) {
+        return Err(message);
+    }
+    // Pin is local to this command: callers have no `require_read_only` argument
+    // they could flip. Fail here first so a future change to the shared
+    // sandbox helper cannot silently lower the agent boundary.
+    validate_sandbox_batch(&statements, true)?;
+    execute_sandboxed_query(
+        connection_id,
+        statements,
+        Some(true),
+        request_id,
+        db_manager,
+        cancellation_state,
+        safe_mode,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{validate_sandbox_batch, validate_sandbox_statement, QueryCancellationState};
@@ -543,6 +592,50 @@ mod tests {
         ];
         assert!(validate_sandbox_batch(&mutating, true).is_err());
         assert!(validate_sandbox_batch(&mutating, false).is_ok());
+    }
+
+    #[test]
+    fn agent_readonly_boundary_blocks_mutations_and_allows_reads() {
+        // `execute_agent_readonly_query` pins require_read_only = true, so the
+        // shared batch validator must accept plain reads while rejecting every
+        // mutating or schema-changing statement regardless of caller intent.
+        assert!(validate_sandbox_batch(&["SELECT 1".to_string()], true).is_ok());
+        assert!(validate_sandbox_batch(&["EXPLAIN SELECT 1".to_string()], true).is_ok());
+        assert!(
+            validate_sandbox_batch(&["UPDATE users SET name = 'x'".to_string()], true).is_err()
+        );
+        assert!(validate_sandbox_batch(&["DELETE FROM users".to_string()], true).is_err());
+        assert!(validate_sandbox_batch(&["DROP TABLE users".to_string()], true).is_err());
+        assert!(
+            validate_sandbox_batch(&["INSERT INTO users(name) VALUES('x')".to_string()], true)
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_readonly_command_rejects_mutating_sql_that_looks_harmless() {
+        // Same pin `execute_agent_readonly_query` hard-codes. These statements
+        // start like reads (WITH/SELECT-shaped) or look like "just SQL", but
+        // the boundary must still refuse them before a driver is involved.
+        let rejected = [
+            "UPDATE users SET name = 'x'",
+            "DELETE FROM users",
+            "DROP TABLE users",
+            "ALTER TABLE users ADD COLUMN x INT",
+            "INSERT INTO users(name) VALUES('x')",
+            "TRUNCATE TABLE users",
+            "CREATE TABLE x (id INT)",
+            "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed",
+            "SELECT 1; DELETE FROM users",
+        ];
+        for sql in rejected {
+            assert!(
+                validate_sandbox_batch(&[sql.to_string()], true).is_err(),
+                "agent read-only boundary must reject {sql}"
+            );
+        }
+        assert!(validate_sandbox_batch(&["SELECT 1".to_string()], true).is_ok());
+        assert!(validate_sandbox_batch(&["WITH x AS (SELECT 1) SELECT * FROM x".to_string()], true).is_ok());
     }
 
     #[tokio::test]

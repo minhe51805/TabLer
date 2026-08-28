@@ -28328,8 +28328,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   .ai-workspace-stage--sidebar
   .ai-workspace-command-model-item {
   margin-left: 16px;
-  min-height: 34px;
-  padding: 7px 10px;
+  min-height: 28px;
+  padding: 4px 10px;
   border-radius: 9px;
   font-size: var(--mm-fs-small);
 }
@@ -28764,13 +28764,46 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   overscroll-behavior: contain;
 }
 
-/* Flat Cherry-style rows: quiet by default, highlighted on hover. */
+/* Flat Cherry-style rows: quiet by default, highlighted on hover. Compact
+   single-line cards: provider name and active model share one row. */
 .app-root
   .ai-workspace-stage--sidebar
   .ai-workspace-commandbar--dock
   .ai-workspace-command-item--provider {
-  min-height: 38px;
+  min-height: 30px;
+  padding: 4px 8px;
   background: transparent;
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-commandbar--dock
+  .ai-workspace-command-item--provider
+  .ai-workspace-command-item-copy {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-commandbar--dock
+  .ai-workspace-command-item--provider
+  .ai-workspace-command-item-copy
+  strong {
+  font-size: var(--mm-fs-small);
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-commandbar--dock
+  .ai-workspace-command-item--provider
+  .ai-workspace-command-item-copy
+  span {
+  flex: 1 1 auto;
+  font-size: var(--mm-fs-micro);
+  color: var(--text-muted);
 }
 
 .app-root

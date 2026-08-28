@@ -28400,9 +28400,10 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   .ai-workspace-stage--sidebar
   .ai-workspace-command-model-item {
   /* width:auto + margins so the indented cards sit INSIDE the popover edge
-     (width:100% + margin-left made them poke out 16px to the right). */
+     (width:100% + margin-left made them poke out 16px to the right). The
+     right edge stays flush with the provider row above. */
   width: auto;
-  margin: 0 10px 0 16px;
+  margin: 0 0 0 16px;
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 9px;

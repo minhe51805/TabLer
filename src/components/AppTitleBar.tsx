@@ -5,8 +5,6 @@ import {
   Copy,
   Square,
   X,
-  Settings2,
-  PanelRightClose,
   ChevronRight,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -31,6 +29,7 @@ interface AppTitleBarProps {
   windowMenuSections: { key: WindowMenuSectionKey; label: string; items: WindowMenuItem[] }[];
   onToggleSidebar: () => void;
   onOpenAISettings: () => void;
+
   onToggleMaximizeWindow: () => void;
   onMinimizeWindow: () => void;
   onCloseWindow: () => void;
@@ -271,8 +270,6 @@ export function AppTitleBar({
   activeWindowMenuItemPath,
   windowMenuRef,
   windowMenuSections,
-  onToggleSidebar,
-  onOpenAISettings,
   onToggleMaximizeWindow,
   onMinimizeWindow,
   onCloseWindow,
@@ -415,28 +412,6 @@ export function AppTitleBar({
         </div>
 
         <div className="titlebar-spacer" />
-      </div>
-
-      <div className="titlebar-actions" data-no-window-drag="true">
-        <span className="popover-container" data-popover="AI Settings">
-          <button
-            onClick={onOpenAISettings}
-            className="titlebar-icon-btn"
-            title={t("titlebar.aiSettings")}
-          >
-            <Settings2 className="w-4 h-4" />
-          </button>
-        </span>
-
-        <span className="popover-container" data-popover="Toggle Sidebar">
-          <button
-            onClick={onToggleSidebar}
-            className="titlebar-icon-btn"
-            title={t("titlebar.expandSidebar")}
-          >
-            <PanelRightClose className="w-4 h-4" />
-          </button>
-        </span>
       </div>
 
       {renderWindowControls()}

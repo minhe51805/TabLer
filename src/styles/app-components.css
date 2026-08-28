@@ -34344,3 +34344,182 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent),
     0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
 }
+
+/* ── In-app update button + confirm popup (topbars) ────────────────────── */
+
+.app-update {
+  position: relative;
+  display: inline-flex;
+  margin-left: 8px;
+}
+
+.app-update-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--success) 38%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.app-update-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--success) 24%, transparent);
+}
+
+.app-update-btn:disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+
+.app-update-spin {
+  animation: app-update-rotate 900ms linear infinite;
+}
+
+@keyframes app-update-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.app-update-popup {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 320;
+  width: min(340px, calc(100vw - 48px));
+  padding: 14px;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-0);
+  box-shadow: 0 18px 44px rgba(2, 8, 20, 0.35);
+  text-align: left;
+}
+
+.app-update-popup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.app-update-popup-head strong {
+  color: var(--text-primary);
+  font-size: var(--mm-fs-body);
+}
+
+.app-update-popup-close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.app-update-popup-close:hover {
+  background: var(--mm-surface-1);
+  color: var(--text-primary);
+}
+
+.app-update-popup-version {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+}
+
+.app-update-popup-version strong {
+  color: var(--success);
+}
+
+.app-update-notes {
+  max-height: 150px;
+  overflow-y: auto;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--mm-surface-1);
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  font-family: inherit;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.app-update-error {
+  margin: 0 0 8px;
+  color: var(--error);
+  font-size: var(--mm-fs-caption);
+}
+
+.app-update-popup-status {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+}
+
+.app-update-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--mm-surface-1);
+}
+
+.app-update-progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--success);
+  transition: width 200ms ease;
+}
+
+.app-update-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.app-update-secondary {
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--mm-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+  cursor: pointer;
+}
+
+.app-update-secondary:hover {
+  background: var(--mm-surface-1);
+}
+
+.app-update-primary {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--success);
+  color: #ffffff;
+  font-size: var(--mm-fs-caption);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.app-update-primary:hover {
+  filter: brightness(1.08);
+}

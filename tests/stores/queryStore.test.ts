@@ -40,9 +40,28 @@ describe("queryStore", () => {
       if (command === "classify_sql_safety") return Promise.resolve(safetyDecision(args.sql || ""));
       return Promise.resolve(queryResult);
     });
-    useQueryStore.setState({ isExecutingQuery: false, activeQueryRequestId: null });
+    useQueryStore.setState({
+      isExecutingQuery: false,
+      activeQueryRequestId: null,
+      activeQueryConnectionId: null,
+    });
     useSafeModeStore.getState().setGlobalLevel(1);
     useSafeModeStore.getState().clearConnectionOverrides();
+  });
+
+  it("sends the active connection id when cancelling a query", async () => {
+    invokeMutationMock.mockResolvedValue(true);
+    useQueryStore.setState({
+      isExecutingQuery: true,
+      activeQueryRequestId: "req-1",
+      activeQueryConnectionId: "connection-1",
+    });
+
+    await expect(useQueryStore.getState().cancelQuery()).resolves.toBe(true);
+    expect(invokeMutationMock).toHaveBeenCalledWith("cancel_query", {
+      requestId: "req-1",
+      connectionId: "connection-1",
+    });
   });
 
   it("tracks query execution and returns the backend result", async () => {

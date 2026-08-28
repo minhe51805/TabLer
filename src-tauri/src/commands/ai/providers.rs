@@ -234,7 +234,12 @@ mod tests {
         let mut body = json!({ "model": "m", "messages": [] });
         let tools = json!([{ "type": "function", "function": { "name": "finish" } }]);
         let choice = json!("auto");
-        apply_native_tools(&mut body, &AIProviderType::OpenAI, Some(&tools), Some(&choice));
+        apply_native_tools(
+            &mut body,
+            &AIProviderType::OpenAI,
+            Some(&tools),
+            Some(&choice),
+        );
         assert_eq!(body["tools"], tools);
         assert_eq!(body["tool_choice"], json!("auto"));
     }
@@ -244,7 +249,12 @@ mod tests {
         let mut body = json!({ "contents": [] });
         let tools = json!([{ "name": "finish", "parameters": {} }]);
         let choice = json!({ "function_calling_config": { "mode": "AUTO" } });
-        apply_native_tools(&mut body, &AIProviderType::Gemini, Some(&tools), Some(&choice));
+        apply_native_tools(
+            &mut body,
+            &AIProviderType::Gemini,
+            Some(&tools),
+            Some(&choice),
+        );
         assert_eq!(body["tools"], json!([{ "functionDeclarations": tools }]));
         assert_eq!(body["tool_config"], choice);
         // Gemini must not receive the OpenAI-style top-level tool_choice key.

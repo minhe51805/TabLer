@@ -10,7 +10,8 @@
 //! Heavy engines additionally need the `heavy` compose profile and opt-in env:
 //!   TABLER_IT_MSSQL=1, TABLER_IT_CASSANDRA=1
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use tabler_lib::database::models::{ConnectionConfig, DatabaseType};
 use tabler_lib::database::{
@@ -454,5 +455,178 @@ async fn cassandra_round_trip_lifecycle() {
         "system.local must answer a cluster name"
     );
 
+    let _ = driver.disconnect().await;
+}
+
+fn postgres_live_config() -> Option<ConnectionConfig> {
+    if let Ok(host) = std::env::var("TABLER_TEST_POSTGRES_HOST") {
+        let mut config = base_config(DatabaseType::PostgreSQL);
+        config.host = Some(host);
+        config.port = Some(
+            std::env::var("TABLER_TEST_POSTGRES_PORT")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(5432),
+        );
+        config.username = Some(
+            std::env::var("TABLER_TEST_POSTGRES_USER").unwrap_or_else(|_| "tabler".to_string()),
+        );
+        config.password = Some(
+            std::env::var("TABLER_TEST_POSTGRES_PASSWORD")
+                .unwrap_or_else(|_| "tabler_test".to_string()),
+        );
+        config.database = Some(
+            std::env::var("TABLER_TEST_POSTGRES_DATABASE")
+                .unwrap_or_else(|_| "tabler_test".to_string()),
+        );
+        return Some(config);
+    }
+    integration_enabled().then(|| sql_config(DatabaseType::PostgreSQL, 15432, "tabler_test"))
+}
+
+fn mysql_live_config() -> Option<ConnectionConfig> {
+    if let Ok(host) = std::env::var("TABLER_TEST_MYSQL_HOST") {
+        let mut config = base_config(DatabaseType::MySQL);
+        config.host = Some(host);
+        config.port = Some(
+            std::env::var("TABLER_TEST_MYSQL_PORT")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(3306),
+        );
+        config.username =
+            Some(std::env::var("TABLER_TEST_MYSQL_USER").unwrap_or_else(|_| "tabler".to_string()));
+        config.password = Some(
+            std::env::var("TABLER_TEST_MYSQL_PASSWORD")
+                .unwrap_or_else(|_| "tabler_test".to_string()),
+        );
+        config.database = Some(
+            std::env::var("TABLER_TEST_MYSQL_DATABASE")
+                .unwrap_or_else(|_| "tabler_test".to_string()),
+        );
+        return Some(config);
+    }
+    integration_enabled().then(|| sql_config(DatabaseType::MySQL, 13306, "tabler_test"))
+}
+
+#[tokio::test]
+async fn sqlite_cancel_query_request_is_a_documented_noop() {
+    let path =
+        std::env::temp_dir().join(format!("tabler-it-sqlite-cancel-{}.db", std::process::id()));
+    let driver = tabler_lib::database::sqlite::SqliteDriver::connect(path.to_str().unwrap())
+        .await
+        .expect("SQLite connect");
+    assert!(
+        !driver
+            .cancel_query_request("unused")
+            .await
+            .expect("sqlite cancel"),
+        "SQLite must not claim server-side cancel"
+    );
+    let _ = driver.disconnect().await;
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn postgres_cancels_running_query_server_side() {
+    let Some(config) = postgres_live_config() else {
+        eprintln!("skipped: set TABLER_TEST_POSTGRES_HOST or TABLER_DRIVER_INTEGRATION=1");
+        return;
+    };
+    let driver = Arc::new(
+        retry_connect(20, || {
+            let config = config.clone();
+            async move { PostgresDriver::connect(&config).await }
+        })
+        .await
+        .expect("PostgreSQL connect"),
+    );
+    let worker = Arc::clone(&driver);
+    let started = Instant::now();
+    let handle = tokio::spawn(async move {
+        worker
+            .execute_query_for_request("it-pg-cancel", "SELECT pg_sleep(30)")
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(
+        driver
+            .cancel_query_request("it-pg-cancel")
+            .await
+            .expect("cancel lookup"),
+        "Postgres must report a server-side cancel"
+    );
+    let outcome = handle.await.expect("join");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "cancelled sleep must return quickly, took {:?}",
+        started.elapsed()
+    );
+    assert!(
+        outcome.is_err(),
+        "pg_sleep should not complete: {outcome:?}"
+    );
+    let leftover = driver
+        .execute_query(
+            "SELECT count(*)::int FROM pg_stat_activity WHERE query LIKE '%pg_sleep%' AND state = 'active' AND pid <> pg_backend_pid()",
+        )
+        .await
+        .expect("pg_stat_activity");
+    let count = leftover.rows.first().and_then(|row| row.first()).cloned();
+    assert_eq!(
+        count,
+        Some(serde_json::json!(0)),
+        "sleep must not remain active: {leftover:?}"
+    );
+    let _ = driver.disconnect().await;
+}
+
+#[tokio::test]
+async fn mysql_cancels_running_query_server_side() {
+    let Some(config) = mysql_live_config() else {
+        eprintln!("skipped: set TABLER_TEST_MYSQL_HOST or TABLER_DRIVER_INTEGRATION=1");
+        return;
+    };
+    let driver = Arc::new(
+        retry_connect(20, || {
+            let config = config.clone();
+            async move { MySqlDriver::connect(&config).await }
+        })
+        .await
+        .expect("MySQL connect"),
+    );
+    let worker = Arc::clone(&driver);
+    let started = Instant::now();
+    let handle = tokio::spawn(async move {
+        worker
+            .execute_query_for_request("it-mysql-cancel", "SELECT SLEEP(30)")
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(
+        driver
+            .cancel_query_request("it-mysql-cancel")
+            .await
+            .expect("cancel lookup"),
+        "MySQL must report a server-side cancel"
+    );
+    let outcome = handle.await.expect("join");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "cancelled sleep must return quickly, took {:?}",
+        started.elapsed()
+    );
+    let accepted = outcome.is_err()
+        || outcome.as_ref().is_ok_and(|result| {
+            result
+                .rows
+                .first()
+                .and_then(|row| row.first())
+                .is_some_and(|value| value == &serde_json::json!(1))
+        });
+    assert!(
+        accepted,
+        "SLEEP should abort (error) or return 1: {outcome:?}"
+    );
     let _ = driver.disconnect().await;
 }

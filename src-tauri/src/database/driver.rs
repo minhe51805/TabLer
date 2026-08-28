@@ -42,6 +42,20 @@ pub trait DatabaseDriver: Send + Sync {
     /// Execute a raw SQL query and return results
     async fn execute_query(&self, sql: &str) -> Result<QueryResult>;
 
+    /// Run a query under a request scope so `cancel_query` can reach the server.
+    /// Default: ignore the scope (drivers without server-side cancel).
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        let _ = request_id;
+        self.execute_query(sql).await
+    }
+
+    /// Attempt to abort the in-flight server-side query for this request.
+    /// Returns `Ok(false)` when the driver cannot cancel server-side.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        let _ = request_id;
+        Ok(false)
+    }
+
     /// Execute one SQL statement using already compiled bind markers. Values are
     /// supplied separately so callers never interpolate data into SQL text.
     async fn execute_parameterized_query(
@@ -52,6 +66,16 @@ pub trait DatabaseDriver: Send + Sync {
         Err(anyhow::anyhow!(
             "Prepared SQL parameters are not supported by this database driver yet"
         ))
+    }
+
+    async fn execute_parameterized_query_for_request(
+        &self,
+        request_id: &str,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let _ = request_id;
+        self.execute_parameterized_query(sql, parameters).await
     }
 
     /// Get rows from a table with pagination

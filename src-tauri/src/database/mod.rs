@@ -20,6 +20,7 @@ pub mod parameterized_query;
 pub mod pgpass;
 pub mod postgres;
 mod postgres_support;
+pub mod query_cancel;
 pub mod query_common;
 pub mod redis;
 mod redis_support;

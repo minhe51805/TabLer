@@ -695,8 +695,11 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             } catch (errorValue) {
               if (isSupersededAIRequestError(errorValue)) throw errorValue;
               const requestError = normalizeAIRequestError(errorValue);
-              const failoverEligible =
-                requestError.code === "timeout" || requestError.code === "provider";
+              // Anything except a user-initiated cancel is worth a promoted
+              // re-run: rate limits surface as "provider", garbage bodies as
+              // "invalid-response", and odd transport failures as "unknown" -
+              // refusing to retry on those was exactly the silent-stop bug.
+              const failoverEligible = requestError.code !== "cancelled";
 
               // A dead or rate-limited provider must not end the run: promote
               // the next configured provider, tell the user inline, wait out

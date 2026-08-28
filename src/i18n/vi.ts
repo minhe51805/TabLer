@@ -307,4 +307,12 @@ export const vi: Record<keyof typeof en, string> = {
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":
     'Provider "{{failed}}" đang lỗi, sẽ chuyển sang provider "{{next}}", vui lòng đợi.',
+  "ai.failover.consentTitle":
+    "Provider đang lỗi",
+  "ai.failover.consentBody":
+    'Provider "{{failed}}" đang gặp lỗi liên tục. Cho phép TableR ghi nhớ và tự động chuyển sang provider khác khi gặp lỗi về sau không?',
+  "ai.failover.consentAllow":
+    "Cho phép tự chuyển",
+  "ai.failover.consentDeny":
+    "Không",
 };

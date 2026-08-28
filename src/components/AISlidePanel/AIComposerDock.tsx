@@ -295,7 +295,6 @@ export function AIComposerDock({
                   <div className="ai-workspace-command-popover ai-workspace-command-popover--provider" role="menu" aria-label="Choose AI model">
                     <div className="ai-workspace-command-popover-head">
                       <strong>Switch model</strong>
-                      <span>Switch the active AI provider without leaving the chat panel.</span>
                     </div>
                     <div className="ai-workspace-command-provider-list">
                       {providers.length > 0 ? providers.map((config) => {

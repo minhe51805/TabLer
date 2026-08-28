@@ -299,4 +299,12 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":
     "提供者“{{failed}}”出现故障，正在切换到提供者“{{next}}”，请稍候。",
+  "ai.failover.consentTitle":
+    "提供者出现故障",
+  "ai.failover.consentBody":
+    "提供者“{{failed}}”持续出错。是否允许 TableR 记住这一点，并在以后再次发生时自动切换到其他已启用的提供者？",
+  "ai.failover.consentAllow":
+    "允许自动切换",
+  "ai.failover.consentDeny":
+    "暂不",
 };

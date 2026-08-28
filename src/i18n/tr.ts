@@ -311,4 +311,12 @@ export const tr: Record<keyof typeof en, string> = {
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":
     '"{{failed}}" sağlayıcısı hata veriyor, "{{next}}" sağlayıcısına geçiliyor, lütfen bekleyin.',
+  "ai.failover.consentTitle":
+    "Sağlayıcı hata veriyor",
+  "ai.failover.consentBody":
+    '"{{failed}}" sağlayıcısı hata vermeye devam ediyor. TableR bunu hatırlayıp ileride tekrar olduğunda başka bir etkin sağlayıcıya otomatik geçmesine izin verir misiniz?',
+  "ai.failover.consentAllow":
+    "Otomatik geçişe izin ver",
+  "ai.failover.consentDeny":
+    "Şimdi değil",
 };

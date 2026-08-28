@@ -6,6 +6,7 @@ import { useConnectionStore } from "../../../stores/connectionStore";
 import { useQueryStore } from "../../../stores/queryStore";
 import { type AIConversationMessage, type AIProviderConfig, type AIRequestIntent, type AIRequestMode } from "../../../types";
 import { getActiveAIProvider, isLocalAIProvider } from "../../../utils/ai-provider-registry";
+import { getAIFailoverConsent, requestAIFailoverConsent } from "../../../utils/ai-failover-consent";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { getSemanticGlossary } from "../../../utils/semantic-glossary";
 import { invokeMutation } from "../../../utils/tauri-utils";
@@ -734,40 +735,51 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 providerRetryCount < Math.max(0, enabledProviderCount - 1);
 
               if (failoverEligible && canPromoteFurther) {
-                providerRetryCount += 1;
-                const failedProvider = getActiveAIProvider(useAIStore.getState().aiConfigs);
-                if (failedProvider) failedProviderIds.add(failedProvider.id);
-                const promoted = useAIStore.getState().promoteNextEnabledProvider();
-                failoverNoteLines.push(
-                  formatProviderFailoverNote(appLanguage, failedProvider, promoted),
-                );
-                publishAgentProgress({
-                  action: "think",
-                  message: failoverNoteLines[failoverNoteLines.length - 1],
-                });
-                await new Promise((resolve) =>
-                  setTimeout(resolve, PROVIDER_RETRY_DELAY_MS),
-                );
-                try {
-                  const promotedRetryAction = await requestAgentAction(controllerPrompt, false);
-                  consecutiveActionFailures = 0;
-                  return promotedRetryAction;
-                } catch (promotedRetryError) {
-                  if (isSupersededAIRequestError(promotedRetryError)) throw promotedRetryError;
-                  const promotedFailedProvider = getActiveAIProvider(
-                    useAIStore.getState().aiConfigs,
-                  );
-                  // The promoted provider also failed - keep its REAL reason so
-                  // the recovery note can tell the user what to go fix.
-                  failoverNoteLines.push(
-                    formatProviderFollowUpNote(
-                      appLanguage,
-                      promotedFailedProvider,
-                      formatActionFailureReason(promotedRetryError),
-                    ),
-                  );
-                  // Fall through to the standard same-provider retry below.
+                // The very first failure asks for permission before the agent
+                // ever switches providers on its own. An approval (or decline)
+                // is remembered, so the question never comes back.
+                let failoverAllowed = getAIFailoverConsent() === "approved";
+                if (!failoverAllowed && getAIFailoverConsent() === "unset") {
+                  failoverAllowed = await requestAIFailoverConsent();
                 }
+                if (failoverAllowed) {
+                  providerRetryCount += 1;
+                  const failedProvider = getActiveAIProvider(useAIStore.getState().aiConfigs);
+                  if (failedProvider) failedProviderIds.add(failedProvider.id);
+                  const promoted = useAIStore.getState().promoteNextEnabledProvider();
+                  failoverNoteLines.push(
+                    formatProviderFailoverNote(appLanguage, failedProvider, promoted),
+                  );
+                  publishAgentProgress({
+                    action: "think",
+                    message: failoverNoteLines[failoverNoteLines.length - 1],
+                  });
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, PROVIDER_RETRY_DELAY_MS),
+                  );
+                  try {
+                    const promotedRetryAction = await requestAgentAction(controllerPrompt, false);
+                    consecutiveActionFailures = 0;
+                    return promotedRetryAction;
+                  } catch (promotedRetryError) {
+                    if (isSupersededAIRequestError(promotedRetryError)) throw promotedRetryError;
+                    const promotedFailedProvider = getActiveAIProvider(
+                      useAIStore.getState().aiConfigs,
+                    );
+                    // The promoted provider also failed - keep its REAL reason so
+                    // the recovery note can tell the user what to go fix.
+                    failoverNoteLines.push(
+                      formatProviderFollowUpNote(
+                        appLanguage,
+                        promotedFailedProvider,
+                        formatActionFailureReason(promotedRetryError),
+                      ),
+                    );
+                    // Fall through to the standard same-provider retry below.
+                  }
+                }
+                // Declined: stay on the failing provider and fall through to
+                // the ordinary same-provider retry / recovery path below.
               }
 
               // One bad model turn must not discard the evidence already

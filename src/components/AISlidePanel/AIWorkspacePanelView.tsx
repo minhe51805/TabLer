@@ -28,7 +28,7 @@ export interface AIWorkspacePanelViewModel {
   isHistoryOpen: boolean; isInspectMode: boolean; isLongformComposer: boolean; isRunning: boolean; isSessionDataReadEnabled: boolean; isSwitchingProvider: boolean;
   language: string; promptDraft: string; recentWorkspaceThreads: AIChatThread[]; selectionContext: SelectionContextState | null; sessionDataReadButtonLabel: string;
   sessionDataReadButtonTitle: string; showThinking: boolean; switchableProviders: AIProviderConfig[]; tableContextCount: number; visibleError: string | null;
-  visualizationConsentPending: ConfirmState | null; chatThreadRef: RefObject<HTMLDivElement | null>;
+  visualizationConsentPending: ConfirmState | null; failoverConsentPending: ConfirmState | null; chatThreadRef: RefObject<HTMLDivElement | null>;
   close: () => void; confirmDeleteThread: () => void; createThread: () => void; dismissError: () => void; dismissSelection: () => void;
   generate: () => void; cancelGeneration: () => void; openSettings: () => void; requestDeleteThread: (id: string, event: React.MouseEvent) => void;
   retryBubble: (bubble: AIWorkspaceBubbleData) => void; rewriteBubble: (bubble: AIWorkspaceBubbleData, note: string) => void; runBubble: (bubble: AIWorkspaceBubbleData) => void;
@@ -37,7 +37,7 @@ export interface AIWorkspacePanelViewModel {
   setDetailBubbleId: (id: string | null) => void; setHistoryOpen: (value: boolean | ((value: boolean) => boolean)) => void; setInspectMode: (value: boolean | ((value: boolean) => boolean)) => void;
   setPromptDraft: (value: string) => void; setSessionDataReadEnabled: (value: boolean) => void; setShowThinking: (value: boolean) => void;
   selectAgentAutonomy: (value: AIWorkspaceAgentAutonomy) => void; selectInteractionMode: (value: AIWorkspaceInteractionMode) => void; activateProvider: (id: string, model?: string) => void; toggleModelVisibility: (id: string, model: string) => void;
-  confirmVisualizationConsent: (value: boolean) => void; cancelDeleteThread: () => void; composerKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  confirmVisualizationConsent: (value: boolean) => void; resolveFailoverConsent: (approved: boolean) => void; cancelDeleteThread: () => void; composerKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
 }
 
 export function AIWorkspacePanelView({ model }: { model: AIWorkspacePanelViewModel }) {
@@ -62,6 +62,7 @@ export function AIWorkspacePanelView({ model }: { model: AIWorkspacePanelViewMod
     </div>
     {m.detailBubble && <AIBubbleDetailModal bubble={m.detailBubble} isGenerating={m.isGenerating} isRunning={m.isRunning} onClose={() => m.setDetailBubbleId(null)} onCopy={m.copyBubble} onInsert={m.insertBubble} onRun={m.runBubble} onRewrite={m.rewriteBubble} />}
     <ConfirmDialog isOpen={m.visualizationConsentPending !== null} title={m.visualizationConsentPending?.title || "Allow AI data read?"} message={m.visualizationConsentPending?.message || ""} confirmText={m.visualizationConsentPending?.confirmText || "Allow"} cancelText={m.visualizationConsentPending?.cancelText || "Deny"} onConfirm={() => m.confirmVisualizationConsent(true)} onCancel={() => m.confirmVisualizationConsent(false)} />
+    <ConfirmDialog isOpen={m.failoverConsentPending !== null} title={m.failoverConsentPending?.title || "Provider failed"} message={m.failoverConsentPending?.message || ""} confirmText={m.failoverConsentPending?.confirmText || "Allow auto-switch"} cancelText={m.failoverConsentPending?.cancelText || "Not now"} onConfirm={() => m.resolveFailoverConsent(true)} onCancel={() => m.resolveFailoverConsent(false)} />
     <ConfirmDialog isOpen={m.deleteThreadPending !== null} title={m.aiCopy.composer.historyDeleteTitle ?? "Delete conversation"} message={m.aiCopy.composer.historyDeleteConfirm ?? "Delete this conversation thread?"} confirmText="Delete" cancelText="Cancel" onConfirm={m.confirmDeleteThread} onCancel={m.cancelDeleteThread} />
   </div>;
 }

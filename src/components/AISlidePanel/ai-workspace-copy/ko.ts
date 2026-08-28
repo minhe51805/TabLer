@@ -85,6 +85,7 @@ export const KO_COPY: AIWorkspaceCopy = {
       thinkingToggleHint: "????? ??? ?? ??/??",
       thinkingOn: "??",
       thinkingOff: "??",
+      autoProviderSwitchLabel: "공급자 자동 전환",
       modeNeedsSchemaHint: "이 모드에는 AI 프로바이더 설정에서 스키마 공유를 활성화해야 합니다.",
       openSettings: "설정 열기",
       hiddenModelsToggle: "숨겨진 모델",

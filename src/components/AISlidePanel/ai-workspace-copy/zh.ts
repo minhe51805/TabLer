@@ -85,6 +85,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
       thinkingToggleHint: "????? agent ?????",
       thinkingOn: "?",
       thinkingOff: "?",
+      autoProviderSwitchLabel: "自动切换提供者",
       modeNeedsSchemaHint: "这个模式需要在 AI Provider Settings 中开启 schema sharing。",
       openSettings: "打开设置",
       hiddenModelsToggle: "已隐藏的模型",

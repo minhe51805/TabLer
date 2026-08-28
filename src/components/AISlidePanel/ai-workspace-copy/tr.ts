@@ -85,6 +85,7 @@ export const TR_COPY: AIWorkspaceCopy = {
       thinkingToggleHint: "Ajanın canlı muhakemesini göster veya gizle",
       thinkingOn: "Açık",
       thinkingOff: "Kapalı",
+      autoProviderSwitchLabel: "Otomatik sağlayıcı geçişi",
       modeNeedsSchemaHint: "Bu mod, AI Sağlayıcı Ayarlarında şema paylaşımının etkinleştirilmesini gerektirir.",
       openSettings: "Ayarları aç",
       hiddenModelsToggle: "Gizli modeller",

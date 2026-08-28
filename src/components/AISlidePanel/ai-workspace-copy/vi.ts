@@ -85,6 +85,7 @@ export const VI_COPY: AIWorkspaceCopy = {
       thinkingToggleHint: "Hiện hoặc ẩn suy luận trực tiếp của agent",
       thinkingOn: "Bật",
       thinkingOff: "Tắt",
+      autoProviderSwitchLabel: "Tự chuyển provider",
       modeNeedsSchemaHint: "Chế độ này cần bật chia sẻ schema trong AI Provider Settings.",
       openSettings: "Mở settings",
       hiddenModelsToggle: "Model bị ẩn",

@@ -85,6 +85,7 @@ export const EN_COPY: AIWorkspaceCopy = {
       thinkingToggleHint: "Show or hide the agent's live reasoning",
       thinkingOn: "On",
       thinkingOff: "Off",
+      autoProviderSwitchLabel: "Auto provider switch",
       modeNeedsSchemaHint: "This mode needs schema sharing enabled in AI Provider Settings.",
       openSettings: "Open settings",
       hiddenModelsToggle: "Hidden models",

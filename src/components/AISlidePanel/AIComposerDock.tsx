@@ -1,4 +1,5 @@
 import {
+  ArrowLeftRight,
   Brain,
   Check,
   ChevronDown,
@@ -19,6 +20,7 @@ import {
 import { Fragment, useEffect, useRef, useState, type KeyboardEventHandler, type RefObject } from "react";
 import type { AIProviderConfig } from "../../types";
 import { formatAIProviderTypeLabel } from "../../utils/ai-provider-registry";
+import { getAIFailoverConsent, setAIFailoverConsent } from "../../utils/ai-failover-consent";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import type {
   AIWorkspaceAgentAutonomy,
@@ -188,6 +190,17 @@ export function AIComposerDock({
       .filter(Boolean)
       .map((model) => ({ config, model }))
   ));
+
+  // Mirrors the failover consent (localStorage) and stays in sync when the
+  // agent-side consent dialog records a decision.
+  const [autoSwitchEnabled, setAutoSwitchEnabled] = useState(
+    () => getAIFailoverConsent() === "approved",
+  );
+  useEffect(() => {
+    const sync = () => setAutoSwitchEnabled(getAIFailoverConsent() === "approved");
+    window.addEventListener("ai-failover-consent-change", sync);
+    return () => window.removeEventListener("ai-failover-consent-change", sync);
+  }, []);
 
   return (
     <div className="ai-workspace-compose-dock">
@@ -443,6 +456,20 @@ export function AIComposerDock({
                         <span>{sessionDataReadTitle}</span>
                       </span>
                       {isSessionDataReadEnabled && <Check className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={autoSwitchEnabled}
+                      className={`ai-workspace-command-utility-item ${autoSwitchEnabled ? "is-active" : ""}`}
+                      onClick={() => setAIFailoverConsent(autoSwitchEnabled ? "declined" : "approved")}
+                    >
+                      <span className="ai-workspace-command-utility-icon"><ArrowLeftRight className="w-3.5 h-3.5" /></span>
+                      <span className="ai-workspace-command-utility-copy">
+                        <strong>{copy.composer.autoProviderSwitchLabel}</strong>
+                        <span>{autoSwitchEnabled ? copy.composer.thinkingOn : copy.composer.thinkingOff}</span>
+                      </span>
+                      {autoSwitchEnabled && <Check className="w-3.5 h-3.5" />}
                     </button>
                     {interactionMode === "agent" && (
                       <>

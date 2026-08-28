@@ -88,6 +88,7 @@ export interface AIWorkspaceCopy {
     thinkingToggleHint: string;
     thinkingOn: string;
     thinkingOff: string;
+    autoProviderSwitchLabel: string;
     modeNeedsSchemaHint: string;
     openSettings: string;
     hiddenModelsToggle: string;

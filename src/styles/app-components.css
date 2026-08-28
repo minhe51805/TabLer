@@ -28814,9 +28814,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   min-width: 0;
 }
 
-/* ...except the model switcher: the popover becomes a flex column where only
-   the provider list scrolls, so head / hidden models / settings link stay
-   pinned inside the card no matter how long the content is. */
+/* ...except the model switcher: no internal scrolling anywhere — the popover
+   grows to fit its full content (providers, expanded models, hidden models). */
 .app-root
   .ai-workspace-stage--sidebar
   .ai-workspace-commandbar--dock
@@ -28824,7 +28823,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   .ai-workspace-command-popover--provider {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  max-height: none;
+  overflow: visible;
 }
 
 .app-root
@@ -28833,10 +28833,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   .ai-workspace-command-dropdown--provider
   .ai-workspace-command-popover--provider
   .ai-workspace-command-provider-list {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: visible;
 }
 
 .app-root
@@ -28848,14 +28845,10 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   flex-shrink: 0;
 }
 
-/* Hidden-model entries get their own bounded scroll so they can never push
-   the settings link out of the card. */
+/* Hidden-model entries render fully - no internal scroll either. */
 .ai-workspace-command-hidden-list {
   display: grid;
   gap: 4px;
-  max-height: 132px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 /* Flat Cherry-style rows: quiet by default, highlighted on hover. Compact

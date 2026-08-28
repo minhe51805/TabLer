@@ -115,6 +115,25 @@ function formatProviderFailoverNote(
     ? `Provider "${failedLabel}" đang lỗi — đã tự chuyển sang provider "${nextLabel}" và chạy lại.`
     : `Provider "${failedLabel}" failed — switched to provider "${nextLabel}" and re-ran automatically.`;
 }
+
+/**
+ * Second line of the failover note: what happened when the promoted provider
+ * was actually tried, with the REAL underlying reason (HTTP status, bad key,
+ * connection refused...) so the user can go fix that provider's config.
+ */
+function formatProviderFollowUpNote(
+  language: string,
+  provider: AIProviderConfig | null,
+  rawReason: string,
+) {
+  const label = provider?.name?.trim()
+    || provider?.model
+    || (language === "vi" ? "provider hiện tại" : "the current provider");
+  const shortReason = rawReason.length > 180 ? `${rawReason.slice(0, 180)}…` : rawReason;
+  return language === "vi"
+    ? `Provider "${label}" cũng trả lời lỗi: ${shortReason}`
+    : `Provider "${label}" also failed: ${shortReason}`;
+}
 /** Upper bound for tables scanned per search_schema call; large catalogs are prioritized, not fully scanned. */
 /** Pause before retrying a transient provider failure inside the agent loop. */
 /** Rate limits need a longer cooldown than blips; one patient retry still beats failing the run. */
@@ -533,6 +552,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             wantsVisualization,
             steps: agentTraceSteps,
           });
+          const failoverNoteLines = [
+            providerFailoverNote,
+            providerFailoverFollowUpNote,
+          ].filter((line): line is string => Boolean(line));
+          const failoverNoteSuffix = failoverNoteLines.length > 0
+            ? `\n\n*${failoverNoteLines.join(" ")}*`
+            : "";
 
           try {
             const recoveredResponse = await askAI(
@@ -557,10 +583,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             const trimmedResponse = recoveredResponse.trim() || fallbackResponse;
             // When providers died mid-run, surface the automatic switch right
             // under the recovery answer in a quiet, italic side note.
-            const responseWithFailoverNote = providerFailoverNote
-              ? `${trimmedResponse}\n\n*${providerFailoverNote}*`
-              : trimmedResponse;
-            const recoveredSql = extractSqlFromResponse(responseWithFailoverNote);
+            const responseWithFailoverNote = `${trimmedResponse}${failoverNoteSuffix}`;
+            const recoveredSql = extractSqlFromResponse(trimmedResponse);
 
             return {
               action: "finish",
@@ -579,9 +603,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               action: "finish",
               message: reason,
               args: {
-                response: providerFailoverNote
-                  ? `${fallbackResponse}\n\n*${providerFailoverNote}*`
-                  : fallbackResponse,
+                response: `${fallbackResponse}${failoverNoteSuffix}`,
               },
             };
           }
@@ -636,7 +658,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         // the selector to the next enabled provider and every later failure
         // retries there instead of rotating providers again.
         let providerPromoted = false;
+        let promotedProvider: AIProviderConfig | null = null;
         let providerFailoverNote: string | null = null;
+        let providerFailoverFollowUpNote: string | null = null;
 
         const agentRunnerResult = await runAIAgentToolLoop({
           workspaceToolsEnabled,
@@ -711,6 +735,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 providerPromoted = true;
                 const failedProvider = getActiveAIProvider(useAIStore.getState().aiConfigs);
                 const promoted = useAIStore.getState().promoteNextEnabledProvider();
+                promotedProvider = promoted;
                 providerFailoverNote = formatProviderFailoverNote(
                   appLanguage,
                   failedProvider,
@@ -729,6 +754,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                   return promotedRetryAction;
                 } catch (promotedRetryError) {
                   if (isSupersededAIRequestError(promotedRetryError)) throw promotedRetryError;
+                  // The promoted provider also failed - keep its REAL reason so
+                  // the recovery note can tell the user what to go fix.
+                  providerFailoverFollowUpNote = formatProviderFollowUpNote(
+                    appLanguage,
+                    promotedProvider,
+                    formatActionFailureReason(promotedRetryError),
+                  );
                   // Fall through to the standard same-provider retry below.
                 }
               }
@@ -748,6 +780,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 return retriedAction;
               } catch (retryError) {
                 if (isSupersededAIRequestError(retryError)) throw retryError;
+                if (!providerFailoverFollowUpNote) {
+                  providerFailoverFollowUpNote = formatProviderFollowUpNote(
+                    appLanguage,
+                    promotedProvider,
+                    formatActionFailureReason(retryError),
+                  );
+                }
                 return recoverAgentFinishAction(
                   `The agent could not return a valid action: ${formatActionFailureReason(retryError)}`,
                 );

@@ -46,6 +46,7 @@ function renderComposer(overrides: Partial<React.ComponentProps<typeof AICompose
     onSelectInteractionMode: vi.fn(),
     onSelectAgentAutonomy: vi.fn(),
     onActivateProvider: vi.fn(),
+    onToggleModelVisibility: vi.fn(),
     onSetSessionDataReadEnabled: vi.fn(),
     onSetShowThinking: vi.fn(),
     onOpenSettings: vi.fn(),
@@ -102,6 +103,23 @@ describe("AI workspace components", () => {
     await user.click(screen.getByRole("menuitem", { name: /DeepSeek/i }));
     await user.click(screen.getByRole("menuitemradio", { name: /deepseek-r2/i }));
     expect(props.onActivateProvider).toHaveBeenCalledWith("provider-2", "deepseek-r2");
+  });
+
+  it("reveals hidden models through a collapsible section above the settings link", async () => {
+    const user = userEvent.setup();
+    const withHidden: AIProviderConfig = {
+      ...provider,
+      models: ["gpt-test", "gpt-old"],
+      disabled_models: ["gpt-old"],
+    };
+    const props = renderComposer({ providers: [withHidden] });
+
+    await user.click(screen.getByTitle("gpt-test"));
+    // Hidden models stay collapsed until the toggle above "Open settings" is used.
+    expect(screen.queryByRole("menuitem", { name: /gpt-old/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("menuitemcheckbox", { name: copy.composer.hiddenModelsToggle }));
+    await user.click(screen.getByRole("menuitem", { name: /gpt-old/i }));
+    expect(props.onToggleModelVisibility).toHaveBeenCalledWith("provider-1", "gpt-old");
   });
 
   it("keeps agent permissions inside the chat tools menu", async () => {

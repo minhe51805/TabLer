@@ -87,6 +87,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
       thinkingOff: "?",
       modeNeedsSchemaHint: "这个模式需要在 AI Provider Settings 中开启 schema sharing。",
       openSettings: "打开设置",
+      hiddenModelsToggle: "已隐藏的模型",
       switchToPrompt: "改用提示词模式",
       historyTitle: "对话历史",
       historyHint: "重新打开之前的线程，并从上次停下的位置继续。",

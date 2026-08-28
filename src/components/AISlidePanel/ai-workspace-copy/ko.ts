@@ -87,6 +87,7 @@ export const KO_COPY: AIWorkspaceCopy = {
       thinkingOff: "??",
       modeNeedsSchemaHint: "이 모드에는 AI 프로바이더 설정에서 스키마 공유를 활성화해야 합니다.",
       openSettings: "설정 열기",
+      hiddenModelsToggle: "숨겨진 모델",
       switchToPrompt: "프롬프트 모드로 전환",
       historyTitle: "대화 기록",
       historyHint: "이전 스레드를 다시 열고 중단된 위치부터 계속하세요.",

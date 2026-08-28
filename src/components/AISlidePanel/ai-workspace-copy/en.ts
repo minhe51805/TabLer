@@ -87,6 +87,7 @@ export const EN_COPY: AIWorkspaceCopy = {
       thinkingOff: "Off",
       modeNeedsSchemaHint: "This mode needs schema sharing enabled in AI Provider Settings.",
       openSettings: "Open settings",
+      hiddenModelsToggle: "Hidden models",
       switchToPrompt: "Use prompt mode",
       historyTitle: "Conversation history",
       historyHint: "Reopen a previous thread and continue where you left off.",

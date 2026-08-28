@@ -28347,6 +28347,17 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   transform: rotate(180deg);
 }
 
+/* Divider row that reveals hidden (disabled) models above the settings link. */
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-command-hidden-toggle {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--mm-border);
+  border-radius: 0;
+  background: transparent;
+}
+
 /* Long model names must ellipsize instead of wrapping the popover apart. */
 .app-root
   .ai-workspace-stage--sidebar

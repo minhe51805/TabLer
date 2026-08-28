@@ -87,6 +87,7 @@ export const VI_COPY: AIWorkspaceCopy = {
       thinkingOff: "Tắt",
       modeNeedsSchemaHint: "Chế độ này cần bật chia sẻ schema trong AI Provider Settings.",
       openSettings: "Mở settings",
+      hiddenModelsToggle: "Model bị ẩn",
       switchToPrompt: "Dùng chỉ prompt",
       historyTitle: "Lịch sử trò chuyện",
       historyHint: "Mở lại cuộc trò chuyện trước đó và tiếp tục đúng ngữ cảnh đang làm.",

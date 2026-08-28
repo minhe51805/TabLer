@@ -90,6 +90,7 @@ export interface AIWorkspaceCopy {
     thinkingOff: string;
     modeNeedsSchemaHint: string;
     openSettings: string;
+    hiddenModelsToggle: string;
     switchToPrompt: string;
     historyTitle: string;
     historyHint: string;

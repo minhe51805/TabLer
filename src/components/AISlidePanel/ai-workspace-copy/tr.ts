@@ -87,6 +87,7 @@ export const TR_COPY: AIWorkspaceCopy = {
       thinkingOff: "Kapalı",
       modeNeedsSchemaHint: "Bu mod, AI Sağlayıcı Ayarlarında şema paylaşımının etkinleştirilmesini gerektirir.",
       openSettings: "Ayarları aç",
+      hiddenModelsToggle: "Gizli modeller",
       switchToPrompt: "Prompt moduna geç",
       historyTitle: "Konuşma geçmişi",
       historyHint: "Önceki bir konuyu yeniden açın ve kaldığınız yerden devam edin.",

@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   Database,
+  Eye,
   Loader2,
   MessageSquare,
   PencilLine,
@@ -49,6 +50,7 @@ interface AIComposerDockProps {
   onSelectInteractionMode: (mode: AIWorkspaceInteractionMode) => void;
   onSelectAgentAutonomy: (autonomy: AIWorkspaceAgentAutonomy) => void;
   onActivateProvider: (providerId: string, model?: string) => void;
+  onToggleModelVisibility: (providerId: string, model: string) => void;
   onSetSessionDataReadEnabled: (enabled: boolean) => void;
   onSetShowThinking: (show: boolean) => void;
   onOpenSettings: () => void;
@@ -123,6 +125,7 @@ export function AIComposerDock({
   onSelectInteractionMode,
   onSelectAgentAutonomy,
   onActivateProvider,
+  onToggleModelVisibility,
   onSetSessionDataReadEnabled,
   onSetShowThinking,
   onOpenSettings,
@@ -132,6 +135,7 @@ export function AIComposerDock({
 }: AIComposerDockProps) {
   const [openMenu, setOpenMenu] = useState<ComposerMenu | null>(null);
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
+  const [showHiddenModels, setShowHiddenModels] = useState(false);
   const commandBarRef = useRef<HTMLDivElement>(null);
   const activeProviderValue = activeProvider?.model?.trim()
     || activeProvider?.name?.trim()
@@ -172,10 +176,18 @@ export function AIComposerDock({
   useEffect(() => {
     if (openMenu !== "provider") {
       setExpandedProviderId(null);
+      setShowHiddenModels(false);
       return;
     }
     setExpandedProviderId((current) => current ?? activeProvider?.id ?? null);
   }, [openMenu, activeProvider?.id]);
+
+  const hiddenModelEntries = providers.flatMap((config) => (
+    (config.disabled_models ?? [])
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((model) => ({ config, model }))
+  ));
 
   return (
     <div className="ai-workspace-compose-dock">
@@ -366,6 +378,37 @@ export function AIComposerDock({
                         </button>
                       )}
                     </div>
+                    {hiddenModelEntries.length > 0 ? (
+                      <>
+                        <button
+                          type="button"
+                          role="menuitemcheckbox"
+                          aria-checked={showHiddenModels}
+                          className="ai-workspace-command-item ai-workspace-command-hidden-toggle"
+                          onClick={() => setShowHiddenModels((current) => !current)}
+                        >
+                          <span className="ai-workspace-command-item-copy">
+                            <strong>{copy.composer.hiddenModelsToggle}</strong>
+                          </span>
+                          <ChevronDown className={`w-3.5 h-3.5 ai-workspace-command-model-chevron ${showHiddenModels ? "is-open" : ""}`} />
+                        </button>
+                        {showHiddenModels ? hiddenModelEntries.map(({ config, model }) => (
+                          <button
+                            key={`${config.id}:${model}`}
+                            type="button"
+                            role="menuitem"
+                            className="ai-workspace-command-item ai-workspace-command-model-item"
+                            onClick={() => onToggleModelVisibility(config.id, model)}
+                          >
+                            <span className="ai-workspace-command-item-copy">
+                              <strong>{model}</strong>
+                              <span>{config.name?.trim() || formatAIProviderTypeLabel(config.provider_type)}</span>
+                            </span>
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        )) : null}
+                      </>
+                    ) : null}
                     <button type="button" className="ai-workspace-command-settings-link" onClick={onOpenSettings}>
                       {copy.composer.openSettings}
                     </button>

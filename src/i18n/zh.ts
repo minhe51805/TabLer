@@ -297,4 +297,6 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.widget.openSourceSql": "Open source SQL",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
+  "ai.toast.providerFailover":
+    "提供者“{{failed}}”出现故障，正在切换到提供者“{{next}}”，请稍候。",
 };

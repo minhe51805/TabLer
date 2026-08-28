@@ -305,4 +305,6 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.widget.openSourceSql": "Open source SQL",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
+  "ai.toast.providerFailover":
+    'Provider "{{failed}}" đang lỗi, sẽ chuyển sang provider "{{next}}", vui lòng đợi.',
 };

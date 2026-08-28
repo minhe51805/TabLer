@@ -303,4 +303,6 @@ export const en = {
   "tabs.readyToExecute": "Press Ctrl+Enter to run",
   "tabs.noSqlToExecute":
     "Nothing to run yet. Type a query or command first, then press Ctrl+Enter.",
+  "ai.toast.providerFailover":
+    'Provider "{{failed}}" is failing — switching to provider "{{next}}", please wait.',
 } as const;

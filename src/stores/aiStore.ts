@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
-import { getCurrentAppLanguage } from "../i18n";
+import { getCurrentAppLanguage, translateLanguage } from "../i18n";
 import {
   type AIConversationMessage,
   type AIProviderConfig,
@@ -12,8 +12,9 @@ import {
 } from "../types";
 import { buildNativeToolPayload } from "../components/AISlidePanel/ai-agent-tool-schema";
 import { useConnectionStore } from "./connectionStore";
-import { getActiveAIProvider } from "../utils/ai-provider-registry";
+import { getActiveAIProvider, normalizeAIProviderConfigs } from "../utils/ai-provider-registry";
 import { AIRequestError, normalizeAIRequestError } from "../utils/ai-request-errors";
+import { emitAppToast } from "../utils/app-toast";
 import { useGlobalErrorStore } from "./globalErrorStore";
 
 const AI_TIMEOUTS = {
@@ -89,6 +90,40 @@ export interface AIState {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[]
   ) => Promise<{ text: string; reasoning?: string }>;
+}
+
+/**
+ * Promotes `next` to the active (primary) provider after `failed` broke a run.
+ * Updates the store so the provider selector in the AI panel follows, announces
+ * the switch through the global toast region, and persists the choice
+ * best-effort so the healthy provider survives an app restart.
+ */
+function switchActiveProvider(
+  configs: AIProviderConfig[],
+  next: AIProviderConfig,
+  failed: AIProviderConfig,
+  set: (partial: Partial<AIState>) => void,
+) {
+  const normalized = normalizeAIProviderConfigs(
+    configs.map((config) => ({ ...config, is_primary: config.id === next.id })),
+  );
+  set({ aiConfigs: normalized });
+  emitAppToast({
+    title: translateLanguage(getCurrentAppLanguage(), "ai.toast.providerFailover", {
+      failed: failed.name || failed.id,
+      next: next.name || next.id,
+    }),
+    tone: "info",
+    durationMs: 8_000,
+  });
+  // Best-effort persistence: the retried request must not wait on the disk
+  // write, and a failed save still leaves the runtime switch in place.
+  void invokeMutation<[AIProviderConfig[], Record<string, boolean>]>(
+    "save_ai_configs",
+    { providers: normalized, apiKeyUpdates: {}, clearedProviderIds: [] },
+  )
+    .then(([aiConfigs]) => set({ aiConfigs }))
+    .catch((error) => console.warn("[AI] Failed to persist provider failover:", error));
 }
 
 export const useAIStore = create<AIState>((set, get) => ({
@@ -294,6 +329,13 @@ export const useAIStore = create<AIState>((set, get) => ({
         if (!canFailOver || index === chain.length - 1) throw requestError;
         // Stop the superseded backend request before switching endpoints.
         void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
+        // Promote the next provider to active so the provider selector follows
+        // the switch and later requests in this session start on the healthy
+        // provider instead of paying another failed attempt on this one.
+        const nextAttempt = chain[index + 1];
+        if (nextAttempt) {
+          switchActiveProvider(get().aiConfigs, nextAttempt.config, config, set);
+        }
         console.warn(
           `[AI] Provider "${config.name || config.id}" failed (${requestError.code}); failing over to the next enabled provider.`,
         );

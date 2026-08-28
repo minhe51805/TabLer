@@ -180,4 +180,60 @@ describe("aiStore", () => {
       "Failed to load AI configs",
     );
   });
+
+  it("promotes the next provider to active and announces the failover", async () => {
+    const fallback: AIProviderConfig = {
+      ...provider,
+      id: "provider-2",
+      name: "Claude",
+      provider_type: "anthropic",
+      is_primary: false,
+    };
+    useAIStore.setState({ aiConfigs: [provider, fallback] });
+    invokeMutationMock.mockImplementation(async (command: string, args?: { providers?: AIProviderConfig[] }) => {
+      if (command === "cancel_ai_request") return true;
+      if (command === "save_ai_configs") return [args?.providers ?? [], {}];
+      return null;
+    });
+    let streamAttempts = 0;
+    invokeWithTimeoutMock.mockImplementation(async (command: string) => {
+      if (command === "ask_ai_stream") {
+        streamAttempts += 1;
+        if (streamAttempts === 1) {
+          throw new Error("HTTP 429 Too Many Requests: rate limit exceeded");
+        }
+        return undefined;
+      }
+      return null;
+    });
+
+    const toastSpy = vi.fn();
+    window.addEventListener("app-toast", toastSpy);
+    try {
+      await expect(
+        useAIStore.getState().askAI("prompt", "context", "panel", "sql"),
+      ).resolves.toBe("");
+    } finally {
+      window.removeEventListener("app-toast", toastSpy);
+    }
+
+    // The healthy provider becomes active so the selector follows the switch.
+    const configs = useAIStore.getState().aiConfigs;
+    expect(configs.find((config) => config.id === "provider-2")?.is_primary).toBe(true);
+    expect(configs.find((config) => config.id === "provider-1")?.is_primary).toBe(false);
+    // The switch is persisted so it survives an app restart.
+    expect(invokeMutationMock).toHaveBeenCalledWith(
+      "save_ai_configs",
+      expect.objectContaining({ providers: expect.any(Array) }),
+    );
+    // The user is told which provider failed and which one took over.
+    expect(toastSpy).toHaveBeenCalledTimes(1);
+    const detail = (toastSpy.mock.calls[0][0] as CustomEvent).detail as {
+      title: string;
+      tone: string;
+    };
+    expect(detail.tone).toBe("info");
+    expect(detail.title).toContain("OpenAI");
+    expect(detail.title).toContain("Claude");
+  });
 });

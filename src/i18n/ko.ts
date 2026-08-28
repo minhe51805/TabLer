@@ -304,4 +304,6 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.widget.openSourceSql": "Open source SQL",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
+  "ai.toast.providerFailover":
+    '"{{failed}}" 공급자에 오류가 발생했습니다. "{{next}}" 공급자로 전환 중입니다. 잠시만 기다려 주세요.',
 };

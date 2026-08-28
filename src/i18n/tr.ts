@@ -309,4 +309,6 @@ export const tr: Record<keyof typeof en, string> = {
   "metrics.widget.openSourceSql": "Open source SQL",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
+  "ai.toast.providerFailover":
+    '"{{failed}}" sağlayıcısı hata veriyor, "{{next}}" sağlayıcısına geçiliyor, lütfen bekleyin.',
 };

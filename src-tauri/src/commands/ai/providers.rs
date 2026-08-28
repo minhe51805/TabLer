@@ -239,6 +239,7 @@ pub(crate) fn sample_provider(provider_type: AIProviderType) -> AIProviderConfig
         allow_inline_completion: true,
         api_format: None,
         models: Vec::new(),
+        disabled_models: Vec::new(),
     }
 }
 

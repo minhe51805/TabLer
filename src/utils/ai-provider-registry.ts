@@ -116,6 +116,9 @@ export function normalizeAIProviderConfigs(configs: AIProviderConfig[]) {
     const models = (config.models ?? (trimmedModel ? [trimmedModel] : []))
       .map((entry) => entry.trim())
       .filter(Boolean);
+    const disabledModels = (config.disabled_models ?? [])
+      .map((entry) => entry.trim())
+      .filter(Boolean);
 
     return {
       ...config,
@@ -124,6 +127,7 @@ export function normalizeAIProviderConfigs(configs: AIProviderConfig[]) {
       allow_schema_context: config.allow_schema_context ?? false,
       allow_inline_completion: config.allow_inline_completion ?? false,
       models,
+      disabled_models: disabledModels,
     };
   });
 

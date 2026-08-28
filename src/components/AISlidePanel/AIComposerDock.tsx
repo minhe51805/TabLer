@@ -287,11 +287,15 @@ export function AIComposerDock({
                     </div>
                     <div className="ai-workspace-command-provider-list">
                       {providers.length > 0 ? providers.map((config) => {
+                        const disabledModels = new Set(config.disabled_models ?? []);
                         const models = (config.models?.length
                           ? config.models
                           : (config.model?.trim() ? [config.model.trim()] : []))
                           .map((entry) => entry.trim())
-                          .filter(Boolean);
+                          .filter((entry) => Boolean(entry) && !disabledModels.has(entry));
+                        // A provider whose whole catalog is disabled stays out of
+                        // the switcher; re-enable it in settings.
+                        if (models.length === 0 && (config.models?.length ?? 0) > 0) return null;
                         const typeLabel = formatAIProviderTypeLabel(config.provider_type);
                         const providerLabel = config.name?.trim() || typeLabel;
                         const isActiveProvider = config.id === activeProvider?.id;

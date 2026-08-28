@@ -75,6 +75,7 @@ describe("AI provider registry", () => {
       provider("legacy"),
       provider("multi", { models: [" alpha ", "", "beta"] }),
       provider("blank", { model: "  " }),
+      provider("partial-disable", { models: ["a", "b"], disabled_models: [" b ", "gone"] }),
     ]);
 
     // Legacy single-model config inherits `model` as its catalog.
@@ -83,6 +84,8 @@ describe("AI provider registry", () => {
     expect(configs[1].models).toEqual(["alpha", "beta"]);
     // A provider with no models at all stays empty.
     expect(configs[2].models).toEqual([]);
+    // Disabled entries are trimmed but otherwise preserved as-is.
+    expect(configs[3].disabled_models).toEqual(["b", "gone"]);
   });
 
   it("preserves the first valid primary and clears duplicate primaries", () => {

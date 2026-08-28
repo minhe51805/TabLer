@@ -76,6 +76,10 @@ pub struct AIProviderConfig {
     /// config, where `model` alone is the truth.
     #[serde(default)]
     pub models: Vec<String>,
+    /// Models hidden from the composer switcher. They stay editable here in
+    /// storage so they can be re-enabled without retyping the ID.
+    #[serde(default)]
+    pub disabled_models: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

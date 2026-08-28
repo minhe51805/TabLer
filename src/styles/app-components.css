@@ -14301,6 +14301,42 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   color: var(--text-muted);
 }
 
+.ai-settings-model-row.is-disabled {
+  opacity: 0.72;
+}
+
+.ai-settings-model-row.is-disabled .ai-settings-model-name {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.ai-settings-model-inactive {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  background: var(--mm-surface-2);
+  color: var(--text-muted);
+}
+
+.ai-settings-model-state-btn {
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ai-settings-model-state-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
 .ai-settings-model-dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -28249,6 +28285,17 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
      popover across it can never overflow the panel edge. */
   left: 0;
   right: 0;
+  width: auto;
+  min-width: 0;
+}
+
+/* Narrow panels: give the model switcher 20% more width so long model IDs
+   stay on one line instead of wrapping. */
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-command-popover--provider {
+  left: -10%;
+  right: -10%;
   width: auto;
   min-width: 0;
 }

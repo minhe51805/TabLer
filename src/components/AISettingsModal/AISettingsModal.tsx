@@ -185,7 +185,30 @@ export function AISettingsModal({ onClose }: Props) {
         // Removing the active model promotes the first remaining one so the
         // provider never points at a model that no longer exists.
         const nextModel = activeConfig.model === removed ? (models[0] ?? "") : activeConfig.model;
-        updateConfig(activeConfig.id, { models, model: nextModel });
+        updateConfig(activeConfig.id, {
+            models,
+            model: nextModel,
+            disabled_models: (activeConfig.disabled_models ?? []).filter((entry) => entry !== removed),
+        });
+    };
+
+    const handleToggleModelDisabled = (index: number) => {
+        if (!activeConfig) return;
+        const modelName = activeConfigModels[index];
+        if (!modelName) return;
+        const disabled = new Set(activeConfig.disabled_models ?? []);
+        const isDisabling = !disabled.has(modelName);
+        if (isDisabling) {
+            disabled.add(modelName);
+        } else {
+            disabled.delete(modelName);
+        }
+        // Disabling the active model promotes the first model that stays enabled.
+        let nextModel = activeConfig.model;
+        if (isDisabling && activeConfig.model === modelName) {
+            nextModel = activeConfigModels.find((entry) => entry !== modelName && !disabled.has(entry)) ?? "";
+        }
+        updateConfig(activeConfig.id, { disabled_models: [...disabled], model: nextModel });
     };
 
     const handleSaveModelDialog = () => {
@@ -204,15 +227,20 @@ export function AISettingsModal({ onClose }: Props) {
         }
         const models = [...activeConfigModels];
         const wasActiveModel = modelDialog.index >= 0 && models[modelDialog.index] === activeConfig.model;
+        const previousName = modelDialog.index >= 0 ? models[modelDialog.index] : undefined;
         if (modelDialog.index >= 0) {
             models[modelDialog.index] = value;
         } else {
             models.push(value);
         }
+        // Keep the disabled list pointing at the renamed entry.
+        const disabledModels = (activeConfig.disabled_models ?? []).map(
+            (entry) => (previousName && entry === previousName ? value : entry),
+        );
         // A brand-new first model, or a rename of the active model, keeps the
         // provider pointing at something that exists.
         const nextModel = wasActiveModel || !activeConfig.model?.trim() ? value : activeConfig.model;
-        updateConfig(activeConfig.id, { models, model: nextModel });
+        updateConfig(activeConfig.id, { models, model: nextModel, disabled_models: disabledModels });
         setModelDialog(null);
         setModelDialogError(null);
     };
@@ -690,10 +718,22 @@ export function AISettingsModal({ onClose }: Props) {
                                         <div className="ai-settings-field">
                                             <label className="ai-settings-label">Models</label>
                                             <div className="ai-settings-model-list">
-                                                {activeConfigModels.length > 0 ? activeConfigModels.map((modelName, index) => (
-                                                    <div key={`${modelName}-${index}`} className="ai-settings-model-row">
+                                                {activeConfigModels.length > 0 ? activeConfigModels.map((modelName, index) => {
+                                                    const isModelDisabled = (activeConfig.disabled_models ?? []).includes(modelName);
+                                                    return (
+                                                    <div key={`${modelName}-${index}`} className={`ai-settings-model-row ${isModelDisabled ? "is-disabled" : ""}`}>
                                                         <span className={`ai-settings-model-name ${modelName === activeConfig.model ? "is-active" : ""}`}>{modelName}</span>
-                                                        {modelName === activeConfig.model ? <span className="ai-settings-model-active">Active</span> : null}
+                                                        {isModelDisabled ? <span className="ai-settings-model-inactive">Disabled</span> : null}
+                                                        {modelName === activeConfig.model && !isModelDisabled ? <span className="ai-settings-model-active">Active</span> : null}
+                                                        <button
+                                                            type="button"
+                                                            className="ai-settings-model-state-btn"
+                                                            title={isModelDisabled ? "Enable model" : "Disable model"}
+                                                            disabled={isSettingUpLocalOllama}
+                                                            onClick={() => handleToggleModelDisabled(index)}
+                                                        >
+                                                            {isModelDisabled ? "Enable" : "Disable"}
+                                                        </button>
                                                         <button
                                                             type="button"
                                                             className="ai-settings-icon-btn"
@@ -713,7 +753,8 @@ export function AISettingsModal({ onClose }: Props) {
                                                             <Trash2 className="w-4 h-4" />
                                                         </button>
                                                     </div>
-                                                )) : (
+                                                    );
+                                                }) : (
                                                     <p className="ai-settings-model-empty">No models yet — add one below.</p>
                                                 )}
                                                 <button

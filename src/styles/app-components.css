@@ -32817,18 +32817,24 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 @container (max-width: 360px) {
+  /* Narrow panel: keep the footer on ONE row. Instead of stacking the send
+     button below, tighten the gaps and let the model dropdown shrink — its
+     label ellipsizes via the dock trigger rules. */
   .app-root .ai-workspace-stage--sidebar .ai-workspace-composer-footer {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: stretch;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
   }
 
   .app-root .ai-workspace-stage--sidebar .ai-workspace-composer-footer-main {
-    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
-  .app-root .ai-workspace-stage--sidebar .ai-workspace-generate-btn {
-    justify-self: end;
+  .app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock,
+  .app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock.is-agent {
+    grid-template-columns: minmax(52px, auto) minmax(48px, 1fr) 28px;
+    gap: 4px;
   }
 }
 

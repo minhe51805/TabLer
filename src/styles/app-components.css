@@ -32822,7 +32822,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
      label ellipsizes via the dock trigger rules. */
   .app-root .ai-workspace-stage--sidebar .ai-workspace-composer-footer {
     flex-wrap: nowrap;
-    align-items: center;
+    align-items: flex-end;
     gap: 8px;
   }
 
@@ -32854,13 +32854,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 /* The generate button is icon-only now and matches the dock's chat-tools
    button exactly (28×28, radius 9, 14px glyph — see the
-   .ai-workspace-command-settings-btn--dock rule). It must also stay
-   vertically centered on the footer row: the footer's legacy align-items:end
-   and a <=560px align-self:flex-end rule made it ride high. */
-.app-root .ai-workspace-stage--sidebar .ai-workspace-composer-footer {
-  align-items: center;
-}
-
+   .ai-workspace-command-settings-btn--dock rule). footer-main is taller than
+   the button row (the note/spacer sits ABOVE the commandbar), so the button
+   must bottom-align to land on the row — centering made it ride high. */
 .app-root .ai-workspace-stage--sidebar .ai-workspace-generate-btn {
   width: 28px !important;
   max-width: 28px !important;
@@ -32869,7 +32865,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   min-width: 28px !important;
   min-height: 28px !important;
   flex: 0 0 28px !important;
-  align-self: center !important;
+  align-self: flex-end !important;
+  margin-bottom: 0 !important;
   padding: 0 !important;
   border-radius: 9px !important;
   line-height: 1;

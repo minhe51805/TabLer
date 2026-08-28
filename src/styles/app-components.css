@@ -8184,8 +8184,40 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
     gap: 10px;
   }
 
+  /* Meta info merges into ONE segmented strip instead of three stacked cards. */
   .workspace-ready-header-right {
-    grid-template-columns: 1fr;
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 7px 4px;
+    border: 1px solid rgba(0, 122, 255, 0.1);
+    border-radius: 12px;
+    background: rgba(0, 122, 255, 0.03);
+  }
+
+  .workspace-ready-meta-chip {
+    flex: 1 1 0;
+    min-width: 0;
+    gap: 3px;
+    padding: 2px 12px;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    backdrop-filter: none;
+  }
+
+  .workspace-ready-meta-chip + .workspace-ready-meta-chip {
+    border-left: 1px solid rgba(0, 122, 255, 0.14);
+  }
+
+  .workspace-ready-meta-chip::before {
+    display: none;
+  }
+
+  .workspace-ready-meta-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .workspace-ready-title {
@@ -8219,10 +8251,50 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   .workspace-ready-support,
   .workspace-ready-chip-list-metrics {
     grid-template-columns: 1fr;
+    gap: 8px;
   }
 
+  /* Action cards collapse to single-line rows: icon, title + kicker, shortcut. */
   .workspace-ready-action-card {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
     min-height: 0;
+    padding: 8px 12px 8px 14px;
+    border-radius: 12px;
+  }
+
+  .workspace-ready-action-card::after {
+    display: none;
+  }
+
+  .workspace-ready-action-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+  }
+
+  .workspace-ready-action-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .workspace-ready-action-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspace-ready-action-kicker {
+    flex-shrink: 0;
+  }
+
+  .workspace-ready-action-card .kbd {
+    margin-left: auto;
+    flex-shrink: 0;
   }
 
   .workspace-ready-action-description {

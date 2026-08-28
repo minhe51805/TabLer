@@ -12,6 +12,7 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { RefObject } from "react";
 import type { ConnectionConfig } from "../types/database";
+import { AppUpdateButton } from "./StartupConnectionManager/AppUpdateButton";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 import type { WindowMenuSectionKey, WindowMenuItem } from "../types/app-types";
 
@@ -385,6 +386,7 @@ export function AppTitleBar({
             aria-hidden="true"
           />
           <span className="titlebar-name">TableR</span>
+          <AppUpdateButton />
         </div>
 
         <div className="titlebar-divider" />

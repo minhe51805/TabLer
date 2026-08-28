@@ -46,7 +46,9 @@ use commands::tabs::{delete_tabs, load_tabs, save_tabs};
 use commands::terminal::{
     close_terminal, open_terminal, resize_terminal, write_terminal, TerminalManager,
 };
-use commands::update::{check_for_update, download_and_install_update, get_app_version};
+use commands::update::{
+    check_for_update, download_and_install_update, get_app_version, restart_app,
+};
 use commands::users_roles::{
     apply_user_role_change, get_user_role_snapshot, review_user_role_change,
 };
@@ -368,6 +370,7 @@ pub fn run() {
             check_for_update,
             download_and_install_update,
             get_app_version,
+            restart_app,
             // Linked folders commands
             watcher::add_linked_folder,
             watcher::remove_linked_folder,

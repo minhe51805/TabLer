@@ -33,6 +33,7 @@ import {
 import { ConnectionListView } from "./ConnectionListView";
 import { StartupBrandingPanel } from "./StartupBrandingPanel";
 import { HoverPopover } from "./HoverPopover";
+import { AppUpdateButton } from "./AppUpdateButton";
 
 interface Props {
   onNewConnection: () => void;
@@ -389,6 +390,7 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
               <span>Connection launcher</span>
             </span>
             <span className="startup-manager-topbar-version">v{APP_VERSION}</span>
+            <AppUpdateButton />
           </div>
           {windowControls ? <div className="startup-manager-controls">{windowControls}</div> : null}
         </div>

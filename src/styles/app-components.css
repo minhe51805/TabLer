@@ -32862,14 +32862,17 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-generate-btn {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  min-height: 28px;
-  flex: 0 0 28px;
-  align-self: center;
-  padding: 0;
-  border-radius: 9px;
+  width: 28px !important;
+  max-width: 28px !important;
+  height: 28px !important;
+  max-height: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+  flex: 0 0 28px !important;
+  align-self: center !important;
+  padding: 0 !important;
+  border-radius: 9px !important;
+  line-height: 1;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-generate-btn svg {

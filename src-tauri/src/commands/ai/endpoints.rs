@@ -138,19 +138,16 @@ pub(crate) fn resolve_provider_endpoint(config: &AIProviderConfig) -> String {
         config.provider_type,
         AIProviderType::Ollama | AIProviderType::Custom
     ) {
-        match explicit_api_format(config) {
-            Some(format @ ("ollama-chat" | "ollama-generate")) => {
-                if !endpoint.trim().is_empty() {
-                    return endpoint;
-                }
-                let action = if format == "ollama-generate" {
-                    "generate"
-                } else {
-                    "chat"
-                };
-                return format!("http://localhost:11434/api/{action}");
+        if let Some(format @ ("ollama-chat" | "ollama-generate")) = explicit_api_format(config) {
+            if !endpoint.trim().is_empty() {
+                return endpoint;
             }
-            _ => {}
+            let action = if format == "ollama-generate" {
+                "generate"
+            } else {
+                "chat"
+            };
+            return format!("http://localhost:11434/api/{action}");
         }
     }
 

@@ -119,7 +119,10 @@ pub(crate) fn build_provider_request_body(
 ) -> serde_json::Value {
     // An explicit API format wins over URL sniffing so users can point a
     // Custom provider at any path (e.g. an Ollama server behind a proxy).
-    if matches!(config.provider_type, AIProviderType::Ollama | AIProviderType::Custom) {
+    if matches!(
+        config.provider_type,
+        AIProviderType::Ollama | AIProviderType::Custom
+    ) {
         match super::endpoints::explicit_api_format(config) {
             Some("ollama-chat") => {
                 return json!({

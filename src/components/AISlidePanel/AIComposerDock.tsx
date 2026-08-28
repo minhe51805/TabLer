@@ -404,21 +404,25 @@ export function AIComposerDock({
                           </span>
                           <ChevronDown className={`w-3.5 h-3.5 ai-workspace-command-model-chevron ${showHiddenModels ? "is-open" : ""}`} />
                         </button>
-                        {showHiddenModels ? hiddenModelEntries.map(({ config, model }) => (
-                          <button
-                            key={`${config.id}:${model}`}
-                            type="button"
-                            role="menuitem"
-                            className="ai-workspace-command-item ai-workspace-command-model-item"
-                            onClick={() => onToggleModelVisibility(config.id, model)}
-                          >
-                            <span className="ai-workspace-command-item-copy">
-                              <strong>{model}</strong>
-                              <span>{config.name?.trim() || formatAIProviderTypeLabel(config.provider_type)}</span>
-                            </span>
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
-                        )) : null}
+                        {showHiddenModels ? (
+                          <div className="ai-workspace-command-hidden-list">
+                            {hiddenModelEntries.map(({ config, model }) => (
+                              <button
+                                key={`${config.id}:${model}`}
+                                type="button"
+                                role="menuitem"
+                                className="ai-workspace-command-item ai-workspace-command-model-item"
+                                onClick={() => onToggleModelVisibility(config.id, model)}
+                              >
+                                <span className="ai-workspace-command-item-copy">
+                                  <strong>{model}</strong>
+                                  <span>{config.name?.trim() || formatAIProviderTypeLabel(config.provider_type)}</span>
+                                </span>
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
                       </>
                     ) : null}
                     <button type="button" className="ai-workspace-command-settings-link" onClick={onOpenSettings}>

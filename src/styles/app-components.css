@@ -28814,15 +28814,17 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   min-width: 0;
 }
 
-/* ...except the model switcher, which spans the command bar and scrolls its
-   provider list internally, so nothing can overflow the panel edge. */
+/* ...except the model switcher: the popover becomes a flex column where only
+   the provider list scrolls, so head / hidden models / settings link stay
+   pinned inside the card no matter how long the content is. */
 .app-root
   .ai-workspace-stage--sidebar
   .ai-workspace-commandbar--dock
   .ai-workspace-command-dropdown--provider
   .ai-workspace-command-popover--provider {
-  overflow: visible;
-  overflow-x: visible;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .app-root
@@ -28831,7 +28833,27 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   .ai-workspace-command-dropdown--provider
   .ai-workspace-command-popover--provider
   .ai-workspace-command-provider-list {
-  max-height: min(340px, 44vh);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-commandbar--dock
+  .ai-workspace-command-dropdown--provider
+  .ai-workspace-command-popover--provider
+  .ai-workspace-command-settings-link {
+  flex-shrink: 0;
+}
+
+/* Hidden-model entries get their own bounded scroll so they can never push
+   the settings link out of the card. */
+.ai-workspace-command-hidden-list {
+  display: grid;
+  gap: 4px;
+  max-height: 132px;
   overflow-y: auto;
   overscroll-behavior: contain;
 }

@@ -36,7 +36,7 @@ export interface AIWorkspacePanelViewModel {
   copyBubble: (bubble: AIWorkspaceBubbleData) => void; insertBubble: (bubble: AIWorkspaceBubbleData) => void; reset: () => void; selectThread: (id: string) => void;
   setDetailBubbleId: (id: string | null) => void; setHistoryOpen: (value: boolean | ((value: boolean) => boolean)) => void; setInspectMode: (value: boolean | ((value: boolean) => boolean)) => void;
   setPromptDraft: (value: string) => void; setSessionDataReadEnabled: (value: boolean) => void; setShowThinking: (value: boolean) => void;
-  selectAgentAutonomy: (value: AIWorkspaceAgentAutonomy) => void; selectInteractionMode: (value: AIWorkspaceInteractionMode) => void; activateProvider: (id: string) => void; toggleModelVisibility: (id: string, model: string) => void;
+  selectAgentAutonomy: (value: AIWorkspaceAgentAutonomy) => void; selectInteractionMode: (value: AIWorkspaceInteractionMode) => void; activateProvider: (id: string, model?: string) => void; toggleModelVisibility: (id: string, model: string) => void;
   confirmVisualizationConsent: (value: boolean) => void; cancelDeleteThread: () => void; composerKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
 }
 

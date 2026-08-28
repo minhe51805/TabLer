@@ -28289,14 +28289,14 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   min-width: 0;
 }
 
-/* Narrow panels: give the model switcher 20% more width so long model IDs
-   stay on one line instead of wrapping. */
+/* The model switcher anchors to the right edge of the command bar with a
+   floor of 320px so long model IDs never wrap, regardless of viewport. */
 .app-root
   .ai-workspace-stage--sidebar
   .ai-workspace-command-popover--provider {
-  left: -10%;
-  right: -10%;
-  width: auto;
+  left: auto;
+  right: 0;
+  width: min(320px, calc(100vw - 32px));
   min-width: 0;
 }
 
@@ -28330,6 +28330,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   .ai-workspace-stage--sidebar
   .ai-workspace-command-model-item {
   margin-left: 16px;
+  min-height: 34px;
   padding: 7px 10px;
   border-radius: 9px;
   font-size: var(--mm-fs-small);

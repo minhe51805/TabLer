@@ -194,14 +194,12 @@ export function AISlidePanel({
   const [activeThreadId, setActiveThreadId] = useState<string>(initialThreadRef.current!.id);
   const [historyHydrated, setHistoryHydrated] = useState(false);
   const [detailBubbleId, setDetailBubbleId] = useState<string | null>(null);
-  const [isInspectMode, setIsInspectMode] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSwitchingProvider, setIsSwitchingProvider] = useState(false);
   const isProviderFailingOver = useAIStore((state) => state.isProviderFailingOver);
   // The composer model trigger shows the switching spinner for BOTH manual
   // picks and automatic failovers — either way the active provider is moving.
   const isProviderSwitching = isSwitchingProvider || isProviderFailingOver;
-  const [selectionContext, setSelectionContext] = useState<SelectionContextState | null>(null);
   const [attachedSelection, setAttachedSelection] = useState<SelectionContextState | null>(null);
   const [deleteThreadPending, setDeleteThreadPending] = useState<string | null>(null);
   const [visualizationConsentPending, setVisualizationConsentPending] = useState<VisualizationReadConsentState | null>(null);
@@ -339,9 +337,7 @@ export function AISlidePanel({
   }, [activeProvider?.id, aiConfigs]);
   const composerFooterNote = attachedSelection
     ? `${aiCopy.composer.selectionReady} · ${attachedSelection.source}`
-    : isInspectMode
-      ? aiCopy.composer.inspectHint
-      : "";
+    : "";
 
   const sessionDataReadButtonLabel = language === "vi"
     ? (isSessionDataReadEnabled ? "Data: Bật" : "Data: Hỏi")
@@ -522,7 +518,7 @@ export function AISlidePanel({
     chatThreadRef, setIsHistoryOpen, isOpenRef, openSessionRef, visualizationApprovalScopeRef, setIsSessionDataReadEnabled,
     visualizationConsentResolverRef, setVisualizationConsentPending, isHistoryOpen, historyPanelRef, aiConfigs, loadAIConfigs,
     workspaceThreads, recentWorkspaceThreads, activeThreadIdsByWorkspace, lastWorkspaceKeyRef, setAttachedSelection,
-    setSelectionContext, setDetailBubbleId, setIsInspectMode, isInspectMode, setPromptDraft, setError, initialPromptNonce, initialPrompt,
+    setDetailBubbleId, setPromptDraft, setError, initialPromptNonce, initialPrompt,
     composerTextareaRef, initialAttachmentNonce, initialAttachment, detailBubbleId, onClose, historySaveTimerRef,
     bubbleDismissTimersRef, bubbles, chatThreads, workspaceInteractionModes, persistHistoryState,
   });
@@ -1018,46 +1014,12 @@ export function AISlidePanel({
     });
   }, [bubbles, createAssistantBubble, isGenerating, workspaceContextMessages]);
 
-  const handleAskFromSelection = useCallback(async () => {
-    if (!selectionContext?.text.trim()) {
-      setError(aiCopy.bubbleStates.selectSomethingError);
-      return;
-    }
-    setAttachedSelection(selectionContext);
-    setIsInspectMode(false);
-    setError(null);
-    window.requestAnimationFrame(() => {
-      composerTextareaRef.current?.focus();
-      const cursorPosition = composerTextareaRef.current?.value.length ?? 0;
-      composerTextareaRef.current?.setSelectionRange(cursorPosition, cursorPosition);
-    });
-  }, [aiCopy.bubbleStates.selectSomethingError, selectionContext, setError]);
-
   const handleComposerKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault();
       void handleGenerate();
     }
   }, [handleGenerate]);
-
-  useEffect(() => {
-    if (!isOpen || !isInspectMode) return;
-
-    const handleInspectEnter = (event: KeyboardEvent) => {
-      if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.closest(".ai-workspace-composer, .ai-workspace-modal")) return;
-      if (!selectionContext?.text.trim()) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      void handleAskFromSelection();
-    };
-
-    window.addEventListener("keydown", handleInspectEnter, true);
-    return () => window.removeEventListener("keydown", handleInspectEnter, true);
-  }, [handleAskFromSelection, isInspectMode, isOpen, selectionContext]);
 
   const handleCopyBubble = useCallback(async (bubble: AIWorkspaceBubbleData) => {
     const text = bubble.sql || bubble.detail || bubble.preview;
@@ -1350,8 +1312,6 @@ export function AISlidePanel({
     setIsHistoryOpen(false);
     setPromptDraft(initialPrompt);
     setAttachedSelection(null);
-    setSelectionContext(null);
-    setIsInspectMode(false);
     setDetailBubbleId(null);
     setError(null);
     window.requestAnimationFrame(() => {
@@ -1486,7 +1446,7 @@ export function AISlidePanel({
 
   if (!isOpen) return null;
   const visibleError = error && error !== AI_REQUEST_REPLACED_MESSAGE ? error : null;
-  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isCancelling, isGenerating, isHistoryOpen, isInspectMode, isLongformComposer, isRunning, isSessionDataReadEnabled, language, promptDraft, recentWorkspaceThreads, selectionContext, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, failoverConsentPending: failoverConsentState, chatThreadRef, contextUsage, activeChatWorkspaceId, activeChatWorkspaceName: activeChatWorkspace?.name ?? null, activeChatWorkspaceContextUpdatedAt: activeChatWorkspace?.contextUpdatedAt ?? null, chatWorkspaces, importableChatThreads, threadMemories, isCompacting, isSwitchingProvider: isProviderSwitching, close: () => { setIsInspectMode(false); onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, requestDeleteThread: handleRequestDeleteThread, renameThread: handleRenameChatThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setInspectMode: setIsInspectMode, setPromptDraft, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomy, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id, model) => {
+  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isCancelling, isGenerating, isHistoryOpen, isLongformComposer, isRunning, isSessionDataReadEnabled, language, promptDraft, recentWorkspaceThreads, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, failoverConsentPending: failoverConsentState, chatThreadRef, contextUsage, activeChatWorkspaceId, activeChatWorkspaceName: activeChatWorkspace?.name ?? null, activeChatWorkspaceContextUpdatedAt: activeChatWorkspace?.contextUpdatedAt ?? null, chatWorkspaces, importableChatThreads, threadMemories, isCompacting, isSwitchingProvider: isProviderSwitching, close: () => { onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, requestDeleteThread: handleRequestDeleteThread, renameThread: handleRenameChatThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setPromptDraft, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomy, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id, model) => {
                 const wasRunning = isRunning || isGenerating;
                 void handleActivateProvider(id, model).then(() => {
                   // Mid-run manual switch: announce it in the conversation like

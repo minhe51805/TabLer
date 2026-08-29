@@ -91,7 +91,6 @@ export const KO_COPY: AIWorkspaceCopy = {
       hiddenModelsToggle: "숨겨진 모델",
       switchToPrompt: "프롬프트 모드로 전환",
       historyTitle: "대화 기록",
-      historyHint: "이전 스레드를 다시 열고 중단된 위치부터 계속하세요.",
       historyEmpty: "AI에게 이 워크스페이스에서 첫 대화를 시작하도록 요청하세요.",
       placeholder: "이 데이터베이스에 대해 질문하거나, SQL을 요청하거나, 원하는 변경 사항을 설명하세요.",
       note: "Enter로 보내기. 컨텍스트를 캡처하려면 Inspect를 사용하세요.",

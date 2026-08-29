@@ -91,7 +91,6 @@ export const EN_COPY: AIWorkspaceCopy = {
       hiddenModelsToggle: "Hidden models",
       switchToPrompt: "Use prompt mode",
       historyTitle: "Conversation history",
-      historyHint: "Reopen a previous thread and continue where you left off.",
       historyEmpty: "Ask AI to start the first conversation in this workspace.",
       historyDeleteTitle: "Delete thread",
       historyDeleteConfirm: "Delete this conversation thread?",

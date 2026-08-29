@@ -91,7 +91,6 @@ export const TR_COPY: AIWorkspaceCopy = {
       hiddenModelsToggle: "Gizli modeller",
       switchToPrompt: "Prompt moduna geç",
       historyTitle: "Konuşma geçmişi",
-      historyHint: "Önceki bir konuyu yeniden açın ve kaldığınız yerden devam edin.",
       historyEmpty: "AI'ya bu çalışma alanında ilk konuşmayı başlatmasını sorun.",
       placeholder: "Bu veritabanı hakkında sorun, SQL isteyin veya istediğiniz değişikliği açıklayın.",
       note: "Göndermek için Enter. Bağlamı almak için İnceleme'yi kullanın.",

@@ -27356,7 +27356,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-select {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   flex: 1;
   min-width: 0;
   padding: 0;
@@ -27416,6 +27416,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   font-size: var(--mm-fs-caption);
   font-weight: 700;
   color: inherit;
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -27424,6 +27426,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-meta {
   font-size: var(--mm-fs-micro);
   color: var(--text-muted);
+  flex-shrink: 0;
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-count {

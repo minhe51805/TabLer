@@ -94,7 +94,6 @@ export interface AIWorkspaceCopy {
     hiddenModelsToggle: string;
     switchToPrompt: string;
     historyTitle: string;
-    historyHint: string;
     historyEmpty: string;
     historyDeleteTitle?: string;
     historyDeleteConfirm?: string;

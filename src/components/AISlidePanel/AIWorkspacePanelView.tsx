@@ -70,7 +70,6 @@ export function AIWorkspacePanelView({ model }: { model: AIWorkspacePanelViewMod
                   <div className="ai-workspace-history-popover">
                     <div className="ai-workspace-history-head">
                       <span className="ai-workspace-history-label">{m.aiCopy.composer.historyTitle}</span>
-                      <span className="ai-workspace-history-note">{m.aiCopy.composer.historyHint}</span>
                     </div>
                     {m.recentWorkspaceThreads.length === 0 ? (
                       <div className="ai-workspace-history-empty">{m.aiCopy.composer.historyEmpty}</div>
@@ -83,13 +82,11 @@ export function AIWorkspacePanelView({ model }: { model: AIWorkspacePanelViewMod
                             <div key={thread.id} className={`ai-workspace-history-item ${thread.id === m.currentThread?.id ? "is-active" : ""}`}>
                               <button type="button" className="ai-workspace-history-item-select" onClick={() => m.selectThread(thread.id)}>
                                 <MessageSquareText className="ai-workspace-history-item-icon w-3.5 h-3.5" />
-                                <span className="ai-workspace-history-item-copy">
-                                  <span className="ai-workspace-history-item-title">{memoryTitle || thread.label}</span>
-                                  <span className="ai-workspace-history-item-meta">
-                                    {formatThreadTimestamp(thread.updatedAt || thread.createdAt, m.language)}
-                                    <i className="ai-workspace-history-item-meta-dot" />
-                                    {messageCount}
-                                  </span>
+                                <span className="ai-workspace-history-item-title">{memoryTitle || thread.label}</span>
+                                <span className="ai-workspace-history-item-meta">
+                                  {formatThreadTimestamp(thread.updatedAt || thread.createdAt, m.language)}
+                                  <i className="ai-workspace-history-item-meta-dot" />
+                                  {messageCount}
                                 </span>
                               </button>
                               <div className="ai-workspace-history-item-actions">

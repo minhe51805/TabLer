@@ -91,7 +91,6 @@ export const ZH_COPY: AIWorkspaceCopy = {
       hiddenModelsToggle: "已隐藏的模型",
       switchToPrompt: "改用提示词模式",
       historyTitle: "对话历史",
-      historyHint: "重新打开之前的线程，并从上次停下的位置继续。",
       historyEmpty: "先向 AI 发出一个请求，工作区里的第一段对话就会出现在这里。",
       placeholder: "询问当前数据库、请求 SQL，或描述你想做的改动。",
       note: "按 Enter 发送。使用 Inspect 从工作区捕获上下文。",

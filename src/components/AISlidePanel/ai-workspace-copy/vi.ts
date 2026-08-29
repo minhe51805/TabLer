@@ -90,7 +90,7 @@ export const VI_COPY: AIWorkspaceCopy = {
       openSettings: "Mở settings",
       hiddenModelsToggle: "Model bị ẩn",
       switchToPrompt: "Dùng chỉ prompt",
-      historyTitle: "Lịch sử trò chuyện",
+      historyTitle: "Lịch sử chat",
       historyHint: "Mở lại cuộc trò chuyện trước đó và tiếp tục đúng ngữ cảnh đang làm.",
       historyEmpty: "Hãy hỏi AI để bắt đầu cuộc trò chuyện đầu tiên trong workspace này.",
       placeholder: "Hỏi về DB này, yêu cầu SQL, hoặc mô tả thay đổi bạn muốn.",

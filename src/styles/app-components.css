@@ -35317,3 +35317,48 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
 .app-root .ai-workspace-stage--sidebar .ai-workspace-chat-tabs {
   overflow: visible;
 }
+
+/* ─── Context window meter above the composer buttons ─── */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter-track {
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--mm-surface-2);
+  overflow: hidden;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 220ms ease, background 220ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter.is-warn {
+  color: #b45309;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter.is-warn .ai-workspace-context-meter-fill {
+  background: #f59e0b;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter.is-critical {
+  color: var(--error, #ef4444);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter.is-critical .ai-workspace-context-meter-fill {
+  background: var(--error, #ef4444);
+}

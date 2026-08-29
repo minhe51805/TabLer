@@ -38,22 +38,22 @@ const workflowMedia = [
     icon: KeyRound,
     image: "/screenshots/table-r-connection-launcher.png",
     alt: "TableR connection launcher showing saved PostgreSQL connections",
-    width: 1176,
-    height: 769,
+    width: 1280,
+    height: 801,
   },
   {
     icon: Terminal,
     image: "/screenshots/table-r-query-workspace.png",
     alt: "TableR query workspace with SQL editor and result table",
-    width: 1296,
-    height: 809,
+    width: 1280,
+    height: 801,
   },
   {
     icon: Sparkles,
     image: "/screenshots/table-r-ai-workspace.png",
     alt: "TableR AI workspace beside the SQL editor",
-    width: 1296,
-    height: 809,
+    width: 1280,
+    height: 801,
   },
 ];
 
@@ -162,8 +162,8 @@ export default async function Home() {
             <Image
               className="product-image"
               src="/screenshots/table-r-query-workspace.png"
-              width={1296}
-              height={809}
+              width={1280}
+              height={801}
               alt="TableR desktop app showing a PostgreSQL query and its result set"
               priority
               sizes="(max-width: 720px) 94vw, 1180px"
@@ -305,8 +305,8 @@ export default async function Home() {
             <Image
               className="product-image"
               src="/screenshots/table-r-er-diagram.png"
-              width={1296}
-              height={809}
+              width={1280}
+              height={801}
               alt="TableR ER diagram workspace displaying database tables and relationships"
               sizes="(max-width: 720px) 94vw, 1180px"
             />

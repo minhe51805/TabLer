@@ -537,7 +537,7 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
               {readyAdapters.length} {copy.ready}
             </span>
           </div>
-          <div className="app-plugin-manager-list">
+          <div className="app-plugin-manager-list app-plugin-manager-grid">
             {readyAdapters.map((db) => (
               <div key={db.key} className="app-plugin-manager-row">
                 <span className="app-plugin-manager-row-title">{db.label}</span>
@@ -555,7 +555,7 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
               {roadmapAdapters.length} {copy.roadmap}
             </span>
           </div>
-          <div className="app-plugin-manager-list compact">
+          <div className="app-plugin-manager-list compact app-plugin-manager-grid">
             {roadmapAdapters.length === 0 ? (
               <div className="app-plugin-manager-row">
                 <span className="app-plugin-manager-row-title">{copy.ready}</span>

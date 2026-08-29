@@ -34523,3 +34523,86 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
 .app-update-primary:hover {
   filter: brightness(1.08);
 }
+
+/* ── Plugin manager: compact redesign ──────────────────────────────────── */
+
+.app-plugin-manager-modal {
+  width: min(860px, calc(100vw - 32px));
+}
+
+/* Two metrics side by side instead of a 3-col grid with an empty slot. */
+.app-plugin-manager-modal .app-help-modal-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.app-plugin-manager-modal .app-help-modal-metric {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+}
+
+/* Registry rows keep a comfortable single-column list; adapter/roadmap
+   sections use the denser auto-fill grid below. */
+.app-plugin-manager-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 8px;
+}
+
+.app-plugin-manager-grid .app-plugin-manager-row {
+  min-width: 0;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: var(--mm-surface-1);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.app-plugin-manager-grid .app-plugin-manager-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--mm-border));
+  background: var(--mm-surface-2);
+}
+
+.app-plugin-manager-row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mm-fs-caption);
+}
+
+/* Status pills never wrap — the Amazon Redshift overflow bug. */
+.app-plugin-manager-row-state {
+  flex: 0 0 auto;
+  min-height: 20px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.app-plugin-manager-row-state.ready {
+  color: var(--fintech-green);
+  border-color: color-mix(in srgb, var(--fintech-green) 26%, transparent);
+  background: color-mix(in srgb, var(--fintech-green) 10%, transparent);
+}
+
+.app-plugin-manager-row-state.roadmap {
+  color: var(--text-secondary);
+  border-color: var(--mm-border);
+  background: var(--mm-surface-2);
+}
+
+/* Section labels lose the loud blue caps; quieter, aligned with the badges. */
+.app-plugin-manager-section .app-help-modal-section-label {
+  color: var(--text-secondary);
+  letter-spacing: 0.1em;
+}

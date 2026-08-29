@@ -48,8 +48,8 @@ export const metadata: Metadata = {
     images: [
       {
         url: "/screenshots/table-r-query-workspace.png",
-        width: 1296,
-        height: 809,
+        width: 1280,
+        height: 801,
         alt: "TableR query workspace",
       },
     ],

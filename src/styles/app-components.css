@@ -8433,9 +8433,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
     ),
     linear-gradient(180deg, rgba(0, 122, 255, 0.06), rgba(0, 122, 255, 0.02)),
     var(--mm-surface-1);
-  box-shadow:
-    var(--mm-shadow-3),
-    0 0 30px rgba(0, 122, 255, 0.08);
+  box-shadow: var(--mm-shadow-3);
 }
 
 .workspace-ready-action-top {

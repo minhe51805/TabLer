@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, Download, CheckCircle2, AlertCircle, Lock, Eye, EyeOff } from "lucide-react";
+import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff } from "lucide-react";
 import type { ConnectionConfig } from "../../types/database";
 import { exportConnections } from "../../utils/connection-export";
 import "../../styles/lazy-overlays.css";
@@ -69,16 +69,39 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
       <div className="cex-modal">
         {/* Header */}
         <div className="cex-header">
-          <div className="cex-header-icon">
-            <Download className="w-5 h-5" />
-          </div>
           <div className="cex-header-copy">
             <h2 className="cex-title">Export Connections</h2>
             <p className="cex-subtitle">Save connections as an encrypted, versioned export</p>
           </div>
-          <button onClick={onClose} className="cex-close-btn" aria-label="Close">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="cex-header-actions">
+            {result ? (
+              <button type="button" onClick={handleClose} className="cex-btn-primary">
+                <Check className="w-4 h-4" />
+                Done
+              </button>
+            ) : (
+              <>
+                <button type="button" onClick={onClose} className="cex-btn-cancel" disabled={isExporting}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  disabled={isExporting || selected.size === 0 || !password}
+                  className="cex-btn-primary"
+                >
+                  {isExporting ? (
+                    "Exporting..."
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      Export {selected.size} Connection{selected.size !== 1 ? "s" : ""}
+                    </>
+                  )}
+                </button>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Body */}
@@ -178,20 +201,6 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
             </>
           )}
         </div>
-
-        {/* Footer */}
-        {!result && (
-          <div className="cex-footer">
-            <button onClick={onClose} className="btn btn-secondary">Cancel</button>
-            <button
-              onClick={handleExport}
-              disabled={isExporting || selected.size === 0 || !password}
-              className="btn btn-primary"
-            >
-              {isExporting ? "Exporting..." : `Export ${selected.size} Connection${selected.size !== 1 ? "s" : ""}`}
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

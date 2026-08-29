@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, Upload, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, FileUp } from "lucide-react";
+import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, FileUp } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ConnectionConfig } from "../../types/database";
@@ -104,16 +104,50 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
       <div className="cex-modal">
         {/* Header */}
         <div className="cex-header">
-          <div className="cex-header-icon import">
-            <Upload className="w-5 h-5" />
-          </div>
           <div className="cex-header-copy">
             <h2 className="cex-title">Import Connections</h2>
             <p className="cex-subtitle">Load connections from an encrypted TableR file</p>
           </div>
-          <button onClick={onClose} className="cex-close-btn" aria-label="Close">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="cex-header-actions">
+            {result ? (
+              <button type="button" onClick={handleClose} className="cex-btn-primary">
+                <Check className="w-4 h-4" />
+                Done
+              </button>
+            ) : (
+              <>
+                <button type="button" onClick={onClose} className="cex-btn-cancel" disabled={isLoading || isDecrypting}>
+                  Cancel
+                </button>
+                {previewConnections ? (
+                  <button
+                    type="button"
+                    onClick={handleImport}
+                    disabled={isLoading || selectedForImport.size === 0}
+                    className="cex-btn-primary"
+                  >
+                    {isLoading ? (
+                      "Importing..."
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Import {selectedForImport.size} Connection{selectedForImport.size !== 1 ? "s" : ""}
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void handleDecrypt()}
+                    disabled={!filePath || !password || isDecrypting}
+                    className="cex-btn-primary"
+                  >
+                    {isDecrypting ? "Decrypting..." : "Open File"}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
         {/* Body */}
@@ -251,30 +285,6 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
             </>
           )}
         </div>
-
-        {/* Footer */}
-        {!result && (
-          <div className="cex-footer">
-            <button onClick={onClose} className="btn btn-secondary">Cancel</button>
-            {previewConnections ? (
-              <button
-                onClick={handleImport}
-                disabled={isLoading || selectedForImport.size === 0}
-                className="btn btn-primary"
-              >
-                {isLoading ? "Importing..." : `Import ${selectedForImport.size} Connection${selectedForImport.size !== 1 ? "s" : ""}`}
-              </button>
-            ) : (
-              <button
-                onClick={() => void handleDecrypt()}
-                disabled={!filePath || !password || isDecrypting}
-                className="btn btn-primary"
-              >
-                {isDecrypting ? "Decrypting..." : "Open File"}
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

@@ -96,6 +96,7 @@ export interface AIWorkspaceCopy {
     historyTitle: string;
     historyEmpty: string;
     historyDeleteTitle?: string;
+    historyRenameTitle?: string;
     historyDeleteConfirm?: string;
     placeholder: string;
     note: string;

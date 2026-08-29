@@ -92,6 +92,7 @@ export const TR_COPY: AIWorkspaceCopy = {
       switchToPrompt: "Prompt moduna geç",
       historyTitle: "Konuşma geçmişi",
       historyEmpty: "AI'ya bu çalışma alanında ilk konuşmayı başlatmasını sorun.",
+      historyRenameTitle: "Konuşmayı yeniden adlandır",
       placeholder: "Bu veritabanı hakkında sorun, SQL isteyin veya istediğiniz değişikliği açıklayın.",
       note: "Göndermek için Enter. Bağlamı almak için İnceleme'yi kullanın.",
       generating: "Oluşturuluyor...",

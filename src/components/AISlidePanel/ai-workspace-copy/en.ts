@@ -93,6 +93,7 @@ export const EN_COPY: AIWorkspaceCopy = {
       historyTitle: "Conversation history",
       historyEmpty: "Ask AI to start the first conversation in this workspace.",
       historyDeleteTitle: "Delete thread",
+      historyRenameTitle: "Rename thread",
       historyDeleteConfirm: "Delete this conversation thread?",
       placeholder: "Ask a question, brainstorm, write content, explain code, or request SQL for this database.",
       note: "Enter to send. Use Inspect when you want grounded help from the workspace.",

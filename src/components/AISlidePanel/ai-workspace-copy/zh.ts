@@ -92,6 +92,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
       switchToPrompt: "改用提示词模式",
       historyTitle: "对话历史",
       historyEmpty: "先向 AI 发出一个请求，工作区里的第一段对话就会出现在这里。",
+      historyRenameTitle: "重命名对话",
       placeholder: "询问当前数据库、请求 SQL，或描述你想做的改动。",
       note: "按 Enter 发送。使用 Inspect 从工作区捕获上下文。",
       generating: "生成中...",

@@ -1,4 +1,5 @@
-import { History, Layers, MessageSquareText, Plus, RotateCcw, Target, Trash2, X } from "lucide-react";
+import { History, Layers, MessageSquareText, Pencil, Plus, RotateCcw, Target, Trash2, X } from "lucide-react";
+import { useState } from "react";
 import type { KeyboardEventHandler, RefObject } from "react";
 import {
   AI_PANEL_DEFAULT_WIDTH,
@@ -27,7 +28,7 @@ export interface AIWorkspacePanelViewModel {
   conversationBubbles: AIWorkspaceBubbleData[]; currentDatabase: string | null; currentThread: AIChatThread | null; deleteThreadPending: string | null;
   detailBubble: AIWorkspaceBubbleData | null; historyPanelRef: RefObject<HTMLDivElement | null>; isCancelling: boolean; isGenerating: boolean;
   isHistoryOpen: boolean; isInspectMode: boolean; isLongformComposer: boolean; isRunning: boolean; isSessionDataReadEnabled: boolean; isSwitchingProvider: boolean;
-  language: string; promptDraft: string; recentWorkspaceThreads: AIChatThread[]; selectionContext: SelectionContextState | null; sessionDataReadButtonLabel: string;
+  language: string; promptDraft: string; recentWorkspaceThreads: AIChatThread[]; renameThread: (threadId: string, label: string) => void; selectionContext: SelectionContextState | null; sessionDataReadButtonLabel: string;
   sessionDataReadButtonTitle: string; showThinking: boolean; switchableProviders: AIProviderConfig[]; tableContextCount: number; visibleError: string | null;
   visualizationConsentPending: ConfirmState | null; failoverConsentPending: ConfirmState | null; chatThreadRef: RefObject<HTMLDivElement | null>;
   contextUsage: { used: number; limit: number };
@@ -46,8 +47,9 @@ export interface AIWorkspacePanelViewModel {
   confirmVisualizationConsent: (value: boolean) => void; resolveFailoverConsent: (approved: boolean) => void; cancelDeleteThread: () => void; composerKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
 }
 
-export function AIWorkspacePanelView({ model }: { model: AIWorkspacePanelViewModel }) {
-  const m = model;
+export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelViewModel }) {
+  const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const panelWidth = useAppLayoutStore((state) => state.aiPanelWidth);
   const setPanelWidth = useAppLayoutStore((state) => state.setAIPanelWidth);
   const onResizeHandleMouseDown = useAIPanelResize({
@@ -80,20 +82,50 @@ export function AIWorkspacePanelView({ model }: { model: AIWorkspacePanelViewMod
                           const messageCount = m.bubbleCountByThread.get(thread.id) || 0;
                           return (
                             <div key={thread.id} className={`ai-workspace-history-item ${thread.id === m.currentThread?.id ? "is-active" : ""}`}>
-                              <button type="button" className="ai-workspace-history-item-select" onClick={() => m.selectThread(thread.id)}>
-                                <MessageSquareText className="ai-workspace-history-item-icon w-3.5 h-3.5" />
-                                <span className="ai-workspace-history-item-title">{memoryTitle || thread.label}</span>
-                                <span className="ai-workspace-history-item-meta">
-                                  {formatThreadTimestamp(thread.updatedAt || thread.createdAt, m.language)}
-                                  <i className="ai-workspace-history-item-meta-dot" />
-                                  {messageCount}
-                                </span>
-                              </button>
-                              <div className="ai-workspace-history-item-actions">
-                                <button type="button" className="ai-workspace-history-item-delete" title={m.aiCopy.composer.historyDeleteTitle} onClick={(event) => m.requestDeleteThread(thread.id, event)}>
-                                  <Trash2 className="w-3.5 h-3.5" />
+                              {renamingThreadId === thread.id ? (
+                                <input
+                                  autoFocus
+                                  type="text"
+                                  className="ai-workspace-history-item-rename"
+                                  value={renameDraft}
+                                  onChange={(event) => setRenameDraft(event.target.value)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      m.renameThread(thread.id, renameDraft);
+                                      setRenamingThreadId(null);
+                                    }
+                                    if (event.key === "Escape") setRenamingThreadId(null);
+                                  }}
+                                  onBlur={() => {
+                                    m.renameThread(thread.id, renameDraft);
+                                    setRenamingThreadId(null);
+                                  }}
+                                />
+                              ) : (
+                                <button type="button" className="ai-workspace-history-item-select" onClick={() => m.selectThread(thread.id)}>
+                                  <MessageSquareText className="ai-workspace-history-item-icon w-3.5 h-3.5" />
+                                  <span className="ai-workspace-history-item-title">{memoryTitle || thread.label}</span>
+                                  <span className="ai-workspace-history-item-meta">
+                                    {formatThreadTimestamp(thread.updatedAt || thread.createdAt, m.language)}
+                                    <i className="ai-workspace-history-item-meta-dot" />
+                                    {messageCount}
+                                  </span>
                                 </button>
-                              </div>
+                              )}
+                              {renamingThreadId !== thread.id && (
+                                <div className="ai-workspace-history-item-actions">
+                                  <button type="button" className="ai-workspace-history-item-delete" title={m.aiCopy.composer.historyRenameTitle} onClick={(event) => {
+                                    event.stopPropagation();
+                                    setRenamingThreadId(thread.id);
+                                    setRenameDraft(memoryTitle || thread.label);
+                                  }}>
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button type="button" className="ai-workspace-history-item-delete" title={m.aiCopy.composer.historyDeleteTitle} onClick={(event) => m.requestDeleteThread(thread.id, event)}>
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           );
                         })}

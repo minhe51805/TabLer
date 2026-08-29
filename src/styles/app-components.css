@@ -27457,6 +27457,19 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   opacity: 1;
 }
 
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-rename {
+  min-width: 0;
+  width: 100%;
+  padding: 4px 8px;
+  font-size: var(--mm-fs-caption);
+  font-weight: 700;
+  color: var(--text-primary);
+  background: var(--mm-surface-0);
+  border: 1px solid rgba(0, 122, 255, 0.4);
+  border-radius: 8px;
+  outline: none;
+}
+
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-meta-dot {
   display: inline-block;
   width: 3px;

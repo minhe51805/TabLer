@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { AIProviderConfig } from "../../../types";
 import { normalizeAIProviderConfigs } from "../../../utils/ai-provider-registry";
@@ -8,7 +8,6 @@ import type {
 } from "../ai-workspace-types";
 
 interface UseAIPanelPreferencesOptions {
-  activeProvider?: AIProviderConfig;
   aiConfigs: AIProviderConfig[];
   currentWorkspaceKey: string;
   saveAIConfigs: (configs: AIProviderConfig[], settings: Record<string, string>, deletedIds: string[]) => Promise<unknown>;
@@ -21,7 +20,6 @@ interface UseAIPanelPreferencesOptions {
 
 export function useAIPanelPreferences(options: UseAIPanelPreferencesOptions) {
   const {
-    activeProvider,
     aiConfigs,
     currentWorkspaceKey,
     saveAIConfigs,
@@ -41,24 +39,42 @@ export function useAIPanelPreferences(options: UseAIPanelPreferencesOptions) {
     setIsHistoryOpen(false);
     window.dispatchEvent(new CustomEvent("open-ai-settings"));
   }, [setIsHistoryOpen]);
-  const activateProvider = useCallback(async (providerId: string, model?: string) => {
-    const target = aiConfigs.find((config) => config.id === providerId);
-    if (!target || (target.id === activeProvider?.id && target.is_enabled && target.is_primary && (!model || target.model === model))) return;
-    const nextConfigs = normalizeAIProviderConfigs(aiConfigs.map((config) => (
-      config.id === providerId
-        ? { ...config, is_enabled: true, is_primary: true, ...(model ? { model } : {}) }
-        : { ...config, is_primary: false }
-    )));
-    setIsSwitchingProvider(true);
-    setError(null);
-    try {
-      await saveAIConfigs(nextConfigs, {}, []);
-    } catch (errorValue) {
-      setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
-    } finally {
-      setIsSwitchingProvider(false);
-    }
-  }, [activeProvider?.id, aiConfigs, saveAIConfigs, setError, setIsSwitchingProvider]);
+  // Fresh config mirror: switches are chained, so each queued switch must read
+  // the latest known provider list instead of the closure snapshot.
+  const aiConfigsRef = useRef(aiConfigs);
+  aiConfigsRef.current = aiConfigs;
+  // Latest click wins: a click while another switch is still in flight gets
+  // queued and applied afterwards against the already-updated config list.
+  const switchChainRef = useRef<Promise<void>>(Promise.resolve());
+  const activateProvider = useCallback((providerId: string, model?: string) => {
+    const run = switchChainRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const configs = aiConfigsRef.current;
+        const target = configs.find((config) => config.id === providerId);
+        if (!target) return;
+        if (target.is_enabled && target.is_primary && (!model || target.model === model)) return;
+        const nextConfigs = normalizeAIProviderConfigs(configs.map((config) => (
+          config.id === providerId
+            ? { ...config, is_enabled: true, is_primary: true, ...(model ? { model } : {}) }
+            : { ...config, is_primary: false }
+        )));
+        setIsSwitchingProvider(true);
+        setError(null);
+        try {
+          const saved = (await saveAIConfigs(nextConfigs, {}, [])) as
+            | { aiConfigs?: AIProviderConfig[] }
+            | undefined;
+          if (saved?.aiConfigs?.length) aiConfigsRef.current = saved.aiConfigs;
+        } catch (errorValue) {
+          setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
+        } finally {
+          setIsSwitchingProvider(false);
+        }
+      });
+    switchChainRef.current = run;
+    return run;
+  }, [saveAIConfigs, setError, setIsSwitchingProvider]);
   const toggleModelVisibility = useCallback(async (providerId: string, model: string) => {
     const target = aiConfigs.find((config) => config.id === providerId);
     if (!target || !(target.disabled_models ?? []).includes(model)) return;

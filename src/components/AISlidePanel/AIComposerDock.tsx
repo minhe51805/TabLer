@@ -320,7 +320,6 @@ export function AIComposerDock({
                   className={`ai-workspace-command-trigger ai-workspace-command-trigger--provider ${openMenu === "provider" ? "is-active" : ""}`}
                   aria-expanded={openMenu === "provider"}
                   aria-haspopup="menu"
-                  disabled={isSwitchingProvider}
                   onClick={() => toggleMenu("provider")}
                   title={activeProviderValue}
                 >

@@ -1444,7 +1444,6 @@ export function AISlidePanel({
     selectAgentAutonomy: handleSelectAgentAutonomy,
     selectInteractionMode: handleSelectInteractionMode,
   } = useAIPanelPreferences({
-    activeProvider,
     aiConfigs,
     currentWorkspaceKey,
     saveAIConfigs,

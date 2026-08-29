@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ConnectionConfig } from "../../types/database";
 import { exportableToConnectionConfig, type ExportableConnection } from "../../utils/connection-export";
+import "../../styles/lazy-overlays.css";
 
 interface ConnectionImporterProps {
   onImport: (connections: ConnectionConfig[]) => void;
@@ -99,28 +100,28 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[80vh]">
+    <div className="cex-backdrop">
+      <div className="cex-modal">
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--border)]">
-          <div className="flex items-center justify-center w-10 h-10 rounded-full bg-blue-500/10 text-blue-500">
+        <div className="cex-header">
+          <div className="cex-header-icon import">
             <Upload className="w-5 h-5" />
           </div>
-          <div className="flex-1">
-            <h2 className="text-base font-semibold text-[var(--text-primary)]">Import Connections</h2>
-            <p className="text-xs text-[var(--text-muted)]">Load connections from an encrypted TableR file</p>
+          <div className="cex-header-copy">
+            <h2 className="cex-title">Import Connections</h2>
+            <p className="cex-subtitle">Load connections from an encrypted TableR file</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-muted)]">
+          <button onClick={onClose} className="cex-close-btn" aria-label="Close">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+        <div className="cex-body">
           {result ? (
-            <div className="flex flex-col items-center gap-3 py-6">
-              <CheckCircle2 className="w-12 h-12 text-green-500" />
-              <p className="text-sm font-medium text-[var(--text-primary)]">
+            <div className="cex-success">
+              <CheckCircle2 />
+              <p>
                 Successfully imported {result.count} connection{result.count !== 1 ? "s" : ""}
               </p>
               <button onClick={handleClose} className="btn btn-primary">Done</button>
@@ -128,17 +129,17 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
           ) : previewConnections ? (
             <>
               {/* Password per connection */}
-              <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 flex items-start gap-2">
-                <Lock className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-                <p className="text-xs text-[var(--text-secondary)]">
+              <div className="cex-warning">
+                <Lock className="w-4 h-4" />
+                <p>
                   Passwords were not exported. Enter the database password for each connection you want to import.
                 </p>
               </div>
 
               {/* Preview list */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs uppercase tracking-wide text-[var(--text-muted)]">
+                <div className="cex-section-head">
+                  <label className="cex-section-label">
                     Connections ({selectedForImport.size}/{previewConnections.length})
                   </label>
                   <button
@@ -147,40 +148,39 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                         ? new Set()
                         : new Set(previewConnections.map((_, i) => i))
                     )}
-                    className="text-xs text-[var(--accent)] hover:underline"
+                    className="cex-toggle-all"
                   >
                     {selectedForImport.size === previewConnections.length ? "Deselect All" : "Select All"}
                   </button>
                 </div>
-                <div className="space-y-2 max-h-60 overflow-y-auto">
+                <div className="cex-preview-list">
                   {previewConnections.map((conn, i) => (
-                    <div key={i} className="border border-[var(--border)] rounded-lg p-3 space-y-2">
-                      <div className="flex items-center gap-2">
+                    <div key={i} className="cex-preview-card">
+                      <div className="cex-preview-head">
                         <input
                           type="checkbox"
                           checked={selectedForImport.has(i)}
                           onChange={() => toggleSelect(i)}
-                          className="rounded"
                         />
-                        <span className="text-sm font-medium text-[var(--text-primary)]">{conn.name || conn.host || conn.dbType}</span>
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--text-muted)]">{conn.dbType}</span>
+                        <span className="cex-preview-name">{conn.name || conn.host || conn.dbType}</span>
+                        <span className="cex-type-pill">{conn.dbType}</span>
                         {conn.host && (
-                          <span className="text-xs text-[var(--text-muted)]">{conn.host}:{conn.port || ""}</span>
+                          <span className="cex-preview-meta">{conn.host}:{conn.port || ""}</span>
                         )}
                       </div>
                       {selectedForImport.has(i) && (
-                        <div className="flex items-center gap-2 pl-6">
+                        <div className="cex-preview-password">
                           <input
                             type={showPassword ? "text" : "password"}
                             value={passwords[i] || ""}
                             onChange={(e) => setPasswords((p) => ({ ...p, [i]: e.target.value }))}
                             placeholder="Database password (optional)"
-                            className="input h-9 text-sm flex-1"
+                            className="input flex-1"
                           />
                           <button
                             type="button"
                             onClick={() => setShowPassword(!showPassword)}
-                            className="p-1.5 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-muted)]"
+                            className="cex-mini-toggle"
                           >
                             {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
@@ -192,9 +192,9 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
               </div>
 
               {error && (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/5 border border-red-500/20">
-                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                  <p className="text-sm text-red-400">{error}</p>
+                <div className="cex-error">
+                  <AlertCircle className="w-4 h-4" />
+                  <p>{error}</p>
                 </div>
               )}
             </>
@@ -202,19 +202,19 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
             <>
               {/* File picker */}
               <div
-                className="border-2 border-dashed border-[var(--border)] rounded-xl p-8 text-center cursor-pointer hover:border-[var(--accent)] transition-colors"
+                className="cex-dropzone"
                 onClick={handlePickFile}
               >
-                <FileUp className="w-10 h-10 mx-auto mb-3 text-[var(--text-muted)]" />
-                <p className="text-sm font-medium text-[var(--text-primary)]">
+                <FileUp />
+                <p className="cex-dropzone-title">
                   {filePath ? filePath.split(/[/\\]/).pop() : "Click to select a .tabler-connections file"}
                 </p>
-                <p className="text-xs text-[var(--text-muted)] mt-1">TableR Connection File (*.tabler-connections)</p>
+                <p className="cex-dropzone-hint">TableR Connection File (*.tabler-connections)</p>
               </div>
 
               {filePath && (
                 <>
-                  <div className="space-y-3">
+                  <div className="cex-fieldset">
                     <div className="connection-form-field">
                       <label className="form-label uppercase tracking-wide">
                         Decryption Password <span className="text-red-400">*</span>
@@ -241,9 +241,9 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                   </div>
 
                   {error && (
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/5 border border-red-500/20">
-                      <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                      <p className="text-sm text-red-400">{error}</p>
+                    <div className="cex-error">
+                      <AlertCircle className="w-4 h-4" />
+                      <p>{error}</p>
                     </div>
                   )}
                 </>
@@ -254,7 +254,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
 
         {/* Footer */}
         {!result && (
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[var(--border)]">
+          <div className="cex-footer">
             <button onClick={onClose} className="btn btn-secondary">Cancel</button>
             {previewConnections ? (
               <button

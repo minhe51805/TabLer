@@ -1,4 +1,4 @@
-import { History, Layers, Plus, RotateCcw, Target, Trash2, X } from "lucide-react";
+import { History, Layers, MessageSquareText, Plus, RotateCcw, Target, Trash2, X } from "lucide-react";
 import type { KeyboardEventHandler, RefObject } from "react";
 import {
   AI_PANEL_DEFAULT_WIDTH,
@@ -61,7 +61,51 @@ export function AIWorkspacePanelView({ model }: { model: AIWorkspacePanelViewMod
       {m.isInspectMode && m.selectionContext?.rect && <><div className="ai-workspace-selection-highlight" style={{ left: m.selectionContext.rect.x, top: m.selectionContext.rect.y, width: m.selectionContext.rect.width, height: m.selectionContext.rect.height }} /><div className="ai-workspace-selection-badge" style={{ left: m.selectionContext.rect.x + 8, top: Math.max(12, m.selectionContext.rect.y - 30) }}><Target className="w-3 h-3" /><span>{m.aiCopy.composer.selectionReady}</span></div></>}
       <aside className={`ai-workspace-sidebar ${m.isLongformComposer ? "is-longform" : ""}`} style={{ width: panelWidth }}><div className="ai-workspace-resize-handle" role="separator" aria-orientation="vertical" aria-valuenow={panelWidth} aria-valuemin={AI_PANEL_MIN_WIDTH} aria-valuemax={AI_PANEL_MAX_WIDTH} aria-label={m.aiCopy.composer.resizeHandleTitle} title={m.aiCopy.composer.resizeHandleTitle} onMouseDown={onResizeHandleMouseDown} onDoubleClick={() => setPanelWidth(AI_PANEL_DEFAULT_WIDTH)}><div className="ai-workspace-resize-handle-line" /></div><div ref={m.composerRef} className={`ai-workspace-composer is-docked ${m.isLongformComposer ? "is-longform" : ""} ${m.activeInteractionMode === "agent" ? "is-agent" : ""}`}><div className="ai-workspace-composer-body">
         <header className="ai-workspace-panel-header workspace-toolbar"><div className="workspace-toolbar-main ai-workspace-panel-header-main"><span className="workspace-toolbar-kicker">{m.aiCopy.composer.kicker}</span><div className="workspace-toolbar-title-row ai-workspace-panel-header-row"><span className="workspace-toolbar-title">{m.aiCopy.composer.title}</span></div></div><div className="workspace-toolbar-actions"><button type="button" className={`toolbar-btn icon-only ${m.isCompacting ? "is-active" : ""}`} onClick={m.compactContext} disabled={m.isCompacting} title={m.isCompacting ? m.aiCopy.workspace.compactRunning : m.aiCopy.workspace.compactAction}><Layers className="w-3.5 h-3.5" /></button><button type="button" className={`toolbar-btn icon-only ${m.isInspectMode ? "is-active" : ""}`} onClick={() => m.setInspectMode((value) => !value)} title={m.aiCopy.composer.inspectOffTitle}><Target className="w-3.5 h-3.5" /></button><button type="button" className="toolbar-btn icon-only" onClick={m.reset} title="Reset"><RotateCcw className="w-3.5 h-3.5" /></button><button type="button" className="toolbar-btn icon-only is-close" onClick={m.close} title={m.aiCopy.composer.alertDismiss}><X className="w-3.5 h-3.5" /></button></div></header>
-        <div className="ai-workspace-chat-tabs"><AIWorkspaceSwitcher copy={m.aiCopy.workspace} workspaces={m.chatWorkspaces} activeWorkspaceId={m.activeChatWorkspaceId} importableThreads={m.importableChatThreads} threadMemories={m.threadMemories} onSelectWorkspace={m.selectChatWorkspace} onCreateWorkspace={m.createChatWorkspace} onRenameWorkspace={m.renameChatWorkspace} onDeleteWorkspace={m.deleteChatWorkspace} onImportThread={m.importChatThread} /><span className="ai-workspace-chat-tab ai-workspace-chat-tab-current is-active">{m.currentThread?.label || "#1"}</span><div className="ai-workspace-chat-toolbar-actions"><div ref={m.historyPanelRef} className={`ai-workspace-history-dropdown ${m.isHistoryOpen ? "is-open" : ""}`}><button type="button" className="ai-workspace-history-toggle" onClick={() => m.setHistoryOpen((value) => !value)}><History className="w-3.5 h-3.5" /><span>{m.aiCopy.composer.historyTitle}</span><span>{m.recentWorkspaceThreads.length}</span></button>{m.isHistoryOpen && <div className="ai-workspace-history-popover"><div className="ai-workspace-history-list">{m.recentWorkspaceThreads.map((thread) => <div key={thread.id} className={`ai-workspace-history-item ${thread.id === m.currentThread?.id ? "is-active" : ""}`}><button type="button" className="ai-workspace-history-item-select" onClick={() => m.selectThread(thread.id)}><strong>{thread.label}</strong><span>{formatThreadTimestamp(thread.updatedAt || thread.createdAt, m.language)}</span></button><button type="button" className="ai-workspace-history-item-delete" onClick={(event) => m.requestDeleteThread(thread.id, event)}><Trash2 className="w-3.5 h-3.5" /></button><span>{m.bubbleCountByThread.get(thread.id) || 0}</span></div>)}</div></div>}</div><button type="button" className="ai-workspace-chat-tab-add" onClick={m.createThread}><Plus className="w-3.5 h-3.5" /></button></div></div>
+        <div className="ai-workspace-chat-tabs"><AIWorkspaceSwitcher copy={m.aiCopy.workspace} workspaces={m.chatWorkspaces} activeWorkspaceId={m.activeChatWorkspaceId} importableThreads={m.importableChatThreads} threadMemories={m.threadMemories} onSelectWorkspace={m.selectChatWorkspace} onCreateWorkspace={m.createChatWorkspace} onRenameWorkspace={m.renameChatWorkspace} onDeleteWorkspace={m.deleteChatWorkspace} onImportThread={m.importChatThread} /><span className="ai-workspace-chat-tab ai-workspace-chat-tab-current is-active">{m.currentThread?.label || "#1"}</span><div className="ai-workspace-chat-toolbar-actions"><div ref={m.historyPanelRef} className={`ai-workspace-history-dropdown ${m.isHistoryOpen ? "is-open" : ""}`}>
+                <button type="button" className="ai-workspace-history-toggle" onClick={() => m.setHistoryOpen((value) => !value)} title={m.aiCopy.composer.historyHint}>
+                  <History className="w-3.5 h-3.5" />
+                  <span>{m.aiCopy.composer.historyTitle}</span>
+                  <span className="ai-workspace-history-toggle-count">{m.recentWorkspaceThreads.length}</span>
+                </button>
+                {m.isHistoryOpen && (
+                  <div className="ai-workspace-history-popover">
+                    <div className="ai-workspace-history-head">
+                      <span className="ai-workspace-history-label">{m.aiCopy.composer.historyTitle}</span>
+                      <span className="ai-workspace-history-note">{m.aiCopy.composer.historyHint}</span>
+                    </div>
+                    {m.recentWorkspaceThreads.length === 0 ? (
+                      <div className="ai-workspace-history-empty">{m.aiCopy.composer.historyEmpty}</div>
+                    ) : (
+                      <div className="ai-workspace-history-list">
+                        {m.recentWorkspaceThreads.map((thread) => {
+                          const memoryTitle = m.threadMemories[thread.id]?.title;
+                          const messageCount = m.bubbleCountByThread.get(thread.id) || 0;
+                          return (
+                            <div key={thread.id} className={`ai-workspace-history-item ${thread.id === m.currentThread?.id ? "is-active" : ""}`}>
+                              <button type="button" className="ai-workspace-history-item-select" onClick={() => m.selectThread(thread.id)}>
+                                <MessageSquareText className="ai-workspace-history-item-icon w-3.5 h-3.5" />
+                                <span className="ai-workspace-history-item-copy">
+                                  <span className="ai-workspace-history-item-title">{memoryTitle || thread.label}</span>
+                                  <span className="ai-workspace-history-item-meta">
+                                    {formatThreadTimestamp(thread.updatedAt || thread.createdAt, m.language)}
+                                    <i className="ai-workspace-history-item-meta-dot" />
+                                    {messageCount}
+                                  </span>
+                                </span>
+                              </button>
+                              <div className="ai-workspace-history-item-actions">
+                                <button type="button" className="ai-workspace-history-item-delete" title={m.aiCopy.composer.historyDeleteTitle} onClick={(event) => m.requestDeleteThread(thread.id, event)}>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div><button type="button" className="ai-workspace-chat-tab-add" onClick={m.createThread}><Plus className="w-3.5 h-3.5" /></button></div></div>
         <AIConversationView bubbles={m.conversationBubbles} copy={m.aiCopy} showThinking={m.showThinking} threadRef={m.chatThreadRef} onOpenDetail={(bubble) => m.setDetailBubbleId(bubble.id)} onInsert={m.insertBubble} onRun={m.runBubble} onRetry={m.retryBubble} onOpenRecord={m.openAgentRecord} onUseSuggestion={(prompt) => m.setPromptDraft(prompt)} />
         <AIComposerDock copy={m.aiCopy} prompt={m.promptDraft} textareaRef={m.composerTextareaRef} footerNote={m.composerFooterNote} contextUsage={m.contextUsage} attachedSelectionSource={m.attachedSelection?.source} hasAttachedSelectionText={Boolean(m.attachedSelection?.text.trim())} interactionMode={m.activeInteractionMode} agentAutonomy={m.activeAgentAutonomy} activeProvider={m.activeProvider} providers={m.switchableProviders} isSwitchingProvider={m.isSwitchingProvider} isGenerating={m.isGenerating} isCancelling={m.isCancelling} isConnectionAvailable={Boolean(m.connectionId)} isSessionDataReadEnabled={m.isSessionDataReadEnabled} sessionDataReadLabel={m.sessionDataReadButtonLabel} sessionDataReadTitle={m.sessionDataReadButtonTitle} showThinking={m.showThinking} onPromptChange={m.setPromptDraft} onKeyDown={m.composerKeyDown} onDismissSelection={m.dismissSelection} onSelectInteractionMode={m.selectInteractionMode} onSelectAgentAutonomy={m.selectAgentAutonomy} onActivateProvider={m.activateProvider} onToggleModelVisibility={m.toggleModelVisibility} onSetSessionDataReadEnabled={m.setSessionDataReadEnabled} onSetShowThinking={m.setShowThinking} onOpenSettings={m.openSettings} onCloseHistory={() => m.setHistoryOpen(false)} onGenerate={m.generate} onCancelGeneration={m.cancelGeneration} />
       </div></div></aside>

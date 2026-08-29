@@ -27320,7 +27320,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-list {
   display: grid;
   gap: 6px;
-  max-height: 136px;
+  max-height: 216px;
   overflow-y: auto;
   padding-right: 2px;
 }
@@ -27337,9 +27337,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
   padding: 8px 10px;
   border-radius: 12px;
@@ -27351,6 +27351,46 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
     border-color 160ms ease,
     background 160ms ease,
     color 160ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-select {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-icon {
+  flex-shrink: 0;
+  color: var(--fintech-cyan);
+  opacity: 0.7;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item:hover .ai-workspace-history-item-icon {
+  opacity: 1;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item.is-active .ai-workspace-history-item-icon {
+  color: var(--fintech-green);
+  opacity: 1;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-meta-dot {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin: 0 6px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: middle;
+  opacity: 0.55;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item:hover {
@@ -27838,7 +27878,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-list {
-  max-height: 124px;
+  max-height: 200px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-empty {

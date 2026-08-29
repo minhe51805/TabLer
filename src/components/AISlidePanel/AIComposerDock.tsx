@@ -69,8 +69,14 @@ const INTERACTION_MODES: AIWorkspaceInteractionMode[] = ["prompt", "edit", "agen
 const AGENT_AUTONOMY_OPTIONS: AIWorkspaceAgentAutonomy[] = ["review", "smart", "full"];
 
 function formatContextChars(chars: number) {
-  if (chars >= 1_000_000) return `${(chars / 1_000_000).toFixed(1)}m`;
-  if (chars >= 1_000) return `${(chars / 1_000).toFixed(1)}k`;
+  if (chars >= 1_000_000) {
+    const millions = chars / 1_000_000;
+    return `${millions >= 10 || Number.isInteger(millions) ? Math.round(millions) : millions.toFixed(1)}M`;
+  }
+  if (chars >= 1_000) {
+    const thousands = chars / 1_000;
+    return `${thousands >= 10 || Number.isInteger(thousands) ? Math.round(thousands) : thousands.toFixed(1)}k`;
+  }
   return String(chars);
 }
 

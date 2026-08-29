@@ -271,13 +271,18 @@ export function AISlidePanel({
     () => [...workspaceContextMessages, ...historyMessages],
     [workspaceContextMessages, historyMessages]
   );
+  const contextWindowLimit = useMemo(() => {
+    const settings = activeProvider?.model_settings?.[activeProvider.model ?? ""];
+    const configured = settings?.context_window;
+    return configured && configured > 0 ? configured : AUTO_COMPACT_TRIGGER_CHARS;
+  }, [activeProvider]);
   const contextUsage = useMemo(
     () => ({
       used: effectiveHistoryMessages.reduce((sum, message) => sum + message.content.length, 0)
         + promptDraft.length,
-      limit: AUTO_COMPACT_TRIGGER_CHARS,
+      limit: contextWindowLimit,
     }),
-    [effectiveHistoryMessages, promptDraft]
+    [contextWindowLimit, effectiveHistoryMessages, promptDraft]
   );
   const conversationBubbles = useMemo(
     () => [...activeThreadBubbles].sort((left, right) => left.createdAt - right.createdAt),
@@ -960,7 +965,7 @@ export function AISlidePanel({
     // never grows unbounded (same idea as Claude Code auto-compact).
     let historyForRun = effectiveHistoryMessages;
     const historyChars = historyForRun.reduce((sum, message) => sum + message.content.length, 0);
-    if (activeChatWorkspace && historyChars > AUTO_COMPACT_TRIGGER_CHARS) {
+    if (activeChatWorkspace && historyChars > contextWindowLimit) {
       const compacted = await handleCompactContext(true);
       if (compacted) historyForRun = compacted.recentHistory;
     }
@@ -980,7 +985,7 @@ export function AISlidePanel({
         setAttachedSelection(null);
       }
     }
-  }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleCompactContext, isGenerating, promptDraft]);
+  }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, contextWindowLimit, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleCompactContext, isGenerating, promptDraft]);
 
   const handleCancelGeneration = useCallback(() => {
     const activeBubbleId = activeGenerationBubbleIdRef.current;

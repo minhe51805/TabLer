@@ -57,8 +57,9 @@ pub struct AIConversationMessage {
 
 /// Optional per-model metadata: context budget and I/O capabilities, keyed by
 /// model id on `AIProviderConfig::model_settings`. Absent = provider defaults.
+/// Field names stay snake_case to match the frontend wire format.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", default)]
+#[serde(default)]
 pub struct AIModelSettings {
     pub context_window: Option<u64>,
     pub max_output_tokens: Option<u64>,

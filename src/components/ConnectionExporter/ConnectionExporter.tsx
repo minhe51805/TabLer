@@ -105,45 +105,50 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
         </div>
 
         {/* Body */}
-        <div className="cex-body">
-          {result ? (
+        {result ? (
+          <div className="cex-body cex-body-centered">
             <div className="cex-success">
               <CheckCircle2 />
               <p>{result.message}</p>
               <button onClick={handleClose} className="btn btn-primary">Done</button>
             </div>
-          ) : (
-            <>
-              {/* Connection selection */}
-              <div>
-                <div className="cex-section-head">
-                  <label className="cex-section-label">
-                    Select Connections ({selected.size}/{connections.length})
-                  </label>
-                  <button
-                    onClick={toggleAll}
-                    className="cex-toggle-all"
-                  >
-                    {selected.size === connections.length ? "Deselect All" : "Select All"}
-                  </button>
-                </div>
-                <div className="cex-conn-list">
-                  {connections.map((conn) => (
+          </div>
+        ) : (
+          <div className="cex-body">
+            {/* Left rail: connection selection */}
+            <aside className="cex-rail">
+              <div className="cex-rail-head">
+                <label className="cex-section-label">
+                  Select ({selected.size}/{connections.length})
+                </label>
+                <button onClick={toggleAll} className="cex-toggle-all">
+                  {selected.size === connections.length ? "Deselect All" : "Select All"}
+                </button>
+              </div>
+              <div className="cex-rail-list">
+                {connections.length === 0 ? (
+                  <p className="cex-rail-empty">No saved connections to export.</p>
+                ) : (
+                  connections.map((conn) => (
                     <label
                       key={conn.id}
-                      className="cex-conn-item"
+                      className={`cex-rail-item ${selected.has(conn.id) ? "is-selected" : ""}`}
                     >
                       <input
                         type="checkbox"
                         checked={selected.has(conn.id)}
                         onChange={() => toggleSelect(conn.id)}
                       />
-                      <span className="cex-conn-name">{conn.name || conn.host || conn.db_type}</span>
-                      <span className="cex-conn-type">{conn.db_type}</span>
+                      <span className="cex-rail-item-name">{conn.name || conn.host || conn.db_type}</span>
+                      <span className="cex-rail-item-meta">{conn.db_type}</span>
                     </label>
-                  ))}
-                </div>
+                  ))
+                )}
               </div>
+            </aside>
+
+            {/* Right detail: encryption */}
+            <div className="cex-detail">
 
               {/* Encryption password */}
               <div className="cex-warning">
@@ -198,9 +203,9 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
                   <p>{error}</p>
                 </div>
               )}
-            </>
-          )}
-        </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

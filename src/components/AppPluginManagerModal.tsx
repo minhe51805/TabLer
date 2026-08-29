@@ -1,8 +1,11 @@
+import type { LucideIcon } from "lucide-react";
 import {
   Box,
   Database,
   Download,
+  LayoutDashboard,
   LoaderCircle,
+  Map as MapIcon,
   Puzzle,
   RefreshCw,
   RotateCcw,
@@ -28,6 +31,14 @@ interface AppPluginManagerModalProps {
 
 const CORE_MODULES = ["Explorer", "SQL Editor", "Metrics", "ER Diagram", "Terminal", "AI Assist"];
 
+type PluginManagerSection =
+  | "overview"
+  | "installed"
+  | "registry"
+  | "core"
+  | "adapters"
+  | "roadmap";
+
 export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
   const { language } = useI18n();
   const installedPlugins = usePluginStore((s) => s.plugins);
@@ -49,6 +60,8 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
   } = usePluginStore();
   const [isInstalling, setIsInstalling] = useState(false);
   const [busyPluginId, setBusyPluginId] = useState<string | null>(null);
+  const [activeSection, setActiveSection] =
+    useState<PluginManagerSection>("overview");
 
   const copy = useMemo(() => {
     if (language === "vi") {
@@ -94,6 +107,7 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
         installSuccess: "Đã cài plugin",
         pluginUpdated: "Đã cập nhật trạng thái plugin",
         pluginRemoved: "Đã gỡ plugin",
+        overview: "Tổng quan",
       };
     }
 
@@ -139,6 +153,7 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
       installSuccess: "Plugin installed",
       pluginUpdated: "Plugin state updated",
       pluginRemoved: "Plugin removed",
+      overview: "Overview",
     };
   }, [language]);
 
@@ -286,77 +301,172 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
     [copy.rollbackSuccess, language, rollbackPlugin],
   );
 
+  const sections: Array<{
+    id: PluginManagerSection;
+    label: string;
+    icon: LucideIcon;
+    count?: number;
+  }> = [
+    { id: "overview", label: copy.overview, icon: LayoutDashboard },
+    {
+      id: "installed",
+      label: copy.installed,
+      icon: Puzzle,
+      count: installedPlugins.length,
+    },
+    ...(latestRegistryPackages.length > 0 || isRegistryLoading
+      ? [
+          {
+            id: "registry" as PluginManagerSection,
+            label: copy.registry,
+            icon: Download,
+            count: latestRegistryPackages.length,
+          },
+        ]
+      : []),
+    { id: "core", label: copy.coreModules, icon: Box },
+    {
+      id: "adapters",
+      label: copy.engineAdapters,
+      icon: Database,
+      count: readyAdapters.length,
+    },
+    { id: "roadmap", label: copy.planned, icon: MapIcon, count: roadmapAdapters.length },
+  ];
+
+  const handleSectionClick = (section: PluginManagerSection) => {
+    setActiveSection(section);
+    if (
+      section === "registry" &&
+      latestRegistryPackages.length === 0 &&
+      !isRegistryLoading
+    ) {
+      void handleBrowseRegistry();
+    }
+  };
+
   return (
     <div className="app-help-modal-backdrop" onClick={onClose}>
-      <div className="app-help-modal app-plugin-manager-modal" onClick={(event) => event.stopPropagation()}>
+      <div
+        className="app-help-modal app-plugin-manager-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="app-help-modal-header">
           <div className="app-help-modal-copy">
             <span className="app-help-modal-kicker">{copy.kicker}</span>
             <h3 className="app-help-modal-title">{copy.title}</h3>
             <p className="app-help-modal-description">{copy.description}</p>
           </div>
-          <button
-            type="button"
-            className="app-help-modal-close"
-            onClick={onClose}
-            aria-label={copy.close}
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="app-help-modal-grid">
-          <div className="app-help-modal-metric">
-            <span className="app-help-modal-metric-label">{copy.bundled}</span>
-            <strong className="app-help-modal-metric-value">{CORE_MODULES.length}</strong>
+          <div className="app-plugin-manager-header-actions">
+            <button
+              type="button"
+              className="btn btn-secondary app-plugin-manager-toolbar-btn"
+              onClick={() => void handleBrowseRegistry()}
+              disabled={isRegistryLoading}
+            >
+              {isRegistryLoading ? (
+                <LoaderCircle className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              <span>{copy.browseRegistry}</span>
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary app-plugin-manager-toolbar-btn"
+              onClick={handleReload}
+              disabled={isLoading}
+            >
+              <RefreshCw
+                className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`}
+              />
+              <span>{copy.reload}</span>
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary app-plugin-manager-toolbar-btn"
+              onClick={handleInstallPlugin}
+              disabled={isInstalling}
+            >
+              {isInstalling ? (
+                <LoaderCircle className="w-4 h-4 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4" />
+              )}
+              <span>{copy.install}</span>
+            </button>
+            <button
+              type="button"
+              className="app-help-modal-close"
+              onClick={onClose}
+              aria-label={copy.close}
+            >
+              <X size={16} />
+            </button>
           </div>
-          <div className="app-help-modal-metric">
-            <span className="app-help-modal-metric-label">{copy.adapterCount}</span>
-            <strong className="app-help-modal-metric-value">{readyAdapters.length}</strong>
-          </div>
-        </div>
-
-        <div className="app-plugin-manager-toolbar">
-          <button
-            type="button"
-            className="btn btn-secondary app-plugin-manager-toolbar-btn"
-            onClick={() => void handleBrowseRegistry()}
-            disabled={isRegistryLoading}
-          >
-            {isRegistryLoading ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            <span>{copy.browseRegistry}</span>
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary app-plugin-manager-toolbar-btn"
-            onClick={handleReload}
-            disabled={isLoading}
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
-            <span>{copy.reload}</span>
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary app-plugin-manager-toolbar-btn"
-            onClick={handleInstallPlugin}
-            disabled={isInstalling}
-          >
-            {isInstalling ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            <span>{copy.install}</span>
-          </button>
         </div>
 
         {error ? <div className="app-plugin-manager-error">{error}</div> : null}
 
-        {(latestRegistryPackages.length > 0 || isRegistryLoading) ? (
-          <div className="app-plugin-manager-section">
-            <div className="app-plugin-manager-section-head">
-              <span className="app-help-modal-section-label">{copy.registry}</span>
-              <span className="app-plugin-manager-badge accent">
-                <Download className="w-3.5 h-3.5" />
-                {latestRegistryPackages.length}
-              </span>
-            </div>
+        <div className="app-plugin-manager-layout">
+          <nav className="app-plugin-manager-rail" aria-label={copy.title}>
+            {sections.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                className={`app-plugin-manager-rail-item${
+                  activeSection === section.id ? " is-active" : ""
+                }`}
+                onClick={() => handleSectionClick(section.id)}
+              >
+                <section.icon className="w-3.5 h-3.5" />
+                <span className="app-plugin-manager-rail-label">
+                  {section.label}
+                </span>
+                {typeof section.count === "number" ? (
+                  <span className="app-plugin-manager-rail-count">
+                    {section.count}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </nav>
+
+          <div className="app-plugin-manager-panel">
+            {activeSection === "overview" ? (
+              <>
+                <div className="app-plugin-manager-panel-head">
+                  <h4 className="app-plugin-manager-panel-title">
+                    {copy.overview}
+                  </h4>
+                </div>
+                <div className="app-help-modal-grid">
+                  <div className="app-help-modal-metric">
+                    <span className="app-help-modal-metric-label">
+                      {copy.bundled}
+                    </span>
+                    <strong className="app-help-modal-metric-value">
+                      {CORE_MODULES.length}
+                    </strong>
+                  </div>
+                  <div className="app-help-modal-metric">
+                    <span className="app-help-modal-metric-label">
+                      {copy.adapterCount}
+                    </span>
+                    <strong className="app-help-modal-metric-value">
+                      {readyAdapters.length}
+                    </strong>
+                  </div>
+                </div>
+                <div className="app-plugin-manager-note">
+                  <Puzzle className="w-4 h-4" />
+                  <span>{copy.note}</span>
+                </div>
+              </>
+            ) : null}
+
+            {activeSection === "registry" ? (
+              <div className="app-plugin-manager-panel-group">
             {isRegistryLoading && latestRegistryPackages.length === 0 ? (
               <div className="app-plugin-manager-empty"><LoaderCircle className="w-4 h-4 animate-spin" /></div>
             ) : latestRegistryPackages.length === 0 ? (
@@ -385,17 +495,20 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
                 })}
               </div>
             )}
-          </div>
-        ) : null}
+              </div>
+            ) : null}
 
-        <div className="app-plugin-manager-section">
-          <div className="app-plugin-manager-section-head">
-            <span className="app-help-modal-section-label">{copy.installed}</span>
-            <span className="app-plugin-manager-badge accent">
-              <Puzzle className="w-3.5 h-3.5" />
-              {installedPlugins.length}
-            </span>
-          </div>
+            {activeSection === "installed" ? (
+              <div className="app-plugin-manager-panel-group">
+                <div className="app-plugin-manager-panel-head">
+                  <h4 className="app-plugin-manager-panel-title">
+                    {copy.installed}
+                  </h4>
+                  <span className="app-plugin-manager-badge accent">
+                    <Puzzle className="w-3.5 h-3.5" />
+                    {installedPlugins.length}
+                  </span>
+                </div>
 
           {installedPlugins.length === 0 ? (
             <div className="app-plugin-manager-empty">{copy.noPlugins}</div>
@@ -510,16 +623,20 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
               ))}
             </div>
           )}
-        </div>
+              </div>
+            ) : null}
 
-        <div className="app-plugin-manager-section">
-          <div className="app-plugin-manager-section-head">
-            <span className="app-help-modal-section-label">{copy.coreModules}</span>
-            <span className="app-plugin-manager-badge">
-              <Box className="w-3.5 h-3.5" />
-              {copy.builtin}
-            </span>
-          </div>
+            {activeSection === "core" ? (
+              <div className="app-plugin-manager-panel-group">
+                <div className="app-plugin-manager-panel-head">
+                  <h4 className="app-plugin-manager-panel-title">
+                    {copy.coreModules}
+                  </h4>
+                  <span className="app-plugin-manager-badge">
+                    <Box className="w-3.5 h-3.5" />
+                    {copy.builtin}
+                  </span>
+                </div>
           <div className="app-help-modal-tags">
             {CORE_MODULES.map((moduleName) => (
               <span key={moduleName} className="app-help-modal-tag">
@@ -527,16 +644,20 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
               </span>
             ))}
           </div>
-        </div>
+              </div>
+            ) : null}
 
-        <div className="app-plugin-manager-section">
-          <div className="app-plugin-manager-section-head">
-            <span className="app-help-modal-section-label">{copy.engineAdapters}</span>
-            <span className="app-plugin-manager-badge accent">
-              <Database className="w-3.5 h-3.5" />
-              {readyAdapters.length} {copy.ready}
-            </span>
-          </div>
+            {activeSection === "adapters" ? (
+              <div className="app-plugin-manager-panel-group">
+                <div className="app-plugin-manager-panel-head">
+                  <h4 className="app-plugin-manager-panel-title">
+                    {copy.engineAdapters}
+                  </h4>
+                  <span className="app-plugin-manager-badge accent">
+                    <Database className="w-3.5 h-3.5" />
+                    {readyAdapters.length} {copy.ready}
+                  </span>
+                </div>
           <div className="app-plugin-manager-list app-plugin-manager-grid">
             {readyAdapters.map((db) => (
               <div key={db.key} className="app-plugin-manager-row">
@@ -545,16 +666,20 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
               </div>
             ))}
           </div>
-        </div>
+              </div>
+            ) : null}
 
-        <div className="app-plugin-manager-section">
-          <div className="app-plugin-manager-section-head">
-            <span className="app-help-modal-section-label">{copy.planned}</span>
-            <span className="app-plugin-manager-badge muted">
-              <Download className="w-3.5 h-3.5" />
-              {roadmapAdapters.length} {copy.roadmap}
-            </span>
-          </div>
+            {activeSection === "roadmap" ? (
+              <div className="app-plugin-manager-panel-group">
+                <div className="app-plugin-manager-panel-head">
+                  <h4 className="app-plugin-manager-panel-title">
+                    {copy.planned}
+                  </h4>
+                  <span className="app-plugin-manager-badge muted">
+                    <Download className="w-3.5 h-3.5" />
+                    {roadmapAdapters.length} {copy.roadmap}
+                  </span>
+                </div>
           <div className="app-plugin-manager-list compact app-plugin-manager-grid">
             {roadmapAdapters.length === 0 ? (
               <div className="app-plugin-manager-row">
@@ -570,21 +695,9 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
               ))
             )}
           </div>
-        </div>
-
-        <div className="app-plugin-manager-note">
-          <Puzzle className="w-4 h-4" />
-          <span>{copy.note}</span>
-        </div>
-
-        <div className="app-help-modal-actions">
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={onClose}
-          >
-            {copy.close}
-          </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

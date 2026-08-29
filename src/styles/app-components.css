@@ -34634,3 +34634,156 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   color: var(--text-secondary);
   letter-spacing: 0.1em;
 }
+
+/* ── Plugin manager: master-detail layout (provider-settings style) ────── */
+
+.app-plugin-manager-modal {
+  display: flex;
+  flex-direction: column;
+  height: min(680px, calc(100vh - 48px));
+}
+
+.app-plugin-manager-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr);
+  gap: 14px;
+}
+
+/* Left rail: section list, pinned while the panel scrolls. */
+.app-plugin-manager-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-1);
+  overflow-y: auto;
+}
+
+.app-plugin-manager-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.app-plugin-manager-rail-item svg {
+  flex: 0 0 auto;
+}
+
+.app-plugin-manager-rail-item:hover {
+  background: var(--mm-surface-2);
+  color: var(--text-primary);
+}
+
+.app-plugin-manager-rail-item.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.app-plugin-manager-rail-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-plugin-manager-rail-count {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--mm-surface-2);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.app-plugin-manager-rail-item.is-active .app-plugin-manager-rail-count {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+/* Right panel: scrolls independently, sections stacked. */
+.app-plugin-manager-panel {
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 4px;
+}
+
+.app-plugin-manager-panel-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.app-plugin-manager-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--mm-border);
+}
+
+.app-plugin-manager-panel-title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--mm-fs-body);
+  font-weight: 700;
+}
+
+.app-plugin-manager-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.app-plugin-manager-header-actions .btn {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: var(--mm-fs-caption);
+}
+
+/* Narrow screens: rail becomes a horizontal chip strip above the panel. */
+@media (max-width: 700px) {
+  .app-plugin-manager-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-plugin-manager-rail {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 4px;
+  }
+
+  .app-plugin-manager-rail-item {
+    width: auto;
+    white-space: nowrap;
+  }
+}

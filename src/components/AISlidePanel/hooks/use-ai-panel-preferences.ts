@@ -2,6 +2,7 @@ import { useCallback, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { AIProviderConfig } from "../../../types";
 import { normalizeAIProviderConfigs } from "../../../utils/ai-provider-registry";
+import { markManualProviderOverride } from "../../../stores/aiStore";
 import type {
   AIWorkspaceAgentAutonomy,
   AIWorkspaceInteractionMode,
@@ -47,6 +48,10 @@ export function useAIPanelPreferences(options: UseAIPanelPreferencesOptions) {
   // queued and applied afterwards against the already-updated config list.
   const switchChainRef = useRef<Promise<void>>(Promise.resolve());
   const activateProvider = useCallback((providerId: string, model?: string) => {
+    // Record the user's intent immediately (even if the save queues behind an
+    // in-flight switch/failover): an explicit pick must win over any
+    // automatic provider rotation for the current run.
+    markManualProviderOverride();
     const run = switchChainRef.current
       .catch(() => undefined)
       .then(async () => {

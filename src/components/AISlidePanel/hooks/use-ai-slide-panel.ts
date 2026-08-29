@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { getCurrentAppLanguage } from "../../../i18n";
-import { useAIStore } from "../../../stores/aiStore";
+import { getManualProviderOverrideAt, useAIStore } from "../../../stores/aiStore";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useQueryStore } from "../../../stores/queryStore";
 import { type AIConversationMessage, type AIProviderConfig, type AIRequestIntent, type AIRequestMode } from "../../../types";
@@ -658,6 +658,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         const failedProviderIds = new Set<string>();
         const failoverNoteLines: string[] = [];
         let providerRetryCount = 0;
+        // A provider the user picked manually during this run must not be
+        // silently rotated away by automatic failover.
+        const runStartedAt = Date.now();
 
         const agentRunnerResult = await runAIAgentToolLoop({
           workspaceToolsEnabled,
@@ -734,7 +737,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               const canPromoteFurther =
                 providerRetryCount < Math.max(0, enabledProviderCount - 1);
 
-              if (failoverEligible && canPromoteFurther) {
+              const userPickedProviderDuringRun =
+                getManualProviderOverrideAt() > runStartedAt;
+
+              if (failoverEligible && canPromoteFurther && !userPickedProviderDuringRun) {
                 // The very first failure asks for permission before the agent
                 // ever switches providers on its own. An approval (or decline)
                 // is remembered, so the question never comes back.

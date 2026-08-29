@@ -89,13 +89,13 @@ describe("AI agent tool runner", () => {
     ]);
   });
 
-  it("uses a final budget request after all tool iterations are consumed", async () => {
+  it("extends a productive run past its step budget instead of forcing an early finish", async () => {
     const requestAction = vi.fn()
       .mockResolvedValueOnce(action("list_tables"))
       .mockResolvedValueOnce(action("describe_table", "Describe", { table: "users" }))
       .mockResolvedValueOnce(action("finish", "Best grounded answer"));
 
-    await runAIAgentToolLoop({
+    const result = await runAIAgentToolLoop({
       workspaceToolsEnabled: true,
       stepBudget: 2,
       requestAction,
@@ -103,6 +103,63 @@ describe("AI agent tool runner", () => {
       recoverFinish: vi.fn(),
     });
 
+    expect(result.finalAction.message).toBe("Best grounded answer");
+    expect(requestAction.mock.calls.map(([request]) => ({
+      reason: request.reason,
+      forceFinish: request.forceFinish,
+      includeHistory: request.includeHistory,
+      iteration: request.iteration,
+    }))).toEqual([
+      { reason: "iterate", forceFinish: false, includeHistory: true, iteration: 1 },
+      { reason: "iterate", forceFinish: true, includeHistory: false, iteration: 2 },
+      { reason: "iterate", forceFinish: false, includeHistory: false, iteration: 3 },
+    ]);
+  });
+
+  it("caps extensions once the productive-run allowance is spent", async () => {
+    // Every step is distinct, so every extension request is granted until the
+    // MAX_STEP_EXTENSIONS allowance runs out; then the budget finish fires.
+    const requestAction = vi.fn()
+      .mockImplementation(async (request: { iteration: number }) => (
+        request.iteration <= 10
+          ? action("describe_table", `Describe ${request.iteration}`, { table: `users${request.iteration}` })
+          : action("finish", "Finally grounded")
+      ));
+
+    const result = await runAIAgentToolLoop({
+      workspaceToolsEnabled: true,
+      stepBudget: 2,
+      requestAction,
+      runTool: vi.fn().mockResolvedValue("observation"),
+      recoverFinish: vi.fn(),
+    });
+
+    expect(result.finalAction.message).toBe("Finally grounded");
+    const reasons = requestAction.mock.calls.map(([request]) => request.reason);
+    expect(reasons.filter((reason) => reason === "budget")).toHaveLength(1);
+    expect(reasons[reasons.length - 1]).toBe("budget");
+    // 2 base + 2 extensions × 4 = 10 tool iterations before the forced finish.
+    expect(requestAction.mock.calls.filter(([request]) => request.reason === "iterate")).toHaveLength(10);
+  });
+
+  it("does not extend an unproductive run that repeats the same action", async () => {
+    const requestAction = vi.fn()
+      .mockResolvedValueOnce(action("list_tables"))
+      .mockResolvedValueOnce(action("list_tables", "Again"))
+      .mockResolvedValueOnce(action("list_tables", "Budget close-out"));
+    const recoverFinish = vi.fn().mockResolvedValue(action("finish", "Recovered"));
+
+    await runAIAgentToolLoop({
+      workspaceToolsEnabled: true,
+      stepBudget: 2,
+      requestAction,
+      runTool: vi.fn().mockResolvedValue("observation"),
+      recoverFinish,
+    });
+
+    expect(recoverFinish).toHaveBeenCalledWith(
+      "The agent exhausted its tool budget without returning a final answer.",
+    );
     expect(requestAction.mock.calls.map(([request]) => ({
       reason: request.reason,
       forceFinish: request.forceFinish,

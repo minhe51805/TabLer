@@ -858,7 +858,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                     ? "Tool budget reached — wrapping up with the evidence gathered."
                     : snapshot.requestReason === "direct"
                       ? "Composing response."
-                      : `Deciding next action (step ${Math.min(snapshot.iteration, snapshot.stepBudget)}/${snapshot.stepBudget}).`,
+                      : `Deciding next action (step ${Math.min(snapshot.iteration, snapshot.stepBudget)}).`,
               });
             } else if (snapshot.phase === "recovering-finish") {
               publishAgentProgress({ action: "think", message: "Finalizing answer." });

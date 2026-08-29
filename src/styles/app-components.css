@@ -27281,8 +27281,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   z-index: 12;
   width: min(300px, calc(100vw - 48px));
   display: grid;
-  gap: 8px;
-  padding: 12px;
+  gap: 6px;
+  padding: 10px;
   border-radius: 16px;
   border: 1px solid rgba(0, 122, 255, 0.1);
   background:
@@ -27319,15 +27319,15 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-list {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   max-height: 216px;
   overflow-y: auto;
   padding-right: 2px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-empty {
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
   border: 1px dashed rgba(0, 122, 255, 0.12);
   background: var(--mm-surface-1);
   color: var(--text-muted);
@@ -27339,10 +27339,10 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 12px;
+  padding: 6px 9px;
+  border-radius: 10px;
   border: 1px solid rgba(0, 122, 255, 0.08);
   background: var(--mm-surface-1);
   color: var(--text-secondary);
@@ -27872,8 +27872,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-popover {
   width: min(272px, calc(100vw - 32px));
-  gap: 6px;
-  padding: 10px;
+  gap: 4px;
+  padding: 8px;
   border-radius: 12px;
 }
 
@@ -27888,9 +27888,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item {
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 10px;
+  gap: 6px;
+  padding: 4px 7px;
+  border-radius: 9px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-copy {

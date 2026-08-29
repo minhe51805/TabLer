@@ -35088,3 +35088,168 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
     white-space: nowrap;
   }
 }
+
+/* ─── AI chat workspace switcher (user workspaces + /compact) ─── */
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher {
+  min-width: 0;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-toggle {
+  max-width: 190px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-name {
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  width: min(320px, calc(100vw - 48px));
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-popover-section {
+  font-size: var(--mm-fs-micro);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fintech-cyan);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-title {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(0, 122, 255, 0.12);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-list {
+  display: grid;
+  gap: 4px;
+  max-height: 148px;
+  overflow-y: auto;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:hover {
+  background: rgba(0, 122, 255, 0.07);
+  color: var(--text-primary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item.is-active {
+  border-color: rgba(0, 122, 255, 0.22);
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item .lucide {
+  flex-shrink: 0;
+  color: var(--fintech-cyan);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-check {
+  color: var(--fintech-green);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-action:hover {
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-action.is-danger:hover {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--error, #ef4444);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item.is-editing {
+  padding: 4px 6px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-rename-input {
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 122, 255, 0.25);
+  background: var(--mm-surface-0);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+  outline: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-rename-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-context-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--fintech-green);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.14);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-new {
+  border: 1px dashed rgba(0, 122, 255, 0.18);
+  color: var(--accent);
+  font-weight: 600;
+}

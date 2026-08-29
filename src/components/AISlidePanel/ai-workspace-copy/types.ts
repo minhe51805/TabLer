@@ -140,4 +140,22 @@ export interface AIWorkspaceCopy {
     openedInWorkspaceSubtitle: string;
     openedInWorkspacePreview: string;
   };
+  workspace: {
+    switcherTitle: string;
+    autoMode: string;
+    newWorkspace: string;
+    defaultName: string;
+    renameAction: string;
+    deleteAction: string;
+    importTitle: string;
+    importAction: string;
+    importEmpty: string;
+    compactAction: string;
+    compactRunning: string;
+    compactDoneTitle: string;
+    compactDoneSubtitle: string;
+    compactNeedsWorkspace: string;
+    compactEmpty: string;
+    contextBadge: string;
+  };
 }

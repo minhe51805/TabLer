@@ -3,7 +3,19 @@ import { translateLanguage, useI18n } from "../../i18n";
 import { useAIStore } from "../../stores/aiStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
-import type { MetricsWidgetType } from "../../types";
+import { selectActiveAIChatWorkspace, useAIChatWorkspaceStore } from "../../stores/aiChatWorkspaceStore";
+import {
+  AUTO_COMPACT_TRIGGER_CHARS,
+  COMPACT_COMMAND,
+  COMPACT_PRESERVE_RECENT_BUBBLES,
+  buildCompactTranscript,
+  buildCompactUserPrompt,
+  buildPostCompactHistory,
+  buildWorkspaceContextMessages,
+  extractDigestFromReply,
+  isCompactCommand,
+} from "../../utils/ai-context-compact";
+import type { AIConversationMessage, MetricsWidgetType } from "../../types";
 import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import { normalizeAIProviderConfigs } from "../../utils/ai-provider-registry";
 import { resolveAIFailoverConsent } from "../../utils/ai-failover-consent";
@@ -86,6 +98,13 @@ export function AISlidePanel({
 }: Props) {
   const { language } = useI18n();
   const aiCopy = useMemo(() => getAIWorkspaceCopy(language), [language]);
+  const chatWorkspaces = useAIChatWorkspaceStore((state) => state.workspaces);
+  const activeChatWorkspaceId = useAIChatWorkspaceStore((state) => state.activeWorkspaceId);
+  const createChatWorkspace = useAIChatWorkspaceStore((state) => state.createWorkspace);
+  const renameChatWorkspace = useAIChatWorkspaceStore((state) => state.renameWorkspace);
+  const deleteChatWorkspace = useAIChatWorkspaceStore((state) => state.deleteWorkspace);
+  const setActiveChatWorkspace = useAIChatWorkspaceStore((state) => state.setActiveWorkspace);
+  const saveChatContextDigest = useAIChatWorkspaceStore((state) => state.saveContextDigest);
   const aiConfigs = useAIStore((state) => state.aiConfigs);
   const loadAIConfigs = useAIStore((state) => state.loadAIConfigs);
   const saveAIConfigs = useAIStore((state) => state.saveAIConfigs);
@@ -121,9 +140,13 @@ export function AISlidePanel({
   const visualizationApprovalScopeRef = useRef<string | null>(null);
   const activeGenerationBubbleIdRef = useRef<string | null>(null);
   const cancelledGenerationBubbleIdsRef = useRef(new Set<string>());
+  const activeChatWorkspace = useMemo(
+    () => selectActiveAIChatWorkspace({ workspaces: chatWorkspaces, activeWorkspaceId: activeChatWorkspaceId }),
+    [chatWorkspaces, activeChatWorkspaceId]
+  );
   const currentWorkspaceKey = useMemo(
-    () => buildAIWorkspaceKey(connectionId, currentDatabase),
-    [connectionId, currentDatabase]
+    () => buildAIWorkspaceKey(connectionId, currentDatabase, activeChatWorkspaceId),
+    [connectionId, currentDatabase, activeChatWorkspaceId]
   );
   const lastWorkspaceKeyRef = useRef(currentWorkspaceKey);
   const initialThreadRef = useRef<AIChatThread | null>(null);
@@ -236,6 +259,14 @@ export function AISlidePanel({
   const historyMessages = useMemo(
     () => buildConversationHistoryMessages(activeThreadBubbles),
     [activeThreadBubbles]
+  );
+  const workspaceContextMessages = useMemo(
+    () => buildWorkspaceContextMessages(activeChatWorkspace?.contextDigest),
+    [activeChatWorkspace?.contextDigest]
+  );
+  const effectiveHistoryMessages = useMemo(
+    () => [...workspaceContextMessages, ...historyMessages],
+    [workspaceContextMessages, historyMessages]
   );
   const conversationBubbles = useMemo(
     () => [...activeThreadBubbles].sort((left, right) => left.createdAt - right.createdAt),
@@ -753,9 +784,98 @@ export function AISlidePanel({
     openSessionRef,
   });
 
+  const [isCompacting, setIsCompacting] = useState(false);
+
+  const handleCompactContext = useCallback(async (silent = false): Promise<{ digest: string; recentHistory: AIConversationMessage[] } | null> => {
+    if (isCompacting) return null;
+    if (!activeChatWorkspace) {
+      if (!silent) setError(aiCopy.workspace.compactNeedsWorkspace);
+      return null;
+    }
+    const readyBubbles = activeThreadBubbles.filter(
+      (bubble) => bubble.kind === "assistant" && bubble.status === "ready"
+    );
+    if (readyBubbles.length === 0) {
+      if (!silent) setError(aiCopy.workspace.compactEmpty);
+      return null;
+    }
+
+    setIsCompacting(true);
+    try {
+      const transcript = buildCompactTranscript(activeThreadBubbles);
+      const reply = await useAIStore.getState().askAI(
+        buildCompactUserPrompt(transcript, activeChatWorkspace.contextDigest, activeChatWorkspace.name),
+        "",
+        "panel",
+        "general",
+        [],
+      );
+      const digest = extractDigestFromReply(reply);
+      if (digest.trim()) {
+        saveChatContextDigest(activeChatWorkspace.id, digest);
+      }
+      const sortedReady = [...readyBubbles].sort((left, right) => left.createdAt - right.createdAt);
+      const keepIds = new Set(
+        sortedReady.slice(-COMPACT_PRESERVE_RECENT_BUBBLES).map((bubble) => bubble.id)
+      );
+      const removedIds = sortedReady
+        .filter((bubble) => !keepIds.has(bubble.id))
+        .map((bubble) => bubble.id);
+      if (removedIds.length > 0) {
+        setBubbles((current) => current.filter((bubble) => !removedIds.includes(bubble.id)));
+      }
+
+      const keptBubbles = sortedReady.slice(-COMPACT_PRESERVE_RECENT_BUBBLES);
+      const effectiveDigest = digest.trim() || activeChatWorkspace.contextDigest;
+      if (currentThread?.id) {
+        const markerBubble: AIWorkspaceBubbleData = {
+          id: createAIWorkspaceId(),
+          threadId: currentThread.id,
+          workspaceKey: currentWorkspaceKey,
+          interactionMode: activeInteractionMode,
+          kind: "assistant",
+          status: "ready",
+          title: aiCopy.workspace.compactDoneTitle,
+          subtitle: aiCopy.workspace.compactDoneSubtitle,
+          prompt: COMPACT_COMMAND,
+          promptSummary: COMPACT_COMMAND,
+          preview: summarizePromptForDisplay(effectiveDigest),
+          detail: effectiveDigest,
+          x: 0,
+          y: 0,
+          pointer: { x: 0, y: 0, visible: false },
+          createdAt: Date.now(),
+        };
+        setBubbles((current) => [...current, markerBubble]);
+      }
+      return { digest: effectiveDigest, recentHistory: buildPostCompactHistory(effectiveDigest, keptBubbles) };
+    } catch (compactError) {
+      setError(compactError instanceof Error ? compactError.message : String(compactError));
+      return null;
+    } finally {
+      setIsCompacting(false);
+    }
+  }, [
+    activeChatWorkspace,
+    activeInteractionMode,
+    activeThreadBubbles,
+    aiCopy,
+    currentThread?.id,
+    currentWorkspaceKey,
+    isCompacting,
+    saveChatContextDigest,
+    setActiveChatWorkspace,
+    setError,
+  ]);
+
   const handleGenerate = useCallback(async () => {
     if (isGenerating) return;
     const normalizedPrompt = promptDraft.trim();
+    if (isCompactCommand(normalizedPrompt)) {
+      setPromptDraft("");
+      await handleCompactContext(false);
+      return;
+    }
     const promptWithSelection = buildPromptWithSelection(normalizedPrompt, attachedSelection);
     if (!promptWithSelection.trim()) return;
 
@@ -768,12 +888,23 @@ export function AISlidePanel({
     // The request is now captured in its own chat turn, so clear the composer
     // immediately instead of leaving an already-sent draft visible while it runs.
     setPromptDraft("");
+
+    // Auto-compact: long workspace histories get summarized into the
+    // workspace context digest before the request goes out, so the prompt
+    // never grows unbounded (same idea as Claude Code auto-compact).
+    let historyForRun = effectiveHistoryMessages;
+    const historyChars = historyForRun.reduce((sum, message) => sum + message.content.length, 0);
+    if (activeChatWorkspace && historyChars > AUTO_COMPACT_TRIGGER_CHARS) {
+      const compacted = await handleCompactContext(true);
+      if (compacted) historyForRun = compacted.recentHistory;
+    }
+
     const result = await createAssistantBubble(promptWithSelection, {
       mode: "compose",
       displayPrompt,
       userPrompt: normalizedPrompt || displayPrompt,
       attachmentSource: attachedSelection?.source,
-      history: historyMessages,
+      history: historyForRun,
       threadId: currentThread?.id,
       interactionMode: activeInteractionMode,
     });
@@ -783,7 +914,7 @@ export function AISlidePanel({
         setAttachedSelection(null);
       }
     }
-  }, [activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, createAssistantBubble, currentThread?.id, historyMessages, isGenerating, promptDraft]);
+  }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleCompactContext, isGenerating, promptDraft]);
 
   const handleCancelGeneration = useCallback(() => {
     const activeBubbleId = activeGenerationBubbleIdRef.current;
@@ -805,12 +936,12 @@ export function AISlidePanel({
       mode: "compose",
       displayPrompt: bubble.promptSummary,
       userPrompt: bubble.prompt,
-      history: retryHistory,
+      history: [...workspaceContextMessages, ...retryHistory],
       threadId: bubble.threadId,
       workspaceKey: bubble.workspaceKey,
       interactionMode: bubble.interactionMode,
     });
-  }, [bubbles, createAssistantBubble, isGenerating]);
+  }, [bubbles, createAssistantBubble, isGenerating, workspaceContextMessages]);
 
   const handleAskFromSelection = useCallback(async () => {
     if (!selectionContext?.text.trim()) {
@@ -1090,7 +1221,7 @@ export function AISlidePanel({
       bubbles.filter((currentBubble) => currentBubble.threadId === bubble.threadId)
     );
     const result = await createAssistantBubble(rewritePrompt, {
-      history: rewriteHistory,
+      history: [...workspaceContextMessages, ...rewriteHistory],
       threadId: bubble.threadId,
       workspaceKey: bubble.workspaceKey,
       interactionMode: bubble.interactionMode,
@@ -1100,7 +1231,7 @@ export function AISlidePanel({
       setActiveThreadId(bubble.threadId);
       setDetailBubbleId(null);
     }
-  }, [bubbles, createAssistantBubble]);
+  }, [bubbles, createAssistantBubble, workspaceContextMessages]);
 
   const handleCreateChatThread = useCallback(() => {
     const nextThread = createChatThread(workspaceThreads.length + 1, currentWorkspaceKey);
@@ -1125,6 +1256,53 @@ export function AISlidePanel({
     handleCreateChatThread();
   }, [handleCreateChatThread]);
 
+  const importableChatThreads = useMemo(
+    () => chatThreads
+      .filter((thread) => thread.workspaceKey !== currentWorkspaceKey)
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, 12),
+    [chatThreads, currentWorkspaceKey]
+  );
+
+  /** Copies a thread (and its bubbles) from another workspace/scope into the
+   *  current one — "import các đoạn chat liên quan" into this workspace. */
+  const handleImportChatThread = useCallback((threadId: string) => {
+    const sourceThread = chatThreads.find((thread) => thread.id === threadId);
+    if (!sourceThread) return;
+    const now = Date.now();
+    const importedThread: AIChatThread = {
+      ...sourceThread,
+      id: createAIWorkspaceId(),
+      workspaceKey: currentWorkspaceKey,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const importedBubbles = bubbles
+      .filter((bubble) => bubble.threadId === threadId && bubble.status !== "loading")
+      .map((bubble) => ({
+        ...bubble,
+        id: createAIWorkspaceId(),
+        threadId: importedThread.id,
+        workspaceKey: currentWorkspaceKey,
+        pointer: { ...bubble.pointer },
+      }));
+    setChatThreads((current) => [...current, importedThread]);
+    setBubbles((current) => [...current, ...importedBubbles]);
+    setActiveThreadIdsByWorkspace((current) => ({
+      ...current,
+      [currentWorkspaceKey]: importedThread.id,
+    }));
+    setActiveThreadId(importedThread.id);
+    setIsHistoryOpen(false);
+  }, [bubbles, chatThreads, currentWorkspaceKey]);
+
+  const handleCreateUserWorkspace = useCallback(() => {
+    createChatWorkspace(
+      `${aiCopy.workspace.defaultName} ${chatWorkspaces.length + 1}`,
+      connectionId,
+    );
+  }, [aiCopy.workspace.defaultName, chatWorkspaces.length, connectionId, createChatWorkspace]);
+
   const {
     activateProvider: handleActivateProvider,
     toggleModelVisibility: handleToggleModelVisibility,
@@ -1145,5 +1323,5 @@ export function AISlidePanel({
 
   if (!isOpen) return null;
   const visibleError = error && error !== AI_REQUEST_REPLACED_MESSAGE ? error : null;
-  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isCancelling, isGenerating, isHistoryOpen, isInspectMode, isLongformComposer, isRunning, isSessionDataReadEnabled, isSwitchingProvider, language, promptDraft, recentWorkspaceThreads, selectionContext, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, failoverConsentPending: failoverConsentState, chatThreadRef, close: () => { setIsInspectMode(false); onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, requestDeleteThread: handleRequestDeleteThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setInspectMode: setIsInspectMode, setPromptDraft, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomy, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id, model) => void handleActivateProvider(id, model), toggleModelVisibility: (id, model) => void handleToggleModelVisibility(id, model), confirmVisualizationConsent: resolveVisualizationConsent, resolveFailoverConsent: handleResolveFailoverConsent, cancelDeleteThread: handleCancelDeleteThread, composerKeyDown: handleComposerKeyDown }} />;
+  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isCancelling, isGenerating, isHistoryOpen, isInspectMode, isLongformComposer, isRunning, isSessionDataReadEnabled, isSwitchingProvider, language, promptDraft, recentWorkspaceThreads, selectionContext, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, failoverConsentPending: failoverConsentState, chatThreadRef, activeChatWorkspaceId, activeChatWorkspaceName: activeChatWorkspace?.name ?? null, activeChatWorkspaceContextUpdatedAt: activeChatWorkspace?.contextUpdatedAt ?? null, chatWorkspaces, importableChatThreads, isCompacting, close: () => { setIsInspectMode(false); onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, requestDeleteThread: handleRequestDeleteThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setInspectMode: setIsInspectMode, setPromptDraft, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomy, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id, model) => void handleActivateProvider(id, model), toggleModelVisibility: (id, model) => void handleToggleModelVisibility(id, model), confirmVisualizationConsent: resolveVisualizationConsent, resolveFailoverConsent: handleResolveFailoverConsent, cancelDeleteThread: handleCancelDeleteThread, composerKeyDown: handleComposerKeyDown, compactContext: () => void handleCompactContext(false), selectChatWorkspace: setActiveChatWorkspace, createChatWorkspace: handleCreateUserWorkspace, renameChatWorkspace: renameChatWorkspace, deleteChatWorkspace: deleteChatWorkspace, importChatThread: handleImportChatThread }} />;
 }

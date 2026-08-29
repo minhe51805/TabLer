@@ -35312,3 +35312,8 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   max-height: min(480px, calc(100vh - 200px));
   overflow-y: auto;
 }
+
+/* Popover is absolutely positioned inside the tab bar — it must not be clipped. */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-tabs {
+  overflow: visible;
+}

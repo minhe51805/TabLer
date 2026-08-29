@@ -151,7 +151,6 @@ describe("AI workspace components", () => {
       <AIConversationView
         bubbles={[]}
         copy={copy}
-        showThinking
         threadRef={createRef<HTMLDivElement>()}
         onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
@@ -194,7 +193,6 @@ describe("AI workspace components", () => {
       <AIConversationView
         bubbles={[bubble]}
         copy={copy}
-        showThinking
         threadRef={createRef<HTMLDivElement>()}
         onOpenDetail={onOpenDetail}
         onInsert={onInsert}
@@ -251,7 +249,6 @@ describe("AI workspace components", () => {
       <AIConversationView
         bubbles={[bubble]}
         copy={copy}
-        showThinking
         threadRef={createRef<HTMLDivElement>()}
         onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
@@ -303,7 +300,6 @@ describe("AI workspace components", () => {
       <AIConversationView
         bubbles={[bubble]}
         copy={copy}
-        showThinking
         threadRef={createRef<HTMLDivElement>()}
         onOpenDetail={vi.fn()}
         onInsert={vi.fn()}

@@ -196,6 +196,7 @@ export function buildAgentControllerPrompt(params: {
   extraInstruction?: string;
   cachedTableSummaries?: string[];
   glossaryLines?: string[];
+  availableSkills?: { name: string; description: string }[];
 }) {
   const {
     userPrompt,
@@ -210,6 +211,7 @@ export function buildAgentControllerPrompt(params: {
     extraInstruction,
     cachedTableSummaries,
     glossaryLines,
+    availableSkills,
   } = params;
   const visibleTables = availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT
     ? availableTableNames
@@ -259,6 +261,15 @@ export function buildAgentControllerPrompt(params: {
       ? [
           "Business glossary (verified semantics — treat as source of truth, never contradict these):",
           ...(glossaryLines ?? []),
+        ].join("\n")
+      : "",
+    (availableSkills ?? []).length > 0
+      ? [
+          "<available_skills>",
+          ...(availableSkills ?? []).map((skill) =>
+            `<skill><name>${skill.name}</name><description>${skill.description}</description></skill>`),
+          "</available_skills>",
+          "When the user's task matches one of these skill descriptions, call the skill tool with that name FIRST and follow the returned instructions.",
         ].join("\n")
       : "",
     "",

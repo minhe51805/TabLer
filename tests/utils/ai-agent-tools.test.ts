@@ -18,9 +18,20 @@ describe("AI agent tool contract", () => {
       "run_readonly_sql",
       "preview_write",
       "remember_term",
+      "skill",
       "finish",
     ]);
     expect(AI_AGENT_TOOL_NAMES).not.toContain("plan");
+  });
+
+  it("parses skill loads and trims the skill name", () => {
+    expect(parseAIAgentToolAction(
+      '{"action":"skill","message":"This matches the db-audit skill","args":{"name":" db-audit "}}',
+    )).toEqual({
+      action: "skill",
+      message: "This matches the db-audit skill",
+      args: { name: "db-audit" },
+    });
   });
 
   it("parses ask_user questions with bounded, cleaned options", () => {

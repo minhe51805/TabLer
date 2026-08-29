@@ -46,6 +46,7 @@ export type AIWorkspaceAgentActionName =
   | "plan"
   | "think"
   | "ask_user"
+  | "skill"
   | "list_tables"
   | "search_schema"
   | "describe_table"
@@ -103,4 +104,7 @@ export interface AIWorkspaceBubbleData {
    *  Compacted bubbles stay persisted (archived in SQLite) but are hidden
    *  from the conversation and excluded from request history. */
   compactedAt?: number;
+  /** Timestamp captured when the run left "loading"; powers the thinking
+   *  duration shown on the collapsed agent step header. */
+  settledAt?: number;
 }

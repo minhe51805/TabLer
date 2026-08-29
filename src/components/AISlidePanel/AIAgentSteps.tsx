@@ -10,6 +10,26 @@ interface AIAgentStepsProps {
   steps: AIWorkspaceAgentStep[];
   /** Compact view (inside a bubble) shows a short observation peek instead of the full body. */
   compact?: boolean;
+  /** Total run time (bubble settle − creation); shown on the collapsed header. */
+  durationMs?: number;
+}
+
+/** One-liner for the collapsed header: what the agent was actually doing. */
+function headerThinkingTitle(steps: AIWorkspaceAgentStep[]): string {
+  const flat = (steps.find((step) => step.action === "think" && step.message)?.message ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!flat) return "";
+  return flat.length > 90 ? `${flat.slice(0, 87)}...` : flat;
+}
+
+/** "42s" / "1m 12s" for the collapsed header, opencode/Codex style. */
+function formatStepsDuration(durationMs: number): string {
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
 function getActionIcon(action: AIWorkspaceAgentActionName): ReactNode {
@@ -75,7 +95,7 @@ function peekObservation(observation: string): string {
   return `${flat.slice(0, 137)}...`;
 }
 
-export function AIAgentSteps({ steps, compact = false }: AIAgentStepsProps) {
+export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStepsProps) {
   const { language } = useI18n();
   const copy = getAIWorkspaceCopy(language);
   const runSettled = steps.length > 0 && steps.every((step) => step.status !== "running");
@@ -89,6 +109,9 @@ export function AIAgentSteps({ steps, compact = false }: AIAgentStepsProps) {
 
   if (steps.length === 0) return null;
 
+  const thinkingTitle = !expanded ? headerThinkingTitle(steps) : "";
+  const showDuration = Boolean(!expanded && runSettled && durationMs && durationMs > 0);
+
   return (
     <div className={`ai-agent-steps ${compact ? "is-compact" : ""} ${expanded ? "" : "is-collapsed"}`}>
       <button
@@ -96,10 +119,12 @@ export function AIAgentSteps({ steps, compact = false }: AIAgentStepsProps) {
         className="ai-agent-steps-head"
         onClick={() => setExpanded((current) => !current)}
         aria-expanded={expanded}
-        title={expanded ? copy.modal.agentStatusDone : undefined}
+        title={expanded ? copy.modal.agentStatusDone : thinkingTitle || undefined}
       >
         <Sparkles className="w-3.5 h-3.5" />
         <span>{copy.modal.agentStepsLabel} ({steps.length})</span>
+        {showDuration && <span className="ai-agent-steps-duration">{formatStepsDuration(durationMs as number)}</span>}
+        {thinkingTitle && <span className="ai-agent-steps-title">{thinkingTitle}</span>}
         {expanded
           ? <ChevronDown className="w-3.5 h-3.5 ai-agent-steps-chevron" />
           : <ChevronRight className="w-3.5 h-3.5 ai-agent-steps-chevron" />}

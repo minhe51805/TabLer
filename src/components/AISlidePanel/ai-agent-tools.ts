@@ -48,6 +48,15 @@ export type AIAgentRememberTermAction = AIAgentToolActionBase<
   AIAgentRememberTermArgs
 >;
 
+export interface AIAgentSkillArgs extends Record<string, unknown> {
+  name: string;
+}
+
+export type AIAgentSkillAction = AIAgentToolActionBase<
+  "skill",
+  AIAgentSkillArgs
+>;
+
 export interface AIAgentPreviewWriteArgs extends Record<string, unknown> {
   statements: string[];
 }
@@ -121,6 +130,7 @@ export type AIAgentToolAction =
   | AIAgentRunReadonlySqlAction
   | AIAgentPreviewWriteAction
   | AIAgentRememberTermAction
+  | AIAgentSkillAction
   | AIAgentFinishAction;
 
 function stripOptionalCodeFence(text: string) {

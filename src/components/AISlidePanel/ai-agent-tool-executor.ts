@@ -25,6 +25,7 @@ import {
   type AIAgentToolAction,
 } from "./ai-agent-tools";
 import { saveSemanticGlossaryEntry } from "../../utils/semantic-glossary";
+import { invokeMutation } from "../../utils/tauri-utils";
 import {
   isSupersededAIRequestError,
   AI_REQUEST_REPLACED_MESSAGE,
@@ -470,6 +471,26 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;
         return `Tool error: could not save the glossary entry: ${formatExecutionError(errorValue)}`;
+      }
+    }
+
+    if (action.action === "skill") {
+      const skillName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
+      if (!skillName) {
+        return "Tool error: skill requires args.name taken from the <available_skills> list.";
+      }
+      try {
+        const content = await invokeMutation<{ name: string; body: string }>("read_ai_skill", {
+          name: skillName,
+        });
+        return [
+          `Skill "${content.name}" loaded. Follow these instructions for the remainder of the run:`,
+          "",
+          content.body,
+        ].join("\n");
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: could not load skill "${skillName}": ${formatExecutionError(errorValue)}`;
       }
     }
 

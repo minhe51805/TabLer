@@ -68,6 +68,22 @@ export interface RunAIAgentToolLoopOptions {
 const TOOL_BUDGET_EXHAUSTED_REASON =
   "The agent exhausted its tool budget without returning a final answer.";
 
+/** Steps granted each time a productive run is extended past its budget. */
+const EXTENSION_STEPS = 4;
+/** Hard cap on extensions, so a chatty run can still never escape the guard. */
+const MAX_STEP_EXTENSIONS = 2;
+
+/** Loop-detection signature: same tool + same args counts as repeated work. */
+function actionSignature(action: AIAgentToolAction): string {
+  let argsText = "";
+  try {
+    argsText = JSON.stringify(action.args ?? {});
+  } catch {
+    argsText = "";
+  }
+  return `${action.action}:${argsText}`;
+}
+
 function cloneSteps(steps: AgentTraceStep[]) {
   return steps.map((step) => ({ ...step }));
 }
@@ -87,6 +103,14 @@ export async function runAIAgentToolLoop(
   const snapshots: AIAgentRunnerSnapshot[] = [];
   let iteration = 0;
   let tokensUsed = 0;
+  // Adaptive budget state: the base budget can grow in bounded extensions
+  // while the run keeps doing new (non-repeating) work.
+  let effectiveBudget = stepBudget;
+  let extensionsUsed = 0;
+  const signatureHistory: string[] = [];
+  /** Productive = the recent window is not the same action+args on repeat. */
+  const isRunProductive = () =>
+    new Set(signatureHistory.slice(-EXTENSION_STEPS)).size >= 2;
 
   const emit = (
     phase: AIAgentRunnerPhase,
@@ -95,7 +119,7 @@ export async function runAIAgentToolLoop(
     const snapshot: AIAgentRunnerSnapshot = {
       phase,
       iteration,
-      stepBudget,
+      stepBudget: effectiveBudget,
       tokensUsed,
       ...details,
       steps: cloneSteps(steps),
@@ -136,10 +160,22 @@ export async function runAIAgentToolLoop(
     if (!options.workspaceToolsEnabled) {
       finalAction = await requestAction("direct", true, true);
     } else {
-      for (iteration = 1; iteration <= stepBudget; iteration += 1) {
+      for (iteration = 1; ; iteration += 1) {
+        const overStepBudget = iteration > effectiveBudget;
+        if (overStepBudget && !tokenBudgetExhausted()) {
+          // Adaptive extension: a run still doing new, non-repeating work gets
+          // bounded extra steps instead of being cut off mid-investigation.
+          if (extensionsUsed < MAX_STEP_EXTENSIONS && isRunProductive()) {
+            extensionsUsed += 1;
+            effectiveBudget = iteration + EXTENSION_STEPS - 1;
+          } else {
+            break; // close through the forced budget finish below
+          }
+        }
+
         const action = await requestAction(
           "iterate",
-          iteration === stepBudget || tokenBudgetExhausted(),
+          iteration >= effectiveBudget || tokenBudgetExhausted(),
           iteration === 1,
         );
 
@@ -162,6 +198,7 @@ export async function runAIAgentToolLoop(
             observation,
           },
         ];
+        signatureHistory.push(actionSignature(action));
         emit("tool-completed", {
           action: action.action,
           message: action.message || "No message provided.",
@@ -175,7 +212,7 @@ export async function runAIAgentToolLoop(
       }
 
       if (!finalAction) {
-        iteration = stepBudget + 1;
+        iteration = effectiveBudget + 1;
         finalAction = await requestAction("budget", true, false);
       }
     }

@@ -123,6 +123,8 @@ export function summarizeAgentSchemaSummaryObservation(tableName: string, summar
 
 export function extractReferencedTableNamesFromSql(sql: string) {
   const candidates = new Set<string>();
+  // CTE aliases defined in this statement are not workspace tables.
+  const cteNames = extractCteNamesFromSql(sql);
   const patterns = [
     /\bfrom\s+([a-z_"`][a-z0-9_$."`]*)/gi,
     /\bjoin\s+([a-z_"`][a-z0-9_$."`]*)/gi,
@@ -134,10 +136,21 @@ export function extractReferencedTableNamesFromSql(sql: string) {
     /\bdrop\s+table\s+([a-z_"`][a-z0-9_$."`]*)/gi,
   ];
 
-  for (const pattern of patterns) {
+  for (const [patternIndex, pattern] of patterns.entries()) {
+    // Indexes 0-1 are the FROM/JOIN row-source patterns: the only places a
+    // set-returning function call (`generate_series(...)`) can appear as the
+    // captured identifier, where a trailing "(" means a call, not grammar
+    // like `INSERT INTO t(...)`.
+    const isRowSource = patternIndex <= 1;
     for (const match of sql.matchAll(pattern)) {
       const raw = match[1];
       if (!raw) continue;
+      // In a FROM/JOIN clause, `generate_series(...)` / `unnest(...)` are
+      // set-returning function calls, not tables: the captured identifier is
+      // immediately followed by an argument list. (Elsewhere — e.g.
+      // `INSERT INTO t(...)` — a trailing "(" is normal grammar.)
+      const afterIdentifier = sql.slice((match.index ?? 0) + match[0].length);
+      if (isRowSource && afterIdentifier.trimStart().startsWith("(")) continue;
       const normalized = raw
         .replace(/["`]/g, "")
         .split(".")
@@ -145,13 +158,25 @@ export function extractReferencedTableNamesFromSql(sql: string) {
         .pop()
         ?.trim()
         .toLowerCase();
-      if (normalized) {
+      if (normalized && !cteNames.has(normalized)) {
         candidates.add(normalized);
       }
     }
   }
 
   return [...candidates];
+}
+
+/**
+ * CTE aliases defined in the same statement (`WITH x AS (…), y AS (…)`).
+ * Referencing them is legitimate SQL — they must not count as unknown tables.
+ */
+export function extractCteNamesFromSql(sql: string): Set<string> {
+  const names = new Set<string>();
+  for (const match of sql.matchAll(/\b(?:with|,)\s*([a-z_][a-z0-9_]*)\s+as\s*\(/gi)) {
+    names.add(match[1].toLowerCase());
+  }
+  return names;
 }
 
 const SYSTEM_BARE_NAME_PATTERN =
@@ -193,9 +218,15 @@ export function getAgentSqlSchemaRequirements(
   // the schema requirement ignores them. The dedicated catalog guard in the
   // run_readonly_sql tool decides whether they are allowed.
   const sanitizedSql = sql.replace(QUALIFIED_CATALOG_REF_PATTERN, " catalog_ref");
+  const cteNames = extractCteNamesFromSql(sanitizedSql);
 
   for (const referencedTable of extractReferencedTableNamesFromSql(sanitizedSql)) {
     if (referencedTable === "catalog_ref" || SYSTEM_BARE_NAME_PATTERN.test(referencedTable)) {
+      continue;
+    }
+    // A CTE alias defined in this statement (or a set-returning function) is
+    // not a workspace table — never block on it.
+    if (cteNames.has(referencedTable)) {
       continue;
     }
     const matchedTable = findMatchingTableName(referencedTable, availableTableNames);

@@ -4,6 +4,7 @@ import {
   buildSchemaContextRequiredMessage,
   buildSchemaRegroundingPrompt,
   buildSqlRegroundingPrompt,
+  extractCteNamesFromSql,
   extractReferencedTableNamesFromSql,
   findMatchingTableName,
   findSystemCatalogReferences,
@@ -151,6 +152,30 @@ describe("AI agent grounding", () => {
     expect(extractReferencedTableNamesFromSql(sql)).toEqual([
       "users", "expired_sessions", "daily_orders", "accounts", "audit_logs",
     ]);
+  });
+
+  it("ignores CTE aliases and set-returning functions in FROM clauses", () => {
+    const sql = [
+      "WITH row_counts AS (",
+      "  SELECT 'bots' AS t, COUNT(*) FROM bots UNION ALL",
+      "  SELECT 'campaigns', COUNT(*) FROM campaigns",
+      ")",
+      "SELECT t, n FROM row_counts CROSS JOIN generate_series(1, 3) g;",
+    ].join("\n");
+    // row_counts is a CTE alias; generate_series is a set-returning function —
+    // only the real tables should be reported.
+    expect(extractReferencedTableNamesFromSql(sql)).toEqual(["bots", "campaigns"]);
+    expect([...extractCteNamesFromSql(sql)]).toEqual(["row_counts"]);
+  });
+
+  it("does not count CTE references as unknown tables in schema requirements", () => {
+    const requirements = getAgentSqlSchemaRequirements(
+      "WITH totals AS (SELECT COUNT(*) AS n FROM bots) SELECT * FROM totals",
+      ["bots"],
+      new Set(["bots"]),
+    );
+    expect(requirements.unknown).toEqual([]);
+    expect(requirements.uninspected).toEqual([]);
   });
 
   it("accepts verified and system tables while rejecting invented tables", () => {

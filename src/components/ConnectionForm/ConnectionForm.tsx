@@ -761,6 +761,7 @@ export function ConnectionForm({
         language={language}
         bootstrapMode={bootstrapMode}
         editConnection={!!editConnection}
+        showCloseButton={!embeddedInStartupShell}
         selectedDb={selectedDb}
         pickerSearch={pickerSearch}
         pickerSections={pickerSections}
@@ -799,6 +800,7 @@ export function ConnectionForm({
     <ConnectionDetailsStep
       language={language}
       editConnection={!!editConnection}
+      showCloseButton={!embeddedInStartupShell}
       bootstrapMode={bootstrapMode}
       formData={formData}
       selectedDb={selectedDb}

@@ -1,5 +1,17 @@
-import { type ChangeEvent, type RefObject } from "react";
-import { Eye, EyeOff, ArrowLeft, X, FileUp } from "lucide-react";
+import { type ChangeEvent, type RefObject, useState, useRef } from "react";
+import {
+  Eye,
+  EyeOff,
+  ArrowLeft,
+  X,
+  FileUp,
+  User,
+  Server,
+  FolderOpen,
+  ShieldCheck,
+  SlidersHorizontal,
+  Database,
+} from "lucide-react";
 import { DatabaseBrandIcon } from "../DatabaseBrandIcon";
 import type { ConnectionConfig } from "../../../types";
 import type { AppLanguage } from "../../../i18n";
@@ -9,6 +21,7 @@ import { resolveFieldWithMeta } from "../../../utils/env-resolve";
 export interface ConnectionDetailsStepProps {
   language: AppLanguage;
   editConnection: boolean;
+  showCloseButton?: boolean;
   bootstrapMode: boolean;
   formData: ConnectionConfig;
   selectedDb: DbEntry | null;
@@ -176,6 +189,7 @@ function ColorPalette({ selectedColor, onSelectColor, label, hint }: ColorPalett
 export function ConnectionDetailsStep({
   language,
   editConnection,
+  showCloseButton = true,
   bootstrapMode,
   formData,
   selectedDb,
@@ -238,6 +252,100 @@ export function ConnectionDetailsStep({
   const showBootstrapSection = showBootstrapWorkflow && (!isFileEngine || bootstrapMode);
   const showCreateAndOpenAction = showBootstrapWorkflow && (!isFileEngine || bootstrapMode);
 
+  const isVi = language === "vi";
+  const sectionMeta: Record<string, { kicker: string; title: string; copy: string; label: string }> = {
+    identity: {
+      kicker: strings.profile,
+      title: strings.connectionIdentity,
+      copy: strings.identityCopy,
+      label: isVi ? "Nhận diện" : "Identity",
+    },
+    storage: {
+      kicker: strings.storage,
+      title: strings.databaseFile,
+      copy: bootstrapMode ? strings.databaseFileBootstrapCopy : strings.databaseFileConnectCopy,
+      label: isVi ? "Tệp CSDL" : "Database file",
+    },
+    network: {
+      kicker: strings.network,
+      title: strings.connectionDetails,
+      copy: strings.detailsCopy,
+      label: isVi ? "Kết nối" : "Connection",
+    },
+    advanced: {
+      kicker: isVi ? "Nâng cao" : "Advanced",
+      title: isVi ? "SSL, SSH & script" : "SSL, SSH & scripts",
+      copy: isVi
+        ? "Bảo mật kết nối và các lệnh chạy kèm khi mở phiên làm việc."
+        : "Connection security and commands that run around the session.",
+      label: isVi ? "Nâng cao" : "Advanced",
+    },
+    engineFields: {
+      kicker: selectedDb?.label || "Engine",
+      title: strings.engineFields,
+      copy: strings.engineFieldsCopy,
+      label: isVi ? "Tham số engine" : "Engine options",
+    },
+    bootstrap: {
+      kicker: strings.bootstrap,
+      title: strings.starterSchemaSeedSql,
+      copy: strings.starterSchemaSeedSqlCopy,
+      label: isVi ? "Bootstrap SQL" : "Bootstrap SQL",
+    },
+  };
+
+  const [activeSection, setActiveSection] = useState("identity");
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  const SECTION_ORDER = ["identity", "storage", "network", "advanced", "engineFields", "bootstrap"];
+
+  // Scroll-spy: highlight the rail item whose section is currently in view.
+  const handlePanelScroll = () => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const renderedKeys = SECTION_ORDER.filter((key) => sectionRefs.current[key]);
+    if (renderedKeys.length === 0) return;
+    // When scrolled to the bottom, always highlight the last section —
+    // short final sections (e.g. Bootstrap SQL) may never reach the threshold.
+    if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 8) {
+      setActiveSection(renderedKeys[renderedKeys.length - 1]);
+      return;
+    }
+    const threshold = panel.getBoundingClientRect().top + 96;
+    let current = renderedKeys[0];
+    for (const key of renderedKeys) {
+      const el = sectionRefs.current[key];
+      if (!el) continue;
+      if (el.getBoundingClientRect().top <= threshold) current = key;
+    }
+    setActiveSection(current);
+  };
+
+  // Clicking a rail item smoothly scrolls the panel to that section.
+  const handleRailClick = (key: string) => {
+    const panel = panelRef.current;
+    const el = sectionRefs.current[key];
+    if (!panel || !el) return;
+    const offset = el.getBoundingClientRect().top - panel.getBoundingClientRect().top;
+    panel.scrollTo({ top: panel.scrollTop + offset - 8, behavior: "smooth" });
+    setActiveSection(key);
+  };
+
+  const railSections = [
+    { key: "identity", icon: User },
+    ...(isFileEngine
+      ? [{ key: "storage", icon: FolderOpen }]
+      : [
+          { key: "network", icon: Server },
+          { key: "advanced", icon: ShieldCheck },
+        ]),
+    ...(engineExtraFields.length > 0
+      ? [{ key: "engineFields", icon: SlidersHorizontal }]
+      : []),
+    ...(showBootstrapSection ? [{ key: "bootstrap", icon: Database }] : []),
+  ];
+
   return (
     <>
       <div className="connection-form-header">
@@ -268,8 +376,10 @@ export function ConnectionDetailsStep({
           )}
 
           <div className="connection-form-header-copy">
-            <span className="panel-kicker">{editConnection ? strings.editConnection : strings.readyToConfigure}</span>
-            <h2 className="connection-form-title">{connectionTitle}</h2>
+            <h2 className="connection-form-title">
+              {connectionTitle}
+              <span className="connection-form-title-dot" aria-hidden="true" />
+            </h2>
             <p className="connection-form-subtitle">{strings.configureSubtitle}</p>
             {bootstrapMode && (
               <p className="connection-form-subtitle">{strings.configureLocalSubtitle}</p>
@@ -279,29 +389,58 @@ export function ConnectionDetailsStep({
 
         <div className="connection-form-header-side">
           {selectedDb && <span className="connection-form-engine-pill">{selectedDb.label}</span>}
-          <button
-            type="button"
-            onClick={onClose}
-            className="connection-form-close"
-            title={strings.close}
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {showCloseButton && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="connection-form-close"
+              title={strings.close}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="connection-form-body">
-        {/* Identity section */}
-        <section className="connection-form-section">
-          <div className="connection-form-section-head">
-            <div>
-              <span className="connection-form-section-kicker">{strings.profile}</span>
-              <h3 className="connection-form-section-title">{strings.connectionIdentity}</h3>
-            </div>
-            <p className="connection-form-section-copy">{strings.identityCopy}</p>
-          </div>
+      <div className="connection-form-layout">
+        <aside className="connection-form-rail">
+          <span className="connection-form-rail-label">{isVi ? "Cấu hình" : "Setup"}</span>
+          {railSections.map((section) => {
+            const Icon = section.icon;
+            return (
+              <button
+                key={section.key}
+                type="button"
+                onClick={() => handleRailClick(section.key)}
+                className={`connection-form-rail-item ${activeSection === section.key ? "active" : ""}`}
+              >
+                <Icon className="connection-form-rail-item-icon" />
+                <span className="connection-form-rail-item-text">
+                  {sectionMeta[section.key]?.label}
+                </span>
+                <span
+                  className={`connection-form-rail-item-dot ${activeSection === section.key ? "done" : ""}`}
+                />
+              </button>
+            );
+          })}
+        </aside>
 
-          <div className="connection-form-profile-grid">
+        <div className="connection-form-panel" ref={panelRef} onScroll={handlePanelScroll}>
+          {/* Identity section */}
+          <section
+            ref={(el) => { sectionRefs.current.identity = el; }}
+            className="connection-form-panel-section"
+          >
+            <div className="connection-form-panel-head">
+              <div>
+                <span className="connection-form-section-kicker">{sectionMeta.identity.kicker}</span>
+                <h3 className="connection-form-panel-title">{sectionMeta.identity.title}</h3>
+              </div>
+              <p className="connection-form-section-copy">{sectionMeta.identity.copy}</p>
+            </div>
+
+            <div className="connection-form-profile-grid">
             <div className="connection-form-field">
               <label className="form-label uppercase tracking-wide">{strings.name}</label>
               <input
@@ -319,20 +458,21 @@ export function ConnectionDetailsStep({
               label={strings.color}
               hint={strings.colorHint}
             />
-          </div>
-        </section>
+            </div>
+          </section>
 
-        {/* File DB section */}
-        {isFileEngine ? (
-          <section className="connection-form-section">
-            <div className="connection-form-section-head">
+        {/* Storage section (file engines) */}
+        {isFileEngine && (
+          <section
+            ref={(el) => { sectionRefs.current.storage = el; }}
+            className="connection-form-panel-section"
+          >
+            <div className="connection-form-panel-head">
               <div>
-                <span className="connection-form-section-kicker">{strings.storage}</span>
-                <h3 className="connection-form-section-title">{strings.databaseFile}</h3>
+                <span className="connection-form-section-kicker">{sectionMeta.storage.kicker}</span>
+                <h3 className="connection-form-panel-title">{sectionMeta.storage.title}</h3>
               </div>
-              <p className="connection-form-section-copy">
-                {bootstrapMode ? strings.databaseFileBootstrapCopy : strings.databaseFileConnectCopy}
-              </p>
+              <p className="connection-form-section-copy">{sectionMeta.storage.copy}</p>
             </div>
 
             {bootstrapMode ? (
@@ -416,15 +556,20 @@ export function ConnectionDetailsStep({
               </div>
             )}
           </section>
-        ) : (
-          /* Server DB section */
-          <section className="connection-form-section">
-            <div className="connection-form-section-head">
+        )}
+
+        {/* Network section (server engines) */}
+        {!isFileEngine && (
+          <section
+            ref={(el) => { sectionRefs.current.network = el; }}
+            className="connection-form-panel-section"
+          >
+            <div className="connection-form-panel-head">
               <div>
-                <span className="connection-form-section-kicker">{strings.network}</span>
-                <h3 className="connection-form-section-title">{strings.connectionDetails}</h3>
+                <span className="connection-form-section-kicker">{sectionMeta.network.kicker}</span>
+                <h3 className="connection-form-panel-title">{sectionMeta.network.title}</h3>
               </div>
-              <p className="connection-form-section-copy">{strings.detailsCopy}</p>
+              <p className="connection-form-section-copy">{sectionMeta.network.copy}</p>
             </div>
 
             <div className="connection-form-grid connection-form-grid-host">
@@ -524,6 +669,22 @@ export function ConnectionDetailsStep({
                 )}
               </div>
             )}
+          </section>
+        )}
+
+        {/* Advanced section (server engines) */}
+        {!isFileEngine && (
+          <section
+            ref={(el) => { sectionRefs.current.advanced = el; }}
+            className="connection-form-panel-section"
+          >
+            <div className="connection-form-panel-head">
+              <div>
+                <span className="connection-form-section-kicker">{sectionMeta.advanced.kicker}</span>
+                <h3 className="connection-form-panel-title">{sectionMeta.advanced.title}</h3>
+              </div>
+              <p className="connection-form-section-copy">{sectionMeta.advanced.copy}</p>
+            </div>
 
             {showSslToggle && (
               <div className="connection-form-toggle-row">
@@ -698,16 +859,22 @@ export function ConnectionDetailsStep({
                 Shell script executed locally before establishing the connection to the database.
               </span>
             </div>
+          </section>
+        )}
 
-            {engineExtraFields.length > 0 && (
-              <section className="connection-form-section">
-                <div className="connection-form-section-head">
-                  <div>
-                    <span className="connection-form-section-kicker">{selectedDb?.label || "Engine"}</span>
-                    <h3 className="connection-form-section-title">{strings.engineFields}</h3>
-                  </div>
-                  <p className="connection-form-section-copy">{strings.engineFieldsCopy}</p>
-                </div>
+        {/* Engine fields */}
+        {engineExtraFields.length > 0 && (
+          <section
+            ref={(el) => { sectionRefs.current.engineFields = el; }}
+            className="connection-form-panel-section"
+          >
+            <div className="connection-form-panel-head">
+              <div>
+                <span className="connection-form-section-kicker">{sectionMeta.engineFields.kicker}</span>
+                <h3 className="connection-form-panel-title">{sectionMeta.engineFields.title}</h3>
+              </div>
+              <p className="connection-form-section-copy">{sectionMeta.engineFields.copy}</p>
+            </div>
 
                 <div className="connection-form-grid">
                   {engineExtraFields.map((field) => (
@@ -729,19 +896,22 @@ export function ConnectionDetailsStep({
                     </div>
                   ))}
                 </div>
-              </section>
-            )}
+          </section>
+        )}
 
-            {/* Bootstrap section */}
-            {showBootstrapSection && (
-              <section className="connection-form-section">
-                <div className="connection-form-section-head">
-                  <div>
-                    <span className="connection-form-section-kicker">{strings.bootstrap}</span>
-                    <h3 className="connection-form-section-title">{strings.starterSchemaSeedSql}</h3>
-                  </div>
-                  <p className="connection-form-section-copy">{strings.starterSchemaSeedSqlCopy}</p>
-                </div>
+        {/* Bootstrap section */}
+        {showBootstrapSection && (
+          <section
+            ref={(el) => { sectionRefs.current.bootstrap = el; }}
+            className="connection-form-panel-section"
+          >
+            <div className="connection-form-panel-head">
+              <div>
+                <span className="connection-form-section-kicker">{sectionMeta.bootstrap.kicker}</span>
+                <h3 className="connection-form-panel-title">{sectionMeta.bootstrap.title}</h3>
+              </div>
+              <p className="connection-form-section-copy">{sectionMeta.bootstrap.copy}</p>
+            </div>
 
                 <div className="connection-form-grid">
                   <div className="connection-form-field">
@@ -795,8 +965,6 @@ export function ConnectionDetailsStep({
                   />
                   <span className="connection-form-field-hint">{strings.additionalSqlHint}</span>
                 </div>
-              </section>
-            )}
           </section>
         )}
 
@@ -805,10 +973,15 @@ export function ConnectionDetailsStep({
             <span className="break-words">{testResult.message}</span>
           </div>
         )}
+        </div>
       </div>
 
       <div className="connection-form-footer">
         <div className="connection-form-footer-left">
+          <button onClick={onClose} className="btn btn-secondary">{strings.cancel}</button>
+        </div>
+
+        <div className="connection-form-footer-actions">
           <button onClick={onTest} disabled={isTesting} className="btn btn-secondary">
             {strings.testConnection}
           </button>
@@ -822,10 +995,6 @@ export function ConnectionDetailsStep({
               {strings.createAndOpen}
             </button>
           )}
-        </div>
-
-        <div className="connection-form-footer-actions">
-          <button onClick={onClose} className="btn btn-secondary">{strings.cancel}</button>
           {showCreateAndOpenAction && bootstrapMode ? (
             <button
               type="button"

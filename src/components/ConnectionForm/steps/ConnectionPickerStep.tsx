@@ -63,6 +63,7 @@ export interface ConnectionPickerStepProps {
   language: AppLanguage;
   bootstrapMode: boolean;
   editConnection?: boolean;
+  showCloseButton?: boolean;
   selectedDb: DbEntry | null;
   pickerSearch: string;
   pickerSections: PickerSection[];
@@ -292,6 +293,7 @@ export function ConnectionPickerStep({
   roadmapCount,
   localRoadmapCount,
   strings,
+  showCloseButton = true,
   onSearchChange,
   onSelectDb,
   onDoubleClickDb,
@@ -374,14 +376,16 @@ export function ConnectionPickerStep({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="connection-picker-close connection-picker-topbar-close"
-            title={strings.close}
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {showCloseButton && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="connection-picker-close connection-picker-topbar-close"
+              title={strings.close}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 

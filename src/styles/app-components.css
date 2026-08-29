@@ -2131,6 +2131,8 @@
   display: flex;
   flex-direction: column;
   width: 100%;
+  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
   overflow: visible;
   border: none;
@@ -3593,7 +3595,13 @@
 .connection-form-body input[type="password"],
 .connection-form-body select,
 .connection-form-body textarea,
-.connection-form-body .input {
+.connection-form-body .input,
+.connection-form-panel input[type="text"],
+.connection-form-panel input[type="number"],
+.connection-form-panel input[type="password"],
+.connection-form-panel select,
+.connection-form-panel textarea,
+.connection-form-panel .input {
   background: #ffffff !important;
   border: 1px solid #eeeeef !important;
   border-radius: 0px !important;
@@ -3611,7 +3619,12 @@
 .connection-form-body input[type="number"]:not(textarea),
 .connection-form-body input[type="password"]:not(textarea),
 .connection-form-body select:not(textarea),
-.connection-form-body .input:not(textarea) {
+.connection-form-body .input:not(textarea),
+.connection-form-panel input[type="text"]:not(textarea),
+.connection-form-panel input[type="number"]:not(textarea),
+.connection-form-panel input[type="password"]:not(textarea),
+.connection-form-panel select:not(textarea),
+.connection-form-panel .input:not(textarea) {
   height: 40px !important;
 }
 
@@ -3621,7 +3634,13 @@
 .connection-form-body input[type="password"]:focus,
 .connection-form-body select:focus,
 .connection-form-body textarea:focus,
-.connection-form-body .input:focus {
+.connection-form-body .input:focus,
+.connection-form-panel input[type="text"]:focus,
+.connection-form-panel input[type="number"]:focus,
+.connection-form-panel input[type="password"]:focus,
+.connection-form-panel select:focus,
+.connection-form-panel textarea:focus,
+.connection-form-panel .input:focus {
   border: 1px solid #707071 !important;
   outline: none !important;
   box-shadow: none !important;
@@ -3631,7 +3650,10 @@
 /* Placeholder styling */
 .connection-form-body input::placeholder,
 .connection-form-body textarea::placeholder,
-.connection-form-body .input::placeholder {
+.connection-form-body .input::placeholder,
+.connection-form-panel input::placeholder,
+.connection-form-panel textarea::placeholder,
+.connection-form-panel .input::placeholder {
   color: #9f9f9f !important;
 }
 
@@ -12902,14 +12924,21 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .connection-form-title {
   margin-top: 3px;
+  color: var(--text-primary);
   font-size: var(--mm-fs-heading);
   line-height: 1.05;
   font-weight: 700;
   letter-spacing: -0.03em;
-  background: linear-gradient(135deg, var(--mm-surface-3), var(--mm-surface-3));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+}
+
+.connection-form-title-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 10px;
+  border-radius: 50%;
+  background: var(--fintech-green, #22c55e);
+  vertical-align: 6%;
 }
 
 .connection-form-subtitle {
@@ -13000,6 +13029,166 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   color: var(--text-muted);
   font-size: var(--mm-fs-micro);
   line-height: 1.5;
+}
+
+/* ─── Master-detail layout (rail + panel) ───────────────────────────────────── */
+
+.connection-form-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connection-form-header-actions .btn {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+}
+
+.connection-form-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+}
+
+.connection-form-rail {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 12px;
+  border-right: 1px solid rgba(0, 122, 255, 0.08);
+}
+
+.connection-form-rail-label {
+  padding: 2px 10px 8px;
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.connection-form-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.connection-form-rail-item:hover {
+  color: var(--text-primary);
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.connection-form-rail-item.active {
+  color: var(--accent-hover);
+  border-color: rgba(0, 122, 255, 0.28);
+  background: rgba(0, 122, 255, 0.1);
+}
+
+.connection-form-rail-item-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+.connection-form-rail-item-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-form-rail-item-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(128, 138, 155, 0.35);
+  transition: background 0.15s;
+}
+
+.connection-form-rail-item-dot.done {
+  background: var(--fintech-green, #22c55e);
+}
+
+.connection-form-panel {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 22px 20px;
+}
+
+.connection-form-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scroll-margin-top: 8px;
+}
+
+.connection-form-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(0, 122, 255, 0.08);
+}
+
+.connection-form-panel-head > div {
+  min-width: 0;
+}
+
+.connection-form-panel-title {
+  margin-top: 4px;
+  color: var(--text-primary);
+  font-size: var(--mm-fs-subheading);
+  line-height: 1.2;
+  font-weight: 700;
+}
+
+@media (max-width: 860px) {
+  .connection-form-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .connection-form-rail {
+    flex-direction: row;
+    align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: 6px;
+    padding: 10px 12px;
+    border-right: none;
+    border-bottom: 1px solid rgba(0, 122, 255, 0.08);
+  }
+
+  .connection-form-rail-label {
+    display: none;
+  }
+
+  .connection-form-rail-item {
+    width: auto;
+    flex-shrink: 0;
+  }
 }
 
 .connection-form-profile-grid {
@@ -13102,13 +13291,12 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .connection-form-color-swatch:hover,
 .connection-form-color-swatch.active {
   transform: translateY(-1px) scale(1.04);
-  box-shadow:
-    0 8px 18px rgba(0, 0, 0, 0.24),
-    0 0 0 1px rgba(255, 255, 255, 0.18);
+  box-shadow: none;
 }
 
 .connection-form-color-swatch.active {
-  border-color: var(--mm-border);
+  border-color: #111318;
+  box-shadow: 0 0 0 1px #111318;
 }
 
 .connection-form-grid {
@@ -26261,6 +26449,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .connection-picker-v2 .connection-picker-head {
   display: grid;
+  /* Right column hugs its content so the toggle/stats block always lines up
+     with the content edge below (same 16px inset as the picker body). */
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   padding: 14px 16px 12px;
   border-bottom: 1px solid rgba(0, 122, 255, 0.08);
@@ -34082,6 +34273,14 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   width: 100%;
   max-width: 1080px;
   margin-inline: auto;
+}
+
+/* Connection form shell fills the whole window width */
+.connection-form-shell-frame {
+  max-width: none;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-sidebar {

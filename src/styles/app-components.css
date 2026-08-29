@@ -34515,6 +34515,117 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   filter: brightness(1.08);
 }
 
+/* ── Connection picker: provider-settings style rail + detail panel ────── */
+
+.connection-picker-v2 .connection-picker-layout {
+  grid-template-columns: 252px minmax(0, 1fr);
+}
+
+.connection-picker-v2 .connection-picker-main {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Left rail: compact searchable engine list. */
+.connection-picker-rail {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-1);
+}
+
+.connection-picker-rail .connection-picker-searchbar {
+  flex: 0 0 auto;
+}
+
+.connection-picker-rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.connection-picker-rail-group-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 8px 4px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.connection-picker-rail-group-count {
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+
+.connection-picker-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.connection-picker-rail-item:hover {
+  background: var(--mm-surface-2);
+}
+
+.connection-picker-rail-item.selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.connection-picker-rail-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  flex: 0 0 auto;
+}
+
+.connection-picker-rail-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-picker-rail-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--mm-border);
+}
+
+.connection-picker-rail-dot.supported {
+  background: var(--fintech-green);
+}
+
+.connection-picker-rail-dot.soon {
+  background: var(--mm-border);
+}
+
 /* ── Plugin manager: compact redesign ──────────────────────────────────── */
 
 .app-plugin-manager-modal {

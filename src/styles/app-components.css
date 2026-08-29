@@ -35293,3 +35293,22 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   right: auto;
   left: 0;
 }
+
+/* ─── Workspace switcher popover must float above the conversation ─── */
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher {
+  position: relative;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher.is-open {
+  z-index: 60;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher .ai-workspace-history-popover,
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  z-index: 70;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  max-height: min(480px, calc(100vh - 200px));
+  overflow-y: auto;
+}

@@ -662,6 +662,20 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         // silently rotated away by automatic failover.
         const runStartedAt = Date.now();
 
+        // Announce a manual provider pick (mid-run) in the same step log the
+        // automatic failover note uses, so the conversation shows the switch.
+        const handleManualProviderSwitch = (event: Event) => {
+          const detail = (event as CustomEvent<{ providerLabel?: string }>).detail;
+          const nextLabel = detail?.providerLabel?.trim();
+          if (!nextLabel) return;
+          const note = appLanguage === "vi"
+            ? `Bạn đã chọn provider "${nextLabel}" — các bước tiếp theo sẽ chạy trên provider này.`
+            : `You switched to provider "${nextLabel}" — the following steps run on it.`;
+          failoverNoteLines.push(note);
+          publishAgentProgress({ action: "think", message: note });
+        };
+        window.addEventListener("ai-provider-switched-during-run", handleManualProviderSwitch);
+
         const agentRunnerResult = await runAIAgentToolLoop({
           workspaceToolsEnabled,
           stepBudget: agentStepBudget,
@@ -845,6 +859,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           },
         });
         agentTraceSteps = agentRunnerResult.steps;
+        window.removeEventListener("ai-provider-switched-during-run", handleManualProviderSwitch);
         let finalAction = agentRunnerResult.finalAction;
         let finalSteps = agentRunnerResult.steps;
         if (endedWithAskUser && typeof finalAction.args?.response === "string") {

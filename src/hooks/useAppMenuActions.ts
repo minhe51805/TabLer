@@ -4,7 +4,6 @@ import type { AdminQueryKind } from "../utils/admin-query-presets";
 
 export interface AppMenuActionHandlers {
   activeTab: { type: string; id: string } | null;
-  handleOpenConnectionForm: (intent: "connect" | "bootstrap") => void;
   handleOpenDatabaseFile: () => void;
   handleImportSqlFile: () => void;
   handleImportSqlIntoCurrentDatabase: () => void;
@@ -42,7 +41,6 @@ export interface AppMenuActionHandlers {
 export function useAppMenuActions(handlers: AppMenuActionHandlers) {
   const {
     activeTab,
-    handleOpenConnectionForm,
     handleOpenDatabaseFile,
     handleImportSqlFile,
     handleImportSqlIntoCurrentDatabase,
@@ -78,7 +76,6 @@ export function useAppMenuActions(handlers: AppMenuActionHandlers) {
 
   return useMemo(
     () => ({
-      onNewConnection: handleOpenConnectionForm.bind(null, "connect"),
       onOpenDatabaseFile: handleOpenDatabaseFile,
       onImportSqlFile: handleImportSqlFile,
       onImportSqlIntoCurrentDatabase: handleImportSqlIntoCurrentDatabase,
@@ -134,7 +131,6 @@ export function useAppMenuActions(handlers: AppMenuActionHandlers) {
       handleNewQuery,
       handleOpenAdminQuery,
       handleOpenAISlidePanel,
-      handleOpenConnectionForm,
       handleOpenDatabaseFile,
       handleOpenMetricsBoard,
       handleRefreshWorkspace,

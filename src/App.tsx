@@ -604,7 +604,6 @@ function App() {
 
   const menuActions = useAppMenuActions({
     activeTab,
-    handleOpenConnectionForm,
     handleOpenDatabaseFile,
     handleImportSqlFile,
     handleImportSqlIntoCurrentDatabase,

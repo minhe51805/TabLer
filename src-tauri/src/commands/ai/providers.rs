@@ -1,5 +1,6 @@
 use crate::database::ai_models::{AIProviderConfig, AIProviderType, AIRequestMode};
 use serde_json::json;
+#[cfg(test)]
 use std::collections::HashMap;
 
 use super::endpoints::{

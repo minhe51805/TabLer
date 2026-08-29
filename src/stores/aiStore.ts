@@ -28,6 +28,34 @@ const AI_TIMEOUTS = {
 /** Active provider first, then at most this many enabled fallbacks. */
 const MAX_PROVIDER_ATTEMPTS = 3;
 
+/**
+ * Explicit user provider switches win over automatic failover: the panel
+ * hook marks the moment of a manual pick, and the agent retry loop skips
+ * auto-promotion when the user chose a provider during the current run.
+ */
+let manualProviderOverrideAt = 0;
+export function markManualProviderOverride() {
+  manualProviderOverrideAt = Date.now();
+}
+export function getManualProviderOverrideAt() {
+  return manualProviderOverrideAt;
+}
+
+/**
+ * All provider-config persistence funnels through one chain, so an automatic
+ * failover write and a user switch can never interleave and clobber each
+ * other — last queued write wins, in order.
+ */
+const configSaveChain = { current: Promise.resolve() };
+function enqueueConfigSave<T>(task: () => Promise<T>): Promise<T> {
+  const run = configSaveChain.current.then(task, task);
+  configSaveChain.current = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export type AIRequestPhase = "idle" | "requesting" | "cancelling";
 
 function createAIRequestId() {
@@ -60,6 +88,8 @@ export interface AIState {
   streamingText: string;
   streamingReasoning: boolean;
   streamingUsage: Record<string, unknown> | null;
+  /** True while an automatic provider failover is switching the active provider. */
+  isProviderFailingOver: boolean;
 
   loadAIConfigs: () => Promise<{
     aiConfigs: AIProviderConfig[];
@@ -114,7 +144,9 @@ function switchActiveProvider(
   const normalized = normalizeAIProviderConfigs(
     configs.map((config) => ({ ...config, is_primary: config.id === next.id })),
   );
-  set({ aiConfigs: normalized });
+  // Surface the automatic switch in the panel: the composer model trigger
+  // shows the spinner until the (queued) persistence settles.
+  set({ aiConfigs: normalized, isProviderFailingOver: true });
   emitAppToast({
     title: translateLanguage(getCurrentAppLanguage(), "ai.toast.providerFailover", {
       failed: failed.name || failed.id,
@@ -125,12 +157,15 @@ function switchActiveProvider(
   });
   // Best-effort persistence: the retried request must not wait on the disk
   // write, and a failed save still leaves the runtime switch in place.
-  void invokeMutation<[AIProviderConfig[], Record<string, boolean>]>(
-    "save_ai_configs",
-    { providers: normalized, apiKeyUpdates: {}, clearedProviderIds: [] },
-  )
+  // Queued behind other config saves so it can never clobber a user pick.
+  void enqueueConfigSave(() =>
+    invokeMutation<[AIProviderConfig[], Record<string, boolean>]>(
+      "save_ai_configs",
+      { providers: normalized, apiKeyUpdates: {}, clearedProviderIds: [] },
+    ))
     .then(([aiConfigs]) => set({ aiConfigs }))
-    .catch((error) => console.warn("[AI] Failed to persist provider failover:", error));
+    .catch((error) => console.warn("[AI] Failed to persist provider failover:", error))
+    .finally(() => set({ isProviderFailingOver: false }));
 }
 
 export const useAIStore = create<AIState>((set, get) => ({
@@ -140,6 +175,7 @@ export const useAIStore = create<AIState>((set, get) => ({
   streamingText: "",
   streamingReasoning: false,
   streamingUsage: null,
+  isProviderFailingOver: false,
 
   loadAIConfigs: async () => {
     try {
@@ -156,9 +192,11 @@ export const useAIStore = create<AIState>((set, get) => ({
 
   saveAIConfigs: async (configs, apiKeyUpdates, clearedProviderIds) => {
     try {
-      const [aiConfigs, aiKeyStatus] = await invokeMutation<
-        [AIProviderConfig[], Record<string, boolean>]
-      >("save_ai_configs", { providers: configs, apiKeyUpdates, clearedProviderIds });
+      const [aiConfigs, aiKeyStatus] = await enqueueConfigSave(() =>
+        invokeMutation<[AIProviderConfig[], Record<string, boolean>]>(
+          "save_ai_configs",
+          { providers: configs, apiKeyUpdates, clearedProviderIds },
+        ));
       set({ aiConfigs });
       return { aiConfigs, aiKeyStatus };
     } catch (e) {

@@ -1,5 +1,6 @@
 use crate::database::ai_models::{AIProviderConfig, AIProviderType, AIRequestMode};
 use serde_json::json;
+use std::collections::HashMap;
 
 use super::endpoints::{
     is_nvidia_integrate_endpoint, is_ollama_native_chat_endpoint,
@@ -243,6 +244,7 @@ pub(crate) fn sample_provider(provider_type: AIProviderType) -> AIProviderConfig
         api_format: None,
         models: Vec::new(),
         disabled_models: Vec::new(),
+        model_settings: HashMap::new(),
     }
 }
 

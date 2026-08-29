@@ -14602,12 +14602,87 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: min(420px, 90vw);
+  width: min(460px, 92vw);
+  max-height: min(640px, 92vh);
+  overflow-y: auto;
   padding: 18px;
   border: 1px solid var(--mm-border);
   border-radius: 14px;
   background: var(--mm-surface-0);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+
+.ai-settings-model-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-settings-model-dialog-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ai-settings-model-dialog .ai-settings-label {
+  margin-bottom: -4px;
+}
+
+.ai-settings-type-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ai-settings-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.ai-settings-type-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.ai-settings-type-chip.is-on {
+  border-color: var(--accent);
+  background: var(--mm-primary-soft, rgba(0, 122, 255, 0.1));
+  color: var(--text-primary);
+}
+
+.ai-settings-type-chip:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.ai-settings-type-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-0);
+  color: var(--accent);
+}
+
+.ai-settings-type-chip.is-on .ai-settings-type-check {
+  border-color: var(--accent);
 }
 
 .ai-settings-model-dialog-actions {
@@ -27281,8 +27356,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   z-index: 12;
   width: min(300px, calc(100vw - 48px));
   display: grid;
-  gap: 8px;
-  padding: 12px;
+  gap: 6px;
+  padding: 10px;
   border-radius: 16px;
   border: 1px solid rgba(0, 122, 255, 0.1);
   background:
@@ -27319,15 +27394,15 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-list {
   display: grid;
-  gap: 6px;
-  max-height: 136px;
+  gap: 4px;
+  max-height: 216px;
   overflow-y: auto;
   padding-right: 2px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-empty {
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
   border: 1px dashed rgba(0, 122, 255, 0.12);
   background: var(--mm-surface-1);
   color: var(--text-muted);
@@ -27337,12 +27412,12 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 12px;
+  padding: 6px 9px;
+  border-radius: 10px;
   border: 1px solid rgba(0, 122, 255, 0.08);
   background: var(--mm-surface-1);
   color: var(--text-secondary);
@@ -27351,6 +27426,59 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
     border-color 160ms ease,
     background 160ms ease,
     color 160ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-select {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-icon {
+  flex-shrink: 0;
+  color: var(--fintech-cyan);
+  opacity: 0.7;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item:hover .ai-workspace-history-item-icon {
+  opacity: 1;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item.is-active .ai-workspace-history-item-icon {
+  color: var(--fintech-green);
+  opacity: 1;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-rename {
+  min-width: 0;
+  width: 100%;
+  padding: 4px 8px;
+  font-size: var(--mm-fs-caption);
+  font-weight: 700;
+  color: var(--text-primary);
+  background: var(--mm-surface-0);
+  border: 1px solid rgba(0, 122, 255, 0.4);
+  border-radius: 8px;
+  outline: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-meta-dot {
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin: 0 6px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: middle;
+  opacity: 0.55;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item:hover {
@@ -27376,6 +27504,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   font-size: var(--mm-fs-caption);
   font-weight: 700;
   color: inherit;
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -27384,6 +27514,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-meta {
   font-size: var(--mm-fs-micro);
   color: var(--text-muted);
+  flex-shrink: 0;
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-count {
@@ -27832,13 +27965,13 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-popover {
   width: min(272px, calc(100vw - 32px));
-  gap: 6px;
-  padding: 10px;
+  gap: 4px;
+  padding: 8px;
   border-radius: 12px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-list {
-  max-height: 124px;
+  max-height: 200px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-empty {
@@ -27848,9 +27981,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item {
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: 10px;
+  gap: 6px;
+  padding: 4px 7px;
+  border-radius: 9px;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-history-item-copy {
@@ -35087,4 +35220,327 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
     width: auto;
     white-space: nowrap;
   }
+}
+
+/* ─── AI chat workspace switcher (user workspaces + /compact) ─── */
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher {
+  min-width: 0;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-toggle {
+  max-width: 190px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-name {
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  width: min(320px, calc(100vw - 48px));
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-popover-section {
+  font-size: var(--mm-fs-micro);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fintech-cyan);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-title {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(0, 122, 255, 0.12);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-list {
+  display: grid;
+  gap: 4px;
+  max-height: 148px;
+  overflow-y: auto;
+}
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-search {
+  margin: 6px 2px 4px;
+  padding: 6px 10px;
+  width: 100%;
+  font-size: var(--mm-fs-caption);
+  color: var(--text-primary);
+  background: rgba(0, 122, 255, 0.05);
+  border: 1px solid rgba(0, 122, 255, 0.16);
+  border-radius: 8px;
+  outline: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-search::placeholder {
+  color: var(--text-tertiary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-search:focus {
+  border-color: rgba(0, 122, 255, 0.45);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-keywords {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-empty {
+  padding: 6px 2px 8px;
+  font-size: var(--mm-fs-caption);
+  color: var(--text-tertiary);
+  opacity: 0.75;
+}
+
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:hover {
+  background: rgba(0, 122, 255, 0.07);
+  color: var(--text-primary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item.is-active {
+  border-color: rgba(0, 122, 255, 0.22);
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item .lucide {
+  flex-shrink: 0;
+  color: var(--fintech-cyan);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-check {
+  color: var(--fintech-green);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-action:hover {
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-action.is-danger:hover {
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--error, #ef4444);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item.is-editing {
+  padding: 4px 6px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-rename-input {
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 122, 255, 0.25);
+  background: var(--mm-surface-0);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+  outline: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-rename-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-context-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--fintech-green);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.14);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-new {
+  border: 1px dashed rgba(0, 122, 255, 0.18);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ─── Workspace switcher: keep the chat tab bar on one line ─── */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-tabs {
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-toggle {
+  max-width: 128px;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-name {
+  max-width: 92px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-tab-current {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-toolbar-actions {
+  flex-shrink: 0;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  right: auto;
+  left: 0;
+}
+
+/* ─── Workspace switcher popover must float above the conversation ─── */
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher {
+  position: relative;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher.is-open {
+  z-index: 60;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher .ai-workspace-history-popover,
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  z-index: 70;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  max-height: min(480px, calc(100vh - 200px));
+  overflow-y: auto;
+}
+
+/* Popover is absolutely positioned inside the tab bar — it must not be clipped. */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-tabs {
+  overflow: visible;
+}
+
+/* ─── Context window meter above the composer buttons ─── */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter-track {
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--mm-surface-2);
+  overflow: hidden;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 220ms ease, background 220ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter.is-warn {
+  color: #b45309;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter.is-warn .ai-workspace-context-meter-fill {
+  background: #f59e0b;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter.is-critical {
+  color: var(--error, #ef4444);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter.is-critical .ai-workspace-context-meter-fill {
+  background: var(--error, #ef4444);
+}
+
+/* Pull the context meter tight against the composer button row */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter {
+  padding: 0 2px 1px;
+  margin-bottom: -4px;
 }

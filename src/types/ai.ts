@@ -2,6 +2,14 @@ export type AIProviderType = "openai" | "anthropic" | "gemini" | "openrouter" | 
 export type AIResponseLanguage = "en" | "vi" | "zh" | "tr" | "ko";
 export type AIConversationRole = "user" | "assistant";
 
+/** Optional per-model metadata: context budget and I/O capabilities. */
+export interface AIModelSettings {
+    context_window?: number | null;
+    max_output_tokens?: number | null;
+    input_types?: string[];
+    output_types?: string[];
+}
+
 export interface AIProviderConfig {
     id: string;
     name: string;
@@ -14,6 +22,8 @@ export interface AIProviderConfig {
     models?: string[];
     /** Models hidden from the composer switcher; kept for easy re-enabling. */
     disabled_models?: string[];
+    /** Per-model metadata keyed by model id; missing entry = provider defaults. */
+    model_settings?: Record<string, AIModelSettings>;
     is_enabled: boolean;
     is_primary?: boolean;
     allow_schema_context: boolean;

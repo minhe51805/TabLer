@@ -99,4 +99,8 @@ export interface AIWorkspaceBubbleData {
   /** Set once this SQL has been pushed to a Query tab; further "Duyệt chạy"
    *  clicks keep the button but must not spawn another tab. */
   openedInWorkspace?: boolean;
+  /** Timestamp when /compact folded this bubble into the workspace digest.
+   *  Compacted bubbles stay persisted (archived in SQLite) but are hidden
+   *  from the conversation and excluded from request history. */
+  compactedAt?: number;
 }

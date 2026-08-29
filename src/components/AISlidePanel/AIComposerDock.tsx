@@ -60,12 +60,25 @@ interface AIComposerDockProps {
   onCloseHistory: () => void;
   onGenerate: () => void;
   onCancelGeneration: () => void;
+  contextUsage?: { used: number; limit: number };
 }
 
 type ComposerMenu = "mode" | "provider" | "utility";
 
 const INTERACTION_MODES: AIWorkspaceInteractionMode[] = ["prompt", "edit", "agent"];
 const AGENT_AUTONOMY_OPTIONS: AIWorkspaceAgentAutonomy[] = ["review", "smart", "full"];
+
+function formatContextChars(chars: number) {
+  if (chars >= 1_000_000) {
+    const millions = chars / 1_000_000;
+    return `${millions >= 10 || Number.isInteger(millions) ? Math.round(millions) : millions.toFixed(1)}M`;
+  }
+  if (chars >= 1_000) {
+    const thousands = chars / 1_000;
+    return `${thousands >= 10 || Number.isInteger(thousands) ? Math.round(thousands) : thousands.toFixed(1)}k`;
+  }
+  return String(chars);
+}
 
 function getInteractionModeLabel(mode: AIWorkspaceInteractionMode, copy: AIWorkspaceCopy) {
   if (mode === "agent") return copy.composer.modeAgent;
@@ -135,11 +148,21 @@ export function AIComposerDock({
   onCloseHistory,
   onGenerate,
   onCancelGeneration,
+  contextUsage,
 }: AIComposerDockProps) {
   const [openMenu, setOpenMenu] = useState<ComposerMenu | null>(null);
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
   const [showHiddenModels, setShowHiddenModels] = useState(false);
   const commandBarRef = useRef<HTMLDivElement>(null);
+  const effectiveContextUsage = contextUsage ?? { used: 0, limit: 24_000 };
+  const usagePercent = effectiveContextUsage.limit > 0
+    ? Math.min(100, Math.round((effectiveContextUsage.used / effectiveContextUsage.limit) * 100))
+    : 0;
+  const contextMeterState = usagePercent >= 90
+    ? "is-critical"
+    : usagePercent >= 70
+      ? "is-warn"
+      : "";
   const activeProviderValue = activeProvider?.model?.trim()
     || activeProvider?.name?.trim()
     || copy.composer.noProvider;
@@ -227,6 +250,14 @@ export function AIComposerDock({
           placeholder={copy.composer.placeholder}
         />
 
+        <div className={`ai-workspace-context-meter ${contextMeterState}`} title={`${copy.workspace.contextBadge} · ${usagePercent}%`}>
+          <span className="ai-workspace-context-meter-value">{formatContextChars(effectiveContextUsage.used)}</span>
+          <div className="ai-workspace-context-meter-track">
+            <div className="ai-workspace-context-meter-fill" style={{ width: `${Math.max(2, usagePercent)}%` }} />
+          </div>
+          <span className="ai-workspace-context-meter-limit">{formatContextChars(effectiveContextUsage.limit)}</span>
+        </div>
+
         <div className={`ai-workspace-composer-footer ${footerNote ? "" : "is-note-hidden"}`}>
           <div className="ai-workspace-composer-footer-main">
             {footerNote ? (
@@ -289,7 +320,6 @@ export function AIComposerDock({
                   className={`ai-workspace-command-trigger ai-workspace-command-trigger--provider ${openMenu === "provider" ? "is-active" : ""}`}
                   aria-expanded={openMenu === "provider"}
                   aria-haspopup="menu"
-                  disabled={isSwitchingProvider}
                   onClick={() => toggleMenu("provider")}
                   title={activeProviderValue}
                 >

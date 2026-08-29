@@ -107,7 +107,10 @@ export function buildThreadLabel(prompt: string, index: number) {
   return summary.length > 24 ? `${summary.slice(0, 21).trimEnd()}...` : summary;
 }
 
-export function buildAIWorkspaceKey(connectionId: string | null, database: string | null) {
+export function buildAIWorkspaceKey(connectionId: string | null, database: string | null, userWorkspaceId?: string | null) {
+  // An explicit user workspace ("player bao bên ngoài") fully scopes threads:
+  // context lives with the workspace, not the raw connection/database pair.
+  if (userWorkspaceId) return `uw:${userWorkspaceId}`;
   return `${connectionId || "no-connection"}::${database || "no-database"}`;
 }
 

@@ -17,7 +17,6 @@ import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 interface AIConversationViewProps {
   bubbles: AIWorkspaceBubbleData[];
   copy: AIWorkspaceCopy;
-  showThinking: boolean;
   threadRef: RefObject<HTMLDivElement | null>;
   onOpenDetail: (bubble: AIWorkspaceBubbleData) => void;
   onInsert: (bubble: AIWorkspaceBubbleData) => void;
@@ -30,7 +29,6 @@ interface AIConversationViewProps {
 export function AIConversationView({
   bubbles,
   copy,
-  showThinking,
   threadRef,
   onOpenDetail,
   onInsert,
@@ -71,8 +69,10 @@ export function AIConversationView({
           <div ref={threadRef} className="ai-workspace-chat-thread">
             {bubbles.map((bubble) => {
               const conversationText = getBubbleConversationText(bubble);
-              const hasVisibleAgentProgress = showThinking
-                && bubble.interactionMode === "agent"
+              // Keep the agent step log available after the answer lands: it
+              // collapses automatically once every step settles, so users can
+              // re-open the reasoning without the toggle.
+              const hasVisibleAgentProgress = bubble.interactionMode === "agent"
                 && (bubble.agentSteps?.length ?? 0) > 0;
               const recordLinks = extractAgentRecordLinks(bubble.agentSteps);
               const agentReadLiveData = bubble.interactionMode === "agent"

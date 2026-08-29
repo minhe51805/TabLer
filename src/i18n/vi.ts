@@ -71,7 +71,7 @@ export const vi: Record<keyof typeof en, string> = {
   "menu.item.pluginManager": "Quản lý plugin",
   "menu.item.externalIntegrations": "Tích hợp bên ngoài",
   "menu.item.metrics": "Metrics",
-  "menu.item.queryHistory": "Lịch sử truy vấn",
+  "menu.item.queryHistory": "Lịch sử Query",
   "menu.item.aboutTableR": "Giới thiệu TableR",
   "menu.item.keyboardShortcuts": "Phím tắt",
   "help.about.kicker": "Giới thiệu",

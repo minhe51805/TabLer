@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -54,6 +55,18 @@ pub struct AIConversationMessage {
     pub content: String,
 }
 
+/// Optional per-model metadata: context budget and I/O capabilities, keyed by
+/// model id on `AIProviderConfig::model_settings`. Absent = provider defaults.
+/// Field names stay snake_case to match the frontend wire format.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct AIModelSettings {
+    pub context_window: Option<u64>,
+    pub max_output_tokens: Option<u64>,
+    pub input_types: Vec<String>,
+    pub output_types: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AIProviderConfig {
     pub id: String,
@@ -80,6 +93,10 @@ pub struct AIProviderConfig {
     /// storage so they can be re-enabled without retyping the ID.
     #[serde(default)]
     pub disabled_models: Vec<String>,
+    /// Per-model metadata keyed by model id (context window, output budget,
+    /// I/O capability chips). Missing entry = provider defaults.
+    #[serde(default)]
+    pub model_settings: HashMap<String, AIModelSettings>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

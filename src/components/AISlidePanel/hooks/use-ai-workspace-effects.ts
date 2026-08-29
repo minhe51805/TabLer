@@ -4,10 +4,9 @@
 import { useEffect } from "react";
 import { invokeMutation } from "../../../utils/tauri-utils";
 import { AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS, AI_WORKSPACE_HISTORY_VERSION, createChatThread, createEmptyPersistedAIWorkspaceState, hasPersistedAIWorkspaceStateData, loadLegacyPersistedAIWorkspaceState, prunePersistedAIWorkspaceState, type PersistedAIWorkspaceState } from "../ai-conversation-state";
-import { getSelectionFromActiveElement, getSelectionRect } from "../ai-panel-selection";
 
 export function useAIWorkspaceEffects(options: Record<string, any>) {
-  const { historyHydrated, isOpen, setChatThreads, setBubbles, setWorkspaceInteractionModes, setActiveThreadIdsByWorkspace, currentWorkspaceKey, initialThreadRef, activeThreadId, setActiveThreadId, setHistoryHydrated, hasConversation, scrollChatToLatest, currentThread, isGenerating, latestConversationBubbleId, latestConversationBubbleSnapshot, chatThreadRef, setIsHistoryOpen, isOpenRef, openSessionRef, visualizationApprovalScopeRef, setIsSessionDataReadEnabled, visualizationConsentResolverRef, setVisualizationConsentPending, isHistoryOpen, historyPanelRef, aiConfigs, loadAIConfigs, workspaceThreads, recentWorkspaceThreads, activeThreadIdsByWorkspace, lastWorkspaceKeyRef, setAttachedSelection, setSelectionContext, setDetailBubbleId, setIsInspectMode, setPromptDraft, setError, initialPromptNonce, initialPrompt, composerTextareaRef, initialAttachmentNonce, initialAttachment, detailBubbleId, onClose, historySaveTimerRef, bubbleDismissTimersRef, bubbles, chatThreads, workspaceInteractionModes, persistHistoryState, isInspectMode } = options;
+  const { historyHydrated, isOpen, setChatThreads, setBubbles, setWorkspaceInteractionModes, setActiveThreadIdsByWorkspace, currentWorkspaceKey, initialThreadRef, activeThreadId, setActiveThreadId, setHistoryHydrated, hasConversation, scrollChatToLatest, currentThread, isGenerating, latestConversationBubbleId, latestConversationBubbleSnapshot, chatThreadRef, setIsHistoryOpen, isOpenRef, openSessionRef, visualizationApprovalScopeRef, setIsSessionDataReadEnabled, visualizationConsentResolverRef, setVisualizationConsentPending, isHistoryOpen, historyPanelRef, aiConfigs, loadAIConfigs, workspaceThreads, recentWorkspaceThreads, activeThreadIdsByWorkspace, lastWorkspaceKeyRef, setAttachedSelection, setDetailBubbleId, setPromptDraft, setError, initialPromptNonce, initialPrompt, composerTextareaRef, initialAttachmentNonce, initialAttachment, detailBubbleId, onClose, historySaveTimerRef, bubbleDismissTimersRef, bubbles, chatThreads, workspaceInteractionModes, persistHistoryState } = options;
   useEffect(() => {
     if (historyHydrated || !isOpen) return;
 
@@ -210,9 +209,7 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
     }
     lastWorkspaceKeyRef.current = currentWorkspaceKey;
     setAttachedSelection(null);
-    setSelectionContext(null);
     setDetailBubbleId(null);
-    setIsInspectMode(false);
     setPromptDraft("");
     visualizationApprovalScopeRef.current = null;
     setIsSessionDataReadEnabled(false);
@@ -239,7 +236,6 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
       rect: null,
       updatedAt: Date.now(),
     });
-    setIsInspectMode(false);
     setError(null);
 
     window.requestAnimationFrame(() => {
@@ -248,73 +244,6 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
       composerTextareaRef.current?.setSelectionRange(cursorPosition, cursorPosition);
     });
   }, [initialAttachment, initialAttachmentNonce, setError]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const handleSelectionChange = () => {
-      const activeElement = document.activeElement;
-      if (activeElement instanceof HTMLElement && activeElement.closest(".ai-workspace-overlay")) {
-        return;
-      }
-
-      const selection = window.getSelection();
-      const selectedText = selection?.toString().trim() ?? "";
-      if (selectedText.length > 1 && selection?.rangeCount) {
-        const range = selection.getRangeAt(0);
-        const rect = getSelectionRect(range);
-        setSelectionContext({
-          text: selectedText,
-          source: "workspace selection",
-          rect,
-          updatedAt: Date.now(),
-        });
-        return;
-      }
-
-      const fallbackSelection = getSelectionFromActiveElement(activeElement);
-      if (fallbackSelection) {
-        setSelectionContext({
-          ...fallbackSelection,
-          updatedAt: Date.now(),
-        });
-        return;
-      }
-
-      setSelectionContext((current: any) => {
-        if (!current || Date.now() - current.updatedAt > 6_000) {
-          return null;
-        }
-        return current;
-      });
-    };
-
-    const handleEditorSelection = (event: Event) => {
-      const detail = (event as CustomEvent<{ text?: string; source?: string }>).detail;
-      if (!detail?.text?.trim()) {
-        setSelectionContext((current: any) => {
-          if (current?.source === (detail?.source || "SQL editor selection")) {
-            return null;
-          }
-          return current;
-        });
-        return;
-      }
-      setSelectionContext({
-        text: detail.text.trim(),
-        source: detail.source || "SQL editor selection",
-        rect: null,
-        updatedAt: Date.now(),
-      });
-    };
-
-    document.addEventListener("selectionchange", handleSelectionChange);
-    window.addEventListener("ai-selection-context", handleEditorSelection);
-    return () => {
-      document.removeEventListener("selectionchange", handleSelectionChange);
-      window.removeEventListener("ai-selection-context", handleEditorSelection);
-    };
-  }, [isInspectMode, isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;

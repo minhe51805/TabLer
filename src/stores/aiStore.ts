@@ -88,6 +88,8 @@ export interface AIState {
   streamingText: string;
   streamingReasoning: boolean;
   streamingUsage: Record<string, unknown> | null;
+  /** True while an automatic provider failover is switching the active provider. */
+  isProviderFailingOver: boolean;
 
   loadAIConfigs: () => Promise<{
     aiConfigs: AIProviderConfig[];
@@ -142,7 +144,9 @@ function switchActiveProvider(
   const normalized = normalizeAIProviderConfigs(
     configs.map((config) => ({ ...config, is_primary: config.id === next.id })),
   );
-  set({ aiConfigs: normalized });
+  // Surface the automatic switch in the panel: the composer model trigger
+  // shows the spinner until the (queued) persistence settles.
+  set({ aiConfigs: normalized, isProviderFailingOver: true });
   emitAppToast({
     title: translateLanguage(getCurrentAppLanguage(), "ai.toast.providerFailover", {
       failed: failed.name || failed.id,
@@ -160,7 +164,8 @@ function switchActiveProvider(
       { providers: normalized, apiKeyUpdates: {}, clearedProviderIds: [] },
     ))
     .then(([aiConfigs]) => set({ aiConfigs }))
-    .catch((error) => console.warn("[AI] Failed to persist provider failover:", error));
+    .catch((error) => console.warn("[AI] Failed to persist provider failover:", error))
+    .finally(() => set({ isProviderFailingOver: false }));
 }
 
 export const useAIStore = create<AIState>((set, get) => ({
@@ -170,6 +175,7 @@ export const useAIStore = create<AIState>((set, get) => ({
   streamingText: "",
   streamingReasoning: false,
   streamingUsage: null,
+  isProviderFailingOver: false,
 
   loadAIConfigs: async () => {
     try {

@@ -152,7 +152,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
 
         {/* Body */}
         {result ? (
-          <div className="cex-body cex-body-centered">
+          <div className="cex-body cex-body-stacked cex-body-centered">
             <div className="cex-success">
               <CheckCircle2 />
               <p>
@@ -161,57 +161,8 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
               <button onClick={handleClose} className="btn btn-primary">Done</button>
             </div>
           </div>
-        ) : (
-          <div className="cex-body">
-            {/* Left rail: preview selection */}
-            <aside className="cex-rail">
-              <div className="cex-rail-head">
-                <label className="cex-section-label">
-                  {previewConnections
-                    ? `Select (${selectedForImport.size}/${previewConnections.length})`
-                    : "Preview"}
-                </label>
-                {previewConnections && (
-                  <button
-                    onClick={() => setSelectedForImport(
-                      selectedForImport.size === previewConnections.length
-                        ? new Set()
-                        : new Set(previewConnections.map((_, i) => i))
-                    )}
-                    className="cex-toggle-all"
-                  >
-                    {selectedForImport.size === previewConnections.length ? "Deselect All" : "Select All"}
-                  </button>
-                )}
-              </div>
-              <div className="cex-rail-list">
-                {!previewConnections ? (
-                  <p className="cex-rail-empty">
-                    Pick a .tabler-connections file to preview the connections stored inside it.
-                  </p>
-                ) : (
-                  previewConnections.map((conn, i) => (
-                    <label
-                      key={i}
-                      className={`cex-rail-item ${selectedForImport.has(i) ? "is-selected" : ""}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedForImport.has(i)}
-                        onChange={() => toggleSelect(i)}
-                      />
-                      <span className="cex-rail-item-name">{conn.name || conn.host || conn.dbType}</span>
-                      <span className="cex-rail-item-meta">{conn.dbType}</span>
-                    </label>
-                  ))
-                )}
-              </div>
-            </aside>
-
-            {/* Right detail */}
-            <div className="cex-detail">
-              {previewConnections ? (
-                <>
+        ) : previewConnections ? (
+          <div className="cex-body cex-body-stacked">
                   {/* Password per connection */}
                   <div className="cex-warning">
                     <Lock className="w-4 h-4" />
@@ -225,6 +176,11 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                     {previewConnections.map((conn, i) => (
                       <div key={i} className="cex-preview-card">
                         <div className="cex-preview-head">
+                          <input
+                            type="checkbox"
+                            checked={selectedForImport.has(i)}
+                            onChange={() => toggleSelect(i)}
+                          />
                           <span className="cex-preview-name">{conn.name || conn.host || conn.dbType}</span>
                           <span className="cex-type-pill">{conn.dbType}</span>
                           {conn.host && (
@@ -257,9 +213,10 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                       <p>{error}</p>
                     </div>
                   )}
-                </>
-              ) : (
-                <>
+          </div>
+        ) : (
+          <div className="cex-body cex-body-stacked">
+            <>
                   {/* File picker */}
                   <span className="cex-section-label">Source file</span>
                   <div
@@ -307,9 +264,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                       <p>{error}</p>
                     </div>
                   )}
-                </>
-              )}
-            </div>
+            </>
           </div>
         )}
       </div>

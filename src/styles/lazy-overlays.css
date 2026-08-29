@@ -1848,6 +1848,25 @@
   border-top: none;
 }
 
+/* Single-column variant (Import modal) */
+.cex-body-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  overflow-y: auto;
+  border-top: none;
+  padding: 16px 22px 20px;
+  gap: 16px;
+}
+
+.cex-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
 /* Left rail: connection selection (mirrors the Provider Settings sidebar) */
 .cex-rail {
   width: 264px;

@@ -60,6 +60,8 @@ pub struct AIWorkspaceBubbleData {
     pub pointer: AIWorkspacePointerState,
     pub created_at: i64,
     pub auto_dismiss_at: Option<i64>,
+    #[serde(default)]
+    pub compacted_at: Option<i64>,
 }
 
 #[derive(Clone)]

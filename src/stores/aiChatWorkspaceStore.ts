@@ -34,6 +34,11 @@ interface AIChatWorkspaceState {
   deleteWorkspace: (id: string) => void;
   setActiveWorkspace: (id: string | null) => void;
   saveContextDigest: (id: string, digest: string) => void;
+  /**
+   * Merges digests persisted in the SQLite cache back into the store after a
+   * restart. Only applies entries newer than what the store already holds.
+   */
+  hydrateDigests: (entries: { workspaceId: string; digest: string; updatedAt: number }[]) => void;
 }
 
 export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
@@ -101,6 +106,27 @@ export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
               : workspace
           )),
         }));
+      },
+
+      hydrateDigests: (entries) => {
+        set((state) => {
+          let changed = false;
+          const workspaces = state.workspaces.map((workspace) => {
+            const entry = entries.find((candidate) => candidate.workspaceId === workspace.id);
+            if (!entry) return workspace;
+            const currentUpdatedAt = workspace.contextUpdatedAt ?? 0;
+            const digest = entry.digest.trim();
+            if (!digest || entry.updatedAt <= currentUpdatedAt) return workspace;
+            if (workspace.contextDigest === digest) {
+              return workspace.contextUpdatedAt === entry.updatedAt
+                ? workspace
+                : { ...workspace, contextUpdatedAt: entry.updatedAt };
+            }
+            changed = true;
+            return { ...workspace, contextDigest: digest, contextUpdatedAt: entry.updatedAt };
+          });
+          return changed ? { workspaces } : state;
+        });
       },
     }),
     {

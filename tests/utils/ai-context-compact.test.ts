@@ -79,13 +79,22 @@ describe("buildCompactTranscript", () => {
 });
 
 describe("buildCompactUserPrompt", () => {
-  it("embeds workspace name, merge instructions and transcript", () => {
-    const prompt = buildCompactUserPrompt("USER: hi", "old digest", "QL_BAN_HANG");
-    expect(prompt).toContain("Workspace: QL_BAN_HANG");
-    expect(prompt).toContain("Existing digest to update");
-    expect(prompt).toContain("old digest");
-    expect(prompt).toContain("Transcript:");
+  it("embeds workspace name, template and transcript on first compact", () => {
+    const prompt = buildCompactUserPrompt("USER: hi", "", "QL_BAN_HANG");
+    expect(prompt).toContain("Target workspace: QL_BAN_HANG");
+    expect(prompt).toContain("<conversation>");
     expect(prompt).toContain("USER: hi");
+    expect(prompt).toContain("## Objective");
+    expect(prompt).toContain("## Work State");
+    expect(prompt).not.toContain("<prior-summary>");
+  });
+
+  it("re-anchors with the prior summary on later compacts", () => {
+    const prompt = buildCompactUserPrompt("USER: hi", "old digest", "QL_BAN_HANG");
+    expect(prompt).toContain("<prior-summary>");
+    expect(prompt).toContain("old digest");
+    expect(prompt).toContain("Update it so it still holds everything relevant");
+    expect(prompt).toContain("## Objective");
   });
 });
 

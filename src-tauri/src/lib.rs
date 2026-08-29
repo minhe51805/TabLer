@@ -1,4 +1,5 @@
 use tauri::{Emitter, Manager};
+mod ai_workspace_cache;
 mod ai_workspace_history;
 mod commands;
 pub mod database;
@@ -12,6 +13,10 @@ pub mod storage;
 mod utils;
 mod watcher;
 
+use ai_workspace_cache::{
+    delete_workspace_context_snapshots, get_latest_workspace_digest, list_latest_workspace_digests,
+    list_workspace_context_snapshots, save_workspace_context_snapshot,
+};
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
     ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_agent_trace, save_ai_configs,
@@ -313,6 +318,11 @@ pub fn run() {
             // AI workspace history commands
             get_ai_workspace_history,
             save_ai_workspace_history,
+            save_workspace_context_snapshot,
+            list_workspace_context_snapshots,
+            get_latest_workspace_digest,
+            list_latest_workspace_digests,
+            delete_workspace_context_snapshots,
             // File commands
             read_sql_file,
             read_sql_file_from_path,

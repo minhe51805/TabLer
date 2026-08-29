@@ -48,27 +48,76 @@ export function buildCompactTranscript(bubbles: AIWorkspaceBubbleData[]) {
       const replySample = reply.length > COMPACT_SAMPLE_PER_BUBBLE
         ? `${reply.slice(0, COMPACT_SAMPLE_PER_BUBBLE).trimEnd()}…`
         : reply;
-      return `[${formatTurn(bubble.createdAt)}] User: ${userPrompt.trim()}\nAssistant: ${replySample.trim()}`;
+      const turns = [`[${formatTurn(bubble.createdAt)}] User: ${userPrompt.trim()}`, `Assistant: ${replySample.trim()}`];
+      // Agent tool observations are the bulk of any transcript (opencode
+      // truncates them to 2k chars) — keep just enough to preserve facts.
+      if (bubble.agentSteps?.length) {
+        const observations = bubble.agentSteps
+          .filter((step) => step.observation?.trim())
+          .map((step) => truncateText(step.observation!, COMPACT_TOOL_OUTPUT_MAX_CHARS).trim());
+        if (observations.length > 0) {
+          turns.push(`Tool observations: ${observations.join(" | ")}`);
+        }
+      }
+      return turns.join("\n");
     })
     .join("\n\n");
 }
 
+/** opencode caps tool output at 2000 chars before summarizing. */
+export const COMPACT_TOOL_OUTPUT_MAX_CHARS = 2_000;
+
+export function truncateText(text: string, maxChars: number) {
+  return text.length > maxChars ? `${text.slice(0, maxChars).trimEnd()}…` : text;
+}
+
+/**
+ * opencode's anchored summary template — another agent can resume the task
+ * from this digest alone. Section headers stay canonical (English) while the
+ * content is written in the conversation's language.
+ */
+export const COMPACT_SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response. Write the content in the same language as the conversation.
+<template>
+## Objective
+- [one or two brief sentences describing what the user is trying to accomplish]
+
+## Important Details
+- [constraints/preferences, decisions and why, important facts/assumptions, exact identifiers (tables, columns, queries) needed to continue, or "(none)"]
+
+## Work State
+### Completed
+- [finished work, verified facts, or changes made; otherwise "(none)"]
+
+### Active
+- [current work, partial changes, or investigation state; otherwise "(none)"]
+
+### Open
+- [next steps, unanswered questions; otherwise "(none)"]
+</template>`;
+
+const SUMMARY_UPDATE_INSTRUCTIONS = `Here is the summary of the conversation before the <conversation> above. Update it so it still holds everything relevant from BOTH the prior summary and the new conversation turns. Do not lose still-relevant facts, decisions or identifiers; drop anything that became obsolete.`;
+
 export function buildCompactUserPrompt(transcript: string, previousDigest: string, workspaceName: string) {
+  const conversation = `Here is the conversation so far:\n\n<conversation>\n${transcript}\n</conversation>`;
+  const workspace = `Target workspace: ${workspaceName}.`;
+
+  if (!previousDigest.trim()) {
+    return [
+      "You are compressing a work session transcript into a durable context digest so another assistant instance can continue the task without the original messages.",
+      workspace,
+      conversation,
+      COMPACT_SUMMARY_TEMPLATE,
+    ].join("\n\n");
+  }
+
   return [
-    "You are compressing a work session transcript into a compact context digest.",
-    `Workspace: ${workspaceName}.`,
-    "Write the digest in the same language as the conversation.",
-    "Structure it as short markdown sections:",
-    "- Goal: the user's overarching task",
-    "- Done: completed steps with key table/column/SQL names",
-    "- Decisions: choices, conventions and constraints agreed during the chat",
-    "- Open: unfinished work, pending questions and next steps",
-    "Keep concrete identifiers (tables, columns, queries) verbatim. Be dense; no filler.",
-    previousDigest.trim()
-      ? `\nExisting digest to update (merge, don't lose still-relevant facts):\n${previousDigest.trim()}`
-      : "",
-    `\nTranscript:\n${transcript}`,
-  ].filter(Boolean).join("\n\n");
+    "You are re-anchoring an existing context digest with newer conversation turns.",
+    workspace,
+    `Here is the summary of the conversation before the <conversation> above:\n\n<prior-summary>\n${previousDigest.trim()}\n</prior-summary>`,
+    conversation,
+    SUMMARY_UPDATE_INSTRUCTIONS,
+    COMPACT_SUMMARY_TEMPLATE,
+  ].join("\n\n");
 }
 
 /** Extracts the digest body from the model reply (drops any chatty preamble). */

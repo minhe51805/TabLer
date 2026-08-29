@@ -150,6 +150,7 @@ export const TR_COPY: AIWorkspaceCopy = {
       deleteAction: "Sil",
       importTitle: "Sohbet içe aktar",
       importAction: "İçe aktar",
+      importSearchPlaceholder: "Ada veya anahtar kelimeye göre ara…",
       importEmpty: "İçe aktarılacak başka sohbet yok.",
       compactAction: "/compact — bu sohbeti çalışma alanı bağlamına özetle",
       compactRunning: "Bağlam sıkıştırılıyor…",

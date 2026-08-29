@@ -104,6 +104,23 @@ impl AIWorkspaceCacheStorage {
 
         sqlx::query(
             r#"
+            CREATE TABLE IF NOT EXISTS thread_memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workspace_id TEXT NOT NULL,
+                thread_id TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                keywords TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .map_err(|error| format!("Failed to create thread memory schema: {error}"))?;
+
+        sqlx::query(
+            r#"
             CREATE INDEX IF NOT EXISTS idx_workspace_context_cache_lookup
             ON workspace_context_cache (workspace_id, kind, created_at)
             "#,
@@ -317,6 +334,178 @@ pub async fn delete_workspace_context_snapshots(workspace_id: String) -> Result<
         .await
 }
 
+/// Codex-style long-term memory entry for one chat thread: a named, keyword
+/// tagged digest so related context can be found and re-imported later.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadMemory {
+    pub id: i64,
+    pub workspace_id: String,
+    pub thread_id: String,
+    pub title: String,
+    pub summary: String,
+    pub keywords: Vec<String>,
+    pub updated_at: i64,
+}
+
+impl AIWorkspaceCacheStorage {
+    pub async fn upsert_thread_memory(
+        &self,
+        workspace_id: &str,
+        thread_id: &str,
+        title: &str,
+        summary: &str,
+        keywords: &[String],
+    ) -> Result<ThreadMemory, String> {
+        let pool = self.connect_pool().await?;
+        let updated_at = Utc::now().timestamp_millis();
+        let keywords_text = serde_json::to_string(keywords)
+            .map_err(|error| format!("Failed to serialize thread memory keywords: {error}"))?;
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO thread_memories (workspace_id, thread_id, title, summary, keywords, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            ON CONFLICT(thread_id) DO UPDATE SET
+                workspace_id = excluded.workspace_id,
+                title = excluded.title,
+                summary = excluded.summary,
+                keywords = excluded.keywords,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(workspace_id)
+        .bind(thread_id)
+        .bind(title)
+        .bind(summary)
+        .bind(keywords_text)
+        .bind(updated_at)
+        .execute(&pool)
+        .await
+        .map_err(|error| format!("Failed to persist thread memory: {error}"))?;
+
+        Ok(ThreadMemory {
+            id: result.last_insert_rowid(),
+            workspace_id: workspace_id.to_string(),
+            thread_id: thread_id.to_string(),
+            title: title.to_string(),
+            summary: summary.to_string(),
+            keywords: keywords.to_vec(),
+            updated_at,
+        })
+    }
+
+    pub async fn list_thread_memories(
+        &self,
+        workspace_id: Option<&str>,
+    ) -> Result<Vec<ThreadMemory>, String> {
+        let pool = self.connect_pool().await?;
+        let rows = if let Some(workspace_id) = workspace_id {
+            sqlx::query(
+                r#"
+                SELECT id, workspace_id, thread_id, title, summary, keywords, updated_at
+                FROM thread_memories
+                WHERE workspace_id = ?1
+                ORDER BY updated_at DESC
+                LIMIT 200
+                "#,
+            )
+            .bind(workspace_id)
+            .fetch_all(&pool)
+            .await
+            .map_err(|error| format!("Failed to read thread memories: {error}"))?
+        } else {
+            sqlx::query(
+                r#"
+                SELECT id, workspace_id, thread_id, title, summary, keywords, updated_at
+                FROM thread_memories
+                ORDER BY updated_at DESC
+                LIMIT 200
+                "#,
+            )
+            .fetch_all(&pool)
+            .await
+            .map_err(|error| format!("Failed to read thread memories: {error}"))?
+        };
+
+        Ok(rows
+            .into_iter()
+            .map(|row| ThreadMemory {
+                id: row.try_get("id").unwrap_or_default(),
+                workspace_id: row.try_get("workspace_id").unwrap_or_default(),
+                thread_id: row.try_get("thread_id").unwrap_or_default(),
+                title: row.try_get("title").unwrap_or_default(),
+                summary: row.try_get("summary").unwrap_or_default(),
+                keywords: row
+                    .try_get::<String, _>("keywords")
+                    .ok()
+                    .and_then(|keywords| serde_json::from_str(&keywords).ok())
+                    .unwrap_or_default(),
+                updated_at: row.try_get("updated_at").unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    pub async fn delete_thread_memories_for_workspace(
+        &self,
+        workspace_id: &str,
+    ) -> Result<(), String> {
+        let pool = self.connect_pool().await?;
+        sqlx::query("DELETE FROM thread_memories WHERE workspace_id = ?1")
+            .bind(workspace_id)
+            .execute(&pool)
+            .await
+            .map_err(|error| format!("Failed to delete thread memories: {error}"))?;
+        Ok(())
+    }
+
+    pub async fn delete_thread_memory_for_thread(&self, thread_id: &str) -> Result<(), String> {
+        let pool = self.connect_pool().await?;
+        sqlx::query("DELETE FROM thread_memories WHERE thread_id = ?1")
+            .bind(thread_id)
+            .execute(&pool)
+            .await
+            .map_err(|error| format!("Failed to delete thread memory: {error}"))?;
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub async fn upsert_thread_memory(
+    workspace_id: String,
+    thread_id: String,
+    title: String,
+    summary: String,
+    keywords: Vec<String>,
+) -> Result<ThreadMemory, String> {
+    AIWorkspaceCacheStorage::new()?
+        .upsert_thread_memory(&workspace_id, &thread_id, &title, &summary, &keywords)
+        .await
+}
+
+#[tauri::command]
+pub async fn list_thread_memories(
+    workspace_id: Option<String>,
+) -> Result<Vec<ThreadMemory>, String> {
+    AIWorkspaceCacheStorage::new()?
+        .list_thread_memories(workspace_id.as_deref())
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_thread_memories_for_workspace(workspace_id: String) -> Result<(), String> {
+    AIWorkspaceCacheStorage::new()?
+        .delete_thread_memories_for_workspace(&workspace_id)
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_thread_memory_for_thread(thread_id: String) -> Result<(), String> {
+    AIWorkspaceCacheStorage::new()?
+        .delete_thread_memory_for_thread(&thread_id)
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AIWorkspaceCacheStorage, WorkspaceContextSnapshot};
@@ -401,6 +590,60 @@ mod tests {
             .filter(|entry| entry.workspace_id == "ws-a" || entry.workspace_id == "ws-b")
             .collect();
         assert_eq!(mine.len(), 2);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn upserts_and_lists_thread_memories() {
+        let path = temp_cache_db_path();
+        let storage =
+            AIWorkspaceCacheStorage::new_with_file(path.clone()).expect("storage should init");
+
+        storage
+            .upsert_thread_memory(
+                "ws-1",
+                "thread-1",
+                "Migration plan",
+                "Goal: migrate",
+                &["dbo.taikhoan".into(), "postgres".into()],
+            )
+            .await
+            .expect("upsert should succeed");
+        storage
+            .upsert_thread_memory(
+                "ws-1",
+                "thread-1",
+                "Migration plan v2",
+                "Goal: migrate",
+                &["dbo.taikhoan".into()],
+            )
+            .await
+            .expect("second upsert should succeed");
+
+        let memories = storage
+            .list_thread_memories(Some("ws-1"))
+            .await
+            .expect("list should succeed");
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].title, "Migration plan v2");
+        assert_eq!(memories[0].keywords, vec!["dbo.taikhoan".to_string()]);
+
+        let all = storage
+            .list_thread_memories(None)
+            .await
+            .expect("list all should succeed");
+        assert_eq!(all.len(), 1);
+
+        storage
+            .delete_thread_memory_for_thread("thread-1")
+            .await
+            .expect("delete should succeed");
+        let emptied = storage
+            .list_thread_memories(Some("ws-1"))
+            .await
+            .expect("list should succeed");
+        assert!(emptied.is_empty());
 
         let _ = std::fs::remove_file(path);
     }

@@ -167,6 +167,7 @@ export const EN_COPY: AIWorkspaceCopy = {
       deleteAction: "Delete",
       importTitle: "Import a chat",
       importAction: "Import",
+      importSearchPlaceholder: "Search by name or keyword…",
       importEmpty: "No other chats to import yet.",
       compactAction: "/compact — summarize this chat into workspace context",
       compactRunning: "Compacting context…",

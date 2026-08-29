@@ -35131,6 +35131,49 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   max-height: 148px;
   overflow-y: auto;
 }
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-search {
+  margin: 6px 2px 4px;
+  padding: 6px 10px;
+  width: 100%;
+  font-size: var(--mm-fs-caption);
+  color: var(--text-primary);
+  background: rgba(0, 122, 255, 0.05);
+  border: 1px solid rgba(0, 122, 255, 0.16);
+  border-radius: 8px;
+  outline: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-search::placeholder {
+  color: var(--text-tertiary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-search:focus {
+  border-color: rgba(0, 122, 255, 0.45);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-keywords {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-import-empty {
+  padding: 6px 2px 8px;
+  font-size: var(--mm-fs-caption);
+  color: var(--text-tertiary);
+  opacity: 0.75;
+}
+
 
 .app-root .ai-workspace-stage--sidebar .ai-ws-item {
   display: flex;

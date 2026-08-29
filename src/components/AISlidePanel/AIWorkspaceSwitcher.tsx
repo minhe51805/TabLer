@@ -14,6 +14,7 @@ interface AIWorkspaceSwitcherProps {
   workspaces: AIWorkspaceSwitcherWorkspace[];
   activeWorkspaceId: string | null;
   importableThreads: AIChatThread[];
+  threadMemories: Record<string, { title: string; keywords: string[]; summary: string }>;
   onSelectWorkspace: (id: string | null) => void;
   onCreateWorkspace: () => void;
   onRenameWorkspace: (id: string, name: string) => void;
@@ -30,6 +31,7 @@ export function AIWorkspaceSwitcher({
   workspaces,
   activeWorkspaceId,
   importableThreads,
+  threadMemories,
   onSelectWorkspace,
   onCreateWorkspace,
   onRenameWorkspace,
@@ -39,6 +41,7 @@ export function AIWorkspaceSwitcher({
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
+  const [importQuery, setImportQuery] = useState("");
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -50,6 +53,10 @@ export function AIWorkspaceSwitcher({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) setImportQuery("");
+  }, [isOpen]);
+
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
   const displayLabel = activeWorkspace?.name ?? copy.autoMode;
 
@@ -57,6 +64,30 @@ export function AIWorkspaceSwitcher({
     if (editingId && draftName.trim()) onRenameWorkspace(editingId, draftName);
     setEditingId(null);
   };
+
+  const normalizedImportQuery = importQuery.trim().toLowerCase();
+  const importableEntries = importableThreads
+    .map((thread) => {
+      const memory = threadMemories[thread.id] ?? null;
+      const haystack = [thread.label, memory?.title ?? "", memory?.keywords.join(" ") ?? ""]
+        .join(" ")
+        .toLowerCase();
+      const matchScore = normalizedImportQuery
+        ? normalizedImportQuery.split(/\s+/).reduce(
+            (score, token) =>
+              haystack.includes(token)
+                || memory?.keywords.some((keyword) => keyword.includes(token))
+                ? score + 1
+                : score,
+            0,
+          )
+        : memory
+          ? 0.5
+          : 0;
+      return { thread, memory, matchScore };
+    })
+    .filter((entry) => !normalizedImportQuery || entry.matchScore > 0)
+    .sort((left, right) => right.matchScore - left.matchScore);
 
   return (
     <div ref={rootRef} className={`ai-workspace-history-dropdown ai-ws-switcher ${isOpen ? "is-open" : ""}`}>
@@ -161,23 +192,44 @@ export function AIWorkspaceSwitcher({
           {importableThreads.length > 0 && (
             <>
               <div className="ai-ws-popover-section ai-ws-import-title">{copy.importTitle}</div>
-              <div className="ai-ws-import-list">
-                {importableThreads.map((thread) => (
-                  <button
-                    key={thread.id}
-                    type="button"
-                    className="ai-ws-item"
-                    title={copy.importAction}
-                    onClick={() => {
-                      onImportThread(thread.id);
-                      setIsOpen(false);
-                    }}
-                  >
-                    <Import className="w-3.5 h-3.5" />
-                    <span className="ai-ws-item-name">{thread.label}</span>
-                  </button>
-                ))}
-              </div>
+              {importableThreads.length > 3 && (
+                <input
+                  type="search"
+                  className="ai-ws-import-search"
+                  placeholder={copy.importSearchPlaceholder}
+                  value={importQuery}
+                  onChange={(event) => setImportQuery(event.target.value)}
+                  onKeyDown={(event) => event.stopPropagation()}
+                />
+              )}
+              {importableEntries.length > 0 ? (
+                <div className="ai-ws-import-list">
+                  {importableEntries.map(({ thread, memory }) => (
+                    <button
+                      key={thread.id}
+                      type="button"
+                      className="ai-ws-item ai-ws-import-item"
+                      title={memory?.summary ? `${memory.title}\n\n${memory.summary}` : copy.importAction}
+                      onClick={() => {
+                        onImportThread(thread.id);
+                        setIsOpen(false);
+                      }}
+                    >
+                      <Import className="w-3.5 h-3.5" />
+                      <span className="ai-ws-import-meta">
+                        <span className="ai-ws-item-name">{memory?.title || thread.label}</span>
+                        {memory && memory.keywords.length > 0 && (
+                          <span className="ai-ws-import-keywords">
+                            {memory.keywords.slice(0, 4).join(" · ")}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="ai-ws-import-empty">{copy.importSearchPlaceholder}</div>
+              )}
             </>
           )}
         </div>

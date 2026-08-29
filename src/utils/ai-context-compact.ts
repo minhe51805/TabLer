@@ -172,3 +172,52 @@ export function buildPostCompactHistory(
   }
   return messages;
 }
+
+const MEMORY_STOP_WORDS = new Set([
+  "none", "with", "this", "that", "from", "have", "been", "were", "their", "which",
+  "about", "into", "select", "where", "table", "update", "during", "these", "those",
+  "while", "there", "then", "them", "they", "your", "yours", "keep", "mind", "task",
+  "when", "what", "need", "some", "will", "would", "should", "could", "make", "made",
+]);
+
+/**
+ * Codex-style keyword extraction for a memory entry: qualified identifiers
+ * (`dbo.taikhoan`) rank highest, then snake_case tokens — those are the
+ * searchable handles for finding related context later.
+ */
+export function extractMemoryKeywords(text: string, maxKeywords = 12): string[] {
+  const scores = new Map<string, number>();
+  const bump = (token: string, weight: number) => {
+    const clean = token.trim().toLowerCase();
+    if (clean.length < 3 || clean.length > 64 || MEMORY_STOP_WORDS.has(clean)) return;
+    scores.set(clean, (scores.get(clean) ?? 0) + weight);
+  };
+
+  for (const match of text.matchAll(/\b[a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*\b/g)) {
+    bump(match[0], 3);
+  }
+  for (const match of text.matchAll(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g)) {
+    bump(match[0], 2);
+  }
+
+  return [...scores.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, maxKeywords)
+    .map(([token]) => token);
+}
+
+/** Names a memory from the digest's Objective bullet, falling back cleanly. */
+export function deriveMemoryTitle(digest: string, fallback: string): string {
+  const objective = digest.match(/##\s*Objective\s*\n+-\s*([^\n]+)/i);
+  const candidate = (
+    objective?.[1]
+    ?? digest.split("\n").find((line) => line.trim() && !line.trim().startsWith("#"))
+    ?? ""
+  )
+    .replace(/^[-*\s]+/, "")
+    .replace(/^(mình|tôi|goal|the user)\s*[:\-–]?\s*/i, "")
+    .trim();
+
+  const title = candidate || fallback;
+  return title.length > 72 ? `${title.slice(0, 69).trimEnd()}...` : title;
+}

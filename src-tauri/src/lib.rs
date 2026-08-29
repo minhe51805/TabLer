@@ -14,8 +14,10 @@ mod utils;
 mod watcher;
 
 use ai_workspace_cache::{
+    delete_thread_memories_for_workspace, delete_thread_memory_for_thread,
     delete_workspace_context_snapshots, get_latest_workspace_digest, list_latest_workspace_digests,
-    list_workspace_context_snapshots, save_workspace_context_snapshot,
+    list_thread_memories, list_workspace_context_snapshots, save_workspace_context_snapshot,
+    upsert_thread_memory,
 };
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
@@ -323,6 +325,10 @@ pub fn run() {
             get_latest_workspace_digest,
             list_latest_workspace_digests,
             delete_workspace_context_snapshots,
+            upsert_thread_memory,
+            list_thread_memories,
+            delete_thread_memories_for_workspace,
+            delete_thread_memory_for_thread,
             // File commands
             read_sql_file,
             read_sql_file_from_path,

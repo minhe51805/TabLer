@@ -150,6 +150,7 @@ export const KO_COPY: AIWorkspaceCopy = {
       deleteAction: "삭제",
       importTitle: "채팅 가져오기",
       importAction: "가져오기",
+      importSearchPlaceholder: "이름 또는 키워드로 검색…",
       importEmpty: "가져올 다른 채팅이 없습니다.",
       compactAction: "/compact — 이 채팅을 워크스페이스 컨텍스트로 요약",
       compactRunning: "컨텍스트 압축 중…",

@@ -4,7 +4,9 @@ import {
   buildCompactUserPrompt,
   buildPostCompactHistory,
   buildWorkspaceContextMessages,
+  deriveMemoryTitle,
   extractDigestFromReply,
+  extractMemoryKeywords,
   isCompactCommand,
 } from "../../src/utils/ai-context-compact";
 import { buildAIWorkspaceKey } from "../../src/components/AISlidePanel/ai-conversation-state";
@@ -148,5 +150,56 @@ describe("buildPostCompactHistory", () => {
     const messages = buildPostCompactHistory("d".repeat(9_000), [], 500);
     expect(messages[0].content.length).toBeLessThan(700);
     expect(messages[0].content.endsWith("…")).toBe(true);
+  });
+});
+
+describe("extractMemoryKeywords", () => {
+  it("ranks qualified identifiers highest and includes snake_case tokens", () => {
+    const digest = [
+      "## Objective",
+      "- Keep tracking the migration of dbo.taikhoan to the new schema.",
+      "",
+      "## Agreements",
+      "- The achievement_tiers table maps onto public.achievement_tiers.",
+      "- We agreed to keep the sync worker idempotent.",
+    ].join("\n");
+
+    const keywords = extractMemoryKeywords(digest);
+
+    expect(keywords).toContain("dbo.taikhoan");
+    expect(keywords.indexOf("achievement_tiers")).toBeLessThan(keywords.indexOf("dbo.taikhoan"));
+    expect(keywords).toContain("public.achievement_tiers");
+    expect(keywords.some((keyword) => keyword === "keep" || keyword === "table")).toBe(false);
+  });
+
+  it("caps the keyword list and lowercases everything", () => {
+    const keywords = extractMemoryKeywords(
+      "DBO.TaiKhoan dbo.taikhoan order_items order_items order_items " +
+        Array.from({ length: 30 }, (_, index) => `extra_${index}`).join(" "),
+      5,
+    );
+
+    expect(keywords).toHaveLength(5);
+    expect(keywords.every((keyword) => keyword === keyword.toLowerCase())).toBe(true);
+  });
+});
+
+describe("deriveMemoryTitle", () => {
+  it("uses the first Objective bullet as the title", () => {
+    const digest = "## Objective\n- Migrate dbo.taikhoan to Postgres\n\n## Agreements\n- None";
+    expect(deriveMemoryTitle(digest, "fallback")).toBe("Migrate dbo.taikhoan to Postgres");
+  });
+
+  it("falls back to the first non-header line, then the fallback", () => {
+    expect(deriveMemoryTitle("# Summary\nTối ưu câu query báo cáo", "fallback")).toBe(
+      "Tối ưu câu query báo cáo",
+    );
+    expect(deriveMemoryTitle("", "Thread #3")).toBe("Thread #3");
+  });
+
+  it("truncates very long titles", () => {
+    const title = deriveMemoryTitle("- " + "x".repeat(200), "fallback");
+    expect(title.length).toBeLessThanOrEqual(72);
+    expect(title.endsWith("...")).toBe(true);
   });
 });

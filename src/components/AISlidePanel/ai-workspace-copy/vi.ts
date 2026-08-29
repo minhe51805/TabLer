@@ -165,6 +165,7 @@ export const VI_COPY: AIWorkspaceCopy = {
       deleteAction: "Xóa",
       importTitle: "Nhập đoạn chat",
       importAction: "Nhập",
+      importSearchPlaceholder: "Tìm theo tên hoặc từ khoá…",
       importEmpty: "Chưa có đoạn chat nào khác để nhập.",
       compactAction: "/compact — tóm tắt đoạn chat này vào context của workspace",
       compactRunning: "Đang nén context…",

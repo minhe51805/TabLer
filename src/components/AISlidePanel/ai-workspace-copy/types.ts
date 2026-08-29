@@ -149,6 +149,7 @@ export interface AIWorkspaceCopy {
     deleteAction: string;
     importTitle: string;
     importAction: string;
+    importSearchPlaceholder: string;
     importEmpty: string;
     compactAction: string;
     compactRunning: string;

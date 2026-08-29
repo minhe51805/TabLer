@@ -165,6 +165,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
       deleteAction: "删除",
       importTitle: "导入聊天",
       importAction: "导入",
+      importSearchPlaceholder: "按名称或关键词搜索…",
       importEmpty: "暂无其他可导入的聊天。",
       compactAction: "/compact — 将此聊天压缩为工作区上下文",
       compactRunning: "正在压缩上下文…",

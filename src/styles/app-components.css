@@ -34528,6 +34528,34 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
 
 .app-plugin-manager-modal {
   width: min(860px, calc(100vw - 32px));
+  /* Never taller than the viewport: long content scrolls inside the modal
+     (on small screens it used to clip the close button and footer note). */
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Small screens: full-width minus margins, wrapping toolbar, single-col metrics. */
+@media (max-width: 560px) {
+  .app-plugin-manager-modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    padding: 14px 14px 12px;
+  }
+
+  .app-plugin-manager-modal .app-help-modal-grid,
+  .app-plugin-manager-modal .app-help-modal-grid .app-help-modal-metric {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-plugin-manager-toolbar {
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  .app-plugin-manager-toolbar-btn {
+    flex: 1 1 auto;
+  }
 }
 
 /* Two metrics side by side instead of a 3-col grid with an empty slot. */

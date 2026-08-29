@@ -1,4 +1,5 @@
 use tauri::{Emitter, Manager};
+mod ai_skills;
 mod ai_workspace_cache;
 mod ai_workspace_history;
 mod commands;
@@ -19,6 +20,7 @@ use ai_workspace_cache::{
     list_thread_memories, list_workspace_context_snapshots, save_workspace_context_snapshot,
     upsert_thread_memory,
 };
+
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
     ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_agent_trace, save_ai_configs,
@@ -329,7 +331,8 @@ pub fn run() {
             list_thread_memories,
             delete_thread_memories_for_workspace,
             delete_thread_memory_for_thread,
-            // File commands
+            ai_skills::list_ai_skills,
+            ai_skills::read_ai_skill,            // File commands
             read_sql_file,
             read_sql_file_from_path,
             read_csv_file,

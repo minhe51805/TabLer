@@ -128,11 +128,11 @@ describe("AI agent tool schema", () => {
     expect(gemini.tool_choice).toEqual({ function_calling_config: { mode: "AUTO" } });
   });
 
-  it("lists every registry tool in the controller catalog, and only ask_user/finish when tools are off", () => {
+  it("lists every registry tool in the controller catalog, and only non-SQL tools when tools are off", () => {
     const enabled = formatAgentToolCatalog(true);
     expect(enabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual([...AI_AGENT_TOOL_NAMES]);
     const disabled = formatAgentToolCatalog(false);
-    expect(disabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual(["ask_user", "finish"]);
+    expect(disabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual(["ask_user", "skill", "finish"]);
     expect(disabled.join("\n")).not.toContain("metricsWidgets");
   });
 

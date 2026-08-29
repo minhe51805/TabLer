@@ -496,6 +496,12 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               .catch(() => [] as string[])
           : undefined;
 
+        // Agent Skills: frontmatter-only catalog (progressive disclosure — the
+        // agent loads the full SKILL.md body through the skill tool on demand).
+        const availableSkills = await invokeMutation<
+          { name: string; description: string }[]
+        >("list_ai_skills", {}).catch(() => [] as { name: string; description: string }[]);
+
         const buildControllerPrompt = (
           forceFinish: boolean,
           extraInstruction?: string,
@@ -514,6 +520,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             extraInstruction,
             cachedTableSummaries,
             glossaryLines,
+            availableSkills,
           });
 
         // Model-call layer: transient retry + parse-repair (extracted).

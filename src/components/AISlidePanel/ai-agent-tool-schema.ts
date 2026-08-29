@@ -22,6 +22,7 @@ export const AI_AGENT_TOOL_NAMES = [
   "run_readonly_sql",
   "preview_write",
   "remember_term",
+  "skill",
   "finish",
 ] as const;
 
@@ -238,6 +239,20 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
     ),
   },
 
+  skill: {
+    name: "skill",
+    description:
+      "Load the full instructions of an available Agent Skill. Pick the name from the <available_skills> list when the task matches a skill's description, then follow the returned instructions before continuing.",
+    parameters: objectSchema(
+      {
+        name: {
+          type: "string",
+          description: "Skill name exactly as listed in <available_skills>.",
+        },
+      },
+      ["name"],
+    ),
+  },
   finish: {
     name: "finish",
     description:

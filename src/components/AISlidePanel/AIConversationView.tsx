@@ -126,7 +126,7 @@ export function AIConversationView({
                       <p className="ai-workspace-chat-subtitle">{bubble.subtitle}</p>
                     )}
                     {hasVisibleAgentProgress
-                      && <AIAgentSteps steps={bubble.agentSteps ?? []} compact />}
+                      && <AIAgentSteps steps={bubble.agentSteps ?? []} compact durationMs={bubble.settledAt ? Math.max(0, bubble.settledAt - bubble.createdAt) : undefined} />}
                     {bubble.status === "loading" && !hasVisibleAgentProgress ? (
                       <div className="ai-workspace-thinking-line">
                         <span className="ai-workspace-thinking-orb" aria-hidden="true" />

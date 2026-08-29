@@ -20699,6 +20699,29 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .ai-agent-steps.is-collapsed .ai-agent-steps-head {
   color: var(--text-secondary);
   margin-bottom: 0;
+  max-width: 100%;
+}
+
+.ai-agent-steps-duration {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+  color: var(--text-tertiary);
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+}
+
+.ai-agent-steps-title {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
 .ai-agent-steps-list {

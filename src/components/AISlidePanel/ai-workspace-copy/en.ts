@@ -160,7 +160,7 @@ export const EN_COPY: AIWorkspaceCopy = {
     },
     workspace: {
       switcherTitle: "Chat workspace",
-      autoMode: "Auto — follow connection",
+      autoMode: "Auto",
       newWorkspace: "+ New workspace",
       defaultName: "Workspace",
       renameAction: "Rename",

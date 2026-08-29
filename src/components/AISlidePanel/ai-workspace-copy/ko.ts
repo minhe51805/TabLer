@@ -143,7 +143,7 @@ export const KO_COPY: AIWorkspaceCopy = {
     },
     workspace: {
       switcherTitle: "채팅 워크스페이스",
-      autoMode: "자동 — 연결 따르기",
+      autoMode: "자동",
       newWorkspace: "+ 새 워크스페이스",
       defaultName: "워크스페이스",
       renameAction: "이름 바꾸기",

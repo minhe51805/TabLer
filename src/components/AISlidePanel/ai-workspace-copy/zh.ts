@@ -158,7 +158,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
     },
     workspace: {
       switcherTitle: "聊天工作区",
-      autoMode: "自动 — 跟随连接",
+      autoMode: "自动",
       newWorkspace: "+ 新建工作区",
       defaultName: "工作区",
       renameAction: "重命名",

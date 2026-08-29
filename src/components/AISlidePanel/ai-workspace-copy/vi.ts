@@ -157,8 +157,8 @@ export const VI_COPY: AIWorkspaceCopy = {
       openedInWorkspacePreview: "Mình đã mở cái này trong một tab workspace để bạn xem kết quả ở đó. Đoạn chat này vẫn ở đây để bạn hỏi tiếp.",
     },
     workspace: {
-      switcherTitle: "Workspace chat",
-      autoMode: "Tự động — theo kết nối",
+      switcherTitle: "Workspace chat — chế độ tự động theo kết nối",
+      autoMode: "Tự động",
       newWorkspace: "+ Workspace mới",
       defaultName: "Workspace",
       renameAction: "Đổi tên",

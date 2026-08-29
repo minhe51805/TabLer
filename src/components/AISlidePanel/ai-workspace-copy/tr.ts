@@ -143,7 +143,7 @@ export const TR_COPY: AIWorkspaceCopy = {
     },
     workspace: {
       switcherTitle: "Sohbet çalışma alanı",
-      autoMode: "Otomatik — bağlantıyı takip et",
+      autoMode: "Otomatik",
       newWorkspace: "+ Yeni çalışma alanı",
       defaultName: "Çalışma alanı",
       renameAction: "Yeniden adlandır",

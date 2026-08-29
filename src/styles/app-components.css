@@ -35253,3 +35253,43 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* ─── Workspace switcher: keep the chat tab bar on one line ─── */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-tabs {
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-toggle {
+  max-width: 128px;
+  min-width: 0;
+  padding: 0 8px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-name {
+  max-width: 92px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-tab-current {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-toolbar-actions {
+  flex-shrink: 0;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  right: auto;
+  left: 0;
+}

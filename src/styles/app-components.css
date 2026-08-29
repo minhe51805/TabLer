@@ -2329,8 +2329,7 @@
       transparent 70%
     );
   box-shadow:
-    0 0 30px rgba(0, 122, 255, 0.12),
-    0 0 60px rgba(0, 122, 255, 0.05),
+    0 8px 24px rgba(0, 0, 0, 0.25),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
   animation: fintech-float 4s ease-in-out infinite;
   position: relative;
@@ -2717,8 +2716,6 @@
   backdrop-filter: blur(16px);
   box-shadow:
     var(--mm-shadow-3),
-    0 0 30px rgba(0, 122, 255, 0.04),
-    0 0 60px rgba(0, 122, 255, 0.02),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
   z-index: 4;
 }
@@ -4469,9 +4466,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
     ),
     linear-gradient(180deg, var(--mm-surface-1) 0%, var(--mm-surface-1) 100%);
   box-shadow:
-    0 24px 60px rgba(0, 0, 0, 0.6),
-    0 0 60px rgba(0, 122, 255, 0.06),
-    0 0 120px rgba(0, 122, 255, 0.03),
+    0 24px 60px rgba(0, 0, 0, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
@@ -11996,9 +11991,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
       rgba(255, 255, 255, 0.01)
     ),
     var(--mm-surface-1);
-  box-shadow:
-    var(--mm-shadow-3),
-    0 0 60px rgba(0, 122, 255, 0.04);
+  box-shadow: var(--mm-shadow-3);
 }
 
 .connection-picker-head {
@@ -13798,7 +13791,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   border: 1px solid var(--border-color);
   background: linear-gradient(180deg, var(--mm-surface-1), var(--mm-surface-1));
   box-shadow:
-    0 28px 72px var(--mm-surface-1),
+    0 16px 40px rgba(0, 0, 0, 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 

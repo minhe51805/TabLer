@@ -79,7 +79,7 @@ impl ConnectionConfig {
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                 {
-                    validate_network_host(host)?;
+                    validate_network_host(host, false)?;
                 }
             }
             DatabaseType::Snowflake => {
@@ -89,7 +89,7 @@ impl ConnectionConfig {
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| "Snowflake account host is required".to_string())?;
-                validate_network_host(host)?;
+                validate_network_host(host, false)?;
 
                 let token = self
                     .password
@@ -209,13 +209,14 @@ impl ConnectionConfig {
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
                 {
-                    validate_network_host(host)?;
+                    validate_network_host(host, false)?;
                 }
             }
             _ => {
                 // For network databases, host is required
                 if let Some(ref host) = self.host {
-                    validate_network_host(host)?;
+                    // SQL Server accepts SSMS-style `SERVER\INSTANCE` names.
+                    validate_network_host(host, self.db_type == DatabaseType::MSSQL)?;
                 } else {
                     return Err("Host is required for this database type".to_string());
                 }
@@ -245,6 +246,8 @@ impl ConnectionConfig {
 }
 
 fn database_requires_username(db_type: DatabaseType) -> bool {
+    // MSSQL is excluded: a blank username means Windows Authentication
+    // (SSPI as the current Windows user, SSMS parity).
     matches!(
         db_type,
         DatabaseType::MySQL
@@ -254,13 +257,12 @@ fn database_requires_username(db_type: DatabaseType) -> bool {
             | DatabaseType::Greenplum
             | DatabaseType::Redshift
             | DatabaseType::Cassandra
-            | DatabaseType::MSSQL
             | DatabaseType::Vertica
             | DatabaseType::ClickHouse
     )
 }
 
-fn validate_network_host(host: &str) -> Result<(), String> {
+fn validate_network_host(host: &str, allow_backslash: bool) -> Result<(), String> {
     let trimmed = host.trim();
     if trimmed.is_empty() {
         return Err("Host cannot be empty".to_string());
@@ -273,9 +275,16 @@ fn validate_network_host(host: &str) -> Result<(), String> {
         return Err("Host contains invalid whitespace or control characters".to_string());
     }
 
+    // SQL Server (SSMS parity) accepts `SERVER\\INSTANCE` server names, so a
+    // single backslash separator is allowed there. Everything else (scheme,
+    // path, extra separators, query, fragment) stays forbidden.
+    if allow_backslash && trimmed.matches('\\').count() > 1 {
+        return Err("Host must contain at most one instance separator (\\)".to_string());
+    }
+
     if trimmed.contains("://")
         || trimmed.contains('/')
-        || trimmed.contains('\\')
+        || (trimmed.contains('\\') && !allow_backslash)
         || trimmed.contains('?')
         || trimmed.contains('#')
     {
@@ -402,6 +411,55 @@ fn validate_local_file_path(
 mod tests {
     use super::super::connection::{ConnectionConfig, DatabaseType};
     use std::collections::HashMap;
+
+    fn base_config(db_type: DatabaseType, host: Option<&str>) -> ConnectionConfig {
+        ConnectionConfig {
+            id: "mssql-test".to_string(),
+            name: "MSSQL test".to_string(),
+            db_type,
+            host: host.map(ToOwned::to_owned),
+            port: Some(1433),
+            username: None,
+            password: None,
+            database: None,
+            file_path: None,
+            use_ssl: false,
+            ssl_mode: None,
+            ssl_ca_cert_path: None,
+            ssl_client_cert_path: None,
+            ssl_client_key_path: None,
+            ssl_skip_host_verification: None,
+            color: None,
+            additional_fields: HashMap::new(),
+            startup_commands: None,
+            pre_connect_script: None,
+            ssh_config: None,
+        }
+    }
+
+    #[test]
+    fn mssql_allows_ssms_style_instance_server_name() {
+        let config = base_config(DatabaseType::MSSQL, Some("LAPTOP-JFECRET1C\\MINH"));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn mssql_rejects_multiple_instance_separators() {
+        let config = base_config(DatabaseType::MSSQL, Some("host\\a\\b"));
+        assert!(config
+            .validate()
+            .err()
+            .is_some_and(|e| e.contains("instance separator")));
+    }
+
+    #[test]
+    fn non_mssql_still_rejects_backslash_in_host() {
+        let config = base_config(DatabaseType::MySQL, Some("host\\instance"));
+        assert!(config
+            .validate()
+            .err()
+            .is_some_and(|e| e.contains("scheme, path, query")));
+    }
 
     #[test]
     fn allows_redis_validation_without_username() {

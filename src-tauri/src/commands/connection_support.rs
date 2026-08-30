@@ -1,7 +1,10 @@
 use super::connection::CONNECTION_TIMEOUT;
 use crate::database::driver::DatabaseDriver;
 use crate::database::models::{ConnectionConfig, DatabaseType};
-use crate::database::safety::{quote_mysql_identifier, quote_postgres_identifier};
+use crate::database::mssql::MssqlDriver;
+use crate::database::safety::{
+    quote_mssql_identifier, quote_mysql_identifier, quote_postgres_identifier,
+};
 use crate::database::sqlite::SqliteDriver;
 use sqlx::mysql::{MySqlConnectOptions, MySqlConnection, MySqlSslMode};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
@@ -164,8 +167,8 @@ pub(super) fn format_connection_runtime_error(
             "Connection timed out: {} did not respond before the deadline.", engine
         ),
         ConnectionFailureStage::Unknown => format!(
-            "Failed to connect to {}. Please verify the host, port, credentials, and database settings.",
-            engine
+            "Failed to connect to {}. Please verify the host, port, credentials, and database settings. (Reason: {})",
+            engine, raw
         ),
     }
 }
@@ -577,4 +580,145 @@ pub(super) async fn create_local_mysql_database(
     } else {
         format!("Created local MySQL database `{database_name}` and applied bootstrap SQL.")
     })
+}
+
+pub(super) async fn create_local_mssql_database(
+    config: &ConnectionConfig,
+    database_name: &str,
+    bootstrap_statements: &[String],
+) -> Result<String, String> {
+    // The admin session runs against `master` using the same SSMS-style auth
+    // rules as a normal connection (blank username = Windows Authentication).
+    let mut admin_client = MssqlDriver::open_mssql_client(config, "master")
+        .await
+        .map_err(|error| {
+            format!("{} (Reason: {error:#})", format_local_bootstrap_error("SQL Server", "connecting to the local instance"))
+        })?;
+
+    let mut lookup = tiberius::Query::new("SELECT 1 FROM sys.databases WHERE name = @P1");
+    lookup.bind(database_name.to_string());
+    let existing_rows = lookup
+        .query(&mut admin_client)
+        .await
+        .map_err(|error| {
+            format!("{} (Reason: {error:#})", format_local_bootstrap_error("SQL Server", "checking whether the database already exists"))
+        })?
+        .into_first_result()
+        .await
+        .map_err(|error| {
+            format!("{} (Reason: {error:#})", format_local_bootstrap_error("SQL Server", "checking whether the database already exists"))
+        })?;
+    let exists = !existing_rows.is_empty();
+
+    if !exists {
+        let quoted = quote_mssql_identifier(database_name).map_err(|e| e.to_string())?;
+        tiberius::Query::new(format!("CREATE DATABASE {quoted}"))
+            .execute(&mut admin_client)
+            .await
+            .map_err(|_| format_local_bootstrap_error("SQL Server", "creating the new database"))?;
+    }
+
+    if !bootstrap_statements.is_empty() {
+        let mut bootstrap_client = MssqlDriver::open_mssql_client(config, database_name)
+            .await
+            .map_err(|_| {
+                format_local_bootstrap_error("SQL Server", "opening the new database for bootstrap")
+            })?;
+
+        for statement in bootstrap_statements {
+            tiberius::Query::new(statement.clone())
+                .execute(&mut bootstrap_client)
+                .await
+                .map_err(|_| format_local_bootstrap_error("SQL Server", "applying bootstrap SQL"))?;
+        }
+    }
+
+    Ok(if exists {
+        if bootstrap_statements.is_empty() {
+            format!("Database `{database_name}` already exists and is ready to use.")
+        } else {
+            format!("Database `{database_name}` already existed. Bootstrap SQL was applied successfully.")
+        }
+    } else if bootstrap_statements.is_empty() {
+        format!("Created local SQL Server database `{database_name}`. You can connect to it now.")
+    } else {
+        format!("Created local SQL Server database `{database_name}` and applied bootstrap SQL.")
+    })
+}
+
+#[cfg(test)]
+mod mssql_bootstrap_live {
+    use super::create_local_mssql_database;
+    use crate::database::models::{ConnectionConfig, DatabaseType};
+    use std::collections::HashMap;
+
+    /// Requires a live local SQL Server instance. Run manually:
+    /// `cargo test --lib mssql_live_bootstrap -- --ignored --nocapture`
+    /// Reproduces the exact "Tao & Mo" (create & open) flow the UI runs:
+    /// user config (instance field with SERVER\INSTANCE garbage) + the
+    /// starter_core preset SQL from connection-form-utils.ts.
+    #[tokio::test]
+    #[ignore]
+    async fn mssql_live_bootstrap() {
+        let mut additional_fields = HashMap::new();
+        additional_fields.insert("instance_name".to_string(), "LAPTOP-JFECRE1C\\MINH".to_string());
+        let config = ConnectionConfig {
+            id: "live-bootstrap".to_string(),
+            name: "live-bootstrap".to_string(),
+            db_type: DatabaseType::MSSQL,
+            host: Some("localhost".to_string()),
+            port: Some(14330),
+            username: None,
+            password: None,
+            database: None,
+            file_path: None,
+            use_ssl: false,
+            ssl_mode: None,
+            ssl_ca_cert_path: None,
+            ssl_client_cert_path: None,
+            ssl_client_key_path: None,
+            ssl_skip_host_verification: None,
+            color: None,
+            additional_fields,
+            startup_commands: None,
+            pre_connect_script: None,
+            ssh_config: None,
+        };
+
+        let ts = "DATETIME2 DEFAULT CURRENT_TIMESTAMP";
+        let preset = [
+            "IF OBJECT_ID(N'dbo.users', N'U') IS NULL",
+            "CREATE TABLE dbo.users (",
+            "  id BIGINT PRIMARY KEY,",
+            "  email VARCHAR(255) NOT NULL,",
+            "  full_name VARCHAR(255),",
+            &format!("  created_at {ts}"),
+            ");",
+            "",
+            "IF OBJECT_ID(N'dbo.audit_log', N'U') IS NULL",
+            "CREATE TABLE dbo.audit_log (",
+            "  id BIGINT PRIMARY KEY,",
+            "  entity_type VARCHAR(80) NOT NULL,",
+            "  entity_id BIGINT,",
+            "  [action] VARCHAR(80) NOT NULL,",
+            &format!("  created_at {ts}"),
+            ");",
+        ]
+        .join("\n");
+
+        let statements = preset
+            .split(';')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("{s};"))
+            .collect::<Vec<_>>();
+
+        match create_local_mssql_database(&config, "tabler_live_bootstrap_test", &statements).await {
+            Ok(message) => println!("BOOTSTRAP OK: {message}"),
+            Err(error) => {
+                println!("BOOTSTRAP FAILED: {error}");
+                panic!("live bootstrap failed");
+            }
+        }
+    }
 }

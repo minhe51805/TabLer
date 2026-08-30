@@ -6,19 +6,30 @@ use super::safety::{
     sanitize_mssql_filter_clause,
 };
 use crate::utils::sql::split_sql_statements;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tiberius::{
     AuthMethod, Client, ColumnData, Config, EncryptionLevel, Query as TiberiusQuery, Row,
 };
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
-type MssqlClient = Client<Compat<TcpStream>>;
+pub type MssqlClient = Client<Compat<TcpStream>>;
+
+/// SSMS-style server address parsed out of a [`ConnectionConfig`].
+pub(crate) struct MssqlServerAddress {
+    pub host: String,
+    pub instance: Option<String>,
+    pub port: u16,
+    /// True when the port was written inside the server name itself
+    /// (`host,port` / `host\\INSTANCE,port` / `host:port`). SSMS treats an
+    /// explicit port as "connect directly, skip the SQL Browser".
+    pub port_from_host: bool,
+}
 
 pub struct MssqlDriver {
     client: Arc<Mutex<MssqlClient>>,
@@ -27,41 +38,257 @@ pub struct MssqlDriver {
 
 impl MssqlDriver {
     pub async fn connect(config: &ConnectionConfig) -> Result<Self> {
-        let host = config.host.as_deref().unwrap_or("127.0.0.1");
-        let port = config.port.unwrap_or_else(|| config.default_port());
+        let database_name = config
+            .database
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("master");
+
+        let client = Self::open_mssql_client(config, database_name).await?;
+
+        Ok(Self {
+            client: Arc::new(Mutex::new(client)),
+            current_db: Arc::new(RwLock::new(Some(database_name.to_string()))),
+        })
+    }
+
+    /// --- Server name parsing (SSMS-style) --------------------------------
+    /// Accepts: "host", "host\\INSTANCE", "host,port",
+    /// "host\\INSTANCE,port" and "host:port". A named instance is resolved
+    /// through the SQL Browser service (UDP 1434) by tiberius.
+    pub(crate) fn parse_mssql_address(config: &ConnectionConfig) -> MssqlServerAddress {
+        let raw_host = config.host.as_deref().unwrap_or("127.0.0.1").trim();
+        let mut host = raw_host.to_string();
+        // Users often paste the full `SERVER\INSTANCE` (or `SERVER\INSTANCE,port`)
+        // into the separate instance-name field; keep only the instance part.
+        let sanitize_instance = |raw: &str| -> Option<String> {
+            let value = raw.trim();
+            let value = value.rsplit('\\').next().unwrap_or(value).trim();
+            let value = value.split(',').next().unwrap_or(value).trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        };
+        let mut instance: Option<String> = config
+            .additional_fields
+            .get("instance_name")
+            .map(|value| sanitize_instance(value))
+            .flatten();
+        let mut host_port: Option<u16> = None;
+
+        if let Some((server, rest)) = raw_host.split_once('\\') {
+            host = server.trim().to_string();
+            let rest = rest.trim();
+            if let Some((name, port)) = rest.split_once(',') {
+                instance = Some(name.trim().to_string());
+                host_port = port.trim().parse::<u16>().ok();
+            } else {
+                instance = Some(rest.to_string());
+            }
+        } else if let Some((server, port)) = raw_host.rsplit_once(',') {
+            host = server.trim().to_string();
+            host_port = port.trim().parse::<u16>().ok();
+        } else if let Some((server, port)) = raw_host.rsplit_once(':') {
+            if let Ok(parsed) = port.trim().parse::<u16>() {
+                host = server.trim().to_string();
+                host_port = Some(parsed);
+            }
+        }
+        if host.is_empty() {
+            host = "127.0.0.1".to_string();
+        }
+
+        let explicit_port = config.port.filter(|value| *value != 0);
+        // SSMS parity: a port written inside the server name (`host,port` /
+        // `host\\INSTANCE,port`) is authoritative and wins over the separate
+        // port field, which is only a fallback default.
+        let port = host_port
+            .or(explicit_port)
+            .unwrap_or_else(|| if instance.is_some() { 1434 } else { config.default_port() });
+
+        MssqlServerAddress {
+            host,
+            instance,
+            port,
+            port_from_host: host_port.is_some(),
+        }
+    }
+
+    /// --- Authentication + wire config (SSMS parity) ----------------------
+    /// - Blank username            -> Windows Authentication as the current
+    ///   Windows user (SSPI), like pressing Connect in SSMS with
+    ///   "Windows Authentication" selected.
+    /// - Username + auth=windows   -> Windows Authentication with explicit
+    ///   credentials ("Run as different user").
+    /// - Username (default)        -> SQL Server authentication.
+    pub(crate) fn build_mssql_tds_config(
+        config: &ConnectionConfig,
+        address: &MssqlServerAddress,
+        database_name: &str,
+    ) -> Result<Config> {
+        let auth_type = config
+            .additional_fields
+            .get("auth_type")
+            .map(|value| value.trim().to_lowercase())
+            .unwrap_or_default();
         let user = config
             .username
             .as_deref()
             .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .context("SQL Server username is required")?;
+            .filter(|value| !value.is_empty());
         let password = config.password.as_deref().unwrap_or("");
-        let database = config.database.as_deref().unwrap_or("master");
+
+        let auth = match (user, auth_type.as_str()) {
+            (Some(user), "windows") => {
+                AuthMethod::windows(user.to_string(), password.to_string())
+            }
+            (Some(user), _) => AuthMethod::sql_server(user.to_string(), password.to_string()),
+            (None, "sql") => anyhow::bail!("SQL Server authentication requires a username."),
+            (None, _) => {
+                #[cfg(windows)]
+                {
+                    AuthMethod::Integrated
+                }
+                #[cfg(not(windows))]
+                {
+                    anyhow::bail!("Windows Authentication is only supported on Windows hosts.");
+                }
+            }
+        };
+
+        // Azure SQL / managed instances always require TLS. Other servers:
+        // "encrypt_mode = mandatory" or the legacy SSL toggle forces TLS,
+        // everything else behaves like "Optional" in the mssql VS Code
+        // extension (encrypt only if the server requires it).
+        let encrypt_mode = config
+            .additional_fields
+            .get("encrypt_mode")
+            .map(|value| value.trim().to_lowercase())
+            .unwrap_or_default();
+        let is_azure = address.host.to_lowercase().contains("database.windows.net");
+
+        // A named instance connects directly when a real port is known
+        // (from the server name or the port field) — SSMS parity. Only a
+        // bare `SERVER\INSTANCE` without any port goes through the SQL
+        // Browser, where tiberius needs the TDS port pre-set to 1434 for
+        // its SSRP probe (see open_mssql_client, which rebuilds this
+        // config with port 1434 for the probe).
+        let port = address.port;
 
         let mut tds = Config::new();
-        tds.host(host);
+        tds.host(&address.host);
         tds.port(port);
-        tds.database(database);
-        tds.authentication(AuthMethod::sql_server(
-            user.to_string(),
-            password.to_string(),
-        ));
-        tds.trust_cert();
-        tds.encryption(if config.use_ssl {
+        tds.database(database_name);
+        tds.authentication(auth);
+        // Local SQL Server instances ship self-signed certificates; SSMS and
+        // the mssql VS Code extension both default to trusting them, as do we
+        // unless the user explicitly unchecks "Trust server certificate".
+        let trust_server_cert = config
+            .additional_fields
+            .get("trust_server_cert")
+            .map(|value| value.trim().to_lowercase())
+            .unwrap_or_else(|| "true".to_string())
+            != "false";
+        if trust_server_cert {
+            tds.trust_cert();
+        }
+        tds.encryption(if is_azure
+            || encrypt_mode == "mandatory"
+            || (encrypt_mode.is_empty() && config.use_ssl)
+        {
             EncryptionLevel::Required
         } else {
             EncryptionLevel::Off
         });
 
-        let tcp = TcpStream::connect(tds.get_addr()).await?;
+        if let Some(instance) = &address.instance {
+            tds.instance_name(instance);
+        }
+
+        Ok(tds)
+    }
+
+    /// Opens a raw tiberius client for the given database using the SSMS-style
+    /// connection config. Shared between the driver itself and the local
+    /// database bootstrap command (which connects to `master` first).
+    pub(crate) async fn open_mssql_client(
+        config: &ConnectionConfig,
+        database_name: &str,
+    ) -> Result<MssqlClient> {
+        let address = Self::parse_mssql_address(config);
+        let tds = Self::build_mssql_tds_config(config, &address, database_name)?;
+
+        let tcp = if address.instance.is_some() && !address.port_from_host {
+            // Named instance: SSMS resolves it through the SQL Browser
+            // (UDP 1434). Exception — an explicit non-default port (from
+            // the port field) is tried directly first, exactly like typing
+            // `SERVER\INSTANCE,port` in SSMS; if that is refused we still
+            // fall back to the browser probe.
+            let browser_tds = |address: &MssqlServerAddress| -> Result<Config> {
+                Self::build_mssql_tds_config(
+                    config,
+                    &MssqlServerAddress {
+                        host: address.host.clone(),
+                        instance: address.instance.clone(),
+                        port: 1434,
+                        port_from_host: false,
+                    },
+                    database_name,
+                )
+            };
+            if address.port != 1434 && address.port != config.default_port() {
+                use tiberius::SqlBrowser;
+                match TcpStream::connect(tds.get_addr()).await {
+                    Ok(tcp) => tcp,
+                    Err(_) => TcpStream::connect_named(&browser_tds(&address)?)
+                        .await
+                        .map_err(|error| {
+                            // The SQL Browser probe fails with a raw OS error
+                            // (e.g. 10054 reset / timeout) when the service is
+                            // stopped or its UDP port is blocked, which is
+                            // indistinguishable from a dead server for the
+                            // user. Surface an actionable hint.
+                            let raw = error.to_string();
+                            anyhow::Error::msg(format!(
+                                "SQL Server Browser is unreachable for instance '{}' (the UDP 1434 probe failed). \
+Either start the 'SQL Server Browser' service as Administrator, or connect with an explicit \
+port instead (e.g. 'localhost,1433'). Original error: {}",
+                                address.instance.as_deref().unwrap_or(""),
+                                raw
+                            ))
+                        })?,
+                }
+            } else {
+                use tiberius::SqlBrowser;
+                TcpStream::connect_named(&browser_tds(&address)?).await.map_err(|error| {
+                    // The SQL Browser probe fails with a raw OS error (e.g.
+                    // 10054 reset / timeout) when the service is stopped or its
+                    // UDP port is blocked, which is indistinguishable from a
+                    // dead server for the user. Surface an actionable hint.
+                    let raw = error.to_string();
+                    anyhow::Error::msg(format!(
+                        "SQL Server Browser is unreachable for instance '{}' (the UDP 1434 probe failed). \
+Either start the 'SQL Server Browser' service as Administrator, or connect with an explicit \
+port instead (e.g. 'localhost,1433'). Original error: {}",
+                        address.instance.as_deref().unwrap_or(""),
+                        raw
+                    ))
+                })?
+            }
+        } else {
+            // Default instance, or an explicit port in the server name
+            // (`host\\INSTANCE,port`) which connects directly like SSMS.
+            TcpStream::connect(tds.get_addr()).await?
+        };
         tcp.set_nodelay(true)?;
         let client = Client::connect(tds, tcp.compat_write()).await?;
 
-        Ok(Self {
-            client: Arc::new(Mutex::new(client)),
-            current_db: Arc::new(RwLock::new(Some(database.to_string()))),
-        })
+        Ok(client)
     }
+
 
     fn split_schema_table(table: &str) -> (String, String) {
         if let Some((schema, name)) = table.split_once('.') {
@@ -94,7 +321,7 @@ impl MssqlDriver {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
-            .or_else(|| self.current_db.blocking_read().clone())
+            .or_else(|| self.current_db.read().unwrap().clone())
             .unwrap_or_else(|| "master".to_string())
     }
 
@@ -707,12 +934,12 @@ impl DatabaseDriver for MssqlDriver {
     async fn use_database(&self, database: &str) -> Result<()> {
         let sql = format!("USE {}", super::safety::quote_mssql_identifier(database)?);
         self.execute_statement(&sql).await?;
-        *self.current_db.write().await = Some(database.to_string());
+        *self.current_db.write().unwrap() = Some(database.to_string());
         Ok(())
     }
 
     fn current_database(&self) -> Option<String> {
-        self.current_db.blocking_read().clone()
+        self.current_db.read().unwrap().clone()
     }
 
     async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
@@ -806,5 +1033,275 @@ impl DatabaseDriver for MssqlDriver {
             }
         }
         Ok(values)
+    }
+}
+
+#[cfg(test)]
+mod mssql_parse_tests {
+    use super::MssqlDriver;
+    use crate::database::models::{ConnectionConfig, DatabaseType};
+    use std::collections::HashMap;
+
+    fn config(host: &str, port: Option<u16>, instance_name: Option<&str>) -> ConnectionConfig {
+        let mut additional_fields = HashMap::new();
+        if let Some(name) = instance_name {
+            additional_fields.insert("instance_name".to_string(), name.to_string());
+        }
+        ConnectionConfig {
+            id: "t".to_string(),
+            name: "t".to_string(),
+            db_type: DatabaseType::MSSQL,
+            host: Some(host.to_string()),
+            port,
+            username: None,
+            password: None,
+            database: None,
+            file_path: None,
+            use_ssl: false,
+            ssl_mode: None,
+            ssl_ca_cert_path: None,
+            ssl_client_cert_path: None,
+            ssl_client_key_path: None,
+            ssl_skip_host_verification: None,
+            color: None,
+            additional_fields,
+            startup_commands: None,
+            pre_connect_script: None,
+            ssh_config: None,
+        }
+    }
+
+    #[test]
+    fn instance_field_with_server_prefix_is_sanitized_and_port_field_is_kept() {
+        // The exact configuration that hit the SQL Browser probe (os error
+        // 10054): full `SERVER\INSTANCE` pasted into the instance field plus
+        // an explicit port in the port field.
+        let address = MssqlDriver::parse_mssql_address(&config(
+            "localhost",
+            Some(14330),
+            Some("LAPTOP-JFECRE1C\\MINH"),
+        ));
+        assert_eq!(address.instance.as_deref(), Some("MINH"));
+        assert_eq!(address.port, 14330);
+        assert!(!address.port_from_host);
+    }
+
+    #[test]
+    fn instance_field_with_embedded_port_keeps_instance_only() {
+        let address =
+            MssqlDriver::parse_mssql_address(&config("localhost", None, Some("SERVER\\MINH,14330")));
+        assert_eq!(address.instance.as_deref(), Some("MINH"));
+        assert_eq!(address.port, 1434);
+    }
+
+    #[test]
+    fn bare_instance_without_port_targets_the_sql_browser() {
+        let address = MssqlDriver::parse_mssql_address(&config("localhost", None, Some("MINH")));
+        assert_eq!(address.instance.as_deref(), Some("MINH"));
+        assert_eq!(address.port, 1434);
+    }
+
+    #[test]
+    fn host_port_wins_over_instance_field() {
+        let address = MssqlDriver::parse_mssql_address(&config(
+            "localhost,14330",
+            Some(1433),
+            Some("MINH"),
+        ));
+        assert_eq!(address.port, 14330);
+        assert!(address.port_from_host);
+    }
+}
+
+#[cfg(test)]
+mod mssql_live_diagnostics {
+    use super::MssqlDriver;
+    use crate::database::models::{ConnectionConfig, DatabaseType};
+    use std::collections::HashMap;
+
+    /// Requires a live SQL Server instance on this machine. Run manually:
+    /// `cargo test --lib mssql_live_connection -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn mssql_live_connection() {
+        async fn variant(label: &str, mutate: impl FnOnce(&mut ConnectionConfig)) {
+            let mut config = ConnectionConfig {
+                id: "live-diag".to_string(),
+                name: "live-diag".to_string(),
+                db_type: DatabaseType::MSSQL,
+                host: Some("localhost,14330".to_string()),
+                port: None,
+                username: None,
+                password: None,
+                database: None,
+                file_path: None,
+                use_ssl: false,
+                ssl_mode: None,
+                ssl_ca_cert_path: None,
+                ssl_client_cert_path: None,
+                ssl_client_key_path: None,
+                ssl_skip_host_verification: None,
+                color: None,
+                additional_fields: HashMap::new(),
+                startup_commands: None,
+                pre_connect_script: None,
+                ssh_config: None,
+            };
+            mutate(&mut config);
+            let outcome = match MssqlDriver::connect(&config).await {
+                Ok(_) => "OK".to_string(),
+                Err(error) => format!("FAILED: {error:#}"),
+            };
+            println!("[{label}] {outcome}");
+        }
+
+        variant("baseline: localhost,14330 + Integrated + Off", |_| {}).await;
+        variant(
+            "encrypt_mode=mandatory",
+            &|config: &mut ConnectionConfig| {
+                config
+                    .additional_fields
+                    .insert("encrypt_mode".to_string(), "mandatory".to_string());
+            },
+        )
+        .await;
+        variant(
+            "use_ssl=true (legacy SSL toggle)",
+            &|config: &mut ConnectionConfig| {
+                config.use_ssl = true;
+            },
+        )
+        .await;
+        variant(
+            "localhost + port field 14330",
+            &|config: &mut ConnectionConfig| {
+                config.host = Some("localhost".to_string());
+                config.port = Some(14330);
+            },
+        )
+        .await;
+        variant(
+            "localhost + port field 1433 (wrong port)",
+            &|config: &mut ConnectionConfig| {
+                config.host = Some("localhost".to_string());
+                config.port = Some(1433);
+            },
+        )
+        .await;
+        variant(
+            "LAPTOP-JFECRE1C\\MINH (browser path)",
+            &|config: &mut ConnectionConfig| {
+                config.host = Some("LAPTOP-JFECRE1C\\MINH".to_string());
+                config.port = None;
+            },
+        )
+        .await;
+        variant(
+            "LAPTOP-JFECRE1C,14330 (hostname + port)",
+            &|config: &mut ConnectionConfig| {
+                config.host = Some("LAPTOP-JFECRE1C,14330".to_string());
+                config.port = None;
+            },
+        )
+        .await;
+        variant(
+            "127.0.0.1,14330",
+            &|config: &mut ConnectionConfig| {
+                config.host = Some("127.0.0.1,14330".to_string());
+                config.port = None;
+            },
+        )
+        .await;
+        variant(
+            "USER CONFIG: localhost + port 14330 + instance field SERVER\\\\MINH",
+            &|config: &mut ConnectionConfig| {
+                config.host = Some("localhost".to_string());
+                config.port = Some(14330);
+                config
+                    .additional_fields
+                    .insert("instance_name".to_string(), "LAPTOP-JFECRE1C\\\\MINH".to_string());
+            },
+        )
+        .await;
+
+        // Raw SQL Browser diagnostics
+        use tokio::net::UdpSocket;
+        for (label, addr) in [("localhost/MINH", "127.0.0.1:1434"), ("LAPTOP-JFECRE1C/MINH", "LAPTOP-JFECRE1C:1434")] {
+            let sock = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+            let mut req = vec![4u8]; // CLNT_UCAST_EX
+            req.extend(b"MINH".iter().flat_map(|b| [*b, 0])); // UTF-16LE
+            req.extend([0u8, 0]);
+            let send_res = sock.send_to(&req, addr).await;
+            let mut buf = vec![0u8; 4096];
+            let recv_res = tokio::time::timeout(std::time::Duration::from_secs(3), sock.recv_from(&mut buf)).await;
+            match (send_res, recv_res) {
+                (Ok(_), Ok(Ok((len, _)))) => {
+                    let resp = String::from_utf8_lossy(&buf[..len]).to_string();
+                    println!("[SSRP probe {label}] response: {resp:?}");
+                }
+                (send, recv) => println!("[SSRP probe {label}] send={send:?} recv={recv:?}"),
+            }
+        }
+
+        // Does connect_named itself establish TCP?
+        let cfg_host = tiberius::Config::from_ado_string("Server=LAPTOP-JFECRE1C\\MINH;Integrated Security=true").unwrap();
+        println!("[connect_named LAPTOP-JFECRE1C\\\\MINH] -> {:?}", <tokio::net::TcpStream as tiberius::SqlBrowser>::connect_named(&cfg_host).await.map(|_| "TCP established").map_err(|e| e.to_string()));
+
+        // Table metadata diagnostics (reproduces the "No tables were found" bug)
+        use crate::database::driver::DatabaseDriver;
+        let mut diag = ConnectionConfig {
+            host: Some("localhost".to_string()),
+            port: Some(14330),
+            additional_fields: HashMap::new(),
+            ..crate::database::mssql::config_defaults()
+        };
+        diag.additional_fields
+            .insert("instance_name".to_string(), "LAPTOP-JFECRE1C\\MINH".to_string());
+        match MssqlDriver::connect(&diag).await {
+            Ok(driver) => {
+                for db_arg in [Some("dangkytest"), None] {
+                    match driver.list_tables(db_arg).await {
+                        Ok(tables) => println!(
+                            "[list_tables {:?}] count={} names={:?}",
+                            db_arg,
+                            tables.len(),
+                            tables
+                                .iter()
+                                .take(5)
+                                .map(|t| format!("{}|{}", t.schema.as_deref().unwrap_or("?"), t.name))
+                                .collect::<Vec<_>>()
+                        ),
+                        Err(error) => println!("[list_tables {:?}] ERROR: {error:#}", db_arg),
+                    }
+                }
+            }
+            Err(error) => println!("[tables diag] connect failed: {error:#}"),
+        }
+    }
+}
+
+fn config_defaults() -> ConnectionConfig {
+    use std::collections::HashMap;
+    ConnectionConfig {
+        id: "live-diag".to_string(),
+        name: "live-diag".to_string(),
+        db_type: DatabaseType::MSSQL,
+        host: Some("localhost,14330".to_string()),
+        port: None,
+        username: None,
+        password: None,
+        database: None,
+        file_path: None,
+        use_ssl: false,
+        ssl_mode: None,
+        ssl_ca_cert_path: None,
+        ssl_client_cert_path: None,
+        ssl_client_key_path: None,
+        ssl_skip_host_verification: None,
+        color: None,
+        additional_fields: HashMap::new(),
+        startup_commands: None,
+        pre_connect_script: None,
+        ssh_config: None,
     }
 }

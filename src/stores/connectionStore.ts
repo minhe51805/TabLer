@@ -67,6 +67,21 @@ export interface ConnectionState {
   pickSqliteDatabasePath: (databaseName: string) => Promise<string | null>;
 }
 
+const SYSTEM_DATABASE_NAMES = new Set([
+  "master",
+  "tempdb",
+  "model",
+  "msdb",
+  "mysql",
+  "sys",
+  "performance_schema",
+  "information_schema",
+  "postgres",
+  "template0",
+  "template1",
+  "rdsadmin",
+]);
+
 export const useConnectionStore = create<ConnectionState>((set, get) => {
   type ConnectSnapshot = Pick<
     ConnectionState,
@@ -109,11 +124,26 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
   };
 
   const loadMetadataAfterConnect = (connectionId: string, database: string | null | undefined) => {
-    void get().fetchDatabases(connectionId);
     if (database) {
+      void get().fetchDatabases(connectionId);
       void get().fetchTables(connectionId, database);
       void get().fetchSchemaObjects(connectionId, database);
+      return;
     }
+    // Connected without a database (e.g. SQL Server with blank CSDL): fall
+    // back to the first user database so the workspace still loads tables and
+    // the AI assistant has schema context, instead of an empty catalog.
+    void (async () => {
+      await get().fetchDatabases(connectionId);
+      const databases = get().databases;
+      const firstUserDatabase = databases.find(
+        (item) => !SYSTEM_DATABASE_NAMES.has(item.name.toLowerCase()),
+      );
+      const fallbackDatabase = firstUserDatabase?.name ?? databases[0]?.name;
+      if (fallbackDatabase) {
+        await get().switchDatabase(connectionId, fallbackDatabase);
+      }
+    })();
   };
 
   return {

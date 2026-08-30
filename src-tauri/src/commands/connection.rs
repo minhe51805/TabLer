@@ -324,6 +324,12 @@ pub async fn create_local_database(
         )
         .await
         .map_err(|_| "Local MySQL bootstrap timed out after 60 seconds.".to_string())?,
+        DatabaseType::MSSQL => timeout(
+            BOOTSTRAP_TIMEOUT,
+            create_local_mssql_database(&config, requested_database, &bootstrap_statements),
+        )
+        .await
+        .map_err(|_| "Local SQL Server bootstrap timed out after 60 seconds.".to_string())?,
         _ => Err(format!(
             "{:?} local database bootstrap is not wired into this build yet.",
             config.db_type

@@ -182,7 +182,10 @@ pub fn run() {
     };
     let connection_rate_limiter = ConnectionAttemptLimiter::new(
         Duration::from_secs(60),
-        8,
+        // Generous enough for legitimate retry loops ("test connection" +
+        // "connect" during first-time setup / debugging), still capped to
+        // blunt credential brute-forcing.
+        20,
         "Too many connection attempts in a short time. Please wait about a minute and try again.",
     );
     let ai_rate_limiter = AIRequestLimiter::new(

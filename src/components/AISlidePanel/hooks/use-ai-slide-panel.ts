@@ -4,7 +4,8 @@ import { getCurrentAppLanguage } from "../../../i18n";
 import { getManualProviderOverrideAt, useAIStore } from "../../../stores/aiStore";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useQueryStore } from "../../../stores/queryStore";
-import { type AIConversationMessage, type AIProviderConfig, type AIRequestIntent, type AIRequestMode } from "../../../types";
+import { type AIConversationMessage, type AIProviderConfig, type AIRequestAttachment, type AIRequestIntent, type AIRequestMode } from "../../../types";
+import { buildAttachmentFileBlocks, toRequestAttachments, type AIAttachmentDraft } from "../../../utils/ai-attachments";
 import { getActiveAIProvider, isLocalAIProvider } from "../../../utils/ai-provider-registry";
 import { getAIFailoverConsent, requestAIFailoverConsent } from "../../../utils/ai-failover-consent";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
@@ -206,8 +207,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       mode: AIRequestMode = "panel",
       intent: AIRequestIntent = "sql",
       history: AIConversationMessage[] = [],
+      attachments?: AIRequestAttachment[],
     ): Promise<string> => {
-      const { text, reasoning } = await askAIWithReasoning(prompt, context, mode, intent, history);
+      const { text, reasoning } = await askAIWithReasoning(prompt, context, mode, intent, history, attachments);
       if (reasoning && reasoning.trim()) {
         lastReasoningRef.current = reasoning.trim();
       }
@@ -276,6 +278,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       requestDataReadConsent?: () => Promise<boolean>;
       userPrompt?: string;
       onAgentProgress?: (steps: AIWorkspaceAgentStep[]) => void;
+      /** Files/images attached by the user for this turn (composer pipeline). */
+      attachments?: AIAttachmentDraft[];
     }
   ): Promise<AIGeneratedAssistResult> => {
     const normalizedPrompt = prompt.trim();
@@ -284,6 +288,15 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       setError(message);
       throw new Error(message);
     }
+    // Text-file contents ride inside the prompt text (Codex-style); images ride
+    // the multimodal attachment channel and are only sent on the first request
+    // of a run so the token cost is paid once, not per agent step.
+    const attachmentDrafts = options?.attachments ?? [];
+    const attachmentFileBlock = buildAttachmentFileBlocks(attachmentDrafts);
+    const imageAttachments = toRequestAttachments(attachmentDrafts);
+    const promptForRequest = attachmentFileBlock
+      ? `${normalizedPrompt}\n\n${attachmentFileBlock}`
+      : normalizedPrompt;
     if (!activeProvider) {
       const message = "No AI provider is enabled yet. Configure one in Settings first.";
       setError(message);
@@ -508,7 +521,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           steps: AgentTraceStep[] = agentTraceSteps,
         ) =>
           buildAgentControllerPrompt({
-            userPrompt: normalizedPrompt,
+            userPrompt: promptForRequest,
             assistIntent,
             currentDatabase,
             availableTableNames: agentPromptTableNames.length > 0 ? agentPromptTableNames : availableSchemaTables,
@@ -708,7 +721,14 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               steps,
             );
             try {
-              const action = await requestAgentAction(controllerPrompt, includeHistory);
+              // Images ride only the first controller call of the run; later
+              // steps see the tools' observations instead (token cost once).
+              const action = await requestAgentAction(
+                controllerPrompt,
+                includeHistory,
+                undefined,
+                iteration === 1 && imageAttachments.length > 0 ? imageAttachments : undefined,
+              );
               consecutiveActionFailures = 0;
               if (action.action === "ask_user") {
                 // The harness runs one agent turn per user message, so a
@@ -992,7 +1012,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         fastRemoteRecovery,
         intent: assistIntent,
         isCurrentRequest: () => requestId === requestIdRef.current,
-        normalizedPrompt,
+        normalizedPrompt: promptForRequest,
         requestHistory,
         schemaContextEnabled,
         strictRecoveryContext,

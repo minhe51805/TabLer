@@ -68,6 +68,15 @@ export interface AIConversationMessage {
     content: string;
 }
 
+/** A user attachment riding the current request (matches Rust AIRequestAttachment). */
+export interface AIRequestAttachment {
+    kind: "image" | "text";
+    name: string;
+    mime_type: string;
+    /** base64 image bytes (no data-URL prefix) or text file contents. */
+    data: string;
+}
+
 export interface AIRequest {
     request_id?: string;
     prompt: string;
@@ -76,6 +85,8 @@ export interface AIRequest {
     intent?: AIRequestIntent;
     language?: AIResponseLanguage;
     history?: AIConversationMessage[];
+    /** Current-turn image attachments; text files are inlined into `prompt`. */
+    attachments?: AIRequestAttachment[];
 }
 
 export interface AIResponse {

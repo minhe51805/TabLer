@@ -89,6 +89,8 @@ export interface AIWorkspaceCopy {
     thinkingOn: string;
     thinkingOff: string;
     autoProviderSwitchLabel: string;
+    newChatTitle: string;
+    reloadChatTitle: string;
     modeNeedsSchemaHint: string;
     openSettings: string;
     hiddenModelsToggle: string;
@@ -139,6 +141,25 @@ export interface AIWorkspaceCopy {
     openedInWorkspaceTitle: string;
     openedInWorkspaceSubtitle: string;
     openedInWorkspacePreview: string;
+  };
+  attachments: {
+    attachButton: string;
+    imageUnsupported: string;
+    removeAttachment: string;
+    managerOpen: string;
+    managerTitle: string;
+    managerClose: string;
+    managerFilterAll: string;
+    managerFilterImages: string;
+    managerFilterFiles: string;
+    managerFiltersLabel: string;
+    managerStorageLabel: string;
+    managerEmpty: string;
+    managerDeleteSelected: string;
+    managerDeleteAll: string;
+    managerDeleteAllConfirm: string;
+    managerTotalSize: string;
+    managerUsageHint: string;
   };
   workspace: {
     switcherTitle: string;

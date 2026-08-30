@@ -1,15 +1,17 @@
-import { CornerDownLeft, ExternalLink, Eye, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
+import { CornerDownLeft, ExternalLink, Eye, FileText, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
 import { useEffect, useState, type RefObject } from "react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
   aiModeAllowsInsert,
   aiModeAllowsRun,
+  type AIWorkspaceAttachment,
   type AIWorkspaceBubbleData,
 } from "./ai-workspace-types";
 import {
   getBubbleConversationText,
   summarizePromptForDisplay,
 } from "./ai-conversation-state";
+import { fetchAttachmentDataUrl } from "../../utils/ai-attachments";
 import { AIAgentSteps } from "./AIAgentSteps";
 import { extractAgentRecordLinks, type AIAgentRecordLink } from "./ai-agent-record-links";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
@@ -24,6 +26,46 @@ interface AIConversationViewProps {
   onRetry: (bubble: AIWorkspaceBubbleData) => void;
   onOpenRecord: (link: AIAgentRecordLink) => void;
   onUseSuggestion: (prompt: string) => void;
+}
+
+/** Renders a user turn's attachments: image thumbnails (fetched on demand) and file chips. */
+function AIAttachmentStrip({ attachments }: { attachments: AIWorkspaceAttachment[] }) {
+  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
+  const imageIds = attachments.filter((a) => a.kind === "image").map((a) => a.id);
+
+  useEffect(() => {
+    let cancelled = false;
+    imageIds.forEach((id) => {
+      void fetchAttachmentDataUrl(id).then((dataUrl) => {
+        if (!cancelled && dataUrl) {
+          setImageUrls((current) => ({ ...current, [id]: dataUrl }));
+        }
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageIds.join(",")]);
+
+  if (attachments.length === 0) return null;
+
+  return (
+    <div className="ai-workspace-attachment-strip">
+      {attachments.map((attachment) => (
+        attachment.kind === "image" ? (
+          imageUrls[attachment.id]
+            ? <img key={attachment.id} className="ai-workspace-attachment-strip-thumb" src={imageUrls[attachment.id]} alt={attachment.name} title={attachment.name} />
+            : <span key={attachment.id} className="ai-workspace-attachment-strip-chip" title={attachment.name}>{attachment.name}</span>
+        ) : (
+          <span key={attachment.id} className="ai-workspace-attachment-strip-chip" title={attachment.name}>
+            <FileText className="w-3 h-3" />
+            {attachment.name}
+          </span>
+        )
+      ))}
+    </div>
+  );
 }
 
 export function AIConversationView({
@@ -101,6 +143,9 @@ export function AIConversationView({
                     <p className="ai-workspace-chat-text">
                       {bubble.promptSummary || summarizePromptForDisplay(bubble.prompt)}
                     </p>
+                    {bubble.attachments && bubble.attachments.length > 0 && (
+                      <AIAttachmentStrip attachments={bubble.attachments} />
+                    )}
                   </div>
                   <div className="ai-workspace-chat-turn-header ai-workspace-chat-turn-header--assistant">
                     <strong className="ai-workspace-chat-turn-label">{copy.modal.assistantExplanation}</strong>

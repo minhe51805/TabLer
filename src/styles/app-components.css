@@ -22327,7 +22327,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   align-items: end;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 12px;
+  margin-top: 6px;
 }
 
 .ai-workspace-stage--sidebar .ai-workspace-composer-note {
@@ -35562,8 +35562,410 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   background: var(--error, #ef4444);
 }
 
+/* Paperclip button rides the context-meter row instead of its own line */
+.app-root .ai-workspace-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.app-root .ai-workspace-meter-row .ai-workspace-attach-btn {
+  flex-shrink: 0;
+}
+
+.app-root .ai-workspace-meter-row .ai-workspace-context-meter {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Pull the context meter tight against the composer button row */
 .app-root .ai-workspace-stage--sidebar .ai-workspace-context-meter {
   padding: 0 2px 1px;
   margin-bottom: -4px;
+}
+
+/* ===== AI chat attachments (composer chips) ===== */
+.ai-workspace-attachment-input {
+  display: none;
+}
+
+.ai-workspace-compose-dock.is-dragover {
+  outline: 1.5px dashed var(--accent, #7c9cff);
+  outline-offset: -3px;
+  border-radius: 10px;
+}
+
+.ai-workspace-attachment-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.ai-workspace-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+  font-size: 11px;
+}
+
+.ai-workspace-attachment-chip.is-image .ai-workspace-attachment-thumb {
+  width: 30px;
+  height: 30px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.ai-workspace-attachment-chip-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ai-workspace-attachment-chip-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 130px;
+  font-weight: 500;
+}
+
+.ai-workspace-attachment-chip-copy span {
+  opacity: 0.6;
+  font-size: 10px;
+}
+
+.ai-workspace-attachment-chip-dismiss {
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: inline-flex;
+}
+
+.ai-workspace-attachment-chip-dismiss:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.app-root .ai-workspace-attach-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.65;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.app-root .ai-workspace-attach-btn:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Attachment strip on user chat bubbles */
+.ai-workspace-attachment-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.ai-workspace-attachment-strip-thumb {
+  width: 84px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: 8px;
+  cursor: default;
+}
+
+.ai-workspace-attachment-strip-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== Attachment manager modal (mirrors ai-settings design language) ===== */
+.ai-attachment-manager-modal {
+  width: min(820px, 100%);
+  height: min(620px, calc(100vh - 36px));
+}
+
+/* Two-pane layout: filter sidebar + grouped detail pane */
+.ai-attachment-manager-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.ai-attachment-manager-sidebar {
+  width: 210px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 12px 16px;
+  border-right: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+  overflow-y: auto;
+}
+
+.ai-attachment-manager-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ai-attachment-manager-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.ai-attachment-manager-nav-item:hover {
+  background: var(--mm-surface-2);
+  color: var(--text-primary);
+}
+
+.ai-attachment-manager-nav-item.is-active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--accent);
+}
+
+.ai-attachment-manager-nav-item span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-attachment-manager-nav-item em {
+  font-style: normal;
+  font-size: var(--mm-fs-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background: var(--mm-surface-2);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.ai-attachment-manager-nav-item.is-active em {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.ai-attachment-manager-storage-label {
+  margin-top: 8px;
+}
+
+.ai-attachment-manager-storage {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--mm-border);
+  border-radius: 8px;
+  background: var(--mm-surface-0);
+}
+
+.ai-attachment-manager-storage strong {
+  font-size: var(--mm-fs-caption);
+  color: var(--text-primary);
+}
+
+.ai-attachment-manager-storage span {
+  font-size: var(--mm-fs-micro);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-attachment-manager-detail {
+  flex: 1;
+  min-width: 0;
+  gap: 16px;
+  padding: 14px 18px 18px;
+}
+
+.ai-attachment-manager-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-attachment-manager-group-label {
+  padding: 0 2px;
+}
+
+.ai-attachment-manager-group-rows {
+  border: 1px solid var(--mm-border);
+  border-radius: 10px;
+  background: var(--mm-surface-0);
+  overflow: hidden;
+}
+
+.ai-attachment-manager-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: var(--mm-fs-caption);
+  color: var(--text-primary);
+  border-top: 1px solid var(--mm-border);
+  transition: background var(--transition);
+}
+
+.ai-attachment-manager-row:first-child {
+  border-top: none;
+}
+
+.ai-attachment-manager-row:hover {
+  background: var(--mm-surface-2);
+}
+
+.ai-attachment-manager-row.is-selected {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.ai-attachment-manager-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.ai-attachment-manager-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid var(--mm-border);
+}
+
+.ai-attachment-manager-thumb--placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: var(--mm-surface-2);
+}
+
+.ai-attachment-manager-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.ai-attachment-manager-size {
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-attachment-manager-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  color: var(--text-muted);
+}
+
+.ai-attachment-manager-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-size: var(--mm-fs-caption);
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.ai-attachment-manager-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Outlined danger action: "Delete selected" */
+.ai-attachment-manager-btn--ghost {
+  border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
+  background: color-mix(in srgb, var(--error) 7%, transparent);
+  color: var(--error);
+}
+
+.ai-attachment-manager-btn--ghost:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+}
+
+/* Solid danger action: "Delete all" */
+.ai-attachment-manager-btn--danger {
+  border: none;
+  background: var(--error);
+  color: #ffffff;
+}
+
+.ai-attachment-manager-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 88%, black);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--error) 30%, transparent);
+}
+
+/* ============================================================
+   Composer spacing: keep the attach + context-meter row tight
+   against the command bar row (~1rem total). This block MUST
+   stay last — the sidebar composer footer is restyled many times
+   across this file and the final rule wins the cascade.
+   ============================================================ */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-meter-row {
+  margin: 0;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-composer-footer {
+  margin-top: 4px;
+  padding-top: 0;
 }

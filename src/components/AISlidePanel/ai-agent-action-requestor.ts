@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import type { AIConversationMessage, AIRequestIntent, AIRequestMode } from "../../types";
+import type { AIConversationMessage, AIRequestAttachment, AIRequestIntent, AIRequestMode } from "../../types";
 import { normalizeAIRequestError } from "../../utils/ai-request-errors";
 import { parseAIAgentToolAction } from "./ai-agent-tools";
 
@@ -25,6 +25,7 @@ interface AgentActionRequestorDeps {
     mode?: AIRequestMode,
     intent?: AIRequestIntent,
     history?: AIConversationMessage[],
+    attachments?: AIRequestAttachment[],
   ) => Promise<string>;
   context: string;
   strictRecoveryContext: string | null;
@@ -53,9 +54,10 @@ export function createAgentActionRequestor(deps: AgentActionRequestorDeps) {
   const askAgentWithTransientRetry = async (
     prompt: string,
     history: AIConversationMessage[] = [],
+    attachments?: AIRequestAttachment[],
   ) => {
     try {
-      return await askAI(prompt, strictRecoveryContext || context, "panel", "agent", history);
+      return await askAI(prompt, strictRecoveryContext || context, "panel", "agent", history, attachments);
     } catch (errorValue) {
       if (isSupersededAIRequestError(errorValue)) throw errorValue;
       const requestError = normalizeAIRequestError(errorValue);
@@ -65,7 +67,7 @@ export function createAgentActionRequestor(deps: AgentActionRequestorDeps) {
         resolve,
         rateLimited ? AGENT_RATE_LIMIT_RETRY_DELAY_MS : AGENT_TRANSIENT_RETRY_DELAY_MS,
       ));
-      return askAI(prompt, strictRecoveryContext || context, "panel", "agent", history);
+      return askAI(prompt, strictRecoveryContext || context, "panel", "agent", history, attachments);
     }
   };
 
@@ -73,12 +75,14 @@ export function createAgentActionRequestor(deps: AgentActionRequestorDeps) {
     controllerPrompt: string,
     includeHistory: boolean,
     extraInstruction?: string,
+    attachments?: AIRequestAttachment[],
   ): Promise<ReturnType<typeof parseAIAgentToolAction>> => {
     let rawAgentResponse = await askAgentWithTransientRetry(
       extraInstruction
         ? `${controllerPrompt}\n\nRepair note:\n${extraInstruction}`
         : controllerPrompt,
       includeHistory ? requestHistory : [],
+      attachments,
     );
     if (requestId !== requestIdRef.current) {
       throw new Error(AI_REQUEST_REPLACED_MESSAGE);

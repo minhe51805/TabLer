@@ -6,8 +6,10 @@ import {
   ChevronDown,
   Database,
   Eye,
+  FileText,
   Loader2,
   MessageSquare,
+  Paperclip,
   PencilLine,
   Settings2,
   Shield,
@@ -18,10 +20,11 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { Fragment, useEffect, useRef, useState, type KeyboardEventHandler, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, type DragEvent, type KeyboardEventHandler, type ClipboardEvent, type RefObject } from "react";
 import type { AIProviderConfig } from "../../types";
 import { formatAIProviderTypeLabel } from "../../utils/ai-provider-registry";
 import { getAIFailoverConsent, setAIFailoverConsent } from "../../utils/ai-failover-consent";
+import { formatAttachmentBytes, type AIAttachmentDraft } from "../../utils/ai-attachments";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import type {
   AIWorkspaceAgentAutonomy,
@@ -61,6 +64,13 @@ interface AIComposerDockProps {
   onGenerate: () => void;
   onCancelGeneration: () => void;
   contextUsage?: { used: number; limit: number };
+  /** Draft attachments waiting to be sent with the next message. */
+  attachments?: AIAttachmentDraft[];
+  /** Whether the active model advertises image input (`input_types`). */
+  canAttachImages?: boolean;
+  onAddAttachmentFiles?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
+  onOpenAttachmentManager?: () => void;
 }
 
 type ComposerMenu = "mode" | "provider" | "utility";
@@ -149,10 +159,16 @@ export function AIComposerDock({
   onGenerate,
   onCancelGeneration,
   contextUsage,
+  attachments = [],
+  onAddAttachmentFiles = () => {},
+  onRemoveAttachment = () => {},
+  onOpenAttachmentManager = () => {},
 }: AIComposerDockProps) {
   const [openMenu, setOpenMenu] = useState<ComposerMenu | null>(null);
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
   const [showHiddenModels, setShowHiddenModels] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const commandBarRef = useRef<HTMLDivElement>(null);
   const effectiveContextUsage = contextUsage ?? { used: 0, limit: 24_000 };
   const usagePercent = effectiveContextUsage.limit > 0
@@ -227,7 +243,56 @@ export function AIComposerDock({
   }, []);
 
   return (
-    <div className="ai-workspace-compose-dock">
+    <div
+      className={`ai-workspace-compose-dock ${isDragOver ? "is-dragover" : ""}`}
+      onDragOver={(event: DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(event: DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        setIsDragOver(false);
+        const files = Array.from(event.dataTransfer.files ?? []);
+        if (files.length > 0) onAddAttachmentFiles(files);
+      }}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="ai-workspace-attachment-input"
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          if (files.length > 0) onAddAttachmentFiles(files);
+          event.target.value = "";
+        }}
+      />
+      {attachments.length > 0 && (
+        <div className="ai-workspace-attachment-row">
+          {attachments.map((attachment) => (
+            <div key={attachment.id} className={`ai-workspace-attachment-chip ${attachment.kind === "image" ? "is-image" : "is-file"}`}>
+              {attachment.kind === "image" && attachment.dataUrl ? (
+                <img className="ai-workspace-attachment-thumb" src={attachment.dataUrl} alt={attachment.name} />
+              ) : (
+                <FileText className="w-3.5 h-3.5 ai-workspace-attachment-kind-icon" />
+              )}
+              <span className="ai-workspace-attachment-chip-copy">
+                <strong title={attachment.name}>{attachment.name}</strong>
+                <span>{formatAttachmentBytes(attachment.size)}</span>
+              </span>
+              <button
+                type="button"
+                className="ai-workspace-attachment-chip-dismiss"
+                onClick={() => onRemoveAttachment(attachment.id)}
+                title={copy.attachments.removeAttachment}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {attachedSelectionSource && (
         <div className="ai-workspace-selection-chip">
           <div className="ai-workspace-selection-chip-copy">
@@ -246,16 +311,34 @@ export function AIComposerDock({
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={(event: ClipboardEvent<HTMLTextAreaElement>) => {
+            const files = Array.from(event.clipboardData?.files ?? []);
+            if (files.length > 0) {
+              event.preventDefault();
+              onAddAttachmentFiles(files);
+            }
+          }}
           className="ai-workspace-composer-textarea"
           placeholder={copy.composer.placeholder}
         />
 
-        <div className={`ai-workspace-context-meter ${contextMeterState}`} title={`${copy.workspace.contextBadge} · ${usagePercent}%`}>
-          <span className="ai-workspace-context-meter-value">{formatContextChars(effectiveContextUsage.used)}</span>
-          <div className="ai-workspace-context-meter-track">
-            <div className="ai-workspace-context-meter-fill" style={{ width: `${Math.max(2, usagePercent)}%` }} />
+        <div className="ai-workspace-meter-row">
+          <button
+            type="button"
+            className="ai-workspace-attach-btn"
+            onClick={() => fileInputRef.current?.click()}
+            title={copy.attachments.attachButton}
+            aria-label={copy.attachments.attachButton}
+          >
+            <Paperclip className="w-3.5 h-3.5" />
+          </button>
+          <div className={`ai-workspace-context-meter ${contextMeterState}`} title={`${copy.workspace.contextBadge} · ${usagePercent}%`}>
+            <span className="ai-workspace-context-meter-value">{formatContextChars(effectiveContextUsage.used)}</span>
+            <div className="ai-workspace-context-meter-track">
+              <div className="ai-workspace-context-meter-fill" style={{ width: `${Math.max(2, usagePercent)}%` }} />
+            </div>
+            <span className="ai-workspace-context-meter-limit">{formatContextChars(effectiveContextUsage.limit)}</span>
           </div>
-          <span className="ai-workspace-context-meter-limit">{formatContextChars(effectiveContextUsage.limit)}</span>
         </div>
 
         <div className={`ai-workspace-composer-footer ${footerNote ? "" : "is-note-hidden"}`}>
@@ -552,6 +635,18 @@ export function AIComposerDock({
                       className="ai-workspace-command-utility-item"
                       onClick={() => {
                         setOpenMenu(null);
+                        onOpenAttachmentManager();
+                      }}
+                    >
+                      <span className="ai-workspace-command-utility-icon"><Paperclip className="w-3.5 h-3.5" /></span>
+                      <span className="ai-workspace-command-utility-copy"><strong>{copy.attachments.managerOpen}</strong></span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="ai-workspace-command-utility-item"
+                      onClick={() => {
+                        setOpenMenu(null);
                         onOpenSettings();
                       }}
                     >
@@ -568,7 +663,7 @@ export function AIComposerDock({
             type="button"
             className={`ai-workspace-generate-btn ${isGenerating || isCancelling ? "is-cancel" : ""}`}
             onClick={isGenerating ? onCancelGeneration : onGenerate}
-            disabled={isCancelling || (!isGenerating && (!prompt.trim() && !hasAttachedSelectionText))}
+            disabled={isCancelling || (!isGenerating && !prompt.trim() && !hasAttachedSelectionText && attachments.length === 0)}
             aria-label={
               isCancelling
                 ? copy.composer.cancelling

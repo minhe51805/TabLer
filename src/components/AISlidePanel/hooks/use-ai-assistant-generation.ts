@@ -3,6 +3,8 @@ import { useAIStore } from "../../../stores/aiStore";
 import type { AIConversationMessage, DatabaseType, MetricsWidgetType } from "../../../types";
 import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
+import { invokeMutation } from "../../../utils/tauri-utils";
+import type { AIAttachmentDraft } from "../../../utils/ai-attachments";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
 import { shouldAgentAutoRunSql } from "../ai-execution-policy";
 import {
@@ -272,6 +274,8 @@ export function useAIAssistantGeneration({
       threadId?: string;
       workspaceKey?: string;
       interactionMode?: AIWorkspaceInteractionMode;
+      /** Files/images attached by the user for this turn (composer pipeline). */
+      attachments?: AIAttachmentDraft[];
     }
   ) => {
     const normalizedPrompt = prompt.trim();
@@ -290,6 +294,38 @@ export function useAIAssistantGeneration({
       workspaceKey: targetWorkspaceKey,
       interactionMode,
     });
+    // Persist attachment bytes (base64/text) in the backend table; the bubble
+    // only carries metadata so the persisted history JSON stays small.
+    const attachmentDrafts = options?.attachments ?? [];
+    if (attachmentDrafts.length > 0) {
+      loadingBubble.attachments = attachmentDrafts.map((draft) => ({
+        id: draft.id,
+        kind: draft.kind,
+        name: draft.name,
+        mimeType: draft.mimeType,
+        size: draft.size,
+        createdAt: draft.createdAt,
+      }));
+      void invokeMutation("save_ai_attachments", {
+        attachments: attachmentDrafts
+          .filter((draft) => (draft.kind === "image" ? draft.dataUrl : draft.textContent))
+          .map((draft) => ({
+            id: draft.id,
+            workspaceKey: targetWorkspaceKey,
+            threadId: targetThreadId,
+            kind: draft.kind,
+            name: draft.name,
+            mimeType: draft.mimeType,
+            size: draft.size,
+            data: draft.kind === "image"
+              ? draft.dataUrl!.slice(draft.dataUrl!.indexOf(",") + 1)
+              : draft.textContent ?? "",
+            createdAt: draft.createdAt,
+          })),
+      }).catch((error: unknown) =>
+        console.error("[AIWorkspace] Failed to save attachments:", error)
+      );
+    }
     activeGenerationBubbleIdRef.current = loadingBubble.id;
     setBubbles((current) => [...current, loadingBubble]);
     setChatThreads((current) =>
@@ -461,6 +497,7 @@ export function useAIAssistantGeneration({
         interactionMode,
         requestDataReadConsent: () => requestVisualizationReadConsent(requestPrompt),
         userPrompt: requestPrompt,
+        attachments: attachmentDrafts.length > 0 ? attachmentDrafts : undefined,
         onAgentProgress: (steps) => {
           if (openSessionRef.current !== sessionId) return;
           setBubbles((current) =>

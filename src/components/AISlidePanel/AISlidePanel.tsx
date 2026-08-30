@@ -56,6 +56,7 @@ import {
 } from "./ai-visualization-intent";
 import { buildAIWorkspaceKey, buildConversationHistoryMessages, createAIWorkspaceId, createChatThread, prunePersistedAIWorkspaceState, summarizePromptForDisplay, type AIChatThread, type PersistedAIWorkspaceState } from "./ai-conversation-state";
 import { buildExecutionDetail, buildPromptWithSelection, isSingleSqlStatement, type SelectionContextState } from "./ai-panel-selection";
+import { processFilesIntoAttachmentDrafts, type AIAttachmentDraft } from "../../utils/ai-attachments";
 import type { AIAgentRecordLink } from "./ai-agent-record-links";
 
 interface Props {
@@ -202,6 +203,8 @@ export function AISlidePanel({
   const isProviderSwitching = isSwitchingProvider || isProviderFailingOver;
   const [attachedSelection, setAttachedSelection] = useState<SelectionContextState | null>(null);
   const [deleteThreadPending, setDeleteThreadPending] = useState<string | null>(null);
+  const [composerAttachments, setComposerAttachments] = useState<AIAttachmentDraft[]>([]);
+  const [isAttachmentManagerOpen, setIsAttachmentManagerOpen] = useState(false);
   const [visualizationConsentPending, setVisualizationConsentPending] = useState<VisualizationReadConsentState | null>(null);
   const [isFailoverConsentPending, setIsFailoverConsentPending] = useState(false);
 
@@ -939,6 +942,41 @@ export function AISlidePanel({
     setError,
   ]);
 
+  // Image attachments require the active model to advertise image input
+  // (per-model `input_types` in the settings modal); text files always work.
+  const canAttachImages = Boolean(
+    activeProvider?.model
+      && activeProvider?.model_settings?.[activeProvider.model]?.input_types?.includes("image"),
+  );
+
+  const handleAddComposerAttachmentFiles = useCallback(async (files: File[]) => {
+    const drafts = await processFilesIntoAttachmentDrafts(files);
+    // Gate images on the active model's advertised input types; text files
+    // always ride the prompt so they are never blocked.
+    const accepted = canAttachImages ? drafts : drafts.filter((draft) => draft.kind !== "image");
+    if (accepted.length === 0) {
+      if (drafts.length > 0) setError(aiCopy.attachments.imageUnsupported);
+      return;
+    }
+    if (accepted.length < drafts.length) setError(aiCopy.attachments.imageUnsupported);
+    setComposerAttachments((current) => {
+      const existing = new Set(current.map((draft) => `${draft.kind}:${draft.name}:${draft.size}`));
+      const merged = [...current];
+      accepted.forEach((draft) => {
+        const key = `${draft.kind}:${draft.name}:${draft.size}`;
+        if (!existing.has(key)) {
+          existing.add(key);
+          merged.push(draft);
+        }
+      });
+      return merged;
+    });
+  }, [aiCopy.attachments.imageUnsupported, canAttachImages, setError]);
+
+  const handleRemoveComposerAttachment = useCallback((id: string) => {
+    setComposerAttachments((current) => current.filter((draft) => draft.id !== id));
+  }, []);
+
   const handleGenerate = useCallback(async () => {
     if (isGenerating) return;
     const normalizedPrompt = promptDraft.trim();
@@ -978,14 +1016,16 @@ export function AISlidePanel({
       history: historyForRun,
       threadId: currentThread?.id,
       interactionMode: activeInteractionMode,
+      attachments: composerAttachments.length > 0 ? composerAttachments : undefined,
     });
 
     if (result?.success) {
+      setComposerAttachments([]);
       if (!isDashboardSelectionSource(attachedSelection?.source)) {
         setAttachedSelection(null);
       }
     }
-  }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, contextWindowLimit, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleCompactContext, isGenerating, promptDraft]);
+  }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, composerAttachments, contextWindowLimit, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleCompactContext, isGenerating, promptDraft]);
 
   const handleCancelGeneration = useCallback(() => {
     const activeBubbleId = activeGenerationBubbleIdRef.current;
@@ -1241,6 +1281,9 @@ export function AISlidePanel({
     invokeMutation("delete_thread_memory_for_thread", { threadId }).catch(
       (error: unknown) => console.error("[AIWorkspace] Failed to delete thread memory:", error),
     );
+    invokeMutation("delete_ai_attachments_for_thread", { threadId }).catch(
+      (error: unknown) => console.error("[AIWorkspace] Failed to delete thread attachments:", error),
+    );
     setActiveThreadIdsByWorkspace((current) => {
       const next = { ...current };
       if (nextActiveThreadId) {
@@ -1309,6 +1352,14 @@ export function AISlidePanel({
     const nextThread = createChatThread(workspaceThreads.length + 1, currentWorkspaceKey);
     setChatThreads((current) => [...current, nextThread]);
     setActiveThreadId(nextThread.id);
+    // Update the per-workspace active map in the same tick: the workspace
+    // effects re-derive activeThreadId from this map, so leaving it on the
+    // old thread makes two effects ping-pong the view between the new empty
+    // chat and the in-progress one forever (constant visible jitter).
+    setActiveThreadIdsByWorkspace((current) => ({
+      ...current,
+      [currentWorkspaceKey]: nextThread.id,
+    }));
     setIsHistoryOpen(false);
     setPromptDraft(initialPrompt);
     setAttachedSelection(null);
@@ -1323,8 +1374,44 @@ export function AISlidePanel({
   }, [currentWorkspaceKey, initialPrompt, setError, workspaceThreads.length]);
 
   const handleResetStage = useCallback(() => {
+    // Starting a fresh thread must also stop any in-flight generation: the
+    // background run keeps publishing progress (provider failover retries)
+    // and re-rendering the panel while the user looks at the new empty
+    // thread, which reads as constant jitter.
+    const activeBubbleId = activeGenerationBubbleIdRef.current;
+    if (activeBubbleId) {
+      cancelledGenerationBubbleIdsRef.current.add(activeBubbleId);
+    }
+    cancelGeneration();
     handleCreateChatThread();
-  }, [handleCreateChatThread]);
+  }, [cancelGeneration, handleCreateChatThread]);
+
+  /** Reloads the current conversation from the persisted SQLite history so a
+   *  stale-looking chat can be refreshed without touching live generations. */
+  const handleReloadChat = useCallback(async () => {
+    if (isGenerating || isRunning) return;
+    try {
+      const persistedState = await invokeMutation<PersistedAIWorkspaceState>("get_ai_workspace_history", {});
+      const threads = Array.isArray(persistedState?.threads) ? persistedState.threads : [];
+      const loadedBubbles = (Array.isArray(persistedState?.bubbles) ? persistedState.bubbles : [])
+        .filter((bubble) => bubble.status !== "loading");
+      setChatThreads(threads);
+      setBubbles(loadedBubbles);
+      setWorkspaceInteractionModes(persistedState?.interactionModes ?? {});
+      const activeMap = persistedState?.activeThreadIds ?? {};
+      setActiveThreadIdsByWorkspace(activeMap);
+      const workspaceThreadsForCurrentKey = threads.filter((thread) => thread.workspaceKey === currentWorkspaceKey);
+      const preferredThreadId = activeMap[currentWorkspaceKey];
+      const nextThreadId =
+        workspaceThreadsForCurrentKey.find((thread) => thread.id === preferredThreadId)?.id ??
+        [...workspaceThreadsForCurrentKey].sort((left, right) => right.updatedAt - left.updatedAt)[0]?.id ??
+        workspaceThreadsForCurrentKey[0]?.id;
+      if (nextThreadId) setActiveThreadId(nextThreadId);
+      setError(null);
+    } catch (error) {
+      console.error("[AIWorkspace] Failed to reload chat:", error);
+    }
+  }, [currentWorkspaceKey, isGenerating, isRunning, setActiveThreadId, setActiveThreadIdsByWorkspace, setBubbles, setChatThreads, setError, setWorkspaceInteractionModes]);
 
   const importableChatThreads = useMemo(
     () => chatThreads
@@ -1380,6 +1467,9 @@ export function AISlidePanel({
     );
     invokeMutation("delete_thread_memories_for_workspace", { workspaceId }).catch(
       (error: unknown) => console.error("[AIWorkspace] Failed to delete workspace memories:", error),
+    );
+    invokeMutation("delete_ai_attachments_for_workspace", { workspaceKey: workspaceId }).catch(
+      (error: unknown) => console.error("[AIWorkspace] Failed to delete workspace attachments:", error),
     );
   }, [deleteChatWorkspace]);
 
@@ -1446,7 +1536,7 @@ export function AISlidePanel({
 
   if (!isOpen) return null;
   const visibleError = error && error !== AI_REQUEST_REPLACED_MESSAGE ? error : null;
-  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isCancelling, isGenerating, isHistoryOpen, isLongformComposer, isRunning, isSessionDataReadEnabled, language, promptDraft, recentWorkspaceThreads, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, failoverConsentPending: failoverConsentState, chatThreadRef, contextUsage, activeChatWorkspaceId, activeChatWorkspaceName: activeChatWorkspace?.name ?? null, activeChatWorkspaceContextUpdatedAt: activeChatWorkspace?.contextUpdatedAt ?? null, chatWorkspaces, importableChatThreads, threadMemories, isCompacting, isSwitchingProvider: isProviderSwitching, close: () => { onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, requestDeleteThread: handleRequestDeleteThread, renameThread: handleRenameChatThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setPromptDraft, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomy, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id, model) => {
+  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isAttachmentManagerOpen, canAttachImages, composerAttachments, isCancelling, isGenerating, isHistoryOpen, isLongformComposer, isRunning, isSessionDataReadEnabled, language, promptDraft, recentWorkspaceThreads, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, failoverConsentPending: failoverConsentState, chatThreadRef, contextUsage, activeChatWorkspaceId, activeChatWorkspaceName: activeChatWorkspace?.name ?? null, activeChatWorkspaceContextUpdatedAt: activeChatWorkspace?.contextUpdatedAt ?? null, chatWorkspaces, importableChatThreads, threadMemories, isCompacting, isSwitchingProvider: isProviderSwitching, close: () => { onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, reloadChat: () => void handleReloadChat(), dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, openAttachmentManager: () => setIsAttachmentManagerOpen(true), closeAttachmentManager: () => setIsAttachmentManagerOpen(false), addAttachmentFiles: (files) => void handleAddComposerAttachmentFiles(files), removeAttachment: handleRemoveComposerAttachment, requestDeleteThread: handleRequestDeleteThread, renameThread: handleRenameChatThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setPromptDraft, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomy, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id, model) => {
                 const wasRunning = isRunning || isGenerating;
                 void handleActivateProvider(id, model).then(() => {
                   // Mid-run manual switch: announce it in the conversation like

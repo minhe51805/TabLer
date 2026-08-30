@@ -5,6 +5,7 @@ import { getCurrentAppLanguage, translateLanguage } from "../i18n";
 import {
   type AIConversationMessage,
   type AIProviderConfig,
+  type AIRequestAttachment,
   type AIRequestIntent,
   type AIRequestMode,
   type LocalOllamaSetupResult,
@@ -111,14 +112,16 @@ export interface AIState {
     context: string,
     mode?: AIRequestMode,
     intent?: AIRequestIntent,
-    history?: AIConversationMessage[]
+    history?: AIConversationMessage[],
+    attachments?: AIRequestAttachment[]
   ) => Promise<string>;
   askAIWithReasoning: (
     prompt: string,
     context: string,
     mode?: AIRequestMode,
     intent?: AIRequestIntent,
-    history?: AIConversationMessage[]
+    history?: AIConversationMessage[],
+    attachments?: AIRequestAttachment[]
   ) => Promise<{ text: string; reasoning?: string }>;
   /**
    * Promotes the next enabled provider (cyclic list order, skipping the
@@ -270,6 +273,7 @@ export const useAIStore = create<AIState>((set, get) => ({
     mode = "panel",
     intent = "sql",
     history = [],
+    attachments,
   ) => {
     const activeConfig = getActiveAIProvider(get().aiConfigs);
     if (!activeConfig) {
@@ -344,6 +348,7 @@ export const useAIStore = create<AIState>((set, get) => ({
                 intent,
                 language: getCurrentAppLanguage(),
                 history,
+                attachments: attachments && attachments.length > 0 ? attachments : undefined,
               },
             },
             timeoutMs,
@@ -368,6 +373,7 @@ export const useAIStore = create<AIState>((set, get) => ({
               intent,
               language: getCurrentAppLanguage(),
               history,
+              attachments: attachments && attachments.length > 0 ? attachments : undefined,
               ...(nativeToolPayload
                 ? {
                     tools: nativeToolPayload.tools,
@@ -414,8 +420,8 @@ export const useAIStore = create<AIState>((set, get) => ({
     throw normalizeAIRequestError(lastError);
   },
 
-  askAI: async (prompt, context, mode = "panel", intent = "sql", history = []) => {
-    const response = await get().askAIWithReasoning(prompt, context, mode, intent, history);
+  askAI: async (prompt, context, mode = "panel", intent = "sql", history = [], attachments) => {
+    const response = await get().askAIWithReasoning(prompt, context, mode, intent, history, attachments);
     return response.text;
   },
 }));

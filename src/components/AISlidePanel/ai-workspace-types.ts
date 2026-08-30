@@ -107,4 +107,18 @@ export interface AIWorkspaceBubbleData {
   /** Timestamp captured when the run left "loading"; powers the thinking
    *  duration shown on the collapsed agent step header. */
   settledAt?: number;
+  /** Metadata of files/images attached by the user to this turn. Image bytes
+   *  live in the ai_attachments SQLite table and are fetched on demand. */
+  attachments?: AIWorkspaceAttachment[];
+}
+
+/** Persisted metadata of a user attachment; bytes live in the backend table. */
+export interface AIWorkspaceAttachment {
+  id: string;
+  kind: "image" | "text";
+  name: string;
+  mimeType: string;
+  /** Approximate stored size in bytes (post-compression for images). */
+  size: number;
+  createdAt: number;
 }

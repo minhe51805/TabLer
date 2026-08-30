@@ -179,6 +179,14 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
       return;
     }
 
+    // The active thread is already valid for this workspace: keep the view
+    // where it is and let the map-sync effect below follow it. Re-deriving
+    // the active thread from the (possibly stale) map here ping-pongs with
+    // that sync effect and flips the visible chat back and forth forever.
+    if (workspaceThreads.some((thread: any) => thread.id === activeThreadId)) {
+      return;
+    }
+
     const preferredThreadId = activeThreadIdsByWorkspace[currentWorkspaceKey];
     const nextActiveThread =
       workspaceThreads.find((thread: any) => thread.id === preferredThreadId) ??

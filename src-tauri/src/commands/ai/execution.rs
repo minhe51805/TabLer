@@ -22,7 +22,8 @@ use super::extraction::{
 };
 use super::prompt::build_ai_prompt;
 use super::providers::{
-    apply_native_tools, build_provider_request_body, streaming_endpoint, streaming_request_body,
+    apply_attachments, apply_native_tools, build_provider_request_body, resolve_provider_body_shape,
+    streaming_endpoint, streaming_request_body,
 };
 use super::{ai_http_client, run_blocking_storage_task, AI_REQUEST_CANCELLED_ERROR};
 
@@ -83,12 +84,18 @@ pub(crate) async fn execute_ai_stream_request(
     let base_endpoint = resolve_provider_endpoint(&config);
     validate_ai_endpoint(&config, &base_endpoint)?;
     let endpoint = streaming_endpoint(&config, &base_endpoint);
-    let body = streaming_request_body(
+    let mut body = streaming_request_body(
         &config,
         &base_endpoint,
         &system_prompt,
         &prompt,
         &request.mode,
+    );
+    apply_attachments(
+        &mut body,
+        resolve_provider_body_shape(&config, &base_endpoint),
+        &prompt,
+        &request.attachments,
     );
     let mut request_builder = ai_http_client().post(&endpoint);
     match config.provider_type {
@@ -267,6 +274,12 @@ pub(crate) async fn execute_ai_request(
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
             );
+            apply_attachments(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &prompt,
+                &request.attachments,
+            );
             let max_attempts = if is_nvidia_integrate_endpoint(&endpoint) {
                 3
             } else {
@@ -394,6 +407,12 @@ pub(crate) async fn execute_ai_request(
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
             );
+            apply_attachments(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &prompt,
+                &request.attachments,
+            );
 
             let response = client
                 .post(&endpoint)
@@ -500,6 +519,12 @@ pub(crate) async fn execute_ai_request(
                 &config.provider_type,
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
+            );
+            apply_attachments(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &prompt,
+                &request.attachments,
             );
 
             let response = client

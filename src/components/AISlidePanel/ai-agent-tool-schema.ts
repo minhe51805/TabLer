@@ -21,6 +21,9 @@ export const AI_AGENT_TOOL_NAMES = [
   "describe_tables",
   "sample_table_data",
   "run_readonly_sql",
+  "run_parameterized_sql",
+  "find_value",
+  "check_sql",
   "run_preset",
   "preview_write",
   "remember_term",
@@ -54,6 +57,9 @@ const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "describe_tables",
   "sample_table_data",
   "run_readonly_sql",
+  "run_parameterized_sql",
+  "find_value",
+  "check_sql",
   "run_preset",
   "preview_write",
   "remember_term",
@@ -242,6 +248,48 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
       "Run a read-only observation query (SELECT, SHOW, EXPLAIN, DESCRIBE, WITH, or read-only PRAGMA). Never query system catalogs.",
     parameters: objectSchema(
       { sql: { type: "string", description: "A single read-only SQL statement grounded in the verified schema." } },
+      ["sql"],
+    ),
+  },
+  run_parameterized_sql: {
+    name: "run_parameterized_sql",
+    description:
+      "Run a read-only SELECT with named parameter bindings (:name) instead of splicing literals into SQL. Prefer this over run_readonly_sql whenever a value comes from the user - it is injection-safe and passes sandbox validation.",
+    parameters: objectSchema(
+      {
+        sql: {
+          type: "string",
+          description: "A single read-only SQL statement using :name placeholders, e.g. \"SELECT * FROM users WHERE name = :name\".",
+        },
+        parameters: {
+          type: "array",
+          description: "Named bindings referenced by the SQL. Every :name in the SQL must have an entry.",
+          items: { type: "object" },
+        },
+      },
+      ["sql", "parameters"],
+    ),
+  },
+  find_value: {
+    name: "find_value",
+    description:
+      "Look up rows in a verified table by one column value, executed as a parameterized query. Cheaper and safer than writing SQL for exact-match lookups.",
+    parameters: objectSchema(
+      {
+        table: { type: "string", description: "Table name verified by describe_table." },
+        column: { type: "string", description: "Exact column name from describe_table." },
+        value: { type: "string", description: "Exact value to find; numbers may be sent unquoted." },
+        limit: { type: "integer", minimum: 1, maximum: 50, description: "Max matching rows (default 10)." },
+      },
+      ["table", "column", "value"],
+    ),
+  },
+  check_sql: {
+    name: "check_sql",
+    description:
+      "Pre-flight your proposed SQL without executing it: verifies read-only shape, table visibility, and schema grounding. Use before finish when you did not run the exact SQL earlier.",
+    parameters: objectSchema(
+      { sql: { type: "string", description: "A single SQL statement to validate." } },
       ["sql"],
     ),
   },
@@ -534,6 +582,8 @@ function exampleLiteral(key: string, schema: JsonSchema): string {
     case "string":
       if (key === "sql") return '"SELECT ..."';
       if (key === "table") return '"exact_table_name"';
+      if (key === "column") return '"exact_column_name"';
+      if (key === "value") return '"exact value; numbers may be unquoted"';
       if (key === "query") return '"column or concept to find"';
       if (key === "question") return '"one concise question"';
       if (key === "response") return '"markdown for the user"';
@@ -552,6 +602,7 @@ function exampleLiteral(key: string, schema: JsonSchema): string {
     case "array":
       if (key === "options") return '["option A","option B"]';
       if (key === "tables") return '["table_a","table_b"]';
+      if (key === "parameters") return '[{"name":"status","value":"active"}]';
       if (key === "statements") return `["UPDATE orders SET status = 'cancelled' WHERE id = 42"]`;
       if (key === "metricsWidgets") {
         return '[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ...","dimension":"verified label column","measures":["verified numeric alias"],"transforms":["group/sort operation"],"limit":100}]';

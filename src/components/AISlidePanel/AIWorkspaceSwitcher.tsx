@@ -6,6 +6,8 @@ import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 export interface AIWorkspaceSwitcherWorkspace {
   id: string;
   name: string;
+  /** Database this workspace is bound to (AI context follows it). */
+  database?: string | null;
   contextUpdatedAt: number | null;
 }
 
@@ -149,6 +151,11 @@ export function AIWorkspaceSwitcher({
                 >
                   <FolderKanban className="w-3.5 h-3.5" />
                   <span className="ai-ws-item-name">{workspace.name}</span>
+                  {workspace.database ? (
+                    <span className="ai-ws-item-db" title={workspace.database}>
+                      {workspace.database}
+                    </span>
+                  ) : null}
                   {workspace.contextUpdatedAt ? <span className="ai-ws-context-dot" title={copy.contextBadge} /> : null}
                 </button>
                 <button

@@ -174,13 +174,14 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       activeDbType: state.connections.find((connection) => connection.id === state.activeConnectionId)?.db_type,
     })),
   );
-  const { getTableStructure, getTableColumnsPreview, getTableData, executeSandboxQuery, executeAgentReadonlyQuery, previewWriteTransaction } = useQueryStore(
+  const { getTableStructure, getTableColumnsPreview, getTableData, executeSandboxQuery, executeAgentReadonlyQuery, executeAgentParameterizedQuery, previewWriteTransaction } = useQueryStore(
     useShallow((state) => ({
       getTableStructure: state.getTableStructure,
       getTableColumnsPreview: state.getTableColumnsPreview,
       getTableData: state.getTableData,
       executeSandboxQuery: state.executeSandboxQuery,
       executeAgentReadonlyQuery: state.executeAgentReadonlyQuery,
+      executeAgentParameterizedQuery: state.executeAgentParameterizedQuery,
       previewWriteTransaction: state.previewWriteTransaction,
     })),
   );
@@ -561,6 +562,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           getTableStructure,
           getTableData,
           executeReadonlyQuery: executeAgentReadonlyQuery,
+          executeParameterizedReadonlyQuery: executeAgentParameterizedQuery,
           previewWriteTransaction,
           toolAvailability,
         });
@@ -1060,7 +1062,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         setIsGenerating(false);
       }
     }
-  }, [activeDbType, activeProvider, aiConfigs, askAI, connectionId, currentDatabase, executeAgentReadonlyQuery, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
+  }, [activeDbType, activeProvider, aiConfigs, askAI, connectionId, currentDatabase, executeAgentParameterizedQuery, executeAgentReadonlyQuery, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
 
   const copyText = useCallback(async (text: string) => {
     await navigator.clipboard.writeText(text);

@@ -65,6 +65,18 @@ function mkDeps(overrides: Partial<AgentToolExecutorDeps> = {}) {
       sandboxed: true,
       truncated: false,
     }),
+    executeParameterizedReadonlyQuery: vi.fn().mockResolvedValue({
+      columns: [
+        { name: "id", data_type: "INT", is_nullable: false, is_primary_key: true },
+        { name: "email", data_type: "TEXT", is_nullable: true, is_primary_key: false },
+      ],
+      rows: [[1, "a@b.c"]],
+      affected_rows: 0,
+      execution_time_ms: 2,
+      query: "fixture",
+      sandboxed: true,
+      truncated: false,
+    }),
     previewWriteTransaction: vi.fn().mockResolvedValue({
       results: [{ affected_rows: 1, rows: [[1]], truncated: false }],
     }),
@@ -344,6 +356,111 @@ describe("preview_write", () => {
     expect(parsed.rolledBack).toBe(true);
     expect(parsed.persisted).toBe(false);
     expect(parsed.statementCount).toBe(1);
+  });
+});
+
+describe("run_parameterized_sql (MỚI-2)", () => {
+  it("executes a read-only parameterized query with coerced bindings", async () => {
+    const deps = mkDeps();
+    (deps.inspectedAgentTables as Set<string>).add("public.users");
+    const obs = await run(deps, {
+      action: "run_parameterized_sql",
+      args: {
+        sql: "SELECT * FROM users WHERE email = :email",
+        parameters: [{ name: "email", value: "a@b.c" }],
+      },
+    } as AIAgentToolAction);
+    const parsed = parseObservation(obs);
+    expect(parsed.parameterized).toBe(true);
+    expect(parsed.parameterCount).toBe(1);
+    const call = (deps.executeParameterizedReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[1]).toBe("SELECT * FROM users WHERE email = :email");
+    expect(call[2]).toEqual([{ name: "email", value: "a@b.c", dataType: "text" }]);
+  });
+
+  it("rejects mutating SQL and unknown tables without touching the backend", async () => {
+    const deps = mkDeps();
+    await run(deps, {
+      action: "run_parameterized_sql",
+      args: { sql: "DELETE FROM users WHERE id = :id", parameters: [{ name: "id", value: 1 }] },
+    } as AIAgentToolAction);
+    expect(deps.executeParameterizedReadonlyQuery as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+
+    const blocked = await run(mkDeps(), {
+      action: "run_parameterized_sql",
+      args: { sql: "SELECT * FROM ghost WHERE id = :id", parameters: [{ name: "id", value: 1 }] },
+    } as AIAgentToolAction);
+    expect(blocked).toContain("Tool blocked: SQL references unknown table(s)");
+  });
+
+  it("rejects empty parameter lists", async () => {
+    const obs = await run(mkDeps(), {
+      action: "run_parameterized_sql",
+      args: { sql: "SELECT 1", parameters: [] },
+    } as unknown as AIAgentToolAction);
+    expect(obs).toContain("Tool error: run_parameterized_sql requires bindings");
+  });
+});
+
+describe("find_value (MỚI-3)", () => {
+  it("verifies the column and executes a parameterized exact-match query", async () => {
+    const deps = mkDeps();
+    const obs = await run(deps, {
+      action: "find_value",
+      args: { table: "users", column: "email", value: "a@b.c" },
+    } as AIAgentToolAction);
+    const parsed = parseObservation(obs);
+    expect(parsed.table).toBe("public.users");
+    expect(parsed.column).toBe("email");
+    expect(parsed.parameterized).toBe(true);
+    const call = (deps.executeParameterizedReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[1]).toContain(":value");
+    expect(call[2]).toEqual([{ name: "value", value: "a@b.c", dataType: "text" }]);
+  });
+
+  it("rejects unknown columns with the actual column list", async () => {
+    const obs = await run(mkDeps(), {
+      action: "find_value",
+      args: { table: "users", column: "nope", value: "x" },
+    } as AIAgentToolAction);
+    expect(obs).toContain("Available columns: id, email");
+  });
+
+  it("uses TOP for MSSQL instead of LIMIT", async () => {
+    const deps = mkDeps({ dbType: "mssql" });
+    await run(deps, {
+      action: "find_value",
+      args: { table: "users", column: "email", value: "a@b.c", limit: 3 },
+    } as AIAgentToolAction);
+    const call = (deps.executeParameterizedReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call[1]).toContain("SELECT TOP (3) * FROM");
+    expect(call[1]).not.toContain("LIMIT");
+    expect(call[1]).toContain("= :value");
+  });
+});
+
+describe("check_sql preflight", () => {
+  it("passes grounded read-only SQL and never executes anything", async () => {
+    const deps = mkDeps();
+    deps.inspectedAgentTables = new Set<string>(["public.users"]);
+    const obs = await run(deps, {
+      action: "check_sql",
+      args: { sql: "SELECT id FROM public.users LIMIT 5" },
+    } as AIAgentToolAction);
+    const parsed = parseObservation(obs);
+    expect(parsed.ok).toBe(true);
+    expect(deps.executeReadonlyQuery).not.toHaveBeenCalled();
+    expect(deps.executeParameterizedReadonlyQuery).not.toHaveBeenCalled();
+  });
+
+  it("flags unknown tables and uninspected schemas without executing", async () => {
+    const obs = await run(mkDeps(), {
+      action: "check_sql",
+      args: { sql: "SELECT * FROM public.orders LIMIT 5" },
+    } as AIAgentToolAction);
+    const parsed = parseObservation(obs);
+    expect(parsed.ok).toBe(false);
+    expect(JSON.stringify(parsed.issues)).toContain("describe_table");
   });
 });
 

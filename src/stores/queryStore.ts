@@ -26,6 +26,11 @@ export interface QueryState {
     connectionId: string,
     statements: string[],
   ) => Promise<QueryResult>;
+  executeAgentParameterizedQuery: (
+    connectionId: string,
+    sql: string,
+    parameters: QueryParameter[],
+  ) => Promise<QueryResult>;
   previewWriteTransaction: (connectionId: string, statements: string[]) => Promise<{
     results: QueryResult[];
     rolledBack: boolean;
@@ -184,6 +189,41 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       const result = await invokeAIWorkspaceToolMutation(
         "execute_agent_readonly_query",
         { connectionId, statements, requestId },
+      );
+      if (safety.hasSchemaMutation) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      return result;
+    } catch (e) {
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      throw e;
+    }
+  },
+
+  executeAgentParameterizedQuery: async (
+    connectionId: string,
+    sql: string,
+    parameters: QueryParameter[],
+  ) => {
+    // Read-only AND prepared-parameters are both pinned server-side by the
+    // `execute_agent_parameterized_query` command; the local safe-mode guard
+    // only makes blocked policies fail fast with a clear message.
+    const safety = await assertQueryAllowed(sql, connectionId);
+    const requestId = crypto.randomUUID();
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
+    try {
+      const result = await invokeAIWorkspaceToolMutation(
+        "execute_agent_parameterized_query",
+        { connectionId, sql, parameters, requestId },
       );
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);

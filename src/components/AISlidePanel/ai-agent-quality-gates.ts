@@ -13,7 +13,10 @@ import { verifyAgentResponseAgainstEvidence } from "./ai-agent-verification";
 export function hasExecutedReadStep(steps: AgentTraceStep[]): boolean {
   return steps.some(
     (step) =>
-      (step.action === "run_readonly_sql" || step.action === "sample_table_data")
+      (step.action === "run_readonly_sql"
+        || step.action === "run_parameterized_sql"
+        || step.action === "find_value"
+        || step.action === "sample_table_data")
       && Boolean(step.observation)
       && !step.observation.startsWith("Tool error")
       && !step.observation.startsWith("Tool blocked"),
@@ -42,7 +45,10 @@ export function responseClaimsSuccessfulExecution(response: string | undefined):
 export function hasSuccessfulReadStep(steps: AgentTraceStep[]): boolean {
   return steps.some(
     (step) =>
-      (step.action === "run_readonly_sql" || step.action === "sample_table_data")
+      (step.action === "run_readonly_sql"
+        || step.action === "run_parameterized_sql"
+        || step.action === "find_value"
+        || step.action === "sample_table_data")
       && Boolean(step.observation)
       && !step.observation.startsWith("Tool error")
       && !step.observation.startsWith("Tool blocked")

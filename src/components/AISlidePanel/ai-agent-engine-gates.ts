@@ -86,18 +86,22 @@ export function isAgentToolEnabled(
   name: AIAgentToolName,
   availability: Pick<AgentToolAvailability, "sqlRead" | "sqlWritePreview">,
 ): boolean {
-  if (name === "run_readonly_sql") return availability.sqlRead;
+  if (name === "run_readonly_sql" || name === "run_parameterized_sql") return availability.sqlRead;
+  if (name === "find_value" || name === "check_sql") return availability.sqlRead;
   if (name === "list_schema_objects" || name === "run_preset") return availability.sqlRead;
   if (name === "preview_write") return availability.sqlWritePreview;
   return true;
 }
 
 export function agentSqlToolBlockedMessage(
-  name: "run_readonly_sql" | "preview_write",
+  name: "run_readonly_sql" | "run_parameterized_sql" | "find_value" | "check_sql" | "preview_write",
   availability: AgentToolAvailability,
 ): string {
   if (name === "run_readonly_sql") {
     return `Tool blocked: run_readonly_sql is not available on ${availability.engineLabel}. This engine does not speak SQL. Use list_tables, describe_table, search_schema, or sample_table_data instead.`;
+  }
+  if (name === "run_parameterized_sql" || name === "find_value") {
+    return `Tool blocked: ${name} is not available on ${availability.engineLabel}. This engine does not support parameterized SQL reads. Use list_tables, describe_table, search_schema, or sample_table_data instead.`;
   }
   return `Tool blocked: preview_write is not available on ${availability.engineLabel}. SQL write previews are only offered on SQL engines.`;
 }

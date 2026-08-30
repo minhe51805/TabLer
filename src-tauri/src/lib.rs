@@ -292,6 +292,7 @@ pub fn run() {
             set_safe_mode_policy,
             cancel_query,
             execute_parameterized_query,
+            execute_agent_parameterized_query,
             execute_sandboxed_query,
             execute_agent_readonly_query,
             preview_write_transaction,

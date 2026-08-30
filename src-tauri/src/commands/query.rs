@@ -566,6 +566,56 @@ pub async fn execute_sandboxed_query(
     Ok(result)
 }
 
+/// Read-only + prepared-parameters boundary for the AI agent's
+/// `run_parameterized_sql` / `find_value` tools (MỚI-2/MỚI-3).
+///
+/// Combines both agent guarantees in one command: the read-only pin from
+/// [`execute_agent_readonly_query`] (no caller-lowerable flag, mutations and
+/// session SQL rejected before the driver is involved) and the parameter
+/// compilation of [`execute_parameterized_query`] (named `:name` bindings are
+/// compiled to engine placeholders and never spliced into the SQL text).
+#[tauri::command]
+pub async fn execute_agent_parameterized_query(
+    connection_id: String,
+    sql: String,
+    parameters: Vec<QueryParameter>,
+    request_id: Option<String>,
+    db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, QueryCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
+) -> Result<QueryResult, String> {
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(message) = agent_sql_read_unsupported_error(database_type) {
+        return Err(message);
+    }
+    db_manager
+        .require_capability(&connection_id, DriverCapability::PreparedParameters)
+        .await
+        .map_err(|error| error.to_string())?;
+    // Same read-only pin `execute_agent_readonly_query` hard-codes: there is
+    // no caller argument that can lower this boundary.
+    validate_sandbox_batch(std::slice::from_ref(&sql), true)?;
+    let style = placeholder_style_for_database(database_type);
+    let compiled = compile_parameterized_query(&sql, &parameters, style)
+        .map_err(|error| error.to_string())?;
+    if split_sql_statements(&compiled.sql).len() != 1 {
+        return Err("The agent parameterized tool accepts exactly one SQL statement.".to_string());
+    }
+    execute_parameterized_query(
+        connection_id,
+        compiled.sql,
+        compiled.parameters,
+        request_id,
+        db_manager,
+        cancellation_state,
+        safe_mode,
+    )
+    .await
+}
+
 /// Read-only execution boundary for the AI agent's `run_readonly_sql` tool.
 ///
 /// Unlike [`execute_sandboxed_query`], read-only enforcement is pinned
@@ -651,6 +701,30 @@ mod tests {
             validate_sandbox_batch(&["INSERT INTO users(name) VALUES('x')".to_string()], true)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn agent_parameterized_boundary_blocks_mutations_and_keeps_placeholders() {
+        // The agent parameterized boundary pins read-only exactly like
+        // `execute_agent_readonly_query`; placeholders must not slip past the
+        // guard, and mutations are rejected before compilation.
+        assert!(validate_sandbox_batch(
+            &["SELECT * FROM users WHERE name = :name".to_string()],
+            true,
+        )
+        .is_ok());
+        assert!(
+            validate_sandbox_batch(&["UPDATE users SET name = :name".to_string()], true).is_err()
+        );
+        assert!(
+            validate_sandbox_batch(&["DELETE FROM users WHERE id = :id".to_string()], true)
+                .is_err()
+        );
+        assert!(validate_sandbox_batch(
+            &["SELECT 1; DELETE FROM users WHERE id = :id".to_string()],
+            true
+        )
+        .is_err());
     }
 
     #[tokio::test]

@@ -138,6 +138,33 @@ export type AIAgentRunReadonlySqlAction = AIAgentToolActionBase<
   { sql: string }
 >;
 
+export interface AIAgentRunParameterizedSqlArgs extends Record<string, unknown> {
+  sql: string;
+  parameters: Array<{ name: string; value?: unknown; dataType?: string }>;
+}
+
+export type AIAgentRunParameterizedSqlAction = AIAgentToolActionBase<
+  "run_parameterized_sql",
+  AIAgentRunParameterizedSqlArgs
+>;
+
+export interface AIAgentFindValueArgs extends Record<string, unknown> {
+  table: string;
+  column: string;
+  value: unknown;
+  limit?: number;
+}
+
+export type AIAgentFindValueAction = AIAgentToolActionBase<
+  "find_value",
+  AIAgentFindValueArgs
+>;
+
+export type AIAgentCheckSqlAction = AIAgentToolActionBase<
+  "check_sql",
+  { sql: string }
+>;
+
 export interface AIAgentRunPresetArgs extends Record<string, unknown> {
   presetId?: "process-list" | "user-management";
   list?: boolean;
@@ -165,6 +192,9 @@ export type AIAgentToolAction =
   | AIAgentDescribeTablesAction
   | AIAgentSampleTableDataAction
   | AIAgentRunReadonlySqlAction
+  | AIAgentRunParameterizedSqlAction
+  | AIAgentFindValueAction
+  | AIAgentCheckSqlAction
   | AIAgentRunPresetAction
   | AIAgentPreviewWriteAction
   | AIAgentRememberTermAction

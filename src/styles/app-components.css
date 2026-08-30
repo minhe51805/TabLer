@@ -35389,6 +35389,19 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   white-space: nowrap;
 }
 
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-db {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(0, 122, 255, 0.12);
+  color: var(--text-secondary);
+  font-size: calc(var(--mm-fs-caption) - 1px);
+}
+
 .app-root .ai-workspace-stage--sidebar .ai-ws-item-check {
   color: var(--fintech-green);
 }

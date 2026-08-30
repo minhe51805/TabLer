@@ -3,7 +3,7 @@ import { translateLanguage, useI18n } from "../../i18n";
 import { useAIStore } from "../../stores/aiStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
-import { selectActiveAIChatWorkspace, useAIChatWorkspaceStore } from "../../stores/aiChatWorkspaceStore";
+import { inferDatabaseFromWorkspaceName, selectActiveAIChatWorkspace, useAIChatWorkspaceStore } from "../../stores/aiChatWorkspaceStore";
 import {
   AUTO_COMPACT_TRIGGER_CHARS,
   COMPACT_COMMAND,
@@ -110,6 +110,8 @@ export function AISlidePanel({
   const setActiveChatWorkspace = useAIChatWorkspaceStore((state) => state.setActiveWorkspace);
   const saveChatContextDigest = useAIChatWorkspaceStore((state) => state.saveContextDigest);
   const hydrateChatContextDigests = useAIChatWorkspaceStore((state) => state.hydrateDigests);
+  const bindChatWorkspaceDatabase = useAIChatWorkspaceStore((state) => state.bindWorkspaceDatabase);
+  const chatDatabaseCatalog = useConnectionStore((state) => state.databases);
   const aiConfigs = useAIStore((state) => state.aiConfigs);
   const loadAIConfigs = useAIStore((state) => state.loadAIConfigs);
   const saveAIConfigs = useAIStore((state) => state.saveAIConfigs);
@@ -158,6 +160,60 @@ export function AISlidePanel({
   if (!initialThreadRef.current) {
     initialThreadRef.current = createChatThread(1, currentWorkspaceKey);
   }
+
+  // A chat workspace owns its database context (like separate SSMS windows):
+  // activating a workspace must re-scope the connection to that workspace's
+  // database so tables/schemaObjects and the AI schema capsule follow it.
+  const ensureWorkspaceDatabase = useCallback((workspaceId: string | null) => {
+    if (!workspaceId || !connectionId) return;
+    const workspace = chatWorkspaces.find((item) => item.id === workspaceId);
+    if (!workspace) return;
+
+    void (async () => {
+      let boundDatabase = workspace.database ?? null;
+      let catalog = chatDatabaseCatalog;
+
+      // The catalog may be empty right after an app restart (the connection
+      // store keeps no per-session database list until it is fetched); legacy
+      // workspaces also need it to backfill their database from the name.
+      if (!boundDatabase || catalog.length === 0) {
+        if (catalog.length === 0) {
+          await useConnectionStore.getState().fetchDatabases(connectionId);
+          catalog = useConnectionStore.getState().databases;
+        }
+        if (!boundDatabase) {
+          const inferred = inferDatabaseFromWorkspaceName(workspace.name, catalog);
+          if (inferred) {
+            boundDatabase = inferred;
+            bindChatWorkspaceDatabase(workspace.id, inferred);
+          }
+        }
+      }
+
+      if (!boundDatabase) return;
+      // The workspace is bound to a database this server does not expose
+      // (e.g. the binding came from a different connection): leave the
+      // current context untouched instead of erroring on `use_database`.
+      if (catalog.length > 0 && !catalog.some((item) => item.name === boundDatabase)) return;
+      if (boundDatabase === useConnectionStore.getState().currentDatabase) return;
+      await useConnectionStore.getState().switchDatabase(connectionId, boundDatabase);
+    })();
+  }, [bindChatWorkspaceDatabase, chatDatabaseCatalog, chatWorkspaces, connectionId]);
+
+  const handleSelectChatWorkspace = useCallback((workspaceId: string | null) => {
+    setActiveChatWorkspace(workspaceId);
+    ensureWorkspaceDatabase(workspaceId);
+  }, [ensureWorkspaceDatabase, setActiveChatWorkspace]);
+
+  // Re-scopes the database once per workspace activation (panel open or
+  // workspace switch); manual database changes elsewhere are never reverted.
+  const syncedWorkspaceIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!isOpen) return;
+    if (syncedWorkspaceIdRef.current === activeChatWorkspaceId) return;
+    syncedWorkspaceIdRef.current = activeChatWorkspaceId;
+    ensureWorkspaceDatabase(activeChatWorkspaceId);
+  }, [activeChatWorkspaceId, ensureWorkspaceDatabase, isOpen]);
 
   const [promptDraft, setPromptDraft] = useState(initialPrompt);
   const [bubbles, setBubbles] = useState<AIWorkspaceBubbleData[]>([]);
@@ -1461,8 +1517,9 @@ export function AISlidePanel({
     createChatWorkspace(
       `${aiCopy.workspace.defaultName} ${chatWorkspaces.length + 1}`,
       connectionId,
+      currentDatabase,
     );
-  }, [aiCopy.workspace.defaultName, chatWorkspaces.length, connectionId, createChatWorkspace]);
+  }, [aiCopy.workspace.defaultName, chatWorkspaces.length, connectionId, createChatWorkspace, currentDatabase]);
 
   const handleDeleteUserWorkspace = useCallback((workspaceId: string) => {
     deleteChatWorkspace(workspaceId);
@@ -1551,5 +1608,5 @@ export function AISlidePanel({
                   if (!label) return;
                   window.dispatchEvent(new CustomEvent("ai-provider-switched-during-run", { detail: { providerLabel: label } }));
                 });
-              }, toggleModelVisibility: (id, model) => void handleToggleModelVisibility(id, model), confirmVisualizationConsent: resolveVisualizationConsent, resolveFailoverConsent: handleResolveFailoverConsent, cancelDeleteThread: handleCancelDeleteThread, composerKeyDown: handleComposerKeyDown, compactContext: () => void handleCompactContext(false), selectChatWorkspace: setActiveChatWorkspace, createChatWorkspace: handleCreateUserWorkspace, renameChatWorkspace: renameChatWorkspace, deleteChatWorkspace: handleDeleteUserWorkspace, importChatThread: handleImportChatThread }} />;
+              }, toggleModelVisibility: (id, model) => void handleToggleModelVisibility(id, model), confirmVisualizationConsent: resolveVisualizationConsent, resolveFailoverConsent: handleResolveFailoverConsent, cancelDeleteThread: handleCancelDeleteThread, composerKeyDown: handleComposerKeyDown, compactContext: () => void handleCompactContext(false), selectChatWorkspace: handleSelectChatWorkspace, createChatWorkspace: handleCreateUserWorkspace, renameChatWorkspace: renameChatWorkspace, deleteChatWorkspace: handleDeleteUserWorkspace, importChatThread: handleImportChatThread }} />;
 }

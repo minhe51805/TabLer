@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import type { ColumnDetail, DatabaseType, QueryResult, TableInfo, TableStructure } from "../../types";
+import type { ColumnDetail, DatabaseType, QueryParameterType, QueryResult, TableInfo, TableStructure } from "../../types";
 import { buildWorkspaceTableIdentifier } from "./ai-agent-context";
 import { findAgentSchemaMatches, prioritizeSchemaScanCandidates } from "./ai-agent-schema-search";
 import { formatExecutionError, isHighRiskStatement, isMutatingStatement, isSessionSwitchStatement } from "../SQLEditor/SQLEditorUtils";
@@ -63,6 +63,15 @@ export interface AgentToolExecutorDeps {
     connectionId: string,
     statements: string[],
   ) => Promise<QueryResult>;
+  /**
+   * Read-only prepared-parameters execution (backend pins both guarantees);
+   * used by run_parameterized_sql and find_value (MỚI-2/MỚI-3).
+   */
+  executeParameterizedReadonlyQuery: (
+    connectionId: string,
+    sql: string,
+    parameters: Array<{ name: string; value: unknown; dataType: QueryParameterType }>,
+  ) => Promise<QueryResult>;
   previewWriteTransaction: (
     connectionId: string,
     statements: string[],
@@ -76,6 +85,114 @@ export interface AgentToolExecutorDeps {
  * de-dupe guard so identical non-read calls do not burn step budget.
  * Extracted verbatim from use-ai-slide-panel.
  */
+
+const AGENT_PARAMETER_DATA_TYPES = new Set<string>([
+  "text",
+  "integer",
+  "decimal",
+  "boolean",
+  "json",
+  "null",
+]);
+
+/**
+ * Infers the parameter data type from a raw JSON value, honouring an explicit
+ * model-provided dataType when it is valid. Primitives bind directly; anything
+ * else (objects/arrays) falls back to a JSON parameter.
+ */
+export function coerceAgentQueryParameter(
+  name: string,
+  rawValue: unknown,
+  rawDataType?: unknown,
+): { name: string; value: unknown; dataType: QueryParameterType } {
+  let dataType: QueryParameterType = "text";
+  let value = rawDataType === "null" ? null : rawValue;
+  if (typeof rawDataType === "string" && AGENT_PARAMETER_DATA_TYPES.has(rawDataType)) {
+    dataType = rawDataType as QueryParameterType;
+    if (dataType === "null") value = null;
+    if (dataType === "integer" && typeof value === "string") {
+      const parsed = Number.parseInt(value, 10);
+      value = Number.isFinite(parsed) ? parsed : value;
+    }
+    if (dataType === "decimal" && typeof value === "string") {
+      const parsed = Number.parseFloat(value);
+      if (Number.isFinite(parsed)) value = parsed;
+    }
+    if (dataType === "boolean" && typeof value === "string") {
+      value = value.trim().toLowerCase() === "true";
+    }
+  } else if (typeof value === "number") {
+    dataType = Number.isInteger(value) ? "integer" : "decimal";
+  } else if (typeof value === "boolean") {
+    dataType = "boolean";
+  } else if (value !== null && (typeof value === "object" || Array.isArray(value))) {
+    dataType = "json";
+  }
+  return { name, value, dataType };
+}
+
+/**
+ * Quotes a (possibly schema-qualified) identifier per engine dialect so
+ * agent-built SQL can never break out of the identifier context.
+ */
+export function agentSqlQuoteIdentifier(
+  dbType: DatabaseType | undefined,
+  identifier: string,
+): string {
+  const parts = identifier.trim().split(".").filter(Boolean);
+  if (parts.length === 0) return identifier;
+  if (dbType === "mysql" || dbType === "mariadb") {
+    return parts.map((part) => `\`${part.replace(/`/g, "``")}\``).join(".");
+  }
+  if (dbType === "mssql") {
+    return parts.map((part) => `[${part.replace(/]/g, "]]")}]`).join(".");
+  }
+  return parts.map((part) => `"${part.replace(/"/g, '""')}"`).join(".");
+}
+
+/**
+ * Static pre-flight shared by run_parameterized_sql and check_sql. Returns
+ * the first blocking reason, or null when the SQL passes all agent guards.
+ */
+export function analyzeAgentSqlForAgent(
+  sql: string,
+  availableSchemaTables: string[],
+  inspectedAgentTables: Set<string>,
+): { ok: true } | { ok: false; error: string } {
+  try {
+    validateAIAgentReadonlySql(sql);
+  } catch (errorValue) {
+    return {
+      ok: false,
+      error: errorValue instanceof Error ? errorValue.message : String(errorValue),
+    };
+  }
+  const catalogRefs = findSystemCatalogReferences(sql);
+  if (catalogRefs.length > 0) {
+    return {
+      ok: false,
+      error: `SQL references system catalog objects (${catalogRefs.join(", ")}). Use list_tables, search_schema, or describe_table instead of system catalogs.`,
+    };
+  }
+  const schemaRequirements = getAgentSqlSchemaRequirements(
+    sql,
+    availableSchemaTables,
+    inspectedAgentTables,
+  );
+  if (schemaRequirements.unknown.length > 0) {
+    return {
+      ok: false,
+      error: `SQL references unknown table(s): ${schemaRequirements.unknown.join(", ")}. Use list_tables and describe_table first.`,
+    };
+  }
+  if (schemaRequirements.uninspected.length > 0) {
+    return {
+      ok: false,
+      error: `Inspect the schema before reading rows. Call describe_table for: ${schemaRequirements.uninspected.join(", ")}.`,
+    };
+  }
+  return { ok: true };
+}
 
 export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const {
@@ -94,6 +211,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     getTableStructure,
     getTableData,
     executeReadonlyQuery,
+    executeParameterizedReadonlyQuery,
     previewWriteTransaction,
     toolAvailability,
   } = deps;
@@ -119,6 +237,8 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     // Repeating an exploration call with identical arguments returns the
     // identical observation and burns a step from a tight budget.
     const explorationKey = action.action !== "run_readonly_sql"
+      && action.action !== "run_parameterized_sql"
+      && action.action !== "find_value"
       && action.action !== "sample_table_data"
       && action.action !== "read_page"
       ? `${action.action}:${JSON.stringify(action.args ?? {})}`
@@ -567,6 +687,150 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       }
 
       return `${summarizeAgentQueryObservation(queryResult)}${explainNote}`;
+    }
+
+    if (action.action === "run_parameterized_sql") {
+      if (toolAvailability && !toolAvailability.sqlRead) {
+        return agentSqlToolBlockedMessage("run_parameterized_sql", toolAvailability);
+      }
+      const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
+      if (!sql) {
+        return "Tool error: run_parameterized_sql requires args.sql.";
+      }
+      const rawParameters = Array.isArray(action.args?.parameters) ? action.args.parameters : [];
+      const parameters: Array<{ name: string; value: unknown; dataType: QueryParameterType }> = [];
+      for (const item of rawParameters) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+        const record = item as Record<string, unknown>;
+        const name = typeof record.name === "string" ? record.name.trim() : "";
+        if (!name || !("value" in record)) {
+          return 'Tool error: every parameters[] entry requires a non-empty "name" and a "value".';
+        }
+        parameters.push(coerceAgentQueryParameter(name, record.value, record.dataType));
+      }
+      if (parameters.length === 0) {
+        return 'Tool error: run_parameterized_sql requires bindings like [{"name":"status","value":"active"}]. Reference them in SQL as :name.';
+      }
+
+      const guard = analyzeAgentSqlForAgent(sql, availableSchemaTables, inspectedAgentTables);
+      if (!guard.ok) {
+        return `Tool blocked: ${guard.error}`;
+      }
+
+      if (requestDataReadConsent) {
+        const approved = await requestDataReadConsent();
+        if (!approved) {
+          return "Tool blocked: The user did not grant permission to read live database rows for this request.";
+        }
+      }
+
+      try {
+        const queryResult = await executeParameterizedReadonlyQuery(connectionId!, sql, parameters);
+        if (requestId !== requestIdRef.current) {
+          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+        }
+        return stringifyAgentObservation({
+          parameterized: true,
+          parameterCount: parameters.length,
+          result: summarizeAgentQueryObservation(queryResult),
+        });
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: parameterized query failed: ${formatExecutionError(errorValue)}`;
+      }
+    }
+
+    if (action.action === "find_value") {
+      if (toolAvailability && !toolAvailability.sqlRead) {
+        return agentSqlToolBlockedMessage("find_value", toolAvailability);
+      }
+      const requestedTable = typeof action.args?.table === "string" ? action.args.table.trim() : "";
+      const requestedColumn = typeof action.args?.column === "string" ? action.args.column.trim() : "";
+      if (!requestedTable || !requestedColumn) {
+        return "Tool error: find_value requires args.table and args.column.";
+      }
+      if (!("value" in (action.args ?? {}))) {
+        return "Tool error: find_value requires args.value.";
+      }
+
+      const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
+      if (!matchedTable) {
+        return `Tool error: Table "${requestedTable}" is not present in the current workspace schema.`;
+      }
+
+      // Verify the column against the real structure so a hallucinated column
+      // name fails here with the actual list instead of at the driver.
+      const columns = await getTableColumnsPreview(connectionId!, matchedTable, currentDatabase || undefined);
+      if (requestId !== requestIdRef.current) {
+        throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+      }
+      const matchedColumn = columns.find(
+        (column) => column.name.toLowerCase() === requestedColumn.toLowerCase(),
+      );
+      if (!matchedColumn) {
+        return `Tool error: Column "${requestedColumn}" does not exist on ${matchedTable}. Available columns: ${columns.map((column) => column.name).join(", ")}.`;
+      }
+
+      if (requestDataReadConsent) {
+        const approved = await requestDataReadConsent();
+        if (!approved) {
+          return "Tool blocked: The user did not grant permission to read live database rows for this request.";
+        }
+      }
+
+      const requestedLimit = typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
+        ? Math.min(AI_AGENT_SAMPLE_MAX_ROWS, Math.max(1, Math.floor(action.args.limit)))
+        : 10;
+      const quotedTable = agentSqlQuoteIdentifier(dbType, matchedTable);
+      const quotedColumn = agentSqlQuoteIdentifier(dbType, matchedColumn.name);
+      const binding = coerceAgentQueryParameter("value", action.args.value);
+      const sql = dbType === "mssql"
+        ? `SELECT TOP (${requestedLimit}) * FROM ${quotedTable} WHERE ${quotedColumn} = :value`
+        : `SELECT * FROM ${quotedTable} WHERE ${quotedColumn} = :value LIMIT ${requestedLimit}`;
+
+      try {
+        const queryResult = await executeParameterizedReadonlyQuery(connectionId!, sql, [binding]);
+        if (requestId !== requestIdRef.current) {
+          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+        }
+        inspectedAgentTables.add(matchedTable);
+        return stringifyAgentObservation({
+          table: matchedTable,
+          column: matchedColumn.name,
+          value: binding.value,
+          parameterized: true,
+          result: summarizeAgentQueryObservation(queryResult),
+        });
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: find_value failed: ${formatExecutionError(errorValue)}`;
+      }
+    }
+
+    if (action.action === "check_sql") {
+      if (toolAvailability && !toolAvailability.sqlRead) {
+        return agentSqlToolBlockedMessage("check_sql", toolAvailability);
+      }
+      const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
+      if (!sql) {
+        return "Tool error: check_sql requires args.sql.";
+      }
+      const analysis = analyzeAgentSqlForAgent(sql, availableSchemaTables, inspectedAgentTables);
+      const unboundedSelect = analysis.ok
+        && /^(SELECT|WITH)\b/i.test(sql)
+        && !/\bLIMIT\s+\d/i.test(sql)
+        && !/^EXPLAIN\b/i.test(sql);
+      return stringifyAgentObservation({
+        ok: analysis.ok && !unboundedSelect,
+        sql: redactAgentSqlLiterals(sql),
+        issues: analysis.ok ? [] : [analysis.error],
+        ...(unboundedSelect
+          ? { notes: ["The SELECT has no LIMIT - add one before finishing so it can never become a full-table pull."] }
+          : {}),
+        note: analysis.ok && !unboundedSelect
+          ? "Pre-flight passed. You may now finish with this SQL."
+          : "Fix every issue (or re-check corrected SQL) before calling finish.",
+      });
     }
 
     if (action.action === "preview_write") {

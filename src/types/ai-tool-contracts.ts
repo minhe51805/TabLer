@@ -1,4 +1,4 @@
-import type { QueryResult, TableInfo, TableStructure } from "./database";
+import type { QueryParameter, QueryResult, TableStructure, TableInfo } from "./database";
 
 export interface AIListTablesCommandArgs extends Record<string, unknown> {
   connectionId: string;
@@ -15,6 +15,13 @@ export interface AIExecuteSandboxedQueryCommandArgs extends Record<string, unkno
   connectionId: string;
   statements: string[];
   requireReadOnly?: boolean;
+  requestId?: string;
+}
+
+export interface AIExecuteAgentParameterizedQueryCommandArgs extends Record<string, unknown> {
+  connectionId: string;
+  sql: string;
+  parameters: QueryParameter[];
   requestId?: string;
 }
 
@@ -49,6 +56,10 @@ export interface AIWorkspaceToolCommandMap {
   };
   execute_agent_readonly_query: {
     args: AIExecuteAgentReadonlyQueryCommandArgs;
+    result: QueryResult;
+  };
+  execute_agent_parameterized_query: {
+    args: AIExecuteAgentParameterizedQueryCommandArgs;
     result: QueryResult;
   };
   preview_write_transaction: {

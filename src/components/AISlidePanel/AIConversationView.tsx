@@ -1,5 +1,5 @@
 import { CornerDownLeft, ExternalLink, Eye, FileText, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
-import { useEffect, useState, type RefObject } from "react";
+import { memo, useEffect, useState, type RefObject } from "react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
   aiModeAllowsInsert,
@@ -120,7 +120,7 @@ function AIAttachmentFileChips({ attachments }: { attachments: AIWorkspaceAttach
   );
 }
 
-export function AIConversationView({
+export const AIConversationView = memo(function AIConversationView({
   bubbles,
   copy,
   threadRef,
@@ -367,4 +367,4 @@ export function AIConversationView({
       />
     </div>
   );
-}
+})

@@ -696,7 +696,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         };
         window.addEventListener("ai-provider-switched-during-run", handleManualProviderSwitch);
 
-        const agentRunnerResult = await runAIAgentToolLoop({
+        let agentRunnerResult: Awaited<ReturnType<typeof runAIAgentToolLoop>> | undefined;
+        try {
+          agentRunnerResult = await runAIAgentToolLoop({
           workspaceToolsEnabled,
           stepBudget: agentStepBudget,
           tokenBudget: DEFAULT_AGENT_TOKEN_BUDGET,
@@ -885,8 +887,15 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             }
           },
         });
+        } finally {
+          // Always detach, including when the run throws mid-loop; otherwise a
+        // failed run leaks its manual-switch listener (and its closures).
+          window.removeEventListener("ai-provider-switched-during-run", handleManualProviderSwitch);
+        }
+        if (!agentRunnerResult) {
+          throw new Error("Agent runner returned no result");
+        }
         agentTraceSteps = agentRunnerResult.steps;
-        window.removeEventListener("ai-provider-switched-during-run", handleManualProviderSwitch);
         let finalAction = agentRunnerResult.finalAction;
         let finalSteps = agentRunnerResult.steps;
         if (endedWithAskUser && typeof finalAction.args?.response === "string") {

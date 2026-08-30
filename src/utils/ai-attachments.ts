@@ -188,6 +188,20 @@ export function toRequestAttachments(drafts: AIAttachmentDraft[]): AIRequestAtta
 
 const attachmentDataUrlCache = new Map<string, string>();
 
+/** Memory guard: base64 payloads are large, so keep the cache bounded (LRU-ish
+ *  by insertion order) instead of growing with every image ever viewed. */
+const ATTACHMENT_DATA_URL_CACHE_MAX = 24;
+
+function rememberAttachmentDataUrl(id: string, dataUrl: string) {
+  attachmentDataUrlCache.set(id, dataUrl);
+  if (attachmentDataUrlCache.size > ATTACHMENT_DATA_URL_CACHE_MAX) {
+    const oldest = attachmentDataUrlCache.keys().next().value;
+    if (oldest !== undefined && oldest !== id) {
+      attachmentDataUrlCache.delete(oldest);
+    }
+  }
+}
+
 /** Resolves a persisted attachment id to a renderable data URL (cached). */
 export async function fetchAttachmentDataUrl(id: string): Promise<string | null> {
   const cached = attachmentDataUrlCache.get(id);
@@ -200,7 +214,7 @@ export async function fetchAttachmentDataUrl(id: string): Promise<string | null>
     const row = rows?.[0];
     if (!row) return null;
     const dataUrl = `data:${row.mimeType};base64,${row.data}`;
-    attachmentDataUrlCache.set(id, dataUrl);
+    rememberAttachmentDataUrl(id, dataUrl);
     return dataUrl;
   } catch {
     return null;

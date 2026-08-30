@@ -83,6 +83,7 @@ export function useSQLEditor({
   const splitRef = useRef<HTMLDivElement>(null);
   const inlineCompletionDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const structurePrefetchKeysRef = useRef<Set<string>>(new Set());
   const selectionContextDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const contentPersistTimerRef = useRef<number | null>(null);
   const cursorPersistTimerRef = useRef<number | null>(null);
@@ -517,6 +518,18 @@ export function useSQLEditor({
           dbType,
         })
       : null;
+
+    // Warm the structure cache in the background: without this, the FIRST
+    // completion request fired one metadata query per table in parallel and
+    // stalled the editor (and the connection pool) for seconds.
+    const completionProvider = completionDisposableRef.current as
+      | { dispose: () => void; prefetchStructures?: () => Promise<void> }
+      | null;
+    const prefetchKey = `${connectionId ?? ""}|${dbType ?? ""}`;
+    if (completionProvider?.prefetchStructures && connectionId && !structurePrefetchKeysRef.current.has(prefetchKey)) {
+      structurePrefetchKeysRef.current.add(prefetchKey);
+      void completionProvider.prefetchStructures();
+    }
 
     selectionContextDisposableRef.current?.dispose();
     selectionContextDisposableRef.current = editor.onDidChangeCursorSelection(() => {

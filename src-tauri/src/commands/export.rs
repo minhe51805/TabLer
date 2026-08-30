@@ -86,7 +86,7 @@ pub async fn export_database(
         .get_driver(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
-    let driver_ref: &dyn DatabaseDriver = &**driver;
+    let driver_ref: &dyn DatabaseDriver = &*driver;
 
     let requested_database = database
         .as_deref()

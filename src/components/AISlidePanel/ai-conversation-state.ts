@@ -6,7 +6,7 @@ import type { AIConversationMessage } from "../../types";
 
 export const AI_WORKSPACE_HISTORY_VERSION = 1;
 export const AI_WORKSPACE_HISTORY_LEGACY_STORAGE_KEY = "tabler.ai.workspace.history.v1";
-export const AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS = 300;
+export const AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS = 1_200;
 
 const MAX_STORED_THREADS_PER_WORKSPACE = 12;
 const MAX_STORED_BUBBLES_PER_THREAD = 24;

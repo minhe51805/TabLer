@@ -144,7 +144,9 @@ describe("connectionStore", () => {
     );
   });
 
-  it("clears stale connection state when metadata reports a missing connection", async () => {
+  it("keeps the workspace connected when metadata reports a missing connection", async () => {
+    // A single failed metadata command must NOT tear the workspace down or
+    // kick the user back to the launcher; only an explicit disconnect does.
     useConnectionStore.setState({
       activeConnectionId: "connection-1",
       connectedIds: new Set(["connection-1"]),
@@ -154,8 +156,8 @@ describe("connectionStore", () => {
 
     await useConnectionStore.getState().fetchTables("connection-1", "app");
 
-    expect(useConnectionStore.getState().activeConnectionId).toBeNull();
-    expect(useConnectionStore.getState().connectedIds.size).toBe(0);
+    expect(useConnectionStore.getState().activeConnectionId).toBe("connection-1");
+    expect(useConnectionStore.getState().connectedIds.has("connection-1")).toBe(true);
     expect(useGlobalErrorStore.getState().error).toContain("Failed to list tables");
   });
 

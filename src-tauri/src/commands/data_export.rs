@@ -118,7 +118,7 @@ pub async fn export_table_data(
     let temporary_path = temporary_export_path(&target_path);
     let cancelled = cancellation_state.start(&operation_id)?;
     let result = stream_table_export(
-        &**driver,
+        &*driver,
         &request,
         format,
         &temporary_path,

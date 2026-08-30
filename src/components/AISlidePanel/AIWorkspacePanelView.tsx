@@ -1,5 +1,5 @@
 import { History, Layers, MessageSquarePlus, MessageSquareText, Pencil, RotateCcw, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { KeyboardEventHandler, RefObject } from "react";
 import {
   AI_PANEL_DEFAULT_WIDTH,
@@ -54,6 +54,16 @@ export interface AIWorkspacePanelViewModel {
 export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelViewModel }) {
   const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  // Stable callbacks so the memoized AIConversationView skips re-renders
+  // triggered by unrelated panel state (composer keystrokes, health ticks...).
+  const handleOpenDetail = useCallback(
+    (bubble: { id: string }) => m.setDetailBubbleId(bubble.id),
+    [m.setDetailBubbleId],
+  );
+  const handleUseSuggestion = useCallback(
+    (prompt: string) => m.setPromptDraft(prompt),
+    [m.setPromptDraft],
+  );
   const panelWidth = useAppLayoutStore((state) => state.aiPanelWidth);
   const setPanelWidth = useAppLayoutStore((state) => state.setAIPanelWidth);
   const onResizeHandleMouseDown = useAIPanelResize({
@@ -137,7 +147,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                   </div>
                 )}
               </div><button type="button" className="ai-workspace-chat-tab-add" onClick={m.reloadChat} disabled={m.isGenerating || m.isRunning} title={m.aiCopy.composer.reloadChatTitle}><RotateCcw className="w-3.5 h-3.5" /></button></div></div>
-        <AIConversationView bubbles={m.conversationBubbles} copy={m.aiCopy} threadRef={m.chatThreadRef} onOpenDetail={(bubble) => m.setDetailBubbleId(bubble.id)} onInsert={m.insertBubble} onRun={m.runBubble} onRetry={m.retryBubble} onOpenRecord={m.openAgentRecord} onUseSuggestion={(prompt) => m.setPromptDraft(prompt)} />
+        <AIConversationView bubbles={m.conversationBubbles} copy={m.aiCopy} threadRef={m.chatThreadRef} onOpenDetail={handleOpenDetail} onInsert={m.insertBubble} onRun={m.runBubble} onRetry={m.retryBubble} onOpenRecord={m.openAgentRecord} onUseSuggestion={handleUseSuggestion} />
         <AIComposerDock copy={m.aiCopy} prompt={m.promptDraft} textareaRef={m.composerTextareaRef} footerNote={m.composerFooterNote} contextUsage={m.contextUsage} attachedSelectionSource={m.attachedSelection?.source} hasAttachedSelectionText={Boolean(m.attachedSelection?.text.trim())} attachments={m.composerAttachments} canAttachImages={m.canAttachImages} onAddAttachmentFiles={m.addAttachmentFiles} onRemoveAttachment={m.removeAttachment} onOpenAttachmentManager={m.openAttachmentManager} interactionMode={m.activeInteractionMode} agentAutonomy={m.activeAgentAutonomy} activeProvider={m.activeProvider} providers={m.switchableProviders} isSwitchingProvider={m.isSwitchingProvider} isGenerating={m.isGenerating} isCancelling={m.isCancelling} isConnectionAvailable={Boolean(m.connectionId)} isSessionDataReadEnabled={m.isSessionDataReadEnabled} sessionDataReadLabel={m.sessionDataReadButtonLabel} sessionDataReadTitle={m.sessionDataReadButtonTitle} showThinking={m.showThinking} onPromptChange={m.setPromptDraft} onKeyDown={m.composerKeyDown} onDismissSelection={m.dismissSelection} onSelectInteractionMode={m.selectInteractionMode} onSelectAgentAutonomy={m.selectAgentAutonomy} onActivateProvider={m.activateProvider} onToggleModelVisibility={m.toggleModelVisibility} onSetSessionDataReadEnabled={m.setSessionDataReadEnabled} onSetShowThinking={m.setShowThinking} onOpenSettings={m.openSettings} onCloseHistory={() => m.setHistoryOpen(false)} onGenerate={m.generate} onCancelGeneration={m.cancelGeneration} />
       </div></div></aside>
     </div>

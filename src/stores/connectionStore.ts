@@ -23,7 +23,6 @@ import {
   FRONTEND_TIMEOUTS,
   inFlightSchemaObjectFetches,
   inFlightTableFetches,
-  isMissingConnectionError,
   metadataFetchKey,
   resolveConnectionConfig,
   runWithInFlight,
@@ -285,8 +284,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       const message = `Failed to list databases: ${error}`;
       set({
         isLoadingDatabases: false,
-        ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
-      });
+        });
       useGlobalErrorStore.getState().setError(message);
     }
   },
@@ -304,8 +302,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     } catch (error) {
       set({
         isSwitchingDatabase: false,
-        ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
-      });
+        });
       useGlobalErrorStore.getState().setError(`Failed to switch database: ${error}`);
     }
   },
@@ -327,8 +324,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       } catch (error) {
         set({
           isLoadingTables: false,
-          ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
-        });
+            });
         useGlobalErrorStore
           .getState()
           .setError(`Failed to list tables: ${error}`);
@@ -352,8 +348,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       } catch (error) {
         set({
           isLoadingSchemaObjects: false,
-          ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
-        });
+            });
         useGlobalErrorStore
           .getState()
           .setError(`Failed to list schema objects: ${error}`);

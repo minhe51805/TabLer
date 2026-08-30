@@ -244,20 +244,33 @@ fn next_entry_id(path: &PathBuf) -> Result<i64, std::io::Error> {
 
 // ─── Tauri Commands ──────────────────────────────────────────────────────────
 
+/// Shared storage instance. Building one per command call re-scanned the
+/// whole JSONL file to recover the next id on every save; keeping a process-
+/// wide instance recovers it once and reuses the id counter afterwards.
+static QUERY_HISTORY_STORAGE: std::sync::OnceLock<Result<QueryHistoryStorage, String>> =
+    std::sync::OnceLock::new();
+
+fn shared_storage() -> Result<QueryHistoryStorage, String> {
+    QUERY_HISTORY_STORAGE
+        .get_or_init(QueryHistoryStorage::new)
+        .clone()
+}
+
+
 #[tauri::command]
-pub fn save_query_history(entry: QueryHistoryEntry) -> Result<i64, String> {
-    let storage = QueryHistoryStorage::new()?;
+pub async fn save_query_history(entry: QueryHistoryEntry) -> Result<i64, String> {
+    let storage = shared_storage()?;
     let mut entry = entry;
     storage.save_entry(&mut entry)
 }
 
 #[tauri::command]
-pub fn get_query_history(
+pub async fn get_query_history(
     connection_id: Option<String>,
     search: Option<String>,
     limit: Option<u32>,
 ) -> Result<Vec<QueryHistoryEntry>, String> {
-    let storage = QueryHistoryStorage::new()?;
+    let storage = shared_storage()?;
     storage.get_entries(
         connection_id.as_deref(),
         search.as_deref(),
@@ -266,20 +279,20 @@ pub fn get_query_history(
 }
 
 #[tauri::command]
-pub fn delete_query_history_entry(entry_id: i64) -> Result<bool, String> {
-    let storage = QueryHistoryStorage::new()?;
+pub async fn delete_query_history_entry(entry_id: i64) -> Result<bool, String> {
+    let storage = shared_storage()?;
     storage.delete_entry(entry_id)
 }
 
 #[tauri::command]
-pub fn delete_query_history_entries(entry_ids: Vec<i64>) -> Result<usize, String> {
-    let storage = QueryHistoryStorage::new()?;
+pub async fn delete_query_history_entries(entry_ids: Vec<i64>) -> Result<usize, String> {
+    let storage = shared_storage()?;
     storage.delete_entries(&entry_ids)
 }
 
 #[tauri::command]
-pub fn clear_query_history(connection_id: Option<String>) -> Result<usize, String> {
-    let storage = QueryHistoryStorage::new()?;
+pub async fn clear_query_history(connection_id: Option<String>) -> Result<usize, String> {
+    let storage = shared_storage()?;
     storage.clear_entries(connection_id.as_deref())
 }
 

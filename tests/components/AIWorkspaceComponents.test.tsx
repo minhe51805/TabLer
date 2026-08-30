@@ -311,7 +311,11 @@ describe("AI workspace components", () => {
     );
 
     expect(screen.getByRole("button", { name: "Open public.users record (id: 42)" })).toBeInTheDocument();
-    expect(screen.queryByText(bubble.sql!)).not.toBeInTheDocument();
+    // The SQL block always stays visible (formatted); the record link is an
+    // addition on top of it, not a replacement.
+    const sqlBlock = document.querySelector(".ai-workspace-markdown-code");
+    expect(sqlBlock).not.toBeNull();
+    expect(sqlBlock?.textContent).toContain("FROM");
 
     await user.click(screen.getByRole("button", { name: "Open public.users record (id: 42)" }));
     expect(onOpenRecord).toHaveBeenCalledWith({

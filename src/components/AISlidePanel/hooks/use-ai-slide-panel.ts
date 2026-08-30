@@ -548,6 +548,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         const { runAgentTool } = createAgentToolExecutor({
           connectionId,
           currentDatabase,
+          dbType: activeDbType,
           latestTables,
           availableSchemaTables,
           relationalSchemaSummaryByTable,

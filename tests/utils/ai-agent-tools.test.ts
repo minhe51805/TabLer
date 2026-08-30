@@ -12,13 +12,16 @@ describe("AI agent tool contract", () => {
       "ask_user",
       "list_tables",
       "search_schema",
+      "list_schema_objects",
       "describe_table",
       "describe_tables",
       "sample_table_data",
       "run_readonly_sql",
+      "run_preset",
       "preview_write",
       "remember_term",
       "skill",
+      "read_page",
       "finish",
     ]);
     expect(AI_AGENT_TOOL_NAMES).not.toContain("plan");

@@ -12,6 +12,7 @@ import {
   summarizePromptForDisplay,
 } from "./ai-conversation-state";
 import { fetchAttachmentDataUrl } from "../../utils/ai-attachments";
+import { AIWorkspaceSqlBlock } from "./AIWorkspaceMarkdown";
 import { AIImageViewer } from "./AIImageViewer";
 import { AIAgentSteps } from "./AIAgentSteps";
 import { extractAgentRecordLinks, type AIAgentRecordLink } from "./ai-agent-record-links";
@@ -257,8 +258,8 @@ export const AIConversationView = memo(function AIConversationView({
                         ))}
                       </div>
                     )}
-                    {bubble.sql && bubble.status !== "error" && !agentReadLiveData && (
-                      <pre className="ai-workspace-chat-code">{bubble.sql}</pre>
+                    {bubble.sql && bubble.status !== "error" && (
+                      <AIWorkspaceSqlBlock code={bubble.sql} />
                     )}
                     {(canShowDetail || canInsert || canRun || canRetry) && (
                       <div className="ai-workspace-chat-actions">

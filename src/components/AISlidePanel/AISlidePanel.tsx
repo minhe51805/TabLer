@@ -22,6 +22,7 @@ import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import { normalizeAIProviderConfigs } from "../../utils/ai-provider-registry";
 import { resolveAIFailoverConsent } from "../../utils/ai-failover-consent";
 import { invokeMutation } from "../../utils/tauri-utils";
+import { formatAgentSql } from "../../utils/ai-sql-format";
 import { AIWorkspacePanelView } from "./AIWorkspacePanelView";
 import { useAIAssistantGeneration } from "./hooks/use-ai-assistant-generation";
 import { useAIDashboardBubbleUpdates } from "./hooks/use-ai-dashboard-bubble-updates";
@@ -1094,6 +1095,9 @@ export function AISlidePanel({
   const handleRunBubble = useCallback(async (bubble: AIWorkspaceBubbleData) => {
     if (!bubble.sql || !aiModeAllowsRun(bubble.interactionMode)) return;
     const sessionId = openSessionRef.current;
+    // The workspace Query tab should receive pretty-printed SQL — the same
+    // formatting the chat bubble shows — instead of the model's one-liner.
+    const runnableSql = formatAgentSql(bubble.sql);
     const bubbleIntentPrompt = bubble.promptSummary?.trim() || bubble.prompt;
 
     if (isVisualizationPrompt(bubbleIntentPrompt)) {
@@ -1105,7 +1109,7 @@ export function AISlidePanel({
         : null;
       const preferredVisualizationSql =
         deterministicOverviewChartSql ||
-        (bubble.sql && isSingleSqlStatement(bubble.sql) ? bubble.sql : null);
+        (runnableSql && isSingleSqlStatement(runnableSql) ? runnableSql : null);
 
       if (wantsMetricsDashboard) {
         const visualizationReadApproved = await requestVisualizationReadConsent(bubbleIntentPrompt);
@@ -1185,7 +1189,7 @@ export function AISlidePanel({
       return;
     }
     const approvedRiskLevel = bubble.risk?.level;
-    const workspaceOpened = openSqlInWorkspace(bubble.sql, {
+    const workspaceOpened = openSqlInWorkspace(runnableSql, {
       title: "AI Query",
       autoRun: approvedRiskLevel === "safe",
       focusWorkspace: true,
@@ -1202,7 +1206,7 @@ export function AISlidePanel({
     }
 
     try {
-      const result = await runSql(bubble.sql);
+      const result = await runSql(runnableSql);
       setBubbles((current) =>
         current.map((currentBubble) =>
           currentBubble.id === bubble.id

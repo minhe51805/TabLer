@@ -16,13 +16,16 @@ export const AI_AGENT_TOOL_NAMES = [
   "ask_user",
   "list_tables",
   "search_schema",
+  "list_schema_objects",
   "describe_table",
   "describe_tables",
   "sample_table_data",
   "run_readonly_sql",
+  "run_preset",
   "preview_write",
   "remember_term",
   "skill",
+  "read_page",
   "finish",
 ] as const;
 
@@ -36,14 +39,22 @@ export const AI_AGENT_BATCH_DESCRIBE_LIMIT = 8;
 export const AI_AGENT_PREVIEW_STATEMENT_LIMIT = 10;
 /** Max selectable answers on ask_user. */
 export const AI_AGENT_ASK_USER_OPTIONS_LIMIT = 6;
+/** Max schema objects (views/triggers/routines) returned per list call. */
+export const AI_AGENT_SCHEMA_OBJECTS_LIMIT = 60;
+/** Max characters of a view/routine definition emitted per object. */
+export const AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS = 2500;
+/** Max characters returned per read_page slice. */
+export const AI_AGENT_READ_PAGE_MAX_CHARS = 4000;
 
 const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "list_tables",
   "search_schema",
+  "list_schema_objects",
   "describe_table",
   "describe_tables",
   "sample_table_data",
   "run_readonly_sql",
+  "run_preset",
   "preview_write",
   "remember_term",
 ]);
@@ -148,6 +159,33 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
     ),
   },
 
+  list_schema_objects: {
+    name: "list_schema_objects",
+    description:
+      "List database views, triggers, and stored routines, optionally with their SQL definition. A view definition is verified business logic (how revenue is actually computed, which statuses are filtered) written by the database owners — prefer reading it over guessing column semantics. Definitions are redacted and truncated; page through with repeated calls if needed.",
+    parameters: objectSchema(
+      {
+        objectType: {
+          type: "string",
+          enum: ["view", "trigger", "routine", "all"],
+          description: "Which object kinds to list (defaults to all).",
+        },
+        pattern: { type: "string", description: "Optional case-insensitive name substring." },
+        withDefinition: {
+          type: "boolean",
+          description: "Include each object's SQL definition (redacted, truncated). Only set true for the few objects you actually need.",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: AI_AGENT_SCHEMA_OBJECTS_LIMIT,
+          description: `Maximum objects to return (defaults to ${AI_AGENT_SCHEMA_OBJECTS_LIMIT}).`,
+        },
+      },
+      [],
+    ),
+  },
+
   describe_table: {
     name: "describe_table",
     description: "Inspect the exact columns of one verified table before reading its rows.",
@@ -188,6 +226,11 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
           maximum: AI_AGENT_SAMPLE_MAX_ROWS,
           description: `Rows to sample (up to ${AI_AGENT_SAMPLE_MAX_ROWS}).`,
         },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description: "Rows to skip before sampling, for paging through large tables.",
+        },
       },
       ["table"],
     ),
@@ -200,6 +243,26 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
     parameters: objectSchema(
       { sql: { type: "string", description: "A single read-only SQL statement grounded in the verified schema." } },
       ["sql"],
+    ),
+  },
+
+  run_preset: {
+    name: "run_preset",
+    description:
+      "Run a pre-vetted operational query written per engine: process-list shows currently running queries/sessions; user-management lists database users and roles. These are the ONLY sanctioned way to inspect server state — catalog SQL like pg_stat_activity remains blocked in run_readonly_sql on purpose.",
+    parameters: objectSchema(
+      {
+        presetId: {
+          type: "string",
+          enum: ["process-list", "user-management"],
+          description: "Which vetted preset to run.",
+        },
+        list: {
+          type: "boolean",
+          description: "Set true to list preset availability for the current engine instead of running one.",
+        },
+      },
+      [],
     ),
   },
 
@@ -253,6 +316,33 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
       ["name"],
     ),
   },
+
+  read_page: {
+    name: "read_page",
+    description:
+      "Re-read a previous tool observation that was truncated in the trace (large query results, sampled rows). Pass ref to pick the observation number shown in the trace, or omit it for the most recent one; use offset to keep paging until hasMore is false. This re-reads already-fetched data at zero cost — never re-run a query just to see more of it.",
+    parameters: objectSchema(
+      {
+        ref: {
+          type: "integer",
+          minimum: 1,
+          description: "1-based observation number from the trace; omitted means the latest observation.",
+        },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description: "Character offset to start reading from (use nextOffset from the previous page).",
+        },
+        limit: {
+          type: "integer",
+          minimum: 100,
+          maximum: AI_AGENT_READ_PAGE_MAX_CHARS,
+          description: `Characters to return per page (defaults to ~1400, max ${AI_AGENT_READ_PAGE_MAX_CHARS}).`,
+        },
+      },
+      [],
+    ),
+  },
   finish: {
     name: "finish",
     description:
@@ -264,8 +354,31 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
         sql: { type: "string", description: "Optional grounded SQL for later human approval." },
         metricsWidgets: {
           type: "array",
-          items: { type: "object" },
-          description: "Optional dashboard widgets.",
+          minItems: 1,
+          maxItems: 6,
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Widget heading." },
+              type: {
+                type: "string",
+                enum: ["table","scoreboard","bar","horizontal-bar","line","area","pie","donut","radial"],
+                description: "Widget kind; unknown kinds fall back to table.",
+              },
+              query: { type: "string", description: "Grounded SELECT feeding this widget." },
+              dimension: { type: "string", description: "Label column returned by the query." },
+              measures: {
+                type: "array",
+                items: { type: "string" },
+                description: "Numeric value columns or aliases from the query.",
+              },
+              transforms: { type: "array", items: { type: "string" }, description: "Group/sort operations." },
+              limit: { type: "integer", minimum: 1, description: "Max rows for the widget." },
+            },
+            required: ["title", "type", "query"],
+            additionalProperties: false,
+          },
+          description: "Optional dashboard widgets (3-6 for a metrics board).",
         },
       },
       // finish carries a flexible payload consumed by the finalizer, so extra

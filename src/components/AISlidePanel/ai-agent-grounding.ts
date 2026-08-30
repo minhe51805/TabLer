@@ -1,8 +1,9 @@
-import type { AIResponseLanguage, QueryResult, TableStructure } from "../../types";
+import type { AIResponseLanguage, DatabaseType, QueryResult, TableStructure } from "../../types";
 import { encodeStructureForAI } from "./AISlidePanelUtils";
 import type { AIWorkspaceInteractionMode } from "./ai-workspace-types";
 import type { AssistIntent } from "./ai-agent-context";
 import { buildKnownTableNameSet, normalizeIntentText } from "./ai-assist-intent";
+import { getExplainHotspots, parseExplainOutput } from "../../utils/explain-parser";
 
 const MAX_AGENT_QUERY_PREVIEW_ROWS = 5;
 const MAX_AGENT_QUERY_PREVIEW_COLUMNS = 8;
@@ -35,9 +36,14 @@ export function redactAgentSqlLiterals(sql: string) {
   return sql.replace(/'(?:''|[^'])*'/g, "'[REDACTED]'");
 }
 
+/** Full (untruncated) observation text — the read_page tool archives this so
+ *  truncated trace output can always be re-read page by page. */
+export function stringifyAgentObservationFull(data: unknown) {
+  return typeof data === "string" ? data : JSON.stringify(data, null, 2);
+}
+
 export function stringifyAgentObservation(data: unknown) {
-  const content = typeof data === "string" ? data : JSON.stringify(data, null, 2);
-  return truncateAgentObservation(content);
+  return truncateAgentObservation(stringifyAgentObservationFull(data));
 }
 
 export function findMatchingTableName(tableName: string, availableTableNames: string[]) {
@@ -49,6 +55,7 @@ export function findMatchingTableName(tableName: string, availableTableNames: st
 }
 
 const MAX_EXPLAIN_PLAN_CHARS = 800;
+const MAX_EXPLAIN_SUMMARY_CHARS = 2400;
 
 /** Condenses an EXPLAIN result into a bounded plan preview for observations. */
 export function summarizeAgentExplainPlan(result: QueryResult) {
@@ -60,6 +67,45 @@ export function summarizeAgentExplainPlan(result: QueryResult) {
   return text.length <= MAX_EXPLAIN_PLAN_CHARS
     ? text
     : `${text.slice(0, MAX_EXPLAIN_PLAN_CHARS)}\n[plan truncated]`;
+}
+
+/**
+ * Structured EXPLAIN summary: parses the raw plan with the same engine the
+ * ExplainVisualizer uses and emits cost totals plus the hottest operations,
+ * falling back to the bounded raw text when a plan cannot be parsed.
+ */
+export function summarizeAgentExplainPlanStructured(
+  result: QueryResult,
+  dbType: DatabaseType | undefined,
+) {
+  const rawText = summarizeAgentExplainPlan(result);
+  if (!rawText) return "";
+  try {
+    const plan = parseExplainOutput(dbType ?? "postgresql", rawText.replace("\n[plan truncated]", ""));
+    if (plan.nodes.length === 0 && plan.warnings.length === 0) return rawText;
+    const hotspots = getExplainHotspots(plan, 3);
+    const summary = {
+      engine: plan.dbType,
+      analyzed: plan.analyzed,
+      totalCost: plan.totalCost,
+      warnings: plan.warnings.length > 0 ? plan.warnings : undefined,
+      hotspots: hotspots.map((hotspot) => ({
+        operation: hotspot.node.operation,
+        cost: hotspot.node.cost,
+        estimatedRows: hotspot.node.estimatedRows,
+        actualRows: hotspot.node.actualRows,
+        actualTimeMs: hotspot.node.actualTimeMs,
+        reasons: hotspot.reasons,
+      })),
+      rawPlan: rawText,
+    };
+    const content = JSON.stringify(summary, null, 2);
+    return content.length <= MAX_EXPLAIN_SUMMARY_CHARS
+      ? content
+      : `${content.slice(0, MAX_EXPLAIN_SUMMARY_CHARS)}\n[plan summary truncated]`;
+  } catch {
+    return rawText;
+  }
 }
 
 export function summarizeAgentQueryObservation(result: QueryResult) {

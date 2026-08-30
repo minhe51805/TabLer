@@ -1,4 +1,4 @@
-import { BookOpen, PenLine, Brain, CheckCircle2, ChevronDown, ChevronRight, Database, HelpCircle, ListTree, Loader2, Search, Sparkles, AlertCircle } from "lucide-react";
+import { BookOpen, PenLine, Brain, CheckCircle2, ChevronDown, ChevronRight, Database, Eye, HelpCircle, ListTree, Loader2, Search, Sparkles, AlertCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
@@ -42,14 +42,18 @@ function getActionIcon(action: AIWorkspaceAgentActionName): ReactNode {
     case "list_tables":
       return <ListTree className="w-3.5 h-3.5" />;
     case "search_schema":
+    case "list_schema_objects":
     case "describe_table":
     case "describe_tables":
       return <Search className="w-3.5 h-3.5" />;
     case "sample_table_data":
     case "run_readonly_sql":
+    case "run_preset":
       return <Database className="w-3.5 h-3.5" />;
     case "remember_term":
       return <BookOpen className="w-3.5 h-3.5" />;
+    case "read_page":
+      return <Eye className="w-3.5 h-3.5" />;
     case "preview_write":
       return <PenLine className="w-3.5 h-3.5" />;
     case "finish":
@@ -72,14 +76,18 @@ function getActionLabel(
     case "list_tables":
       return copy.modal.agentActionListTables;
     case "search_schema":
+    case "list_schema_objects":
     case "describe_table":
     case "describe_tables":
       return copy.modal.agentActionDescribeTable;
     case "sample_table_data":
     case "run_readonly_sql":
+    case "run_preset":
       return copy.modal.agentActionRunSql;
     case "remember_term":
       return copy.modal.agentActionRememberTerm;
+    case "read_page":
+      return copy.modal.agentActionThink;
     case "preview_write":
       return copy.modal.agentActionPreviewWrite;
     case "finish":

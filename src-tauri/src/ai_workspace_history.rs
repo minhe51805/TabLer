@@ -80,6 +80,12 @@ pub struct AIWorkspaceBubbleData {
     /// save, so images disappeared from user bubbles after an app reload.
     #[serde(default)]
     pub attachments: Vec<AIWorkspaceBubbleAttachment>,
+
+    /// Agent trace steps. Persisting them keeps gating such as "the agent
+    /// already read live data" consistent between the live run and a reload;
+    /// without it, buttons/SQL visibility flipped after an app restart.
+    #[serde(default)]
+    pub agent_steps: Vec<JsonValue>,
 }
 
 #[derive(Clone)]
@@ -284,6 +290,7 @@ mod tests {
             created_at: 1,
             auto_dismiss_at: None,
             compacted_at: None,
+            agent_steps: Vec::new(),
             attachments: vec![super::AIWorkspaceBubbleAttachment {
                 id: "att-1".into(),
                 kind: "image".into(),

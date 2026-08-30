@@ -15,7 +15,10 @@ export {
   AI_AGENT_ASK_USER_OPTIONS_LIMIT,
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
   AI_AGENT_PREVIEW_STATEMENT_LIMIT,
+  AI_AGENT_READ_PAGE_MAX_CHARS,
   AI_AGENT_SAMPLE_MAX_ROWS,
+  AI_AGENT_SCHEMA_OBJECTS_LIMIT,
+  AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS,
   AI_AGENT_TOOL_NAMES,
 } from "./ai-agent-tool-schema";
 export type { AIAgentToolName } from "./ai-agent-tool-schema";
@@ -57,6 +60,17 @@ export type AIAgentSkillAction = AIAgentToolActionBase<
   AIAgentSkillArgs
 >;
 
+export interface AIAgentReadPageArgs extends Record<string, unknown> {
+  ref?: number;
+  offset?: number;
+  limit?: number;
+}
+
+export type AIAgentReadPageAction = AIAgentToolActionBase<
+  "read_page",
+  AIAgentReadPageArgs
+>;
+
 export interface AIAgentPreviewWriteArgs extends Record<string, unknown> {
   statements: string[];
 }
@@ -81,6 +95,18 @@ export type AIAgentListTablesAction = AIAgentToolActionBase<
 export type AIAgentSearchSchemaAction = AIAgentToolActionBase<
   "search_schema",
   { query: string }
+>;
+
+export interface AIAgentListSchemaObjectsArgs extends Record<string, unknown> {
+  objectType?: "view" | "trigger" | "routine" | "all";
+  pattern?: string;
+  withDefinition?: boolean;
+  limit?: number;
+}
+
+export type AIAgentListSchemaObjectsAction = AIAgentToolActionBase<
+  "list_schema_objects",
+  AIAgentListSchemaObjectsArgs
 >;
 
 export type AIAgentDescribeTableAction = AIAgentToolActionBase<
@@ -112,6 +138,16 @@ export type AIAgentRunReadonlySqlAction = AIAgentToolActionBase<
   { sql: string }
 >;
 
+export interface AIAgentRunPresetArgs extends Record<string, unknown> {
+  presetId?: "process-list" | "user-management";
+  list?: boolean;
+}
+
+export type AIAgentRunPresetAction = AIAgentToolActionBase<
+  "run_preset",
+  AIAgentRunPresetArgs
+>;
+
 export interface AIAgentFinishArgs extends Record<string, unknown> {
   response?: unknown;
   sql?: unknown;
@@ -124,13 +160,16 @@ export type AIAgentToolAction =
   | AIAgentAskUserAction
   | AIAgentListTablesAction
   | AIAgentSearchSchemaAction
+  | AIAgentListSchemaObjectsAction
   | AIAgentDescribeTableAction
   | AIAgentDescribeTablesAction
   | AIAgentSampleTableDataAction
   | AIAgentRunReadonlySqlAction
+  | AIAgentRunPresetAction
   | AIAgentPreviewWriteAction
   | AIAgentRememberTermAction
   | AIAgentSkillAction
+  | AIAgentReadPageAction
   | AIAgentFinishAction;
 
 function stripOptionalCodeFence(text: string) {

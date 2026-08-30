@@ -49,12 +49,15 @@ export type AIWorkspaceAgentActionName =
   | "skill"
   | "list_tables"
   | "search_schema"
+  | "list_schema_objects"
   | "describe_table"
   | "describe_tables"
   | "sample_table_data"
   | "run_readonly_sql"
+  | "run_preset"
   | "preview_write"
   | "remember_term"
+  | "read_page"
   | "finish";
 
 export type AIWorkspaceAgentStepStatus = "running" | "done" | "error";

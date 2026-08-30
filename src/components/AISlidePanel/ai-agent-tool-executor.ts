@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import type { ColumnDetail, QueryResult, TableInfo, TableStructure } from "../../types";
+import type { ColumnDetail, DatabaseType, QueryResult, TableInfo, TableStructure } from "../../types";
 import { buildWorkspaceTableIdentifier } from "./ai-agent-context";
 import { findAgentSchemaMatches, prioritizeSchemaScanCandidates } from "./ai-agent-schema-search";
 import { formatExecutionError, isHighRiskStatement, isMutatingStatement, isSessionSwitchStatement } from "../SQLEditor/SQLEditorUtils";
@@ -7,11 +7,13 @@ import {
   findMatchingTableName,
   findSystemCatalogReferences,
   getAgentSqlSchemaRequirements,
-  stringifyAgentObservation,
-  summarizeAgentExplainPlan,
+  redactAgentSqlLiterals,
+  stringifyAgentObservationFull,
+  summarizeAgentExplainPlanStructured,
   summarizeAgentQueryObservation,
   summarizeAgentSchemaSummaryObservation,
   summarizeAgentStructureObservation,
+  truncateAgentObservation,
 } from "./ai-agent-grounding";
 import { mapWithConcurrency } from "./ai-async-utils";
 import {
@@ -20,10 +22,14 @@ import {
 } from "./ai-agent-engine-gates";
 import {
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
+  AI_AGENT_READ_PAGE_MAX_CHARS,
   AI_AGENT_SAMPLE_MAX_ROWS,
+  AI_AGENT_SCHEMA_OBJECTS_LIMIT,
+  AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS,
   validateAIAgentReadonlySql,
   type AIAgentToolAction,
 } from "./ai-agent-tools";
+import { getAdminQueryPreset, type AdminQueryKind } from "../../utils/admin-query-presets";
 import { saveSemanticGlossaryEntry } from "../../utils/semantic-glossary";
 import { invokeMutation } from "../../utils/tauri-utils";
 import {
@@ -36,6 +42,7 @@ const MAX_AGENT_SCHEMA_SCAN_TABLES = 120;
 export interface AgentToolExecutorDeps {
   connectionId: string | null;
   currentDatabase: string | null;
+  dbType?: DatabaseType;
   latestTables: TableInfo[];
   availableSchemaTables: string[];
   relationalSchemaSummaryByTable: Map<string, string>;
@@ -50,7 +57,7 @@ export interface AgentToolExecutorDeps {
   getTableData: (
     connectionId: string,
     table: string,
-    opts?: { database?: string; limit?: number },
+    opts?: { database?: string; limit?: number; offset?: number },
   ) => Promise<QueryResult>;
   executeReadonlyQuery: (
     connectionId: string,
@@ -74,6 +81,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const {
     connectionId,
     currentDatabase,
+    dbType,
     latestTables,
     availableSchemaTables,
     relationalSchemaSummaryByTable,
@@ -91,11 +99,28 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   } = deps;
   let lastExplorationToolKey = "";
 
-  const runAgentTool = async (action: AIAgentToolAction): Promise<string> => {
+  /**
+   * Full (untruncated) observations from this run, 1-based-indexed in call
+   * order. The trace the model sees truncates at ~1400 chars; read_page
+   * re-reads the archived original at zero cost.
+   */
+  const observationArchive: Array<{ action: string; full: string }> = [];
+  let pendingFullObservation: string | null = null;
+
+  /** Archives the full observation and returns the truncated trace version. */
+  const stringifyAgentObservation = (data: unknown) => {
+    const full = stringifyAgentObservationFull(data);
+    pendingFullObservation = full;
+    return truncateAgentObservation(full);
+  };
+
+  const dispatchAgentTool = async (action: AIAgentToolAction): Promise<string> => {
   try {
     // Repeating an exploration call with identical arguments returns the
     // identical observation and burns a step from a tight budget.
-    const explorationKey = action.action !== "run_readonly_sql" && action.action !== "sample_table_data"
+    const explorationKey = action.action !== "run_readonly_sql"
+      && action.action !== "sample_table_data"
+      && action.action !== "read_page"
       ? `${action.action}:${JSON.stringify(action.args ?? {})}`
       : "";
     if (explorationKey && explorationKey === lastExplorationToolKey) {
@@ -302,11 +327,15 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       const requestedLimit = typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
         ? Math.min(AI_AGENT_SAMPLE_MAX_ROWS, Math.max(1, Math.floor(action.args.limit)))
         : 10;
+      const requestedOffset = typeof action.args?.offset === "number" && Number.isFinite(action.args.offset)
+        ? Math.max(0, Math.floor(action.args.offset))
+        : 0;
       // get_table_data goes through the engine driver so identifiers are
       // quoted per dialect; no model-supplied SQL is involved here.
       const queryResult = await getTableData(connectionId!, matchedTable, {
         database: currentDatabase || undefined,
         limit: requestedLimit,
+        offset: requestedOffset || undefined,
       });
       if (requestId !== requestIdRef.current) {
         throw new Error(AI_REQUEST_REPLACED_MESSAGE);
@@ -316,6 +345,153 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       return summarizeAgentQueryObservation(queryResult);
     }
 
+    if (action.action === "list_schema_objects") {
+      const objectType = typeof action.args?.objectType === "string" && action.args.objectType !== "all"
+        ? action.args.objectType
+        : undefined;
+      const patternFilter = typeof action.args?.pattern === "string" ? action.args.pattern.trim().toLowerCase() : "";
+      const withDefinition = action.args?.withDefinition === true;
+      const limitFilter = typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
+        ? Math.min(AI_AGENT_SCHEMA_OBJECTS_LIMIT, Math.max(1, Math.floor(action.args.limit)))
+        : AI_AGENT_SCHEMA_OBJECTS_LIMIT;
+
+      try {
+        const objects = await invokeMutation<Array<{
+          name: string;
+          schema: string | null;
+          object_type: string;
+          related_table: string | null;
+          definition: string | null;
+        }>>("list_schema_objects", {
+          connectionId,
+          database: currentDatabase ?? null,
+        });
+        if (requestId !== requestIdRef.current) {
+          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+        }
+        const filtered = objects
+          .filter((object) => (objectType ? object.object_type.toLowerCase() === objectType : true))
+          .filter((object) => (
+            patternFilter
+              ? object.name.toLowerCase().includes(patternFilter)
+                || (object.related_table ?? "").toLowerCase().includes(patternFilter)
+              : true
+          ));
+        const emit = (object: (typeof filtered)[number]) => ({
+          name: object.name,
+          schema: object.schema,
+          objectType: object.object_type,
+          relatedTable: object.related_table,
+          definition: withDefinition && object.definition
+            ? redactAgentSqlLiterals(
+                object.definition.length > AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS
+                  ? `${object.definition.slice(0, AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS)}\n[definition truncated]`
+                  : object.definition,
+              )
+            : undefined,
+        });
+        return stringifyAgentObservation({
+          objectType: objectType ?? "all",
+          objectCount: filtered.length,
+          truncated: filtered.length > limitFilter ? true : undefined,
+          next: filtered.length > limitFilter
+            ? `${filtered.length} objects exceed the ${limitFilter}-object preview. Narrow with args {"pattern":"substring"} or {"objectType":"view"}.`
+            : undefined,
+          objects: filtered.slice(0, limitFilter).map(emit),
+          note: withDefinition
+            ? undefined
+            : "Set args.withDefinition=true to read the SQL definition of specific objects - it is verified business logic.",
+        });
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: could not list schema objects: ${formatExecutionError(errorValue)}`;
+      }
+    }
+    if (action.action === "run_preset") {
+      if (toolAvailability && !toolAvailability.sqlRead) {
+        return `Tool blocked: run_preset is not available on ${toolAvailability.engineLabel}. Preset SQL targets SQL engines.`;
+      }
+      const wantsList = action.args?.list === true || typeof action.args?.presetId !== "string";
+      const presetKinds: AdminQueryKind[] = ["process-list", "user-management"];
+      if (wantsList) {
+        return stringifyAgentObservation({
+          engine: toolAvailability?.engineLabel ?? "current engine",
+          availablePresets: presetKinds.map((kind) => ({
+            presetId: kind,
+            ...(() => {
+              const preset = getAdminQueryPreset(dbType, kind);
+              return { supported: preset.supported, reason: preset.reason };
+            })(),
+          })),
+          note: "Call again with args.presetId to run a preset. Preset SQL is pre-vetted per engine - catalog guards do not apply to it.",
+        });
+      }
+      const presetId = action.args?.presetId === "user-management" ? "user-management" : "process-list";
+      const preset = getAdminQueryPreset(dbType, presetId as AdminQueryKind);
+      if (!preset.supported) {
+        return `Tool blocked: the "${presetId}" preset is not available on this engine${preset.reason ? `: ${preset.reason}` : "."}`;
+      }
+      if (requestDataReadConsent) {
+        const approved = await requestDataReadConsent();
+        if (!approved) {
+          return "Tool blocked: The user did not grant permission to read live database rows for this request.";
+        }
+      }
+      try {
+        const queryResult = await executeReadonlyQuery(connectionId!, [preset.content]);
+        if (requestId !== requestIdRef.current) {
+          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+        }
+        return stringifyAgentObservation({
+          presetId,
+          note: "Executed a pre-vetted operational preset (not model-written SQL).",
+          result: summarizeAgentQueryObservation(queryResult),
+        });
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: preset "${presetId}" failed: ${formatExecutionError(errorValue)}`;
+      }
+    }
+
+    if (action.action === "read_page") {
+      const total = observationArchive.length;
+      if (total === 0) {
+        return "Tool error: read_page has nothing to page through - no tool observations exist in this run yet.";
+      }
+      const requestedRef = typeof action.args?.ref === "number" && Number.isFinite(action.args.ref)
+        ? Math.floor(action.args.ref)
+        : total;
+      if (requestedRef < 1 || requestedRef > total) {
+        return `Tool error: read_page args.ref must be between 1 and ${total} (this run produced ${total} observation(s)).`;
+      }
+      const entry = observationArchive[requestedRef - 1];
+      const offset = typeof action.args?.offset === "number" && Number.isFinite(action.args.offset)
+        ? Math.max(0, Math.floor(action.args.offset))
+        : 0;
+      const limit = typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
+        ? Math.min(AI_AGENT_READ_PAGE_MAX_CHARS, Math.max(100, Math.floor(action.args.limit)))
+        : 1400;
+      if (offset >= entry.full.length) {
+        return stringifyAgentObservationFull({
+          ref: requestedRef,
+          action: entry.action,
+          totalChars: entry.full.length,
+          offset,
+          note: "Offset is past the end of this observation. Use a smaller offset.",
+        });
+      }
+      const slice = entry.full.slice(offset, offset + limit);
+      const nextOffset = offset + slice.length;
+      return stringifyAgentObservationFull({
+        ref: requestedRef,
+        action: entry.action,
+        totalChars: entry.full.length,
+        offset,
+        nextOffset: nextOffset < entry.full.length ? nextOffset : undefined,
+        hasMore: nextOffset < entry.full.length || undefined,
+        text: slice,
+      });
+    }
     if (action.action === "run_readonly_sql") {
       if (toolAvailability && !toolAvailability.sqlRead) {
         return agentSqlToolBlockedMessage("run_readonly_sql", toolAvailability);
@@ -372,9 +548,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       ) {
         try {
           const plan = await executeReadonlyQuery(connectionId!, [`EXPLAIN ${sql}`]);
-          const planText = summarizeAgentExplainPlan(plan);
+          const planText = summarizeAgentExplainPlanStructured(plan, dbType);
           if (planText) {
-            explainNote = `\n\nQuery plan (EXPLAIN, not executed):\n${planText}`;
+            explainNote = `\n\nQuery plan (EXPLAIN, not executed - structured summary with cost hotspots):\n${planText}`;
           }
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
@@ -502,6 +678,16 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     return `Tool error: ${formatExecutionError(errorValue)}`;
   }
 };
+
+  const runAgentTool = async (action: AIAgentToolAction): Promise<string> => {
+    pendingFullObservation = null;
+    const result = await dispatchAgentTool(action);
+    observationArchive.push({
+      action: action.action,
+      full: pendingFullObservation ?? result,
+    });
+    return result;
+  };
 
   return { runAgentTool };
 }

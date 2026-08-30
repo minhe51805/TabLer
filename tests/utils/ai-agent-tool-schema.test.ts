@@ -132,7 +132,7 @@ describe("AI agent tool schema", () => {
     const enabled = formatAgentToolCatalog(true);
     expect(enabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual([...AI_AGENT_TOOL_NAMES]);
     const disabled = formatAgentToolCatalog(false);
-    expect(disabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual(["ask_user", "skill", "finish"]);
+    expect(disabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual(["ask_user", "skill", "read_page", "finish"]);
     expect(disabled.join("\n")).not.toContain("metricsWidgets");
   });
 

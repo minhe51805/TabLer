@@ -87,6 +87,7 @@ export function isAgentToolEnabled(
   availability: Pick<AgentToolAvailability, "sqlRead" | "sqlWritePreview">,
 ): boolean {
   if (name === "run_readonly_sql") return availability.sqlRead;
+  if (name === "list_schema_objects" || name === "run_preset") return availability.sqlRead;
   if (name === "preview_write") return availability.sqlWritePreview;
   return true;
 }

@@ -179,6 +179,11 @@ export const EN_COPY: AIWorkspaceCopy = {
       managerTotalSize: "Total size",
       managerUsageHint: "Attachments are stored locally and count toward disk usage. Delete old ones to free space.",
     },
+    imageViewer: {
+      close: "Close viewer",
+      download: "Download image",
+      resetZoom: "Reset zoom (100%)",
+    },
     workspace: {
       switcherTitle: "Chat workspace",
       autoMode: "Auto",

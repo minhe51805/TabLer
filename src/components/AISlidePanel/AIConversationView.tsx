@@ -12,6 +12,7 @@ import {
   summarizePromptForDisplay,
 } from "./ai-conversation-state";
 import { fetchAttachmentDataUrl } from "../../utils/ai-attachments";
+import { AIImageViewer } from "./AIImageViewer";
 import { AIAgentSteps } from "./AIAgentSteps";
 import { extractAgentRecordLinks, type AIAgentRecordLink } from "./ai-agent-record-links";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
@@ -28,41 +29,92 @@ interface AIConversationViewProps {
   onUseSuggestion: (prompt: string) => void;
 }
 
-/** Renders a user turn's attachments: image thumbnails (fetched on demand) and file chips. */
-function AIAttachmentStrip({ attachments }: { attachments: AIWorkspaceAttachment[] }) {
-  const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
-  const imageIds = attachments.filter((a) => a.kind === "image").map((a) => a.id);
+/** Fetches a persisted image attachment's data URL (metadata-only bubbles). */
+function AIAttachmentImageCard({
+  attachment,
+  onOpen,
+}: {
+  attachment: AIWorkspaceAttachment;
+  onOpen: (url: string, name: string) => void;
+}) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    imageIds.forEach((id) => {
-      void fetchAttachmentDataUrl(id).then((dataUrl) => {
-        if (!cancelled && dataUrl) {
-          setImageUrls((current) => ({ ...current, [id]: dataUrl }));
-        }
-      });
+    setFailed(false);
+    setDataUrl(null);
+    void fetchAttachmentDataUrl(attachment.id).then((url) => {
+      if (cancelled) return;
+      if (url) setDataUrl(url);
+      else setFailed(true);
     });
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageIds.join(",")]);
+  }, [attachment.id]);
 
-  if (attachments.length === 0) return null;
+  if (failed) {
+    return (
+      <span className="ai-workspace-attachment-strip-chip" title={attachment.name}>
+        <FileText className="w-3 h-3" />
+        {attachment.name}
+      </span>
+    );
+  }
+
+  if (!dataUrl) {
+    return (
+      <span
+        className="ai-workspace-attachment-image-card is-loading"
+        title={attachment.name}
+        aria-label={attachment.name}
+      />
+    );
+  }
 
   return (
+    <button
+      type="button"
+      className="ai-workspace-attachment-image-card"
+      onClick={() => onOpen(dataUrl, attachment.name)}
+      title={attachment.name}
+    >
+      <img src={dataUrl} alt={attachment.name} draggable={false} />
+    </button>
+  );
+}
+
+/** Claude-style gallery: images render above the message text, click to zoom. */
+function AIAttachmentImages({
+  attachments,
+  onOpenImage,
+}: {
+  attachments: AIWorkspaceAttachment[];
+  onOpenImage: (url: string, name: string) => void;
+}) {
+  const images = attachments.filter((attachment) => attachment.kind === "image");
+  if (images.length === 0) return null;
+  return (
+    <div className="ai-workspace-attachment-images">
+      {images.map((attachment) => (
+        <AIAttachmentImageCard key={attachment.id} attachment={attachment} onOpen={onOpenImage} />
+      ))}
+    </div>
+  );
+}
+
+/** Non-image attachments render as file chips under the message text. */
+function AIAttachmentFileChips({ attachments }: { attachments: AIWorkspaceAttachment[] }) {
+  const files = attachments.filter((attachment) => attachment.kind !== "image");
+  if (files.length === 0) return null;
+  return (
     <div className="ai-workspace-attachment-strip">
-      {attachments.map((attachment) => (
-        attachment.kind === "image" ? (
-          imageUrls[attachment.id]
-            ? <img key={attachment.id} className="ai-workspace-attachment-strip-thumb" src={imageUrls[attachment.id]} alt={attachment.name} title={attachment.name} />
-            : <span key={attachment.id} className="ai-workspace-attachment-strip-chip" title={attachment.name}>{attachment.name}</span>
-        ) : (
-          <span key={attachment.id} className="ai-workspace-attachment-strip-chip" title={attachment.name}>
-            <FileText className="w-3 h-3" />
-            {attachment.name}
-          </span>
-        )
+      {files.map((attachment) => (
+        <span key={attachment.id} className="ai-workspace-attachment-strip-chip" title={attachment.name}>
+          <FileText className="w-3 h-3" />
+          {attachment.name}
+        </span>
       ))}
     </div>
   );
@@ -80,6 +132,7 @@ export function AIConversationView({
   onUseSuggestion,
 }: AIConversationViewProps) {
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
+  const [viewerImage, setViewerImage] = useState<{ url: string; name: string } | null>(null);
   const hasConversation = bubbles.length > 0;
 
   useEffect(() => {
@@ -139,12 +192,18 @@ export function AIConversationView({
                   <div className="ai-workspace-chat-turn-header">
                     <strong className="ai-workspace-chat-turn-label">{copy.modal.originalRequest}</strong>
                   </div>
+                  {bubble.attachments && bubble.attachments.length > 0 && (
+                    <AIAttachmentImages
+                      attachments={bubble.attachments}
+                      onOpenImage={(url, name) => setViewerImage({ url, name })}
+                    />
+                  )}
                   <div className="ai-workspace-chat-message ai-workspace-chat-message--user">
                     <p className="ai-workspace-chat-text">
                       {bubble.promptSummary || summarizePromptForDisplay(bubble.prompt)}
                     </p>
                     {bubble.attachments && bubble.attachments.length > 0 && (
-                      <AIAttachmentStrip attachments={bubble.attachments} />
+                      <AIAttachmentFileChips attachments={bubble.attachments} />
                     )}
                   </div>
                   <div className="ai-workspace-chat-turn-header ai-workspace-chat-turn-header--assistant">
@@ -301,6 +360,11 @@ export function AIConversationView({
           </div>
         )}
       </div>
+      <AIImageViewer
+        image={viewerImage}
+        labels={copy.imageViewer}
+        onClose={() => setViewerImage(null)}
+      />
     </div>
   );
 }

@@ -177,6 +177,11 @@ export const ZH_COPY: AIWorkspaceCopy = {
       managerTotalSize: "总大小",
       managerUsageHint: "附件存储在本地并占用磁盘空间。删除旧附件可释放空间。",
     },
+    imageViewer: {
+      close: "关闭查看器",
+      download: "下载图片",
+      resetZoom: "重置缩放 (100%)",
+    },
     workspace: {
       switcherTitle: "聊天工作区",
       autoMode: "自动",

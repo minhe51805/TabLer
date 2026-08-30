@@ -100,7 +100,12 @@ pub fn run() {
     };
     if let Err(error) = observability::initialize(&data_dir) {
         eprintln!("TableR logging initialization failed: {error}");
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+        // The updater plugin logs every unreachable endpoint at error level
+        // (e.g. no published release yet), which spams the console on every
+        // launch; the check failure is already surfaced to the UI instead.
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .filter_module("tauri_plugin_updater", log::LevelFilter::Off)
+            .init();
     }
     info!("[TableR] Application starting");
     if let Err(error) = storage::migrations::run_storage_migrations(&data_dir) {

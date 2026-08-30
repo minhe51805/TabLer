@@ -177,6 +177,11 @@ export const VI_COPY: AIWorkspaceCopy = {
       managerTotalSize: "Dung lượng",
       managerUsageHint: "Tệp đính kèm được lưu cục bộ và chiếm dung lượng đĩa. Xoá các mục cũ để giải phóng chỗ.",
     },
+    imageViewer: {
+      close: "Đóng trình xem ảnh",
+      download: "Tải ảnh xuống",
+      resetZoom: "Đặt lại độ phóng (100%)",
+    },
     workspace: {
       switcherTitle: "Workspace chat — chế độ tự động theo kết nối",
       autoMode: "Tự động",

@@ -35969,3 +35969,151 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   margin-top: 4px;
   padding-top: 0;
 }
+
+/* ===== AI user-bubble image gallery (Claude-style: image above text) + fullscreen viewer =====
+   NOTE: appended at end of file on purpose — this stylesheet restyles the same
+   selectors many times, so new blocks must stay last to win the cascade. */
+
+.ai-workspace-attachment-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-self: flex-end;
+  justify-content: flex-end;
+  margin: 0 0 1px;
+}
+
+.ai-workspace-attachment-image-card {
+  display: block;
+  width: 49px;
+  height: 49px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--mm-border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex: 0 0 auto;
+  background: rgba(0, 0, 0, 0.18);
+  cursor: zoom-in;
+  line-height: 0;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.ai-workspace-attachment-image-card:hover {
+  border-color: var(--mm-border-strong, rgba(255, 255, 255, 0.3));
+  transform: translateY(-1px);
+}
+
+.ai-workspace-attachment-image-card img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ai-workspace-attachment-image-card.is-loading {
+  width: 49px;
+  height: 49px;
+  display: inline-block;
+  border-radius: 8px;
+  background:
+    linear-gradient(100deg, rgba(255, 255, 255, 0.04) 30%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.04) 70%);
+  background-size: 200% 100%;
+  animation: ai-attachment-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes ai-attachment-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* Fullscreen viewer (portaled to document.body) */
+.ai-image-viewer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(9, 9, 12, 0.92);
+  backdrop-filter: blur(2px);
+}
+
+.ai-image-viewer-toolbar {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  display: flex;
+  gap: 10px;
+  z-index: 2;
+}
+
+.ai-image-viewer-btn {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(32, 32, 38, 0.92);
+  color: #f4f4f6;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.ai-image-viewer-btn:hover {
+  background: rgba(58, 58, 66, 0.96);
+}
+
+.ai-image-viewer-btn--small {
+  width: 30px;
+  height: 30px;
+}
+
+.ai-image-viewer-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ai-image-viewer-img {
+  max-width: min(920px, 86vw);
+  max-height: 78vh;
+  border-radius: 10px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  transition: transform 0.12s ease;
+  user-select: none;
+}
+
+.ai-image-viewer-zoombar {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(32, 32, 38, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  z-index: 2;
+}
+
+.ai-image-viewer-zoom-label {
+  min-width: 52px;
+  background: transparent;
+  border: none;
+  color: #f4f4f6;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-image-viewer-zoom-label:hover {
+  color: #ffffff;
+}

@@ -162,6 +162,11 @@ export const KO_COPY: AIWorkspaceCopy = {
       managerTotalSize: "총 크기",
       managerUsageHint: "첨부 파일은 로컬에 저장되며 디스크 공간을 사용합니다. 오래된 항목을 삭제해 공간을 확보하세요.",
     },
+    imageViewer: {
+      close: "뷰어 닫기",
+      download: "이미지 다운로드",
+      resetZoom: "확대/축소 초기화 (100%)",
+    },
     workspace: {
       switcherTitle: "채팅 워크스페이스",
       autoMode: "자동",

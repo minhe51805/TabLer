@@ -161,6 +161,11 @@ export interface AIWorkspaceCopy {
     managerTotalSize: string;
     managerUsageHint: string;
   };
+  imageViewer: {
+    close: string;
+    download: string;
+    resetZoom: string;
+  };
   workspace: {
     switcherTitle: string;
     autoMode: string;

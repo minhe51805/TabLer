@@ -162,6 +162,11 @@ export const TR_COPY: AIWorkspaceCopy = {
       managerTotalSize: "Toplam boyut",
       managerUsageHint: "Ekler yerel olarak depolanır ve disk alanı kaplar. Yer açmak için eski ekleri silin.",
     },
+    imageViewer: {
+      close: "Görüntüleyiciyi kapat",
+      download: "Görseli indir",
+      resetZoom: "Yakınlaştırmayı sıfırla (%100)",
+    },
     workspace: {
       switcherTitle: "Sohbet çalışma alanı",
       autoMode: "Otomatik",

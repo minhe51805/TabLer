@@ -5,6 +5,68 @@ import { useEffect } from "react";
 import { invokeMutation } from "../../../utils/tauri-utils";
 import { AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS, AI_WORKSPACE_HISTORY_VERSION, createChatThread, createEmptyPersistedAIWorkspaceState, hasPersistedAIWorkspaceStateData, loadLegacyPersistedAIWorkspaceState, prunePersistedAIWorkspaceState, type PersistedAIWorkspaceState } from "../ai-conversation-state";
 
+/** Attachment rows were created up to moments before their chat bubble; allow
+ *  small clock/serialization skew when matching them back together. */
+const ATTACHMENT_RECOVERY_SKEW_MS = 1500;
+
+interface OrphanAttachmentRow {
+  id: string;
+  threadId: string;
+  kind: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  createdAt: number;
+}
+
+/**
+ * One-time self-heal for messages sent before the persistence fix: an older
+ * build silently stripped the `attachments` metadata from saved bubbles,
+ * although the bytes are still stored in `ai_attachments` keyed by thread.
+ * Re-links every orphaned row to the nearest turn in the same thread created
+ * after the attachment was added. Idempotent: rows already referenced by a
+ * bubble are skipped.
+ */
+async function recoverStrippedAttachmentMetadata(state: PersistedAIWorkspaceState): Promise<void> {
+  try {
+    const rows = await invokeMutation<OrphanAttachmentRow[]>("list_ai_attachments", {});
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    const referencedIds = new Set(
+      state.bubbles.flatMap((bubble) => (bubble.attachments ?? []).map((attachment) => attachment.id)),
+    );
+    const orphans = rows
+      .filter((row) => row && row.id && !referencedIds.has(row.id))
+      .sort((left, right) => left.createdAt - right.createdAt);
+    let recovered = 0;
+    for (const row of orphans) {
+      const target = state.bubbles
+        .filter((bubble) =>
+          bubble.threadId === row.threadId
+          && bubble.createdAt >= row.createdAt - ATTACHMENT_RECOVERY_SKEW_MS
+          && !(bubble.attachments ?? []).some((attachment) => attachment.id === row.id))
+        .sort((left, right) => left.createdAt - right.createdAt)[0];
+      if (!target) continue;
+      target.attachments = [
+        ...(target.attachments ?? []),
+        {
+          id: row.id,
+          kind: row.kind === "image" ? "image" : "text",
+          name: row.name,
+          mimeType: row.mimeType,
+          size: row.size,
+          createdAt: row.createdAt,
+        },
+      ];
+      recovered += 1;
+    }
+    if (recovered > 0) {
+      console.info(`[AIWorkspace] Recovered ${recovered} attachment(s) stripped by an older build`);
+    }
+  } catch {
+    // Best-effort recovery only; never block hydration.
+  }
+}
+
 export function useAIWorkspaceEffects(options: Record<string, any>) {
   const { historyHydrated, isOpen, setChatThreads, setBubbles, setWorkspaceInteractionModes, setActiveThreadIdsByWorkspace, currentWorkspaceKey, initialThreadRef, activeThreadId, setActiveThreadId, setHistoryHydrated, hasConversation, scrollChatToLatest, currentThread, isGenerating, latestConversationBubbleId, latestConversationBubbleSnapshot, chatThreadRef, setIsHistoryOpen, isOpenRef, openSessionRef, visualizationApprovalScopeRef, setIsSessionDataReadEnabled, visualizationConsentResolverRef, setVisualizationConsentPending, isHistoryOpen, historyPanelRef, aiConfigs, loadAIConfigs, workspaceThreads, recentWorkspaceThreads, activeThreadIdsByWorkspace, lastWorkspaceKeyRef, setAttachedSelection, setDetailBubbleId, setPromptDraft, setError, initialPromptNonce, initialPrompt, composerTextareaRef, initialAttachmentNonce, initialAttachment, detailBubbleId, onClose, historySaveTimerRef, bubbleDismissTimersRef, bubbles, chatThreads, workspaceInteractionModes, persistHistoryState } = options;
   useEffect(() => {
@@ -24,6 +86,8 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
         normalizedPersistedState.interactionModes = persistedState.interactionModes || {};
         normalizedPersistedState.activeThreadIds = persistedState.activeThreadIds || {};
         persistedState = normalizedPersistedState;
+
+        await recoverStrippedAttachmentMetadata(persistedState);
 
         if (!hasPersistedAIWorkspaceStateData(persistedState)) {
           const legacyState = prunePersistedAIWorkspaceState(loadLegacyPersistedAIWorkspaceState());

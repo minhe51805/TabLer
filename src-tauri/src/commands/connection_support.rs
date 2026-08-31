@@ -592,7 +592,10 @@ pub(super) async fn create_local_mssql_database(
     let mut admin_client = MssqlDriver::open_mssql_client(config, "master")
         .await
         .map_err(|error| {
-            format!("{} (Reason: {error:#})", format_local_bootstrap_error("SQL Server", "connecting to the local instance"))
+            format!(
+                "{} (Reason: {error:#})",
+                format_local_bootstrap_error("SQL Server", "connecting to the local instance")
+            )
         })?;
 
     let mut lookup = tiberius::Query::new("SELECT 1 FROM sys.databases WHERE name = @P1");
@@ -601,12 +604,24 @@ pub(super) async fn create_local_mssql_database(
         .query(&mut admin_client)
         .await
         .map_err(|error| {
-            format!("{} (Reason: {error:#})", format_local_bootstrap_error("SQL Server", "checking whether the database already exists"))
+            format!(
+                "{} (Reason: {error:#})",
+                format_local_bootstrap_error(
+                    "SQL Server",
+                    "checking whether the database already exists"
+                )
+            )
         })?
         .into_first_result()
         .await
         .map_err(|error| {
-            format!("{} (Reason: {error:#})", format_local_bootstrap_error("SQL Server", "checking whether the database already exists"))
+            format!(
+                "{} (Reason: {error:#})",
+                format_local_bootstrap_error(
+                    "SQL Server",
+                    "checking whether the database already exists"
+                )
+            )
         })?;
     let exists = !existing_rows.is_empty();
 
@@ -629,7 +644,9 @@ pub(super) async fn create_local_mssql_database(
             tiberius::Query::new(statement.clone())
                 .execute(&mut bootstrap_client)
                 .await
-                .map_err(|_| format_local_bootstrap_error("SQL Server", "applying bootstrap SQL"))?;
+                .map_err(|_| {
+                    format_local_bootstrap_error("SQL Server", "applying bootstrap SQL")
+                })?;
         }
     }
 
@@ -661,7 +678,10 @@ mod mssql_bootstrap_live {
     #[ignore]
     async fn mssql_live_bootstrap() {
         let mut additional_fields = HashMap::new();
-        additional_fields.insert("instance_name".to_string(), "LAPTOP-JFECRE1C\\MINH".to_string());
+        additional_fields.insert(
+            "instance_name".to_string(),
+            "LAPTOP-JFECRE1C\\MINH".to_string(),
+        );
         let config = ConnectionConfig {
             id: "live-bootstrap".to_string(),
             name: "live-bootstrap".to_string(),
@@ -713,7 +733,8 @@ mod mssql_bootstrap_live {
             .map(|s| format!("{s};"))
             .collect::<Vec<_>>();
 
-        match create_local_mssql_database(&config, "tabler_live_bootstrap_test", &statements).await {
+        match create_local_mssql_database(&config, "tabler_live_bootstrap_test", &statements).await
+        {
             Ok(message) => println!("BOOTSTRAP OK: {message}"),
             Err(error) => {
                 println!("BOOTSTRAP FAILED: {error}");

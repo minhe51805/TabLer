@@ -22,8 +22,8 @@ use super::extraction::{
 };
 use super::prompt::build_ai_prompt;
 use super::providers::{
-    apply_attachments, apply_native_tools, build_provider_request_body, resolve_provider_body_shape,
-    streaming_endpoint, streaming_request_body,
+    apply_attachments, apply_native_tools, build_provider_request_body,
+    resolve_provider_body_shape, streaming_endpoint, streaming_request_body,
 };
 use super::{ai_http_client, run_blocking_storage_task, AI_REQUEST_CANCELLED_ERROR};
 

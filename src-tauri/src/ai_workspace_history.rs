@@ -286,7 +286,11 @@ mod tests {
             risk: None,
             x: 0.0,
             y: 0.0,
-            pointer: super::AIWorkspacePointerState { x: 0.0, y: 0.0, visible: false },
+            pointer: super::AIWorkspacePointerState {
+                x: 0.0,
+                y: 0.0,
+                visible: false,
+            },
             created_at: 1,
             auto_dismiss_at: None,
             compacted_at: None,

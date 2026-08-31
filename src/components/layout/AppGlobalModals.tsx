@@ -6,6 +6,9 @@ import { AppUserRolesModal } from "../AppUserRolesModal";
 import { AppShortcutsModal } from "../AppShortcutsModal";
 import { CommandPalette } from "../CommandPalette/CommandPalette";
 import { QuickSwitcher } from "../QuickSwitcher/QuickSwitcher";
+import { GlobalSearchPanel } from "../GlobalSearch/GlobalSearchPanel";
+import { SchemaDiffView } from "../SchemaDiff/SchemaDiffView";
+import { ImportWizard } from "../DataImport/ImportWizard";
 import { ThemeCustomizer } from "../ThemeCustomizer/ThemeCustomizer";
 import { SafeModeConfirmDialog } from "../SafeMode/SafeModeConfirmDialog";
 import { ConnectionExporter, ConnectionImporter } from "../ConnectionExporter";
@@ -142,6 +145,9 @@ export function AppGlobalModals({
           window.dispatchEvent(new CustomEvent("connect-switcher", { detail: { connectionId } }));
         }}
       />
+      <GlobalSearchPanel />
+      <SchemaDiffView />
+      <ImportWizard />
       <SafeModeConfirmDialog />
       {showConnectionExporter && (
         <ConnectionExporter

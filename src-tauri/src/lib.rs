@@ -4,6 +4,7 @@ mod ai_workspace_cache;
 mod ai_workspace_history;
 mod commands;
 pub mod database;
+pub mod error;
 pub mod mcp;
 pub mod mcp_local;
 pub mod mcp_security;
@@ -16,11 +17,11 @@ mod watcher;
 
 use ai_workspace_cache::{
     delete_ai_attachments, delete_ai_attachments_for_thread, delete_ai_attachments_for_workspace,
-    delete_all_ai_attachments, delete_thread_memories_for_workspace, delete_thread_memory_for_thread,
-    delete_workspace_context_snapshots, get_ai_attachment_data, get_latest_workspace_digest,
-    list_ai_attachments, list_latest_workspace_digests, list_thread_memories,
-    list_workspace_context_snapshots, save_ai_attachments, save_workspace_context_snapshot,
-    upsert_thread_memory,
+    delete_all_ai_attachments, delete_thread_memories_for_workspace,
+    delete_thread_memory_for_thread, delete_workspace_context_snapshots, get_ai_attachment_data,
+    get_latest_workspace_digest, list_ai_attachments, list_latest_workspace_digests,
+    list_thread_memories, list_workspace_context_snapshots, save_ai_attachments,
+    save_workspace_context_snapshot, upsert_thread_memory,
 };
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
@@ -31,6 +32,7 @@ use commands::ai::{
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
 use commands::data_export::{cancel_table_export, export_table_data, TableExportCancellationState};
+use commands::data_import::{import_csv, preview_import_csv};
 use commands::deep_link::parse_deep_link;
 use commands::diagnostics::{
     export_diagnostic_bundle, preview_diagnostic_bundle, DiagnosticReviewState,
@@ -52,6 +54,8 @@ use commands::plugins::{
 use commands::query::*;
 use commands::restore::{preview_database_restore, restore_database_sql};
 use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
+use commands::schema_diff::{compare_schemas, generate_migration_script};
+use commands::search::{search_schema, search_table_data};
 use commands::table::*;
 use commands::tabs::{delete_tabs, load_tabs, save_tabs};
 use commands::terminal::{
@@ -293,6 +297,13 @@ pub fn run() {
             cancel_query,
             execute_parameterized_query,
             execute_agent_parameterized_query,
+            execute_query_progressive,
+            search_schema,
+            search_table_data,
+            compare_schemas,
+            generate_migration_script,
+            preview_import_csv,
+            import_csv,
             execute_sandboxed_query,
             execute_agent_readonly_query,
             preview_write_transaction,
@@ -350,7 +361,7 @@ pub fn run() {
             delete_ai_attachments_for_workspace,
             delete_ai_attachments_for_thread,
             ai_skills::list_ai_skills,
-            ai_skills::read_ai_skill,            // File commands
+            ai_skills::read_ai_skill, // File commands
             read_sql_file,
             read_sql_file_from_path,
             read_csv_file,

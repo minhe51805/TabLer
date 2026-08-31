@@ -38,8 +38,8 @@ pub fn apply_window_profile_to_main(app: &AppHandle, profile: WindowProfile) -> 
         WindowProfile::Form => 2u8,
         WindowProfile::Workspace => 3u8,
     };
-    let reapplying_workspace =
-        profile == WindowProfile::Workspace && LAST_APPLIED_PROFILE.load(Ordering::Relaxed) == requested;
+    let reapplying_workspace = profile == WindowProfile::Workspace
+        && LAST_APPLIED_PROFILE.load(Ordering::Relaxed) == requested;
 
     let window = app
         .get_webview_window("main")

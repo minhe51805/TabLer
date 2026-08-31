@@ -5,7 +5,7 @@ import {
   type AISchemaCodecMode,
 } from "./AISlidePanelUtils";
 import type { AgentToolAvailability } from "./ai-agent-engine-gates";
-import { formatAgentToolCatalog } from "./ai-agent-tool-schema";
+import { formatAgentToolCatalog, NATIVE_TOOL_CALLING_ENABLED } from "./ai-agent-tool-schema";
 import type { AIWorkspaceAgentActionName } from "./ai-workspace-types";
 
 export type AssistIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error" | "general";
@@ -235,10 +235,18 @@ export function buildAgentControllerPrompt(params: {
   const preInspectedSummaries = (cachedTableSummaries ?? []).slice(0, MAX_PRE_INSPECTED_TABLE_SUMMARIES);
   const sqlRead = toolAvailability?.sqlRead !== false;
   const sqlWritePreview = toolAvailability?.sqlWritePreview !== false;
-  const availableActions = formatAgentToolCatalog({
-    workspaceToolsEnabled,
-    availability: toolAvailability,
-  });
+  // With native function calling the 17-tool schema travels in the request's
+  // `tools` parameter — duplicating it as prompt text wastes tokens. Keep only
+  // the reply contract so text finals still parse.
+  const availableActions = NATIVE_TOOL_CALLING_ENABLED
+    ? [
+        'Tools are attached to this request via native function calling — call them with the schemas supplied to the model.',
+        'If you answer in text instead of invoking a tool, reply with exactly one JSON object: {"action":"<tool_name>","message":"short reason","args":{…}} using one of the native tool names (for the final answer use {"action":"finish",…}).',
+      ]
+    : formatAgentToolCatalog({
+        workspaceToolsEnabled,
+        availability: toolAvailability,
+      });
 
   const assembled = [
     "Work as an autonomous workspace agent.",
@@ -279,7 +287,9 @@ export function buildAgentControllerPrompt(params: {
     "Rules:",
     "- Return exactly one JSON object and nothing else.",
     "- Write the message field as a short first-person thought that narrates your reasoning.",
-    "- Use only the action names above.",
+    NATIVE_TOOL_CALLING_ENABLED
+      ? "- Use only the native tool names provided via function calling."
+      : "- Use only the action names above.",
     "- If the request is ambiguous about which table, metric, or meaning is intended, call ask_user once with one short question and up to 4 concrete options instead of guessing.",
     workspaceToolsEnabled
       ? "- Tables can be EMPTY. Before building any report, overview, or dashboard, prefer tables whose rowCount is greater than zero in list_tables output (or pass args {\"minRows\":1}), confirm with sample_table_data when unsure, and skip zero-row tables instead of presenting them as content."

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
 import type { ColumnDetail, QueryParameter, QueryResult, TableCellUpdateRequest, TableRowDeleteRequest, TableStructure } from "../types";
 import { assertQueryAllowed } from "../utils/safe-mode-query-guard";
@@ -13,6 +14,11 @@ export interface QueryState {
   isExecutingQuery: boolean;
   activeQueryRequestId: string | null;
   activeQueryConnectionId: string | null;
+  /** Roadmap Phase 3B: progressive row delivery for large read-only queries. */
+  progressiveDeliveryEnabled: boolean;
+  /** Live count of rows delivered by the progressive channel (null when idle). */
+  progressiveRowCount: number | null;
+  setProgressiveDeliveryEnabled: (enabled: boolean) => void;
 
   executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
   cancelQuery: () => Promise<boolean>;
@@ -98,10 +104,33 @@ export interface QueryState {
   ) => Promise<Array<{ value: string | number; label: string }>>;
 }
 
+const PROGRESSIVE_DELIVERY_STORAGE_KEY = "tablerogrid.progressive-delivery";
+
+/**
+ * Roadmap Phase 3B: only single read-only row-returning statements go through
+ * the progressive channel; everything else keeps the legacy path.
+ */
+export function isProgressiveEligible(sql: string): boolean {
+  const trimmed = sql.trim().replace(/;+\s*$/, "");
+  if (!trimmed || trimmed.includes(";")) return false;
+  return /^(select|with|table|values)\b/i.test(trimmed);
+}
+
 export const useQueryStore = create<QueryState>((set, get) => ({
   isExecutingQuery: false,
   activeQueryRequestId: null,
   activeQueryConnectionId: null,
+  progressiveDeliveryEnabled: (() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(PROGRESSIVE_DELIVERY_STORAGE_KEY) !== "off";
+  })(),
+  progressiveRowCount: null,
+  setProgressiveDeliveryEnabled: (enabled: boolean) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(PROGRESSIVE_DELIVERY_STORAGE_KEY, enabled ? "on" : "off");
+    }
+    set({ progressiveDeliveryEnabled: enabled });
+  },
 
   executeQuery: async (connectionId: string, sql: string) => {
     const safety = await assertQueryAllowed(sql, connectionId);
@@ -112,11 +141,37 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       activeQueryConnectionId: connectionId,
     });
     try {
-      const result = await invokeMutation<QueryResult>("execute_query", {
-        connectionId,
-        sql,
-        requestId,
-      });
+      let result: QueryResult | null = null;
+      let unlisten: UnlistenFn | null = null;
+      if (get().progressiveDeliveryEnabled && isProgressiveEligible(sql)) {
+        // Phase 3B: stream row batches so the UI can show live delivery
+        // progress; the command still resolves with the complete result and
+        // any failure falls back to the legacy path transparently.
+        try {
+          unlisten = await listen<{ connectionId: string; rows: unknown[][]; totalRows: number }>("query-row-batch", (event) => {
+            if (event.payload.connectionId !== connectionId) return;
+            set({ progressiveRowCount: event.payload.totalRows });
+          });
+          result = await invokeMutation<QueryResult>("execute_query_progressive", {
+            connectionId,
+            sql,
+            chunkSize: null,
+            requestId,
+          });
+        } catch {
+          result = null; // fall back below
+        } finally {
+          unlisten?.();
+        }
+      }
+      if (result === null) {
+        result = await invokeMutation<QueryResult>("execute_query", {
+          connectionId,
+          sql,
+          requestId,
+        });
+      }
+      set({ progressiveRowCount: null });
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
@@ -126,7 +181,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       return result;
     } catch (e) {
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null, progressiveRowCount: null }
         : state);
       throw e;
     }

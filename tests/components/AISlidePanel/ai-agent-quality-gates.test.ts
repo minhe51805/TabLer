@@ -7,6 +7,7 @@ import {
   formatActionFailureReason,
   hasExecutedReadStep,
   MAX_EVIDENCE_ROUNDS,
+  responseClaimsSuccessfulExecution,
   responseHasMarkdownTable,
 } from "@/components/AISlidePanel/ai-agent-quality-gates";
 import type { AgentTraceStep } from "@/components/AISlidePanel/ai-agent-context";
@@ -263,5 +264,27 @@ describe("false-success gate", () => {
     });
     expect(instruction).toContain("FAILED");
     expect(instruction).toContain("list_tables rowCount");
+  });
+});
+
+describe("responseClaimsSuccessfulExecution", () => {
+  it("detects English success claims", () => {
+    expect(responseClaimsSuccessfulExecution("The query ran successfully.")).toBe(true);
+    expect(responseClaimsSuccessfulExecution("I successfully executed the sandbox.")).toBe(true);
+  });
+
+  it("detects Vietnamese success claims", () => {
+    expect(responseClaimsSuccessfulExecution("Tôi đã chạy thành công truy vấn.")).toBe(true);
+  });
+
+  it("detects Turkish success claims", () => {
+    expect(responseClaimsSuccessfulExecution("Sorgu başarıyla çalıştırıldı.")).toBe(true);
+    expect(responseClaimsSuccessfulExecution("Sorgu başarılı şekilde çalıştı.")).toBe(true);
+    expect(responseClaimsSuccessfulExecution("Sorgu başarılı.")).toBe(true);
+  });
+
+  it("does not flag ordinary answers", () => {
+    expect(responseClaimsSuccessfulExecution("Here are the top 5 users by sales.")).toBe(false);
+    expect(responseClaimsSuccessfulExecution(undefined)).toBe(false);
   });
 });

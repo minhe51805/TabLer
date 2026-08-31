@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { agentToolAvailability } from "@/components/AISlidePanel/ai-agent-engine-gates";
+import { nativeToolPayloadForProvider } from "@/components/AISlidePanel/ai-agent-tool-schema";
 import {
   buildAgentControllerPrompt,
   buildAgentPlanPrompt,
@@ -102,11 +103,19 @@ describe("AI agent context builder", () => {
       workspaceToolsEnabled: true,
     });
 
-    expect(prompt).toContain('"action":"run_readonly_sql"');
-    expect(prompt).toContain('"action":"search_schema"');
-    expect(prompt).toContain('"action":"sample_table_data"');
-    expect(prompt).toContain('"action":"describe_tables"');
-    expect(prompt).toContain('"action":"ask_user"');
+    expect(prompt).toContain("native function calling");
+    // Tool schemas travel in the native payload; gating must still hold there.
+    const nativePayload = JSON.stringify(
+      nativeToolPayloadForProvider("openai", {
+        workspaceToolsEnabled: true,
+        availability: { sqlRead: true, sqlWritePreview: true },
+      }),
+    );
+    expect(nativePayload).toContain('"run_readonly_sql"');
+    expect(nativePayload).toContain('"search_schema"');
+    expect(nativePayload).toContain('"sample_table_data"');
+    expect(nativePayload).toContain('"describe_tables"');
+    expect(nativePayload).toContain('"ask_user"');
     expect(prompt).toContain("every table in FROM or JOIN must be inspected");
     expect(prompt).toContain("Observation (older, condensed)");
     expect(prompt).not.toContain("narration");
@@ -142,9 +151,16 @@ describe("AI agent context builder", () => {
     });
 
     expect(prompt).toContain("Engine: MongoDB (document)");
-    expect(prompt).not.toContain('"action":"run_readonly_sql"');
-    expect(prompt).not.toContain('"action":"preview_write"');
-    expect(prompt).toContain('"action":"sample_table_data"');
+    // SQL gating moves to the native payload: MongoDB must not receive the
+    // read-only SQL tool at all.
+    const mongoPayload = JSON.stringify(
+      nativeToolPayloadForProvider("openai", {
+        workspaceToolsEnabled: true,
+        availability: agentToolAvailability("mongodb"),
+      }),
+    );
+    expect(mongoPayload).not.toContain('"run_readonly_sql"');
+    expect(mongoPayload).not.toContain('"preview_write"');
     expect(prompt).toContain("Omit finish.args.sql");
     expect(prompt).not.toContain("run run_readonly_sql before finishing");
   });
@@ -159,8 +175,15 @@ describe("AI agent context builder", () => {
       workspaceToolsEnabled: true,
       toolAvailability: agentToolAvailability("clickhouse"),
     });
-    expect(prompt).toContain('"action":"run_readonly_sql"');
-    expect(prompt).toContain('"action":"preview_write"');
+    expect(prompt).toContain("native function calling");
+    const clickhousePayload = JSON.stringify(
+      nativeToolPayloadForProvider("openai", {
+        workspaceToolsEnabled: true,
+        availability: agentToolAvailability("clickhouse"),
+      }),
+    );
+    expect(clickhousePayload).toContain('"run_readonly_sql"');
+    expect(clickhousePayload).toContain('"preview_write"');
   });
 
   it("injects pre-inspected summaries and caps them to save describe_table steps", () => {

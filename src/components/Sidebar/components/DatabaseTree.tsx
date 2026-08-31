@@ -1,4 +1,5 @@
-import { memo, useCallback } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Database, ChevronDown, ChevronRight, Loader2, Filter } from "lucide-react";
 import type { DatabaseInfo, SchemaObjectInfo, TableInfo } from "../../../types";
 import type { AppLanguage } from "../../../i18n";
@@ -11,6 +12,12 @@ import {
   TableRow,
   ViewRow,
 } from "./DatabaseTreeItems";
+import {
+  estimateExplorerItemSize,
+  EXPLORER_GROUP_LABEL_KEYS,
+  flattenExplorerSections,
+  type ExplorerFlatItem,
+} from "./explorer-virtualization";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,12 +67,18 @@ function getLastPathSegment(value?: string | null) {
   return parts[parts.length - 1] || value;
 }
 
+
+
 // ---------------------------------------------------------------------------
-// Memoized schema group section
+// Virtualized schema rows (freeze-audit P1)
 // ---------------------------------------------------------------------------
 
-interface SchemaGroupProps {
-  section: ExplorerSchemaSection;
+interface VirtualizedSchemaRowsProps {
+  sections: ExplorerSchemaSection[];
+  /** The `.explorer-tree-scroll` element — the actual vertical scroller. */
+  getScrollElement: () => HTMLElement | null;
+  /** Changes whenever layout above the panel may shift (expand/collapse, db switch). */
+  layoutKey: string;
   mixedStateFilter: MixedStateFilter;
   onMixedStateToggle: DatabaseTreeProps["onMixedStateToggle"];
   getMixedStateFilterForTable: DatabaseTreeProps["getMixedStateFilterForTable"];
@@ -79,8 +92,10 @@ interface SchemaGroupProps {
   t: (key: import("../../../i18n").TranslationKey, opts?: Record<string, string | number>) => string;
 }
 
-const SchemaGroup = memo(function SchemaGroup({
-  section,
+const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
+  sections,
+  getScrollElement,
+  layoutKey,
   mixedStateFilter,
   onMixedStateToggle,
   getMixedStateFilterForTable,
@@ -92,121 +107,131 @@ const SchemaGroup = memo(function SchemaGroup({
   contextQualifiedName,
   language,
   t,
-}: SchemaGroupProps) {
-  const groupState = getSchemaGroupFilterState(section.schemaName, mixedStateFilter);
+}: VirtualizedSchemaRowsProps) {
+  const flatItems = useMemo(() => flattenExplorerSections(sections), [sections]);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
 
-  const handleGroupToggle = useCallback(
-    (next: CheckboxFilterState) => {
-      // Toggle all tables in this schema group
-      for (const item of section.tables) {
-        onMixedStateToggle(section.schemaName, item.name, next);
+  // The scroll container holds every database section, so the virtual rows
+  // region starts part-way down it; TanStack needs that offset (scrollMargin)
+  // and it changes whenever other sections expand/collapse.
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const scroller = getScrollElement();
+    if (!container || !scroller) return;
+    const offset = container.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    setScrollMargin((previous) => (Math.abs(previous - offset) > 1 ? offset : previous));
+  }, [flatItems, getScrollElement, layoutKey]);
+
+  const virtualizer = useVirtualizer({
+    count: flatItems.length,
+    getScrollElement: () => getScrollElement(),
+    estimateSize: (index) => estimateExplorerItemSize(flatItems[index]),
+    overscan: 10,
+    scrollMargin,
+    getItemKey: (index) => flatItems[index].key,
+  });
+
+  const renderItem = useCallback((item: ExplorerFlatItem) => {
+    switch (item.kind) {
+      case "schema-head": {
+        const groupState = getSchemaGroupFilterState(item.schemaName, mixedStateFilter);
+        return (
+          <div className="explorer-schema-head explorer-virtual-schema-head">
+            <MixedCheckbox
+              state={groupState}
+              onChange={(next) => {
+                for (const table of item.tables) {
+                  onMixedStateToggle(item.schemaName, table.name, next);
+                }
+              }}
+              title={`Schema filter: ${item.schemaName}`}
+            />
+            <span className="explorer-schema-name">{item.schemaName}</span>
+            <span className="explorer-schema-count">{item.count}</span>
+          </div>
+        );
       }
-    },
-    [onMixedStateToggle, section],
-  );
+      case "group-head":
+        return (
+          <div className="explorer-object-group-head explorer-virtual-group-head">
+            {t(EXPLORER_GROUP_LABEL_KEYS[item.group] as import("../../../i18n").TranslationKey)}
+          </div>
+        );
+      case "table": {
+        const tableFilter = getMixedStateFilterForTable(item.table.name, item.schemaName);
+        const itemState = getItemFilterState(item.table.name, item.schemaName, tableFilter);
+        const isContextActive =
+          contextQualifiedName !== null &&
+          contextQualifiedName === getQualifiedTableName(item.table);
+        return (
+          <TableRow
+            table={item.table}
+            itemState={itemState}
+            isContextActive={isContextActive}
+            onTableClick={onTableClick}
+            onTableDoubleClick={onTableDoubleClick}
+            onStructureClick={onStructureClick}
+            onTableContextMenu={onTableContextMenu}
+            schemaName={item.schemaName}
+            language={language}
+            t={t}
+            onMixedStateToggle={onMixedStateToggle}
+          />
+        );
+      }
+      case "view": {
+        const tableFilter = getMixedStateFilterForTable(item.view.name, item.schemaName);
+        const itemState = getItemFilterState(item.view.name, item.schemaName, tableFilter);
+        return (
+          <ViewRow
+            view={item.view}
+            itemState={itemState}
+            onTableClick={onTableClick}
+            onTableDoubleClick={onTableDoubleClick}
+            onStructureClick={onStructureClick}
+            schemaName={item.schemaName}
+            language={language}
+            t={t}
+            onMixedStateToggle={onMixedStateToggle}
+          />
+        );
+      }
+      case "object":
+        return (
+          <StaticObjectRow
+            object={item.object}
+            metaText={item.group === "triggers"
+              ? item.object.related_table || t("explorer.triggersGroup")
+              : item.object.object_type}
+            icon={item.group === "triggers" ? "GitBranch" : "FileCode"}
+            onObjectSqlClick={onObjectSqlClick}
+            t={t}
+          />
+        );
+      default:
+        return null;
+    }
+  }, [contextQualifiedName, getMixedStateFilterForTable, language, mixedStateFilter, onMixedStateToggle, onObjectSqlClick, onStructureClick, onTableClick, onTableContextMenu, onTableDoubleClick, t]);
 
   return (
-    <section className="explorer-schema-group">
-      {/* Schema group header with mixed-state checkbox */}
-      <div className="explorer-schema-head">
-        <MixedCheckbox
-          state={groupState}
-          onChange={handleGroupToggle}
-          title={`Schema filter: ${section.schemaName}`}
-        />
-        <span className="explorer-schema-name">{section.schemaName}</span>
-        <span className="explorer-schema-count">
-          {section.tables.length + section.views.length + section.triggers.length + section.routines.length}
-        </span>
-      </div>
-
-      <div className="explorer-schema-list">
-        {section.tables.length > 0 && (
-          <div className="explorer-object-group">
-            <div className="explorer-object-group-head">{t("explorer.tablesGroup")}</div>
-            {section.tables.map((table) => {
-              const tableFilter = getMixedStateFilterForTable(table.name, section.schemaName);
-              const itemState = getItemFilterState(table.name, section.schemaName, tableFilter);
-              const isContextActive =
-                contextQualifiedName !== null &&
-                contextQualifiedName === getQualifiedTableName(table);
-              return (
-                <TableRow
-                  key={`table-${section.schemaName}-${table.name}`}
-                  table={table}
-                  itemState={itemState}
-                  isContextActive={isContextActive}
-                  onTableClick={onTableClick}
-                  onTableDoubleClick={onTableDoubleClick}
-                  onStructureClick={onStructureClick}
-                  onTableContextMenu={onTableContextMenu}
-                  schemaName={section.schemaName}
-                  language={language}
-                  t={t}
-                  onMixedStateToggle={onMixedStateToggle}
-                />
-              );
-            })}
-          </div>
-        )}
-
-        {section.views.length > 0 && (
-          <div className="explorer-object-group">
-            <div className="explorer-object-group-head">{t("explorer.viewsGroup")}</div>
-            {section.views.map((view) => {
-              const tableFilter = getMixedStateFilterForTable(view.name, section.schemaName);
-              const itemState = getItemFilterState(view.name, section.schemaName, tableFilter);
-              return (
-                <ViewRow
-                  key={`view-${section.schemaName}-${view.name}`}
-                  view={view}
-                  itemState={itemState}
-                  onTableClick={onTableClick}
-                  onTableDoubleClick={onTableDoubleClick}
-                  onStructureClick={onStructureClick}
-                  schemaName={section.schemaName}
-                  language={language}
-                  t={t}
-                  onMixedStateToggle={onMixedStateToggle}
-                />
-              );
-            })}
-          </div>
-        )}
-
-        {section.triggers.length > 0 && (
-          <div className="explorer-object-group">
-            <div className="explorer-object-group-head">{t("explorer.triggersGroup")}</div>
-            {section.triggers.map((trigger) => (
-              <StaticObjectRow
-                key={`trigger-${section.schemaName}-${trigger.name}`}
-                object={trigger}
-                metaText={trigger.related_table || t("explorer.triggersGroup")}
-                icon="GitBranch"
-                onObjectSqlClick={onObjectSqlClick}
-                t={t}
-              />
-            ))}
-          </div>
-        )}
-
-        {section.routines.length > 0 && (
-          <div className="explorer-object-group">
-            <div className="explorer-object-group-head">{t("explorer.routinesGroup")}</div>
-            {section.routines.map((routine) => (
-              <StaticObjectRow
-                key={`routine-${section.schemaName}-${routine.name}`}
-                object={routine}
-                metaText={routine.object_type}
-                icon="FileCode"
-                onObjectSqlClick={onObjectSqlClick}
-                t={t}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
+    <div
+      ref={containerRef}
+      className="explorer-virtual-container"
+      style={{ height: virtualizer.getTotalSize() }}
+    >
+      {virtualizer.getVirtualItems().map((virtualItem) => (
+        <div
+          key={virtualItem.key}
+          data-index={virtualItem.index}
+          ref={virtualizer.measureElement}
+          className="explorer-virtual-row"
+          style={{ transform: `translateY(${virtualItem.start - virtualizer.options.scrollMargin}px)` }}
+        >
+          {renderItem(flatItems[virtualItem.index])}
+        </div>
+      ))}
+    </div>
   );
 });
 
@@ -247,9 +272,17 @@ export function DatabaseTree({
   const contextQualifiedName = tableContextMenu
     ? getQualifiedTableName(tableContextMenu.table)
     : null;
+  const explorerScrollRef = useRef<HTMLDivElement | null>(null);
+  // Layout above the virtual panel (expanded DB headers) shifts its offset
+  // inside the scroll container; key the effect off that layout signature.
+  const layoutKey = useMemo(
+    () => `${currentDatabase ?? ""}|${[...expandedDbs].sort().join(",")}|${activeSchemaFilter}|${availableSchemaNames.length}`,
+    [activeSchemaFilter, availableSchemaNames.length, currentDatabase, expandedDbs],
+  );
+  const getScrollElement = useCallback(() => explorerScrollRef.current, []);
 
   return (
-    <div className="explorer-tree-scroll">
+    <div ref={explorerScrollRef} className="explorer-tree-scroll">
       {databases.map((db) => {
         const isExpanded = expandedDbs.has(db.name);
         const isCurrent = currentDatabase === db.name;
@@ -350,23 +383,22 @@ export function DatabaseTree({
                     {hasSearch ? t("explorer.noObjectsMatch") : t("explorer.noObjectsFound")}
                   </div>
                 ) : (
-                  filteredSchemaSections.map((section) => (
-                    <SchemaGroup
-                      key={section.schemaName}
-                      section={section}
-                      mixedStateFilter={mixedStateFilter}
-                      onMixedStateToggle={onMixedStateToggle}
-                      getMixedStateFilterForTable={getMixedStateFilterForTable}
-                      onTableClick={onTableClick}
-                      onTableDoubleClick={onTableDoubleClick}
-                      onStructureClick={onStructureClick}
-                      onObjectSqlClick={onObjectSqlClick}
-                      onTableContextMenu={onTableContextMenu}
-                      contextQualifiedName={contextQualifiedName}
-                      language={language}
-                      t={t}
-                    />
-                  ))
+                  <VirtualizedSchemaRows
+                    sections={filteredSchemaSections}
+                    getScrollElement={getScrollElement}
+                    layoutKey={layoutKey}
+                    mixedStateFilter={mixedStateFilter}
+                    onMixedStateToggle={onMixedStateToggle}
+                    getMixedStateFilterForTable={getMixedStateFilterForTable}
+                    onTableClick={onTableClick}
+                    onTableDoubleClick={onTableDoubleClick}
+                    onStructureClick={onStructureClick}
+                    onObjectSqlClick={onObjectSqlClick}
+                    onTableContextMenu={onTableContextMenu}
+                    contextQualifiedName={contextQualifiedName}
+                    language={language}
+                    t={t}
+                  />
                 )}
               </div>
             )}

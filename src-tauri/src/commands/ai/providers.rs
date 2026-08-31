@@ -379,12 +379,7 @@ mod tests {
             "messages": [{ "role": "user", "content": "look" }]
         });
         let before = body.clone();
-        apply_attachments(
-            &mut body,
-            ProviderBodyShape::OpenAiLike,
-            "look",
-            &[],
-        );
+        apply_attachments(&mut body, ProviderBodyShape::OpenAiLike, "look", &[]);
         assert_eq!(before, body);
 
         // Text attachments never become image parts.

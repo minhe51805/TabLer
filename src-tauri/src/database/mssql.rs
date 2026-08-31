@@ -105,9 +105,13 @@ impl MssqlDriver {
         // SSMS parity: a port written inside the server name (`host,port` /
         // `host\\INSTANCE,port`) is authoritative and wins over the separate
         // port field, which is only a fallback default.
-        let port = host_port
-            .or(explicit_port)
-            .unwrap_or_else(|| if instance.is_some() { 1434 } else { config.default_port() });
+        let port = host_port.or(explicit_port).unwrap_or_else(|| {
+            if instance.is_some() {
+                1434
+            } else {
+                config.default_port()
+            }
+        });
 
         MssqlServerAddress {
             host,
@@ -142,9 +146,7 @@ impl MssqlDriver {
         let password = config.password.as_deref().unwrap_or("");
 
         let auth = match (user, auth_type.as_str()) {
-            (Some(user), "windows") => {
-                AuthMethod::windows(user.to_string(), password.to_string())
-            }
+            (Some(user), "windows") => AuthMethod::windows(user.to_string(), password.to_string()),
             (Some(user), _) => AuthMethod::sql_server(user.to_string(), password.to_string()),
             (None, "sql") => anyhow::bail!("SQL Server authentication requires a username."),
             (None, _) => {
@@ -195,14 +197,16 @@ impl MssqlDriver {
         if trust_server_cert {
             tds.trust_cert();
         }
-        tds.encryption(if is_azure
-            || encrypt_mode == "mandatory"
-            || (encrypt_mode.is_empty() && config.use_ssl)
-        {
-            EncryptionLevel::Required
-        } else {
-            EncryptionLevel::Off
-        });
+        tds.encryption(
+            if is_azure
+                || encrypt_mode == "mandatory"
+                || (encrypt_mode.is_empty() && config.use_ssl)
+            {
+                EncryptionLevel::Required
+            } else {
+                EncryptionLevel::Off
+            },
+        );
 
         if let Some(instance) = &address.instance {
             tds.instance_name(instance);
@@ -288,7 +292,6 @@ port instead (e.g. 'localhost,1433'). Original error: {}",
 
         Ok(client)
     }
-
 
     fn split_schema_table(table: &str) -> (String, String) {
         if let Some((schema, name)) = table.split_once('.') {
@@ -1088,8 +1091,11 @@ mod mssql_parse_tests {
 
     #[test]
     fn instance_field_with_embedded_port_keeps_instance_only() {
-        let address =
-            MssqlDriver::parse_mssql_address(&config("localhost", None, Some("SERVER\\MINH,14330")));
+        let address = MssqlDriver::parse_mssql_address(&config(
+            "localhost",
+            None,
+            Some("SERVER\\MINH,14330"),
+        ));
         assert_eq!(address.instance.as_deref(), Some("MINH"));
         assert_eq!(address.port, 1434);
     }
@@ -1103,11 +1109,8 @@ mod mssql_parse_tests {
 
     #[test]
     fn host_port_wins_over_instance_field() {
-        let address = MssqlDriver::parse_mssql_address(&config(
-            "localhost,14330",
-            Some(1433),
-            Some("MINH"),
-        ));
+        let address =
+            MssqlDriver::parse_mssql_address(&config("localhost,14330", Some(1433), Some("MINH")));
         assert_eq!(address.port, 14330);
         assert!(address.port_from_host);
     }
@@ -1204,36 +1207,39 @@ mod mssql_live_diagnostics {
             },
         )
         .await;
-        variant(
-            "127.0.0.1,14330",
-            &|config: &mut ConnectionConfig| {
-                config.host = Some("127.0.0.1,14330".to_string());
-                config.port = None;
-            },
-        )
+        variant("127.0.0.1,14330", &|config: &mut ConnectionConfig| {
+            config.host = Some("127.0.0.1,14330".to_string());
+            config.port = None;
+        })
         .await;
         variant(
             "USER CONFIG: localhost + port 14330 + instance field SERVER\\\\MINH",
             &|config: &mut ConnectionConfig| {
                 config.host = Some("localhost".to_string());
                 config.port = Some(14330);
-                config
-                    .additional_fields
-                    .insert("instance_name".to_string(), "LAPTOP-JFECRE1C\\\\MINH".to_string());
+                config.additional_fields.insert(
+                    "instance_name".to_string(),
+                    "LAPTOP-JFECRE1C\\\\MINH".to_string(),
+                );
             },
         )
         .await;
 
         // Raw SQL Browser diagnostics
         use tokio::net::UdpSocket;
-        for (label, addr) in [("localhost/MINH", "127.0.0.1:1434"), ("LAPTOP-JFECRE1C/MINH", "LAPTOP-JFECRE1C:1434")] {
+        for (label, addr) in [
+            ("localhost/MINH", "127.0.0.1:1434"),
+            ("LAPTOP-JFECRE1C/MINH", "LAPTOP-JFECRE1C:1434"),
+        ] {
             let sock = UdpSocket::bind("0.0.0.0:0").await.unwrap();
             let mut req = vec![4u8]; // CLNT_UCAST_EX
             req.extend(b"MINH".iter().flat_map(|b| [*b, 0])); // UTF-16LE
             req.extend([0u8, 0]);
             let send_res = sock.send_to(&req, addr).await;
             let mut buf = vec![0u8; 4096];
-            let recv_res = tokio::time::timeout(std::time::Duration::from_secs(3), sock.recv_from(&mut buf)).await;
+            let recv_res =
+                tokio::time::timeout(std::time::Duration::from_secs(3), sock.recv_from(&mut buf))
+                    .await;
             match (send_res, recv_res) {
                 (Ok(_), Ok(Ok((len, _)))) => {
                     let resp = String::from_utf8_lossy(&buf[..len]).to_string();
@@ -1244,8 +1250,17 @@ mod mssql_live_diagnostics {
         }
 
         // Does connect_named itself establish TCP?
-        let cfg_host = tiberius::Config::from_ado_string("Server=LAPTOP-JFECRE1C\\MINH;Integrated Security=true").unwrap();
-        println!("[connect_named LAPTOP-JFECRE1C\\\\MINH] -> {:?}", <tokio::net::TcpStream as tiberius::SqlBrowser>::connect_named(&cfg_host).await.map(|_| "TCP established").map_err(|e| e.to_string()));
+        let cfg_host = tiberius::Config::from_ado_string(
+            "Server=LAPTOP-JFECRE1C\\MINH;Integrated Security=true",
+        )
+        .unwrap();
+        println!(
+            "[connect_named LAPTOP-JFECRE1C\\\\MINH] -> {:?}",
+            <tokio::net::TcpStream as tiberius::SqlBrowser>::connect_named(&cfg_host)
+                .await
+                .map(|_| "TCP established")
+                .map_err(|e| e.to_string())
+        );
 
         // Table metadata diagnostics (reproduces the "No tables were found" bug)
         use crate::database::driver::DatabaseDriver;
@@ -1255,8 +1270,10 @@ mod mssql_live_diagnostics {
             additional_fields: HashMap::new(),
             ..crate::database::mssql::config_defaults()
         };
-        diag.additional_fields
-            .insert("instance_name".to_string(), "LAPTOP-JFECRE1C\\MINH".to_string());
+        diag.additional_fields.insert(
+            "instance_name".to_string(),
+            "LAPTOP-JFECRE1C\\MINH".to_string(),
+        );
         match MssqlDriver::connect(&diag).await {
             Ok(driver) => {
                 for db_arg in [Some("dangkytest"), None] {
@@ -1268,7 +1285,11 @@ mod mssql_live_diagnostics {
                             tables
                                 .iter()
                                 .take(5)
-                                .map(|t| format!("{}|{}", t.schema.as_deref().unwrap_or("?"), t.name))
+                                .map(|t| format!(
+                                    "{}|{}",
+                                    t.schema.as_deref().unwrap_or("?"),
+                                    t.name
+                                ))
                                 .collect::<Vec<_>>()
                         ),
                         Err(error) => println!("[list_tables {:?}] ERROR: {error:#}", db_arg),
@@ -1280,6 +1301,8 @@ mod mssql_live_diagnostics {
     }
 }
 
+/// Live-diagnostic connection defaults (used by the manual `tables diag` probe).
+#[allow(dead_code)]
 fn config_defaults() -> ConnectionConfig {
     use std::collections::HashMap;
     ConnectionConfig {

@@ -21,10 +21,10 @@ export interface SqlSafetyDecision {
   parseError?: string | null;
 }
 
-export function classifySqlSafety(sql: string): Promise<SqlSafetyDecision> {
+export function classifySqlSafety(sql: string, databaseType?: string | null): Promise<SqlSafetyDecision> {
   return invokeWithTimeout<SqlSafetyDecision>(
     "classify_sql_safety",
-    { sql },
+    { sql, databaseType: databaseType ?? null },
     5_000,
     "Classifying SQL",
   );

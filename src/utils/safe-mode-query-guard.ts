@@ -1,4 +1,5 @@
 import { useSafeModeStore } from "../stores/safeModeStore";
+import { useConnectionStore } from "../stores/connectionStore";
 import { isBlockedAtLevel, requiresConfirmationAtLevel } from "../types/safe-mode";
 import { classifySqlSafety, type SqlSafetyDecision } from "./sql-safety";
 
@@ -30,7 +31,13 @@ export async function assertQueryAllowed(
   connectionId: string,
 ): Promise<SqlSafetyDecision> {
   const safeLevel = useSafeModeStore.getState().getEffectiveLevel(connectionId);
-  const decision = await classifySqlSafety(sql);
+  // Pass the connection's engine so dialect-specific server commands
+  // (MySQL SHOW/DESCRIBE presets) classify under the right grammar.
+  const databaseType =
+    useConnectionStore
+      .getState()
+      .connections.find((connection) => connection.id === connectionId)?.db_type ?? null;
+  const decision = await classifySqlSafety(sql, databaseType);
   if (decision.statements.length === 0) {
     throw new Error(decision.parseError || "SQL contains no executable statements.");
   }

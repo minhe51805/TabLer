@@ -34,7 +34,7 @@ export function finishHasSql(action: AIAgentFinishAction): boolean {
  * failed — the trace, not the model, is the source of truth.
  */
 const SUCCESS_CLAIM_PATTERN =
-  /(?:successfully\s+(?:ran|executed)|ran\s+successfully|executed\s+successfully|(?:query|sql|sandbox)\s+(?:ran|executed|works?)\s+(?:fine|ok|correctly|well)|th\u1ef1c\s*thi\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang|\u1ed5n)|\u0111\u00fang\s*th\u1ef1c\s*thi|ch\u1ea1y\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang|\u1ed5n)|\u0111\u00e3\s*ch\u1ea1y\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang)|沙箱?运行成功|执行成功|성공적으로\s*실행)/i;
+  /(?:successfully\s+(?:ran|executed)|ran\s+successfully|executed\s+successfully|(?:query|sql|sandbox)\s+(?:ran|executed|works?)\s+(?:fine|ok|correctly|well)|th\u1ef1c\s*thi\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang|\u1ed5n)|\u0111\u00fang\s*th\u1ef1c\s*thi|ch\u1ea1y\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang|\u1ed5n)|\u0111\u00e3\s*ch\u1ea1y\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang)|沙箱?运行成功|执行成功|성공적으로\s*실행|başarıyla\s*(?:çalıştır|çalış|gerçekleştir|uygula)|başarılı\s*(?:şekilde\s*)?(?:çalıştır|çalış|gerçekleştir|uygula)\w*|sorgu\s*başarılı|başarıyla\s*tamamlandı)/i;
 
 /** True when the response asserts a successful execution. */
 export function responseClaimsSuccessfulExecution(response: string | undefined): boolean {

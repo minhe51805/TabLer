@@ -256,7 +256,6 @@ fn shared_storage() -> Result<QueryHistoryStorage, String> {
         .clone()
 }
 
-
 #[tauri::command]
 pub async fn save_query_history(entry: QueryHistoryEntry) -> Result<i64, String> {
     let storage = shared_storage()?;

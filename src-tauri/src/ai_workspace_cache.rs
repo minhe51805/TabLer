@@ -604,13 +604,11 @@ impl AIWorkspaceCacheStorage {
         let pool = self.connect_pool().await?;
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
-            let row = sqlx::query(
-                "SELECT id, mime_type, data FROM ai_attachments WHERE id = ?1",
-            )
-            .bind(id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|error| format!("Failed to load AI attachment: {error}"))?;
+            let row = sqlx::query("SELECT id, mime_type, data FROM ai_attachments WHERE id = ?1")
+                .bind(id)
+                .fetch_optional(&pool)
+                .await
+                .map_err(|error| format!("Failed to load AI attachment: {error}"))?;
             if let Some(row) = row {
                 results.push(AIAttachmentData {
                     id: row.try_get("id").unwrap_or_default(),
@@ -707,9 +705,7 @@ pub async fn delete_thread_memory_for_thread(thread_id: String) -> Result<(), St
 }
 
 #[tauri::command]
-pub async fn save_ai_attachments(
-    attachments: Vec<AIAttachmentRecord>,
-) -> Result<(), String> {
+pub async fn save_ai_attachments(attachments: Vec<AIAttachmentRecord>) -> Result<(), String> {
     AIWorkspaceCacheStorage::new()?
         .save_ai_attachments(&attachments)
         .await
@@ -722,17 +718,23 @@ pub async fn list_ai_attachments() -> Result<Vec<AIAttachmentMeta>, String> {
 
 #[tauri::command]
 pub async fn get_ai_attachment_data(ids: Vec<String>) -> Result<Vec<AIAttachmentData>, String> {
-    AIWorkspaceCacheStorage::new()?.get_ai_attachment_data(&ids).await
+    AIWorkspaceCacheStorage::new()?
+        .get_ai_attachment_data(&ids)
+        .await
 }
 
 #[tauri::command]
 pub async fn delete_ai_attachments(ids: Vec<String>) -> Result<(), String> {
-    AIWorkspaceCacheStorage::new()?.delete_ai_attachments(&ids).await
+    AIWorkspaceCacheStorage::new()?
+        .delete_ai_attachments(&ids)
+        .await
 }
 
 #[tauri::command]
 pub async fn delete_all_ai_attachments() -> Result<i64, String> {
-    AIWorkspaceCacheStorage::new()?.delete_all_ai_attachments().await
+    AIWorkspaceCacheStorage::new()?
+        .delete_all_ai_attachments()
+        .await
 }
 
 #[tauri::command]

@@ -30,7 +30,10 @@ fn skill_roots(workspace_dir: Option<&str>) -> Vec<(PathBuf, String)> {
     if let Some(workspace_dir) = workspace_dir {
         let trimmed = workspace_dir.trim();
         if !trimmed.is_empty() {
-            roots.push((PathBuf::from(trimmed).join("skills"), "workspace".to_string()));
+            roots.push((
+                PathBuf::from(trimmed).join("skills"),
+                "workspace".to_string(),
+            ));
         }
     }
     if let Ok(data_dir) = resolve_data_dir() {
@@ -69,7 +72,9 @@ fn parse_skill_md(raw: &str) -> (Option<String>, Option<String>, String) {
 }
 
 fn dir_display_name(path: &Path) -> Option<String> {
-    path.file_name().and_then(|value| value.to_str()).map(str::to_string)
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .map(str::to_string)
 }
 
 fn skill_md_path(dir: &Path) -> PathBuf {
@@ -134,7 +139,9 @@ pub fn read_ai_skill_by_name(
     let trimmed = name.trim();
     if trimmed.is_empty()
         || trimmed.len() > 64
-        || !trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        || !trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
     {
         return Err("Invalid skill name.".to_string());
     }

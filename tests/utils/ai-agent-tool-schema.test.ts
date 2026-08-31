@@ -95,12 +95,12 @@ describe("AI agent tool schema", () => {
     expect(decls[0].parameters).toBe(AI_AGENT_TOOL_SPECS.ask_user.parameters);
   });
 
-  it("keeps native tool calling gated off by default so the text path stays default", () => {
-    expect(NATIVE_TOOL_CALLING_ENABLED).toBe(false);
-    // While the flag is off the request builder must be inert for every caller.
-    expect(buildNativeToolPayload("openai", "agent")).toBeNull();
-    expect(buildNativeToolPayload("anthropic", "agent")).toBeNull();
-    expect(buildNativeToolPayload("openai", "agent", "redis")).toBeNull();
+  it("enables native tool calling for the agent intent on supported providers", () => {
+    expect(NATIVE_TOOL_CALLING_ENABLED).toBe(true);
+    expect(buildNativeToolPayload("openai", "agent")).not.toBeNull();
+    expect(buildNativeToolPayload("anthropic", "agent")).not.toBeNull();
+    // Non-agent intents must still ride the classic streaming text path.
+    expect(buildNativeToolPayload("openai", "sql")).toBeNull();
   });
 
   it("only ever offers tools for the agent intent", () => {

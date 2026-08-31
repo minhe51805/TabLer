@@ -61,29 +61,24 @@ describe("aiStore", () => {
     expect(useAIStore.getState().aiConfigs).toEqual([provider]);
   });
 
-  it("collects streamed text using the agent timeout policy", async () => {
+  it("collects non-streaming agent responses using the agent timeout policy (native tool calling)", async () => {
     useAIStore.setState({ aiConfigs: [provider] });
-    invokeWithTimeoutMock.mockImplementation(async (_command, args) => {
-      const requestId = args.request.request_id;
-      streamListener?.({
-        payload: { requestId, kind: "reasoning_delta", text: "private" },
-      });
-      streamListener?.({
-        payload: { requestId, kind: "text_delta", text: "SELECT " },
-      });
-      streamListener?.({
-        payload: { requestId, kind: "text_delta", text: "1" },
-      });
+    invokeWithTimeoutMock.mockImplementation(async (command) => {
+      if (command === "load_ai_configs") {
+        return [[provider], { "provider-1": true }];
+      }
+      // Native tool calling rides the non-streaming path.
+      return { text: "SELECT 1", reasoning: "private" };
     });
 
     await expect(
       useAIStore
         .getState()
         .askAIWithReasoning("write SQL", "schema", "panel", "agent"),
-    ).resolves.toEqual({ text: "SELECT 1" });
+    ).resolves.toEqual({ text: "SELECT 1", reasoning: "private" });
 
     expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
-      "ask_ai_stream",
+      "ask_ai",
       expect.objectContaining({
         request: expect.objectContaining({
           prompt: "write SQL",
@@ -91,6 +86,8 @@ describe("aiStore", () => {
           mode: "panel",
           intent: "agent",
           request_id: expect.any(String),
+          tools: expect.any(Array),
+          tool_choice: "auto",
         }),
       }),
       360_000,
@@ -99,7 +96,9 @@ describe("aiStore", () => {
     );
     expect(useAIStore.getState().requestPhase).toBe("idle");
     expect(useAIStore.getState().streamingText).toBe("");
-    expect(listenMock).toHaveBeenCalledWith("ai-stream-event", expect.any(Function));
+    // Native tool calling rides the non-streaming path: no stream subscription.
+    expect(listenMock).not.toHaveBeenCalledWith("ai-stream-event", expect.any(Function));
+    expect(streamListener).toBeUndefined();
   });
 
   it("cancels the active provider request", async () => {

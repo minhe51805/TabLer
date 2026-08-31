@@ -266,15 +266,12 @@ impl DatabaseManager {
     /// block connect/disconnect (write-lock) while waiting on the network.
     pub async fn get_driver(&self, connection_id: &str) -> Result<Arc<dyn DatabaseDriver>> {
         let conns = self.connections.read().await;
-        conns
-            .get(connection_id)
-            .cloned()
-            .ok_or_else(|| {
-                anyhow!(
-                    "Connection '{}' not found. Please connect first.",
-                    connection_id
-                )
-            })
+        conns.get(connection_id).cloned().ok_or_else(|| {
+            anyhow!(
+                "Connection '{}' not found. Please connect first.",
+                connection_id
+            )
+        })
     }
 
     /// Check if a connection exists and is alive. The ping runs on a cloned

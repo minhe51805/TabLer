@@ -8,9 +8,12 @@ use crate::database::models::QueryResult;
 use crate::database::parameterized_query::{
     compile_parameterized_query, placeholder_style_for_database,
 };
-use crate::utils::sql::{classify_sql, split_sql_statements, SqlSafetyDecision, SqlStatementKind};
+use crate::error::AppError;
+use crate::utils::sql::{
+    classify_sql_with_dialect, split_sql_statements, SqlSafetyDecision, SqlStatementKind,
+};
 use std::collections::HashMap;
-use tauri::State;
+use tauri::{Emitter, State};
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
@@ -128,8 +131,11 @@ fn format_query_runtime_error(error: impl std::fmt::Display) -> String {
     }
 }
 
-fn validate_sandbox_statement(statement: &str) -> Result<(), String> {
-    let decision = classify_sql(statement);
+fn validate_sandbox_statement(
+    statement: &str,
+    database_type: Option<crate::database::models::DatabaseType>,
+) -> Result<(), String> {
+    let decision = classify_sql_with_dialect(statement, database_type);
     if let Some(error) = decision.parse_error {
         return Err(format!("Sandbox gateway could not parse SQL: {error}"));
     }
@@ -152,26 +158,37 @@ fn validate_sandbox_statement(statement: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_sandbox_batch(statements: &[String], require_read_only: bool) -> Result<(), String> {
+fn validate_sandbox_batch(
+    statements: &[String],
+    require_read_only: bool,
+    database_type: Option<crate::database::models::DatabaseType>,
+) -> Result<(), String> {
     if statements.is_empty() {
-        return Err("Sandbox execution requires at least one SQL statement.".to_string());
+        return Err("Sandbox execution requires at least one SQL statement."
+            .to_string()
+            .into());
     }
     for statement in statements {
-        validate_sandbox_statement(statement)?;
+        validate_sandbox_statement(statement, database_type)?;
     }
     if require_read_only {
         let combined = statements.join(";\n");
-        let decision = classify_sql(&combined);
+        let decision = classify_sql_with_dialect(&combined, database_type);
         if decision.parse_error.is_some() || !decision.read_only {
-            return Err("This execution boundary only permits read-only SQL.".to_string());
+            return Err("This execution boundary only permits read-only SQL."
+                .to_string()
+                .into());
         }
     }
     Ok(())
 }
 
-fn timeout_for_statements<'a>(statements: impl Iterator<Item = &'a str>) -> Duration {
+fn timeout_for_statements<'a>(
+    statements: impl Iterator<Item = &'a str>,
+    database_type: Option<crate::database::models::DatabaseType>,
+) -> Duration {
     let sql = statements.collect::<Vec<_>>().join(";\n");
-    if classify_sql(&sql).read_only {
+    if classify_sql_with_dialect(&sql, database_type).read_only {
         READ_ONLY_QUERY_TIMEOUT
     } else {
         MUTATING_QUERY_TIMEOUT
@@ -179,8 +196,13 @@ fn timeout_for_statements<'a>(statements: impl Iterator<Item = &'a str>) -> Dura
 }
 
 #[tauri::command]
-pub fn classify_sql_safety(sql: String) -> SqlSafetyDecision {
-    classify_sql(&sql)
+pub fn classify_sql_safety(sql: String, database_type: Option<String>) -> SqlSafetyDecision {
+    let parsed_type = database_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| crate::commands::schema_diff::parse_dialect(value).ok());
+    classify_sql_with_dialect(&sql, parsed_type)
 }
 
 #[tauri::command]
@@ -191,7 +213,7 @@ pub async fn execute_query(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, AppError> {
     safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
     let operation_id = Uuid::new_v4();
     db_manager
@@ -214,7 +236,11 @@ pub async fn execute_query(
         formatted
     })?;
     let statements = split_sql_statements(&sql);
-    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
+    let db_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str), db_type);
     let request_id = request_id
         .as_deref()
         .map(str::trim)
@@ -277,10 +303,10 @@ pub async fn cancel_query(
     connection_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
-) -> Result<bool, String> {
+) -> Result<bool, AppError> {
     let request_id = request_id.trim();
     if request_id.is_empty() {
-        return Err("Request ID cannot be empty.".to_string());
+        return Err("Request ID cannot be empty.".to_string().into());
     }
     let token_cancelled = cancellation_state.cancel(request_id).await;
     let mut server_cancelled = false;
@@ -299,6 +325,105 @@ pub async fn cancel_query(
     Ok(token_cancelled || server_cancelled)
 }
 
+/// Progressive result delivery for large read queries (roadmap Phase 3B).
+///
+/// The driver materializes the full result once (all drivers are fetch-all
+/// today); this command then emits `query-row-batch` events so the frontend
+/// can render rows progressively instead of blocking on one giant payload.
+/// Cancellation between chunks rides the existing `cancel_query` registry.
+/// Read-only is pinned: this boundary exists for browsing large results.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_query_progressive(
+    connection_id: String,
+    sql: String,
+    chunk_size: Option<usize>,
+    request_id: Option<String>,
+    app_handle: tauri::AppHandle,
+    db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, QueryCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
+) -> Result<QueryResult, AppError> {
+    safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(message) = agent_sql_read_unsupported_error(database_type) {
+        return Err(AppError::Query(message));
+    }
+    validate_sandbox_batch(std::slice::from_ref(&sql), true, Some(database_type))?;
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(format_query_connection_error)?;
+
+    let request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let cancellation_token = CancellationToken::new();
+    if let Some(ref id) = request_id {
+        cancellation_state
+            .register(id, cancellation_token.clone())
+            .await;
+    }
+    let exec = async {
+        if let Some(ref id) = request_id {
+            driver.execute_query_for_request(id, &sql).await
+        } else {
+            driver.execute_query(&sql).await
+        }
+    };
+    let result = timeout(READ_ONLY_QUERY_TIMEOUT, exec).await;
+    let mut result = match result {
+        Ok(inner) => inner.map_err(format_query_runtime_error)?,
+        Err(_) => {
+            if let Some(ref id) = request_id {
+                cancellation_state.finish(id).await;
+            }
+            return Err(AppError::Query("Progressive query timed out.".to_string()));
+        }
+    };
+
+    // Emit bounded row batches so the UI appends progressively. The
+    // cancellation entry stays registered until emission ends so
+    // `cancel_query` can still stop a slow consumer mid-stream.
+    let chunk_size = chunk_size.unwrap_or(500).clamp(50, 5_000);
+    let total_rows = result.rows.len();
+    for (batch_index, chunk) in chunk_rows(total_rows, chunk_size).into_iter().enumerate() {
+        if cancellation_token.is_cancelled() {
+            result.truncated = true;
+            break;
+        }
+        let _ = app_handle.emit(
+            "query-row-batch",
+            serde_json::json!({
+                "connectionId": connection_id,
+                "columns": if batch_index == 0 { result.columns.clone() } else { Vec::new() },
+                "rows": &result.rows[chunk.0..chunk.1],
+                "offset": chunk.0,
+                "totalRows": total_rows,
+                "done": chunk.1 >= total_rows,
+            }),
+        );
+    }
+    if let Some(ref id) = request_id {
+        cancellation_state.finish(id).await;
+    }
+    Ok(result)
+}
+
+/// Contiguous `(start, end)` boundaries for `total` rows in `chunk_size` steps.
+fn chunk_rows(total: usize, chunk_size: usize) -> Vec<(usize, usize)> {
+    let step = chunk_size.max(1);
+    (0..total)
+        .step_by(step)
+        .map(|start| (start, (start + step).min(total)))
+        .collect()
+}
+
 #[tauri::command]
 pub async fn execute_parameterized_query(
     connection_id: String,
@@ -308,7 +433,7 @@ pub async fn execute_parameterized_query(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, AppError> {
     safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
     let operation_id = Uuid::new_v4();
     db_manager
@@ -333,7 +458,11 @@ pub async fn execute_parameterized_query(
         parameters.len()
     );
     if split_sql_statements(&compiled.sql).len() != 1 {
-        return Err("Prepared parameters only support one SQL statement at a time.".to_string());
+        return Err(
+            "Prepared parameters only support one SQL statement at a time."
+                .to_string()
+                .into(),
+        );
     }
     let request_id = request_id
         .as_deref()
@@ -346,7 +475,8 @@ pub async fn execute_parameterized_query(
             .register(request_id, cancellation_token.clone())
             .await;
     }
-    let timeout_window = timeout_for_statements(std::iter::once(compiled.sql.as_str()));
+    let timeout_window =
+        timeout_for_statements(std::iter::once(compiled.sql.as_str()), Some(database_type));
     let exec = async {
         if let Some(ref id) = request_id {
             driver
@@ -398,7 +528,7 @@ pub async fn preview_write_transaction(
     connection_id: String,
     statements: Vec<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<PreviewWriteResult, String> {
+) -> Result<PreviewWriteResult, AppError> {
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
         .await
@@ -408,22 +538,26 @@ pub async fn preview_write_transaction(
         .await
         .map_err(|error| error.to_string())?;
     if let Some(message) = agent_sql_write_preview_unsupported_error(database_type) {
-        return Err(message);
+        return Err(message.into());
     }
 
     if statements.is_empty() || statements.len() > MAX_PREVIEW_STATEMENTS {
-        return Err(format!(
+        return Err(AppError::from(format!(
             "Write preview accepts between 1 and {MAX_PREVIEW_STATEMENTS} statements."
-        ));
+        )));
     }
-    validate_sandbox_batch(&statements, false)?;
+    let db_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    validate_sandbox_batch(&statements, false, db_type)?;
     let has_mutating = statements
         .iter()
-        .any(|statement| !classify_sql(statement).read_only);
+        .any(|statement| !classify_sql_with_dialect(statement, db_type).read_only);
     if !has_mutating {
-        return Err(
+        return Err(AppError::from(
             "Write preview requires at least one data- or schema-changing statement.".to_string(),
-        );
+        ));
     }
 
     let operation_id = Uuid::new_v4();
@@ -433,7 +567,7 @@ pub async fn preview_write_transaction(
         statements.len()
     );
 
-    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
+    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str), db_type);
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -474,7 +608,7 @@ pub async fn execute_sandboxed_query(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, AppError> {
     safe_mode
         .assert_sql_allowed(&connection_id, &statements.join(";\n"))
         .await?;
@@ -489,13 +623,19 @@ pub async fn execute_sandboxed_query(
         connection_id,
         statements.len()
     );
-    if let Err(error) = validate_sandbox_batch(&statements, require_read_only.unwrap_or(false)) {
+    let db_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    if let Err(error) =
+        validate_sandbox_batch(&statements, require_read_only.unwrap_or(false), db_type)
+    {
         log::error!(
             "operation_id={} operation=query.execute_sandboxed status=failed stage=validation error={}",
             operation_id,
             error
         );
-        return Err(error);
+        return Err(AppError::from(error));
     }
 
     let driver = db_manager.get_driver(&connection_id).await.map_err(|e| {
@@ -507,7 +647,7 @@ pub async fn execute_sandboxed_query(
         );
         formatted
     })?;
-    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str));
+    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str), db_type);
     let combined_query = statements.join(";\n");
     let request_id = request_id
         .as_deref()
@@ -583,13 +723,13 @@ pub async fn execute_agent_parameterized_query(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, AppError> {
     let database_type = db_manager
         .connection_database_type(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
     if let Some(message) = agent_sql_read_unsupported_error(database_type) {
-        return Err(message);
+        return Err(message.into());
     }
     db_manager
         .require_capability(&connection_id, DriverCapability::PreparedParameters)
@@ -597,12 +737,16 @@ pub async fn execute_agent_parameterized_query(
         .map_err(|error| error.to_string())?;
     // Same read-only pin `execute_agent_readonly_query` hard-codes: there is
     // no caller argument that can lower this boundary.
-    validate_sandbox_batch(std::slice::from_ref(&sql), true)?;
+    validate_sandbox_batch(std::slice::from_ref(&sql), true, Some(database_type))?;
     let style = placeholder_style_for_database(database_type);
-    let compiled = compile_parameterized_query(&sql, &parameters, style)
-        .map_err(|error| error.to_string())?;
+    let compiled =
+        compile_parameterized_query(&sql, &parameters, style).map_err(|error| error.to_string())?;
     if split_sql_statements(&compiled.sql).len() != 1 {
-        return Err("The agent parameterized tool accepts exactly one SQL statement.".to_string());
+        return Err(
+            "The agent parameterized tool accepts exactly one SQL statement."
+                .to_string()
+                .into(),
+        );
     }
     execute_parameterized_query(
         connection_id,
@@ -632,18 +776,18 @@ pub async fn execute_agent_readonly_query(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, AppError> {
     let database_type = db_manager
         .connection_database_type(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
     if let Some(message) = agent_sql_read_unsupported_error(database_type) {
-        return Err(message);
+        return Err(message.into());
     }
     // Pin is local to this command: callers have no `require_read_only` argument
     // they could flip. Fail here first so a future change to the shared
     // sandbox helper cannot silently lower the agent boundary.
-    validate_sandbox_batch(&statements, true)?;
+    validate_sandbox_batch(&statements, true, Some(database_type))?;
     execute_sandboxed_query(
         connection_id,
         statements,
@@ -666,14 +810,42 @@ mod tests {
 
     #[test]
     fn sandbox_uses_canonical_classifier_for_edge_cases() {
-        assert!(validate_sandbox_statement("-- inspect\nSELECT 1").is_ok());
+        assert!(validate_sandbox_statement("-- inspect\nSELECT 1", None).is_ok());
         assert!(validate_sandbox_statement(
-            "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed"
+            "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed",
+            None
         )
         .is_ok());
-        assert!(validate_sandbox_statement("SET search_path TO public").is_err());
-        assert!(validate_sandbox_statement("SELECT 1; SELECT 2").is_err());
-        assert!(validate_sandbox_statement("-- no executable SQL").is_err());
+        assert!(validate_sandbox_statement("SET search_path TO public", None).is_err());
+        assert!(validate_sandbox_statement("SELECT 1; SELECT 2", None).is_err());
+        assert!(validate_sandbox_statement("-- no executable SQL", None).is_err());
+    }
+
+    #[test]
+    fn mysql_server_commands_classify_readonly_under_mysql_dialect() {
+        use crate::database::models::DatabaseType;
+        // SHOW FULL PROCESSLIST fails the generic parser; the MySQL dialect
+        // (plus the read-only server-command fallback) must classify it as a
+        // read so the process-list preset works on MySQL/MariaDB.
+        let decision = validate_sandbox_batch(
+            &["SHOW FULL PROCESSLIST".to_string()],
+            true,
+            Some(DatabaseType::MySQL),
+        );
+        assert!(
+            decision.is_ok(),
+            "mysql process-list preset must pass: {decision:?}"
+        );
+        assert!(
+            validate_sandbox_batch(&["SHOW FULL PROCESSLIST".to_string()], true, None).is_err()
+        );
+        // The fallback must not widen the boundary to mutations.
+        assert!(validate_sandbox_batch(
+            &["UPDATE users SET name = 'x'".to_string()],
+            true,
+            Some(DatabaseType::MySQL),
+        )
+        .is_err());
     }
 
     #[test]
@@ -681,8 +853,8 @@ mod tests {
         let mutating = vec![
             "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed".to_string(),
         ];
-        assert!(validate_sandbox_batch(&mutating, true).is_err());
-        assert!(validate_sandbox_batch(&mutating, false).is_ok());
+        assert!(validate_sandbox_batch(&mutating, true, None).is_err());
+        assert!(validate_sandbox_batch(&mutating, false, None).is_ok());
     }
 
     #[test]
@@ -690,17 +862,20 @@ mod tests {
         // `execute_agent_readonly_query` pins require_read_only = true, so the
         // shared batch validator must accept plain reads while rejecting every
         // mutating or schema-changing statement regardless of caller intent.
-        assert!(validate_sandbox_batch(&["SELECT 1".to_string()], true).is_ok());
-        assert!(validate_sandbox_batch(&["EXPLAIN SELECT 1".to_string()], true).is_ok());
+        assert!(validate_sandbox_batch(&["SELECT 1".to_string()], true, None).is_ok());
+        assert!(validate_sandbox_batch(&["EXPLAIN SELECT 1".to_string()], true, None).is_ok());
         assert!(
-            validate_sandbox_batch(&["UPDATE users SET name = 'x'".to_string()], true).is_err()
-        );
-        assert!(validate_sandbox_batch(&["DELETE FROM users".to_string()], true).is_err());
-        assert!(validate_sandbox_batch(&["DROP TABLE users".to_string()], true).is_err());
-        assert!(
-            validate_sandbox_batch(&["INSERT INTO users(name) VALUES('x')".to_string()], true)
+            validate_sandbox_batch(&["UPDATE users SET name = 'x'".to_string()], true, None)
                 .is_err()
         );
+        assert!(validate_sandbox_batch(&["DELETE FROM users".to_string()], true, None).is_err());
+        assert!(validate_sandbox_batch(&["DROP TABLE users".to_string()], true, None).is_err());
+        assert!(validate_sandbox_batch(
+            &["INSERT INTO users(name) VALUES('x')".to_string()],
+            true,
+            None
+        )
+        .is_err());
     }
 
     #[test]
@@ -711,20 +886,38 @@ mod tests {
         assert!(validate_sandbox_batch(
             &["SELECT * FROM users WHERE name = :name".to_string()],
             true,
+            None,
         )
         .is_ok());
         assert!(
-            validate_sandbox_batch(&["UPDATE users SET name = :name".to_string()], true).is_err()
-        );
-        assert!(
-            validate_sandbox_batch(&["DELETE FROM users WHERE id = :id".to_string()], true)
+            validate_sandbox_batch(&["UPDATE users SET name = :name".to_string()], true, None)
                 .is_err()
         );
         assert!(validate_sandbox_batch(
-            &["SELECT 1; DELETE FROM users WHERE id = :id".to_string()],
-            true
+            &["DELETE FROM users WHERE id = :id".to_string()],
+            true,
+            None
         )
         .is_err());
+        assert!(validate_sandbox_batch(
+            &["SELECT 1; DELETE FROM users WHERE id = :id".to_string()],
+            true,
+            None
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn chunk_rows_covers_all_rows_with_bounded_batches() {
+        use super::chunk_rows;
+        assert!(chunk_rows(0, 500).is_empty());
+        assert_eq!(chunk_rows(5, 500), vec![(0, 5)]);
+        assert_eq!(
+            chunk_rows(1_100, 500),
+            vec![(0, 500), (500, 1_000), (1_000, 1_100)]
+        );
+        // chunk_size is sanitized by the caller, but the helper stays safe anyway.
+        assert_eq!(chunk_rows(3, 0), vec![(0, 1), (1, 2), (2, 3)]);
     }
 
     #[tokio::test]
@@ -745,14 +938,15 @@ mod tests {
         ];
         for sql in rejected {
             assert!(
-                validate_sandbox_batch(&[sql.to_string()], true).is_err(),
+                validate_sandbox_batch(&[sql.to_string()], true, None).is_err(),
                 "agent read-only boundary must reject {sql}"
             );
         }
-        assert!(validate_sandbox_batch(&["SELECT 1".to_string()], true).is_ok());
+        assert!(validate_sandbox_batch(&["SELECT 1".to_string()], true, None).is_ok());
         assert!(validate_sandbox_batch(
             &["WITH x AS (SELECT 1) SELECT * FROM x".to_string()],
-            true
+            true,
+            None
         )
         .is_ok());
     }
@@ -777,25 +971,26 @@ mod tests {
     #[test]
     fn timeout_uses_read_only_window_only_for_read_batches() {
         assert_eq!(
-            timeout_for_statements(["SELECT 1"].into_iter()),
+            timeout_for_statements(["SELECT 1"].into_iter(), None),
             READ_ONLY_QUERY_TIMEOUT
         );
         assert_eq!(
-            timeout_for_statements(["SELECT 1", "SELECT 2"].into_iter()),
+            timeout_for_statements(["SELECT 1", "SELECT 2"].into_iter(), None),
             READ_ONLY_QUERY_TIMEOUT
         );
         assert_eq!(
-            timeout_for_statements(["UPDATE users SET name = 'x'"].into_iter()),
+            timeout_for_statements(["UPDATE users SET name = 'x'"].into_iter(), None),
             MUTATING_QUERY_TIMEOUT
         );
         assert_eq!(
-            timeout_for_statements(["SELECT 1", "DELETE FROM users"].into_iter()),
+            timeout_for_statements(["SELECT 1", "DELETE FROM users"].into_iter(), None),
             MUTATING_QUERY_TIMEOUT
         );
         assert_eq!(
             timeout_for_statements(
                 ["WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed"]
-                    .into_iter()
+                    .into_iter(),
+                None
             ),
             MUTATING_QUERY_TIMEOUT
         );

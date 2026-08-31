@@ -728,14 +728,16 @@ export function toGeminiFunctionDeclarations(
 }
 
 /**
- * Feature flag for native provider function-calling. Kept OFF by default so the
- * agent runs entirely through the proven text-contract path; the coupled
- * request/parse wiring behind it cannot be integration-tested here, so enabling
- * it is a deliberate, reversible switch for live provider testing. While off,
- * buildNativeToolPayload always returns null and nothing about the request
- * changes.
+ * Feature flag for native provider function-calling. The full pipeline is in
+ * place on both ends: the frontend `buildNativeToolPayload` rides the
+ * non-streaming request path, the backend `apply_native_tools` injector adds
+ * the provider-shaped `tools`/`tool_choice`, and `extract_tool_call_as_action_json`
+ * normalizes native tool-call responses back into the text contract the agent
+ * loop already parses (with the parse-repair loop as a safety net for plain
+ * text finals). Enabled so the 17-tool catalog no longer ships as prompt text
+ * on every request — tools travel in the `tools` parameter instead.
  */
-export const NATIVE_TOOL_CALLING_ENABLED = false;
+export const NATIVE_TOOL_CALLING_ENABLED = true;
 
 /** Provider-shaped payload consumed by the backend `apply_native_tools` injector. */
 export interface NativeToolPayload {

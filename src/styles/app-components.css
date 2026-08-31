@@ -35275,59 +35275,301 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   color: var(--fintech-cyan);
 }
 
-.app-root .ai-workspace-stage--sidebar .ai-ws-import-title {
-  margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px dashed rgba(0, 122, 255, 0.12);
+/* ─── AI chat action modal (new chat / add existing chats) ─── */
+.app-root .ai-ws-chat-action {
+  width: 280px;
+  max-height: min(560px, calc(100vh - 96px));
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  overflow-x: hidden;
 }
 
-.app-root .ai-workspace-stage--sidebar .ai-ws-import-list {
+.app-root .ai-ws-chat-action .ai-workspace-modal-header {
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 8px 12px;
+}
+
+.app-root .ai-ws-chat-action .ai-workspace-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mm-fs-caption);
+}
+
+/* Ghost close button: no chrome at rest, gray on hover/press. */
+.app-root .ai-ws-chat-action .ai-workspace-modal-close {
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.app-root .ai-ws-chat-action .ai-workspace-modal-close:hover {
+  background: rgba(0, 0, 0, 0.07);
+  color: var(--text-primary);
+}
+
+.app-root .ai-ws-chat-action .ai-workspace-modal-close:active {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.app-root .ai-ws-chat-action-body {
   display: grid;
   gap: 4px;
-  max-height: 148px;
-  overflow-y: auto;
+  padding: 0 6px 6px;
 }
-.app-root .ai-workspace-stage--sidebar .ai-ws-import-search {
-  margin: 6px 2px 4px;
-  padding: 6px 10px;
+
+.app-root .ai-ws-chat-action-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  transition: background 120ms ease;
+}
+
+.app-root .ai-ws-chat-action-option:hover:not(:disabled) {
+  background: rgba(0, 122, 255, 0.09);
+}
+
+.app-root .ai-ws-chat-action-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.app-root .ai-ws-chat-action-option-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--fintech-cyan);
+  background: rgba(0, 122, 255, 0.1);
+}
+
+.app-root .ai-ws-chat-action-option-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.app-root .ai-ws-chat-action.is-pick {
+  width: 300px;
+}
+
+.app-root .ai-ws-chat-action.is-pick .ai-workspace-modal-header {
+  padding: 12px 12px 4px 14px;
+}
+
+.app-root .ai-ws-chat-action-target {
+  display: flex;
+  padding: 6px 4px 8px;
+}
+
+/* Soft chip: compact, auto-width, tinted — not an input-like box. */
+.app-root .ai-ws-chat-action-target-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  color: var(--accent, #0a84ff);
+  background: rgba(0, 122, 255, 0.09);
+  border: none;
+  border-radius: 999px;
+}
+
+.app-root .ai-ws-chat-action-target-name .lucide {
+  flex: 0 0 auto;
+  color: var(--accent, #0a84ff);
+}
+
+.app-root .ai-ws-chat-action-target-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-root .ai-ws-chat-action-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 8px;
+  padding: 8px 12px;
+  color: var(--text-tertiary);
+  background: var(--mm-surface-1);
+  border: 1px solid var(--mm-border);
+  border-radius: 10px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.app-root .ai-ws-chat-action-search:focus-within {
+  border-color: rgba(0, 122, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+  background: var(--mm-surface-0);
+}
+
+.app-root .ai-ws-chat-action-search input {
+  flex: 1;
+  min-width: 0;
   font-size: var(--mm-fs-caption);
   color: var(--text-primary);
-  background: rgba(0, 122, 255, 0.05);
-  border: 1px solid rgba(0, 122, 255, 0.16);
-  border-radius: 8px;
+  background: transparent;
+  border: none;
   outline: none;
 }
 
-.app-root .ai-workspace-stage--sidebar .ai-ws-import-search::placeholder {
+.app-root .ai-ws-chat-action-search input::placeholder {
   color: var(--text-tertiary);
 }
 
-.app-root .ai-workspace-stage--sidebar .ai-ws-import-search:focus {
+.app-root .ai-ws-chat-action-list {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  flex: 0 1 auto;
+  min-height: 60px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 4px 2px;
+  margin-right: 2px;
+}
+
+.app-root .ai-ws-chat-action-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  transition: background 120ms ease;
+}
+
+.app-root .ai-ws-chat-action-item:hover {
+  background: var(--mm-surface-1);
+}
+
+.app-root .ai-ws-chat-action-item.is-selected {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.app-root .ai-ws-chat-action-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  color: #fff;
+  background: var(--mm-surface-0);
+  border: 1.5px solid var(--mm-border);
+  border-radius: 5px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.app-root .ai-ws-chat-action-item:hover .ai-ws-chat-action-checkbox {
   border-color: rgba(0, 122, 255, 0.45);
 }
 
-.app-root .ai-workspace-stage--sidebar .ai-ws-import-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
+.app-root .ai-ws-chat-action-checkbox.is-checked {
+  background: var(--accent, #0a84ff);
+  border-color: var(--accent, #0a84ff);
 }
 
-.app-root .ai-workspace-stage--sidebar .ai-ws-import-keywords {
-  font-size: 10px;
-  color: var(--text-tertiary);
-  white-space: nowrap;
+.app-root .ai-ws-chat-action-item-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.app-root .ai-ws-chat-action-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mm-fs-caption);
+  font-weight: 500;
+  color: var(--text-primary);
 }
 
-.app-root .ai-workspace-stage--sidebar .ai-ws-import-empty {
-  padding: 6px 2px 8px;
+.app-root .ai-ws-chat-action-item-meta {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.app-root .ai-ws-chat-action-empty {
+  padding: 18px 8px;
+  text-align: center;
   font-size: var(--mm-fs-caption);
   color: var(--text-tertiary);
   opacity: 0.75;
+}
+
+.app-root .ai-ws-chat-action-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 2px 4px 0;
+  padding: 10px 4px;
+  border-top: 1px solid var(--mm-border);
+}
+
+/* Pill action buttons, Provider-Settings style: ghost "back" + filled blue
+   confirm. */
+.app-root .ai-ws-chat-action-footer .ai-workspace-modal-btn {
+  min-height: 30px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: var(--mm-fs-caption);
+}
+
+.app-root .ai-ws-chat-action-footer .ai-workspace-modal-btn.primary {
+  background: var(--accent, #0a84ff);
+  border-color: var(--accent, #0a84ff);
+  color: #fff;
+  font-weight: 600;
+}
+
+.app-root .ai-ws-chat-action-footer .ai-workspace-modal-btn.primary:hover:not(:disabled) {
+  background: var(--accent-strong, #0873d8);
+  border-color: var(--accent-strong, #0873d8);
+}
+
+.app-root .ai-ws-chat-action-footer .ai-workspace-modal-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 
@@ -36314,4 +36556,402 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   color: var(--text-primary);
   font-size: var(--mm-fs-caption);
   white-space: pre-wrap;
+}
+
+/* ─── AI workspace switcher redesign (2-line rows, hover actions, rebind picker) ─── */
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  width: min(340px, calc(100vw - 48px));
+  padding: 8px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-popover-head {
+  padding: 2px 8px 8px;
+  border-bottom: 1px solid rgba(0, 122, 255, 0.1);
+  margin-bottom: 6px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-popover-hint {
+  margin-top: 2px;
+  font-size: calc(var(--mm-fs-caption) - 1px);
+  line-height: 1.35;
+  color: var(--text-tertiary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item {
+  position: relative;
+  padding: 4px 6px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item.is-active {
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-main .ai-ws-item-name {
+  width: 100%;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(var(--mm-fs-caption) - 1px);
+  color: var(--text-tertiary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* DB chip: clickable, opens the rebind picker. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 170px;
+  min-width: 0;
+  padding: 1px 8px;
+  border: 1px solid rgba(0, 122, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--text-secondary);
+  font-size: calc(var(--mm-fs-caption) - 1px);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip:hover {
+  background: rgba(0, 122, 255, 0.18);
+  color: var(--text-primary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip.is-auto {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-tertiary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip .lucide {
+  width: 11px;
+  height: 11px;
+  color: var(--fintech-cyan);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip.is-auto .lucide {
+  color: var(--text-tertiary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Rebind picker: portaled to <body> and fixed-positioned by the component
+   (anchored to the DB chip) so it floats above the popover instead of being
+   clipped by the popover's scroll area. */
+.ai-ws-db-picker {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 224px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid rgba(0, 122, 255, 0.25);
+  border-radius: 10px;
+  background: var(--mm-surface-0);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
+.ai-ws-db-picker-title {
+  padding: 2px 6px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.ai-ws-db-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ai-ws-db-option:hover {
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.ai-ws-db-option.is-active {
+  background: rgba(0, 122, 255, 0.14);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.ai-ws-db-option .lucide {
+  color: var(--fintech-green);
+}
+
+.ai-ws-db-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Hover-revealed row actions (rename / delete). */
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:hover .ai-ws-item-actions,
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:focus-within .ai-ws-item-actions {
+  opacity: 1;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-new {
+  margin-top: 4px;
+  border: 1px dashed rgba(0, 122, 255, 0.18);
+  color: var(--accent);
+  font-weight: 600;
+  justify-content: center;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-caret {
+  width: 10px;
+  height: 10px;
+  color: var(--text-tertiary);
+  transition: transform 140ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:hover .ai-ws-db-caret {
+  color: var(--accent);
+}
+
+.ai-ws-db-open-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--fintech-green);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.14);
+}
+
+/* No horizontal scrolling anywhere in the workspace switcher popover. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  overflow-x: hidden;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item {
+  min-width: 0;
+}
+
+/* Single-line rows: name on the left, DB chip + actions on the right. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-main {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-main .ai-ws-item-name {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip {
+  max-width: 45%;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-sub {
+  display: none;
+}
+
+/* Chip: wider so the DB name stays readable; pinned to the right edge. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip {
+  flex: 0 1 auto;
+  max-width: 150px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip-name {
+  flex: 0 1 auto;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-meta {
+  margin-left: auto;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  width: min(380px, calc(100vw - 48px));
+}
+
+/* Hover: shrink the DB chip to icon + caret (the workspace name beside it
+ * already shows the database) and slide it left so the edit/delete buttons
+ * fit without truncating anything. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:hover .ai-ws-db-chip,
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:focus-within .ai-ws-db-chip {
+  max-width: 56px;
+  padding: 1px 6px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:hover .ai-ws-db-chip-name,
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:focus-within .ai-ws-db-chip-name {
+  display: none;
+}
+
+
+/* Popover anchors to the switcher's LEFT edge and grows rightward so it can
+ * never spill past the sidebar panel (which clips at its right border). */
+.app-root .ai-workspace-stage--sidebar .ai-ws-switcher-popover {
+  width: min(320px, calc(100vw - 48px));
+  left: 0;
+  right: auto;
+}
+
+/* Hover row: tighten paddings so chip (icon+caret) + both actions always fit. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-item {
+  padding: 4px 4px 4px 6px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-actions {
+  gap: 0;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-action {
+  width: 22px;
+  height: 22px;
+}
+
+
+/* All DB chips align to a single right edge: the context dot is taken out of
+ * the flow (overlays the reserved gutter), so rows with/without it match. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-meta {
+  position: relative;
+  margin-left: auto;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-meta .ai-ws-context-dot {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip {
+  margin-right: 14px;
+}
+
+/* Buttons float over the right gutter on hover; idle rows keep the chip flush. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-actions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px;
+  border-radius: 9px;
+  background: var(--mm-surface-0);
+  box-shadow: 0 0 0 1px rgba(0, 122, 255, 0.1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:hover .ai-ws-item-actions,
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:focus-within .ai-ws-item-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Idle: chip hugs the right edge (dot floats in the small gutter). */
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip {
+  margin-right: 16px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-meta .ai-ws-context-dot {
+  right: 3px;
+}
+
+/* Hover: chip slides left so the floating buttons have room. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:hover .ai-ws-db-chip,
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:focus-within .ai-ws-db-chip {
+  margin-right: 56px;
+}
+
+/* Tighten: chips sit nearly flush with the popover edge. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip {
+  margin-right: 6px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-meta .ai-ws-context-dot {
+  right: 1px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:hover .ai-ws-db-chip,
+.app-root .ai-workspace-stage--sidebar .ai-ws-item:focus-within .ai-ws-db-chip {
+  margin-right: 50px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-actions {
+  right: 2px;
+}
+
+/* Floating actions: nudge away from the popover edge. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-actions {
+  right: 10px;
+}
+
+/* Push chips closer to the edge — only the popover's own 8px padding remains. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip {
+  margin-right: 0;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-item-meta .ai-ws-context-dot {
+  right: -2px;
 }

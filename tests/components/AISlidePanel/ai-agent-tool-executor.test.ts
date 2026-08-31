@@ -89,7 +89,12 @@ function run(deps: AgentToolExecutorDeps, action: Partial<AIAgentToolAction>) {
 }
 
 function parseObservation(obs: string): Record<string, unknown> {
-  return JSON.parse(obs);
+  // Observations may carry enrichment suffixes (column stats, @@facts footer);
+  // the JSON payload is the first block. Use the LAST parseable line prefix.
+  const cut = obs.indexOf("\n@@facts:");
+  const body = cut === -1 ? obs : obs.slice(0, cut);
+  const statsCut = body.indexOf("\n\nColumn stats (whole table):");
+  return JSON.parse(statsCut === -1 ? body : body.slice(0, statsCut));
 }
 
 beforeEach(() => {

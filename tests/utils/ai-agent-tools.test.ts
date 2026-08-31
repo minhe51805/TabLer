@@ -209,8 +209,11 @@ line two","args":{"response":"done"}}\nThanks`;
       message: "",
     });
 
-    expect(() => parseAIAgentToolAction('{"action":"describe_table","args":{}}'))
-      .toThrow("args.table");
+    // describe_table with no args now parses (both forms are optional); the
+    // executor reports the missing table/tables at run time.
+    expect(
+      parseAIAgentToolAction('{"action":"describe_table","args":{}}').args,
+    ).toEqual({});
     expect(() => parseAIAgentToolAction('{"action":"search_schema","args":{"query":" "}}'))
       .toThrow("args.query");
     expect(() => parseAIAgentToolAction('{"action":"run_readonly_sql","args":{"sql":" "}}'))

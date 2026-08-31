@@ -168,13 +168,21 @@ export interface AIWorkspaceCopy {
   };
   workspace: {
     switcherTitle: string;
+    switcherHint: string;
+    rebindAction: string;
+    dbAuto: string;
+    dbCurrentHint: string;
     autoMode: string;
     newWorkspace: string;
     defaultName: string;
     renameAction: string;
     deleteAction: string;
-    importTitle: string;
-    importAction: string;
+    chatActionTitle: string;
+    chatActionCreate: string;
+    chatActionAdd: string;
+    chatActionBack: string;
+    addChatsTitle: string;
+    addChatsConfirm: string;
     importSearchPlaceholder: string;
     importEmpty: string;
     compactAction: string;

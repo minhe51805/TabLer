@@ -194,10 +194,23 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
 
   describe_table: {
     name: "describe_table",
-    description: "Inspect the exact columns of one verified table before reading its rows.",
+    description:
+      "Inspect the exact columns of one or more verified tables before reading rows. Pass a single `table`, or a `tables` array (up to "
+      + String(AI_AGENT_BATCH_DESCRIBE_LIMIT)
+      + ") to batch several tables into one call.",
     parameters: objectSchema(
-      { table: { type: "string", description: "Exact table name or identifier." } },
-      ["table"],
+      {
+        table: { type: "string", description: "Exact table name or identifier (single-table form)." },
+        tables: {
+          type: "array",
+          items: { type: "string" },
+          uniqueItems: true,
+          minItems: 1,
+          maxItems: AI_AGENT_BATCH_DESCRIBE_LIMIT,
+          description: `Exact table names (up to ${AI_AGENT_BATCH_DESCRIBE_LIMIT}) — batch form; use this instead of repeating describe_table calls.`,
+        },
+      },
+      [],
     ),
   },
 
@@ -647,11 +660,18 @@ function resolveCatalogOptions(
   };
 }
 
+/** Tools kept parseable for old threads but no longer advertised to models. */
+const HIDDEN_CATALOG_TOOLS = new Set<AIAgentToolName>([
+  // Superseded by describe_table's batch form (`tables` array).
+  "describe_tables",
+]);
+
 export function listEnabledAgentToolSpecs(
   options: boolean | AgentToolCatalogOptions = true,
 ): AIAgentToolSpec[] {
   const resolved = resolveCatalogOptions(options);
   return listAgentToolSpecs().filter((spec) => {
+    if (HIDDEN_CATALOG_TOOLS.has(spec.name)) return false;
     if (!resolved.workspaceToolsEnabled && WORKSPACE_ONLY_TOOLS.has(spec.name)) return false;
     return isAgentToolEnabled(spec.name, resolved.availability);
   });

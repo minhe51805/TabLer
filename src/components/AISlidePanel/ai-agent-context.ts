@@ -15,6 +15,58 @@ export interface AgentTraceStep {
   action: AIWorkspaceAgentActionName;
   message: string;
   observation: string;
+  /** Machine-readable facts extracted from the observation (Phase: structured evidence). */
+  facts?: AgentStepFacts;
+}
+
+export interface AgentColumnStats {
+  column: string;
+  nullRatio: number;
+  distinctCount: number;
+}
+
+export interface AgentStepFacts {
+  rowsReturned?: number;
+  tables?: string[];
+  columnStats?: AgentColumnStats[];
+}
+
+/** Footer marker appended to observations carrying machine-readable facts. */
+const AGENT_FACTS_PREFIX = "@@facts:";
+
+/** Appends a machine-readable facts footer that survives with the trace. */
+export function appendAgentFacts(
+  observation: string,
+  facts: AgentStepFacts,
+): string {
+  if (Object.keys(facts).length === 0) return observation;
+  return `${observation}\n${AGENT_FACTS_PREFIX}${JSON.stringify(facts)}`;
+}
+
+/** Splits an observation into its display text and embedded facts, if any. */
+export function parseAgentFacts(observation: string): {
+  text: string;
+  facts: AgentStepFacts | null;
+} {
+  const index = observation.lastIndexOf(`\n${AGENT_FACTS_PREFIX}`);
+  if (index === -1) return { text: observation, facts: null };
+  const raw = observation.slice(index + 1 + AGENT_FACTS_PREFIX.length);
+  try {
+    const parsed = JSON.parse(raw) as AgentStepFacts;
+    if (parsed && typeof parsed === "object") {
+      return { text: observation.slice(0, index), facts: parsed };
+    }
+  } catch {
+    // Malformed footer — treat the whole observation as plain text.
+  }
+  return { text: observation, facts: null };
+}
+
+/** Convenience accessor used by quality gates: facts or null. */
+export function readStepFacts(step: AgentTraceStep): AgentStepFacts | null {
+  if (step.facts) return step.facts;
+  const { facts } = parseAgentFacts(step.observation);
+  return facts;
 }
 
 const AI_SCHEMA_CODEC_LEGEND = "Legend T=table C=col:type!flags I=index F=fk flags=pk|nn|df|ai";
@@ -44,6 +96,30 @@ function normalizeName(value: string) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Detects a database name the user explicitly mentions that differs from the
+ * database this workspace is bound to (or the one currently open). Returns the
+ * mentioned name, or null when there is no conflict.
+ */
+export function detectDatabaseMentionMismatch(params: {
+  userPrompt: string;
+  knownDatabaseNames?: string[];
+  boundDatabase: string | null;
+}): string | null {
+  const { userPrompt, knownDatabaseNames, boundDatabase } = params;
+  if (!userPrompt.trim() || !knownDatabaseNames || knownDatabaseNames.length === 0) return null;
+  const normalizedPrompt = ` ${userPrompt.toLowerCase().replace(/\s+/g, " ")} `;
+  for (const name of knownDatabaseNames) {
+    const clean = name.trim().toLowerCase();
+    if (!clean || clean === (boundDatabase ?? "").trim().toLowerCase()) continue;
+    if (clean === "default") continue;
+    // Word-boundary match so "sales" does not fire inside "salestrends".
+    const pattern = new RegExp(`(^|[^a-z0-9_])${clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9_]|$)`);
+    if (pattern.test(normalizedPrompt)) return name;
+  }
+  return null;
 }
 
 export function buildWorkspaceTableIdentifier(
@@ -197,6 +273,8 @@ export function buildAgentControllerPrompt(params: {
   cachedTableSummaries?: string[];
   glossaryLines?: string[];
   availableSkills?: { name: string; description: string }[];
+  knownDatabaseNames?: string[];
+  workspaceBoundDatabase?: string | null;
 }) {
   const {
     userPrompt,
@@ -212,7 +290,14 @@ export function buildAgentControllerPrompt(params: {
     cachedTableSummaries,
     glossaryLines,
     availableSkills,
+    knownDatabaseNames,
+    workspaceBoundDatabase,
   } = params;
+  const databaseMentionMismatch = detectDatabaseMentionMismatch({
+    userPrompt,
+    knownDatabaseNames,
+    boundDatabase: workspaceBoundDatabase ?? currentDatabase,
+  });
   const visibleTables = availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT
     ? availableTableNames
     : availableTableNames.slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
@@ -252,6 +337,13 @@ export function buildAgentControllerPrompt(params: {
     "Work as an autonomous workspace agent.",
     `Goal type: ${assistIntent}.`,
     `Current database: ${currentDatabase || "Default"}.`,
+    databaseMentionMismatch
+      ? [
+          `DATABASE MISMATCH WARNING: this workspace is bound to database "${currentDatabase || "Default"}", but the user's request explicitly mentions database "${databaseMentionMismatch}".`,
+          `The schema context above belongs to "${currentDatabase || "Default"}" — do NOT pretend it describes "${databaseMentionMismatch}".`,
+          `Do NOT guess tables from the wrong database. If the user's request actually targets "${databaseMentionMismatch}", tell them the workspace is bound to "${currentDatabase || "Default"}" and ask (ask_user) whether to rebind it via the workspace switcher's database chip.`,
+        ].join("\n")
+      : "",
     workspaceToolsEnabled
       ? `Known tables (${availableTableNames.length}${catalogComplete ? ", complete list below" : ", truncated"}): ${visibleTables.join(", ")}${availableTableNames.length > visibleTables.length ? ", ..." : ""}`
       : "Known tables: unavailable for this turn unless the user explicitly provides them.",

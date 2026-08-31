@@ -1476,50 +1476,77 @@ export function AISlidePanel({
   const importableChatThreads = useMemo(
     () => chatThreads
       .filter((thread) => thread.workspaceKey !== currentWorkspaceKey)
-      .sort((left, right) => right.updatedAt - left.updatedAt)
-      .slice(0, 12),
+      .sort((left, right) => right.updatedAt - left.updatedAt),
     [chatThreads, currentWorkspaceKey]
   );
 
-  /** Copies a thread (and its bubbles) from another workspace/scope into the
+  /** Copies threads (and their bubbles) from other workspaces/scopes into the
    *  current one — "import các đoạn chat liên quan" into this workspace. */
-  const handleImportChatThread = useCallback((threadId: string) => {
-    const sourceThread = chatThreads.find((thread) => thread.id === threadId);
-    if (!sourceThread) return;
+  const handleImportChatThreads = useCallback((threadIds: string[]) => {
+    if (threadIds.length === 0) return;
+    const selectedIds = new Set(threadIds);
+    const sourceThreads = chatThreads.filter((thread) => selectedIds.has(thread.id));
+    if (sourceThreads.length === 0) return;
     const now = Date.now();
-    const importedThread: AIChatThread = {
-      ...sourceThread,
-      id: createAIWorkspaceId(),
-      workspaceKey: currentWorkspaceKey,
-      createdAt: now,
-      updatedAt: now,
-    };
-    const importedBubbles = bubbles
-      .filter((bubble) => bubble.threadId === threadId && bubble.status !== "loading")
-      .map((bubble) => ({
-        ...bubble,
+    const importedThreads: AIChatThread[] = [];
+    const importedBubbles: AIWorkspaceBubbleData[] = [];
+    sourceThreads.forEach((sourceThread) => {
+      const importedThread: AIChatThread = {
+        ...sourceThread,
         id: createAIWorkspaceId(),
-        threadId: importedThread.id,
         workspaceKey: currentWorkspaceKey,
-        pointer: { ...bubble.pointer },
-      }));
-    setChatThreads((current) => [...current, importedThread]);
+        createdAt: now,
+        updatedAt: now,
+      };
+      importedThreads.push(importedThread);
+      bubbles
+        .filter((bubble) => bubble.threadId === sourceThread.id && bubble.status !== "loading")
+        .forEach((bubble) => {
+          importedBubbles.push({
+            ...bubble,
+            id: createAIWorkspaceId(),
+            threadId: importedThread.id,
+            workspaceKey: currentWorkspaceKey,
+            pointer: { ...bubble.pointer },
+          });
+        });
+    });
+    const lastImportedThreadId = importedThreads[importedThreads.length - 1].id;
+    setChatThreads((current) => [...current, ...importedThreads]);
     setBubbles((current) => [...current, ...importedBubbles]);
     setActiveThreadIdsByWorkspace((current) => ({
       ...current,
-      [currentWorkspaceKey]: importedThread.id,
+      [currentWorkspaceKey]: lastImportedThreadId,
     }));
-    setActiveThreadId(importedThread.id);
+    setActiveThreadId(lastImportedThreadId);
     setIsHistoryOpen(false);
   }, [bubbles, chatThreads, currentWorkspaceKey]);
 
   const handleCreateUserWorkspace = useCallback(() => {
+    // Deliberately UNBOUND: the workspace starts in auto mode and follows
+    // whatever database is current when it is used. Binding it to
+    // `currentDatabase` here (the database that happened to be open at click
+    // time) is what made every later activation yank the connection back to
+    // that database. The user can pin a database via the switcher's DB chip;
+    // naming the workspace "db C" also binds it via name inference.
     createChatWorkspace(
       `${aiCopy.workspace.defaultName} ${chatWorkspaces.length + 1}`,
       connectionId,
-      currentDatabase,
+      null,
     );
-  }, [aiCopy.workspace.defaultName, chatWorkspaces.length, connectionId, createChatWorkspace, currentDatabase]);
+  }, [aiCopy.workspace.defaultName, chatWorkspaces.length, connectionId, createChatWorkspace]);
+
+  // Rebind (or unbind) a workspace's database from the switcher's DB chip.
+  // Binding to a new database also clears the workspace's compacted digest
+  // (store handles that) so the old database's context cannot leak through.
+  const handleRebindChatWorkspaceDatabase = useCallback((workspaceId: string, database: string) => {
+    bindChatWorkspaceDatabase(workspaceId, database);
+    if (database) {
+      // Re-scope the connection immediately so the schema capsule and
+      // tables/schemaObjects follow the new binding.
+      ensureWorkspaceDatabase(workspaceId);
+    }
+  }, [bindChatWorkspaceDatabase, ensureWorkspaceDatabase]);
 
   const handleDeleteUserWorkspace = useCallback((workspaceId: string) => {
     deleteChatWorkspace(workspaceId);
@@ -1608,5 +1635,5 @@ export function AISlidePanel({
                   if (!label) return;
                   window.dispatchEvent(new CustomEvent("ai-provider-switched-during-run", { detail: { providerLabel: label } }));
                 });
-              }, toggleModelVisibility: (id, model) => void handleToggleModelVisibility(id, model), confirmVisualizationConsent: resolveVisualizationConsent, resolveFailoverConsent: handleResolveFailoverConsent, cancelDeleteThread: handleCancelDeleteThread, composerKeyDown: handleComposerKeyDown, compactContext: () => void handleCompactContext(false), selectChatWorkspace: handleSelectChatWorkspace, createChatWorkspace: handleCreateUserWorkspace, renameChatWorkspace: renameChatWorkspace, deleteChatWorkspace: handleDeleteUserWorkspace, importChatThread: handleImportChatThread }} />;
+              }, toggleModelVisibility: (id, model) => void handleToggleModelVisibility(id, model), confirmVisualizationConsent: resolveVisualizationConsent, resolveFailoverConsent: handleResolveFailoverConsent, cancelDeleteThread: handleCancelDeleteThread, composerKeyDown: handleComposerKeyDown, compactContext: () => void handleCompactContext(false), selectChatWorkspace: handleSelectChatWorkspace, createChatWorkspace: handleCreateUserWorkspace, renameChatWorkspace: renameChatWorkspace, deleteChatWorkspace: handleDeleteUserWorkspace, importChatThreads: handleImportChatThreads, databases: chatDatabaseCatalog.map((item) => item.name), rebindChatWorkspace: handleRebindChatWorkspaceDatabase }} />;
 }

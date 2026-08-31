@@ -28,6 +28,8 @@ export function finishHasSql(action: AIAgentFinishAction): boolean {
   return typeof action.args?.sql === "string" && Boolean(action.args.sql.trim());
 }
 
+import { readStepFacts } from "./ai-agent-context";
+
 /**
  * Matches claims that a query/sandbox run executed successfully (covering the
  * UI languages). Used to catch finishes that celebrate a run which actually
@@ -52,8 +54,21 @@ export function hasSuccessfulReadStep(steps: AgentTraceStep[]): boolean {
       && Boolean(step.observation)
       && !step.observation.startsWith("Tool error")
       && !step.observation.startsWith("Tool blocked")
-      && (step.action === "sample_table_data" || /"sandboxed"/.test(step.observation)),
+      && hasSuccessfulReadEvidence(step),
   );
+}
+
+/**
+ * Structured-facts-first evidence check (roadmap #7): when the executor
+ * embedded facts, they are the source of truth (rows actually returned);
+ * older traces without facts fall back to the legacy observation regex.
+ */
+function hasSuccessfulReadEvidence(step: AgentTraceStep): boolean {
+  const facts = readStepFacts(step);
+  if (facts && facts.rowsReturned !== undefined) {
+    return facts.rowsReturned > 0;
+  }
+  return step.action === "sample_table_data" || /"sandboxed"/.test(step.observation);
 }
 
 /** True when the response text contains a markdown table block. */

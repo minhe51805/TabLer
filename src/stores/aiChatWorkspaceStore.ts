@@ -106,20 +106,29 @@ export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
         set({ activeWorkspaceId: id });
       },
 
+      /** Pin a workspace to a database; empty string = unbind (auto mode). */
       bindWorkspaceDatabase: (id, database) => {
         const clean = database.trim();
-        if (!clean) return;
+        const nextDatabase = clean || null;
         set((state) => {
           const changed = state.workspaces.some(
-            (workspace) => workspace.id === id && workspace.database !== clean,
+            (workspace) => workspace.id === id && workspace.database !== nextDatabase,
           );
           if (!changed) return state;
           return {
-            workspaces: state.workspaces.map((workspace) => (
-              workspace.id === id
-                ? { ...workspace, database: clean, updatedAt: Date.now() }
-                : workspace
-            )),
+            workspaces: state.workspaces.map((workspace) => {
+              if (workspace.id !== id) return workspace;
+              const rebound = workspace.database !== nextDatabase;
+              return {
+                ...workspace,
+                database: nextDatabase,
+                updatedAt: Date.now(),
+                // A stale digest summarises the OLD database's context; keeping
+                // it after a rebind would poison every future request with
+                // schema facts from a database this workspace no longer owns.
+                ...(rebound ? { contextDigest: "", contextUpdatedAt: null } : {}),
+              };
+            }),
           };
         });
       },

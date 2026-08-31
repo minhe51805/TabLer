@@ -3,6 +3,7 @@ import { agentToolAvailability } from "@/components/AISlidePanel/ai-agent-engine
 import { nativeToolPayloadForProvider } from "@/components/AISlidePanel/ai-agent-tool-schema";
 import {
   buildAgentControllerPrompt,
+  detectDatabaseMentionMismatch,
   buildAgentPlanPrompt,
   buildAgentRecoveryContext,
   buildAgentVisibleTableNames,
@@ -14,6 +15,38 @@ import {
 } from "@/components/AISlidePanel/ai-agent-context";
 
 describe("AI agent context builder", () => {
+  describe("detectDatabaseMentionMismatch", () => {
+    it("flags a different database explicitly mentioned in the prompt", () => {
+      expect(
+        detectDatabaseMentionMismatch({
+          userPrompt: "liet ke hoa don trong db QL_CUA_HANG",
+          knownDatabaseNames: ["QL_BAN_HANG", "QL_CUA_HANG"],
+          boundDatabase: "QL_BAN_HANG",
+        }),
+      ).toBe("QL_CUA_HANG");
+    });
+
+    it("returns null when the prompt mentions only the bound database", () => {
+      expect(
+        detectDatabaseMentionMismatch({
+          userPrompt: "show me all orders in QL_BAN_HANG",
+          knownDatabaseNames: ["QL_BAN_HANG", "QL_CUA_HANG"],
+          boundDatabase: "QL_BAN_HANG",
+        }),
+      ).toBeNull();
+    });
+
+    it("does not fire on substring collisions", () => {
+      expect(
+        detectDatabaseMentionMismatch({
+          userPrompt: "analyze salestrends for me",
+          knownDatabaseNames: ["QL_BAN_HANG", "sales"],
+          boundDatabase: "QL_BAN_HANG",
+        }),
+      ).toBeNull();
+    });
+  });
+
   it("builds workspace identifiers without duplicating the active database qualifier", () => {
     expect(buildWorkspaceTableIdentifier({ name: "users", schema: "public" }, "public"))
       .toBe("users");
@@ -114,7 +147,7 @@ describe("AI agent context builder", () => {
     expect(nativePayload).toContain('"run_readonly_sql"');
     expect(nativePayload).toContain('"search_schema"');
     expect(nativePayload).toContain('"sample_table_data"');
-    expect(nativePayload).toContain('"describe_tables"');
+    expect(nativePayload).toContain('"describe_table"');
     expect(nativePayload).toContain('"ask_user"');
     expect(prompt).toContain("every table in FROM or JOIN must be inspected");
     expect(prompt).toContain("Observation (older, condensed)");

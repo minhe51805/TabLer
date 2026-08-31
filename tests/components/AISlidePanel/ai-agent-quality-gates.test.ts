@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { appendAgentFacts, parseAgentFacts } from "@/components/AISlidePanel/ai-agent-context";
 import {
   buildAgentRecoveryInstruction,
   buildRunnerInstructionForReason,
@@ -6,6 +7,7 @@ import {
   finishHasSql,
   formatActionFailureReason,
   hasExecutedReadStep,
+  hasSuccessfulReadStep,
   MAX_EVIDENCE_ROUNDS,
   responseClaimsSuccessfulExecution,
   responseHasMarkdownTable,
@@ -264,6 +266,56 @@ describe("false-success gate", () => {
     });
     expect(instruction).toContain("FAILED");
     expect(instruction).toContain("list_tables rowCount");
+  });
+});
+
+describe("structured facts (roadmap #7)", () => {
+  it("readStepFacts parses the footer and strips it from display text", () => {
+    const { text, facts } = parseAgentFacts(
+      'rows preview\n{"sandboxed":true}\n@@facts:{"rowsReturned":7,"tables":["users"]}',
+    );
+    expect(text).toBe('rows preview\n{"sandboxed":true}');
+    expect(facts).toEqual({ rowsReturned: 7, tables: ["users"] });
+  });
+
+  it("hasSuccessfulReadStep trusts facts over the legacy regex", () => {
+    // Facts say 0 rows returned → NOT a successful read, even though the
+    // observation mentions "sandboxed" (legacy regex would have passed it).
+    expect(
+      hasSuccessfulReadStep([
+        {
+          step: 1,
+          action: "run_readonly_sql",
+          message: "query",
+          observation:
+            '{"sandboxed":true,"rows":[]}\n@@facts:{"rowsReturned":0}',
+        },
+      ]),
+    ).toBe(false);
+    // Facts say 3 rows → successful, even without the legacy marker.
+    expect(
+      hasSuccessfulReadStep([
+        {
+          step: 1,
+          action: "run_readonly_sql",
+          message: "query",
+          observation: 'plain result\n@@facts:{"rowsReturned":3}',
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("round-trips appendAgentFacts", () => {
+    const observation = appendAgentFacts("sample ok", {
+      rowsReturned: 4,
+      columnStats: [{ column: "age", nullRatio: 0.1, distinctCount: 22 }],
+    });
+    const { facts } = parseAgentFacts(observation);
+    expect(facts).toEqual({
+      rowsReturned: 4,
+      columnStats: [{ column: "age", nullRatio: 0.1, distinctCount: 22 }],
+    });
+    expect(parseAgentFacts("no facts here").facts).toBeNull();
   });
 });
 

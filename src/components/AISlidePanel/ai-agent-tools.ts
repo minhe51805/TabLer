@@ -111,7 +111,7 @@ export type AIAgentListSchemaObjectsAction = AIAgentToolActionBase<
 
 export type AIAgentDescribeTableAction = AIAgentToolActionBase<
   "describe_table",
-  { table: string }
+  { table?: string; tables?: string[] }
 >;
 
 export interface AIAgentDescribeTablesArgs extends Record<string, unknown> {

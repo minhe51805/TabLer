@@ -1,6 +1,9 @@
 import type { RefObject } from "react";
 import type { ColumnDetail, DatabaseType, QueryParameterType, QueryResult, TableInfo, TableStructure } from "../../types";
-import { buildWorkspaceTableIdentifier } from "./ai-agent-context";
+import {
+  appendAgentFacts,
+  buildWorkspaceTableIdentifier,
+} from "./ai-agent-context";
 import { findAgentSchemaMatches, prioritizeSchemaScanCandidates } from "./ai-agent-schema-search";
 import { formatExecutionError, isHighRiskStatement, isMutatingStatement, isSessionSwitchStatement } from "../SQLEditor/SQLEditorUtils";
 import {
@@ -357,29 +360,74 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     }
 
     if (action.action === "describe_table") {
-      const requestedTable = typeof action.args?.table === "string" ? action.args.table.trim() : "";
-      if (!requestedTable) {
-        return "Tool error: describe_table requires args.table.";
+      // Merged tool (was describe_table + describe_tables): accepts a single
+      // `table` or a `tables` array (1..AI_AGENT_BATCH_DESCRIBE_LIMIT).
+      const requestedTables: unknown[] = Array.isArray(action.args?.tables)
+        ? action.args.tables
+        : typeof action.args?.table === "string" && action.args.table.trim()
+          ? [action.args.table]
+          : [];
+      const names = [...new Set(
+        requestedTables
+          .filter((value): value is string | number => typeof value === "string" || typeof value === "number")
+          .map((value) => String(value).trim())
+          .filter(Boolean),
+      )].slice(0, AI_AGENT_BATCH_DESCRIBE_LIMIT);
+      if (names.length === 0) {
+        return "Tool error: describe_table requires args.table or a non-empty args.tables array.";
       }
 
-      const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
-      if (!matchedTable) {
-        return `Tool error: Table "${requestedTable}" is not present in the current workspace schema.`;
-      }
+      if (names.length === 1) {
+        const matchedTable = findMatchingTableName(names[0], availableSchemaTables);
+        if (!matchedTable) {
+          return `Tool error: Table "${names[0]}" is not present in the current workspace schema.`;
+        }
 
-      const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
-      if (cachedSummary) {
+        const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
+        if (cachedSummary) {
+          inspectedAgentTables.add(matchedTable);
+          return summarizeAgentSchemaSummaryObservation(matchedTable, cachedSummary);
+        }
+
+        const structure = await getTableStructure(connectionId!, matchedTable, currentDatabase || undefined);
+        if (requestId !== requestIdRef.current) {
+          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+        }
+
         inspectedAgentTables.add(matchedTable);
-        return summarizeAgentSchemaSummaryObservation(matchedTable, cachedSummary);
+        return summarizeAgentStructureObservation(matchedTable, structure);
       }
 
-      const structure = await getTableStructure(connectionId!, matchedTable, currentDatabase || undefined);
-      if (requestId !== requestIdRef.current) {
-        throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+      const sections: string[] = [];
+      for (const requestedTable of names) {
+        const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
+        if (!matchedTable) {
+          sections.push(`TABLE=${requestedTable} ERROR=Not present in the current workspace schema.`);
+          continue;
+        }
+        try {
+          const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
+          if (cachedSummary) {
+            inspectedAgentTables.add(matchedTable);
+            sections.push(cachedSummary);
+            continue;
+          }
+          const structure = await getTableStructure(connectionId!, matchedTable, currentDatabase || undefined);
+          if (requestId !== requestIdRef.current) {
+            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+          }
+          inspectedAgentTables.add(matchedTable);
+          sections.push(summarizeAgentStructureObservation(matchedTable, structure));
+        } catch (errorValue) {
+          if (isSupersededAIRequestError(errorValue)) throw errorValue;
+          sections.push(`TABLE=${matchedTable} ERROR=${formatExecutionError(errorValue)}`);
+        }
       }
 
-      inspectedAgentTables.add(matchedTable);
-      return summarizeAgentStructureObservation(matchedTable, structure);
+      return stringifyAgentObservation({
+        described: sections.length,
+        tables: sections.join("\n\n"),
+      });
     }
 
     if (action.action === "describe_tables") {
@@ -462,7 +510,64 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       }
 
       inspectedAgentTables.add(matchedTable);
-      return summarizeAgentQueryObservation(queryResult);
+
+      // Roadmap #6: enrich the sample with whole-table column statistics
+      // (null ratio + distinct count) in ONE aggregate query, capped to the
+      // first 12 columns to bound the SQL size. Failures are silent — the
+      // sample itself remains the source of truth.
+      let columnStats: Array<{ column: string; nullRatio: number; distinctCount: number }> | undefined;
+      const statColumns = queryResult.columns.slice(0, 12);
+      if (statColumns.length > 0 && requestedOffset === 0) {
+        try {
+          const quotedTable = agentSqlQuoteIdentifier(dbType, matchedTable);
+          const selectParts = [
+            "COUNT(*) AS __total",
+            ...statColumns.flatMap((column, index) => {
+              const quoted = agentSqlQuoteIdentifier(dbType, column.name);
+              return [
+                `SUM(CASE WHEN ${quoted} IS NULL THEN 1 ELSE 0 END) AS __null_${index}`,
+                `COUNT(DISTINCT ${quoted}) AS __distinct_${index}`,
+              ];
+            }),
+          ];
+          const statsResult = await executeReadonlyQuery(connectionId!, [
+            `SELECT ${selectParts.join(", ")} FROM ${quotedTable}`,
+          ]);
+          if (requestId !== requestIdRef.current) {
+            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+          }
+          const row = statsResult.rows[0];
+          const total = Number(row?.[0] ?? 0);
+          if (Number.isFinite(total) && total > 0) {
+            columnStats = statColumns.map((column, index) => {
+              const nullCount = Number(row?.[1 + index * 2] ?? 0);
+              const distinctCount = Number(row?.[2 + index * 2] ?? 0);
+              return {
+                column: column.name,
+                nullRatio: Math.round((nullCount / total) * 1000) / 1000,
+                distinctCount: Number.isFinite(distinctCount) ? distinctCount : 0,
+              };
+            });
+          }
+        } catch (errorValue) {
+          if (isSupersededAIRequestError(errorValue)) throw errorValue;
+          // Statistics are best-effort; engine quirks must not break sampling.
+        }
+      }
+
+      const observation = summarizeAgentQueryObservation(queryResult);
+      return appendAgentFacts(
+        columnStats
+          ? `${observation}\n\nColumn stats (whole table): ${columnStats
+              .map((stat) => `${stat.column}: nullRatio=${stat.nullRatio}, distinct=${stat.distinctCount}`)
+              .join(" | ")}`
+          : observation,
+        {
+          rowsReturned: queryResult.rows.length,
+          tables: [matchedTable],
+          ...(columnStats ? { columnStats } : {}),
+        },
+      );
     }
 
     if (action.action === "list_schema_objects") {
@@ -686,7 +791,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         throw new Error(AI_REQUEST_REPLACED_MESSAGE);
       }
 
-      return `${summarizeAgentQueryObservation(queryResult)}${explainNote}`;
+      return appendAgentFacts(`${summarizeAgentQueryObservation(queryResult)}${explainNote}`, {
+        rowsReturned: queryResult.rows.length,
+      });
     }
 
     if (action.action === "run_parameterized_sql") {
@@ -729,10 +836,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         if (requestId !== requestIdRef.current) {
           throw new Error(AI_REQUEST_REPLACED_MESSAGE);
         }
-        return stringifyAgentObservation({
+        return appendAgentFacts(stringifyAgentObservation({
           parameterized: true,
           parameterCount: parameters.length,
           result: summarizeAgentQueryObservation(queryResult),
+        }), {
+          rowsReturned: queryResult.rows.length,
         });
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;

@@ -3,6 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import { getCurrentAppLanguage } from "../../../i18n";
 import { getManualProviderOverrideAt, useAIStore } from "../../../stores/aiStore";
 import { useConnectionStore } from "../../../stores/connectionStore";
+import { useAIChatWorkspaceStore } from "../../../stores/aiChatWorkspaceStore";
 import { useQueryStore } from "../../../stores/queryStore";
 import { type AIConversationMessage, type AIProviderConfig, type AIRequestAttachment, type AIRequestIntent, type AIRequestMode } from "../../../types";
 import { buildAttachmentFileBlocks, toRequestAttachments, type AIAttachmentDraft } from "../../../utils/ai-attachments";
@@ -516,6 +517,16 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           { name: string; description: string }[]
         >("list_ai_skills", {}).catch(() => [] as { name: string; description: string }[]);
 
+        // Honest database-mismatch signal: if the user explicitly names a
+        // database other than the one this request is scoped to, the prompt
+        // says so instead of letting schema evidence silently contradict them.
+        const workspaceStoreState = useAIChatWorkspaceStore.getState();
+        const workspaceBoundDatabase = workspaceStoreState
+          .workspaces.find(
+            (workspace) => workspace.id === workspaceStoreState.activeWorkspaceId,
+          )?.database ?? null;
+        const knownDatabaseNames = useConnectionStore.getState().databases.map((item) => item.name);
+
         const buildControllerPrompt = (
           forceFinish: boolean,
           extraInstruction?: string,
@@ -528,6 +539,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             availableTableNames: agentPromptTableNames.length > 0 ? agentPromptTableNames : availableSchemaTables,
             steps,
             workspaceToolsEnabled,
+            knownDatabaseNames,
+            workspaceBoundDatabase,
             workspaceToolStatus,
             toolAvailability,
             forceFinish,

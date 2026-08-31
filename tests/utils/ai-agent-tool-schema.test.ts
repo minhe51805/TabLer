@@ -37,7 +37,8 @@ describe("AI agent tool schema", () => {
   it("mirrors the normalizer's required fields and numeric bounds", () => {
     expect(AI_AGENT_TOOL_SPECS.ask_user.parameters.required).toEqual(["question"]);
     expect(AI_AGENT_TOOL_SPECS.search_schema.parameters.required).toEqual(["query"]);
-    expect(AI_AGENT_TOOL_SPECS.describe_table.parameters.required).toEqual(["table"]);
+    expect(AI_AGENT_TOOL_SPECS.describe_table.parameters.required ?? []).toEqual([]);
+    // describe_tables is hidden from the catalog (superseded by the batch form).
     expect(AI_AGENT_TOOL_SPECS.describe_tables.parameters.required).toEqual(["tables"]);
     expect(AI_AGENT_TOOL_SPECS.sample_table_data.parameters.required).toEqual(["table"]);
     expect(AI_AGENT_TOOL_SPECS.run_readonly_sql.parameters.required).toEqual(["sql"]);
@@ -111,7 +112,7 @@ describe("AI agent tool schema", () => {
   it("shapes the OpenAI-family tool payload with a top-level tool_choice", () => {
     for (const provider of ["openai", "openrouter", "ollama", "custom"] as const) {
       const payload = nativeToolPayloadForProvider(provider);
-      expect(payload.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length);
+      expect(payload.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
       expect(payload.tool_choice).toBe("auto");
       expect((payload.tools[0] as { type: string }).type).toBe("function");
     }
@@ -119,18 +120,20 @@ describe("AI agent tool schema", () => {
 
   it("shapes Anthropic and Gemini tool payloads in their native formats", () => {
     const anthropic = nativeToolPayloadForProvider("anthropic");
-    expect(anthropic.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length);
+    expect(anthropic.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
     expect((anthropic.tools[0] as Record<string, unknown>)).toHaveProperty("input_schema");
     expect(anthropic.tool_choice).toEqual({ type: "auto" });
 
     const gemini = nativeToolPayloadForProvider("gemini");
-    expect(gemini.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length);
+    expect(gemini.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
     expect(gemini.tool_choice).toEqual({ function_calling_config: { mode: "AUTO" } });
   });
 
   it("lists every registry tool in the controller catalog, and only non-SQL tools when tools are off", () => {
     const enabled = formatAgentToolCatalog(true);
-    expect(enabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual([...AI_AGENT_TOOL_NAMES]);
+    expect(enabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual([
+      ...AI_AGENT_TOOL_NAMES.filter((name) => name !== "describe_tables"),
+    ]);
     const disabled = formatAgentToolCatalog(false);
     expect(disabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual(["ask_user", "skill", "read_page", "finish"]);
     expect(disabled.join("\n")).not.toContain("metricsWidgets");
@@ -167,7 +170,6 @@ describe("parseAgentToolArgs", () => {
   it.each([
     ["ask_user", {}, /args.question/],
     ["search_schema", { query: " " }, /args.query/],
-    ["describe_table", {}, /args.table/],
     ["describe_tables", { tables: [] }, /args.tables array/],
     ["sample_table_data", { table: "" }, /args.table/],
     ["run_readonly_sql", { sql: "   " }, /args.sql/],

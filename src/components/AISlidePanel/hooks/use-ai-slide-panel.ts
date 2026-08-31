@@ -25,6 +25,12 @@ import {
   buildAgentControllerPrompt,
   buildAgentPlanPrompt,
   joinAgentInstructions,
+  canonicalizeAgentArgs,
+  isRepeatTrackedAction,
+  mergeRunNotes,
+  previewAgentArgs,
+  REPEAT_CALL_GENTLE_REMINDER,
+  repeatCallDetailedReminder,
   type AgentTraceStep,
   type AssistIntent,
 } from "../ai-agent-context";
@@ -210,8 +216,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       intent: AIRequestIntent = "sql",
       history: AIConversationMessage[] = [],
       attachments?: AIRequestAttachment[],
+      options?: { correlationId?: string },
     ): Promise<string> => {
-      const { text, reasoning } = await askAIWithReasoning(prompt, context, mode, intent, history, attachments);
+      const { text, reasoning } = await askAIWithReasoning(prompt, context, mode, intent, history, attachments, options);
       if (reasoning && reasoning.trim()) {
         lastReasoningRef.current = reasoning.trim();
       }
@@ -462,6 +469,12 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               status: "running",
             });
           }
+          // Renumber sequentially: runner snapshots grow over time, so the
+          // stored note ordinals would otherwise collide with runner steps
+          // and produce duplicate React keys in the step list.
+          completed.forEach((step, index) => {
+            step.step = index + 1;
+          });
           onAgentProgress(completed);
         };
         const needsExtendedAgentBudget = wantsVisualization || assistIntent === "overview";
@@ -563,6 +576,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           });
 
         // Model-call layer: transient retry + parse-repair (extracted).
+        // Retry waits are published as transient "think" steps so a slow
+        // rate-limited provider never looks like a frozen run.
         const { requestAgentAction } = createAgentActionRequestor({
           askAI,
           context,
@@ -570,6 +585,30 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           requestId,
           requestIdRef,
           requestHistory,
+          // Stamps every model call of this run so chain-failover events from
+          // parallel non-agent requests never leak into this trace.
+          correlationId: `agent-run-${requestId}`,
+          onRetryWait: ({ delayMs, reason, retry, maxRetries }) => {
+            const seconds = Math.max(1, Math.round(delayMs / 1000));
+            const transientNote = appLanguage === "vi"
+              ? reason === "rate-limit"
+                ? `Bị rate limit — chờ ${seconds}s rồi thử lại…`
+                : `Lỗi tạm thời từ provider — thử lại sau ${seconds}s…`
+              : reason === "rate-limit"
+                ? `Rate limited — waiting ${seconds}s before retrying…`
+                : `Transient provider error — retrying in ${seconds}s…`;
+            publishAgentProgress({ action: "think", message: transientNote });
+            // Settled note: survives reloads through the persisted trace.
+            const settledNote = appLanguage === "vi"
+              ? `Đã chờ ${seconds}s do ${reason === "rate-limit" ? "rate limit" : "lỗi tạm thời"} trước khi thử lại (lần ${retry}/${maxRetries}).`
+              : `Waited ${seconds}s due to ${reason === "rate-limit" ? "rate limiting" : "a transient error"} before retrying (attempt ${retry}/${maxRetries}).`;
+            manualSwitchNotes.push({
+              step: agentTraceSteps.length + manualSwitchNotes.length + 1,
+              action: "think",
+              message: settledNote,
+              observation: "In-line retry wait.",
+            });
+          },
         });
         const { runAgentTool } = createAgentToolExecutor({
           connectionId,
@@ -619,7 +658,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               strictRecoveryContext || context,
               "panel",
               assistIntent === "overview" ? "overview" : "explain",
-              []
+              [],
+              undefined,
+              { correlationId: `agent-run-${requestId}` },
             );
             if (requestId !== requestIdRef.current) {
               throw new Error(AI_REQUEST_REPLACED_MESSAGE);
@@ -699,6 +740,11 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
         let consecutiveActionFailures = 0;
         let endedWithAskUser = false;
+        // Repeat-call guard (learned from deepseek-harness): a chain of
+        // identical tool calls injects a corrective reminder into the next
+        // controller prompt — gentle at 3 repeats, detailed at 5.
+        let repeatChain: { key: string; count: number } | null = null;
+        let pendingRepeatReminder: string | null = null;
         // Provider failover: each failure promotes the NEXT enabled provider
         // (selector follows, note line recorded) and re-runs the step, until
         // every enabled provider has had a turn as primary. Only then does the
@@ -736,6 +782,41 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         };
         window.addEventListener("ai-provider-switched-during-run", handleManualProviderSwitch);
 
+        // The request-level failover chain (aiStore) moves to the next
+        // enabled provider when one hangs or errors; surface that as a
+        // settled step note so the wait is never silent.
+        const handleChainFailoverNote = (event: Event) => {
+          const detail = (event as CustomEvent<{
+            failedProvider?: string;
+            failedModel?: string | null;
+            reason?: string;
+            attempt?: number;
+            total?: number;
+            correlationId?: string;
+          }>).detail;
+          // Only failovers of THIS run's own model calls — parallel requests
+          // (SQL explain, dashboard previews) must not leak into the trace.
+          if (!detail?.correlationId || detail.correlationId !== `agent-run-${requestId}`) return;
+          const failed = detail.failedProvider?.trim();
+          if (!failed) return;
+          // The chain now walks provider → its other models → next provider, so
+          // the failed stop may be a model switch, not a provider switch.
+          const failedModel = detail.failedModel?.trim();
+          const failedLabel = failedModel ? `${failed} (model ${failedModel})` : failed;
+          const attemptLabel = `${detail?.attempt ?? "?"}/${detail?.total ?? "?"}`;
+          const note = appLanguage === "vi"
+            ? `Provider "${failedLabel}" lỗi (${detail?.reason ?? "không xác định"}) — đang thử model/provider tiếp theo (${attemptLabel})…`
+            : `Provider "${failedLabel}" failed (${detail?.reason ?? "error"}) — trying the next model/provider (${attemptLabel})…`;
+          manualSwitchNotes.push({
+            step: agentTraceSteps.length + manualSwitchNotes.length + 1,
+            action: "think",
+            message: note,
+            observation: "Model/provider failover within the request chain.",
+          });
+          publishAgentProgress();
+        };
+        window.addEventListener("ai-provider-chain-failover", handleChainFailoverNote);
+
         let agentRunnerResult: Awaited<ReturnType<typeof runAIAgentToolLoop>> | undefined;
         try {
           agentRunnerResult = await runAIAgentToolLoop({
@@ -757,11 +838,15 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               });
             }
 
-            const controllerPrompt = buildControllerPrompt(
+            let controllerPrompt = buildControllerPrompt(
               forceFinish,
               instructionForRunnerRequest(reason),
               steps,
             );
+            if (pendingRepeatReminder) {
+              controllerPrompt = `${controllerPrompt}\n\n${pendingRepeatReminder}`;
+              pendingRepeatReminder = null;
+            }
             try {
               // Images ride only the first controller call of the run; later
               // steps see the tools' observations instead (token cost once).
@@ -772,6 +857,23 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 iteration === 1 && imageAttachments.length > 0 ? imageAttachments : undefined,
               );
               consecutiveActionFailures = 0;
+              // Advance the repeat-call chain for tracked (tool-argument)
+              // actions; meta actions leave it untouched (dsh semantics).
+              if (isRepeatTrackedAction(action.action)) {
+                const key = JSON.stringify([action.action, canonicalizeAgentArgs(action.args)]);
+                repeatChain = repeatChain?.key === key
+                  ? { key, count: repeatChain.count + 1 }
+                  : { key, count: 1 };
+                if (repeatChain.count === 3) {
+                  pendingRepeatReminder = REPEAT_CALL_GENTLE_REMINDER;
+                } else if (repeatChain.count === 5) {
+                  pendingRepeatReminder = repeatCallDetailedReminder(
+                    action.action,
+                    repeatChain.count,
+                    previewAgentArgs(canonicalizeAgentArgs(action.args)),
+                  );
+                }
+              }
               if (action.action === "ask_user") {
                 // The harness runs one agent turn per user message, so a
                 // clarifying question ends the turn: the reply arrives as the
@@ -831,9 +933,27 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                   if (repairedHasPayload) return repairedFinish;
                 } catch (repairError) {
                   if (isSupersededAIRequestError(repairError)) throw repairError;
-                  // Repair failed — fall through and accept the bare finish
-                  // so finalization's fallback text can handle it.
+                  // Repair call failed — the local evidence summary below takes over.
                 }
+                // The model could not summarize even with the repair nudge.
+                // Never end on a canned non-answer: build the floor response
+                // from the run's own trace (bilingual, evidence-backed).
+                const failoverNoteSuffix = failoverNoteLines.length > 0
+                  ? `\n\n*${failoverNoteLines.join(" ")}*`
+                  : "";
+                return {
+                  action: "finish" as const,
+                  message: reason,
+                  args: {
+                    response: `${buildLocalAgentFallbackResponse({
+                      language: appLanguage,
+                      currentDatabase,
+                      availableTableNames: agentPromptTableNames.length > 0 ? agentPromptTableNames : availableSchemaTables,
+                      wantsVisualization,
+                      steps,
+                    })}${failoverNoteSuffix}`,
+                  },
+                };
               }
               return action;
             } catch (errorValue) {
@@ -989,6 +1109,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           // Always detach, including when the run throws mid-loop; otherwise a
         // failed run leaks its manual-switch listener (and its closures).
           window.removeEventListener("ai-provider-switched-during-run", handleManualProviderSwitch);
+          window.removeEventListener("ai-provider-chain-failover", handleChainFailoverNote);
         }
         if (!agentRunnerResult) {
           throw new Error("Agent runner returned no result");
@@ -1105,7 +1226,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           risk: hasValidSql && finalization.sql ? analyzeGeneratedSql(finalization.sql) : undefined,
           intent: assistIntent,
           reasoning: lastReasoningRef.current,
-          agentSteps: finalization.agentSteps,
+          // Persist the run notes (switches, chain failovers, retry waits)
+          // alongside the runner trace so they survive reloads.
+          agentSteps: mergeRunNotes(finalization.agentSteps ?? [], manualSwitchNotes),
           agentWidgets: finalization.agentWidgets,
         };
 

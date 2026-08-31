@@ -8,13 +8,29 @@ export type AIRequestErrorCode =
 export class AIRequestError extends Error {
   readonly code: AIRequestErrorCode;
   readonly retryable: boolean;
+  /** Provider-advertised wait (Retry-After) in ms, when the error carries one. */
+  readonly providerRetryAfterMs?: number;
 
-  constructor(code: AIRequestErrorCode, message: string, retryable = code !== "unknown") {
+  constructor(
+    code: AIRequestErrorCode,
+    message: string,
+    retryable = code !== "unknown",
+    providerRetryAfterMs?: number,
+  ) {
     super(message);
     this.name = "AIRequestError";
     this.code = code;
     this.retryable = retryable;
+    if (providerRetryAfterMs !== undefined) this.providerRetryAfterMs = providerRetryAfterMs;
   }
+}
+
+/** Extract a `retry_after_ms=<n>` marker from a provider error message. */
+function extractRetryAfterMs(message: string): number | undefined {
+  const match = message.match(/retry_after_ms=(\d+)/i);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 export function normalizeAIRequestError(errorValue: unknown) {
@@ -22,12 +38,13 @@ export function normalizeAIRequestError(errorValue: unknown) {
 
   const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
   const normalized = message.toLowerCase();
+  const providerRetryAfterMs = extractRetryAfterMs(message);
 
   if (normalized.includes("cancelled") || normalized.includes("canceled")) {
-    return new AIRequestError("cancelled", "AI request cancelled.");
+    return new AIRequestError("cancelled", "AI request cancelled.", true, providerRetryAfterMs);
   }
   if (normalized.includes("timed out") || normalized.includes("timeout")) {
-    return new AIRequestError("timeout", message);
+    return new AIRequestError("timeout", message, true, providerRetryAfterMs);
   }
   if (
     normalized.includes("malformed json")
@@ -35,7 +52,7 @@ export function normalizeAIRequestError(errorValue: unknown) {
     || normalized.includes("invalid response")
     || normalized.includes("valid json")
   ) {
-    return new AIRequestError("invalid-response", message);
+    return new AIRequestError("invalid-response", message, true, providerRetryAfterMs);
   }
   if (
     normalized.includes("provider")
@@ -48,10 +65,10 @@ export function normalizeAIRequestError(errorValue: unknown) {
     || normalized.includes("http ")
     || normalized.includes("status ")
   ) {
-    return new AIRequestError("provider", message);
+    return new AIRequestError("provider", message, true, providerRetryAfterMs);
   }
 
-  return new AIRequestError("unknown", message, false);
+  return new AIRequestError("unknown", message, false, providerRetryAfterMs);
 }
 
 export function isAIRequestErrorCode(errorValue: unknown, code: AIRequestErrorCode) {

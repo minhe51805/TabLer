@@ -261,4 +261,72 @@ describe("aiStore", () => {
       expect.anything(),
     );
   });
+
+  it("walks every enabled model of every enabled provider in the failover chain", async () => {
+    const multiModelProvider: AIProviderConfig = {
+      ...provider,
+      models: ["gpt-test", "gpt-alt"],
+    };
+    const second: AIProviderConfig = {
+      ...provider,
+      id: "provider-2",
+      name: "Claude",
+      provider_type: "anthropic",
+      model: "claude-test",
+      is_primary: false,
+    };
+    const third: AIProviderConfig = {
+      ...provider,
+      id: "provider-3",
+      name: "Gemini",
+      provider_type: "gemini",
+      model: "gem-a",
+      models: ["gem-a", "gem-b"],
+      // Hidden models stay out of the chain, mirroring the composer switcher.
+      disabled_models: ["gem-b"],
+      is_primary: false,
+    };
+    const fourth: AIProviderConfig = {
+      ...provider,
+      id: "provider-4",
+      name: "Llama",
+      model: "llama-test",
+      is_primary: false,
+    };
+    useAIStore.setState({ aiConfigs: [multiModelProvider, second, third, fourth] });
+    invokeMutationMock.mockImplementation(async (command: string) => {
+      if (command === "cancel_ai_request") return true;
+      return null;
+    });
+    const chainStops: Array<{ providerId: string | null; model: string | null }> = [];
+    invokeWithTimeoutMock.mockImplementation(async (command: string, args?: {
+      request?: { provider_id?: string | null; model?: string | null };
+    }) => {
+      if (command === "ask_ai_stream") {
+        chainStops.push({
+          providerId: args?.request?.provider_id ?? null,
+          model: args?.request?.model ?? null,
+        });
+        throw new Error("HTTP 503 Service Unavailable");
+      }
+      return null;
+    });
+
+    // Every stop in the chain fails, so the run exhausts the full chain and
+    // surfaces the last error instead of silently giving up early.
+    await expect(
+      useAIStore.getState().askAI("prompt", "context", "panel", "sql"),
+    ).rejects.toThrow();
+
+    // Active provider's configured model first, then its other models, then
+    // the remaining enabled providers in order — including the fourth one,
+    // which the old 3-attempt cap never reached.
+    expect(chainStops).toEqual([
+      { providerId: "provider-1", model: "gpt-test" },
+      { providerId: "provider-1", model: "gpt-alt" },
+      { providerId: "provider-2", model: "claude-test" },
+      { providerId: "provider-3", model: "gem-a" },
+      { providerId: "provider-4", model: "llama-test" },
+    ]);
+  });
 });

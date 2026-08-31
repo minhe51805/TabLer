@@ -16,7 +16,9 @@ interface AIAgentStepsProps {
 
 /** One-liner for the collapsed header: what the agent was actually doing. */
 function headerThinkingTitle(steps: AIWorkspaceAgentStep[]): string {
-  const flat = (steps.find((step) => step.action === "think" && step.message)?.message ?? "")
+  const flat = (steps.find((step) => step.action === "think"
+    && step.message
+    && step.message !== "No message provided.")?.message ?? "")
     .replace(/\s+/g, " ")
     .trim();
   if (!flat) return "";

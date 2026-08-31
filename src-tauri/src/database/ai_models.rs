@@ -119,6 +119,11 @@ pub struct AIRequest {
     /// Powers the frontend failover chain across enabled providers.
     #[serde(default)]
     pub provider_id: Option<String>,
+    /// Optional per-request model override; when absent the provider's
+    /// configured model is used. Powers the model-level tier of the frontend
+    /// failover chain (try the provider's other models before leaving it).
+    #[serde(default)]
+    pub model: Option<String>,
     pub prompt: String,
     pub context: String, // DB schema context
     #[serde(default = "default_ai_request_mode")]

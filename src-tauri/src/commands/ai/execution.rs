@@ -13,7 +13,7 @@ use super::endpoints::{
 use super::errors::{
     ai_provider_api_error, ai_provider_config_error, ai_provider_http_status_error,
     ai_provider_non_json_response_error, ai_provider_request_error, ai_provider_response_error,
-    ai_provider_response_error_with_preview,
+    ai_provider_response_error_with_preview, response_retry_after_seconds,
 };
 use super::extraction::{
     extract_anthropic_response_text, extract_gemini_response_text, extract_openai_like_reasoning,
@@ -60,6 +60,15 @@ pub(crate) async fn execute_ai_stream_request(
         Ok((config, api_key))
     })
     .await?;
+    let mut config = config;
+    // Per-request model override (the failover chain's model tier); a blank
+    // override keeps the provider's configured model untouched.
+    if let Some(model_override) = request.model.as_deref() {
+        let trimmed = model_override.trim();
+        if !trimmed.is_empty() {
+            config.model = trimmed.to_string();
+        }
+    }
 
     ai_rate_limiter
         .check(&format!("{}:{:?}:stream", config.id, request.mode))
@@ -121,6 +130,7 @@ pub(crate) async fn execute_ai_stream_request(
             .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?,
     };
     let status = response.status();
+    let retry_after = response_retry_after_seconds(&response);
     if !status.is_success() {
         let raw_body = response
             .text()
@@ -132,6 +142,7 @@ pub(crate) async fn execute_ai_stream_request(
             status,
             &raw_body,
             api_key.as_deref(),
+            retry_after,
         ));
     }
 
@@ -228,6 +239,15 @@ pub(crate) async fn execute_ai_request(
         Ok((config, api_key))
     })
     .await?;
+    let mut config = config;
+    // Per-request model override (the failover chain's model tier); a blank
+    // override keeps the provider's configured model untouched.
+    if let Some(model_override) = request.model.as_deref() {
+        let trimmed = model_override.trim();
+        if !trimmed.is_empty() {
+            config.model = trimmed.to_string();
+        }
+    }
 
     ai_rate_limiter
         .check(&format!("{}:{:?}", config.id, request.mode))
@@ -299,6 +319,7 @@ pub(crate) async fn execute_ai_request(
                     .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?;
 
                 let status = response.status();
+                let retry_after = response_retry_after_seconds(&response);
                 let raw_body = response
                     .text()
                     .await
@@ -336,6 +357,7 @@ pub(crate) async fn execute_ai_request(
                         status,
                         &raw_body,
                         api_key.as_deref(),
+                        retry_after,
                     ));
                 }
 
@@ -424,6 +446,7 @@ pub(crate) async fn execute_ai_request(
                 .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?;
 
             let status = response.status();
+            let retry_after = response_retry_after_seconds(&response);
             let raw_body = response
                 .text()
                 .await
@@ -456,6 +479,7 @@ pub(crate) async fn execute_ai_request(
                     status,
                     &raw_body,
                     api_key.as_deref(),
+                    retry_after,
                 ));
             }
 
@@ -536,6 +560,7 @@ pub(crate) async fn execute_ai_request(
                 .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?;
 
             let status = response.status();
+            let retry_after = response_retry_after_seconds(&response);
             let raw_body = response
                 .text()
                 .await
@@ -568,6 +593,7 @@ pub(crate) async fn execute_ai_request(
                     status,
                     &raw_body,
                     api_key.as_deref(),
+                    retry_after,
                 ));
             }
 

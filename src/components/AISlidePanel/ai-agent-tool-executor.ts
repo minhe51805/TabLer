@@ -42,6 +42,18 @@ import {
 
 const MAX_AGENT_SCHEMA_SCAN_TABLES = 120;
 
+/**
+ * Appended to SQL tool errors when the database itself gave up on the
+ * statement (timeout). A timeout is actionable feedback: the model can run a
+ * narrower statement instead of concluding the table is unreadable.
+ */
+function agentQueryTimeoutHint(errorValue: unknown): string {
+  const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+  return /timed?\s*out/i.test(message)
+    ? " The database gave up on this query. Run a narrower statement instead: filter on a key column, select only the needed columns, and add a LIMIT."
+    : "";
+}
+
 export interface AgentToolExecutorDeps {
   connectionId: string | null;
   currentDatabase: string | null;
@@ -786,7 +798,15 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         }
       }
 
-      const queryResult = await executeReadonlyQuery(connectionId!, [sql]);
+      let queryResult: QueryResult;
+      try {
+        queryResult = await executeReadonlyQuery(connectionId!, [sql]);
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        // A timed-out query is actionable feedback, not a dead end: tell
+        // the model exactly how to shrink the statement.
+        return `Tool error: readonly query failed: ${formatExecutionError(errorValue)}${agentQueryTimeoutHint(errorValue)}`;
+      }
       if (requestId !== requestIdRef.current) {
         throw new Error(AI_REQUEST_REPLACED_MESSAGE);
       }
@@ -845,7 +865,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         });
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;
-        return `Tool error: parameterized query failed: ${formatExecutionError(errorValue)}`;
+        return `Tool error: parameterized query failed: ${formatExecutionError(errorValue)}${agentQueryTimeoutHint(errorValue)}`;
       }
     }
 
@@ -912,7 +932,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         });
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;
-        return `Tool error: find_value failed: ${formatExecutionError(errorValue)}`;
+        return `Tool error: find_value failed: ${formatExecutionError(errorValue)}${agentQueryTimeoutHint(errorValue)}`;
       }
     }
 
@@ -1043,7 +1063,13 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       }
     }
 
-    return "Tool error: finish does not execute a tool observation.";
+    // Unknown action: never say "finish" here — the model needs the list of
+    // valid tools to self-correct (a bare "unknown tool" makes small models
+    // conclude the deployment is broken instead of retrying).
+    if (action.action === "finish") {
+      return "Tool error: finish does not execute a tool observation.";
+    }
+    return `Tool error: unknown tool "${action.action}". Available tools: list_tables, search_schema, list_schema_objects, describe_table, describe_tables, sample_table_data, run_preset, read_page, run_readonly_sql, run_parameterized_sql, find_value, check_sql, preview_write, remember_term, skill. Choose one of these, or return a finish action with args.response if the task is complete.`;
   } catch (errorValue) {
     if (isSupersededAIRequestError(errorValue)) {
       throw errorValue;

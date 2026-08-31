@@ -171,12 +171,26 @@ pub(crate) fn ai_provider_api_error(message: &str, api_key: Option<&str>) -> Str
     )
 }
 
+/// Read the provider's `Retry-After` header (seconds form, the common 429
+/// case) so the frontend can wait exactly as long as the provider asks
+/// instead of guessing. HTTP-date forms are ignored — the seconds form is
+/// what every rate-limiting AI provider emits.
+pub(crate) fn response_retry_after_seconds(response: &reqwest::Response) -> Option<u64> {
+    let raw = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?;
+    raw.trim().parse::<u64>().ok()
+}
+
 pub(crate) fn ai_provider_http_status_error(
     config: &AIProviderConfig,
     endpoint: &str,
     status: StatusCode,
     body: &str,
     api_key: Option<&str>,
+    retry_after_seconds: Option<u64>,
 ) -> String {
     let provider_label = if config.name.trim().is_empty() {
         format!("{:?}", config.provider_type)
@@ -206,9 +220,18 @@ pub(crate) fn ai_provider_http_status_error(
             | StatusCode::GATEWAY_TIMEOUT
             | StatusCode::TOO_MANY_REQUESTS
     ) {
-        " This looks temporary on the provider side. Please try again in a moment."
+        match retry_after_seconds {
+            // Machine-readable marker: normalizeAIRequestError on the
+            // frontend extracts `retry_after_ms=<n>` from this text and
+            // waits exactly that long before retrying.
+            Some(seconds) => format!(
+                " This looks temporary on the provider side. It asks to retry after {seconds} s (retry_after_ms={}).",
+                seconds.saturating_mul(1000)
+            ),
+            None => " This looks temporary on the provider side. Please try again in a moment.".to_string(),
+        }
     } else {
-        ""
+        String::new()
     };
 
     if preview.is_empty() {

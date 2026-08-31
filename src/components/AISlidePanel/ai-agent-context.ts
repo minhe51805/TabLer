@@ -6,9 +6,97 @@ import {
 } from "./AISlidePanelUtils";
 import type { AgentToolAvailability } from "./ai-agent-engine-gates";
 import { formatAgentToolCatalog, NATIVE_TOOL_CALLING_ENABLED } from "./ai-agent-tool-schema";
-import type { AIWorkspaceAgentActionName } from "./ai-workspace-types";
+import type { AIWorkspaceAgentActionName, AIWorkspaceAgentStep } from "./ai-workspace-types";
 
 export type AssistIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error" | "general";
+
+/**
+ * Repeat-call detection (learned from deepseek-harness `repeat-tool-reminder`):
+ * actions that carry tool arguments participate in the consecutive-repeat
+ * chain; meta actions (plan/think/finish/ask_user) are transparent — they
+ * neither count nor reset the chain.
+ */
+const UNTRACKED_REPEAT_ACTIONS = new Set<AIWorkspaceAgentActionName>([
+  "plan",
+  "think",
+  "ask_user",
+  "finish",
+]);
+
+export function isRepeatTrackedAction(action: AIWorkspaceAgentActionName): boolean {
+  return !UNTRACKED_REPEAT_ACTIONS.has(action);
+}
+
+/** Deep key-sort so two argument objects differing only in property order canonicalize identically. */
+function sortAgentArgsValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortAgentArgsValue);
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) {
+      sorted[key] = sortAgentArgsValue(record[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+export function canonicalizeAgentArgs(args: unknown): string {
+  return JSON.stringify(sortAgentArgsValue(args));
+}
+
+/** Head-truncate the canonical args quoted in the detailed reminder. */
+export function previewAgentArgs(canonicalArgs: string, cap = 500): string {
+  if (canonicalArgs.length <= cap) return canonicalArgs;
+  return `${canonicalArgs.slice(0, cap)}… (+${canonicalArgs.length - cap} more chars)`;
+}
+
+export const REPEAT_CALL_GENTLE_REMINDER =
+  "You are repeating the exact same tool call with identical arguments. "
+  + "Carefully analyze the previous result before calling again: if the task is "
+  + "not complete, try a different approach or different arguments instead of "
+  + "repeating the call.";
+
+export function repeatCallDetailedReminder(
+  action: AIWorkspaceAgentActionName,
+  count: number,
+  argsPreview: string,
+): string {
+  return "Repeated tool call detected:\n"
+    + `- tool: ${action}\n`
+    + `- consecutive_calls: ${count}\n`
+    + `- arguments: ${argsPreview}\n`
+    + "The repeated calls are not making progress. Do not call this tool with "
+    + "these exact arguments again. Inspect the latest result and choose a "
+    + "different action, different arguments, or finish the task if enough "
+    + "evidence has been gathered.";
+}
+
+/**
+ * Merge run-time notes (manual provider switches, chain failovers, retry
+ * waits) into the runner's step trace, renumbering sequentially so the stored
+ * list has stable, unique ordinals — the persisted bubble format is the same
+ * `agentSteps` array, so notes survive reloads through the normal path.
+ */
+export function mergeRunNotes(
+  steps: AIWorkspaceAgentStep[],
+  notes: AgentTraceStep[],
+): AIWorkspaceAgentStep[] {
+  const merged: AIWorkspaceAgentStep[] = [
+    ...steps,
+    ...notes.map((note) => ({
+      step: note.step,
+      action: note.action,
+      message: note.message,
+      observation: note.observation,
+      status: "done" as const,
+    })),
+  ];
+  merged.forEach((step, index) => {
+    step.step = index + 1;
+  });
+  return merged;
+}
 
 export interface AgentTraceStep {
   step: number;

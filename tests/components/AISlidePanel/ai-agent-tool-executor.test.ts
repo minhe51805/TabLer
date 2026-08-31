@@ -498,3 +498,48 @@ describe("misc guards", () => {
     expect(obs).toContain("Tool error: connection refused");
   });
 });
+
+describe("unknown tools and timeout hints", () => {
+  it("steers the model back with the available tool list on an unknown tool", async () => {
+    const obs = await run(mkDeps(), { action: "drop_everything", args: {} } as unknown as AIAgentToolAction);
+    expect(obs).toContain('unknown tool "drop_everything"');
+    expect(obs).toContain("run_readonly_sql");
+    expect(obs).toContain("finish");
+  });
+
+  it("keeps the dedicated finish message for finish actions", async () => {
+    const obs = await run(mkDeps(), { action: "finish" } as AIAgentToolAction);
+    expect(obs).toContain("Tool error: finish does not execute a tool observation.");
+  });
+
+  it("appends a narrowing hint when a parameterized query times out", async () => {
+    const deps = mkDeps();
+    (deps.inspectedAgentTables as Set<string>).add("public.users");
+    (deps.executeParameterizedReadonlyQuery as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Parameterized query timed out after 180 seconds."),
+    );
+    const obs = await run(deps, {
+      action: "run_parameterized_sql",
+      args: {
+        sql: "SELECT * FROM users WHERE email = :email",
+        parameters: [{ name: "email", value: "a@b.c" }],
+      },
+    } as AIAgentToolAction);
+    expect(obs).toContain("parameterized query failed: Parameterized query timed out");
+    expect(obs).toContain("Run a narrower statement instead");
+  });
+
+  it("appends the same narrowing hint to run_readonly_sql timeouts", async () => {
+    const deps = mkDeps();
+    (deps.inspectedAgentTables as Set<string>).add("public.users");
+    (deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Read-only query timed out after 180 seconds."),
+    );
+    const obs = await run(deps, {
+      action: "run_readonly_sql",
+      args: { sql: "SELECT * FROM users" },
+    } as AIAgentToolAction);
+    expect(obs).toContain("readonly query failed: Read-only query timed out");
+    expect(obs).toContain("add a LIMIT");
+  });
+});

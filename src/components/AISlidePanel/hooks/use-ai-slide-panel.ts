@@ -431,20 +431,32 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         const inspectedAgentTables = new Set<string>();
         // Snapshot completed steps plus an optional in-flight step, then stream
         // them to the UI so the bubble can show the agent working live.
+        // Manual provider switches are kept separately because agentTraceSteps
+        // is overwritten by the runner's snapshots and would drop the note.
+        const manualSwitchNotes: AgentTraceStep[] = [];
         const publishAgentProgress = (pending?: { action: AIWorkspaceAgentActionName; message: string }) => {
           if (!onAgentProgress) return;
-          const completed: AIWorkspaceAgentStep[] = agentTraceSteps.map((step) => ({
-            step: step.step,
-            action: step.action,
-            message: step.message,
-            observation: step.observation,
-            status: step.observation.startsWith("Tool error") || step.observation.startsWith("Tool blocked")
-              ? "error"
-              : "done",
-          }));
+          const completed: AIWorkspaceAgentStep[] = [
+            ...agentTraceSteps.map((step): AIWorkspaceAgentStep => ({
+              step: step.step,
+              action: step.action,
+              message: step.message,
+              observation: step.observation,
+              status: step.observation.startsWith("Tool error") || step.observation.startsWith("Tool blocked")
+                ? "error"
+                : "done",
+            })),
+            ...manualSwitchNotes.map((step) => ({
+              step: step.step,
+              action: step.action,
+              message: step.message,
+              observation: step.observation,
+              status: "done" as const,
+            })),
+          ];
           if (pending) {
             completed.push({
-              step: agentTraceSteps.length + 1,
+              step: completed.length + 1,
               action: pending.action,
               message: pending.message,
               status: "running",
@@ -698,17 +710,29 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         // silently rotated away by automatic failover.
         const runStartedAt = Date.now();
 
-        // Announce a manual provider pick (mid-run) in the same step log the
-        // automatic failover note uses, so the conversation shows the switch.
+        // Announce a manual provider pick (mid-run) as a settled step in the
+        // live trace, so the conversation shows the switch right below the
+        // running step — like the automatic failover note. The in-flight model
+        // call is cancelled so the current step re-runs on the new provider
+        // instead of finishing on the old one (the action loop retries it).
         const handleManualProviderSwitch = (event: Event) => {
           const detail = (event as CustomEvent<{ providerLabel?: string }>).detail;
           const nextLabel = detail?.providerLabel?.trim();
           if (!nextLabel) return;
           const note = appLanguage === "vi"
-            ? `Bạn đã chọn provider "${nextLabel}" — các bước tiếp theo sẽ chạy trên provider này.`
-            : `You switched to provider "${nextLabel}" — the following steps run on it.`;
+            ? `Bạn đã chọn provider "${nextLabel}" — lượt chạy sẽ tiếp tục trên provider này.`
+            : `You switched to provider "${nextLabel}" — the run continues on it.`;
           failoverNoteLines.push(note);
-          publishAgentProgress({ action: "think", message: note });
+          manualSwitchNotes.push({
+            step: agentTraceSteps.length + manualSwitchNotes.length + 1,
+            action: "think",
+            message: note,
+            observation: "Provider switched manually mid-run.",
+          });
+          publishAgentProgress();
+          if (useAIStore.getState().activeAIRequestId) {
+            void cancelAIRequest();
+          }
         };
         window.addEventListener("ai-provider-switched-during-run", handleManualProviderSwitch);
 
@@ -775,15 +799,73 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                   args: { response: `${action.args.question}${optionsBlock}${suffix}` },
                 };
               }
+              // A bare finish (no response, no message, no SQL) throws away
+              // every observation the run gathered. Flaky models emit these
+              // under long step histories — give them one force-finish chance
+              // to summarize the evidence before the canned fallback takes over.
+              if (
+                action.action === "finish"
+                && !String(action.args?.response ?? "").trim()
+                && !String(action.message ?? "").trim()
+                && !action.args?.sql
+                && steps.some((step) => step.action !== "plan" && step.action !== "think")
+              ) {
+                try {
+                  const repairedFinish = await requestAgentAction(
+                    buildControllerPrompt(
+                      true,
+                      joinAgentInstructions(
+                        sharedAgentInstruction,
+                        "Your finish action contained no user-facing response. Return the finish action again with args.response summarizing the findings from the observations above, in the user's language.",
+                      ),
+                    ),
+                    false,
+                  );
+                  const repairedHasPayload =
+                    repairedFinish.action === "finish"
+                    && (
+                      Boolean(String(repairedFinish.args?.response ?? "").trim())
+                      || Boolean(String(repairedFinish.message ?? "").trim())
+                      || Boolean(repairedFinish.args?.sql)
+                    );
+                  if (repairedHasPayload) return repairedFinish;
+                } catch (repairError) {
+                  if (isSupersededAIRequestError(repairError)) throw repairError;
+                  // Repair failed — fall through and accept the bare finish
+                  // so finalization's fallback text can handle it.
+                }
+              }
               return action;
             } catch (errorValue) {
               if (isSupersededAIRequestError(errorValue)) throw errorValue;
-              const requestError = normalizeAIRequestError(errorValue);
+              let requestError = normalizeAIRequestError(errorValue);
+              let failureReason = formatActionFailureReason(errorValue);
+              // A manual provider switch intentionally cancels the in-flight
+              // call: re-run this same step on the newly picked provider right
+              // away instead of finishing it on the old one. Not a failure.
+              if (requestError.code === "cancelled") {
+                if (requestId !== requestIdRef.current) {
+                  // The run was stopped or replaced while we waited — unwind.
+                  throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+                }
+                try {
+                  return await requestAgentAction(controllerPrompt, false);
+                } catch (switchRetryError) {
+                  if (isSupersededAIRequestError(switchRetryError)) throw switchRetryError;
+                  requestError = normalizeAIRequestError(switchRetryError);
+                  if (requestError.code === "cancelled") {
+                    // Cancelled again — the run itself was stopped; unwind.
+                    throw switchRetryError;
+                  }
+                  failureReason = formatActionFailureReason(switchRetryError);
+                }
+              }
               // Anything except a user-initiated cancel is worth a promoted
               // re-run: rate limits surface as "provider", garbage bodies as
               // "invalid-response", and odd transport failures as "unknown" -
               // refusing to retry on those was exactly the silent-stop bug.
-              const failoverEligible = requestError.code !== "cancelled";
+              // (A deliberate mid-run switch cancel is fully handled above.)
+              const failoverEligible = true;
 
               // A dead or rate-limited provider must not end the run: exactly
               // once per run, promote the next configured provider, tell the
@@ -853,7 +935,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               consecutiveActionFailures += 1;
               if (consecutiveActionFailures >= 2) {
                 return recoverAgentFinishAction(
-                  `The agent could not return a valid action: ${formatActionFailureReason(errorValue)}`,
+                  `The agent could not return a valid action: ${failureReason}`,
                 );
               }
               try {
@@ -1075,7 +1157,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         setIsGenerating(false);
       }
     }
-  }, [activeDbType, activeProvider, aiConfigs, askAI, connectionId, currentDatabase, executeAgentParameterizedQuery, executeAgentReadonlyQuery, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
+  }, [activeDbType, activeProvider, aiConfigs, askAI, cancelAIRequest, connectionId, currentDatabase, executeAgentParameterizedQuery, executeAgentReadonlyQuery, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
 
   const copyText = useCallback(async (text: string) => {
     await navigator.clipboard.writeText(text);

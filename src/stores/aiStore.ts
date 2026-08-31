@@ -21,13 +21,36 @@ import { useGlobalErrorStore } from "./globalErrorStore";
 const AI_TIMEOUTS = {
   default: 60_000,
   remotePanel: 180_000,
-  remoteAgentPanel: 360_000,
+  // Agent steps are single-purpose model calls; 2 minutes is enough for even
+  // slow reasoning models. The old 6-minute ceiling let one hanging endpoint
+  // stall an agent step for 3 provider attempts × 6 min = 18 silent minutes.
+  remoteAgentPanel: 120_000,
   localOllamaPanel: 600_000,
   localOllamaInline: 120_000,
 } as const;
 
 /** Active provider first, then at most this many enabled fallbacks. */
 const MAX_PROVIDER_ATTEMPTS = 3;
+
+/**
+ * Providers that recently timed out (hung without answering). They are pushed
+ * to the back of — or briefly dropped from — the failover chain so a hanging
+ * endpoint cannot eat another full timeout on the very next agent step.
+ */
+const PROVIDER_TIMEOUT_RETRY_AFTER_MS = 120_000;
+const recentProviderTimeouts = new Map<string, number>();
+function markProviderTimeout(providerId: string) {
+  const now = Date.now();
+  recentProviderTimeouts.set(providerId, now);
+  // Keep the map tiny: drop entries old enough to be irrelevant anyway.
+  for (const [id, at] of recentProviderTimeouts) {
+    if (now - at >= PROVIDER_TIMEOUT_RETRY_AFTER_MS) recentProviderTimeouts.delete(id);
+  }
+}
+function providerPenaltyRank(providerId: string): number {
+  const at = recentProviderTimeouts.get(providerId);
+  return at === undefined ? 0 : at;
+}
 
 /**
  * Explicit user provider switches win over automatic failover: the panel
@@ -285,9 +308,21 @@ export const useAIStore = create<AIState>((set, get) => ({
 
     // Failover chain: the active provider first, then the next enabled
     // providers, so one rate-limited or broken endpoint no longer kills a run.
-    const fallbackConfigs = get()
+    // Providers that timed out within the last 2 minutes are skipped (they
+    // would likely hang for another full timeout); if skipping leaves nothing,
+    // the original order is kept so a single-provider setup still retries.
+    // Within the pool, the most recently timed-out provider goes last.
+    const enabledFallbacks = get()
       .aiConfigs
-      .filter((candidate) => candidate.is_enabled && candidate.id !== activeConfig.id)
+      .filter((candidate) => candidate.is_enabled && candidate.id !== activeConfig.id);
+    const now = Date.now();
+    const healthyFallbacks = enabledFallbacks.filter((candidate) => {
+      const timedOutAt = recentProviderTimeouts.get(candidate.id);
+      return timedOutAt === undefined || now - timedOutAt >= PROVIDER_TIMEOUT_RETRY_AFTER_MS;
+    });
+    const fallbackPool = healthyFallbacks.length > 0 ? healthyFallbacks : enabledFallbacks;
+    const fallbackConfigs = [...fallbackPool]
+      .sort((left, right) => providerPenaltyRank(left.id) - providerPenaltyRank(right.id))
       .slice(0, MAX_PROVIDER_ATTEMPTS - 1);
     const chain: Array<{ config: AIProviderConfig; providerId?: string }> = [
       { config: activeConfig },
@@ -395,6 +430,9 @@ export const useAIStore = create<AIState>((set, get) => ({
         lastError = errorValue;
         const requestError = normalizeAIRequestError(errorValue);
         if (requestError.code === "cancelled") throw requestError;
+        // A timed-out provider hung for the full window — deprioritize (or
+        // briefly skip) it on subsequent calls so it cannot eat them too.
+        if (requestError.code === "timeout") markProviderTimeout(config.id);
         const canFailOver = requestError.code === "timeout" || requestError.code === "provider";
         if (!canFailOver || index === chain.length - 1) throw requestError;
         // Stop the superseded backend request before switching endpoints.

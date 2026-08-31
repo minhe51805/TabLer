@@ -148,6 +148,11 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
                 : copy.modal.agentStatusDone;
           const isPlan = step.action === "plan";
           const observation = step.observation?.trim();
+          // Models sometimes omit the per-step message; fall back to a
+          // localized action label instead of showing "No message provided.".
+          const displayMessage = step.message.trim() && step.message !== "No message provided."
+            ? step.message
+            : getActionLabel(step.action, copy);
           return (
             <li
               key={step.step}
@@ -180,11 +185,11 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
                   </div>
                 )}
 
-                {step.message && (
+                {displayMessage && (
                   isPlan ? (
-                    <AIWorkspaceMarkdown className="ai-agent-step-plan-text" compact text={step.message} />
+                    <AIWorkspaceMarkdown className="ai-agent-step-plan-text" compact text={displayMessage} />
                   ) : (
-                    <p className="ai-agent-step-message">{step.message}</p>
+                    <p className="ai-agent-step-message">{displayMessage}</p>
                   )
                 )}
 

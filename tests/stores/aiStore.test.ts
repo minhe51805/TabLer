@@ -90,7 +90,7 @@ describe("aiStore", () => {
           tool_choice: "auto",
         }),
       }),
-      360_000,
+      120_000,
       "AI request",
       expect.objectContaining({ onTimeout: expect.any(Function) }),
     );

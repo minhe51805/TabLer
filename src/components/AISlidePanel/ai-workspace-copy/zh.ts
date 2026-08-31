@@ -101,6 +101,17 @@ export const ZH_COPY: AIWorkspaceCopy = {
       cancelling: "正在停止...",
       cancelGeneration: "停止",
       generateBubble: "询问 AI",
+      sqlConfirmWriteTitle: "执行写入 SQL？",
+      sqlConfirmWriteBody: "AI 代理想要运行会更改数据的语句。批准前请先检查。",
+      sqlConfirmHighRiskTitle: "执行高风险 SQL？",
+      sqlConfirmHighRiskBody: "此次运行可能进行破坏性架构更改。请仔细检查每条语句。",
+      sqlConfirmPreviewLabel: "将执行的 SQL",
+      sqlConfirmRunLabel: "执行 SQL",
+      sqlConfirmCancelLabel: "取消",
+      sqlConfirmBatchLabel: "本次运行包含 {count} 条语句。",
+      autonomyFullConfirmTitle: "启用完全访问？",
+      autonomyFullConfirmBody: "AI 代理将自动运行它准备的所有 SQL，不再事先询问。写入和架构操作在执行前仍会请求确认。",
+      autonomyFullConfirmAllow: "启用完全访问",
       promptIdeas: [
         {
           title: "创建表",

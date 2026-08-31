@@ -103,6 +103,17 @@ export const EN_COPY: AIWorkspaceCopy = {
       cancelling: "Stopping...",
       cancelGeneration: "Stop",
       generateBubble: "Ask AI",
+      sqlConfirmWriteTitle: "Run write SQL?",
+      sqlConfirmWriteBody: "The AI agent wants to run a statement that changes data. Review it before approving.",
+      sqlConfirmHighRiskTitle: "Run high-risk SQL?",
+      sqlConfirmHighRiskBody: "This run can apply destructive schema changes. Review every statement carefully.",
+      sqlConfirmPreviewLabel: "SQL to run",
+      sqlConfirmRunLabel: "Run SQL",
+      sqlConfirmCancelLabel: "Cancel",
+      sqlConfirmBatchLabel: "{count} statements in this run.",
+      autonomyFullConfirmTitle: "Enable full access?",
+      autonomyFullConfirmBody: "The agent will auto-run every SQL it prepares without asking first. Write and schema operations still confirm before executing.",
+      autonomyFullConfirmAllow: "Enable full access",
       promptIdeas: [
         {
           title: "Create table",

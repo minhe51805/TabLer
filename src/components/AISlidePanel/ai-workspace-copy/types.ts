@@ -106,6 +106,17 @@ export interface AIWorkspaceCopy {
     cancelling: string;
     cancelGeneration: string;
     generateBubble: string;
+    sqlConfirmWriteTitle: string;
+    sqlConfirmWriteBody: string;
+    sqlConfirmHighRiskTitle: string;
+    sqlConfirmHighRiskBody: string;
+    sqlConfirmPreviewLabel: string;
+    sqlConfirmRunLabel: string;
+    sqlConfirmCancelLabel: string;
+    sqlConfirmBatchLabel: string;
+    autonomyFullConfirmTitle: string;
+    autonomyFullConfirmBody: string;
+    autonomyFullConfirmAllow: string;
     promptIdeas: PromptIdeaCopy[];
   };
   bubbleStates: {

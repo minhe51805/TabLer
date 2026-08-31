@@ -11,6 +11,7 @@ import { useAppLayoutStore } from "../../stores/appLayoutStore";
 import type { AIProviderConfig } from "../../types";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { AIBubbleDetailModal } from "./AIBubbleDetailModal";
+import { AISqlConfirmDialog } from "./AISqlConfirmDialog";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import { formatThreadTimestamp, type AIChatThread } from "./ai-conversation-state";
 import { AIComposerDock } from "./AIComposerDock";
@@ -59,6 +60,18 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
   // Header "+" opens a two-step modal (new chat / bring in existing chats)
   // instead of starting a thread immediately.
   const [isChatActionModalOpen, setChatActionModalOpen] = useState(false);
+  // Escalating to "full" run access is a risky switch, so it asks first.
+  const [isFullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
+  const handleSelectAgentAutonomy = useCallback(
+    (autonomy: AIWorkspaceAgentAutonomy) => {
+      if (autonomy === "full" && m.activeAgentAutonomy !== "full") {
+        setFullAccessConfirmOpen(true);
+        return;
+      }
+      m.selectAgentAutonomy(autonomy);
+    },
+    [m.activeAgentAutonomy, m.selectAgentAutonomy],
+  );
   // Stable callbacks so the memoized AIConversationView skips re-renders
   // triggered by unrelated panel state (composer keystrokes, health ticks...).
   const handleOpenDetail = useCallback(
@@ -153,13 +166,26 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                 )}
               </div><button type="button" className="ai-workspace-chat-tab-add" onClick={m.reloadChat} disabled={m.isGenerating || m.isRunning} title={m.aiCopy.composer.reloadChatTitle}><RotateCcw className="w-3.5 h-3.5" /></button></div></div>
         <AIConversationView bubbles={m.conversationBubbles} copy={m.aiCopy} threadRef={m.chatThreadRef} onOpenDetail={handleOpenDetail} onInsert={m.insertBubble} onRun={m.runBubble} onRetry={m.retryBubble} onOpenRecord={m.openAgentRecord} onUseSuggestion={handleUseSuggestion} />
-        <AIComposerDock copy={m.aiCopy} prompt={m.promptDraft} textareaRef={m.composerTextareaRef} footerNote={m.composerFooterNote} contextUsage={m.contextUsage} attachedSelectionSource={m.attachedSelection?.source} hasAttachedSelectionText={Boolean(m.attachedSelection?.text.trim())} attachments={m.composerAttachments} canAttachImages={m.canAttachImages} onAddAttachmentFiles={m.addAttachmentFiles} onRemoveAttachment={m.removeAttachment} onOpenAttachmentManager={m.openAttachmentManager} interactionMode={m.activeInteractionMode} agentAutonomy={m.activeAgentAutonomy} activeProvider={m.activeProvider} providers={m.switchableProviders} isSwitchingProvider={m.isSwitchingProvider} isGenerating={m.isGenerating} isCancelling={m.isCancelling} isConnectionAvailable={Boolean(m.connectionId)} isSessionDataReadEnabled={m.isSessionDataReadEnabled} sessionDataReadLabel={m.sessionDataReadButtonLabel} sessionDataReadTitle={m.sessionDataReadButtonTitle} showThinking={m.showThinking} onPromptChange={m.setPromptDraft} onKeyDown={m.composerKeyDown} onDismissSelection={m.dismissSelection} onSelectInteractionMode={m.selectInteractionMode} onSelectAgentAutonomy={m.selectAgentAutonomy} onActivateProvider={m.activateProvider} onToggleModelVisibility={m.toggleModelVisibility} onSetSessionDataReadEnabled={m.setSessionDataReadEnabled} onSetShowThinking={m.setShowThinking} onOpenSettings={m.openSettings} onCloseHistory={() => m.setHistoryOpen(false)} onGenerate={m.generate} onCancelGeneration={m.cancelGeneration} />
+        <AIComposerDock copy={m.aiCopy} prompt={m.promptDraft} textareaRef={m.composerTextareaRef} footerNote={m.composerFooterNote} contextUsage={m.contextUsage} attachedSelectionSource={m.attachedSelection?.source} hasAttachedSelectionText={Boolean(m.attachedSelection?.text.trim())} attachments={m.composerAttachments} canAttachImages={m.canAttachImages} onAddAttachmentFiles={m.addAttachmentFiles} onRemoveAttachment={m.removeAttachment} onOpenAttachmentManager={m.openAttachmentManager} interactionMode={m.activeInteractionMode} agentAutonomy={m.activeAgentAutonomy} activeProvider={m.activeProvider} providers={m.switchableProviders} isSwitchingProvider={m.isSwitchingProvider} isGenerating={m.isGenerating} isCancelling={m.isCancelling} isConnectionAvailable={Boolean(m.connectionId)} isSessionDataReadEnabled={m.isSessionDataReadEnabled} sessionDataReadLabel={m.sessionDataReadButtonLabel} sessionDataReadTitle={m.sessionDataReadButtonTitle} showThinking={m.showThinking} onPromptChange={m.setPromptDraft} onKeyDown={m.composerKeyDown} onDismissSelection={m.dismissSelection} onSelectInteractionMode={m.selectInteractionMode} onSelectAgentAutonomy={handleSelectAgentAutonomy} onActivateProvider={m.activateProvider} onToggleModelVisibility={m.toggleModelVisibility} onSetSessionDataReadEnabled={m.setSessionDataReadEnabled} onSetShowThinking={m.setShowThinking} onOpenSettings={m.openSettings} onCloseHistory={() => m.setHistoryOpen(false)} onGenerate={m.generate} onCancelGeneration={m.cancelGeneration} />
       </div></div></aside>
     </div>
     {m.detailBubble && <AIBubbleDetailModal bubble={m.detailBubble} isGenerating={m.isGenerating} isRunning={m.isRunning} onClose={() => m.setDetailBubbleId(null)} onCopy={m.copyBubble} onInsert={m.insertBubble} onRun={m.runBubble} onRewrite={m.rewriteBubble} />}
     <ConfirmDialog isOpen={m.visualizationConsentPending !== null} title={m.visualizationConsentPending?.title || "Allow AI data read?"} message={m.visualizationConsentPending?.message || ""} confirmText={m.visualizationConsentPending?.confirmText || "Allow"} cancelText={m.visualizationConsentPending?.cancelText || "Deny"} onConfirm={() => m.confirmVisualizationConsent(true)} onCancel={() => m.confirmVisualizationConsent(false)} />
     <ConfirmDialog isOpen={m.failoverConsentPending !== null} title={m.failoverConsentPending?.title || "Provider failed"} message={m.failoverConsentPending?.message || ""} confirmText={m.failoverConsentPending?.confirmText || "Allow auto-switch"} cancelText={m.failoverConsentPending?.cancelText || "Not now"} onConfirm={() => m.resolveFailoverConsent(true)} onCancel={() => m.resolveFailoverConsent(false)} />
     <ConfirmDialog isOpen={m.deleteThreadPending !== null} title={m.aiCopy.composer.historyDeleteTitle ?? "Delete conversation"} message={m.aiCopy.composer.historyDeleteConfirm ?? "Delete this conversation thread?"} confirmText="Delete" cancelText="Cancel" onConfirm={m.confirmDeleteThread} onCancel={m.cancelDeleteThread} />
+    <AISqlConfirmDialog copy={m.aiCopy.composer} />
+    <ConfirmDialog
+      isOpen={isFullAccessConfirmOpen}
+      title={m.aiCopy.composer.autonomyFullConfirmTitle}
+      message={m.aiCopy.composer.autonomyFullConfirmBody}
+      confirmText={m.aiCopy.composer.autonomyFullConfirmAllow}
+      cancelText={m.aiCopy.composer.sqlConfirmCancelLabel}
+      onConfirm={() => {
+        setFullAccessConfirmOpen(false);
+        m.selectAgentAutonomy("full");
+      }}
+      onCancel={() => setFullAccessConfirmOpen(false)}
+    />
     <AIAttachmentManager open={m.isAttachmentManagerOpen} copy={m.aiCopy} onClose={m.closeAttachmentManager} />
     <AIWorkspaceChatActionModal
       open={isChatActionModalOpen}

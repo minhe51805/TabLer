@@ -101,6 +101,17 @@ export const VI_COPY: AIWorkspaceCopy = {
       cancelling: "Đang dừng...",
       cancelGeneration: "Dừng",
       generateBubble: "Hỏi AI",
+      sqlConfirmWriteTitle: "Chạy SQL ghi dữ liệu?",
+      sqlConfirmWriteBody: "AI agent muốn chạy câu lệnh làm thay đổi dữ liệu. Kiểm tra kỹ trước khi duyệt.",
+      sqlConfirmHighRiskTitle: "Chạy SQL rủi ro cao?",
+      sqlConfirmHighRiskBody: "Lượt chạy này có thể thay đổi cấu trúc DB và không thể hoàn tác. Xem kỹ từng câu lệnh.",
+      sqlConfirmPreviewLabel: "SQL sẽ chạy",
+      sqlConfirmRunLabel: "Chạy SQL",
+      sqlConfirmCancelLabel: "Huỷ",
+      sqlConfirmBatchLabel: "{count} câu lệnh trong lượt chạy này.",
+      autonomyFullConfirmTitle: "Bật toàn quyền?",
+      autonomyFullConfirmBody: "Agent sẽ tự chạy mọi câu SQL nó chuẩn bị mà không hỏi trước. Thao tác ghi và đổi schema vẫn sẽ hỏi xác nhận trước khi thực thi.",
+      autonomyFullConfirmAllow: "Bật toàn quyền",
       promptIdeas: [
         {
           title: "Tạo bảng",

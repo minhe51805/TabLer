@@ -9,6 +9,7 @@ import {
   normalizeStatementForGuard,
 } from "../../SQLEditor/SQLEditorUtils";
 import { getAISqlConfirmationRequirement } from "../ai-execution-policy";
+import { requestAISqlConfirmation } from "../ai-sql-confirm";
 import { summarizeRunResult } from "../ai-sql-response";
 
 export interface AIExecutedSqlResult {
@@ -89,13 +90,8 @@ export function useAISqlRunner({
         await switchDatabase(connectionId, targetDatabaseFromUse);
       }
 
-      if (confirmationRequirement === "high-risk") {
-        const confirmed = window.confirm("The AI agent wants to run a high-risk SQL statement through the protected sandbox. It can apply real database changes. Approve this run?");
-        if (!confirmed) throw new Error("Execution cancelled.");
-      } else if (confirmationRequirement === "mutation") {
-        const confirmed = window.confirm("The AI agent wants to run a write or schema-changing SQL statement through the sandbox. Approve this run?");
-        if (!confirmed) throw new Error("Execution cancelled.");
-      }
+      const confirmed = await requestAISqlConfirmation(confirmationRequirement, statements);
+      if (!confirmed) throw new Error("Execution cancelled.");
 
       const queryResult = await executeSandboxQuery(connectionId, statements);
       if (hasMutatingStatements) {

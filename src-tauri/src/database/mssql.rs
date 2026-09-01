@@ -1,6 +1,8 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
-use super::query_common::{statement_returns_rows, MAX_QUERY_RESULT_ROWS};
+use super::query_common::{
+    statement_returns_rows, METADATA_QUERY_ROW_LIMIT, MAX_QUERY_RESULT_ROWS,
+};
 use super::safety::{
     normalize_order_dir, qualify_mssql_table_name, quote_mssql_identifier, quote_mssql_order_by,
     sanitize_mssql_filter_clause,
@@ -452,13 +454,19 @@ port instead (e.g. 'localhost,1433'). Original error: {}",
     }
 
     async fn query_rows(&self, sql: &str) -> Result<(Vec<Row>, bool)> {
+        self.query_rows_with_limit(sql, MAX_QUERY_RESULT_ROWS).await
+    }
+
+    /// Like [`Self::query_rows`] but with a caller-chosen row cap. Metadata
+    /// enumeration (schema objects) legitimately exceeds the interactive
+    /// query cap on system databases (master alone has thousands of system
+    /// objects), so it uses a much larger limit.
+    async fn query_rows_with_limit(&self, sql: &str, limit: usize) -> Result<(Vec<Row>, bool)> {
         let mut client = self.client.lock().await;
         let rows = client.simple_query(sql).await?.into_first_result().await?;
-        let truncated = rows.len() > MAX_QUERY_RESULT_ROWS;
+        let truncated = rows.len() > limit;
         Ok((
-            rows.into_iter()
-                .take(MAX_QUERY_RESULT_ROWS)
-                .collect::<Vec<_>>(),
+            rows.into_iter().take(limit).collect::<Vec<_>>(),
             truncated,
         ))
     }
@@ -642,7 +650,7 @@ impl DatabaseDriver for MssqlDriver {
         let sql = format!(
             "SELECT s.name AS schema_name, o.name, \
                     CASE WHEN o.type = 'D' THEN N'DEFAULT' ELSE o.type_desc END \
-             FROM [{}].sys.objects o \
+             FROM [{}].sys.all_objects o \
              JOIN [{}].sys.schemas s ON s.schema_id = o.schema_id \
              LEFT JOIN [{}].sys.triggers tt ON tt.object_id = o.object_id \
              WHERE o.type IN ('V', 'TR', 'P', 'FN', 'TF', 'IF', 'SN', 'AF', 'PC', 'FS', 'FT', 'R', 'D') \
@@ -650,12 +658,12 @@ impl DatabaseDriver for MssqlDriver {
              UNION ALL \
              SELECT s.name AS schema_name, t.name, N'DATABASE_TRIGGER' \
              FROM [{}].sys.triggers t \
-             JOIN [{}].sys.schemas s ON s.schema_id = t.schema_id \
+             JOIN [{}].sys.objects o ON o.object_id = t.object_id \
+             JOIN [{}].sys.schemas s ON s.schema_id = o.schema_id \
              WHERE t.parent_class = 0 \
              UNION ALL \
-             SELECT s.name AS schema_name, a.name, N'ASSEMBLY' \
+             SELECT N'sys' AS schema_name, a.name, N'ASSEMBLY' \
              FROM [{}].sys.assemblies a \
-             JOIN [{}].sys.schemas s ON s.schema_id = a.schema_id \
              UNION ALL \
              SELECT s.name AS schema_name, t.name, \
                     CASE \
@@ -709,7 +717,9 @@ impl DatabaseDriver for MssqlDriver {
             db.replace(']', "]]"),
             db.replace(']', "]]"),
         );
-        let (rows, _) = self.query_rows(&sql).await?;
+        let (rows, _) = self
+            .query_rows_with_limit(&sql, METADATA_QUERY_ROW_LIMIT)
+            .await?;
 
         Ok(rows
             .iter()
@@ -1365,6 +1375,40 @@ mod mssql_live_diagnostics {
                 }
             }
             Err(error) => println!("[tables diag] connect failed: {error:#}"),
+        }
+    }
+    /// Live probe: verify what object_type values list_schema_objects returns
+    /// against the real server (run with --ignored --nocapture).
+    #[tokio::test]
+    #[ignore]
+    async fn mssql_live_schema_objects() {
+        use crate::database::driver::DatabaseDriver;
+        use crate::database::mssql::config_defaults;
+        let mut config = config_defaults();
+        config.host = Some("localhost".to_string());
+        config.port = Some(14330);
+        config.additional_fields.insert(
+            "instance_name".to_string(),
+            "LAPTOP-JFECRE1C\\MINH".to_string(),
+        );
+        let driver = MssqlDriver::connect(&config).await.expect("connect");
+        let objects = driver
+            .list_schema_objects(Some("master"))
+            .await
+            .expect("list_schema_objects");
+        let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+        for object in &objects {
+            *counts.entry(object.object_type.clone()).or_default() += 1;
+        }
+        println!("[list_schema_objects master] total={}", objects.len());
+        for (kind, count) in &counts {
+            println!("  object_type={kind:?} count={count}");
+        }
+        for object in objects.iter().filter(|o| o.schema.as_deref() == Some("dbo")) {
+            println!(
+                "  dbo row: {} type={:?}",
+                object.name, object.object_type
+            );
         }
     }
 }

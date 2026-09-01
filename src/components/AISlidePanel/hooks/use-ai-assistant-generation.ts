@@ -707,8 +707,8 @@ export function useAIAssistantGeneration({
                   ? [
                       result.rawResponse,
                       language === "vi"
-                        ? "> ⚠ SQL đề xuất là thao tác ghi nên KHÔNG được tự chạy: Safe Mode đang ở mức chặn mutation. Hạ mức Safe Mode trong Settings hoặc chạy thủ công qua nút Apply."
-                        : "> ⚠ The proposed SQL is a write, so it was NOT auto-run: Safe Mode currently blocks mutations. Lower Safe Mode in Settings or apply it manually.",
+                        ? "> ⚠ SQL đề xuất là thao tác ghi nên KHÔNG được tự chạy: Safe Mode đang chặn mutation. Bấm Apply để mở tab SQL rồi chạy — Safe Mode sẽ hiện dialog xác nhận cho phép chạy."
+                        : "> ⚠ The proposed SQL is a write, so it was NOT auto-run: Safe Mode currently blocks mutations. Click Apply to open the SQL tab and run it — Safe Mode will show a confirmation dialog.",
                     ]
                       .filter(Boolean)
                       .join("\n\n")

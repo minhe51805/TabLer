@@ -29,6 +29,7 @@ function requestConfirmation(sql: string, connectionId: string, level: number): 
 export async function assertQueryAllowed(
   sql: string,
   connectionId: string,
+  options?: { userInitiated?: boolean },
 ): Promise<SqlSafetyDecision> {
   const safeLevel = useSafeModeStore.getState().getEffectiveLevel(connectionId);
   // Pass the connection's engine so dialect-specific server commands
@@ -53,10 +54,22 @@ export async function assertQueryAllowed(
       isBlockedAtLevel(safeLevel, statement.sql),
   );
   if (blocked) {
-    throw new Error(
-      `[Safe Mode level ${safeLevel}] This statement is blocked. ` +
-        "Upgrade to a lower protection level or disable Safe Mode in settings to proceed.",
-    );
+    // A blocked statement only becomes an interactive confirmation when a
+    // HUMAN initiated this exact run (query editor Run button). Autonomous
+    // paths (agent tools, sandbox calls) keep the hard block — they must
+    // never pop dialogs or write through a guard tier. Levels 4-5
+    // (strict/production) also keep the hard block for everyone.
+    if (options?.userInitiated && safeLevel <= 3) {
+      const confirmed = await requestConfirmation(sql, connectionId, safeLevel);
+      if (!confirmed) {
+        throw new Error("Query cancelled by Safe Mode confirmation.");
+      }
+    } else {
+      throw new Error(
+        `[Safe Mode level ${safeLevel}] This statement is blocked. ` +
+          "Upgrade to a lower protection level or disable Safe Mode in settings to proceed.",
+      );
+    }
   }
 
   const needsConfirmation =

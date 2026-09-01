@@ -141,10 +141,20 @@ describe("queryStore", () => {
     );
   });
 
-  it("blocks unsafe SQL before invoking the backend", async () => {
+  it("offers a Safe Mode confirmation for blocked user-initiated runs and cancels on deny", async () => {
+    // User-initiated editor runs (the Run button) get an interactive Safe
+    // Mode confirmation instead of a dead-end error; denying cancels before
+    // the backend is ever invoked.
+    const deny = () => {
+      window.dispatchEvent(
+        new CustomEvent("safe-mode-confirm-response", { detail: { approved: false } }),
+      );
+    };
+    window.addEventListener("safe-mode-confirm-request", deny, { once: true });
+
     await expect(
       useQueryStore.getState().executeQuery("connection-1", "DROP TABLE users"),
-    ).rejects.toThrow("Safe Mode level 1");
+    ).rejects.toThrow("Query cancelled by Safe Mode confirmation.");
     expect(invokeMutationMock).not.toHaveBeenCalled();
   });
 

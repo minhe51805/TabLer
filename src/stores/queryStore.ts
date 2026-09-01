@@ -133,7 +133,10 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   },
 
   executeQuery: async (connectionId: string, sql: string) => {
-    const safety = await assertQueryAllowed(sql, connectionId);
+    // The editor's Run button is a human decision: a Safe Mode block becomes
+    // an interactive confirmation instead of a dead end. All other callers
+    // (agent tools, programmatic sandbox calls) keep the hard block.
+    const safety = await assertQueryAllowed(sql, connectionId, { userInitiated: true });
     const requestId = crypto.randomUUID();
     set({
       isExecutingQuery: true,

@@ -19,6 +19,12 @@ export interface SqlSafetyDecision {
   readOnly: boolean;
   hasSchemaMutation: boolean;
   parseError?: string | null;
+  /**
+   * Set by the Safe Mode guard (not the classifier): the human explicitly
+   * approved this exact run — confirmation dialog approved, or the standing
+   * full-autonomy grant. Lets the backend relax its level 1-3 block.
+   */
+  userConfirmed?: boolean;
 }
 
 export function classifySqlSafety(sql: string, databaseType?: string | null): Promise<SqlSafetyDecision> {

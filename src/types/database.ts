@@ -279,4 +279,11 @@ export interface Tab {
   workspaceEntityId?: string;
   workspaceEntityRevision?: string;
   workspaceEntityUpdatedAt?: string;
+  /**
+   * Where the tab came from. `"ai"` tabs were created by the AI workspace
+   * and honor the agent-autonomy grant (full autonomy runs Safe Mode-blocked
+   * statements without the confirmation dialog). Omitted/`"user"` tabs are
+   * regular manual tabs and always confirm.
+   */
+  source?: "ai" | "user";
 }

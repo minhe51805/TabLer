@@ -618,16 +618,19 @@ export function useAIAssistantGeneration({
       const agentAlreadyReadLiveData = result.agentSteps?.some(
         (step) => (step.action === "run_readonly_sql" || step.action === "sample_table_data") && step.status === "done",
       );
-      // Agent autonomy never overrides Safe Mode: a proposal the current
-      // Safe Mode level would hard-block must not be auto-run (the run could
-      // only die with a raw Safe Mode error). Fall back to the manual
-      // approval flow with an explanatory note instead.
+      // Agent autonomy: "full" is a standing human approval, so Safe Mode
+      // blocks at levels <= 3 run through pre-approved instead of falling
+      // back to the manual flow. Other autonomy levels never override Safe
+      // Mode: a proposal the current level would hard-block must not be
+      // auto-run (the run could only die with a raw Safe Mode error).
       const safeModeConnectionId = useConnectionStore.getState().activeConnectionId ?? undefined;
       const safeModeLevel = useSafeModeStore.getState().getEffectiveLevel(safeModeConnectionId);
+      const fullAutonomyPreApproved = activeAgentAutonomy === "full" && safeModeLevel <= 3;
       const safeModeBlockedSql =
         interactionMode === "agent" &&
         Boolean(result.sql) &&
-        isSqlBlockedBySafeMode(result.sql ?? "", safeModeLevel);
+        isSqlBlockedBySafeMode(result.sql ?? "", safeModeLevel) &&
+        !fullAutonomyPreApproved;
       const agentCanAutoRun =
         interactionMode === "agent" &&
         Boolean(result.sql) &&
@@ -636,7 +639,7 @@ export function useAIAssistantGeneration({
         shouldAgentAutoRunSql(activeAgentAutonomy, result.risk?.level);
       if (agentCanAutoRun && result.sql) {
         try {
-          const runResult = await runSql(result.sql);
+          const runResult = await runSql(result.sql, { agentAutonomy: activeAgentAutonomy });
           setBubbles((current) =>
             current.map((bubble) =>
               bubble.id === loadingBubble.id

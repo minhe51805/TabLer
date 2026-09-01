@@ -52,9 +52,9 @@ describe("AICheckpointPickerModal", () => {
     // List view: picking a checkpoint triggers the preview invoke.
     await user.click(await screen.findByRole("button", { name: /before schema change/ }));
 
-    expect(
-      await screen.findByText(/Runs 3 statements \(1 schema, 2 data, 0 destructive\)/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("3")).toBeInTheDocument();
+    expect(await screen.findByText("1")).toBeInTheDocument();
+    expect(await screen.findByText("2")).toBeInTheDocument();
     expect(invokeMutationMock).toHaveBeenCalledWith(
       "preview_database_checkpoint_restore",
       expect.objectContaining({

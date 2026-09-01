@@ -11,15 +11,26 @@ import {
 import { getAISqlConfirmationRequirement } from "../ai-execution-policy";
 import { requestAISqlConfirmation } from "../ai-sql-confirm";
 import { summarizeRunResult } from "../ai-sql-response";
+import type { AIWorkspaceAgentAutonomy } from "../ai-workspace-types";
 
 export interface AIExecutedSqlResult {
   queryResult: QueryResult;
   summary: string;
 }
 
+export interface AIRunSqlOptions {
+  /** Autonomy granted by the user for this run ("full" replaces the per-run dialog). */
+  agentAutonomy?: AIWorkspaceAgentAutonomy;
+}
+
 interface UseAISqlRunnerOptions {
   connectionId: string | null;
-  executeSandboxQuery: (connectionId: string, statements: string[]) => Promise<QueryResult>;
+  executeSandboxQuery: (
+    connectionId: string,
+    statements: string[],
+    requireReadOnly?: boolean,
+    options?: { userInitiated?: boolean; preApproved?: boolean },
+  ) => Promise<QueryResult>;
   setError: (message: string | null) => void;
   switchDatabase: (connectionId: string, database: string) => Promise<void>;
 }
@@ -32,7 +43,7 @@ export function useAISqlRunner({
 }: UseAISqlRunnerOptions) {
   const [isRunning, setIsRunning] = useState(false);
 
-  const runSql = useCallback(async (sql: string): Promise<AIExecutedSqlResult> => {
+  const runSql = useCallback(async (sql: string, runOptions?: AIRunSqlOptions): Promise<AIExecutedSqlResult> => {
     if (!connectionId) {
       const message = "Please connect to a database before running SQL from AI.";
       setError(message);
@@ -79,7 +90,10 @@ export function useAISqlRunner({
       throw new Error(message);
     }
 
-    const confirmationRequirement = getAISqlConfirmationRequirement(statements);
+    const confirmationRequirement = getAISqlConfirmationRequirement(
+      statements,
+      runOptions?.agentAutonomy,
+    );
     const hasMutatingStatements = confirmationRequirement !== null;
     setIsRunning(true);
     setError(null);
@@ -90,10 +104,21 @@ export function useAISqlRunner({
         await switchDatabase(connectionId, targetDatabaseFromUse);
       }
 
-      const confirmed = await requestAISqlConfirmation(confirmationRequirement, statements);
+      // No dialog for read-only-classified runs or under the standing
+      // "full autonomy" grant; otherwise the review dialog gates the run.
+      const confirmed =
+        confirmationRequirement === null ||
+        (await requestAISqlConfirmation(confirmationRequirement, statements));
       if (!confirmed) throw new Error("Execution cancelled.");
 
-      const queryResult = await executeSandboxQuery(connectionId, statements);
+      // Only claim Safe-Mode pre-approval when it is real: the standing
+      // "full autonomy" grant, or the review dialog was actually shown and
+      // approved. Read-classified runs (no dialog) must NOT claim it — the
+      // backend's stricter parser then stays fail-closed on anything the
+      // frontend regex mis-reads as a read (e.g. mutating CTEs).
+      const preApproved =
+        runOptions?.agentAutonomy === "full" || confirmationRequirement !== null;
+      const queryResult = await executeSandboxQuery(connectionId, statements, undefined, { preApproved });
       if (hasMutatingStatements) {
         const invalidateStructure = statements.some((statement) => {
           const normalized = normalizeStatementForGuard(statement);

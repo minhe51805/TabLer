@@ -21775,127 +21775,348 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 /* Checkpoint picker (/rollback) — list → preview → confirm in one modal. */
-.ai-checkpoint-modal {
-  width: min(460px, calc(100vw - 32px));
-}
-
-.ai-checkpoint-modal-head {
+/* ============================================================
+ * /rollback checkpoint picker dialog
+ * Self-contained styles (no Tailwind dependency) so the modal
+ * renders identically inside the document.body portal.
+ * ============================================================ */
+.ckpt-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding-bottom: 10px;
-  font-size: 14px;
-  color: var(--text-primary);
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 18, 25, 0.55);
+  backdrop-filter: blur(4px);
+  animation: ckpt-overlay-in 140ms ease-out;
 }
 
-.ai-checkpoint-modal-hint,
-.ai-checkpoint-modal-empty,
-.ai-checkpoint-modal-error,
-.ai-checkpoint-modal-warning,
-.ai-checkpoint-modal-preview,
-.ai-checkpoint-modal-loading {
-  padding: 8px 10px;
-  font-size: 12.5px;
-  color: var(--text-secondary);
+@keyframes ckpt-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-.ai-checkpoint-modal-empty {
-  color: var(--text-tertiary);
-}
-
-.ai-checkpoint-modal-error {
-  color: #e5484d;
-}
-
-.ai-checkpoint-modal-warning {
-  color: #d97706;
-}
-
-.ai-checkpoint-list {
+.ckpt-dialog {
+  width: min(480px, 100%);
+  max-height: min(600px, calc(100vh - 48px));
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 280px;
+  background: var(--bg-secondary, #fff);
+  color: var(--text-primary, #1f2430);
+  border: 1px solid var(--border, #e3e6ec);
+  border-radius: 14px;
+  box-shadow:
+    0 24px 64px rgba(10, 14, 22, 0.28),
+    0 4px 16px rgba(10, 14, 22, 0.12);
+  overflow: hidden;
+  animation: ckpt-dialog-in 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+@keyframes ckpt-dialog-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.ckpt-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid var(--border, #e3e6ec);
+}
+
+.ckpt-dialog__icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(99, 102, 241, 0.12);
+  color: #6366f1;
+}
+
+.ckpt-dialog--danger .ckpt-dialog__icon {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.ckpt-dialog__heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.ckpt-dialog__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text-primary, #1f2430);
+}
+
+.ckpt-dialog__subtitle {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted, #9aa1ad);
+}
+
+.ckpt-dialog__close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted, #9aa1ad);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.ckpt-dialog__close:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+  color: var(--text-primary, #1f2430);
+}
+
+.ckpt-dialog__body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ckpt-dialog__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 12px;
+  font-size: 13px;
+  color: var(--text-muted, #9aa1ad);
+  text-align: center;
+}
+
+.ckpt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.ai-checkpoint-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: 9px 10px;
-  border: 1px solid var(--mm-border);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-}
-
-.ai-checkpoint-item:hover {
-  background: rgba(0, 122, 255, 0.1);
-}
-
-.ai-checkpoint-item-label {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.ai-checkpoint-item-meta {
-  font-size: 11.5px;
-  color: var(--text-tertiary);
-}
-
-.ai-checkpoint-confirm-card {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 8px 0;
-  padding: 10px 12px;
-  border: 1px solid var(--mm-border);
-  border-radius: 10px;
-  background: rgba(0, 122, 255, 0.06);
-}
-
-.ai-checkpoint-confirm-card strong {
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.ai-checkpoint-confirm-card span {
-  font-size: 11.5px;
-  color: var(--text-tertiary);
-}
-
-.ai-checkpoint-modal-confirm-title {
+.ckpt-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 6px 0 2px;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 13px;
+  border: 1px solid var(--border, #e3e6ec);
+  border-radius: 11px;
+  background: var(--bg-primary, #f7f8fa);
+  color: var(--text-primary, #1f2430);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.ckpt-item:hover {
+  border-color: rgba(99, 102, 241, 0.55);
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.ckpt-item:active {
+  transform: scale(0.99);
+}
+
+.ckpt-item__icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
+}
+
+.ckpt-item__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ckpt-item__label {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-primary, #1f2430);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.ai-checkpoint-modal-actions {
+.ckpt-item__meta {
+  font-size: 11.5px;
+  color: var(--text-muted, #9aa1ad);
+}
+
+.ckpt-item__chevron {
+  flex-shrink: 0;
+  color: var(--text-muted, #9aa1ad);
+}
+
+.ckpt-dialog__confirm-title {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-primary, #1f2430);
+}
+
+.ckpt-dialog__confirm-title svg {
+  color: #d97706;
+}
+
+.ckpt-confirm-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: 11px;
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.ckpt-confirm-card__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ckpt-confirm-card__label {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-primary, #1f2430);
+}
+
+.ckpt-confirm-card__meta {
+  font-size: 11.5px;
+  color: var(--text-muted, #9aa1ad);
+}
+
+.ckpt-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ckpt-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid var(--border, #e3e6ec);
+  border-radius: 999px;
+  background: var(--bg-primary, #f7f8fa);
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--text-secondary, #4a5160);
+}
+
+.ckpt-stat strong {
+  font-weight: 700;
+  color: var(--text-primary, #1f2430);
+}
+
+.ckpt-stat--danger {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.ckpt-stat--danger strong {
+  color: #dc2626;
+}
+
+.ckpt-dialog__warning {
+  display: flex;
+  align-items: flex-start;
   gap: 8px;
-  padding-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 12px;
+  line-height: 1.55;
+  color: #b45309;
 }
 
-.ai-workspace-modal-btn.danger {
-  background: #e5484d;
-  border-color: #e5484d;
-  color: #fff;
+.ckpt-dialog__error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.08);
+  font-size: 12px;
+  line-height: 1.55;
+  color: #dc2626;
+  word-break: break-word;
 }
 
-.ai-workspace-modal-btn.danger:disabled {
-  opacity: 0.55;
+.ckpt-dialog__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 18px 0;
+  font-size: 12.5px;
+  color: var(--text-muted, #9aa1ad);
+}
+
+.ckpt-dialog__footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px 16px;
+  border-top: 1px solid var(--border, #e3e6ec);
+  background: var(--bg-secondary, #fff);
+}
+
+.ckpt-dialog__footer-spacer {
+  flex: 1;
+}
+
+.ckpt-btn-danger {
+  background: #dc2626 !important;
+  border-color: #dc2626 !important;
+  color: #fff !important;
+}
+
+.ckpt-btn-danger:hover:not(:disabled) {
+  background: #ef4444 !important;
+  border-color: #ef4444 !important;
+}
+
+.ckpt-btn-danger:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
@@ -37169,4 +37390,275 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
 
 .app-root .ai-workspace-stage--sidebar .ai-ws-item-meta .ai-ws-context-dot {
   right: -2px;
+}
+
+/* ============================================================
+ * Safe Mode confirmation dialog
+ * Self-contained styles (no Tailwind dependency) so the modal
+ * renders identically inside the document.body portal.
+ * ============================================================ */
+.safe-mode-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 18, 25, 0.55);
+  backdrop-filter: blur(4px);
+  animation: safe-mode-overlay-in 140ms ease-out;
+}
+
+@keyframes safe-mode-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.safe-mode-dialog {
+  width: min(520px, 100%);
+  max-height: min(560px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary, #fff);
+  color: var(--text-primary, #1f2430);
+  border: 1px solid var(--border, #e3e6ec);
+  border-radius: 14px;
+  box-shadow:
+    0 24px 64px rgba(10, 14, 22, 0.28),
+    0 4px 16px rgba(10, 14, 22, 0.12);
+  overflow: hidden;
+  animation: safe-mode-dialog-in 160ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+@keyframes safe-mode-dialog-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.safe-mode-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid var(--border, #e3e6ec);
+}
+
+.safe-mode-dialog__icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+}
+
+.safe-mode-dialog--strict .safe-mode-dialog__icon {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+}
+
+.safe-mode-dialog__heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.safe-mode-dialog__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text-primary, #1f2430);
+}
+
+.safe-mode-dialog__level-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.safe-mode-dialog--strict .safe-mode-dialog__level-chip {
+  background: rgba(239, 68, 68, 0.14);
+  color: #b91c1c;
+}
+
+.safe-mode-dialog__close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted, #9aa1ad);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.safe-mode-dialog__close:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+  color: var(--text-primary, #1f2430);
+}
+
+.safe-mode-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.safe-mode-dialog__description {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary, #4a5160);
+}
+
+.safe-mode-dialog__sql-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted, #9aa1ad);
+}
+
+.safe-mode-dialog__copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border, #e3e6ec);
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--text-muted, #9aa1ad);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.safe-mode-dialog__copy:hover {
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
+  color: var(--text-primary, #1f2430);
+  border-color: var(--border, #e3e6ec);
+}
+
+.safe-mode-dialog__sql {
+  margin: 0;
+  max-height: 216px;
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border, #e3e6ec);
+  border-radius: 10px;
+  background: var(--bg-primary, #f7f8fa);
+  font-family: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-secondary, #4a5160);
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 2;
+}
+
+.safe-mode-dialog__sql-length {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-muted, #9aa1ad);
+  text-align: right;
+}
+
+.safe-mode-dialog__hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px;
+  background: rgba(59, 130, 246, 0.07);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary, #4a5160);
+}
+
+.safe-mode-dialog__hint svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #3b82f6;
+}
+
+.safe-mode-dialog__hint code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text-primary, #1f2430);
+}
+
+.safe-mode-dialog__field-label {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted, #9aa1ad);
+}
+
+.safe-mode-dialog__password {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--border, #e3e6ec);
+  border-radius: 9px;
+  background: var(--bg-primary, #f7f8fa);
+  color: var(--text-primary, #1f2430);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.safe-mode-dialog__password:focus {
+  border-color: var(--accent, #007aff);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.14);
+}
+
+.safe-mode-dialog__field-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #dc2626;
+}
+
+.safe-mode-dialog__field-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted, #9aa1ad);
+}
+
+.safe-mode-dialog__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px 16px;
+  border-top: 1px solid var(--border, #e3e6ec);
+  background: var(--bg-secondary, #fff);
 }

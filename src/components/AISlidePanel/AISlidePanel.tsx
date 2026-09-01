@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { translateLanguage, useI18n } from "../../i18n";
 import { useAIStore } from "../../stores/aiStore";
+import { useAIAutonomyStore } from "../../stores/aiAutonomyStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { inferDatabaseFromWorkspaceName, selectActiveAIChatWorkspace, useAIChatWorkspaceStore } from "../../stores/aiChatWorkspaceStore";
@@ -321,6 +322,13 @@ export function AISlidePanel({
     () => workspaceAgentAutonomy[currentWorkspaceKey] ?? DEFAULT_AI_WORKSPACE_AGENT_AUTONOMY,
     [currentWorkspaceKey, workspaceAgentAutonomy]
   );
+  // Mirror the active autonomy into a per-connection signal so AI-origin
+  // workspace tabs (outside this panel) can honor the full-autonomy grant
+  // for THIS connection only — another connection's tabs keep their own.
+  useEffect(() => {
+    if (!connectionId) return;
+    useAIAutonomyStore.getState().setAutonomy(connectionId, activeAgentAutonomy);
+  }, [activeAgentAutonomy, connectionId]);
   const activeThreadBubbles = useMemo(
     () => (
       !currentThread
@@ -1418,15 +1426,21 @@ export function AISlidePanel({
     // dangerous SQL opens ready-to-run so the user presses Chạy themselves.
     // The Duyệt chạy button itself never disappears — but a bubble that was
     // already opened in the workspace must not spawn yet another tab.
+    // Exception: "full" autonomy is a standing human approval, so the run
+    // executes immediately in the sandbox — no ready-to-run tab that would
+    // only end in another confirmation dialog.
     if (bubble.openedInWorkspace) {
       return;
     }
     const approvedRiskLevel = bubble.risk?.level;
-    const workspaceOpened = openSqlInWorkspace(runnableSql, {
-      title: "AI Query",
-      autoRun: approvedRiskLevel === "safe",
-      focusWorkspace: true,
-    });
+    const fullAutonomyRun = activeAgentAutonomy === "full";
+    const workspaceOpened = fullAutonomyRun
+      ? false
+      : openSqlInWorkspace(runnableSql, {
+          title: "AI Query",
+          autoRun: approvedRiskLevel === "safe",
+          focusWorkspace: true,
+        });
     if (workspaceOpened) {
       setBubbles((current) =>
         current.map((currentBubble) =>
@@ -1439,7 +1453,7 @@ export function AISlidePanel({
     }
 
     try {
-      const result = await runSql(runnableSql);
+      const result = await runSql(runnableSql, { agentAutonomy: activeAgentAutonomy });
       setBubbles((current) =>
         current.map((currentBubble) =>
           currentBubble.id === bubble.id

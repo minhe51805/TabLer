@@ -115,6 +115,106 @@ describe("queryStore", () => {
     expect(invokeMutationMock).not.toHaveBeenCalled();
   });
 
+  it("escalates a blocked sandbox write to Safe Mode confirmation when user-initiated", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+    const autoApprove = () => {
+      window.dispatchEvent(
+        new CustomEvent("safe-mode-confirm-response", { detail: { approved: true } }),
+      );
+    };
+    window.addEventListener("safe-mode-confirm-request", autoApprove);
+    try {
+      await useQueryStore.getState().executeSandboxQuery("connection-1", ["DELETE FROM users"], false, {
+        userInitiated: true,
+      });
+      expect(invokeMutationMock).toHaveBeenCalledWith(
+        "execute_sandboxed_query",
+        expect.objectContaining({
+          connectionId: "connection-1",
+          statements: ["DELETE FROM users"],
+        }),
+      );
+    } finally {
+      window.removeEventListener("safe-mode-confirm-request", autoApprove);
+    }
+  });
+
+  it("cancels a user-initiated sandbox write when Safe Mode confirmation is rejected", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+    const autoReject = () => {
+      window.dispatchEvent(
+        new CustomEvent("safe-mode-confirm-response", { detail: { approved: false } }),
+      );
+    };
+    window.addEventListener("safe-mode-confirm-request", autoReject);
+    try {
+      await expect(
+        useQueryStore.getState().executeSandboxQuery("connection-1", ["DELETE FROM users"], false, {
+          userInitiated: true,
+        }),
+      ).rejects.toThrow("Query cancelled by Safe Mode confirmation.");
+      expect(invokeMutationMock).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("safe-mode-confirm-request", autoReject);
+    }
+  });
+
+  it("runs a blocked sandbox write without any dialog when pre-approved", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+    const failOnPrompt = () => {
+      throw new Error("no Safe Mode confirmation should be requested");
+    };
+    window.addEventListener("safe-mode-confirm-request", failOnPrompt);
+    try {
+      await useQueryStore.getState().executeSandboxQuery("connection-1", ["DELETE FROM users"], false, {
+        preApproved: true,
+      });
+      expect(invokeMutationMock).toHaveBeenCalledWith(
+        "execute_sandboxed_query",
+        expect.objectContaining({
+          connectionId: "connection-1",
+          statements: ["DELETE FROM users"],
+          // Backend must honor the human approval and relax its own block.
+          safeModeApprovedByUser: true,
+        }),
+      );
+    } finally {
+      window.removeEventListener("safe-mode-confirm-request", failOnPrompt);
+    }
+  });
+
+  it("passes the user approval flag to the backend after a confirmed dialog", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+    const autoApprove = () => {
+      window.dispatchEvent(
+        new CustomEvent("safe-mode-confirm-response", { detail: { approved: true } }),
+      );
+    };
+    window.addEventListener("safe-mode-confirm-request", autoApprove);
+    try {
+      await useQueryStore.getState().executeQuery("connection-1", "DELETE FROM users");
+      expect(invokeMutationMock).toHaveBeenCalledWith(
+        "execute_query",
+        expect.objectContaining({
+          connectionId: "connection-1",
+          sql: "DELETE FROM users",
+          safeModeApprovedByUser: true,
+        }),
+      );
+    } finally {
+      window.removeEventListener("safe-mode-confirm-request", autoApprove);
+    }
+  });
+
+  it("does not claim user approval for runs that needed no confirmation", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+    await useQueryStore.getState().executeQuery("connection-1", "select 1");
+    expect(invokeMutationMock).toHaveBeenCalledWith(
+      "execute_query",
+      expect.objectContaining({ safeModeApprovedByUser: false }),
+    );
+  });
+
   it("normalizes optional table-data arguments for the Tauri command", async () => {
     invokeWithTimeoutMock.mockResolvedValue(queryResult);
 

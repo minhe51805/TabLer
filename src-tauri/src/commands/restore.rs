@@ -83,18 +83,29 @@ pub async fn restore_database_sql(
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<RestoreResult, String> {
-    run_sql_restore(&connection_id, &sql, db_type, &db_manager, &safe_mode).await
+    run_sql_restore(&connection_id, &sql, db_type, &db_manager, &safe_mode, true).await
 }
 
 /// Shared restore pipeline — also powers checkpoint rollback.
+///
+/// `enforce_safe_mode` keeps the Safe Mode assertion for the manual SQL
+/// import path. Checkpoint rollback passes `false`: the human already
+/// reviewed and confirmed the exact checkpoint through the picker modal
+/// (list → preview → confirm), and restore dumps routinely contain
+/// statements the SQL parser cannot classify (or DROP/CREATE that read-only
+/// tiers block) — failing there would make rollback, the recovery path,
+/// impossible.
 pub(super) async fn run_sql_restore(
     connection_id: &str,
     sql: &str,
     db_type: DatabaseType,
     db_manager: &DatabaseManager,
     safe_mode: &SafeModeState,
+    enforce_safe_mode: bool,
 ) -> Result<RestoreResult, String> {
-    safe_mode.assert_sql_allowed(connection_id, sql).await?;
+    if enforce_safe_mode {
+        safe_mode.assert_sql_allowed(connection_id, sql).await?;
+    }
     db_manager
         .require_capability(connection_id, DriverCapability::BackupRestore)
         .await

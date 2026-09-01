@@ -44,6 +44,7 @@ describe("assertQueryAllowed safe-mode confirmation override", () => {
     respondToSafeModePrompt(true);
     const decision = await promise;
     expect(decision.statements).toHaveLength(1);
+    expect(decision.userConfirmed).toBe(true);
   });
 
   it("a denied confirmation cancels the run", async () => {
@@ -79,5 +80,35 @@ describe("assertQueryAllowed safe-mode confirmation override", () => {
     await expect(
       assertQueryAllowed("DROP TABLE dbo.SinhViens", "conn-1", { userInitiated: true }),
     ).rejects.toThrow("[Safe Mode level 5] This statement is blocked");
+  });
+
+  it("preApproved runs pass Safe Mode levels 1-3 without another dialog", async () => {
+    // The human already granted approval (AI review dialog or the standing
+    // "full autonomy" permission): no confirmation event is expected.
+    const decision = await assertQueryAllowed("UPDATE dbo.SinhViens SET HoTen = N'Ninh'", "conn-1", {
+      preApproved: true,
+    });
+    expect(decision.statements).toHaveLength(1);
+    expect(decision.userConfirmed).toBe(true);
+  });
+
+  it("preApproved does not skip confirmations at levels 4-5 (strict/production)", async () => {
+    useSafeModeStore.setState({
+      settings: { globalLevel: 5, connectionOverrides: [], connectionEnvironments: {} },
+    });
+    invokeWithTimeoutMock.mockResolvedValue({
+      statements: [
+        { sql: "UPDATE dbo.SinhViens SET HoTen = N'Ninh'", kind: "write", readOnly: false },
+      ],
+      readOnly: false,
+      hasSchemaMutation: false,
+    });
+    const promise = assertQueryAllowed("UPDATE dbo.SinhViens SET HoTen = N'Ninh'", "conn-1", {
+      preApproved: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    respondToSafeModePrompt(true);
+    const decision = await promise;
+    expect(decision.statements).toHaveLength(1);
   });
 });

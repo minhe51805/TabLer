@@ -4,6 +4,7 @@ import { initVimMode, type VimAdapterInstance } from "monaco-vim";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useUIStore } from "../../../stores/uiStore";
 import { useQueryStore } from "../../../stores/queryStore";
+import { useAIAutonomyStore } from "../../../stores/aiAutonomyStore";
 import { useEditorPreferencesStore } from "../../../stores/editorPreferencesStore";
 import { useQueryHistoryStore } from "../../../stores/queryHistoryStore";
 import type { QueryResult } from "../../../types";
@@ -45,6 +46,8 @@ export interface QueryEditorSessionState {
 export interface UseSQLEditorOptions {
   connectionId: string;
   tabId?: string;
+  /** Origin of the owning tab ("ai" tabs honor the full-autonomy grant). */
+  tabSource?: "ai" | "user";
   initialContent: string;
   initialCursor?: { lineNumber: number; column: number };
   vimStatusRef?: RefObject<HTMLDivElement | null>;
@@ -58,6 +61,7 @@ export interface UseSQLEditorOptions {
 export function useSQLEditor({
   connectionId,
   tabId,
+  tabSource,
   initialContent,
   initialCursor,
   vimStatusRef,
@@ -173,6 +177,14 @@ export function useSQLEditor({
     const editor = editorRef.current;
     if (!editor || isBatchExecuting) return;
 
+    // AI-origin tabs honor the full-autonomy grant scoped to their own
+    // connection: the standing human approval lets Safe Mode-blocked
+    // statements (levels <= 3) run without the confirmation dialog. Regular
+    // tabs and other connections keep the confirmation.
+    const fullAutonomyPreApproved =
+      tabSource === "ai" &&
+      useAIAutonomyStore.getState().getAutonomy(connectionId) === "full";
+
     const selection = editor.getSelection();
     let sql = "";
     if (selection && !selection.isEmpty()) {
@@ -197,7 +209,12 @@ export function useSQLEditor({
       setIsBatchExecuting(true);
       try {
         const parameters = toQueryParameters(parameterNames, parameterDraftsRef.current);
-        const queryResult = await executeParameterizedQuery(connectionId, commandText, parameters);
+        const queryResult = await executeParameterizedQuery(
+          connectionId,
+          commandText,
+          parameters,
+          fullAutonomyPreApproved ? { preApproved: true } : { userInitiated: true },
+        );
         setResult(queryResult);
         if (queryResult.rows.length > 0) setShowResultsPane(true);
         setQueryCount((count) => count + 1);
@@ -222,7 +239,11 @@ export function useSQLEditor({
       setIsBatchExecuting(true);
 
       try {
-        const queryResult = await executeQuery(connectionId, commandText);
+        const queryResult = await executeQuery(
+          connectionId,
+          commandText,
+          fullAutonomyPreApproved ? { preApproved: true } : undefined,
+        );
         setResult(queryResult);
         if (queryResult.rows.length > 0) {
           setShowResultsPane(true);
@@ -313,7 +334,15 @@ export function useSQLEditor({
         await switchDatabase(connectionId, targetDatabaseFromUse);
       }
 
-      const queryResult = await executeSandboxQuery(connectionId, statementsToExecute);
+      // The Run button is a human decision even on the sandbox gateway path:
+      // a Safe Mode block becomes an interactive confirmation (levels <= 3)
+      // instead of a dead end — unless full autonomy pre-approves the run.
+      const queryResult = await executeSandboxQuery(
+        connectionId,
+        statementsToExecute,
+        undefined,
+        fullAutonomyPreApproved ? { preApproved: true } : { userInitiated: true },
+      );
       setResult(queryResult);
       if (queryResult.rows.length > 0) {
         setShowResultsPane(true);
@@ -366,7 +395,7 @@ export function useSQLEditor({
       setIsExecutingCurrent(false);
       setIsBatchExecuting(false);
     }
-  }, [connectionId, executeParameterizedQuery, executeQuery, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase, usesDirectExecution]);
+  }, [connectionId, executeParameterizedQuery, executeQuery, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase, tabSource, usesDirectExecution]);
 
   /** Formats the selected text (or entire editor content) using the connection's SQL dialect. */
   const handleFormatSql = useCallback(() => {

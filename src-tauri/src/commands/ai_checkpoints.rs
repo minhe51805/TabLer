@@ -263,8 +263,12 @@ pub fn preview_database_checkpoint_restore(
     super::restore::build_restore_preview(&sql, db_type)
 }
 
-/// `/rollback` step 2b: run the checkpoint SQL through the same guarded
-/// restore pipeline as the manual SQL import (safe mode + capability checks).
+/// `/rollback` step 2b: run the checkpoint SQL through the shared restore
+/// pipeline (capability checks, statement splitting, transactional execution).
+/// Safe Mode is intentionally not re-asserted here: the human confirmed the
+/// exact checkpoint through the picker modal, and dump SQL routinely contains
+/// parser-hostile or destructive statements that would make the recovery
+/// path impossible behind read-only tiers.
 #[tauri::command]
 pub async fn restore_database_checkpoint(
     connection_id: String,
@@ -280,5 +284,5 @@ pub async fn restore_database_checkpoint(
     })
     .await
     .map_err(|_| "Checkpoint read task failed unexpectedly.".to_string())??;
-    run_sql_restore(&connection_id, &sql, db_type, &db_manager, &safe_mode).await
+    run_sql_restore(&connection_id, &sql, db_type, &db_manager, &safe_mode, false).await
 }

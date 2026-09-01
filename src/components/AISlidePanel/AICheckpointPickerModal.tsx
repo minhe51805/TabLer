@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { History, Loader2, ShieldAlert } from "lucide-react";
+import { History, Loader2, ShieldAlert, ChevronRight, X } from "lucide-react";
 import { invokeMutation } from "../../utils/tauri-utils";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
@@ -63,6 +63,25 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
     };
   }, []);
 
+  // Esc cancels the pick. Must run before the `!request` early return so the
+  // hook order stays stable across renders.
+  useEffect(() => {
+    if (!request) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      window.dispatchEvent(
+        new CustomEvent("ai-checkpoint-pick-response", {
+          detail: { id: request.id, fileName: null },
+        }),
+      );
+      setRequest(null);
+      setConfirming(null);
+      setPreview(null);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [request]);
+
   if (!request) return null;
 
   const respond = (fileName: string | null) => {
@@ -100,90 +119,132 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
     }
   };
 
+  const describeCheckpoint = (checkpoint: AIDatabaseCheckpoint) =>
+    [
+      formatCheckpointTime(checkpoint.createdAt, request.language),
+      checkpoint.engine,
+      checkpoint.database,
+      `${checkpoint.tableCount}T/${checkpoint.rowCount}R`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
   return createPortal(
     <div
-      className="ai-workspace-modal-backdrop"
+      className="ckpt-overlay"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) close();
       }}
     >
-      <div className="ai-workspace-modal ai-checkpoint-modal" role="dialog" aria-modal="true">
-        <header className="ai-checkpoint-modal-head">
-          <History className="w-4 h-4" />
-          <strong>{copy.checkpointTitle}</strong>
-        </header>
+      <div
+        className={`ckpt-dialog${confirming ? " ckpt-dialog--danger" : ""}`}
+        role="dialog"
+        aria-modal="true"
+      >
+        {/* Header */}
+        <div className="ckpt-dialog__header">
+          <div className="ckpt-dialog__icon">
+            {confirming ? <ShieldAlert size={21} /> : <History size={21} />}
+          </div>
+          <div className="ckpt-dialog__heading">
+            <h2 className="ckpt-dialog__title">{copy.checkpointTitle}</h2>
+            {!confirming && <p className="ckpt-dialog__subtitle">{copy.checkpointHint}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={close}
+            className="ckpt-dialog__close"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
 
-        {!confirming ? (
-          <>
-            <p className="ai-checkpoint-modal-hint">{copy.checkpointHint}</p>
-            {request.checkpoints.length === 0 ? (
-              <p className="ai-checkpoint-modal-empty">{copy.checkpointEmpty}</p>
+        {/* Body */}
+        <div className="ckpt-dialog__body">
+          {!confirming ? (
+            request.checkpoints.length === 0 ? (
+              <div className="ckpt-dialog__empty">
+                <History size={22} />
+                {copy.checkpointEmpty}
+              </div>
             ) : (
-              <ul className="ai-checkpoint-list">
+              <ul className="ckpt-list">
                 {request.checkpoints.map((checkpoint) => (
                   <li key={checkpoint.fileName}>
                     <button
                       type="button"
-                      className="ai-checkpoint-item"
+                      className="ckpt-item"
                       onClick={() => void startConfirm(checkpoint)}
                     >
-                      <span className="ai-checkpoint-item-label">{checkpoint.label}</span>
-                      <span className="ai-checkpoint-item-meta">
-                        {formatCheckpointTime(checkpoint.createdAt, request.language)}
-                        {" · "}
-                        {checkpoint.engine}
-                        {checkpoint.database ? ` · ${checkpoint.database}` : ""}
-                        {" · "}
-                        {checkpoint.tableCount}T/{checkpoint.rowCount}R
+                      <span className="ckpt-item__icon">
+                        <History size={15} />
                       </span>
+                      <span className="ckpt-item__main">
+                        <span className="ckpt-item__label">{checkpoint.label}</span>
+                        <span className="ckpt-item__meta">{describeCheckpoint(checkpoint)}</span>
+                      </span>
+                      <ChevronRight size={15} className="ckpt-item__chevron" />
                     </button>
                   </li>
                 ))}
               </ul>
-            )}
-            <footer className="ai-checkpoint-modal-actions">
-              <button type="button" className="ai-workspace-modal-btn" onClick={close} autoFocus>
-                {copy.checkpointCancel}
-              </button>
-            </footer>
-          </>
-        ) : (
-          <>
-            <p className="ai-checkpoint-modal-confirm-title">
-              <ShieldAlert className="w-4 h-4" />
-              {copy.checkpointConfirmTitle}
-            </p>
-            <div className="ai-checkpoint-confirm-card">
-              <strong>{confirming.label}</strong>
-              <span>
-                {formatCheckpointTime(confirming.createdAt, request.language)}
-                {" · "}
-                {confirming.tableCount}T/{confirming.rowCount}R
-              </span>
-            </div>
-            {previewLoading ? (
-              <p className="ai-checkpoint-modal-loading">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            )
+          ) : (
+            <>
+              <p className="ckpt-dialog__confirm-title">
+                <ShieldAlert size={15} />
+                {copy.checkpointConfirmTitle}
               </p>
-            ) : previewError ? (
-              <p className="ai-checkpoint-modal-error">{previewError}</p>
-            ) : preview ? (
-              <>
-                <p className="ai-checkpoint-modal-preview">
-                  {copy.checkpointPreviewBody
-                    .replace("{statements}", String(preview.statementCount))
-                    .replace("{schema}", String(preview.schemaChangeCount))
-                    .replace("{data}", String(preview.dataChangeCount))
-                    .replace("{destructive}", String(preview.destructiveStatementCount))}
-                  {!preview.transactional ? " ⚠" : ""}
+              <div className="ckpt-confirm-card">
+                <div className="ckpt-confirm-card__main">
+                  <span className="ckpt-confirm-card__label">{confirming.label}</span>
+                  <span className="ckpt-confirm-card__meta">{describeCheckpoint(confirming)}</span>
+                </div>
+              </div>
+              {previewLoading ? (
+                <p className="ckpt-dialog__loading">
+                  <Loader2 size={14} className="animate-spin" />
+                  …
                 </p>
-                {preview.warning ? <p className="ai-checkpoint-modal-warning">{preview.warning}</p> : null}
-              </>
-            ) : null}
-            <footer className="ai-checkpoint-modal-actions">
+              ) : previewError ? (
+                <div className="ckpt-dialog__error">{previewError}</div>
+              ) : preview ? (
+                <>
+                  <div className="ckpt-stats">
+                    <span className="ckpt-stat">
+                      <strong>{preview.statementCount}</strong> SQL
+                    </span>
+                    <span className="ckpt-stat">
+                      <strong>{preview.schemaChangeCount}</strong> schema
+                    </span>
+                    <span className="ckpt-stat">
+                      <strong>{preview.dataChangeCount}</strong> data
+                    </span>
+                    <span
+                      className={`ckpt-stat${
+                        preview.destructiveStatementCount > 0 ? " ckpt-stat--danger" : ""
+                      }`}
+                    >
+                      <strong>{preview.destructiveStatementCount}</strong> destructive
+                    </span>
+                  </div>
+                  {preview.warning ? (
+                    <div className="ckpt-dialog__warning">⚠ {preview.warning}</div>
+                  ) : null}
+                </>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="ckpt-dialog__footer">
+          {confirming ? (
+            <>
               <button
                 type="button"
-                className="ai-workspace-modal-btn"
+                className="btn btn-secondary"
                 onClick={() => {
                   setConfirming(null);
                   setPreview(null);
@@ -191,20 +252,28 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
               >
                 {copy.checkpointBack}
               </button>
+              <span className="ckpt-dialog__footer-spacer" />
+              <button type="button" className="btn btn-secondary" onClick={close}>
+                {copy.checkpointCancel}
+              </button>
               <button
                 type="button"
-                className="ai-workspace-modal-btn danger"
+                className="btn btn-primary ckpt-btn-danger"
                 disabled={previewLoading || !preview || Boolean(previewError)}
                 onClick={() => respond(confirming.fileName)}
               >
                 {copy.checkpointRestoreAction}
               </button>
-              <button type="button" className="ai-workspace-modal-btn" onClick={close} autoFocus>
+            </>
+          ) : (
+            <>
+              <span className="ckpt-dialog__footer-spacer" />
+              <button type="button" className="btn btn-secondary" onClick={close} autoFocus>
                 {copy.checkpointCancel}
               </button>
-            </footer>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </div>
     </div>,
     document.body,

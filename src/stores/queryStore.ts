@@ -20,13 +20,23 @@ export interface QueryState {
   progressiveRowCount: number | null;
   setProgressiveDeliveryEnabled: (enabled: boolean) => void;
 
-  executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
+  executeQuery: (
+    connectionId: string,
+    sql: string,
+    options?: { preApproved?: boolean },
+  ) => Promise<QueryResult>;
   cancelQuery: () => Promise<boolean>;
-  executeParameterizedQuery: (connectionId: string, sql: string, parameters: QueryParameter[]) => Promise<QueryResult>;
+  executeParameterizedQuery: (
+    connectionId: string,
+    sql: string,
+    parameters: QueryParameter[],
+    options?: { userInitiated?: boolean; preApproved?: boolean },
+  ) => Promise<QueryResult>;
   executeSandboxQuery: (
     connectionId: string,
     statements: string[],
     requireReadOnly?: boolean,
+    options?: { userInitiated?: boolean; preApproved?: boolean },
   ) => Promise<QueryResult>;
   executeAgentReadonlyQuery: (
     connectionId: string,
@@ -132,11 +142,15 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     set({ progressiveDeliveryEnabled: enabled });
   },
 
-  executeQuery: async (connectionId: string, sql: string) => {
+  executeQuery: async (connectionId: string, sql: string, options?: { preApproved?: boolean }) => {
     // The editor's Run button is a human decision: a Safe Mode block becomes
-    // an interactive confirmation instead of a dead end. All other callers
-    // (agent tools, programmatic sandbox calls) keep the hard block.
-    const safety = await assertQueryAllowed(sql, connectionId, { userInitiated: true });
+    // an interactive confirmation instead of a dead end — unless the AI tab
+    // carries the standing full-autonomy grant (`preApproved`). All other
+    // callers (agent tools, programmatic sandbox calls) keep the hard block.
+    const safety = await assertQueryAllowed(sql, connectionId, {
+      userInitiated: true,
+      preApproved: options?.preApproved,
+    });
     const requestId = crypto.randomUUID();
     set({
       isExecutingQuery: true,
@@ -160,6 +174,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
             sql,
             chunkSize: null,
             requestId,
+            safeModeApprovedByUser: safety.userConfirmed === true,
           });
         } catch {
           result = null; // fall back below
@@ -172,6 +187,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           connectionId,
           sql,
           requestId,
+          safeModeApprovedByUser: safety.userConfirmed === true,
         });
       }
       set({ progressiveRowCount: null });
@@ -201,8 +217,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     connectionId: string,
     statements: string[],
     requireReadOnly = false,
+    options?: { userInitiated?: boolean; preApproved?: boolean },
   ) => {
-    const safety = await assertQueryAllowed(statements.join(";\n"), connectionId);
+    const safety = await assertQueryAllowed(statements.join(";\n"), connectionId, options);
     const requestId = crypto.randomUUID();
     set({
       isExecutingQuery: true,
@@ -212,7 +229,13 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     try {
       const result = await invokeAIWorkspaceToolMutation(
         "execute_sandboxed_query",
-        { connectionId, statements, requireReadOnly, requestId },
+        {
+          connectionId,
+          statements,
+          requireReadOnly,
+          requestId,
+          safeModeApprovedByUser: safety.userConfirmed === true,
+        },
       );
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
@@ -442,8 +465,11 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     return affectedRows;
   },
 
-  executeParameterizedQuery: async (connectionId, sql, parameters) => {
-    const safety = await assertQueryAllowed(sql, connectionId);
+  executeParameterizedQuery: async (connectionId, sql, parameters, options) => {
+    // Same human-decision treatment as the plain execute path: an editor Run
+    // with named parameters must get the confirmation dialog (levels <= 3)
+    // instead of a dead end, and a full-autonomy AI tab passes pre-approved.
+    const safety = await assertQueryAllowed(sql, connectionId, options);
     const requestId = crypto.randomUUID();
     set({
       isExecutingQuery: true,
@@ -456,6 +482,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         sql,
         parameters,
         requestId,
+        safeModeApprovedByUser: safety.userConfirmed === true,
       });
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);

@@ -18,6 +18,8 @@ interface Props {
   initialContent?: string;
   initialCursor?: { lineNumber: number; column: number };
   tabId?: string;
+  /** Origin of the owning tab ("ai" tabs honor the full-autonomy grant). */
+  tabSource?: "ai" | "user";
   initialState?: QueryEditorSessionState;
   runRequestNonce?: number;
   onChromeChange?: (state: QueryChromeState) => void;
@@ -29,6 +31,7 @@ export function SQLEditor({
   initialContent = "",
   initialCursor,
   tabId,
+  tabSource,
   initialState,
   runRequestNonce = 0,
   onChromeChange,
@@ -103,6 +106,7 @@ export function SQLEditor({
   } = useSQLEditor({
     connectionId,
     tabId,
+    tabSource,
     initialContent: restoredContent,
     initialCursor,
     vimStatusRef,

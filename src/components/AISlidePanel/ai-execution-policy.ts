@@ -20,10 +20,11 @@ export function shouldAgentAutoRunSql(
 
 /**
  * True when any statement would be hard-blocked by the current Safe Mode
- * level. Auto-running blocked SQL is pointless — the run can only fail with a
- * raw Safe Mode error — so the proposal should fall back to the manual
- * approval flow instead. Agent autonomy ("full") intentionally does NOT
- * override Safe Mode: they are independent protection layers.
+ * level. Auto-running blocked SQL is pointless — unless the autonomy is
+ * "full", whose standing human approval lets Safe Mode levels <= 3 run the
+ * SQL through pre-approved (see the guard's `preApproved` option) — so the
+ * proposal should fall back to the manual approval flow instead. Levels 4-5
+ * (strict/production) stay independent from agent autonomy for everyone.
  */
 export function isSqlBlockedBySafeMode(sql: string, safeModeLevel: SafeModeLevel): boolean {
   const trimmed = sql.trim();
@@ -33,9 +34,17 @@ export function isSqlBlockedBySafeMode(sql: string, safeModeLevel: SafeModeLevel
   );
 }
 
+/**
+ * What the AI bubble must confirm with the user before running. `null` means
+ * the run needs no dialog: either the SQL is read-only, or the user granted
+ * the standing "full autonomy" permission ("Toàn quyền") which replaces the
+ * per-run dialog.
+ */
 export function getAISqlConfirmationRequirement(
   statements: string[],
+  autonomy?: AIWorkspaceAgentAutonomy,
 ): AISqlConfirmationRequirement {
+  if (autonomy === "full") return null;
   if (statements.some(isHighRiskStatement)) return "high-risk";
   if (statements.some(isMutatingStatement)) return "mutation";
   return null;

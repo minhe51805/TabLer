@@ -61,4 +61,18 @@ describe("AI SQL execution policy", () => {
       "DROP TABLE legacy_users",
     ])).toBe("high-risk");
   });
+
+  it("full autonomy replaces the per-run confirmation with the standing grant", () => {
+    expect(getAISqlConfirmationRequirement([
+      "UPDATE users SET active = 1 WHERE id = 1",
+      "DROP TABLE legacy_users",
+    ], "full")).toBeNull();
+    // Other autonomy levels keep the dialog.
+    expect(getAISqlConfirmationRequirement([
+      "UPDATE users SET active = 1 WHERE id = 1",
+    ], "review")).toBe("mutation");
+    expect(getAISqlConfirmationRequirement([
+      "UPDATE users SET active = 1 WHERE id = 1",
+    ])).toBe("mutation");
+  });
 });

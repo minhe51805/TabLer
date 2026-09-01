@@ -210,11 +210,18 @@ pub async fn execute_query(
     connection_id: String,
     sql: String,
     request_id: Option<String>,
+    safe_mode_approved_by_user: Option<bool>,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
-    safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
+    safe_mode
+        .assert_sql_allowed_with_approval(
+            &connection_id,
+            &sql,
+            safe_mode_approved_by_user.unwrap_or(false),
+        )
+        .await?;
     let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
@@ -339,12 +346,19 @@ pub async fn execute_query_progressive(
     sql: String,
     chunk_size: Option<usize>,
     request_id: Option<String>,
+    safe_mode_approved_by_user: Option<bool>,
     app_handle: tauri::AppHandle,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
-    safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
+    safe_mode
+        .assert_sql_allowed_with_approval(
+            &connection_id,
+            &sql,
+            safe_mode_approved_by_user.unwrap_or(false),
+        )
+        .await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
         .await
@@ -425,16 +439,24 @@ fn chunk_rows(total: usize, chunk_size: usize) -> Vec<(usize, usize)> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_parameterized_query(
     connection_id: String,
     sql: String,
     parameters: Vec<QueryParameter>,
     request_id: Option<String>,
+    safe_mode_approved_by_user: Option<bool>,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
-    safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
+    safe_mode
+        .assert_sql_allowed_with_approval(
+            &connection_id,
+            &sql,
+            safe_mode_approved_by_user.unwrap_or(false),
+        )
+        .await?;
     let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::PreparedParameters)
@@ -523,12 +545,20 @@ const MAX_PREVIEW_STATEMENTS: usize = 10;
 /// Runs the agent's proposed mutating statements inside one transaction and
 /// ALWAYS rolls back, so the caller sees affected rows without persisting
 /// anything. The human still applies real changes through the approval flow.
+/// Safe Mode is asserted without an approval flag: this is an agent path, and
+/// autonomous paths must never write through a guard tier — even temporarily.
+/// Levels 1-2 therefore refuse previews of blocked writes (nothing persists,
+/// so the human loses nothing); level 3+ previews pass for confirmable DML.
 #[tauri::command]
 pub async fn preview_write_transaction(
     connection_id: String,
     statements: Vec<String>,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<PreviewWriteResult, AppError> {
+    safe_mode
+        .assert_sql_allowed(&connection_id, &statements.join(";\n"))
+        .await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
         .await
@@ -600,17 +630,23 @@ pub async fn preview_write_transaction(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_sandboxed_query(
     connection_id: String,
     statements: Vec<String>,
     require_read_only: Option<bool>,
     request_id: Option<String>,
+    safe_mode_approved_by_user: Option<bool>,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
     safe_mode
-        .assert_sql_allowed(&connection_id, &statements.join(";\n"))
+        .assert_sql_allowed_with_approval(
+            &connection_id,
+            &statements.join(";\n"),
+            safe_mode_approved_by_user.unwrap_or(false),
+        )
         .await?;
     let operation_id = Uuid::new_v4();
     db_manager
@@ -753,6 +789,8 @@ pub async fn execute_agent_parameterized_query(
         compiled.sql,
         compiled.parameters,
         request_id,
+        // Agent tool path: never carries human approval.
+        None,
         db_manager,
         cancellation_state,
         safe_mode,
@@ -793,6 +831,8 @@ pub async fn execute_agent_readonly_query(
         statements,
         Some(true),
         request_id,
+        // Agent tool path: never carries human approval.
+        None,
         db_manager,
         cancellation_state,
         safe_mode,

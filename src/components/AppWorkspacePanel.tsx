@@ -821,6 +821,7 @@ export function AppWorkspacePanel({
                 initialContent={tab.content || ""}
                 initialCursor={tab.editorCursor}
                 tabId={tab.id}
+                tabSource={tab.source}
                 initialState={querySessionByTab[tab.id]}
                 runRequestNonce={queryRunRequestByTab[tab.id] ?? 0}
                 onChromeChange={(state) =>

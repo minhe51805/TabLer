@@ -131,6 +131,7 @@ export type AIAgentDescribeTablesAction = AIAgentToolActionBase<
 export interface AIAgentSampleTableDataArgs extends Record<string, unknown> {
   table: string;
   limit?: number;
+  stats?: "auto" | "sample" | "off";
 }
 
 export type AIAgentSampleTableDataAction = AIAgentToolActionBase<

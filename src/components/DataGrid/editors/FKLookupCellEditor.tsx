@@ -61,7 +61,7 @@ export function FKLookupCellEditor({
       .finally(() => {
         setIsLoading(false);
       });
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- seedValue included to re-resolve label when value changes
+  // seedValue is deliberately in deps to re-resolve the label when value changes.
   }, [referencedTable, referencedColumn, seedValue]);
 
   useEffect(() => {

@@ -11,7 +11,15 @@ import {
   normalizeAgentPlanSteps,
   resolveColumnStatsScope,
 } from "@/components/AISlidePanel/ai-agent-tool-executor";
-import { AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS } from "@/components/AISlidePanel/ai-agent-tools";
+import {
+  AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS,
+  AI_AGENT_TOOL_NAMES,
+} from "@/components/AISlidePanel/ai-agent-tools";
+import {
+  AI_AGENT_TOOL_SPECS,
+  formatAgentToolCatalog,
+  nativeToolPayloadForProvider,
+} from "@/components/AISlidePanel/ai-agent-tool-schema";
 import { verifyAgentResponseAgainstEvidence } from "@/components/AISlidePanel/ai-agent-verification";
 
 /**
@@ -96,6 +104,57 @@ describe("eval: claim verification (fabrications caught, noise ignored)", () => 
       [step('{"rowCount": 1234}')],
     );
     expect(result.unsupported).toEqual([]);
+  });
+
+  it("witnesses figures from structured step.facts without any text parsing", () => {
+    const factsStep: AgentTraceStep = {
+      step: 1,
+      action: "sample_table_data",
+      message: "peek",
+      // Observation text deliberately carries none of the witnessed numbers.
+      observation: "sampled the customers table",
+      facts: {
+        rowsReturned: 2401,
+        columnStats: [{ column: "email", nullRatio: 0.12, distinctCount: 88 }],
+      },
+    };
+    const result = verifyAgentResponseAgainstEvidence(
+      "Found 2,401 rows; the email column has 88 distinct values (12% null).",
+      [factsStep],
+    );
+    expect(result.unsupported).toEqual([]);
+    expect(result.ok).toBe(true);
+
+    const fabricated = verifyAgentResponseAgainstEvidence(
+      "Found 2,401 rows and exactly 1,200 duplicate accounts.",
+      [factsStep],
+    );
+    expect(fabricated.unsupported).toContain(1200);
+  });
+});
+
+describe("eval: update_plan and delegate are first-class registry tools", () => {
+  it("registers both tools with executable specs", () => {
+    expect(AI_AGENT_TOOL_NAMES).toContain("update_plan");
+    expect(AI_AGENT_TOOL_NAMES).toContain("delegate");
+    expect(AI_AGENT_TOOL_SPECS.update_plan.parameters.required).toEqual(["steps"]);
+    expect(AI_AGENT_TOOL_SPECS.delegate.parameters.required).toEqual(["instruction"]);
+    // Both stay available even when workspace SQL tools are off.
+    const disabled = new Set(
+      formatAgentToolCatalog(false)
+        .map((line) => line.match(/"action":"([^"]+)"/)?.[1]),
+    );
+    expect(disabled.has("update_plan")).toBe(true);
+    expect(disabled.has("delegate")).toBe(true);
+  });
+
+  it("travels in the native function-calling payload", () => {
+    const payload = nativeToolPayloadForProvider("openai");
+    const names = (payload.tools as Array<{ function: { name: string } }>).map(
+      (tool) => tool.function.name,
+    );
+    expect(names).toContain("update_plan");
+    expect(names).toContain("delegate");
   });
 });
 

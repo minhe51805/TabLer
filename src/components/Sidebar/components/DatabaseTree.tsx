@@ -123,6 +123,9 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
     setScrollMargin((previous) => (Math.abs(previous - offset) > 1 ? offset : previous));
   }, [flatItems, getScrollElement, layoutKey]);
 
+  // TanStack Virtual's API returns functions that cannot be memoized without
+  // stale UI (react-compiler rule); the hook contract handles identity itself.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: flatItems.length,
     getScrollElement: () => getScrollElement(),

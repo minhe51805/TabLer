@@ -106,6 +106,8 @@ export function SetCellEditor({
 /** Parse SET values from MySQL column type string.
  * Example: "set('val1','val2','val3')" -> ["val1", "val2", "val3"]
  */
+// Parse helper (not a component) kept with the editor it belongs to.
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseSetValues(columnType: string): string[] {
   const match = columnType.match(/^set\((.+)\)$/i);
   if (!match) return [];

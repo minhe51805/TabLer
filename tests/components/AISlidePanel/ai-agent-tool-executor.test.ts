@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentToolAvailability } from "@/components/AISlidePanel/ai-agent-engine-gates";
 import { createAgentToolExecutor } from "@/components/AISlidePanel/ai-agent-tool-executor";
 import type { AgentToolExecutorDeps } from "@/components/AISlidePanel/ai-agent-tool-executor";
+import { AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS } from "@/components/AISlidePanel/ai-agent-tools";
 import type { AIAgentToolAction } from "@/components/AISlidePanel/ai-agent-tools";
 import type { TableInfo } from "@/types";
 
@@ -242,6 +243,35 @@ describe("sample_table_data", () => {
     expect(parsed.rowCount).toBe(2);
     expect(parsed.identityColumns).toEqual(["id"]);
     expect(String(parsed.navigation)).toContain("stable-primary-key");
+  });
+
+  it("runs whole-table stats only for tables the catalog says are small", async () => {
+    const deps = mkDeps();
+    const obs = await run(deps, { action: "sample_table_data", args: { table: "users" } } as AIAgentToolAction);
+    // users has catalog rowCount 100 (≤ AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS):
+    // one aggregate query runs and the whole-table label is emitted.
+    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect(obs).toContain("Column stats (whole table):");
+  });
+
+  it("falls back to in-memory sample stats for tables above the scan cap", async () => {
+    const deps = mkDeps({
+      latestTables: [tbl("users", AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS + 1)],
+    });
+    const obs = await run(deps, { action: "sample_table_data", args: { table: "users" } } as AIAgentToolAction);
+    // No stats SQL at all — the aggregate would scan millions of rows.
+    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([statements]) => String((statements as string[])[0]).includes("__total"),
+    )).toHaveLength(0);
+    expect(obs).toContain("Column stats (sample of 2 rows):");
+    expect(obs).toContain("email: nullRatio=0, distinct=2");
+  });
+
+  it("skips statistics entirely with args.stats=off", async () => {
+    const deps = mkDeps();
+    const obs = await run(deps, { action: "sample_table_data", args: { table: "users", stats: "off" } } as AIAgentToolAction);
+    expect(deps.executeReadonlyQuery).not.toHaveBeenCalled();
+    expect(obs).not.toContain("Column stats");
   });
 });
 

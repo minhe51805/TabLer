@@ -345,12 +345,16 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const dispatchAgentTool = async (action: AIAgentToolAction): Promise<string> => {
   try {
     // Repeating an exploration call with identical arguments returns the
-    // identical observation and burns a step from a tight budget.
+    // identical observation and burns a step from a tight budget. Meta actions
+    // (update_plan re-posts the whole checklist by design) and delegate (which
+    // has its own per-run budget) are exempt.
     const explorationKey = action.action !== "run_readonly_sql"
       && action.action !== "run_parameterized_sql"
       && action.action !== "find_value"
       && action.action !== "sample_table_data"
       && action.action !== "read_page"
+      && action.action !== "update_plan"
+      && action.action !== "delegate"
       ? `${action.action}:${JSON.stringify(action.args ?? {})}`
       : "";
     if (explorationKey && explorationKey === lastExplorationToolKey) {

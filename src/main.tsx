@@ -55,6 +55,9 @@ function clearPersistedBootFailure() {
   }
 }
 
+// Entry-point-only error screen; moving it out of main.tsx is churn for
+// fast-refresh that never applies to the boot failure path.
+// eslint-disable-next-line react-refresh/only-export-components
 function BootFailureScreen({ failure }: { failure: BootFailureSnapshot }) {
   return (
     <div className="boot-failure-screen">

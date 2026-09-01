@@ -1,13 +1,18 @@
-import type { AgentTraceStep } from "./ai-agent-context";
+import { readStepFacts, type AgentStepFacts, type AgentTraceStep } from "./ai-agent-context";
 
 /**
  * Claim verification: the agent must not cite figures that no tool ever
  * observed. This module extracts numbers from a draft final answer, collects
- * the numbers the trace actually witnessed (rowCount/affectedRows/counts and
- * sampled cell values), and reports unsupported claims.
+ * the numbers the trace actually witnessed, and reports unsupported claims.
  *
- * Extraction is deliberately conservative (audit fix): numbers inside code
- * spans or SQL fences are not prose claims, dates and version strings are not
+ * Witnessed numbers come from TWO sources (audit follow-up): the structured
+ * `step.facts` the harness already attaches to every tool step (primary — no
+ * parsing, and it carries fields the text regex never sees, like columnStats
+ * distinct counts), and a conservative regex fallback over the observation
+ * text for legacy steps that predate the facts footer.
+ *
+ * Claim extraction is deliberately conservative: numbers inside code spans or
+ * SQL fences are not prose claims, dates and version strings are not
  * statistics, thousands/decimal separators are ambiguous across locales, and
  * rounding means a claimed figure rarely matches a witnessed value exactly.
  */
@@ -88,9 +93,29 @@ function collectObservationNumbers(observation: string, into: Set<number>) {
   }
 }
 
+/** Witnessed numbers from the harness's own structured facts (no text parsing). */
+function collectFactsNumbers(facts: AgentStepFacts, into: Set<number>) {
+  if (typeof facts.rowsReturned === "number" && Number.isFinite(facts.rowsReturned)) {
+    into.add(facts.rowsReturned);
+  }
+  for (const stat of facts.columnStats ?? []) {
+    if (Number.isFinite(stat.distinctCount)) into.add(stat.distinctCount);
+    if (Number.isFinite(stat.nullRatio)) {
+      into.add(stat.nullRatio);
+      // Responses habitually restate ratios as percentages ("12% null") —
+      // accept both readings of a witnessed ratio.
+      into.add(stat.nullRatio * 100);
+    }
+  }
+}
+
 export function collectObservedNumbers(steps: AgentTraceStep[]): Set<number> {
   const observed = new Set<number>();
   for (const step of steps) {
+    // Primary: the structured facts the executor attached to this step.
+    const facts = readStepFacts(step);
+    if (facts) collectFactsNumbers(facts, observed);
+    // Fallback: legacy observations that carry numbers only as text.
     collectObservationNumbers(step.observation ?? "", observed);
     collectObservationNumbers(step.message ?? "", observed);
   }

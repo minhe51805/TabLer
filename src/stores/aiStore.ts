@@ -80,10 +80,18 @@ function buildFailoverChain(
   const fallbackPool = healthyFallbacks.length > 0 ? healthyFallbacks : enabledFallbacks;
   const sortedPool = [...fallbackPool]
     .sort((left, right) => providerPenaltyRank(left.id) - providerPenaltyRank(right.id));
-  return [
-    ...attemptsOf(activeConfig),
+  const activeAttempts = attemptsOf(activeConfig);
+  // Degenerate config guard: an active provider with no configured model and
+  // no visible catalog entries would otherwise produce an EMPTY chain (and a
+  // pointless "undefined" error). Keep one model-less attempt so the backend
+  // still tries the provider's stored configuration.
+  const chain = [
+    ...(activeAttempts.length > 0
+      ? activeAttempts
+      : [{ config: activeConfig, providerId: activeConfig.id }]),
     ...sortedPool.flatMap((config) => attemptsOf(config)),
   ];
+  return chain;
 }
 
 /**

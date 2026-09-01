@@ -6,7 +6,9 @@ import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { invokeMutation } from "../../../utils/tauri-utils";
 import type { AIAttachmentDraft } from "../../../utils/ai-attachments";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
-import { shouldAgentAutoRunSql } from "../ai-execution-policy";
+import { shouldAgentAutoRunSql, isSqlBlockedBySafeMode } from "../ai-execution-policy";
+import { useConnectionStore } from "../../../stores/connectionStore";
+import { useSafeModeStore } from "../../../stores/safeModeStore";
 import {
   buildThreadLabel,
   createAIWorkspaceId,
@@ -616,10 +618,21 @@ export function useAIAssistantGeneration({
       const agentAlreadyReadLiveData = result.agentSteps?.some(
         (step) => (step.action === "run_readonly_sql" || step.action === "sample_table_data") && step.status === "done",
       );
+      // Agent autonomy never overrides Safe Mode: a proposal the current
+      // Safe Mode level would hard-block must not be auto-run (the run could
+      // only die with a raw Safe Mode error). Fall back to the manual
+      // approval flow with an explanatory note instead.
+      const safeModeConnectionId = useConnectionStore.getState().activeConnectionId ?? undefined;
+      const safeModeLevel = useSafeModeStore.getState().getEffectiveLevel(safeModeConnectionId);
+      const safeModeBlockedSql =
+        interactionMode === "agent" &&
+        Boolean(result.sql) &&
+        isSqlBlockedBySafeMode(result.sql ?? "", safeModeLevel);
       const agentCanAutoRun =
         interactionMode === "agent" &&
         Boolean(result.sql) &&
         !agentAlreadyReadLiveData &&
+        !safeModeBlockedSql &&
         shouldAgentAutoRunSql(activeAgentAutonomy, result.risk?.level);
       if (agentCanAutoRun && result.sql) {
         try {
@@ -688,7 +701,18 @@ export function useAIAssistantGeneration({
                 subtitle: readySubtitle,
                 promptSummary: loadingBubble.promptSummary,
                 preview: readyPreview,
-                detail: result.rawResponse,
+                // Safe Mode blocked the proposal: surface WHY it was not
+                // auto-run next to the Proposed SQL instead of a dead end.
+                detail: safeModeBlockedSql
+                  ? [
+                      result.rawResponse,
+                      language === "vi"
+                        ? "> ⚠ SQL đề xuất là thao tác ghi nên KHÔNG được tự chạy: Safe Mode đang ở mức chặn mutation. Hạ mức Safe Mode trong Settings hoặc chạy thủ công qua nút Apply."
+                        : "> ⚠ The proposed SQL is a write, so it was NOT auto-run: Safe Mode currently blocks mutations. Lower Safe Mode in Settings or apply it manually.",
+                    ]
+                      .filter(Boolean)
+                      .join("\n\n")
+                  : result.rawResponse,
                 sql: result.sql || undefined,
                 risk: result.risk,
                 reasoning: result.reasoning,

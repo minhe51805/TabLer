@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getAISqlConfirmationRequirement,
+  isSqlBlockedBySafeMode,
   shouldAgentAutoRunSql,
 } from "@/components/AISlidePanel/ai-execution-policy";
 
@@ -11,6 +12,20 @@ describe("AI SQL execution policy", () => {
     expect(shouldAgentAutoRunSql("smart", "review")).toBe(false);
     expect(shouldAgentAutoRunSql("smart", "dangerous")).toBe(false);
     expect(shouldAgentAutoRunSql("full", "dangerous")).toBe(true);
+  });
+
+  it("flags statements the current Safe Mode level would hard-block", () => {
+    // Level 1 = read-only: any write is blocked...
+    expect(isSqlBlockedBySafeMode("UPDATE users SET x = 1", 1)).toBe(true);
+    expect(isSqlBlockedBySafeMode("SELECT * FROM users", 1)).toBe(false);
+    // ...level 2 also allows INSERT...
+    expect(isSqlBlockedBySafeMode("INSERT INTO t VALUES (1)", 2)).toBe(false);
+    expect(isSqlBlockedBySafeMode("DELETE FROM t", 2)).toBe(true);
+    // level 0 disables the guard entirely; empty SQL is trivially unblocked.
+    expect(isSqlBlockedBySafeMode("DROP TABLE t", 0)).toBe(false);
+    expect(isSqlBlockedBySafeMode("   ", 3)).toBe(false);
+    // One blocked statement in a batch is enough.
+    expect(isSqlBlockedBySafeMode("SELECT 1; DELETE FROM t", 1)).toBe(true);
   });
 
   it("allows read-only statements without a mutation confirmation", () => {

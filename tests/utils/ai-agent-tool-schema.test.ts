@@ -89,11 +89,13 @@ describe("AI agent tool schema", () => {
     expect(tools[0]).not.toHaveProperty("parameters");
   });
 
-  it("converts to Gemini function declarations", () => {
+  it("converts to Gemini function declarations (normalized to the Gemini proto)", () => {
     const decls = toGeminiFunctionDeclarations();
     expect(decls).toHaveLength(AI_AGENT_TOOL_NAMES.length);
     expect(decls.map((decl) => decl.name)).toEqual([...AI_AGENT_TOOL_NAMES]);
-    expect(decls[0].parameters).toBe(AI_AGENT_TOOL_SPECS.ask_user.parameters);
+    const parameters = decls[0].parameters as unknown as Record<string, unknown>;
+    expect(parameters.type).toBe("OBJECT");
+    expect(parameters.required).toEqual(["question"]);
   });
 
   it("enables native tool calling for the agent intent on supported providers", () => {
@@ -127,6 +129,24 @@ describe("AI agent tool schema", () => {
     const gemini = nativeToolPayloadForProvider("gemini");
     expect(gemini.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
     expect(gemini.tool_choice).toEqual({ function_calling_config: { mode: "AUTO" } });
+  });
+
+  it("normalizes Gemini schemas to the Gemini proto (audit fix)", () => {
+    const gemini = nativeToolPayloadForProvider("gemini");
+    const declarations = gemini.tools as Array<Record<string, unknown>>;
+    const sample = declarations.find((declaration) => declaration.name === "sample_table_data");
+    expect(sample).toBeDefined();
+    const parameters = sample!.parameters as Record<string, unknown>;
+    // type must be the UPPERCASE proto enum, not the JSON Schema spelling.
+    expect(parameters.type).toBe("OBJECT");
+    // JSON-Schema-only keys must not leak into the wire format.
+    expect(JSON.stringify(parameters)).not.toContain("additionalProperties");
+    expect(JSON.stringify(parameters)).not.toContain("uniqueItems");
+    // Number bounds rename to minValue/maxValue.
+    const limit = (parameters.properties as Record<string, Record<string, unknown>>).limit;
+    expect(limit.type).toBe("INTEGER");
+    expect(limit.maximum).toBeUndefined();
+    expect(limit.maxValue).toBe(AI_AGENT_SAMPLE_MAX_ROWS);
   });
 
   it("lists every registry tool in the controller catalog, and only non-SQL tools when tools are off", () => {

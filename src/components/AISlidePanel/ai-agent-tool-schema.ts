@@ -813,13 +813,51 @@ export interface GeminiFunctionDeclaration {
   parameters: JsonSchema;
 }
 
+const GEMINI_TYPE_NAMES: Record<JsonSchema["type"], string> = {
+  object: "OBJECT",
+  string: "STRING",
+  number: "NUMBER",
+  integer: "INTEGER",
+  boolean: "BOOLEAN",
+  array: "ARRAY",
+};
+
+/**
+ * Gemini's Schema proto differs from JSON Schema in ways that hard-fail the
+ * REST call when left as-is (audit fix): `type` must be the UPPERCASE enum
+ * name ("OBJECT" not "object"), number bounds are `minValue`/`maxValue` (not
+ * `minimum`/`maximum`), and unknown keys like `additionalProperties` /
+ * `uniqueItems` / `$schema` are rejected by the API's strict proto parsing.
+ */
+function toGeminiSchema(schema: JsonSchema): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (schema.type) out.type = GEMINI_TYPE_NAMES[schema.type] ?? String(schema.type).toUpperCase();
+  if (schema.description) out.description = schema.description;
+  if (schema.enum) out.enum = [...schema.enum];
+  if (typeof schema.minimum === "number") out.minValue = schema.minimum;
+  if (typeof schema.maximum === "number") out.maxValue = schema.maximum;
+  if (typeof schema.minItems === "number") out.minItems = schema.minItems;
+  if (typeof schema.maxItems === "number") out.maxItems = schema.maxItems;
+  if (schema.items) out.items = toGeminiSchema(schema.items);
+  if (schema.properties) {
+    const properties: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(schema.properties)) {
+      properties[key] = toGeminiSchema(value);
+    }
+    out.properties = properties;
+  }
+  if (schema.required?.length) out.required = [...schema.required];
+  return out;
+}
+
 export function toGeminiFunctionDeclarations(
   specs: AIAgentToolSpec[] = listAgentToolSpecs(),
 ): GeminiFunctionDeclaration[] {
   return specs.map((spec) => ({
     name: spec.name,
     description: spec.description,
-    parameters: spec.parameters,
+    // Wire shape normalized to Gemini's Schema proto (see toGeminiSchema).
+    parameters: toGeminiSchema(spec.parameters) as unknown as JsonSchema,
   }));
 }
 

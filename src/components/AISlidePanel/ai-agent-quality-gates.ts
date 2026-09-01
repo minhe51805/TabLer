@@ -158,7 +158,7 @@ export function buildAgentRecoveryInstruction(params: {
       ? "This is the final round. Run the one read that answers the request, or finish with the complete answer built from the evidence already gathered. Do not end with a promise."
       : !verification.ok
         ? `Your answer cites figures that no tool observation supports (e.g. ${verification.unsupported.slice(0, 4).join(", ")}). Either run the read that verifies them, or correct the answer to cite only observed figures.`
-        : "Your previous finish returned no SQL and no executed query, but this request needs real workspace data. Either call sample_table_data, describe_tables, or run_readonly_sql now, or if that is genuinely impossible, finish again with a complete explanation instead of a promise.";
+        : "Your previous finish returned no SQL and no executed query, but this request needs real workspace data. Either call sample_table_data, describe_table, or run_readonly_sql now, or if that is genuinely impossible, finish again with a complete explanation instead of a promise.";
 }
 
 /** Wraps the shared agent instruction for a specific action-request reason. */

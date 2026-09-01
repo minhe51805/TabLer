@@ -342,4 +342,60 @@ mod tests {
         assert!(preview.chars().count() <= 320);
         assert!(preview.ends_with("..."));
     }
+
+    /// Contract with the frontend (`normalizeAIRequestError` in
+    /// `src/utils/ai-request-errors.ts`): retryable provider HTTP failures
+    /// (429/5xx with a Retry-After header) embed a machine-readable
+    /// `retry_after_ms=<n>` marker parsed by the frontend to wait exactly as
+    /// long as the provider asked.
+    #[test]
+    fn provider_http_error_carries_machine_readable_retry_after_marker() {
+        use crate::database::ai_models::AIProviderType;
+
+        let config: AIProviderConfig = serde_json::from_str(&format!(
+            r#"{{"id":"p1","name":"OpenAI","provider_type":{},"endpoint":"https://api.openai.com/v1/chat/completions","model":"gpt-test","is_enabled":true}}"#,
+            serde_json::to_string(&AIProviderType::OpenAI).unwrap()
+        ))
+        .expect("provider config should deserialize");
+
+        let endpoint = "https://api.openai.com/v1/chat/completions";
+
+        let with_marker = ai_provider_http_status_error(
+            &config,
+            endpoint,
+            StatusCode::TOO_MANY_REQUESTS,
+            "{}",
+            None,
+            Some(4),
+        );
+        assert!(
+            with_marker.contains("retry_after_ms=4000"),
+            "message was: {with_marker}"
+        );
+
+        // Retryable status without a parseable Retry-After header: no marker,
+        // just the human-facing note.
+        let without_marker = ai_provider_http_status_error(
+            &config,
+            endpoint,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{}",
+            None,
+            None,
+        );
+        assert!(!without_marker.contains("retry_after_ms="));
+        assert!(without_marker.contains("Please try again in a moment."));
+
+        // Non-retryable statuses never carry the marker even if a header
+        // slipped through.
+        let bad_request = ai_provider_http_status_error(
+            &config,
+            endpoint,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            None,
+            Some(4),
+        );
+        assert!(!bad_request.contains("retry_after_ms="));
+    }
 }

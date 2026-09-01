@@ -218,3 +218,61 @@ describe("parseAgentToolArgs", () => {
     });
   });
 });
+
+describe("native tool calling wire parity", () => {
+  const PROVIDER_TYPES = [
+    "openai",
+    "anthropic",
+    "gemini",
+    "openrouter",
+    "ollama",
+    "custom",
+  ] as const;
+
+  /** Extracts tool names from any provider shape (OpenAI/Anthropic/Gemini). */
+  function extractToolNames(payload: { tools: unknown[] }): string[] {
+    return payload.tools.flatMap((tool) => {
+      const record = tool as Record<string, unknown>;
+      if (typeof record.name === "string") return [record.name]; // Anthropic
+      const fn = record.function as { name?: unknown } | undefined;
+      if (fn && typeof fn.name === "string") return [fn.name]; // OpenAI family
+      const declarations = record.function_declarations as
+        | Array<{ name?: unknown }>
+        | undefined; // Gemini
+      if (Array.isArray(declarations)) {
+        return declarations
+          .filter((declaration) => typeof declaration.name === "string")
+          .map((declaration) => declaration.name as string);
+      }
+      return [];
+    });
+  }
+
+  it("keeps every provider family aligned: non-null payload, tool_choice, identical tool set", () => {
+    const nameSets = PROVIDER_TYPES.map((provider) => {
+      const payload = buildNativeToolPayload(provider, "agent");
+      expect(payload, `${provider} must produce a native payload`).not.toBeNull();
+      expect(payload?.tools.length).toBeGreaterThan(0);
+      expect(payload?.tool_choice).toBeDefined();
+      const names = extractToolNames(payload as { tools: unknown[] });
+      expect(names.length).toBeGreaterThan(0);
+      // Catalog essentials must survive every wire format.
+      expect(names).toContain("list_tables");
+      expect(names).toContain("describe_table");
+      expect(names).toContain("finish");
+      return names;
+    });
+
+    // Parity: no provider family drops or gains tools relative to the others.
+    for (const names of nameSets.slice(1)) {
+      expect(names).toEqual(nameSets[0]);
+    }
+  });
+
+  it("rides only the agent intent and stays null elsewhere", () => {
+    expect(buildNativeToolPayload("openai", "agent")).not.toBeNull();
+    expect(buildNativeToolPayload("openai", "general")).toBeNull();
+    expect(buildNativeToolPayload("openai", "sql")).toBeNull();
+    expect(buildNativeToolPayload("anthropic", "fix-error")).toBeNull();
+  });
+});

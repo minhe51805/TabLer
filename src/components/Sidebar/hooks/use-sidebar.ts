@@ -28,6 +28,7 @@ import {
   usePinnedTables,
   useSchemaSections,
   useExplorerSummary,
+  explorerSectionObjectCount,
 } from "./useTreeState";
 import { EXPLORER_PINNED_TABLES_STORAGE_KEY } from "./useTreeState";
 import type { DatabaseInfo, SchemaObjectInfo, TableInfo } from "../../../types";
@@ -516,7 +517,14 @@ export function useSidebar() {
     [filteredTables],
   );
 
-  const schemaSections = useSchemaSections(actualTables, filteredSchemaObjects, pinnedTableSet);
+  // SSMS parity: on SQL Server fold `sys`/`INFORMATION_SCHEMA` objects into the
+  // `dbo` section so "System …" folders render like SSMS's database node.
+  const schemaSections = useSchemaSections(
+    actualTables,
+    filteredSchemaObjects,
+    pinnedTableSet,
+    dbType === "mssql",
+  );
 
   const availableSchemaNames = useMemo(
     () => schemaSections.map((section) => section.schemaName),
@@ -534,23 +542,14 @@ export function useSidebar() {
         value: "all",
         label: t("explorer.allSchemas"),
         count: schemaSections.reduce(
-          (total, section) =>
-            total +
-            section.tables.length +
-            section.views.length +
-            section.triggers.length +
-            section.routines.length,
+          (total, section) => total + section.tables.length + explorerSectionObjectCount(section),
           0
         ),
       },
       ...schemaSections.map((section) => ({
         value: section.schemaName,
         label: section.schemaName,
-        count:
-          section.tables.length +
-          section.views.length +
-          section.triggers.length +
-          section.routines.length,
+        count: section.tables.length + explorerSectionObjectCount(section),
       })),
     ],
     [schemaSections, t],

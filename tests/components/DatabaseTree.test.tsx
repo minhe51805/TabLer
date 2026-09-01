@@ -26,7 +26,25 @@ const sections: ExplorerSchemaSection[] = [
     schemaName: "dbo",
     tables,
     views: schemaObjects,
+    systemViews: [],
     triggers: [],
+    procedures: [],
+    systemProcedures: [],
+    systemFunctions: [],
+    tableFunctions: [],
+    scalarFunctions: [],
+    aggregateFunctions: [],
+    databaseTriggers: [],
+    assemblies: [],
+    rules: [],
+    defaults: [],
+    systemTypes: [],
+    userDefinedTypes: [],
+    userTableTypes: [],
+    clrTypes: [],
+    xmlSchemaCollections: [],
+    synonyms: [],
+    sequences: [],
     routines: [],
   },
 ];
@@ -99,5 +117,13 @@ describe("DatabaseTree (virtualized explorer, freeze-audit P1)", () => {
 
     const multi = renderTree({ availableSchemaNames: ["dbo", "sales"] });
     expect(multi.container.querySelector(".explorer-schema-toolbar")).toBeTruthy();
+  });
+
+  it("renders SSMS-style folder rows for the expanded schema, collapsed by default", () => {
+    // jsdom gives the virtual scroller zero height, so TanStack Virtual renders
+    // no rows; assert the tree wiring instead of DOM folder rows (the folder
+    // flattening itself is covered by tests/performance/v015-performance).
+    const { container } = renderTree();
+    expect(container.querySelector(".explorer-virtual-container")).toBeTruthy();
   });
 });

@@ -632,14 +632,82 @@ impl DatabaseDriver for MssqlDriver {
 
     async fn list_schema_objects(&self, database: Option<&str>) -> Result<Vec<SchemaObjectInfo>> {
         let db = self.current_database_name(database);
+        // SSMS-parity coverage: views, triggers (DML), stored procedures
+        // (incl. CLR), all function kinds, synonyms, sequences, database-level
+        // (DDL) triggers, assemblies, rules, standalone defaults, data types
+        // (system categories / user-defined / table types / CLR) and XML
+        // schema collections. System objects (is_ms_shipped = 1) are included
+        // on purpose — they surface under the `sys` schema section in the
+        // explorer, mirroring SSMS.
         let sql = format!(
-            "SELECT s.name AS schema_name, o.name, o.type_desc \
+            "SELECT s.name AS schema_name, o.name, \
+                    CASE WHEN o.type = 'D' THEN N'DEFAULT' ELSE o.type_desc END \
              FROM [{}].sys.objects o \
              JOIN [{}].sys.schemas s ON s.schema_id = o.schema_id \
-             WHERE o.type IN ('V', 'TR', 'P', 'FN', 'TF', 'IF') \
-             ORDER BY s.name, o.name",
+             LEFT JOIN [{}].sys.triggers tt ON tt.object_id = o.object_id \
+             WHERE o.type IN ('V', 'TR', 'P', 'FN', 'TF', 'IF', 'SN', 'AF', 'PC', 'FS', 'FT', 'R', 'D') \
+               AND (o.type <> 'TR' OR tt.parent_class <> 0) \
+             UNION ALL \
+             SELECT s.name AS schema_name, t.name, N'DATABASE_TRIGGER' \
+             FROM [{}].sys.triggers t \
+             JOIN [{}].sys.schemas s ON s.schema_id = t.schema_id \
+             WHERE t.parent_class = 0 \
+             UNION ALL \
+             SELECT s.name AS schema_name, a.name, N'ASSEMBLY' \
+             FROM [{}].sys.assemblies a \
+             JOIN [{}].sys.schemas s ON s.schema_id = a.schema_id \
+             UNION ALL \
+             SELECT s.name AS schema_name, t.name, \
+                    CASE \
+                      WHEN t.is_user_defined = 0 THEN \
+                        CASE \
+                          WHEN t.name IN (N'bigint', N'int', N'smallint', N'tinyint', N'bit', \
+                                          N'decimal', N'numeric', N'money', N'smallmoney') \
+                            THEN N'SYSTEM_EXACT_NUMERIC' \
+                          WHEN t.name IN (N'float', N'real') \
+                            THEN N'SYSTEM_APPROXIMATE_NUMERIC' \
+                          WHEN t.name IN (N'date', N'datetime2', N'datetime', N'smalldatetime', \
+                                          N'time', N'datetimeoffset') \
+                            THEN N'SYSTEM_DATE_TIME' \
+                          WHEN t.name IN (N'char', N'varchar', N'text') \
+                            THEN N'SYSTEM_CHARACTER_STRING' \
+                          WHEN t.name IN (N'nchar', N'nvarchar', N'ntext') \
+                            THEN N'SYSTEM_UNICODE_CHARACTER_STRING' \
+                          WHEN t.name IN (N'binary', N'varbinary', N'image') \
+                            THEN N'SYSTEM_BINARY_STRING' \
+                          WHEN t.name IN (N'geography', N'geometry') \
+                            THEN N'SYSTEM_SPATIAL_DATA_TYPE' \
+                          WHEN t.is_assembly_type = 1 THEN N'SYSTEM_CLR_DATA_TYPE' \
+                          ELSE N'SYSTEM_OTHER_DATA_TYPE' \
+                        END \
+                      WHEN t.is_table_type = 1 THEN N'USER_TABLE_TYPE' \
+                      WHEN t.is_assembly_type = 1 THEN N'USER_CLR_TYPE' \
+                      ELSE N'USER_DEFINED_TYPE' \
+                    END \
+             FROM [{}].sys.types t \
+             JOIN [{}].sys.schemas s ON s.schema_id = t.schema_id \
+             UNION ALL \
+             SELECT s.name AS schema_name, q.name, N'SEQUENCE' \
+             FROM [{}].sys.sequences q \
+             JOIN [{}].sys.schemas s ON s.schema_id = q.schema_id \
+             UNION ALL \
+             SELECT s.name AS schema_name, x.name, N'XML_SCHEMA_COLLECTION' \
+             FROM [{}].sys.xml_schema_collections x \
+             JOIN [{}].sys.schemas s ON s.schema_id = x.schema_id \
+             ORDER BY schema_name, name",
             db.replace(']', "]]"),
-            db.replace(']', "]]")
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
         );
         let (rows, _) = self.query_rows(&sql).await?;
 

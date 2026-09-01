@@ -1,6 +1,6 @@
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Database, ChevronDown, ChevronRight, Loader2, Filter } from "lucide-react";
+import { Database, Folder, FolderOpen, ChevronDown, ChevronRight, Loader2, Filter } from "lucide-react";
 import type { DatabaseInfo, SchemaObjectInfo, TableInfo } from "../../../types";
 import type { AppLanguage } from "../../../i18n";
 import { getQualifiedTableName } from "../SidebarUtils";
@@ -14,7 +14,7 @@ import {
 } from "./DatabaseTreeItems";
 import {
   estimateExplorerItemSize,
-  EXPLORER_GROUP_LABEL_KEYS,
+  EXPLORER_FOLDER_LABEL_KEYS,
   flattenExplorerSections,
   type ExplorerFlatItem,
 } from "./explorer-virtualization";
@@ -89,6 +89,13 @@ interface VirtualizedSchemaRowsProps {
   onTableContextMenu: DatabaseTreeProps["onTableContextMenu"];
   contextQualifiedName: string | null;
   language: AppLanguage;
+  /** Explorer-folder keys currently expanded (see explorerFolderKey). */
+  expandedFolders: ReadonlySet<string>;
+  onToggleFolder: (folderKey: string) => void;
+  /** While searching, every folder is force-expanded regardless of state. */
+  forceExpandFolders: boolean;
+  /** SSMS-parity: always render Synonyms/Sequences folders even when empty. */
+  showSystemFolders: boolean;
   t: (key: import("../../../i18n").TranslationKey, opts?: Record<string, string | number>) => string;
 }
 
@@ -106,9 +113,20 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
   onTableContextMenu,
   contextQualifiedName,
   language,
+  expandedFolders,
+  onToggleFolder,
+  forceExpandFolders,
+  showSystemFolders,
   t,
 }: VirtualizedSchemaRowsProps) {
-  const flatItems = useMemo(() => flattenExplorerSections(sections), [sections]);
+  const flatItems = useMemo(
+    () =>
+      flattenExplorerSections(sections, {
+        expandedFolders: forceExpandFolders ? null : expandedFolders,
+        showSystemFolders,
+      }),
+    [sections, expandedFolders, forceExpandFolders, showSystemFolders],
+  );
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
 
@@ -155,10 +173,39 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
           </div>
         );
       }
-      case "group-head":
+      case "folder":
         return (
-          <div className="explorer-object-group-head explorer-virtual-group-head">
-            {t(EXPLORER_GROUP_LABEL_KEYS[item.group] as import("../../../i18n").TranslationKey)}
+          <button
+            type="button"
+            className={`explorer-folder-row ${item.expanded ? "open" : ""}`}
+            style={{ paddingLeft: 4 + item.depth * 14 }}
+            onClick={() => onToggleFolder(item.key)}
+            aria-expanded={item.expanded}
+          >
+            {item.expanded ? (
+              <ChevronDown className="explorer-folder-chevron" />
+            ) : (
+              <ChevronRight className="explorer-folder-chevron" />
+            )}
+            {item.expanded ? (
+              <FolderOpen className="explorer-folder-icon" />
+            ) : (
+              <Folder className="explorer-folder-icon" />
+            )}
+            <span className="explorer-folder-label">
+              {t(EXPLORER_FOLDER_LABEL_KEYS[item.folder] as import("../../../i18n").TranslationKey)}
+            </span>
+            <span className="explorer-folder-count">{item.count}</span>
+          </button>
+        );
+      case "empty-folder":
+        return (
+          <div
+            className="explorer-empty-folder-row"
+            style={{ paddingLeft: 8 + item.depth * 14 }}
+          >
+            <Folder className="explorer-empty-folder-icon" />
+            <span>{t("explorer.noItems")}</span>
           </div>
         );
       case "table": {
@@ -168,54 +215,71 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
           contextQualifiedName !== null &&
           contextQualifiedName === getQualifiedTableName(item.table);
         return (
-          <TableRow
-            table={item.table}
-            itemState={itemState}
-            isContextActive={isContextActive}
-            onTableClick={onTableClick}
-            onTableDoubleClick={onTableDoubleClick}
-            onStructureClick={onStructureClick}
-            onTableContextMenu={onTableContextMenu}
-            schemaName={item.schemaName}
-            language={language}
-            t={t}
-            onMixedStateToggle={onMixedStateToggle}
-          />
+          <div style={{ paddingLeft: item.depth * 12 }}>
+            <TableRow
+              table={item.table}
+              itemState={itemState}
+              isContextActive={isContextActive}
+              onTableClick={onTableClick}
+              onTableDoubleClick={onTableDoubleClick}
+              onStructureClick={onStructureClick}
+              onTableContextMenu={onTableContextMenu}
+              schemaName={item.schemaName}
+              language={language}
+              t={t}
+              onMixedStateToggle={onMixedStateToggle}
+            />
+          </div>
         );
       }
       case "view": {
         const tableFilter = getMixedStateFilterForTable(item.view.name, item.schemaName);
         const itemState = getItemFilterState(item.view.name, item.schemaName, tableFilter);
         return (
-          <ViewRow
-            view={item.view}
-            itemState={itemState}
-            onTableClick={onTableClick}
-            onTableDoubleClick={onTableDoubleClick}
-            onStructureClick={onStructureClick}
-            schemaName={item.schemaName}
-            language={language}
-            t={t}
-            onMixedStateToggle={onMixedStateToggle}
-          />
+          <div style={{ paddingLeft: item.depth * 12 }}>
+            <ViewRow
+              view={item.view}
+              itemState={itemState}
+              onTableClick={onTableClick}
+              onTableDoubleClick={onTableDoubleClick}
+              onStructureClick={onStructureClick}
+              schemaName={item.schemaName}
+              language={language}
+              t={t}
+              onMixedStateToggle={onMixedStateToggle}
+            />
+          </div>
         );
       }
-      case "object":
+      case "object": {
+        const isTriggerLike = item.group === "triggers" || item.group === "database-triggers";
+        const isTypeLike =
+          item.group === "system-types" ||
+          item.group === "user-defined-types" ||
+          item.group === "user-table-types" ||
+          item.group === "clr-types" ||
+          item.group === "xml-schema-collections" ||
+          item.group === "assemblies";
         return (
-          <StaticObjectRow
-            object={item.object}
-            metaText={item.group === "triggers"
-              ? item.object.related_table || t("explorer.triggersGroup")
-              : item.object.object_type}
-            icon={item.group === "triggers" ? "GitBranch" : "FileCode"}
-            onObjectSqlClick={onObjectSqlClick}
-            t={t}
-          />
+          <div style={{ paddingLeft: item.depth * 12 }}>
+            <StaticObjectRow
+              object={item.object}
+              metaText={isTriggerLike
+                ? item.object.related_table || (item.group === "triggers" ? t("explorer.triggersGroup") : "")
+                : isTypeLike
+                  ? ""
+                  : item.object.object_type}
+              icon={isTriggerLike ? "GitBranch" : "FileCode"}
+              onObjectSqlClick={onObjectSqlClick}
+              t={t}
+            />
+          </div>
         );
+      }
       default:
         return null;
     }
-  }, [contextQualifiedName, getMixedStateFilterForTable, language, mixedStateFilter, onMixedStateToggle, onObjectSqlClick, onStructureClick, onTableClick, onTableContextMenu, onTableDoubleClick, t]);
+  }, [contextQualifiedName, getMixedStateFilterForTable, language, mixedStateFilter, onMixedStateToggle, onObjectSqlClick, onStructureClick, onTableClick, onTableContextMenu, onTableDoubleClick, onToggleFolder, t]);
 
   return (
     <div
@@ -276,11 +340,29 @@ export function DatabaseTree({
     ? getQualifiedTableName(tableContextMenu.table)
     : null;
   const explorerScrollRef = useRef<HTMLDivElement | null>(null);
+  // SSMS-style folder expansion state, keyed by explorerFolderKey. Collapses
+  // whenever the workspace database changes so each DB starts folded.
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    setExpandedFolders(new Set());
+  }, [currentDatabase]);
+  const toggleFolder = useCallback((folderKey: string) => {
+    setExpandedFolders((previous) => {
+      const next = new Set(previous);
+      if (next.has(folderKey)) {
+        next.delete(folderKey);
+      } else {
+        next.add(folderKey);
+      }
+      return next;
+    });
+  }, []);
   // Layout above the virtual panel (expanded DB headers) shifts its offset
   // inside the scroll container; key the effect off that layout signature.
   const layoutKey = useMemo(
-    () => `${currentDatabase ?? ""}|${[...expandedDbs].sort().join(",")}|${activeSchemaFilter}|${availableSchemaNames.length}`,
-    [activeSchemaFilter, availableSchemaNames.length, currentDatabase, expandedDbs],
+    () =>
+      `${currentDatabase ?? ""}|${[...expandedDbs].sort().join(",")}|${activeSchemaFilter}|${availableSchemaNames.length}|${[...expandedFolders].sort().join(",")}`,
+    [activeSchemaFilter, availableSchemaNames.length, currentDatabase, expandedDbs, expandedFolders],
   );
   const getScrollElement = useCallback(() => explorerScrollRef.current, []);
 
@@ -322,7 +404,9 @@ export function DatabaseTree({
                   </span>
               </div>
               <div className="explorer-db-badges">
-                <span className="explorer-db-count">{tableCount ?? "--"}</span>
+                <span className={`explorer-db-count ${tableCount == null ? "pending" : ""}`}>
+                  {tableCount ?? "--"}
+                </span>
                 {db.size && <span className="explorer-db-pill">{db.size}</span>}
               </div>
             </button>
@@ -400,6 +484,10 @@ export function DatabaseTree({
                     onTableContextMenu={onTableContextMenu}
                     contextQualifiedName={contextQualifiedName}
                     language={language}
+                    expandedFolders={expandedFolders}
+                    onToggleFolder={toggleFolder}
+                    forceExpandFolders={hasSearch}
+                    showSystemFolders={activeConnectionDbType === "mssql"}
                     t={t}
                   />
                 )}

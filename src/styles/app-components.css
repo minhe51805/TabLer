@@ -3517,7 +3517,6 @@
 .workspace-ready-context,
 .workspace-ready-action-card,
 .workspace-ready-support-card,
-.explorer-table-panel,
 .connection-card,
 .ai-workspace-stage--sidebar .ai-workspace-composer.is-docked,
 .ai-workspace-stage--sidebar .ai-workspace-compose-box,
@@ -3559,8 +3558,9 @@
 
 /* ─── MiniMax Design System Overrides ────────────────────────────────────── */
 
-/* Sidebar navigation buttons/items active states */
-.explorer-db-button.active,
+/* Sidebar navigation buttons/items active states.
+ * Note: .explorer-db-button.active is intentionally NOT here — the explorer
+ * tree styles its own active state (accent tint + left bar, theme-aware). */
 .connection-card.active,
 .sidebar-rail-btn.active,
 .workspace-sidebar-rail-btn.active {
@@ -3570,7 +3570,6 @@
 }
 
 /* Target specific text classes for active navigation items */
-.explorer-db-button.active span,
 .connection-card.active .connection-card-title,
 .connection-card.active .connection-card-state,
 .connection-card.active .connection-meta-inline-value,
@@ -3582,7 +3581,6 @@
 }
 
 /* Target icons inside active items */
-.explorer-db-button.active svg,
 .connection-card.active svg:not(.connection-card-status-dot),
 .sidebar-rail-btn.active svg,
 .workspace-sidebar-rail-btn.active svg {
@@ -6357,9 +6355,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .explorer-searchbar {
-  min-height: 40px;
-  padding-left: 12px;
-  padding-right: 12px;
+  min-height: 34px;
+  padding-left: 10px;
+  padding-right: 10px;
   border-radius: 8px;
   border-color: var(--mm-border);
   background: var(--mm-surface-0);
@@ -6381,25 +6379,27 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .explorer-tree-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 6px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
 }
 
 .explorer-db-section + .explorer-db-section {
   margin-top: 0;
 }
 
+/* Dense tree row (ADS/SSMS-style): flat surface, quiet borders, the active
+ * database is marked by a left accent bar instead of a heavy card outline. */
 .explorer-db-button {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 11px;
-  border-radius: 10px;
-  border: 1px solid var(--mm-border);
-  background: var(--mm-surface-1);
+  gap: 8px;
+  padding: 5px 8px 5px 6px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
@@ -6410,26 +6410,14 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .explorer-db-button:hover {
-  border-color: color-mix(in srgb, var(--accent) 18%, transparent 82%);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent-dim) 54%, transparent 46%),
-      rgba(255, 255, 255, 0.02)
-    ),
-    rgba(255, 255, 255, 0.03);
+  border-color: var(--mm-border);
+  background: var(--mm-surface-2);
 }
 
 .explorer-db-button.active {
-  border-color: color-mix(in srgb, var(--accent) 28%, transparent 72%);
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent-dim) 90%, transparent 10%),
-      rgba(255, 255, 255, 0.02)
-    ),
-    color-mix(in srgb, var(--accent-dim) 48%, transparent 52%);
-  box-shadow: none;
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent 74%);
+  background: color-mix(in srgb, var(--accent-dim) 55%, transparent 45%);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .explorer-db-chevron {
@@ -6437,14 +6425,14 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .explorer-db-icon {
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  border-radius: 7px;
-  background: var(--accent-dim);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-dim) 70%, transparent 30%);
   color: var(--accent-hover);
 }
 
@@ -6487,33 +6475,41 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .explorer-db-badges {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
   flex-shrink: 0;
 }
 
 .explorer-db-count {
-  min-width: 30px;
-  min-height: 24px;
+  min-width: 22px;
+  min-height: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 8px;
-  border-radius: 8px;
-  background: var(--mm-surface-1);
-  border: 1px solid var(--mm-border);
-  color: var(--text-primary);
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--mm-surface-2);
+  border: 1px solid transparent;
+  color: var(--text-secondary);
   font-size: var(--mm-fs-micro);
   font-weight: 700;
   letter-spacing: -0.02em;
 }
 
+/* Placeholder while tables have not been fetched for this database yet. */
+.explorer-db-count.pending {
+  background: transparent;
+  border-color: var(--mm-border);
+  color: var(--text-muted);
+  opacity: 0.65;
+}
+
 .explorer-db-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
+  min-height: 18px;
+  padding: 0 6px;
   border-radius: 999px;
   background: var(--mm-surface-2);
   border: 1px solid var(--mm-border);
@@ -6531,11 +6527,13 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .explorer-table-panel {
-  margin-top: 8px;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid var(--mm-border);
-  background: var(--mm-surface-1);
+  /* Tree-guide style: instead of a nested card, the expanded database
+   * connects to its children with a vertical guide line (SSMS-like). */
+  margin: 2px 0 4px 16px;
+  padding: 2px 0 2px 4px;
+  border-left: 2px solid color-mix(in srgb, var(--mm-border) 85%, transparent 15%);
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
   animation: explorer-soft-enter 220ms ease;
 }
@@ -6846,9 +6844,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 4px 8px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -6915,18 +6913,38 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .explorer-structure-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  min-height: 30px;
-  padding: 0 9px;
-  border-radius: 10px;
-  border: 1px solid var(--mm-border);
-  background: var(--mm-surface-2);
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
   color: var(--text-muted);
   font-size: var(--mm-fs-micro);
   font-weight: 700;
   cursor: pointer;
   transition: all var(--transition);
   flex-shrink: 0;
+  opacity: 0;
+}
+
+/* Reveal row actions on hover (keyboard users still get them via focus). */
+.explorer-table-row:hover .explorer-structure-btn,
+.explorer-table-row:focus-within .explorer-structure-btn,
+.explorer-structure-btn:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .explorer-structure-btn {
+    opacity: 1;
+  }
+}
+
+.explorer-structure-btn--icon {
+  width: 26px;
+  padding: 0;
 }
 
 .explorer-context-menu {
@@ -8028,6 +8046,107 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .workspace-ready-glyph {
   color: var(--fintech-cyan);
   transform: translate(0.5px, 0.5px);
+}
+
+/* ---------------------------------------------------------------------------
+ * Workspace connecting panel (database reachability check) — orbit + skeleton
+ * ------------------------------------------------------------------------- */
+
+.workspace-connecting-orbit {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  display: grid;
+  place-items: center;
+}
+
+.workspace-connecting-orbit-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 32%, transparent 68%);
+  animation: workspace-connecting-orbit 16s linear infinite;
+}
+
+.workspace-connecting-orbit-ring::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 65%, transparent 35%);
+}
+
+.workspace-connecting-orbit-ring--inner {
+  inset: 16px;
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent 78%);
+  animation-duration: 9s;
+  animation-direction: reverse;
+}
+
+.workspace-connecting-orbit-ring--inner::after {
+  width: 6px;
+  height: 6px;
+  top: -3px;
+  margin-left: -3px;
+  opacity: 0.8;
+}
+
+@keyframes workspace-connecting-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.workspace-connecting-orbit-core {
+  position: relative;
+  z-index: 1;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 13px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 8px 22px rgba(4, 10, 24, 0.16);
+  color: var(--accent);
+}
+
+.workspace-connecting-skeleton-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--mm-surface-1) 25%,
+    var(--mm-surface-3) 50%,
+    var(--mm-surface-1) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+}
+
+.workspace-connecting-skeleton-bar:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.workspace-connecting-skeleton-bar:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-connecting-orbit-ring {
+    animation: none;
+  }
+
+  .workspace-connecting-skeleton-bar {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 .workspace-empty-glyph,
@@ -36829,12 +36948,89 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   white-space: nowrap;
 }
 
-.explorer-virtual-group-head {
-  padding: 6px 8px 2px;
+/* SSMS-style expandable folder row (Tables / Views / Programmability / ...). */
+.explorer-folder-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding-right: 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    color var(--transition);
 }
 
-.explorer-virtual-row .explorer-table-row {
-  padding-left: 8px;
+.explorer-folder-row:hover,
+.explorer-folder-row.open {
+  background: var(--mm-surface-2);
+  color: var(--text-primary);
+}
+
+.explorer-folder-chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.explorer-folder-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--mm-warning);
+  opacity: 0.9;
+}
+
+.explorer-folder-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.explorer-folder-count {
+  flex-shrink: 0;
+  min-width: 20px;
+  min-height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--mm-surface-1);
+  border: 1px solid var(--mm-border);
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+}
+
+/* "No items" placeholder under an expanded empty folder (SSMS parity). */
+.explorer-empty-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  padding: 2px 8px;
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+}
+
+.explorer-empty-folder-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0.55;
 }
 
 /* --------------------------------------------------------------------------

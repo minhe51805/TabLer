@@ -33,6 +33,10 @@ interface AIWorkspaceSwitcherProps {
   onDeleteWorkspace: (id: string) => void;
   /** Pin/unpin a workspace to a database (rebind clears its compacted context). */
   onRebindWorkspace?: (id: string, database: string) => void;
+  /** While an agent run is active, rebinding is locked (it would re-scope the evidence mid-run). */
+  rebindLocked?: boolean;
+  /** Tooltip shown on the locked rebind chips. */
+  rebindLockedTitle?: string;
 }
 
 /**
@@ -51,6 +55,8 @@ export function AIWorkspaceSwitcher({
   onRenameWorkspace,
   onDeleteWorkspace,
   onRebindWorkspace,
+  rebindLocked = false,
+  rebindLockedTitle,
 }: AIWorkspaceSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -82,6 +88,11 @@ export function AIWorkspaceSwitcher({
   useEffect(() => {
     if (!isOpen) setRebindState(null);
   }, [isOpen]);
+
+  // Locking mid-pick (agent started) closes the open picker immediately.
+  useEffect(() => {
+    if (rebindLocked) setRebindState(null);
+  }, [rebindLocked]);
 
   // The picker floats with fixed coordinates — repositioning sources (popover
   // scroll, window resize) invalidate them, so just close it.
@@ -185,10 +196,17 @@ export function AIWorkspaceSwitcher({
                     <span className="ai-ws-item-meta">
                       <button
                         type="button"
-                        className={`ai-ws-db-chip ${workspace.database ? "" : "is-auto"}`}
-                        title={workspace.database ? `${copy.rebindAction}: ${workspace.database}` : copy.rebindAction}
+                        className={`ai-ws-db-chip ${workspace.database ? "" : "is-auto"} ${rebindLocked ? "is-locked" : ""}`}
+                        disabled={rebindLocked}
+                        title={
+                          rebindLocked
+                            ? (rebindLockedTitle ?? copy.rebindAction)
+                            : (workspace.database ? `${copy.rebindAction}: ${workspace.database}` : copy.rebindAction)
+                        }
+                        aria-disabled={rebindLocked}
                         onClick={(event) => {
                           event.stopPropagation();
+                          if (rebindLocked) return;
                           if (!onRebindWorkspace) return;
                           if (rebindId === workspace.id) {
                             setRebindState(null);

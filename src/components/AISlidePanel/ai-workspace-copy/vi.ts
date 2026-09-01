@@ -197,6 +197,7 @@ export const VI_COPY: AIWorkspaceCopy = {
       switcherTitle: "Không gian làm việc",
       switcherHint: "Context theo DB đang mở; pin DB để cố định",
       rebindAction: "Chọn database",
+      rebindLockedTitle: "Agent đang chạy — hãy đợi chạy xong hoặc hủy trước khi đổi database.",
       dbAuto: "Tự động",
       dbCurrentHint: "Đang mở trong Explorer",
       autoMode: "Tự động",

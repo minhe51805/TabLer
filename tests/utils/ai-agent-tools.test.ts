@@ -10,6 +10,7 @@ describe("AI agent tool contract", () => {
   it("exposes only executable controller actions", () => {
     expect(AI_AGENT_TOOL_NAMES).toEqual([
       "ask_user",
+      "update_plan",
       "list_tables",
       "search_schema",
       "list_schema_objects",
@@ -24,6 +25,7 @@ describe("AI agent tool contract", () => {
       "preview_write",
       "remember_term",
       "skill",
+      "delegate",
       "read_page",
       "finish",
     ]);

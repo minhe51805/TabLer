@@ -25,6 +25,11 @@ import {
 } from "./ai-agent-engine-gates";
 import {
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
+  AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS,
+  AI_AGENT_DELEGATE_ANSWER_CHARS,
+  AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT,
+  AI_AGENT_DELEGATE_MAX_CALLS,
+  AI_AGENT_PLAN_STEP_LIMIT,
   AI_AGENT_READ_PAGE_MAX_CHARS,
   AI_AGENT_SAMPLE_MAX_ROWS,
   AI_AGENT_SCHEMA_OBJECTS_LIMIT,
@@ -54,6 +59,84 @@ function agentQueryTimeoutHint(errorValue: unknown): string {
     : "";
 }
 
+/** Scope of the sample_table_data column-statistics enrichment. */
+export type AgentColumnStatsScope = "whole" | "sample" | "off";
+
+const AGENT_PLAN_STATUSES = new Set(["pending", "in_progress", "done"]);
+
+/**
+ * Sanitizes raw update_plan `args.steps` into a bounded, status-valid
+ * checklist: non-object entries and blank titles are dropped, statuses fall
+ * back to "pending", titles are capped, and the list is truncated to the
+ * schema maximum. Exported pure for the golden-set eval.
+ */
+export function normalizeAgentPlanSteps(
+  raw: unknown,
+  maxSteps: number,
+): import("./ai-agent-context").AgentPlanStep[] {
+  if (!Array.isArray(raw)) return [];
+  const steps: import("./ai-agent-context").AgentPlanStep[] = [];
+  for (const entry of raw) {
+    if (steps.length >= maxSteps) break;
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const title = typeof record.title === "string" ? record.title.trim() : "";
+    if (!title) continue;
+    const status = typeof record.status === "string" && AGENT_PLAN_STATUSES.has(record.status)
+      ? record.status as import("./ai-agent-context").AgentPlanStep["status"]
+      : "pending";
+    steps.push({ title: title.slice(0, 160), status });
+  }
+  return steps;
+}
+
+/**
+ * Resolves how sample_table_data computes column statistics. "whole" runs one
+ * aggregate over every row in the table — only safe when the catalog rowCount
+ * is known and small. Large or unknown-size tables use "sample" (stats from
+ * the rows already fetched) so a peek can never become a full-table scan.
+ */
+export function resolveColumnStatsScope(
+  requested: string | undefined,
+  knownRowCount: number | null,
+): AgentColumnStatsScope {
+  if (requested === "off") return "off";
+  if (requested === "sample") return "sample";
+  return knownRowCount !== null && knownRowCount <= AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS
+    ? "whole"
+    : "sample";
+}
+
+/**
+ * Column statistics computed in memory from an already-fetched result page —
+ * the honest fallback for tables too big (or of unknown size) for a
+ * whole-table aggregate. Rows are positional, matching QueryResult.rows.
+ */
+export function computeSampleColumnStats(
+  rows: Array<Array<string | number | boolean | null>>,
+  columns: Array<{ name: string; index: number }>,
+): Array<{ column: string; nullRatio: number; distinctCount: number }> {
+  const total = rows.length;
+  if (total === 0) return [];
+  return columns.map(({ name, index }) => {
+    const distinct = new Set<string>();
+    let nullCount = 0;
+    for (const row of rows) {
+      const value = row[index];
+      if (value === null || value === undefined || value === "") {
+        nullCount += 1;
+        continue;
+      }
+      distinct.add(String(value));
+    }
+    return {
+      column: name,
+      nullRatio: Math.round((nullCount / total) * 1000) / 1000,
+      distinctCount: distinct.size,
+    };
+  });
+}
+
 export interface AgentToolExecutorDeps {
   connectionId: string | null;
   currentDatabase: string | null;
@@ -67,6 +150,14 @@ export interface AgentToolExecutorDeps {
   requestIdRef: RefObject<number>;
   requestDataReadConsent?: () => Promise<boolean>;
   publishAgentProgress: (pending?: { action: import("./ai-workspace-types").AIWorkspaceAgentActionName; message: string }) => void;
+  /** Receives the normalized checklist after each update_plan call. */
+  onAgentPlanUpdate?: (plan: import("./ai-agent-context").AgentPlanStep[]) => void;
+  /**
+   * Runs one focused side-analysis model call for delegate (no tools, text
+   * answer). The executor bounds the number of calls per run; the hook owns
+   * the actual transport, timeout, and correlation.
+   */
+  delegateSubAnalysis?: (instruction: string, focusTables: string[]) => Promise<string>;
   getTableColumnsPreview: (connectionId: string, table: string, database?: string) => Promise<ColumnDetail[]>;
   getTableStructure: (connectionId: string, table: string, database?: string) => Promise<TableStructure>;
   getTableData: (
@@ -222,6 +313,8 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     requestIdRef,
     requestDataReadConsent,
     publishAgentProgress,
+    onAgentPlanUpdate,
+    delegateSubAnalysis,
     getTableColumnsPreview,
     getTableStructure,
     getTableData,
@@ -231,6 +324,8 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     toolAvailability,
   } = deps;
   let lastExplorationToolKey = "";
+  /** Side-analysis calls spent this run (delegate budget). */
+  let delegateCallsUsed = 0;
 
   /**
    * Full (untruncated) observations from this run, 1-based-indexed in call
@@ -266,6 +361,58 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     }
     if (explorationKey) {
       lastExplorationToolKey = explorationKey;
+    }
+
+    if (action.action === "update_plan") {
+      const plan = normalizeAgentPlanSteps(action.args?.steps, AI_AGENT_PLAN_STEP_LIMIT);
+      if (plan.length === 0) {
+        return "Tool error: update_plan requires args.steps — a non-empty array of { title, status? } entries.";
+      }
+      onAgentPlanUpdate?.(plan);
+      const done = plan.filter((step) => step.status === "done").length;
+      const inProgress = plan.filter((step) => step.status === "in_progress").length;
+      return stringifyAgentObservation({
+        planUpdated: true,
+        steps: plan.length,
+        done,
+        inProgress,
+        pending: plan.length - done - inProgress,
+        checklist: plan.map((step, index) => `${index + 1}. [${step.status}] ${step.title}`),
+      });
+    }
+
+    if (action.action === "delegate") {
+      const instruction = typeof action.args?.instruction === "string" ? action.args.instruction.trim() : "";
+      if (!instruction) {
+        return "Tool error: delegate requires args.instruction — a self-contained side question.";
+      }
+      if (!delegateSubAnalysis) {
+        return "Tool notice: delegate is unavailable in this run — answer from the evidence you already have.";
+      }
+      if (delegateCallsUsed >= AI_AGENT_DELEGATE_MAX_CALLS) {
+        return `Tool notice: delegate budget exhausted (${AI_AGENT_DELEGATE_MAX_CALLS}/${AI_AGENT_DELEGATE_MAX_CALLS} used) — continue with your own tools or finish.`;
+      }
+      const focusTables = Array.isArray(action.args?.focusTables)
+        ? (action.args.focusTables as unknown[])
+            .filter((table): table is string => typeof table === "string" && Boolean(table.trim()))
+            .map((table) => table.trim())
+            .slice(0, AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT)
+        : [];
+      delegateCallsUsed += 1;
+      try {
+        const answer = await delegateSubAnalysis(instruction, focusTables);
+        const clean = answer.trim();
+        if (!clean) {
+          return "Side analysis returned nothing. Continue with your own tools.";
+        }
+        const bounded = clean.length > AI_AGENT_DELEGATE_ANSWER_CHARS
+          ? `${clean.slice(0, AI_AGENT_DELEGATE_ANSWER_CHARS)}… [truncated]`
+          : clean;
+        return `Side analysis${focusTables.length > 0 ? ` (focus: ${focusTables.join(", ")})` : ""}:\n${bounded}`;
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Side analysis failed: ${formatExecutionError(errorValue)}. Continue with your own tools.`;
+      }
     }
 
     if (action.action === "list_tables") {
@@ -523,54 +670,80 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
 
       inspectedAgentTables.add(matchedTable);
 
-      // Roadmap #6: enrich the sample with whole-table column statistics
-      // (null ratio + distinct count) in ONE aggregate query, capped to the
-      // first 12 columns to bound the SQL size. Failures are silent — the
-      // sample itself remains the source of truth.
-      let columnStats: Array<{ column: string; nullRatio: number; distinctCount: number }> | undefined;
+      // Column-statistics enrichment, GATED (audit fix: this used to run a
+      // COUNT/SUM/COUNT(DISTINCT) aggregate over the WHOLE table on every
+      // sample). Whole-table stats only run when the catalog rowCount is
+      // known and at most AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS; anything
+      // bigger — or of unknown size — computes stats from the sampled rows
+      // instead, and args.stats="off" skips them entirely. Failures are
+      // silent: the sample itself remains the source of truth.
       const statColumns = queryResult.columns.slice(0, 12);
-      if (statColumns.length > 0 && requestedOffset === 0) {
-        try {
-          const quotedTable = agentSqlQuoteIdentifier(dbType, matchedTable);
-          const selectParts = [
-            "COUNT(*) AS __total",
-            ...statColumns.flatMap((column, index) => {
-              const quoted = agentSqlQuoteIdentifier(dbType, column.name);
-              return [
-                `SUM(CASE WHEN ${quoted} IS NULL THEN 1 ELSE 0 END) AS __null_${index}`,
-                `COUNT(DISTINCT ${quoted}) AS __distinct_${index}`,
-              ];
-            }),
-          ];
-          const statsResult = await executeReadonlyQuery(connectionId!, [
-            `SELECT ${selectParts.join(", ")} FROM ${quotedTable}`,
-          ]);
-          if (requestId !== requestIdRef.current) {
-            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+      const matchedCatalogTable = latestTables.find((table) =>
+        table.name === matchedTable
+        || buildWorkspaceTableIdentifier(table, currentDatabase) === matchedTable
+      );
+      const knownRowCount = matchedCatalogTable?.row_count ?? null;
+      const statsScope = resolveColumnStatsScope(
+        typeof action.args?.stats === "string" ? action.args.stats : undefined,
+        knownRowCount,
+      );
+      let columnStats: Array<{ column: string; nullRatio: number; distinctCount: number }> | undefined;
+      let columnStatsScopeLabel = "";
+      if (statsScope !== "off" && statColumns.length > 0 && requestedOffset === 0) {
+        if (statsScope === "whole") {
+          try {
+            const quotedTable = agentSqlQuoteIdentifier(dbType, matchedTable);
+            const selectParts = [
+              "COUNT(*) AS __total",
+              ...statColumns.flatMap((column, index) => {
+                const quoted = agentSqlQuoteIdentifier(dbType, column.name);
+                return [
+                  `SUM(CASE WHEN ${quoted} IS NULL THEN 1 ELSE 0 END) AS __null_${index}`,
+                  `COUNT(DISTINCT ${quoted}) AS __distinct_${index}`,
+                ];
+              }),
+            ];
+            const statsResult = await executeReadonlyQuery(connectionId!, [
+              `SELECT ${selectParts.join(", ")} FROM ${quotedTable}`,
+            ]);
+            if (requestId !== requestIdRef.current) {
+              throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+            }
+            const row = statsResult.rows[0];
+            const total = Number(row?.[0] ?? 0);
+            if (Number.isFinite(total) && total > 0) {
+              columnStats = statColumns.map((column, index) => {
+                const nullCount = Number(row?.[1 + index * 2] ?? 0);
+                const distinctCount = Number(row?.[2 + index * 2] ?? 0);
+                return {
+                  column: column.name,
+                  nullRatio: Math.round((nullCount / total) * 1000) / 1000,
+                  distinctCount: Number.isFinite(distinctCount) ? distinctCount : 0,
+                };
+              });
+              columnStatsScopeLabel = " (whole table)";
+            }
+          } catch (errorValue) {
+            if (isSupersededAIRequestError(errorValue)) throw errorValue;
+            // Statistics are best-effort; engine quirks must not break sampling.
           }
-          const row = statsResult.rows[0];
-          const total = Number(row?.[0] ?? 0);
-          if (Number.isFinite(total) && total > 0) {
-            columnStats = statColumns.map((column, index) => {
-              const nullCount = Number(row?.[1 + index * 2] ?? 0);
-              const distinctCount = Number(row?.[2 + index * 2] ?? 0);
-              return {
-                column: column.name,
-                nullRatio: Math.round((nullCount / total) * 1000) / 1000,
-                distinctCount: Number.isFinite(distinctCount) ? distinctCount : 0,
-              };
-            });
+        } else {
+          // Sample-scoped stats: computed in memory from the rows this call
+          // already fetched — no extra query, never a full-table read.
+          columnStats = computeSampleColumnStats(
+            queryResult.rows,
+            statColumns.map((column, index) => ({ name: column.name, index })),
+          );
+          if (columnStats.length > 0) {
+            columnStatsScopeLabel = ` (sample of ${queryResult.rows.length} rows)`;
           }
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          // Statistics are best-effort; engine quirks must not break sampling.
         }
       }
 
       const observation = summarizeAgentQueryObservation(queryResult);
       return appendAgentFacts(
         columnStats
-          ? `${observation}\n\nColumn stats (whole table): ${columnStats
+          ? `${observation}\n\nColumn stats${columnStatsScopeLabel}: ${columnStats
               .map((stat) => `${stat.column}: nullRatio=${stat.nullRatio}, distinct=${stat.distinctCount}`)
               .join(" | ")}`
           : observation,

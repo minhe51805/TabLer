@@ -182,6 +182,7 @@ export const TR_COPY: AIWorkspaceCopy = {
       switcherTitle: "Sohbet çalışma alanı",
       switcherHint: "Bağlam açık veritabanını takip eder; sabitlemek için pin kullanın.",
       rebindAction: "Veritabanı seç",
+      rebindLockedTitle: "Bir ajan çalışıyor — veritabanını değiştirmeden önce bitmesini bekleyin veya iptal edin.",
       dbAuto: "Otomatik",
       dbCurrentHint: "Gezginde açık",
       autoMode: "Otomatik",

@@ -46,6 +46,7 @@ export type AIWorkspaceAgentActionName =
   | "plan"
   | "think"
   | "ask_user"
+  | "update_plan"
   | "skill"
   | "list_tables"
   | "search_schema"
@@ -60,6 +61,7 @@ export type AIWorkspaceAgentActionName =
   | "run_preset"
   | "preview_write"
   | "remember_term"
+  | "delegate"
   | "read_page"
   | "finish";
 

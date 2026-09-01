@@ -14,6 +14,11 @@ import {
 export {
   AI_AGENT_ASK_USER_OPTIONS_LIMIT,
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
+  AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS,
+  AI_AGENT_DELEGATE_ANSWER_CHARS,
+  AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT,
+  AI_AGENT_DELEGATE_MAX_CALLS,
+  AI_AGENT_PLAN_STEP_LIMIT,
   AI_AGENT_PREVIEW_STATEMENT_LIMIT,
   AI_AGENT_READ_PAGE_MAX_CHARS,
   AI_AGENT_SAMPLE_MAX_ROWS,
@@ -183,8 +188,33 @@ export interface AIAgentFinishArgs extends Record<string, unknown> {
 
 export type AIAgentFinishAction = AIAgentToolActionBase<"finish", AIAgentFinishArgs>;
 
+export interface AIAgentUpdatePlanStep {
+  title: string;
+  status?: "pending" | "in_progress" | "done";
+}
+
+export interface AIAgentUpdatePlanArgs extends Record<string, unknown> {
+  steps: AIAgentUpdatePlanStep[];
+}
+
+export type AIAgentUpdatePlanAction = AIAgentToolActionBase<
+  "update_plan",
+  AIAgentUpdatePlanArgs
+>;
+
+export interface AIAgentDelegateArgs extends Record<string, unknown> {
+  instruction: string;
+  focusTables?: string[];
+}
+
+export type AIAgentDelegateAction = AIAgentToolActionBase<
+  "delegate",
+  AIAgentDelegateArgs
+>;
+
 export type AIAgentToolAction =
   | AIAgentAskUserAction
+  | AIAgentUpdatePlanAction
   | AIAgentListTablesAction
   | AIAgentSearchSchemaAction
   | AIAgentListSchemaObjectsAction
@@ -199,6 +229,7 @@ export type AIAgentToolAction =
   | AIAgentPreviewWriteAction
   | AIAgentRememberTermAction
   | AIAgentSkillAction
+  | AIAgentDelegateAction
   | AIAgentReadPageAction
   | AIAgentFinishAction;
 

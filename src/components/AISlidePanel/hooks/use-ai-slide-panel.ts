@@ -435,6 +435,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
       if (interactionMode === "agent") {
         let agentTraceSteps: AgentTraceStep[] = [];
+        // Live checklist posted through update_plan — re-read on every
+        // controller prompt build so the model always sees current statuses.
+        let agentPlanLines: string[] = [];
         const inspectedAgentTables = new Set<string>();
         // Snapshot completed steps plus an optional in-flight step, then stream
         // them to the UI so the bubble can show the agent working live.
@@ -566,6 +569,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             workspaceToolsEnabled,
             knownDatabaseNames,
             workspaceBoundDatabase,
+            planLines: agentPlanLines,
             workspaceToolStatus,
             toolAvailability,
             forceFinish,
@@ -622,6 +626,32 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           requestIdRef,
           requestDataReadConsent,
           publishAgentProgress,
+          onAgentPlanUpdate: (plan) => {
+            agentPlanLines = plan.map((step, index) =>
+              `${index + 1}. [${step.status}] ${step.title}`);
+          },
+          delegateSubAnalysis: async (instruction, focusTables) => {
+            const delegatePrompt = [
+              "You are a side-analysis helper for a workspace agent. The agent hands you focused, self-contained questions mid-run.",
+              focusTables.length > 0 ? `Focus tables: ${focusTables.join(", ")}.` : "",
+              "Answer in at most 8 short lines of plain text (no SQL fences, no tool talk).",
+              "Ground everything in the attached schema context; if it is not enough, say exactly what is missing instead of inventing tables or columns.",
+              "",
+              "Instruction:",
+              instruction,
+            ].filter(Boolean).join("\n");
+            return askAI(
+              delegatePrompt,
+              strictRecoveryContext || context,
+              "panel",
+              "general",
+              [],
+              undefined,
+              // Same correlation as the run's own model calls so failover
+              // notes stay in this run's trace.
+              { correlationId: `agent-run-${requestId}` },
+            );
+          },
           getTableColumnsPreview,
           getTableStructure,
           getTableData,

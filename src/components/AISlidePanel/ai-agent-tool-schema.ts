@@ -14,6 +14,7 @@ import {
 
 export const AI_AGENT_TOOL_NAMES = [
   "ask_user",
+  "update_plan",
   "list_tables",
   "search_schema",
   "list_schema_objects",
@@ -28,6 +29,7 @@ export const AI_AGENT_TOOL_NAMES = [
   "preview_write",
   "remember_term",
   "skill",
+  "delegate",
   "read_page",
   "finish",
 ] as const;
@@ -36,6 +38,12 @@ export type AIAgentToolName = (typeof AI_AGENT_TOOL_NAMES)[number];
 
 /** Hard ceiling for sample_table_data so a peek can never become a full scan. */
 export const AI_AGENT_SAMPLE_MAX_ROWS = 50;
+/**
+ * Whole-table column statistics (COUNT/SUM/COUNT(DISTINCT) aggregate) only run
+ * for tables whose list_tables rowCount is known and at most this — above it,
+ * stats fall back to the sampled rows so a peek never becomes a full scan.
+ */
+export const AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS = 200_000;
 /** Max tables accepted in one describe_tables call, to bound observation size. */
 export const AI_AGENT_BATCH_DESCRIBE_LIMIT = 8;
 /** Max statements accepted in one preview_write call. */
@@ -48,6 +56,14 @@ export const AI_AGENT_SCHEMA_OBJECTS_LIMIT = 60;
 export const AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS = 2500;
 /** Max characters returned per read_page slice. */
 export const AI_AGENT_READ_PAGE_MAX_CHARS = 4000;
+/** Max checklist entries accepted in one update_plan call. */
+export const AI_AGENT_PLAN_STEP_LIMIT = 8;
+/** Max delegate side-analysis calls per agent run (each is one model call). */
+export const AI_AGENT_DELEGATE_MAX_CALLS = 2;
+/** Max focus tables accepted per delegate call. */
+export const AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT = 4;
+/** Max characters of the delegate sub-analysis answer surfaced as an observation. */
+export const AI_AGENT_DELEGATE_ANSWER_CHARS = 1500;
 
 const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "list_tables",
@@ -127,6 +143,36 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
         },
       },
       ["question"],
+    ),
+  },
+
+  update_plan: {
+    name: "update_plan",
+    description:
+      "Maintain a visible step checklist for multi-part requests. Post the full list once you know the shape of the work, then re-post it marking steps done/in_progress as you progress.",
+    parameters: objectSchema(
+      {
+        steps: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Short imperative step title." },
+              status: {
+                type: "string",
+                enum: ["pending", "in_progress", "done"],
+                description: "Defaults to pending.",
+              },
+            },
+            required: ["title"],
+            additionalProperties: false,
+          },
+          minItems: 1,
+          maxItems: AI_AGENT_PLAN_STEP_LIMIT,
+          description: `The complete checklist, in order (up to ${AI_AGENT_PLAN_STEP_LIMIT} steps). Always send the FULL list — statuses replace the previous plan.`,
+        },
+      },
+      ["steps"],
     ),
   },
 
@@ -249,6 +295,12 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
           type: "integer",
           minimum: 0,
           description: "Rows to skip before sampling, for paging through large tables.",
+        },
+        stats: {
+          type: "string",
+          enum: ["auto", "sample", "off"],
+          description:
+            "Column statistics scope. auto (default) computes whole-table null/distinct stats only when the catalog rowCount is known and small enough; larger or unknown-size tables get stats from the sampled rows instead. off skips statistics entirely.",
         },
       },
       ["table"],
@@ -375,6 +427,28 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
         },
       },
       ["name"],
+    ),
+  },
+
+  delegate: {
+    name: "delegate",
+    description:
+      "Hand one focused, self-contained side question (a definition to recall, a formula to sanity-check, an interpretation to word) to a helper analysis and get a short text answer as your observation. The helper sees the schema context but runs NO tools — keep the instruction self-contained and never delegate data fetching you can do with your own tools.",
+    parameters: objectSchema(
+      {
+        instruction: {
+          type: "string",
+          description: "The complete side question, answerable from the schema context alone.",
+        },
+        focusTables: {
+          type: "array",
+          items: { type: "string" },
+          uniqueItems: true,
+          maxItems: AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT,
+          description: "Optional verified tables the question is about.",
+        },
+      },
+      ["instruction"],
     ),
   },
 
@@ -617,6 +691,8 @@ function exampleLiteral(key: string, schema: JsonSchema): string {
       if (key === "tables") return '["table_a","table_b"]';
       if (key === "parameters") return '[{"name":"status","value":"active"}]';
       if (key === "statements") return `["UPDATE orders SET status = 'cancelled' WHERE id = 42"]`;
+      if (key === "steps") return '[{"title":"Locate the orders table","status":"pending|in_progress|done"}]';
+      if (key === "focusTables") return '["table_a"]';
       if (key === "metricsWidgets") {
         return '[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ...","dimension":"verified label column","measures":["verified numeric alias"],"transforms":["group/sort operation"],"limit":100}]';
       }

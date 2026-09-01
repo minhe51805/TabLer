@@ -197,6 +197,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
       switcherTitle: "聊天工作区",
       switcherHint: "上下文跟随当前打开的数据库；固定以锁定。",
       rebindAction: "选择数据库",
+      rebindLockedTitle: "Agent 正在运行 — 请等待其完成或取消后再切换数据库。",
       dbAuto: "自动",
       dbCurrentHint: "资源管理器中已打开",
       autoMode: "自动",

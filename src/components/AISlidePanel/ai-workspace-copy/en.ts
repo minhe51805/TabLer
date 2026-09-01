@@ -199,6 +199,7 @@ export const EN_COPY: AIWorkspaceCopy = {
       switcherTitle: "Workspaces",
       switcherHint: "Context follows the open database; pin one to lock it",
       rebindAction: "Choose database",
+      rebindLockedTitle: "An agent run is active — wait for it to finish or cancel it before switching databases.",
       dbAuto: "Auto",
       dbCurrentHint: "Currently open in Explorer",
       autoMode: "Auto",

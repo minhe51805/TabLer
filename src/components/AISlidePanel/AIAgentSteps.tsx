@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
+import { parseAgentFacts } from "./ai-agent-context";
 import type { AIWorkspaceAgentActionName, AIWorkspaceAgentStep } from "./ai-workspace-types";
 
 interface AIAgentStepsProps {
@@ -39,6 +40,10 @@ function getActionIcon(action: AIWorkspaceAgentActionName): ReactNode {
     case "plan":
     case "think":
       return <Brain className="w-3.5 h-3.5" />;
+    case "update_plan":
+      return <ListTree className="w-3.5 h-3.5" />;
+    case "delegate":
+      return <Brain className="w-3.5 h-3.5" />;
     case "ask_user":
       return <HelpCircle className="w-3.5 h-3.5" />;
     case "list_tables":
@@ -72,6 +77,10 @@ function getActionLabel(
     case "plan":
       return copy.modal.agentActionPlan;
     case "think":
+      return copy.modal.agentActionThink;
+    case "update_plan":
+      return copy.modal.agentActionPlan;
+    case "delegate":
       return copy.modal.agentActionThink;
     case "ask_user":
       return copy.modal.agentActionAskUser;
@@ -149,7 +158,10 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
                 ? copy.modal.agentStatusError
                 : copy.modal.agentStatusDone;
           const isPlan = step.action === "plan";
-          const observation = step.observation?.trim();
+          // The machine-readable `@@facts:` footer is harness plumbing — it
+          // feeds the quality gates but must never render into the visible
+          // trace (audit fix: it used to leak raw JSON into the bubble).
+          const observation = parseAgentFacts(step.observation ?? "").text.trim();
           // Models sometimes omit the per-step message; fall back to a
           // localized action label instead of showing "No message provided.".
           const displayMessage = step.message.trim() && step.message !== "No message provided."

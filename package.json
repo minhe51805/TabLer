@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "test": "vitest",
     "test:run": "vitest run",
+    "eval:agent": "vitest run tests/eval",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests --max-warnings=100",
     "check:frontend": "npm run typecheck && npm run lint && npm run test:run && npm run build",

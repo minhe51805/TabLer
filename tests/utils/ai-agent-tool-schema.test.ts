@@ -135,7 +135,14 @@ describe("AI agent tool schema", () => {
       ...AI_AGENT_TOOL_NAMES.filter((name) => name !== "describe_tables"),
     ]);
     const disabled = formatAgentToolCatalog(false);
-    expect(disabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual(["ask_user", "skill", "read_page", "finish"]);
+    expect(disabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual([
+      "ask_user",
+      "update_plan",
+      "skill",
+      "delegate",
+      "read_page",
+      "finish",
+    ]);
     expect(disabled.join("\n")).not.toContain("metricsWidgets");
   });
 

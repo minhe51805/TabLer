@@ -36663,6 +36663,17 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   color: var(--text-tertiary);
 }
 
+/* Locked rebind chip: agent run active — rebinding would re-scope evidence. */
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip.is-locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-ws-db-chip.is-locked:hover {
+  background: rgba(0, 122, 255, 0.1);
+  color: var(--text-secondary);
+}
+
 .app-root .ai-workspace-stage--sidebar .ai-ws-db-chip-name {
   min-width: 0;
   overflow: hidden;

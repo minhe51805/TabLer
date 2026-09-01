@@ -181,6 +181,7 @@ export interface AIWorkspaceCopy {
     switcherTitle: string;
     switcherHint: string;
     rebindAction: string;
+    rebindLockedTitle: string;
     dbAuto: string;
     dbCurrentHint: string;
     autoMode: string;

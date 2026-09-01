@@ -182,6 +182,7 @@ export const KO_COPY: AIWorkspaceCopy = {
       switcherTitle: "채팅 워크스페이스",
       switcherHint: "컨텍스트는 열려 있는 데이터베이스를 따릅니다. 고정하려면 핀을 사용하세요.",
       rebindAction: "데이터베이스 선택",
+      rebindLockedTitle: "에이전트가 실행 중입니다. 데이터베이스를 변경하기 전에 완료되거나 취소될 때까지 기다려 주세요.",
       dbAuto: "자동",
       dbCurrentHint: "탐색기에서 열려 있음",
       autoMode: "자동",

@@ -20,8 +20,17 @@ const UNTRACKED_REPEAT_ACTIONS = new Set<AIWorkspaceAgentActionName>([
   "plan",
   "think",
   "ask_user",
+  // Re-posting the checklist with updated statuses is the intended rhythm,
+  // not a wasted repeat — the plan replaces (not re-derives) state.
+  "update_plan",
   "finish",
 ]);
+
+/** One checklist entry posted through the update_plan tool. */
+export interface AgentPlanStep {
+  title: string;
+  status: "pending" | "in_progress" | "done";
+}
 
 export function isRepeatTrackedAction(action: AIWorkspaceAgentActionName): boolean {
   return !UNTRACKED_REPEAT_ACTIONS.has(action);
@@ -363,6 +372,8 @@ export function buildAgentControllerPrompt(params: {
   availableSkills?: { name: string; description: string }[];
   knownDatabaseNames?: string[];
   workspaceBoundDatabase?: string | null;
+  /** Current checklist (from update_plan), rendered near the top of the prompt. */
+  planLines?: string[];
 }) {
   const {
     userPrompt,
@@ -380,6 +391,7 @@ export function buildAgentControllerPrompt(params: {
     availableSkills,
     knownDatabaseNames,
     workspaceBoundDatabase,
+    planLines,
   } = params;
   const databaseMentionMismatch = detectDatabaseMentionMismatch({
     userPrompt,
@@ -392,6 +404,18 @@ export function buildAgentControllerPrompt(params: {
   const catalogComplete = availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT;
   const toolSteps = steps.filter((step) => step.action !== "plan");
   const recentFullObservations = 4;
+  /**
+   * Clamps an observation for the controller prompt while keeping the
+   * machine-readable facts footer intact: the display text is clamped first,
+   * then the parsed footer is re-appended, so a char-budget cut can never
+   * amputate the `@@facts:` JSON mid-structure (which would silently drop the
+   * step's evidence from the quality gates).
+   */
+  const clampStepObservation = (step: AgentTraceStep, budget: number) => {
+    const { text, facts } = parseAgentFacts(step.observation ?? "");
+    const clamped = clampObservationText(text, budget);
+    return facts ? appendAgentFacts(clamped, facts) : clamped;
+  };
   const priorSteps = toolSteps.length === 0
     ? "No tool actions have run yet."
     : toolSteps.map((step, index) => {
@@ -401,14 +425,14 @@ export function buildAgentControllerPrompt(params: {
           `Action: ${step.action}`,
           `Message: ${step.message || "No message provided."}`,
           isRecent
-            ? `Observation:\n${clampObservationText(step.observation, RECENT_OBSERVATION_CHAR_BUDGET)}`
-            : `Observation (older, condensed):\n${clampObservationText(step.observation, OLDER_OBSERVATION_PEEK_CHARS)}`,
+            ? `Observation:\n${clampStepObservation(step, RECENT_OBSERVATION_CHAR_BUDGET)}`
+            : `Observation (older, condensed):\n${clampStepObservation(step, OLDER_OBSERVATION_PEEK_CHARS)}`,
         ].join("\n");
       }).join("\n\n");
   const preInspectedSummaries = (cachedTableSummaries ?? []).slice(0, MAX_PRE_INSPECTED_TABLE_SUMMARIES);
   const sqlRead = toolAvailability?.sqlRead !== false;
   const sqlWritePreview = toolAvailability?.sqlWritePreview !== false;
-  // With native function calling the 17-tool schema travels in the request's
+  // With native function calling the 19-tool schema travels in the request's
   // `tools` parameter — duplicating it as prompt text wastes tokens. Keep only
   // the reply contract so text finals still parse.
   const availableActions = NATIVE_TOOL_CALLING_ENABLED
@@ -460,6 +484,13 @@ export function buildAgentControllerPrompt(params: {
           "When the user's task matches one of these skill descriptions, call the skill tool with that name FIRST and follow the returned instructions.",
         ].join("\n")
       : "",
+    (planLines ?? []).length > 0
+      ? [
+          "Current plan (from your latest update_plan):",
+          ...(planLines ?? []),
+          "Keep this checklist current: re-post update_plan with the full list whenever a step's status changes.",
+        ].join("\n")
+      : "",
     "",
     "Available actions:",
     ...availableActions,
@@ -479,6 +510,12 @@ export function buildAgentControllerPrompt(params: {
       : "",
     workspaceToolsEnabled
       ? "- When you discover a durable, non-obvious semantic fact (what a metric means, what an alias maps to, a hidden relationship), call remember_term once so every future run for this database inherits it."
+      : "",
+    workspaceToolsEnabled
+      ? "- For multi-part requests, post your working checklist with update_plan once you know the shape of the work, and re-post it (full list, updated statuses) as you complete steps."
+      : "",
+    workspaceToolsEnabled
+      ? "- For a self-contained side question (a definition, formula check, or wording), delegate it once instead of burning several tool steps; the helper returns a short text answer. Never delegate data fetching you can do with your own tools."
       : "",
     "- When the user asks for a report, bảng, tổng hợp, summary, or dashboard: finish.args.response MUST contain ONE complete markdown table — a | header | row, a |---|---| separator, then one | row | per item — built from verified data, followed by at most three short note lines.",
     "- General conversation, writing, planning, coding advice, translation, brainstorming, or reasoning should finish directly.",
@@ -501,7 +538,7 @@ export function buildAgentControllerPrompt(params: {
       ? "- NEVER query system catalogs (information_schema.*, pg_catalog.*, sqlite_master) — their columns differ per engine and catalog guesses like information_schema.tables.row_count do not exist. Row counts come ONLY from the list_tables tool (rowCount field); column facts come ONLY from describe_table/search_schema."
       : "",
     workspaceToolsEnabled && sqlRead
-      ? "- Before run_readonly_sql, every table in FROM or JOIN must be inspected: use one describe_tables call for several tables at once, or rely on tables already listed under Pre-inspected tables. Use only the exact columns reported by the latest describe observation; never guess columns such as name, content, title, or value."
+      ? "- Before run_readonly_sql, every table in FROM or JOIN must be inspected: use one describe_table call with a `tables` array for several tables at once, or rely on tables already listed under Pre-inspected tables. Use only the exact columns reported by the latest describe observation; never guess columns such as name, content, title, or value."
       : "",
     workspaceToolsEnabled
       ? "- When the user identifies data by a field or concept but does not name the exact table, call search_schema first. Trust its catalog-wide column matches instead of guessing from table names."

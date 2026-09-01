@@ -1540,13 +1540,21 @@ export function AISlidePanel({
   // Binding to a new database also clears the workspace's compacted digest
   // (store handles that) so the old database's context cannot leak through.
   const handleRebindChatWorkspaceDatabase = useCallback((workspaceId: string, database: string) => {
+    // Audit fix: rebinding re-scopes the connection/schema immediately, which
+    // would make an in-flight agent run read evidence from a database it never
+    // verified. The switcher chip is disabled during runs; this guard is the
+    // backstop for programmatic calls.
+    if (isGenerating || isRunning) {
+      console.warn("[AIWorkspace] Rebind ignored while an agent run is active.");
+      return;
+    }
     bindChatWorkspaceDatabase(workspaceId, database);
     if (database) {
       // Re-scope the connection immediately so the schema capsule and
       // tables/schemaObjects follow the new binding.
       ensureWorkspaceDatabase(workspaceId);
     }
-  }, [bindChatWorkspaceDatabase, ensureWorkspaceDatabase]);
+  }, [bindChatWorkspaceDatabase, ensureWorkspaceDatabase, isGenerating, isRunning]);
 
   const handleDeleteUserWorkspace = useCallback((workspaceId: string) => {
     deleteChatWorkspace(workspaceId);

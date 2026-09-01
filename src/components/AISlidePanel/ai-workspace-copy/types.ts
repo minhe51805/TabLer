@@ -71,6 +71,15 @@ export interface AIWorkspaceCopy {
     slashNoMatch: string;
     slashBackupDescription: string;
     slashCompactDescription: string;
+    slashRollbackDescription: string;
+    checkpointTitle: string;
+    checkpointEmpty: string;
+    checkpointHint: string;
+    checkpointRestoreAction: string;
+    checkpointCancel: string;
+    checkpointBack: string;
+    checkpointConfirmTitle: string;
+    checkpointPreviewBody: string;
     noProvider: string;
     tableOne: string;
     tableOther: string;

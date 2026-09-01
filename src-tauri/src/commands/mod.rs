@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod ai_checkpoints;
 pub mod connection;
 pub mod connection_export;
 mod connection_support;

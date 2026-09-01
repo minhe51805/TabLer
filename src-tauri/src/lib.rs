@@ -29,6 +29,10 @@ use commands::ai::{
     ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_agent_trace, save_ai_configs,
     AIRequestCancellationState,
 };
+use commands::ai_checkpoints::{
+    create_database_checkpoint, list_database_checkpoints, preview_database_checkpoint_restore,
+    restore_database_checkpoint,
+};
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
 use commands::data_export::{cancel_table_export, export_table_data, TableExportCancellationState};
@@ -310,6 +314,10 @@ pub fn run() {
             save_agent_trace,
             preview_database_restore,
             restore_database_sql,
+            create_database_checkpoint,
+            list_database_checkpoints,
+            preview_database_checkpoint_restore,
+            restore_database_checkpoint,
             // Table commands
             list_tables,
             list_schema_objects,

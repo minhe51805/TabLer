@@ -12,10 +12,27 @@ export interface AISlashCommand {
   description: string;
 }
 
-/** "/backup" or "/backup <ignored note>" — the command itself takes no args. */
+/** A stored DB checkpoint row (matches the Rust DatabaseCheckpoint payload). */
+export interface AIDatabaseCheckpoint {
+  fileName: string;
+  label: string;
+  createdAt: number;
+  engine: string;
+  database: string | null;
+  tableCount: number;
+  rowCount: number;
+  sizeBytes: number;
+}
+
+/** "/backup [note]" — note becomes the checkpoint label (ignored by the run). */
 export function isBackupCommand(text: string) {
   const trimmed = text.trim().toLowerCase();
   return trimmed === "/backup" || trimmed.startsWith("/backup ");
+}
+
+/** "/rollback" — opens the checkpoint picker to restore a previous /backup. */
+export function isRollbackCommand(text: string) {
+  return text.trim().toLowerCase() === "/rollback";
 }
 
 /** Filters the registry by the text typed after the leading "/". */

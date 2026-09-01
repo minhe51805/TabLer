@@ -21774,6 +21774,132 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   color: var(--text-secondary);
 }
 
+/* Checkpoint picker (/rollback) — list → preview → confirm in one modal. */
+.ai-checkpoint-modal {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.ai-checkpoint-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 10px;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.ai-checkpoint-modal-hint,
+.ai-checkpoint-modal-empty,
+.ai-checkpoint-modal-error,
+.ai-checkpoint-modal-warning,
+.ai-checkpoint-modal-preview,
+.ai-checkpoint-modal-loading {
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.ai-checkpoint-modal-empty {
+  color: var(--text-tertiary);
+}
+
+.ai-checkpoint-modal-error {
+  color: #e5484d;
+}
+
+.ai-checkpoint-modal-warning {
+  color: #d97706;
+}
+
+.ai-checkpoint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-checkpoint-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--mm-border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ai-checkpoint-item:hover {
+  background: rgba(0, 122, 255, 0.1);
+}
+
+.ai-checkpoint-item-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ai-checkpoint-item-meta {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.ai-checkpoint-confirm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--mm-border);
+  border-radius: 10px;
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.ai-checkpoint-confirm-card strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.ai-checkpoint-confirm-card span {
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.ai-checkpoint-modal-confirm-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ai-checkpoint-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.ai-workspace-modal-btn.danger {
+  background: #e5484d;
+  border-color: #e5484d;
+  color: #fff;
+}
+
+.ai-workspace-modal-btn.danger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+
 
 .ai-workspace-selection-chip {
   margin-bottom: 8px;

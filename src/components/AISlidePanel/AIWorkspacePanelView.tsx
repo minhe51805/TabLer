@@ -12,6 +12,7 @@ import type { AIProviderConfig } from "../../types";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { AIBubbleDetailModal } from "./AIBubbleDetailModal";
 import { AISqlConfirmDialog } from "./AISqlConfirmDialog";
+import { AICheckpointPickerModal } from "./AICheckpointPickerModal";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import { formatThreadTimestamp, type AIChatThread } from "./ai-conversation-state";
 import { AIComposerDock } from "./AIComposerDock";
@@ -177,6 +178,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
     <ConfirmDialog isOpen={m.failoverConsentPending !== null} title={m.failoverConsentPending?.title || "Provider failed"} message={m.failoverConsentPending?.message || ""} confirmText={m.failoverConsentPending?.confirmText || "Allow auto-switch"} cancelText={m.failoverConsentPending?.cancelText || "Not now"} onConfirm={() => m.resolveFailoverConsent(true)} onCancel={() => m.resolveFailoverConsent(false)} />
     <ConfirmDialog isOpen={m.deleteThreadPending !== null} title={m.aiCopy.composer.historyDeleteTitle ?? "Delete conversation"} message={m.aiCopy.composer.historyDeleteConfirm ?? "Delete this conversation thread?"} confirmText="Delete" cancelText="Cancel" onConfirm={m.confirmDeleteThread} onCancel={m.cancelDeleteThread} />
     <AISqlConfirmDialog copy={m.aiCopy.composer} />
+    <AICheckpointPickerModal copy={m.aiCopy.composer} />
     <ConfirmDialog
       isOpen={isFullAccessConfirmOpen}
       title={m.aiCopy.composer.autonomyFullConfirmTitle}

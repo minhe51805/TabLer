@@ -31,12 +31,20 @@ pub fn preview_database_restore(
     sql: String,
     db_type: DatabaseType,
 ) -> Result<RestorePreview, String> {
+    build_restore_preview(&sql, db_type)
+}
+
+/// Shared preview classifier — also powers checkpoint-restore previews.
+pub(super) fn build_restore_preview(
+    sql: &str,
+    db_type: DatabaseType,
+) -> Result<RestorePreview, String> {
     if db_type == DatabaseType::OpenSearch {
         return Err(
             "SQL restore is not supported by the read-only OpenSearch plugin driver.".to_string(),
         );
     }
-    let statements = split_sql_statements(&sql);
+    let statements = split_sql_statements(sql);
     if statements.is_empty() {
         return Err("The restore file does not contain any SQL statements.".to_string());
     }
@@ -75,9 +83,20 @@ pub async fn restore_database_sql(
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<RestoreResult, String> {
-    safe_mode.assert_sql_allowed(&connection_id, &sql).await?;
+    run_sql_restore(&connection_id, &sql, db_type, &db_manager, &safe_mode).await
+}
+
+/// Shared restore pipeline — also powers checkpoint rollback.
+pub(super) async fn run_sql_restore(
+    connection_id: &str,
+    sql: &str,
+    db_type: DatabaseType,
+    db_manager: &DatabaseManager,
+    safe_mode: &SafeModeState,
+) -> Result<RestoreResult, String> {
+    safe_mode.assert_sql_allowed(connection_id, sql).await?;
     db_manager
-        .require_capability(&connection_id, DriverCapability::BackupRestore)
+        .require_capability(connection_id, DriverCapability::BackupRestore)
         .await
         .map_err(|e| e.to_string())?;
     if db_type == DatabaseType::OpenSearch {
@@ -85,13 +104,13 @@ pub async fn restore_database_sql(
             "SQL restore is not supported by the read-only OpenSearch plugin driver.".to_string(),
         );
     }
-    let statements = split_sql_statements(&sql);
+    let statements = split_sql_statements(sql);
     if statements.is_empty() {
         return Err("The restore file does not contain any SQL statements.".to_string());
     }
     let transactional = supports_transactional_restore(db_type);
     let driver = db_manager
-        .get_driver(&connection_id)
+        .get_driver(connection_id)
         .await
         .map_err(|error| format!("The selected connection is not active: {error}"))?;
     let affected_rows = driver

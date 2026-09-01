@@ -23,7 +23,8 @@ import { normalizeAIProviderConfigs } from "../../utils/ai-provider-registry";
 import { resolveAIFailoverConsent } from "../../utils/ai-failover-consent";
 import { emitAppToast } from "../../utils/app-toast";
 import { invokeMutation } from "../../utils/tauri-utils";
-import { isBackupCommand, matchSlashCommands, type AISlashCommand } from "./ai-slash-commands";
+import { isBackupCommand, isRollbackCommand, matchSlashCommands, type AISlashCommand, type AIDatabaseCheckpoint } from "./ai-slash-commands";
+import { requestAICheckpointPick } from "./ai-checkpoint-picker";
 import { formatAgentSql } from "../../utils/ai-sql-format";
 import { AIWorkspacePanelView } from "./AIWorkspacePanelView";
 import { useAIAssistantGeneration } from "./hooks/use-ai-assistant-generation";
@@ -119,9 +120,6 @@ export function AISlidePanel({
   const saveAIConfigs = useAIStore((state) => state.saveAIConfigs);
   const activeConnectionDbType = useConnectionStore((state) =>
     state.connections.find((connection) => connection.id === state.activeConnectionId)?.db_type
-  );
-  const activeConnectionName = useConnectionStore((state) =>
-    state.connections.find((connection) => connection.id === state.activeConnectionId)?.name
   );
   const {
     activeProvider,
@@ -1047,6 +1045,7 @@ export function AISlidePanel({
   // --- Composer "/" slash commands (/backup, /compact) ---
   const slashCommands = useMemo<AISlashCommand[]>(() => [
     { name: "backup", description: aiCopy.composer.slashBackupDescription },
+    { name: "rollback", description: aiCopy.composer.slashRollbackDescription },
     { name: "compact", description: aiCopy.composer.slashCompactDescription },
   ], [aiCopy]);
   // Menu opens only while the draft is exactly "/<letters>" — plain typing,
@@ -1066,39 +1065,87 @@ export function AISlidePanel({
     }
     setIsBackingUp(true);
     try {
-      const result = await invokeMutation<{ filePath: string; format: string; tableCount: number; rowCount: number }>(
-        "export_database",
-        {
-          connectionId,
-          database: currentDatabase || null,
-          dbType: activeConnectionDbType,
-          connectionName: activeConnectionName || null,
-        },
-      );
+      // "/backup <note>" — the trailing note becomes the checkpoint label.
+      const noteMatch = /^\/backup\s+(.+)$/i.exec(promptDraft.trim());
+      const result = await invokeMutation<{
+        fileName: string;
+        label: string;
+        createdAt: number;
+        engine: string;
+        database: string | null;
+        tableCount: number;
+        rowCount: number;
+        sizeBytes: number;
+      }>("create_database_checkpoint", {
+        connectionId,
+        database: currentDatabase || null,
+        dbType: activeConnectionDbType,
+        label: noteMatch?.[1]?.trim() || null,
+      });
       emitAppToast({
         tone: "success",
-        title: language === "vi" ? "Đã backup database" : "Database backed up",
+        title: language === "vi" ? "Đã tạo điểm khôi phục" : "Restore checkpoint created",
         description:
           language === "vi"
-            ? `${result.tableCount} bảng · ${result.rowCount} dòng → ${result.filePath}`
-            : `${result.tableCount} tables · ${result.rowCount} rows → ${result.filePath}`,
+            ? `${result.tableCount} bảng · ${result.rowCount} dòng — dùng /rollback để khôi phục khi cần.`
+            : `${result.tableCount} tables · ${result.rowCount} rows — use /rollback to restore when needed.`,
         durationMs: 10_000,
       });
     } catch (errorValue) {
       const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-      // A dismissed save dialog is the user cancelling, not a failure.
-      if (!/cancel|dismiss/i.test(message)) {
-        emitAppToast({
-          tone: "error",
-          title: language === "vi" ? "Backup thất bại" : "Backup failed",
-          description: message,
-          durationMs: 10_000,
-        });
-      }
+      emitAppToast({
+        tone: "error",
+        title: language === "vi" ? "Tạo checkpoint thất bại" : "Checkpoint failed",
+        description: message,
+        durationMs: 10_000,
+      });
     } finally {
       setIsBackingUp(false);
     }
-  }, [activeConnectionDbType, activeConnectionName, aiCopy.composer.noDatabaseSelected, connectionId, currentDatabase, isBackingUp, language, setError]);
+  }, [activeConnectionDbType, aiCopy.composer.noDatabaseSelected, connectionId, currentDatabase, isBackingUp, language, promptDraft, setError]);
+
+  const handleRollbackCommand = useCallback(async () => {
+    if (!connectionId || !activeConnectionDbType) {
+      setError(aiCopy.composer.noDatabaseSelected);
+      return;
+    }
+    try {
+      const checkpoints = await invokeMutation<AIDatabaseCheckpoint[]>(
+        "list_database_checkpoints",
+        { connectionId },
+      );
+      const fileName = await requestAICheckpointPick(checkpoints ?? [], language, connectionId);
+      if (!fileName) return;
+      await invokeMutation("restore_database_checkpoint", {
+        connectionId,
+        fileName,
+        dbType: activeConnectionDbType,
+      });
+      // Schema caches across the app must not keep serving pre-rollback data.
+      window.dispatchEvent(
+        new CustomEvent("table-data-updated", {
+          detail: { connectionId, invalidateStructure: true },
+        }),
+      );
+      emitAppToast({
+        tone: "success",
+        title: language === "vi" ? "Đã rollback database" : "Database restored",
+        description:
+          language === "vi"
+            ? "Database đã quay về điểm checkpoint. Hãy refresh explorer nếu cần."
+            : "The database was restored to the checkpoint. Refresh the explorer if needed.",
+        durationMs: 10_000,
+      });
+    } catch (errorValue) {
+      const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+      emitAppToast({
+        tone: "error",
+        title: language === "vi" ? "Rollback thất bại" : "Rollback failed",
+        description: message,
+        durationMs: 10_000,
+      });
+    }
+  }, [activeConnectionDbType, aiCopy.composer.noDatabaseSelected, connectionId, language, setError]);
 
   const runSlashCommand = useCallback((name: string) => {
     setPromptDraft("");
@@ -1110,8 +1157,12 @@ export function AISlidePanel({
     }
     if (name === "backup") {
       void handleBackupCommand();
+      return;
     }
-  }, [handleBackupCommand, handleCompactContext]);
+    if (name === "rollback") {
+      void handleRollbackCommand();
+    }
+  }, [handleBackupCommand, handleCompactContext, handleRollbackCommand]);
 
   // Composer edits re-arm the "/" menu (Escape dismissal lasts one keystroke).
   const handleComposerPromptChange = useCallback((value: string) => {
@@ -1131,6 +1182,11 @@ export function AISlidePanel({
     if (isBackupCommand(normalizedPrompt)) {
       setPromptDraft("");
       await handleBackupCommand();
+      return;
+    }
+    if (isRollbackCommand(normalizedPrompt)) {
+      setPromptDraft("");
+      await handleRollbackCommand();
       return;
     }
     const promptWithSelection = buildPromptWithSelection(normalizedPrompt, attachedSelection);
@@ -1173,7 +1229,7 @@ export function AISlidePanel({
         setAttachedSelection(null);
       }
     }
-  }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, composerAttachments, contextWindowLimit, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleBackupCommand, handleCompactContext, isGenerating, promptDraft]);
+  }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, composerAttachments, contextWindowLimit, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleBackupCommand, handleCompactContext, handleRollbackCommand, isGenerating, promptDraft]);
 
   const handleCancelGeneration = useCallback(() => {
     const activeBubbleId = activeGenerationBubbleIdRef.current;

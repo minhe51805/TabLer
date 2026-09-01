@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isBackupCommand,
+  isRollbackCommand,
   matchSlashCommands,
   type AISlashCommand,
 } from "@/components/AISlidePanel/ai-slash-commands";
@@ -25,6 +26,13 @@ describe("composer slash commands", () => {
     expect(isBackupCommand("/backups")).toBe(false);
     expect(isBackupCommand("/compact")).toBe(false);
     expect(isBackupCommand("please /backup")).toBe(false);
+  });
+
+  it("detects the /rollback command (exact, no args)", () => {
+    expect(isRollbackCommand("/rollback")).toBe(true);
+    expect(isRollbackCommand("  /Rollback ")).toBe(true);
+    expect(isRollbackCommand("/rollback now")).toBe(false);
+    expect(isRollbackCommand("/backup")).toBe(false);
   });
 
   it("keeps registry names unique so menu selection is unambiguous", () => {

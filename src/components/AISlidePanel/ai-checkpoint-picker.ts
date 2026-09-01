@@ -6,6 +6,8 @@ export interface AICheckpointPickRequest {
   language: string;
   /** Active connection — the modal needs it for the restore preview call. */
   connectionId: string | null;
+  /** Engine type — required by the Rust preview/restore commands. */
+  dbType: string;
 }
 
 interface AICheckpointPickResponse {
@@ -35,6 +37,7 @@ export async function requestAICheckpointPick(
   checkpoints: AIDatabaseCheckpoint[],
   language: string,
   connectionId: string | null,
+  dbType: string,
 ): Promise<string | null> {
   if (checkpoints.length === 0) return null;
   if (!isHostMounted) {
@@ -56,7 +59,7 @@ export async function requestAICheckpointPick(
     window.addEventListener(PICK_RESPONSE_EVENT, handleResponse);
     window.dispatchEvent(
       new CustomEvent<AICheckpointPickRequest>(PICK_REQUEST_EVENT, {
-        detail: { id, checkpoints, language, connectionId },
+        detail: { id, checkpoints, language, connectionId, dbType },
       }),
     );
   });

@@ -89,6 +89,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
         {
           connectionId: request.connectionId,
           fileName: checkpoint.fileName,
+          dbType: request.dbType,
         },
       );
       setPreview(result);

@@ -1114,7 +1114,12 @@ export function AISlidePanel({
         "list_database_checkpoints",
         { connectionId },
       );
-      const fileName = await requestAICheckpointPick(checkpoints ?? [], language, connectionId);
+      const fileName = await requestAICheckpointPick(
+        checkpoints ?? [],
+        language,
+        connectionId,
+        activeConnectionDbType,
+      );
       if (!fileName) return;
       await invokeMutation("restore_database_checkpoint", {
         connectionId,

@@ -66,6 +66,11 @@ export interface AIWorkspaceCopy {
       kicker: string;
     title: string;
     noDatabaseSelected: string;
+    slashCommandsTitle: string;
+    slashCommandsHint: string;
+    slashNoMatch: string;
+    slashBackupDescription: string;
+    slashCompactDescription: string;
     noProvider: string;
     tableOne: string;
     tableOther: string;

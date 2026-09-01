@@ -21,7 +21,9 @@ import type { AIConversationMessage, MetricsWidgetType } from "../../types";
 import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import { normalizeAIProviderConfigs } from "../../utils/ai-provider-registry";
 import { resolveAIFailoverConsent } from "../../utils/ai-failover-consent";
+import { emitAppToast } from "../../utils/app-toast";
 import { invokeMutation } from "../../utils/tauri-utils";
+import { isBackupCommand, matchSlashCommands, type AISlashCommand } from "./ai-slash-commands";
 import { formatAgentSql } from "../../utils/ai-sql-format";
 import { AIWorkspacePanelView } from "./AIWorkspacePanelView";
 import { useAIAssistantGeneration } from "./hooks/use-ai-assistant-generation";
@@ -117,6 +119,9 @@ export function AISlidePanel({
   const saveAIConfigs = useAIStore((state) => state.saveAIConfigs);
   const activeConnectionDbType = useConnectionStore((state) =>
     state.connections.find((connection) => connection.id === state.activeConnectionId)?.db_type
+  );
+  const activeConnectionName = useConnectionStore((state) =>
+    state.connections.find((connection) => connection.id === state.activeConnectionId)?.name
   );
   const {
     activeProvider,
@@ -216,6 +221,11 @@ export function AISlidePanel({
   }, [activeChatWorkspaceId, ensureWorkspaceDatabase, isOpen]);
 
   const [promptDraft, setPromptDraft] = useState(initialPrompt);
+  // Composer "/" command menu: open while the draft is exactly "/<letters>",
+  // dismissed by Escape until the draft changes again.
+  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  const [isBackingUp, setIsBackingUp] = useState(false);
   const [bubbles, setBubbles] = useState<AIWorkspaceBubbleData[]>([]);
   const [chatThreads, setChatThreads] = useState<AIChatThread[]>([]);
   const [workspaceInteractionModes, setWorkspaceInteractionModes] = useState<Record<string, AIWorkspaceInteractionMode>>(
@@ -1034,12 +1044,93 @@ export function AISlidePanel({
     setComposerAttachments((current) => current.filter((draft) => draft.id !== id));
   }, []);
 
+  // --- Composer "/" slash commands (/backup, /compact) ---
+  const slashCommands = useMemo<AISlashCommand[]>(() => [
+    { name: "backup", description: aiCopy.composer.slashBackupDescription },
+    { name: "compact", description: aiCopy.composer.slashCompactDescription },
+  ], [aiCopy]);
+  // Menu opens only while the draft is exactly "/<letters>" — plain typing,
+  // not mid-sentence slashes, so normal prompts are never interrupted.
+  const slashQueryMatch = /^\/([a-zA-Z]*)$/.exec(promptDraft.trim());
+  const slashMatches = useMemo(
+    () => (slashQueryMatch ? matchSlashCommands(slashQueryMatch[1], slashCommands) : []),
+    [slashCommands, slashQueryMatch],
+  );
+  const slashMenuOpen = slashQueryMatch !== null && slashMatches.length > 0 && !slashDismissed;
+
+  const handleBackupCommand = useCallback(async () => {
+    if (isBackingUp) return;
+    if (!connectionId || !activeConnectionDbType) {
+      setError(aiCopy.composer.noDatabaseSelected);
+      return;
+    }
+    setIsBackingUp(true);
+    try {
+      const result = await invokeMutation<{ filePath: string; format: string; tableCount: number; rowCount: number }>(
+        "export_database",
+        {
+          connectionId,
+          database: currentDatabase || null,
+          dbType: activeConnectionDbType,
+          connectionName: activeConnectionName || null,
+        },
+      );
+      emitAppToast({
+        tone: "success",
+        title: language === "vi" ? "Đã backup database" : "Database backed up",
+        description:
+          language === "vi"
+            ? `${result.tableCount} bảng · ${result.rowCount} dòng → ${result.filePath}`
+            : `${result.tableCount} tables · ${result.rowCount} rows → ${result.filePath}`,
+        durationMs: 10_000,
+      });
+    } catch (errorValue) {
+      const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+      // A dismissed save dialog is the user cancelling, not a failure.
+      if (!/cancel|dismiss/i.test(message)) {
+        emitAppToast({
+          tone: "error",
+          title: language === "vi" ? "Backup thất bại" : "Backup failed",
+          description: message,
+          durationMs: 10_000,
+        });
+      }
+    } finally {
+      setIsBackingUp(false);
+    }
+  }, [activeConnectionDbType, activeConnectionName, aiCopy.composer.noDatabaseSelected, connectionId, currentDatabase, isBackingUp, language, setError]);
+
+  const runSlashCommand = useCallback((name: string) => {
+    setPromptDraft("");
+    setSlashDismissed(false);
+    setSlashActiveIndex(0);
+    if (name === "compact") {
+      void handleCompactContext(false);
+      return;
+    }
+    if (name === "backup") {
+      void handleBackupCommand();
+    }
+  }, [handleBackupCommand, handleCompactContext]);
+
+  // Composer edits re-arm the "/" menu (Escape dismissal lasts one keystroke).
+  const handleComposerPromptChange = useCallback((value: string) => {
+    setSlashDismissed(false);
+    setSlashActiveIndex(0);
+    setPromptDraft(value);
+  }, []);
+
   const handleGenerate = useCallback(async () => {
     if (isGenerating) return;
     const normalizedPrompt = promptDraft.trim();
     if (isCompactCommand(normalizedPrompt)) {
       setPromptDraft("");
       await handleCompactContext(false);
+      return;
+    }
+    if (isBackupCommand(normalizedPrompt)) {
+      setPromptDraft("");
+      await handleBackupCommand();
       return;
     }
     const promptWithSelection = buildPromptWithSelection(normalizedPrompt, attachedSelection);
@@ -1082,7 +1173,7 @@ export function AISlidePanel({
         setAttachedSelection(null);
       }
     }
-  }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, composerAttachments, contextWindowLimit, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleCompactContext, isGenerating, promptDraft]);
+  }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, composerAttachments, contextWindowLimit, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleBackupCommand, handleCompactContext, isGenerating, promptDraft]);
 
   const handleCancelGeneration = useCallback(() => {
     const activeBubbleId = activeGenerationBubbleIdRef.current;
@@ -1112,11 +1203,36 @@ export function AISlidePanel({
   }, [bubbles, createAssistantBubble, isGenerating, workspaceContextMessages]);
 
   const handleComposerKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // The "/" command menu owns the keyboard while it is open: arrows move the
+    // highlight, Enter/Tab run the highlighted command, Escape dismisses.
+    if (slashMenuOpen && slashMatches.length > 0) {
+      const activeIndex = Math.min(slashActiveIndex, slashMatches.length - 1);
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setSlashActiveIndex((current) => Math.min(current + 1, slashMatches.length - 1));
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setSlashActiveIndex((current) => Math.max(current - 1, 0));
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        runSlashCommand(slashMatches[activeIndex].name);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSlashDismissed(true);
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
       event.preventDefault();
       void handleGenerate();
     }
-  }, [handleGenerate]);
+  }, [handleGenerate, runSlashCommand, slashActiveIndex, slashMatches, slashMenuOpen]);
 
   const handleCopyBubble = useCallback(async (bubble: AIWorkspaceBubbleData) => {
     const text = bubble.sql || bubble.detail || bubble.preview;
@@ -1632,7 +1748,7 @@ export function AISlidePanel({
 
   if (!isOpen) return null;
   const visibleError = error && error !== AI_REQUEST_REPLACED_MESSAGE ? error : null;
-  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isAttachmentManagerOpen, canAttachImages, composerAttachments, isCancelling, isGenerating, isHistoryOpen, isLongformComposer, isRunning, isSessionDataReadEnabled, language, promptDraft, recentWorkspaceThreads, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, failoverConsentPending: failoverConsentState, chatThreadRef, contextUsage, activeChatWorkspaceId, activeChatWorkspaceName: activeChatWorkspace?.name ?? null, activeChatWorkspaceContextUpdatedAt: activeChatWorkspace?.contextUpdatedAt ?? null, chatWorkspaces, importableChatThreads, threadMemories, isCompacting, isSwitchingProvider: isProviderSwitching, close: () => { handleCancelGeneration(); onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, reloadChat: () => void handleReloadChat(), dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, openAttachmentManager: () => setIsAttachmentManagerOpen(true), closeAttachmentManager: () => setIsAttachmentManagerOpen(false), addAttachmentFiles: (files) => void handleAddComposerAttachmentFiles(files), removeAttachment: handleRemoveComposerAttachment, requestDeleteThread: handleRequestDeleteThread, renameThread: handleRenameChatThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setPromptDraft, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomy, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id, model) => {
+  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isAttachmentManagerOpen, canAttachImages, composerAttachments, isCancelling, isGenerating, isHistoryOpen, isLongformComposer, isRunning, isSessionDataReadEnabled, language, promptDraft, recentWorkspaceThreads, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, failoverConsentPending: failoverConsentState, chatThreadRef, contextUsage, activeChatWorkspaceId, activeChatWorkspaceName: activeChatWorkspace?.name ?? null, activeChatWorkspaceContextUpdatedAt: activeChatWorkspace?.contextUpdatedAt ?? null, chatWorkspaces, importableChatThreads, threadMemories, isCompacting, isSwitchingProvider: isProviderSwitching, close: () => { handleCancelGeneration(); onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, reloadChat: () => void handleReloadChat(), dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, openAttachmentManager: () => setIsAttachmentManagerOpen(true), closeAttachmentManager: () => setIsAttachmentManagerOpen(false), addAttachmentFiles: (files) => void handleAddComposerAttachmentFiles(files), removeAttachment: handleRemoveComposerAttachment, requestDeleteThread: handleRequestDeleteThread, renameThread: handleRenameChatThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setPromptDraft: handleComposerPromptChange, slashMenu: slashMenuOpen ? { commands: slashMatches, activeIndex: Math.min(slashActiveIndex, slashMatches.length - 1) } : null, onSelectSlashCommand: runSlashCommand, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomy, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id, model) => {
                 const wasRunning = isRunning || isGenerating;
                 void handleActivateProvider(id, model).then(() => {
                   // Mid-run manual switch: announce it in the conversation as

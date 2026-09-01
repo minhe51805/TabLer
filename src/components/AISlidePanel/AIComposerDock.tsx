@@ -26,6 +26,8 @@ import { formatAIProviderTypeLabel } from "../../utils/ai-provider-registry";
 import { getAIFailoverConsent, setAIFailoverConsent } from "../../utils/ai-failover-consent";
 import { formatAttachmentBytes, type AIAttachmentDraft } from "../../utils/ai-attachments";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
+import { AISlashCommandMenu } from "./AISlashCommandMenu";
+import type { AISlashCommand } from "./ai-slash-commands";
 import type {
   AIWorkspaceAgentAutonomy,
   AIWorkspaceInteractionMode,
@@ -71,6 +73,12 @@ interface AIComposerDockProps {
   onAddAttachmentFiles?: (files: File[]) => void;
   onRemoveAttachment?: (id: string) => void;
   onOpenAttachmentManager?: () => void;
+  /** Open "/" command menu state; null keeps the menu hidden. */
+  slashMenu?: {
+    commands: AISlashCommand[];
+    activeIndex: number;
+  } | null;
+  onSelectSlashCommand?: (name: string) => void;
 }
 
 type ComposerMenu = "mode" | "provider" | "utility";
@@ -163,6 +171,8 @@ export function AIComposerDock({
   onAddAttachmentFiles = () => {},
   onRemoveAttachment = () => {},
   onOpenAttachmentManager = () => {},
+  slashMenu = null,
+  onSelectSlashCommand,
 }: AIComposerDockProps) {
   const [openMenu, setOpenMenu] = useState<ComposerMenu | null>(null);
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
@@ -306,6 +316,16 @@ export function AIComposerDock({
       )}
 
       <div className="ai-workspace-compose-box">
+        {slashMenu && onSelectSlashCommand && (
+          <AISlashCommandMenu
+            title={copy.composer.slashCommandsTitle}
+            emptyHint={copy.composer.slashNoMatch}
+            query={prompt.replace(/^\//, "")}
+            commands={slashMenu.commands}
+            activeIndex={slashMenu.activeIndex}
+            onSelect={onSelectSlashCommand}
+          />
+        )}
         <textarea
           ref={textareaRef}
           value={prompt}

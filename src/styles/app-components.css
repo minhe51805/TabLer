@@ -21689,6 +21689,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .ai-workspace-compose-box {
+  position: relative;
   margin-top: 12px;
   padding: 10px;
   border-radius: 18px;
@@ -21696,6 +21697,83 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   background: var(--mm-surface-1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
+
+/* "/" slash command menu — floats above the composer textarea. */
+.ai-slash-menu {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 6px);
+  z-index: 40;
+  max-height: 264px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-2, var(--mm-surface-1));
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+}
+
+.ai-slash-menu-head {
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.ai-slash-menu-empty {
+  padding: 8px 10px 10px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+.ai-slash-menu-empty .ai-slash-menu-query {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.ai-slash-menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ai-slash-menu-item:hover,
+.ai-slash-menu-item.is-active {
+  background: rgba(0, 122, 255, 0.12);
+  color: var(--text-primary);
+}
+
+.ai-slash-menu-name {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ai-slash-menu-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+}
+
+.ai-slash-menu-item.is-active .ai-slash-menu-description {
+  color: var(--text-secondary);
+}
+
 
 .ai-workspace-selection-chip {
   margin-bottom: 8px;

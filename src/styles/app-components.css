@@ -28767,7 +28767,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .app-toast {
   min-width: 280px;
-  max-width: min(420px, calc(100vw - 32px));
+  max-width: min(480px, calc(100vw - 32px));
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;
@@ -28775,13 +28775,14 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   padding: 12px 14px;
   border-radius: 16px;
   border: 1px solid var(--mm-border);
-  background:
-    linear-gradient(180deg, var(--mm-surface-0), var(--mm-surface-0)),
-    radial-gradient(
-      circle at top left,
-      rgba(0, 122, 255, 0.12),
-      transparent 55%
-    );
+  /* Fully opaque base: chat content behind must never bleed through. */
+  background-color: var(--mm-surface-0, #ffffff);
+  background-image: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.04),
+    rgba(0, 0, 0, 0.02)
+  );
+  backdrop-filter: blur(24px) saturate(1.15);
   box-shadow: var(--mm-shadow-3);
   pointer-events: auto;
   animation: app-toast-slide-in 180ms ease-out;
@@ -28848,7 +28849,29 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .app-toast-description {
   color: var(--text-secondary);
   font-size: var(--mm-fs-caption);
-  line-height: 1.45;
+  line-height: 1.5;
+  /* Long driver errors (rollback/restore) can span many lines: keep them
+     readable and contained instead of overlapping surrounding UI. */
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  max-height: 168px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+}
+
+.app-toast.error .app-toast-title {
+  color: #dc2626;
+}
+
+.app-toast.error .app-toast-description {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.22);
+  border-radius: 8px;
+  padding: 6px 8px;
 }
 
 .app-toast-close {

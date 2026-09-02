@@ -38402,3 +38402,61 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   background: var(--bg-primary, #14161c);
   color: var(--text-primary, #f2f4f8);
 }
+
+/* ── Safe Mode quick toggle inside the model switcher popover ── */
+.app-root .ai-workspace-command-safemode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px 2px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--mm-border, rgba(128, 128, 128, 0.25));
+  color: var(--text-primary, inherit);
+  font-size: 12px;
+}
+.app-root .ai-workspace-command-safemode > svg {
+  color: var(--accent, #0a84ff);
+  flex-shrink: 0;
+}
+.app-root .ai-workspace-command-safemode > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.app-root .ai-ws-safemode-switch {
+  position: relative;
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  border: 1px solid var(--mm-border, rgba(128, 128, 128, 0.35));
+  background: var(--mm-surface-2, rgba(128, 128, 128, 0.18));
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.app-root .ai-ws-safemode-switch:hover {
+  border-color: var(--accent, #0a84ff);
+}
+.app-root .ai-ws-safemode-switch.is-on {
+  background: var(--accent, #0a84ff);
+  border-color: var(--accent, #0a84ff);
+}
+.app-root .ai-ws-safemode-knob {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: left 140ms ease;
+}
+.app-root .ai-ws-safemode-switch.is-on .ai-ws-safemode-knob {
+  left: 17px;
+}

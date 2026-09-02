@@ -138,13 +138,21 @@ export function useAISqlRunner({
             (connection) => connection.id === connectionId,
           )?.db_type;
           if (dbType) {
-            const { invokeMutation } = await import("../../../utils/tauri-utils");
-            await invokeMutation<CheckpointResult>("create_database_checkpoint", {
+            const { invokeWithTimeout } = await import("../../../utils/tauri-utils");
+            const ckLanguage = runOptions?.language ?? "en";
+            emitAppToast({
+              tone: "info",
+              title: ckLanguage === "vi" ? "Đang tạo điểm khôi phục…" : "Creating safety checkpoint…",
+              description: ckLanguage === "vi" ? "Snapshot database trước khi agent ghi dữ liệu." : "Snapshotting the database before the agent writes.",
+              durationMs: 4000,
+            });
+            // Bounded: a whole-database dump must never freeze the run silently.
+            await invokeWithTimeout<CheckpointResult>("create_database_checkpoint", {
               connectionId,
               database: storeState.currentDatabase || null,
               dbType,
               label: AUTO_CHECKPOINT_LABEL,
-            });
+            }, 60_000, "Safety checkpoint");
             autoCheckpointReady = true;
           }
         } catch {

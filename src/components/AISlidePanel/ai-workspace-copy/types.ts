@@ -93,6 +93,7 @@ export interface AIWorkspaceCopy {
     modeEditHint: string;
     modeAgentHint: string;
     agentAutonomyLabel: string;
+    safeModeToggle: string;
     agentAutonomyReview: string;
     agentAutonomyReviewHint: string;
     agentAutonomySmart: string;

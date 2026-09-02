@@ -62,6 +62,10 @@ interface AIComposerDockProps {
   onSetSessionDataReadEnabled: (enabled: boolean) => void;
   onSetShowThinking: (show: boolean) => void;
   onOpenSettings: () => void;
+  /** Whether Safe Mode is currently enabled (level >= 1). */
+  safeModeEnabled?: boolean;
+  /** Flip the global Safe Mode level between 0 (off) and 1 (read-only). */
+  onToggleSafeMode?: (next: boolean) => void;
   onCloseHistory: () => void;
   onGenerate: () => void;
   onCancelGeneration: () => void;
@@ -163,6 +167,8 @@ export function AIComposerDock({
   onSetSessionDataReadEnabled,
   onSetShowThinking,
   onOpenSettings,
+  safeModeEnabled,
+  onToggleSafeMode,
   onCloseHistory,
   onGenerate,
   onCancelGeneration,
@@ -562,6 +568,25 @@ export function AIComposerDock({
                     <button type="button" className="ai-workspace-command-settings-link" onClick={onOpenSettings}>
                       {copy.composer.openSettings}
                     </button>
+                    {onToggleSafeMode && (
+                      <div className="ai-workspace-command-safemode" role="group" aria-label={copy.composer.safeModeToggle}>
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>{copy.composer.safeModeToggle}</span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={safeModeEnabled}
+                          aria-label={copy.composer.safeModeToggle}
+                          className={`ai-ws-safemode-switch ${safeModeEnabled ? "is-on" : ""}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleSafeMode(!safeModeEnabled);
+                          }}
+                        >
+                          <span className="ai-ws-safemode-knob" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

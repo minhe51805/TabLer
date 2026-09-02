@@ -29,6 +29,7 @@ export const AI_AGENT_TOOL_NAMES = [
   "preview_write",
   "remember_term",
   "create_checkpoint",
+  "restore_checkpoint",
   "skill",
   "delegate",
   "read_page",
@@ -68,6 +69,7 @@ export const AI_AGENT_DELEGATE_ANSWER_CHARS = 1500;
 
 const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "create_checkpoint",
+  "restore_checkpoint",
   "list_tables",
   "search_schema",
   "list_schema_objects",
@@ -427,6 +429,22 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
           type: "string",
           description:
             "Short ASCII label describing the moment (e.g. 'before bulk grade update'). Optional.",
+        },
+      },
+      [],
+    ),
+  },
+
+  restore_checkpoint: {
+    name: "restore_checkpoint",
+    description:
+      "Open a rollback confirmation for the user: pick a checkpoint, the user confirms, and the database is restored to that moment (schema + data overwritten). Use it when the user says a change went wrong or asks to undo recent writes. The user must click Restore in the dialog — you cannot force it. Optionally pass label_hint to match a checkpoint label.",
+    parameters: objectSchema(
+      {
+        label_hint: {
+          type: "string",
+          description:
+            "Optional substring of the checkpoint label to restore (e.g. 'before bulk grade update'). Omitted = newest checkpoint.",
         },
       },
       [],

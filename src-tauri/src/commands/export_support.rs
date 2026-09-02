@@ -557,12 +557,14 @@ pub(super) fn normalized_column_type(column: &ColumnDetail) -> String {
 }
 
 /// MSSQL treats a bare `nvarchar`/`varchar` in DDL as length 1, which would
-/// silently truncate restored rows. Widen them to `max` in generated dumps.
+/// silently truncate restored rows. Widen them to 255 in generated dumps —
+/// deliberately NOT `max`: key/index columns reject `nvarchar(max)` with
+/// error 1919, which used to break checkpoint restore on keyed columns.
 pub(super) fn normalize_mssql_column_type(column_type: &str) -> String {
     let trimmed = column_type.trim();
     let lower = trimmed.to_ascii_lowercase();
     if matches!(lower.as_str(), "nvarchar" | "varchar") && !lower.contains('(') {
-        format!("{trimmed}(max)")
+        format!("{trimmed}(255)")
     } else {
         trimmed.to_string()
     }

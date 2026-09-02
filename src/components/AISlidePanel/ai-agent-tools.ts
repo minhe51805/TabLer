@@ -74,6 +74,15 @@ export type AIAgentCreateCheckpointAction = AIAgentToolActionBase<
   AIAgentCreateCheckpointArgs
 >;
 
+export interface AIAgentRestoreCheckpointArgs extends Record<string, unknown> {
+  label_hint?: string;
+}
+
+export type AIAgentRestoreCheckpointAction = AIAgentToolActionBase<
+  "restore_checkpoint",
+  AIAgentRestoreCheckpointArgs
+>;
+
 export interface AIAgentReadPageArgs extends Record<string, unknown> {
   ref?: number;
   offset?: number;
@@ -240,6 +249,7 @@ export type AIAgentToolAction =
   | AIAgentRememberTermAction
   | AIAgentSkillAction
   | AIAgentCreateCheckpointAction
+  | AIAgentRestoreCheckpointAction
   | AIAgentDelegateAction
   | AIAgentReadPageAction
   | AIAgentFinishAction;

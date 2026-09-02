@@ -39,6 +39,7 @@ import {
 } from "./ai-agent-tools";
 import { getAdminQueryPreset, type AdminQueryKind } from "../../utils/admin-query-presets";
 import { saveSemanticGlossaryEntry } from "../../utils/semantic-glossary";
+import { requestAICheckpointPick } from "./ai-checkpoint-picker";
 import { invokeMutation } from "../../utils/tauri-utils";
 import {
   isSupersededAIRequestError,
@@ -190,6 +191,14 @@ export interface AgentToolExecutorDeps {
   createCheckpoint?: (
     label: string | null,
   ) => Promise<{ fileName: string; label: string; tableCount: number; rowCount: number }>;
+  /** Lists the connection's checkpoints for restore_checkpoint. */
+  listCheckpoints?: (connectionId: string) => Promise<
+    Array<{ fileName: string; label: string; createdAt: number; engine: string; database: string | null; tableCount: number; rowCount: number; sizeBytes: number }>
+  >;
+  /** Restores a checkpoint — the picker modal keeps the human confirmation. */
+  restoreCheckpoint?: (connectionId: string, fileName: string, dbType: string) => Promise<unknown>;
+  /** UI language for the rollback dialog copy. */
+  language?: string;
   toolAvailability?: AgentToolAvailability;
 }
 
@@ -330,6 +339,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     executeParameterizedReadonlyQuery,
     previewWriteTransaction,
     createCheckpoint,
+    listCheckpoints,
+    restoreCheckpoint,
+    language,
     toolAvailability,
   } = deps;
   let lastExplorationToolKey = "";
@@ -337,6 +349,8 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   let delegateCallsUsed = 0;
   /** Local checkpoint snapshots created this run (safety budget). */
   let checkpointCallsUsed = 0;
+  /** Rollback confirmations driven this run (one per run). */
+  let restoreCallsUsed = 0;
 
   /**
    * Full (untruncated) observations from this run, 1-based-indexed in call
@@ -1225,6 +1239,52 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       }
     }
 
+    if (action.action === "restore_checkpoint") {
+      if (restoreCallsUsed >= 1) {
+        return "Tool error: restore_checkpoint budget exhausted for this run (1 rollback max). The user can always run /rollback manually.";
+      }
+      restoreCallsUsed += 1;
+      if (
+        !connectionId
+        || !dbType
+        || typeof listCheckpoints !== "function"
+        || typeof restoreCheckpoint !== "function"
+      ) {
+        return "Tool error: restore_checkpoint is unavailable in this context.";
+      }
+      const hint = typeof action.args?.label_hint === "string" ? action.args.label_hint.trim().toLowerCase() : "";
+      const checkpoints = await listCheckpoints(connectionId);
+      if (!checkpoints.length) {
+        return "No checkpoints exist for this connection. The user can create one with /backup or your create_checkpoint tool.";
+      }
+      const chosen = hint
+        ? checkpoints.find((entry) => entry.label.toLowerCase().includes(hint)) ?? checkpoints[0]
+        : checkpoints[0];
+      // Human confirmation is mandatory: the picker modal opens directly on
+      // this checkpoint; the run resumes only after Restore/Cancel.
+      publishAgentProgress({
+        action: "restore_checkpoint",
+        message: `Rollback to "${chosen.label}" — waiting for the user to confirm.`,
+      });
+      const fileName = await requestAICheckpointPick(
+        [chosen],
+        language || "en",
+        connectionId,
+        dbType,
+      );
+      if (!fileName) {
+        return "User cancelled the rollback. No changes were made.";
+      }
+      try {
+        await restoreCheckpoint(connectionId, fileName, dbType);
+        return `Database restored to checkpoint "${chosen.label}". Remind the user to reopen tables if a stale view remains, and continue follow-up work on the restored data.`;
+      } catch (errorValue) {
+        return `Tool error: rollback failed. ${
+          errorValue instanceof Error ? errorValue.message : String(errorValue)
+        }`;
+      }
+    }
+
     if (action.action === "remember_term") {
       const term = typeof action.args?.term === "string" ? action.args.term.trim() : "";
       const definition = typeof action.args?.definition === "string" ? action.args.definition.trim() : "";
@@ -1277,7 +1337,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     if (action.action === "finish") {
       return "Tool error: finish does not execute a tool observation.";
     }
-    return `Tool error: unknown tool "${action.action}". Available tools: list_tables, search_schema, list_schema_objects, describe_table, describe_tables, sample_table_data, run_preset, read_page, run_readonly_sql, run_parameterized_sql, find_value, check_sql, preview_write, remember_term, create_checkpoint, skill. Choose one of these, or return a finish action with args.response if the task is complete.`;
+    return `Tool error: unknown tool "${action.action}". Available tools: list_tables, search_schema, list_schema_objects, describe_table, describe_tables, sample_table_data, run_preset, read_page, run_readonly_sql, run_parameterized_sql, find_value, check_sql, preview_write, remember_term, create_checkpoint, restore_checkpoint, skill. Choose one of these, or return a finish action with args.response if the task is complete.`;
   } catch (errorValue) {
     if (isSupersededAIRequestError(errorValue)) {
       throw errorValue;

@@ -44,6 +44,7 @@ export const KO_COPY: AIWorkspaceCopy = {
       agentActionAskUser: "질문 중",
       agentActionRememberTerm: "학습 중",
       agentActionCreateCheckpoint: "체크포인트 생성 중",
+      agentActionRestoreCheckpoint: "체크포인트 복원 중",
       agentActionPreviewWrite: "변경 미리보기",
       agentActionListTables: "테이블 목록",
       agentActionDescribeTable: "스키마 확인",

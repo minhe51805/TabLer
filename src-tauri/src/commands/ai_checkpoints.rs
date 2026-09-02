@@ -277,7 +277,8 @@ pub async fn delete_database_checkpoint(
         if !sql_path.exists() {
             return Err("Checkpoint not found.".to_string());
         }
-        fs::remove_file(&sql_path).map_err(|error| format!("Failed to delete checkpoint: {error}"))?;
+        fs::remove_file(&sql_path)
+            .map_err(|error| format!("Failed to delete checkpoint: {error}"))?;
         if meta_path.exists() {
             let _ = fs::remove_file(&meta_path);
         }

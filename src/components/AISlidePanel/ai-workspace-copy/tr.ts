@@ -44,6 +44,7 @@ export const TR_COPY: AIWorkspaceCopy = {
       agentActionAskUser: "Sana soruyorum",
       agentActionRememberTerm: "Öğreniyor",
       agentActionCreateCheckpoint: "Kontrol noktası oluşturuluyor",
+      agentActionRestoreCheckpoint: "Checkpoint geri yükleniyor",
       agentActionPreviewWrite: "Değişiklik önizleme",
       agentActionListTables: "Tablolar listeleniyor",
       agentActionDescribeTable: "Şema inceleniyor",

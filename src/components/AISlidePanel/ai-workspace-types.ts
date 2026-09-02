@@ -62,6 +62,7 @@ export type AIWorkspaceAgentActionName =
   | "preview_write"
   | "remember_term"
   | "create_checkpoint"
+  | "restore_checkpoint"
   | "delegate"
   | "read_page"
   | "finish";

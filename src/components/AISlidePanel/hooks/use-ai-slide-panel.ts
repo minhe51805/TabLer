@@ -202,6 +202,24 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     switchDatabase,
   });
 
+  const listCheckpoints = useCallback(
+    (listConnectionId: string) =>
+      invokeMutation<Array<{ fileName: string; label: string; createdAt: number; engine: string; database: string | null; tableCount: number; rowCount: number; sizeBytes: number }>>(
+        "list_database_checkpoints",
+        { connectionId: listConnectionId },
+      ),
+    [],
+  );
+  const restoreCheckpoint = useCallback(
+    (restoreConnectionId: string, fileName: string, restoreDbType: string) =>
+      invokeMutation("restore_database_checkpoint", {
+        connectionId: restoreConnectionId,
+        fileName,
+        dbType: restoreDbType,
+      }),
+    [],
+  );
+
   const aiSchemaCodecCacheRef = useRef(new Map<string, string>());
   const requestIdRef = useRef(0);
   // Captures the model's real reasoning from the most recent askAI call so the
@@ -648,6 +666,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               },
             );
           },
+          listCheckpoints,
+          restoreCheckpoint,
+          language: appLanguage,
           delegateSubAnalysis: async (instruction, focusTables) => {
             const delegatePrompt = [
               "You are a side-analysis helper for a workspace agent. The agent hands you focused, self-contained questions mid-run.",
@@ -1360,5 +1381,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     copyText,
     insertSql,
     runSql,
+    listCheckpoints,
+    restoreCheckpoint,
   };
 }

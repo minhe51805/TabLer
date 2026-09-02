@@ -99,6 +99,8 @@ function getActionLabel(
       return copy.modal.agentActionRememberTerm;
     case "create_checkpoint":
       return copy.modal.agentActionCreateCheckpoint;
+    case "restore_checkpoint":
+      return copy.modal.agentActionRestoreCheckpoint;
     case "read_page":
       return copy.modal.agentActionThink;
     case "preview_write":

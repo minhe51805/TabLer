@@ -34,6 +34,8 @@ export interface AIWorkspacePanelViewModel {
   detailBubble: AIWorkspaceBubbleData | null; historyPanelRef: RefObject<HTMLDivElement | null>; isCancelling: boolean; isGenerating: boolean;
   isAttachmentManagerOpen: boolean; canAttachImages: boolean; composerAttachments: AIAttachmentDraft[];
   isHistoryOpen: boolean; isLongformComposer: boolean; isRunning: boolean; isSessionDataReadEnabled: boolean; isSwitchingProvider: boolean; safeModeEnabled: boolean; onToggleSafeMode: (next: boolean) => void;
+  listCheckpoints: (connectionId: string) => Promise<Array<{ fileName: string; label: string; createdAt: number; engine: string; database: string | null; tableCount: number; rowCount: number }>>;
+  restoreCheckpoint: (connectionId: string, fileName: string, dbType: string) => Promise<unknown>;
   language: string; promptDraft: string; recentWorkspaceThreads: AIChatThread[]; renameThread: (threadId: string, label: string) => void; sessionDataReadButtonLabel: string;
   sessionDataReadButtonTitle: string; showThinking: boolean; switchableProviders: AIProviderConfig[]; tableContextCount: number; visibleError: string | null;
   visualizationConsentPending: ConfirmState | null; failoverConsentPending: ConfirmState | null; chatThreadRef: RefObject<HTMLDivElement | null>;

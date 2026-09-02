@@ -953,6 +953,56 @@ impl DatabaseDriver for MssqlDriver {
         })
     }
 
+    /// True write preview: every statement runs inside one explicit
+    /// BEGIN/ROLLBACK pair pinned to the driver's single client, so partial
+    /// work is always discarded (same contract as the Postgres driver).
+    async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
+        let mut client = self.client.lock().await;
+        // BEGIN/ROLLBACK must go as plain batches: sent via the prepared-RPC
+        // path they run inside a nested scope and SQL Server raises 266
+        // (transaction-count mismatch) when that scope exits.
+        client.simple_query("BEGIN TRANSACTION").await?;
+        let execution = async {
+            let mut results = Vec::new();
+            for statement in statements {
+                let statement_start = Instant::now();
+                if Self::query_returns_rows(statement) {
+                    let rows = client
+                        .simple_query(statement)
+                        .await?
+                        .into_first_result()
+                        .await?;
+                    let mut result =
+                        Self::build_result_from_rows(&rows, 0, statement.clone(), 0, false, false);
+                    result.execution_time_ms = statement_start.elapsed().as_millis();
+                    results.push(result);
+                } else {
+                    let affected = TiberiusQuery::new(statement)
+                        .execute(&mut *client)
+                        .await?
+                        .total();
+                    results.push(QueryResult {
+                        columns: Vec::new(),
+                        rows: Vec::new(),
+                        affected_rows: affected,
+                        execution_time_ms: statement_start.elapsed().as_millis(),
+                        query: statement.clone(),
+                        sandboxed: true,
+                        truncated: false,
+                    });
+                }
+            }
+            Ok::<_, anyhow::Error>(results)
+        }
+        .await;
+
+        if let Err(rollback_error) = client.simple_query("ROLLBACK TRANSACTION").await {
+            log::warn!("write-preview rollback failed: {rollback_error}");
+        }
+        let results = execution?;
+        Ok(results)
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -1459,6 +1509,52 @@ mod mssql_live_diagnostics {
             Err(error) => println!("[tables diag] connect failed: {error:#}"),
         }
     }
+    /// Live probe: preview_write_transaction must run the UPDATE inside
+    /// BEGIN/ROLLBACK and leave the row untouched.
+    /// `cargo test --lib mssql_live_preview_write -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "requires a reachable local SQL Server"]
+    async fn mssql_live_preview_write() {
+        use crate::database::driver::DatabaseDriver;
+        use crate::database::mssql::config_defaults;
+        let mut config = config_defaults();
+        config.host = Some("localhost".to_string());
+        config.port = Some(14330);
+        let driver: std::sync::Arc<dyn DatabaseDriver> =
+            std::sync::Arc::new(MssqlDriver::connect(&config).await.expect("connect"));
+
+        let count_sql = "SELECT COUNT(*) AS c FROM [QuanLySinhVienDB].[dbo].[SinhViens] WHERE HoTen LIKE N'%Ninh%'";
+        let before = driver
+            .execute_query(count_sql)
+            .await
+            .expect("count before")
+            .rows[0][0]
+            .as_i64()
+            .unwrap_or(0);
+        assert!(before > 0, "fixture rows missing");
+
+        let preview = driver
+            .preview_write_transaction(&[format!(
+                "UPDATE [QuanLySinhVienDB].[dbo].[SinhViens] SET HoTen = N'KHOA-PROBE' WHERE HoTen LIKE N'%Ninh%'"
+            )])
+            .await
+            .expect("preview_write_transaction supported on MSSQL");
+        println!(
+            "[preview probe] affected (inside tx): {}",
+            preview[0].affected_rows
+        );
+
+        let after = driver
+            .execute_query(count_sql)
+            .await
+            .expect("count after")
+            .rows[0][0]
+            .as_i64()
+            .unwrap_or(0);
+        assert_eq!(before, after, "rollback must leave data untouched");
+        println!("[preview probe] rolled back; {before} row(s) intact");
+    }
+
     /// Live probe: replicate the global-search multi pipeline end-to-end.
     /// `cargo test --lib mssql_live_multi_search -- --ignored --nocapture`
     #[tokio::test]

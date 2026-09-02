@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { createPortal } from "react-dom";
 import { EventCenter } from "../../stores/event-center";
 import { AppKeyboardHandler } from "../AppKeyboardHandler";
 import { ErrorBoundary } from "../ErrorBoundary";
@@ -274,7 +275,7 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
           />
         </Suspense>
       )}
-      {globalToastMarkup}
+      {createPortal(globalToastMarkup, document.body)}
     </>
   );
 }

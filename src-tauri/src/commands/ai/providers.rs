@@ -25,6 +25,9 @@ pub(crate) fn streaming_request_body(
         if matches!(
             config.provider_type,
             AIProviderType::OpenAI | AIProviderType::OpenRouter | AIProviderType::Custom
+        ) && !matches!(
+            resolve_provider_body_shape(config, endpoint),
+            ProviderBodyShape::Anthropic
         ) {
             object.insert(
                 "stream_options".to_string(),
@@ -33,6 +36,28 @@ pub(crate) fn streaming_request_body(
         }
     }
     body
+}
+
+/// The provider identity a config behaves as on the wire. Custom/Ollama
+/// configs with an explicit `anthropic` API format act exactly like a native
+/// Anthropic provider (body, auth headers, tool calls, response + stream
+/// parsing), so callers should route everything through this instead of the
+/// raw `config.provider_type`.
+pub(crate) fn effective_wire_provider(
+    config: &AIProviderConfig,
+    endpoint: &str,
+) -> AIProviderType {
+    if matches!(
+        config.provider_type,
+        AIProviderType::Ollama | AIProviderType::Custom
+    ) && matches!(
+        resolve_provider_body_shape(config, endpoint),
+        ProviderBodyShape::Anthropic
+    ) {
+        AIProviderType::Anthropic
+    } else {
+        config.provider_type.clone()
+    }
 }
 
 pub(crate) fn streaming_endpoint(config: &AIProviderConfig, endpoint: &str) -> String {
@@ -139,6 +164,7 @@ pub(crate) fn resolve_provider_body_shape(
             Some("ollama-chat") => return ProviderBodyShape::OllamaChat,
             Some("ollama-generate") => return ProviderBodyShape::OllamaGenerate,
             Some("chat-completions") => return ProviderBodyShape::OpenAiLike,
+            Some("anthropic") => return ProviderBodyShape::Anthropic,
             _ => {}
         }
     }
@@ -581,6 +607,71 @@ mod tests {
         );
         assert!(body.get("messages").is_some());
         assert!(body.get("prompt").is_none());
+    }
+
+    #[test]
+    fn explicit_anthropic_format_uses_anthropic_wire_shape() {
+        let mut provider = sample_provider(AIProviderType::Custom);
+        provider.endpoint = "https://proxy.example.com/v1/messages".to_string();
+        provider.api_format = Some("anthropic".to_string());
+
+        // Wire identity + body shape follow the Anthropic contract.
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "https://proxy.example.com/v1/messages"
+        );
+        assert_eq!(
+            effective_wire_provider(&provider, &provider.endpoint),
+            AIProviderType::Anthropic
+        );
+        let body = build_provider_request_body(
+            &provider,
+            &provider.endpoint,
+            "sys",
+            "usr",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(body["system"], "sys");
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert!(body.get("prompt").is_none());
+
+        // Streaming stays on the Anthropic contract: `stream` flips on but the
+        // OpenAI-only `stream_options` key must not appear.
+        let stream_body = streaming_request_body(
+            &provider,
+            &provider.endpoint,
+            "sys",
+            "usr",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(stream_body["stream"], json!(true));
+        assert!(stream_body.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn explicit_anthropic_format_resolves_base_urls_like_native_anthropic() {
+        let mut provider = sample_provider(AIProviderType::Custom);
+        provider.api_format = Some("anthropic".to_string());
+
+        // Blank endpoint defaults to the real Anthropic API.
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "https://api.anthropic.com/v1/messages"
+        );
+
+        // Unwired base URLs get `/messages` appended, like the native provider.
+        provider.endpoint = "https://proxy.example.com/v1".to_string();
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "https://proxy.example.com/v1/messages"
+        );
+
+        // Fully wired URLs are kept as-is (proxies may rewrite the path).
+        provider.endpoint = "https://proxy.example.com/my-gateway".to_string();
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "https://proxy.example.com/my-gateway"
+        );
     }
 
     #[test]

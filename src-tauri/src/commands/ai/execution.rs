@@ -23,7 +23,8 @@ use super::extraction::{
 use super::prompt::build_ai_prompt;
 use super::providers::{
     apply_attachments, apply_native_tools, build_provider_request_body,
-    resolve_provider_body_shape, streaming_endpoint, streaming_request_body,
+    effective_wire_provider, resolve_provider_body_shape, streaming_endpoint,
+    streaming_request_body,
 };
 use super::{ai_http_client, run_blocking_storage_task, AI_REQUEST_CANCELLED_ERROR};
 
@@ -92,6 +93,7 @@ pub(crate) async fn execute_ai_stream_request(
     );
     let base_endpoint = resolve_provider_endpoint(&config);
     validate_ai_endpoint(&config, &base_endpoint)?;
+    let wire_provider = effective_wire_provider(&config, &base_endpoint);
     let endpoint = streaming_endpoint(&config, &base_endpoint);
     let mut body = streaming_request_body(
         &config,
@@ -107,7 +109,7 @@ pub(crate) async fn execute_ai_stream_request(
         &request.attachments,
     );
     let mut request_builder = ai_http_client().post(&endpoint);
-    match config.provider_type {
+    match wire_provider {
         AIProviderType::Anthropic => {
             request_builder = request_builder
                 .header("x-api-key", api_key.as_deref().unwrap_or_default())
@@ -175,7 +177,7 @@ pub(crate) async fn execute_ai_stream_request(
                 publish_stream_payload(
                     app,
                     request_id,
-                    &config.provider_type,
+                    &wire_provider,
                     &payload,
                     &mut pending_text,
                     &mut visible_started,
@@ -192,7 +194,7 @@ pub(crate) async fn execute_ai_stream_request(
             publish_stream_payload(
                 app,
                 request_id,
-                &config.provider_type,
+                &wire_provider,
                 &payload,
                 &mut pending_text,
                 &mut visible_started,
@@ -281,6 +283,7 @@ pub(crate) async fn execute_ai_request(
         | AIProviderType::Custom => {
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
+            let wire_provider = effective_wire_provider(&config, &endpoint);
             let mut body = build_provider_request_body(
                 &config,
                 &endpoint,
@@ -290,7 +293,7 @@ pub(crate) async fn execute_ai_request(
             );
             apply_native_tools(
                 &mut body,
-                &config.provider_type,
+                &wire_provider,
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
             );
@@ -308,7 +311,11 @@ pub(crate) async fn execute_ai_request(
 
             for attempt in 0..max_attempts {
                 let mut req = client.post(&endpoint);
-                if let Some(ref api_key) = api_key {
+                if matches!(wire_provider, AIProviderType::Anthropic) {
+                    req = req
+                        .header("x-api-key", api_key.as_deref().unwrap_or_default())
+                        .header("anthropic-version", "2023-06-01");
+                } else if let Some(ref api_key) = api_key {
                     req = req.bearer_auth(api_key);
                 }
 
@@ -383,7 +390,7 @@ pub(crate) async fn execute_ai_request(
                 }
 
                 if let Some(action) =
-                    extract_tool_call_as_action_json(&config.provider_type, &resp_json)
+                    extract_tool_call_as_action_json(&wire_provider, &resp_json)
                 {
                     return Ok(AIResponse {
                         text: action,
@@ -392,7 +399,16 @@ pub(crate) async fn execute_ai_request(
                     });
                 }
 
-                if let Some(text) = extract_openai_like_response_text(&resp_json) {
+                if matches!(wire_provider, AIProviderType::Anthropic) {
+                    if let Some(text) = extract_anthropic_response_text(&resp_json) {
+                        let (reasoning, cleaned) = split_think_block(&text);
+                        return Ok(AIResponse {
+                            text: cleaned,
+                            reasoning,
+                            error: None,
+                        });
+                    }
+                } else if let Some(text) = extract_openai_like_response_text(&resp_json) {
                     let field_reasoning = extract_openai_like_reasoning(&resp_json);
                     let (think_reasoning, cleaned) = split_think_block(&text);
                     let reasoning = field_reasoning.or(think_reasoning);

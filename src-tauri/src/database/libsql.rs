@@ -264,6 +264,7 @@ impl DatabaseDriver for LibSqlDriver {
         let mut tables = Vec::new();
         while let Some(row) = rows.next().await? {
             tables.push(TableInfo {
+                create_date: None,
                 name: row.get::<String>(0)?,
                 table_type: row.get::<String>(1)?,
                 schema: None,
@@ -291,6 +292,7 @@ impl DatabaseDriver for LibSqlDriver {
         let mut objects = Vec::new();
         while let Some(row) = rows.next().await? {
             objects.push(SchemaObjectInfo {
+                    create_date: None,
                 name: row.get::<String>(0)?,
                 schema: None,
                 object_type: row.get::<String>(1)?.to_ascii_uppercase(),

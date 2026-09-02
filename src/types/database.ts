@@ -120,6 +120,8 @@ export interface TableInfo {
   table_type: string;
   row_count?: number | null;
   engine?: string;
+  /** Object creation date (ISO yyyy-mm-dd where the backend provides it). */
+  create_date?: string | null;
 }
 
 export interface SchemaObjectInfo {
@@ -128,6 +130,8 @@ export interface SchemaObjectInfo {
   object_type: string;
   related_table?: string;
   definition?: string;
+  /** Object creation date (ISO yyyy-mm-dd where the backend provides it). */
+  create_date?: string | null;
 }
 
 export interface DatabaseInfo {

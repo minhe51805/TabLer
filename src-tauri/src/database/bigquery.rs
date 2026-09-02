@@ -172,6 +172,7 @@ impl DatabaseDriver for BigQueryDriver {
             };
 
             objects.push(SchemaObjectInfo {
+                    create_date: None,
                 name: table.table_reference.table_id,
                 schema: Some(table.table_reference.dataset_id),
                 object_type,

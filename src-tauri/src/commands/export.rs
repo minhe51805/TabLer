@@ -216,6 +216,7 @@ mod tests {
             table_type: "TABLE".to_string(),
             row_count: None,
             engine: None,
+            create_date: None,
         };
         let sql =
             build_create_table_statement(DatabaseType::SQLite, &table, &sample_structure(), None)

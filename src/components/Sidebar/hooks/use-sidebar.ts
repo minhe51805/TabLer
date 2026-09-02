@@ -12,7 +12,7 @@ import {
   copyToClipboard,
 } from "../SidebarUtils";
 import {
-  applyConditions,
+  applyConditionsWith,
   applyCondition,
   buildCloneScript,
   buildDeleteTemplate,
@@ -290,7 +290,7 @@ export function useSidebar() {
     (e: React.MouseEvent, object: SchemaObjectInfo) => {
       e.stopPropagation();
       if (!activeConnectionId) return;
-      const tabKind = object.object_type.toLowerCase();
+      const tabKind = (object.object_type ?? "").toLowerCase();
       addTab({
         id: `query-${crypto.randomUUID()}`,
         type: "query",
@@ -473,9 +473,25 @@ export function useSidebar() {
     }
     return tables.filter((table) => {
       const qualifiedName = table.schema ? `${table.schema}.${table.name}` : table.name;
-      // Apply conditions if any
+      // Apply conditions if any — each condition targets the field chosen in
+      // the Property column of the filter settings modal (Name / Schema).
       if (conditions.length > 0) {
-        if (!applyConditions(qualifiedName, conditions, conditionLogic)) return false;
+        if (
+          !applyConditionsWith(
+            (cond) =>
+              cond.column === "schema"
+                ? (table.schema ?? "")
+                : cond.column === "type"
+                  ? (table.table_type ?? "")
+                  : cond.column === "create_date"
+                    ? (table.create_date ?? "")
+                    : qualifiedName,
+            conditions,
+            conditionLogic,
+          )
+        ) {
+          return false;
+        }
       }
       // Apply search filter if search text exists
       if (search.trim()) {
@@ -492,12 +508,28 @@ export function useSidebar() {
     return schemaObjects.filter((object) => {
       const qualifiedName = object.schema ? `${object.schema}.${object.name}` : object.name;
       const relatedTable = object.related_table || "";
-      const typeName = object.object_type.toLowerCase();
+      // Some schema objects (e.g. system folders) may lack object_type.
+      const typeName = (object.object_type ?? "").toLowerCase();
 
-      // Apply conditions if any
+      // Apply conditions if any — each condition targets the field chosen in
+      // the Property column of the filter settings modal (Name / Schema).
       if (conditions.length > 0) {
-        const combinedValue = `${qualifiedName} ${relatedTable} ${object.object_type}`;
-        if (!applyConditions(combinedValue, conditions, conditionLogic)) return false;
+        if (
+          !applyConditionsWith(
+            (cond) =>
+              cond.column === "schema"
+                ? (object.schema ?? "")
+                : cond.column === "type"
+                  ? typeName
+                  : cond.column === "create_date"
+                    ? (object.create_date ?? "")
+                    : qualifiedName,
+            conditions,
+            conditionLogic,
+          )
+        ) {
+          return false;
+        }
       }
 
       // Apply search filter if search text exists

@@ -373,6 +373,7 @@ impl DatabaseDriver for DuckDbDriver {
 
             while let Some(row) = rows.next()? {
                 tables.push(TableInfo {
+                create_date: None,
                     name: row.get(1)?,
                     schema: row.get::<_, String>(0).ok(),
                     table_type: row.get::<_, String>(2)?,
@@ -399,6 +400,7 @@ impl DatabaseDriver for DuckDbDriver {
 
             while let Some(row) = rows.next()? {
                 objects.push(SchemaObjectInfo {
+                    create_date: None,
                     name: row.get(1)?,
                     schema: row.get::<_, String>(0).ok(),
                     object_type: "VIEW".to_string(),

@@ -138,16 +138,34 @@ pub(crate) fn resolve_provider_endpoint(config: &AIProviderConfig) -> String {
         config.provider_type,
         AIProviderType::Ollama | AIProviderType::Custom
     ) {
-        if let Some(format @ ("ollama-chat" | "ollama-generate")) = explicit_api_format(config) {
-            if !endpoint.trim().is_empty() {
-                return endpoint;
+        if let Some(format) = explicit_api_format(config) {
+            match format {
+                "ollama-chat" | "ollama-generate" => {
+                    if !endpoint.trim().is_empty() {
+                        return endpoint;
+                    }
+                    let action = if format == "ollama-generate" {
+                        "generate"
+                    } else {
+                        "chat"
+                    };
+                    return format!("http://localhost:11434/api/{action}");
+                }
+                // Anthropic wire format: behave like the native Anthropic
+                // provider — append `/messages` to unwired base URLs and
+                // default to the real API when the endpoint is blank.
+                "anthropic" => {
+                    if endpoint.trim().is_empty() {
+                        return "https://api.anthropic.com/v1/messages".to_string();
+                    }
+                    let path = endpoint_path(&endpoint).unwrap_or_default();
+                    if is_unwired_base_path(&path) {
+                        return join_endpoint_suffix(&endpoint, "messages");
+                    }
+                    return endpoint;
+                }
+                _ => {}
             }
-            let action = if format == "ollama-generate" {
-                "generate"
-            } else {
-                "chat"
-            };
-            return format!("http://localhost:11434/api/{action}");
         }
     }
 

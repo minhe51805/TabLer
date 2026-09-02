@@ -93,68 +93,94 @@ export function applyCondition(
   value: string,
   condition: FilterCondition
 ): boolean {
-  if (!condition.operator) return true;
-  const needle = value.toLowerCase();
+  if (!condition?.operator) return true;
+  // Harden against legacy/persisted conditions missing `value`.
+  const target = (value ?? "").toLowerCase();
+  const val = condition.value ?? "";
 
   switch (condition.operator) {
     case "equals":
-      return needle === condition.value.toLowerCase();
+      return target === val.toLowerCase();
     case "not_equals":
-      return needle !== condition.value.toLowerCase();
+      return target !== val.toLowerCase();
     case "contains":
-      return needle.includes(condition.value.toLowerCase());
+      return target.includes(val.toLowerCase());
     case "not_contains":
-      return !needle.includes(condition.value.toLowerCase());
+      return !target.includes(val.toLowerCase());
     case "starts_with":
-      return needle.startsWith(condition.value.toLowerCase());
+      return target.startsWith(val.toLowerCase());
     case "ends_with":
-      return needle.endsWith(condition.value.toLowerCase());
+      return target.endsWith(val.toLowerCase());
     case "is_empty":
-      return needle === "" || needle === "null";
+      return target === "" || target === "null";
     case "is_not_empty":
-      return needle !== "" && needle !== "null";
+      return target !== "" && target !== "null";
     case "like":
       try {
-        const escaped = condition.value.replace(/%/g, ".*").replace(/_/g, ".");
+        const escaped = val.replace(/%/g, ".*").replace(/_/g, ".");
         return new RegExp(`^${escaped}$`, "i").test(value);
       } catch {
         return false;
       }
     case "not_like":
       try {
-        const escaped = condition.value.replace(/%/g, ".*").replace(/_/g, ".");
+        const escaped = val.replace(/%/g, ".*").replace(/_/g, ".");
         return !new RegExp(`^${escaped}$`, "i").test(value);
       } catch {
         return false;
       }
     case "regex_match":
       try {
-        return new RegExp(condition.value, "i").test(value);
+        return new RegExp(val, "i").test(value);
       } catch {
         return false;
       }
     case "in_list": {
-      const items = condition.value.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-      return items.includes(needle);
+      const items = val.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+      return items.includes(target);
     }
     case "not_in_list": {
-      const items = condition.value.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-      return !items.includes(needle);
+      const items = val.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+      return !items.includes(target);
     }
     case "greater_than":
-      return needle > condition.value.toLowerCase();
+      return target > val.toLowerCase();
     case "less_than":
-      return needle < condition.value.toLowerCase();
+      return target < val.toLowerCase();
     case "greater_or_equal":
-      return needle >= condition.value.toLowerCase();
+      return target >= val.toLowerCase();
     case "less_or_equal":
-      return needle <= condition.value.toLowerCase();
+      return target <= val.toLowerCase();
     case "raw_sql":
       // raw_sql is applied separately; skip here
       return true;
     default:
       return true;
   }
+}
+
+/**
+ * Apply all conditions, letting the caller pick which string each condition
+ * targets (e.g. table name vs. schema) based on `condition.column`.
+ */
+export function applyConditionsWith(
+  getValue: (condition: FilterCondition) => string,
+  conditions: FilterCondition[],
+  logic: "AND" | "OR"
+): boolean {
+  if (conditions.length === 0) return true;
+  // Skip conditions with an empty value (e.g. an untouched date row): they
+  // would otherwise filter everything out with operators like `equals`.
+  // `is_empty`/`is_not_empty` are the exceptions — they operate on emptiness.
+  const active = conditions.filter(
+    (c) =>
+      (c.value ?? "").trim() !== "" ||
+      c.operator === "is_empty" ||
+      c.operator === "is_not_empty",
+  );
+  if (active.length === 0) return true;
+  const results = active.map((c) => applyCondition(getValue(c) ?? "", c));
+  return logic === "AND" ? results.every(Boolean) : results.some(Boolean);
 }
 
 /** Apply all conditions to a single value using AND/OR logic */

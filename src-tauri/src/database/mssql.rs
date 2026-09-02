@@ -618,11 +618,15 @@ impl DatabaseDriver for MssqlDriver {
     async fn list_tables(&self, database: Option<&str>) -> Result<Vec<TableInfo>> {
         let db = self.current_database_name(database);
         let sql = format!(
-            "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE \
-             FROM [{}].INFORMATION_SCHEMA.TABLES \
-             WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW') \
-             ORDER BY TABLE_SCHEMA, TABLE_NAME",
-            db.replace(']', "]]")
+            "SELECT s.name AS schema_name, o.name, \
+                    CASE WHEN o.type = 'V' THEN N'VIEW' ELSE N'BASE TABLE' END, \
+                    CONVERT(varchar(10), o.create_date, 120) \
+             FROM [{}].sys.all_objects o \
+             JOIN [{}].sys.schemas s ON s.schema_id = o.schema_id \
+             WHERE o.type IN ('U', 'V') \
+             ORDER BY schema_name, name",
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
         );
         let (rows, _) = self.query_rows(&sql).await?;
 
@@ -634,6 +638,7 @@ impl DatabaseDriver for MssqlDriver {
                 table_type: Self::row_value_string(row, 2).unwrap_or_else(|| "TABLE".to_string()),
                 row_count: None,
                 engine: Some("SQL Server".to_string()),
+                create_date: Self::row_value_string(row, 3),
             })
             .collect())
     }
@@ -649,20 +654,22 @@ impl DatabaseDriver for MssqlDriver {
         // explorer, mirroring SSMS.
         let sql = format!(
             "SELECT s.name AS schema_name, o.name, \
-                    CASE WHEN o.type = 'D' THEN N'DEFAULT' ELSE o.type_desc END \
+                    CASE WHEN o.type = 'D' THEN N'DEFAULT' ELSE o.type_desc END, \
+                    CONVERT(varchar(10), o.create_date, 120) \
              FROM [{}].sys.all_objects o \
              JOIN [{}].sys.schemas s ON s.schema_id = o.schema_id \
              LEFT JOIN [{}].sys.triggers tt ON tt.object_id = o.object_id \
              WHERE o.type IN ('V', 'TR', 'P', 'FN', 'TF', 'IF', 'SN', 'AF', 'PC', 'FS', 'FT', 'R', 'D') \
                AND (o.type <> 'TR' OR tt.parent_class <> 0) \
              UNION ALL \
-             SELECT s.name AS schema_name, t.name, N'DATABASE_TRIGGER' \
+             SELECT s.name AS schema_name, t.name, N'DATABASE_TRIGGER', \
+                    CONVERT(varchar(10), o.create_date, 120) \
              FROM [{}].sys.triggers t \
              JOIN [{}].sys.objects o ON o.object_id = t.object_id \
              JOIN [{}].sys.schemas s ON s.schema_id = o.schema_id \
              WHERE t.parent_class = 0 \
              UNION ALL \
-             SELECT N'sys' AS schema_name, a.name, N'ASSEMBLY' \
+             SELECT N'sys' AS schema_name, a.name, N'ASSEMBLY', CAST(NULL AS nvarchar(10)) \
              FROM [{}].sys.assemblies a \
              UNION ALL \
              SELECT s.name AS schema_name, t.name, \
@@ -691,15 +698,17 @@ impl DatabaseDriver for MssqlDriver {
                       WHEN t.is_table_type = 1 THEN N'USER_TABLE_TYPE' \
                       WHEN t.is_assembly_type = 1 THEN N'USER_CLR_TYPE' \
                       ELSE N'USER_DEFINED_TYPE' \
-                    END \
+                    END, CAST(NULL AS nvarchar(10)) \
              FROM [{}].sys.types t \
              JOIN [{}].sys.schemas s ON s.schema_id = t.schema_id \
              UNION ALL \
-             SELECT s.name AS schema_name, q.name, N'SEQUENCE' \
+             SELECT s.name AS schema_name, q.name, N'SEQUENCE', \
+                    CONVERT(varchar(10), q.create_date, 120) \
              FROM [{}].sys.sequences q \
              JOIN [{}].sys.schemas s ON s.schema_id = q.schema_id \
              UNION ALL \
-             SELECT s.name AS schema_name, x.name, N'XML_SCHEMA_COLLECTION' \
+             SELECT s.name AS schema_name, x.name, N'XML_SCHEMA_COLLECTION', \
+                    CONVERT(varchar(10), x.create_date, 120) \
              FROM [{}].sys.xml_schema_collections x \
              JOIN [{}].sys.schemas s ON s.schema_id = x.schema_id \
              ORDER BY schema_name, name",
@@ -729,6 +738,7 @@ impl DatabaseDriver for MssqlDriver {
                 object_type: Self::row_value_string(row, 2).unwrap_or_else(|| "OBJECT".to_string()),
                 related_table: None,
                 definition: None,
+                create_date: Self::row_value_string(row, 3),
             })
             .collect())
     }

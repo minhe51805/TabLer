@@ -813,6 +813,7 @@ export function AISettingsModal({ onClose }: Props) {
                                                 >
                                                     <option value="auto">Auto-detect from URL</option>
                                                     <option value="chat-completions">Chat completions (/chat/completions)</option>
+                                                    <option value="anthropic">Anthropic (/v1/messages)</option>
                                                     <option value="ollama-chat">Ollama /api/chat</option>
                                                     <option value="ollama-generate">Ollama /api/generate</option>
                                                 </select>

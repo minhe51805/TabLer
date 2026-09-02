@@ -313,6 +313,7 @@ impl DatabaseDriver for ClickHouseDriver {
                     .unwrap_or("ClickHouse")
                     .to_string();
                 TableInfo {
+                create_date: None,
                     name: row
                         .get("name")
                         .and_then(|value| value.as_str())
@@ -354,6 +355,7 @@ impl DatabaseDriver for ClickHouseDriver {
                     .and_then(|value| value.as_str())
                     .unwrap_or("VIEW");
                 SchemaObjectInfo {
+                    create_date: None,
                     name: row
                         .get("name")
                         .and_then(|value| value.as_str())

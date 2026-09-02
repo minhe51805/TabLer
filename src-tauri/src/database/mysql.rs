@@ -238,6 +238,7 @@ impl DatabaseDriver for MySqlDriver {
         let mut tables = Vec::new();
         for row in rows {
             tables.push(TableInfo {
+                create_date: None,
                 name: row.get(0),
                 schema: db.clone(),
                 table_type: row.get::<String, _>(1),

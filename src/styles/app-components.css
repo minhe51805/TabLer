@@ -30280,6 +30280,91 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   text-align: center;
 }
 
+/* Filter Settings Modal (SSMS-style) */
+.filter-settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+.filter-settings-modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  width: 680px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 96px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--mm-shadow-3);
+  overflow: hidden;
+}
+.filter-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.filter-settings-title {
+  font-size: var(--mm-fs-body);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.filter-settings-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.filter-settings-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+.filter-settings-body {
+  overflow-y: auto;
+  flex: 1;
+}
+.filter-settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+.filter-settings-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: var(--mm-fs-small);
+  cursor: pointer;
+  border: 1px solid var(--border-default);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  transition: background 0.15s;
+}
+.filter-settings-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.filter-settings-btn.is-primary {
+  background: rgba(0, 122, 255, 0.15);
+  border-color: rgba(0, 122, 255, 0.4);
+  color: var(--accent);
+}
+.filter-settings-btn.is-primary:hover {
+  background: rgba(0, 122, 255, 0.22);
+}
+
 /* Filter Save Dialog */
 .filter-save-dialog-overlay {
   position: fixed;
@@ -30467,7 +30552,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   top: calc(100% + 6px);
   left: 0;
   right: 0;
-  z-index: 1000;
+  /* Above .filter-settings-overlay (2000): both live under <body>. */
+  z-index: 2100;
   border-radius: 10px;
 }
 
@@ -30569,7 +30655,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: 1000;
+  /* Must sit above .filter-settings-overlay (z-index: 2000) since both are
+     portaled to <body>; otherwise the menu renders behind the modal. */
+  z-index: 2100;
   min-width: 200px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-default);
@@ -30732,6 +30820,89 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   border-color: rgba(0, 122, 255, 0.4);
   border-style: solid;
   color: var(--accent);
+}
+
+/* SSMS-style condition grid: Property | Operator | Value | remove */
+.filter-conditions-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.filter-grid-row {
+  display: grid;
+  /* Fixed property width: each row is its own grid, so `max-content` here
+     would size the column per-row and stagger the Operator column. */
+  grid-template-columns: 74px minmax(104px, 0.65fr) minmax(96px, 1.35fr) 28px;
+  column-gap: 14px;
+  align-items: center;
+}
+.filter-grid-head {
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 0 2px;
+}
+.filter-grid-head span:last-child {
+  width: 28px;
+}
+.filter-grid-prop,
+.filter-grid-value {
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+}
+/* SSMS-style property label with info icon (Name / Owner / Type rows). */
+.filter-grid-prop-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--mm-fs-small);
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 2px;
+}
+.filter-prop-info {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0.75;
+  cursor: help;
+}
+.filter-grid-value::placeholder {
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+/* SSMS-style date cell: native calendar picker; indicator follows theme */
+.filter-grid-date {
+  min-width: 0;
+  cursor: pointer;
+}
+.filter-grid-date::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.75;
+}
+[data-theme="dark"] .filter-grid-date::-webkit-calendar-picker-indicator,
+[data-theme-preset="tabler.dark"] .filter-grid-date::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: 0.7;
+}
+.filter-conditions-grid .filter-operator-selector {
+  width: 100%;
+  min-width: 0;
+}
+.filter-conditions-grid .filter-operator-trigger {
+  padding: 7px 10px;
+}
+.filter-logic-btn-compact {
+  padding: 4px 10px;
+  width: auto;
+  border-radius: 6px;
 }
 
 /* ===== Unified sidebar navigation rail (compact + expanded) ===== */

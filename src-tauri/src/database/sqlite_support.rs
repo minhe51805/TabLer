@@ -216,6 +216,7 @@ impl SqliteDriver {
         Ok(rows
             .iter()
             .map(|row| SchemaObjectInfo {
+                    create_date: None,
                 name: row.get(0),
                 schema: None,
                 object_type: row.get::<String, _>(1).to_ascii_uppercase(),

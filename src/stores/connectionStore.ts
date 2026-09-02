@@ -401,49 +401,75 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
 
   fetchTables: async (connectionId, database) =>
     runWithInFlight(inFlightTableFetches, metadataFetchKey(connectionId, database), async () => {
+      const targetDatabase = database ?? get().currentDatabase ?? null;
       set({ isLoadingTables: true });
       try {
         const tables = await getOrLoadSchemaTables(
-          { connectionId, database },
+          { connectionId, database: targetDatabase ?? undefined },
           () => invokeAIWorkspaceToolWithTimeout(
             "list_tables",
-            { connectionId, database: database || null },
+            { connectionId, database: targetDatabase || null },
             FRONTEND_TIMEOUTS.metadata,
             "Listing tables",
           ),
         );
+        // Staleness guard: drop results that belong to a database the user has
+        // already navigated away from (a slow or error-retried fetch overtaken
+        // by a switch). Otherwise the header shows one DB while the tree holds
+        // another DB's tables.
+        const current = get();
+        if (current.activeConnectionId !== connectionId || current.currentDatabase !== targetDatabase) {
+          return;
+        }
         set({ tables, isLoadingTables: false });
       } catch (error) {
+        const current = get();
+        const stillRelevant =
+          current.activeConnectionId === connectionId && current.currentDatabase === targetDatabase;
         set({
           isLoadingTables: false,
             });
-        useGlobalErrorStore
-          .getState()
-          .setError(`Failed to list tables: ${error}`);
+        if (stillRelevant) {
+          useGlobalErrorStore
+            .getState()
+            .setError(`Failed to list tables: ${error}`);
+        }
       }
     }),
 
   fetchSchemaObjects: async (connectionId, database) =>
     runWithInFlight(inFlightSchemaObjectFetches, metadataFetchKey(connectionId, database), async () => {
+      const targetDatabase = database ?? get().currentDatabase ?? null;
       set({ isLoadingSchemaObjects: true });
       try {
         const schemaObjects = await getOrLoadSchemaObjects(
-          { connectionId, database },
+          { connectionId, database: targetDatabase ?? undefined },
           () => invokeWithTimeout<SchemaObjectInfo[]>(
             "list_schema_objects",
-            { connectionId, database: database || null },
+            { connectionId, database: targetDatabase || null },
             FRONTEND_TIMEOUTS.metadata,
             "Listing schema objects",
           ),
         );
+        // Same staleness guard as fetchTables: a late response for a database
+        // the user already left must never overwrite the current tree.
+        const current = get();
+        if (current.activeConnectionId !== connectionId || current.currentDatabase !== targetDatabase) {
+          return;
+        }
         set({ schemaObjects, isLoadingSchemaObjects: false });
       } catch (error) {
+        const current = get();
+        const stillRelevant =
+          current.activeConnectionId === connectionId && current.currentDatabase === targetDatabase;
         set({
           isLoadingSchemaObjects: false,
             });
-        useGlobalErrorStore
-          .getState()
-          .setError(`Failed to list schema objects: ${error}`);
+        if (stillRelevant) {
+          useGlobalErrorStore
+            .getState()
+            .setError(`Failed to list schema objects: ${error}`);
+        }
       }
     }),
 

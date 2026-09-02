@@ -43,6 +43,7 @@ export const VI_COPY: AIWorkspaceCopy = {
       agentActionThink: "Đang suy nghĩ",
       agentActionAskUser: "Đang hỏi bạn",
       agentActionRememberTerm: "Đang ghi nhớ",
+      agentActionCreateCheckpoint: "Tạo điểm khôi phục",
       agentActionPreviewWrite: "Xem trước thay đổi",
       agentActionListTables: "Liệt kê bảng",
       agentActionDescribeTable: "Xem cấu trúc",

@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import type { QueryResult } from "../../../types";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
+import { emitAppToast } from "../../../utils/app-toast";
 import {
   extractLeadingUseDirective,
   formatExecutionError,
@@ -13,6 +14,19 @@ import { requestAISqlConfirmation } from "../ai-sql-confirm";
 import { summarizeRunResult } from "../ai-sql-response";
 import type { AIWorkspaceAgentAutonomy } from "../ai-workspace-types";
 
+/** Label baked into the automatic pre-write checkpoint file name. */
+const AUTO_CHECKPOINT_LABEL = "auto-before-agent-write";
+
+interface CheckpointResult {
+  fileName: string;
+  label: string;
+  tableCount: number;
+  rowCount: number;
+}
+
+/** Rows affected above which the post-run /rollback hint is worth showing. */
+const ROLLBACK_HINT_THRESHOLD = 100;
+
 export interface AIExecutedSqlResult {
   queryResult: QueryResult;
   summary: string;
@@ -21,6 +35,8 @@ export interface AIExecutedSqlResult {
 export interface AIRunSqlOptions {
   /** Autonomy granted by the user for this run ("full" replaces the per-run dialog). */
   agentAutonomy?: AIWorkspaceAgentAutonomy;
+  /** Language for the post-write rollback hint toast. */
+  language?: string;
 }
 
 interface UseAISqlRunnerOptions {
@@ -111,6 +127,40 @@ export function useAISqlRunner({
         (await requestAISqlConfirmation(confirmationRequirement, statements));
       if (!confirmed) throw new Error("Execution cancelled.");
 
+      // Safety net #1: before any agent-driven write, snapshot the database
+      // into a local checkpoint (awaited — it must capture the PRE-write
+      // state). Best effort: a failed snapshot never blocks the run.
+      let autoCheckpointReady = false;
+      if (hasMutatingStatements) {
+        try {
+          const storeState = useConnectionStore.getState();
+          const dbType = storeState.connections.find(
+            (connection) => connection.id === connectionId,
+          )?.db_type;
+          if (dbType) {
+            const { invokeMutation } = await import("../../../utils/tauri-utils");
+            await invokeMutation<CheckpointResult>("create_database_checkpoint", {
+              connectionId,
+              database: storeState.currentDatabase || null,
+              dbType,
+              label: AUTO_CHECKPOINT_LABEL,
+            });
+            autoCheckpointReady = true;
+          }
+        } catch {
+          const language = runOptions?.language ?? "en";
+          emitAppToast({
+            tone: "error",
+            title: language === "vi" ? "Checkpoint tự động thất bại" : "Auto checkpoint failed",
+            description:
+              language === "vi"
+                ? "Tiếp tục chạy, nhưng /rollback sẽ không có mốc mới. Có thể tạo tay bằng /backup."
+                : "Continuing, but /rollback will have no new point. Create one manually with /backup.",
+            durationMs: 8_000,
+          });
+        }
+      }
+
       // Only claim Safe-Mode pre-approval when it is real: the standing
       // "full autonomy" grant, or the review dialog was actually shown and
       // approved. Read-classified runs (no dialog) must NOT claim it — the
@@ -144,6 +194,19 @@ export function useAISqlRunner({
         }));
       }
 
+      // Safety net #3: surface the rollback path when a write touched a lot
+      // of rows. The agent never rolls back on its own — /rollback is the
+      // user's call and restores the pre-run snapshot.
+      if (hasMutatingStatements && autoCheckpointReady && queryResult.affected_rows >= ROLLBACK_HINT_THRESHOLD) {
+        const language = runOptions?.language ?? "en";
+        emitAppToast({
+          tone: "info",
+          title: writeHintTitle(queryResult.affected_rows, language),
+          description: writeHintBody(language),
+          durationMs: 12_000,
+        });
+      }
+
       return { queryResult, summary: summarizeRunResult(queryResult) };
     } catch (errorValue) {
       const message = formatExecutionError(errorValue);
@@ -155,4 +218,17 @@ export function useAISqlRunner({
   }, [connectionId, executeSandboxQuery, setError, switchDatabase]);
 
   return { isRunning, runSql };
+}
+
+/** The runner lives outside i18n providers, so the hint stays bilingual-safe. */
+function writeHintTitle(affectedRows: number, language: string): string {
+  return language === "vi"
+    ? `Lệnh ghi đã ảnh hưởng ${affectedRows} dòng`
+    : `Write affected ${affectedRows} row(s)`;
+}
+
+function writeHintBody(language: string): string {
+  return language === "vi"
+    ? "Đã tự lưu checkpoint trước khi chạy. Nếu sai, gõ /rollback để khôi phục."
+    : "A pre-run checkpoint was saved automatically. If this was wrong, type /rollback to restore it.";
 }

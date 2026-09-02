@@ -28,6 +28,7 @@ export const AI_AGENT_TOOL_NAMES = [
   "run_preset",
   "preview_write",
   "remember_term",
+  "create_checkpoint",
   "skill",
   "delegate",
   "read_page",
@@ -66,6 +67,7 @@ export const AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT = 4;
 export const AI_AGENT_DELEGATE_ANSWER_CHARS = 1500;
 
 const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
+  "create_checkpoint",
   "list_tables",
   "search_schema",
   "list_schema_objects",
@@ -412,6 +414,22 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
         },
       },
       ["term", "definition"],
+    ),
+  },
+
+  create_checkpoint: {
+    name: "create_checkpoint",
+    description:
+      "Snapshot the current database (schema + data) into an app-managed checkpoint file. Read-only for the database — it only writes a local file the user can restore with the /rollback command. Use it right before proposing a chain of risky mutations, or after the user says a change went wrong.",
+    parameters: objectSchema(
+      {
+        label: {
+          type: "string",
+          description:
+            "Short ASCII label describing the moment (e.g. 'before bulk grade update'). Optional.",
+        },
+      },
+      [],
     ),
   },
 

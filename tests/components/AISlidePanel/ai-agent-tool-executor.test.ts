@@ -572,4 +572,38 @@ describe("unknown tools and timeout hints", () => {
     expect(obs).toContain("readonly query failed: Read-only query timed out");
     expect(obs).toContain("add a LIMIT");
   });
+
+  it("create_checkpoint snapshots the database and reports the restore path", async () => {
+    const createCheckpoint = vi.fn().mockResolvedValue({
+      fileName: "1-manual.sql",
+      label: "manual checkpoint",
+      tableCount: 3,
+      rowCount: 11,
+    });
+    const deps = mkDeps({ createCheckpoint });
+    const obs = await run(deps, {
+      action: "create_checkpoint",
+      args: {},
+    } as AIAgentToolAction);
+    expect(createCheckpoint).toHaveBeenCalledWith(null);
+    expect(obs).toContain("3 tables, 11 rows");
+    expect(obs).toContain("/rollback");
+  });
+
+  it("create_checkpoint enforces a 3-per-run budget", async () => {
+    const createCheckpoint = vi.fn().mockResolvedValue({
+      fileName: "1-manual.sql",
+      label: "manual checkpoint",
+      tableCount: 3,
+      rowCount: 11,
+    });
+    const action = { action: "create_checkpoint", args: {} } as AIAgentToolAction;
+    const { runAgentTool } = createAgentToolExecutor(mkDeps({ createCheckpoint }));
+    for (let index = 0; index < 3; index += 1) {
+      const obs = await runAgentTool(action);
+      expect(obs).toContain("Checkpoint created");
+    }
+    const exhausted = await runAgentTool(action);
+    expect(exhausted).toContain("budget exhausted");
+  });
 });

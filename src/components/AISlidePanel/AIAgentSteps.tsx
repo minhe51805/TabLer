@@ -97,6 +97,8 @@ function getActionLabel(
       return copy.modal.agentActionRunSql;
     case "remember_term":
       return copy.modal.agentActionRememberTerm;
+    case "create_checkpoint":
+      return copy.modal.agentActionCreateCheckpoint;
     case "read_page":
       return copy.modal.agentActionThink;
     case "preview_write":

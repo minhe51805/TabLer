@@ -24,6 +24,7 @@ describe("AI agent tool contract", () => {
       "run_preset",
       "preview_write",
       "remember_term",
+      "create_checkpoint",
       "skill",
       "delegate",
       "read_page",

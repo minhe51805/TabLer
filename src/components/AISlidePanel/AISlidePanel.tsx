@@ -1453,7 +1453,7 @@ export function AISlidePanel({
     }
 
     try {
-      const result = await runSql(runnableSql, { agentAutonomy: activeAgentAutonomy });
+      const result = await runSql(runnableSql, { agentAutonomy: activeAgentAutonomy, language });
       setBubbles((current) =>
         current.map((currentBubble) =>
           currentBubble.id === bubble.id

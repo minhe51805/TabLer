@@ -639,7 +639,7 @@ export function useAIAssistantGeneration({
         shouldAgentAutoRunSql(activeAgentAutonomy, result.risk?.level);
       if (agentCanAutoRun && result.sql) {
         try {
-          const runResult = await runSql(result.sql, { agentAutonomy: activeAgentAutonomy });
+          const runResult = await runSql(result.sql, { agentAutonomy: activeAgentAutonomy, language });
           setBubbles((current) =>
             current.map((bubble) =>
               bubble.id === loadingBubble.id

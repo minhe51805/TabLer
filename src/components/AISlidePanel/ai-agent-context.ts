@@ -23,6 +23,8 @@ const UNTRACKED_REPEAT_ACTIONS = new Set<AIWorkspaceAgentActionName>([
   // Re-posting the checklist with updated statuses is the intended rhythm,
   // not a wasted repeat — the plan replaces (not re-derives) state.
   "update_plan",
+  // Checkpoints are cheap local snapshots; the executor caps them per run.
+  "create_checkpoint",
   "finish",
 ]);
 
@@ -536,6 +538,9 @@ export function buildAgentControllerPrompt(params: {
       : "",
     workspaceToolsEnabled
       ? "- NEVER query system catalogs (information_schema.*, pg_catalog.*, sqlite_master) — their columns differ per engine and catalog guesses like information_schema.tables.row_count do not exist. Row counts come ONLY from the list_tables tool (rowCount field); column facts come ONLY from describe_table/search_schema."
+      : "",
+    workspaceToolsEnabled
+      ? "- Before proposing destructive or bulk mutations (UPDATE/DELETE without a tight key, DROP, TRUNCATE), call create_checkpoint so the user has a restore point, and mention that /rollback restores it. The app also auto-checkpoints before approved writes."
       : "",
     workspaceToolsEnabled && sqlRead
       ? "- Before run_readonly_sql, every table in FROM or JOIN must be inspected: use one describe_table call with a `tables` array for several tables at once, or rely on tables already listed under Pre-inspected tables. Use only the exact columns reported by the latest describe observation; never guess columns such as name, content, title, or value."

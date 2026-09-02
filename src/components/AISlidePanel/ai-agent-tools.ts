@@ -65,6 +65,15 @@ export type AIAgentSkillAction = AIAgentToolActionBase<
   AIAgentSkillArgs
 >;
 
+export interface AIAgentCreateCheckpointArgs extends Record<string, unknown> {
+  label?: string;
+}
+
+export type AIAgentCreateCheckpointAction = AIAgentToolActionBase<
+  "create_checkpoint",
+  AIAgentCreateCheckpointArgs
+>;
+
 export interface AIAgentReadPageArgs extends Record<string, unknown> {
   ref?: number;
   offset?: number;
@@ -230,6 +239,7 @@ export type AIAgentToolAction =
   | AIAgentPreviewWriteAction
   | AIAgentRememberTermAction
   | AIAgentSkillAction
+  | AIAgentCreateCheckpointAction
   | AIAgentDelegateAction
   | AIAgentReadPageAction
   | AIAgentFinishAction;

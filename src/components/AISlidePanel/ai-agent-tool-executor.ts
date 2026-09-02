@@ -182,6 +182,14 @@ export interface AgentToolExecutorDeps {
     connectionId: string,
     statements: string[],
   ) => Promise<{ results: Array<{ affected_rows: number; rows: unknown[][]; truncated?: boolean }> }>;
+  /**
+   * Creates a local database checkpoint (schema+data snapshot file). The
+   * database itself is only read; safety comes from the user-facing
+   * /rollback confirmation flow. Optional for tests.
+   */
+  createCheckpoint?: (
+    label: string | null,
+  ) => Promise<{ fileName: string; label: string; tableCount: number; rowCount: number }>;
   toolAvailability?: AgentToolAvailability;
 }
 
@@ -321,11 +329,14 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     executeReadonlyQuery,
     executeParameterizedReadonlyQuery,
     previewWriteTransaction,
+    createCheckpoint,
     toolAvailability,
   } = deps;
   let lastExplorationToolKey = "";
   /** Side-analysis calls spent this run (delegate budget). */
   let delegateCallsUsed = 0;
+  /** Local checkpoint snapshots created this run (safety budget). */
+  let checkpointCallsUsed = 0;
 
   /**
    * Full (untruncated) observations from this run, 1-based-indexed in call
@@ -355,6 +366,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       && action.action !== "read_page"
       && action.action !== "update_plan"
       && action.action !== "delegate"
+      && action.action !== "create_checkpoint"
       ? `${action.action}:${JSON.stringify(action.args ?? {})}`
       : "";
     if (explorationKey && explorationKey === lastExplorationToolKey) {
@@ -1194,6 +1206,25 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       }
     }
 
+    if (action.action === "create_checkpoint") {
+      if (checkpointCallsUsed >= 3) {
+        return "Tool error: create_checkpoint budget exhausted for this run (3 snapshots max). The user can always create one manually with /backup.";
+      }
+      checkpointCallsUsed += 1;
+      if (typeof createCheckpoint !== "function") {
+        return "Tool error: create_checkpoint is unavailable in this context.";
+      }
+      const label = typeof action.args?.label === "string" ? action.args.label.trim() : "";
+      try {
+        const result = await createCheckpoint(label || null);
+        return `Checkpoint created: ${result.tableCount} tables, ${result.rowCount} rows saved locally (label: "${result.label}"). The user can restore it with the /rollback command — suggest that command if an upcoming or just-executed change looks wrong.`;
+      } catch (errorValue) {
+        return `Tool error: create_checkpoint failed. ${
+          errorValue instanceof Error ? errorValue.message : String(errorValue)
+        }`;
+      }
+    }
+
     if (action.action === "remember_term") {
       const term = typeof action.args?.term === "string" ? action.args.term.trim() : "";
       const definition = typeof action.args?.definition === "string" ? action.args.definition.trim() : "";
@@ -1246,7 +1277,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     if (action.action === "finish") {
       return "Tool error: finish does not execute a tool observation.";
     }
-    return `Tool error: unknown tool "${action.action}". Available tools: list_tables, search_schema, list_schema_objects, describe_table, describe_tables, sample_table_data, run_preset, read_page, run_readonly_sql, run_parameterized_sql, find_value, check_sql, preview_write, remember_term, skill. Choose one of these, or return a finish action with args.response if the task is complete.`;
+    return `Tool error: unknown tool "${action.action}". Available tools: list_tables, search_schema, list_schema_objects, describe_table, describe_tables, sample_table_data, run_preset, read_page, run_readonly_sql, run_parameterized_sql, find_value, check_sql, preview_write, remember_term, create_checkpoint, skill. Choose one of these, or return a finish action with args.response if the task is complete.`;
   } catch (errorValue) {
     if (isSupersededAIRequestError(errorValue)) {
       throw errorValue;

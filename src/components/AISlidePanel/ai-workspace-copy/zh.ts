@@ -43,6 +43,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
       agentActionThink: "思考中",
       agentActionAskUser: "询问中",
       agentActionRememberTerm: "学习中",
+      agentActionCreateCheckpoint: "正在创建检查点",
       agentActionPreviewWrite: "预览变更",
       agentActionListTables: "列出表",
       agentActionDescribeTable: "查看结构",

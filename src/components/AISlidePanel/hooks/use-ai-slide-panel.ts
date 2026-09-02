@@ -630,6 +630,24 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             agentPlanLines = plan.map((step, index) =>
               `${index + 1}. [${step.status}] ${step.title}`);
           },
+          createCheckpoint: (label) => {
+            const state = useConnectionStore.getState();
+            const dbType = state.connections.find(
+              (connection) => connection.id === connectionId,
+            )?.db_type;
+            if (!connectionId || !dbType) {
+              return Promise.reject(new Error("No active connection for checkpoint."));
+            }
+            return invokeMutation<{ fileName: string; label: string; tableCount: number; rowCount: number }>(
+              "create_database_checkpoint",
+              {
+                connectionId,
+                database: state.currentDatabase || null,
+                dbType,
+                label: label ?? null,
+              },
+            );
+          },
           delegateSubAnalysis: async (instruction, focusTables) => {
             const delegatePrompt = [
               "You are a side-analysis helper for a workspace agent. The agent hands you focused, self-contained questions mid-run.",

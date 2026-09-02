@@ -78,6 +78,8 @@ export interface AIWorkspaceCopy {
     checkpointHint: string;
     checkpointRestoreAction: string;
     checkpointCancel: string;
+    checkpointDelete: string;
+    checkpointDeleteConfirm: string;
     checkpointBack: string;
     checkpointConfirmTitle: string;
     checkpointPreviewBody: string;

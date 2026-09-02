@@ -75,6 +75,8 @@ export const EN_COPY: AIWorkspaceCopy = {
       checkpointHint: "Pick a checkpoint to restore. The current data will be overwritten.",
       checkpointRestoreAction: "Restore",
       checkpointCancel: "Cancel",
+      checkpointDelete: "Delete checkpoint",
+      checkpointDeleteConfirm: "Click again to confirm deletion",
       checkpointBack: "Back",
       checkpointConfirmTitle: "Restore this checkpoint?",
       checkpointPreviewBody: "Runs {statements} statements ({schema} schema, {data} data, {destructive} destructive) against the current database.",

@@ -75,6 +75,8 @@ export const TR_COPY: AIWorkspaceCopy = {
       checkpointHint: "Geri yüklenecek kontrol noktasını seçin. Mevcut verinin üzerine yazılacak.",
       checkpointRestoreAction: "Geri yükle",
       checkpointCancel: "İptal",
+      checkpointDelete: "Kontrol noktasını sil",
+      checkpointDeleteConfirm: "Silmeyi onaylamak için tekrar tıklayın",
       checkpointBack: "Geri",
       checkpointConfirmTitle: "Bu kontrol noktası geri yüklensin mi?",
       checkpointPreviewBody: "Mevcut veritabanına {statements} ifade çalıştırılacak ({schema} şema, {data} veri, {destructive} yıkıcı).",

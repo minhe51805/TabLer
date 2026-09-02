@@ -75,6 +75,8 @@ export const KO_COPY: AIWorkspaceCopy = {
       checkpointHint: "복원할 체크포인트를 선택하세요. 현재 데이터가 덮어써집니다.",
       checkpointRestoreAction: "복원",
       checkpointCancel: "취소",
+      checkpointDelete: "체크포인트 삭제",
+      checkpointDeleteConfirm: "삭제를 확정하려면 다시 클릭",
       checkpointBack: "뒤로",
       checkpointConfirmTitle: "이 체크포인트를 복원할까요?",
       checkpointPreviewBody: "현재 데이터베이스에 {statements}개 문장({schema} 스키마, {data} 데이터, {destructive} 파괴적)을 실행합니다.",

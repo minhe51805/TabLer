@@ -128,8 +128,11 @@ export async function finalizeAgentResult(options: FinalizeAgentResultOptions): 
     : baseResponseBody;
   // Agent steps are returned separately for the live trace UI. Never append them
   // to the user-facing response, otherwise internal tool logs leak into chat.
+  // When the SQL card is rendered separately, strip fenced SQL from the text:
+  // otherwise the model's own code fence duplicates the exact same statement
+  // as a second card. An empty remainder is fine — only the SQL card shows.
   const rawResponse = shouldExposeSql
-    ? responseBody
+    ? stripSqlCodeBlocksFromResponse(responseBody).trim()
     : stripSqlCodeBlocksFromResponse(responseBody) || responseBody;
   const widgets = buildWidgets(args as Record<string, unknown>);
   return { rawResponse, sql: shouldExposeSql ? sql : null, agentSteps: buildSteps(agentTraceSteps), agentWidgets: widgets.length ? widgets : undefined };

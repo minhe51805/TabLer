@@ -263,6 +263,31 @@ pub fn preview_database_checkpoint_restore(
     super::restore::build_restore_preview(&sql, db_type)
 }
 
+/// Deletes one checkpoint (the `.sql` dump and its meta sidecar). The dump
+/// path is validated against separator/traversal attacks like every other
+/// checkpoint command.
+#[tauri::command]
+pub async fn delete_database_checkpoint(
+    connection_id: String,
+    file_name: String,
+) -> Result<(), String> {
+    let dir = checkpoint_dir(&connection_id)?;
+    let (sql_path, meta_path) = checkpoint_paths(&dir, &file_name)?;
+    task::spawn_blocking(move || -> Result<(), String> {
+        if !sql_path.exists() {
+            return Err("Checkpoint not found.".to_string());
+        }
+        fs::remove_file(&sql_path).map_err(|error| format!("Failed to delete checkpoint: {error}"))?;
+        if meta_path.exists() {
+            let _ = fs::remove_file(&meta_path);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Checkpoint delete task failed: {error}"))??;
+    Ok(())
+}
+
 /// `/rollback` step 2b: run the checkpoint SQL through the shared restore
 /// pipeline (capability checks, statement splitting, transactional execution).
 /// Safe Mode is intentionally not re-asserted here: the human confirmed the

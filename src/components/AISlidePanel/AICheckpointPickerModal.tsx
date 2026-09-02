@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { History, Loader2, ShieldAlert, ChevronRight, X } from "lucide-react";
+import { History, Loader2, ShieldAlert, ChevronRight, Trash2, X } from "lucide-react";
 import { invokeMutation } from "../../utils/tauri-utils";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
@@ -47,6 +47,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
   const [preview, setPreview] = useState<RestorePreviewShape | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   useEffect(() => {
     setAICheckpointPickerHostMounted(true);
@@ -171,7 +172,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
             ) : (
               <ul className="ckpt-list">
                 {request.checkpoints.map((checkpoint) => (
-                  <li key={checkpoint.fileName}>
+                  <li key={checkpoint.fileName} className="ckpt-item-row">
                     <button
                       type="button"
                       className="ckpt-item"
@@ -185,6 +186,40 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                         <span className="ckpt-item__meta">{describeCheckpoint(checkpoint)}</span>
                       </span>
                       <ChevronRight size={15} className="ckpt-item__chevron" />
+                    </button>
+                    <button
+                      type="button"
+                      className={`ckpt-item__delete${deleteConfirmId === checkpoint.fileName ? " is-confirm" : ""}`}
+                      title={deleteConfirmId === checkpoint.fileName ? copy.checkpointDeleteConfirm : copy.checkpointDelete}
+                      aria-label={copy.checkpointDelete}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (deleteConfirmId !== checkpoint.fileName) {
+                          setDeleteConfirmId(checkpoint.fileName);
+                          window.setTimeout(() => setDeleteConfirmId((current) => (current === checkpoint.fileName ? null : current)), 3000);
+                          return;
+                        }
+                        setDeleteConfirmId(null);
+                        void invokeMutation("delete_database_checkpoint", {
+                          connectionId: request.connectionId,
+                          fileName: checkpoint.fileName,
+                        })
+                          .then(() =>
+                            setRequest((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    checkpoints: current.checkpoints.filter(
+                                      (entry) => entry.fileName !== checkpoint.fileName,
+                                    ),
+                                  }
+                                : current,
+                            ),
+                          )
+                          .catch(() => undefined);
+                      }}
+                    >
+                      <Trash2 size={13} />
                     </button>
                   </li>
                 ))}

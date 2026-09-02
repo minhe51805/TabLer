@@ -75,6 +75,8 @@ export const ZH_COPY: AIWorkspaceCopy = {
       checkpointHint: "选择要还原的检查点。当前数据将被覆盖。",
       checkpointRestoreAction: "还原",
       checkpointCancel: "取消",
+      checkpointDelete: "删除检查点",
+      checkpointDeleteConfirm: "再次点击以确认删除",
       checkpointBack: "返回",
       checkpointConfirmTitle: "还原此检查点？",
       checkpointPreviewBody: "将对当前数据库执行 {statements} 条语句（{schema} 架构、{data} 数据、{destructive} 破坏性）。",

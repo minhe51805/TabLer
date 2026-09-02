@@ -313,7 +313,7 @@ impl DatabaseDriver for ClickHouseDriver {
                     .unwrap_or("ClickHouse")
                     .to_string();
                 TableInfo {
-                create_date: None,
+                    create_date: None,
                     name: row
                         .get("name")
                         .and_then(|value| value.as_str())

@@ -284,5 +284,14 @@ pub async fn restore_database_checkpoint(
     })
     .await
     .map_err(|_| "Checkpoint read task failed unexpectedly.".to_string())??;
-    run_sql_restore(&connection_id, &sql, db_type, &db_manager, &safe_mode, false).await
+    run_sql_restore(
+        &connection_id,
+        &sql,
+        db_type,
+        &db_manager,
+        &safe_mode,
+        false,
+        false,
+    )
+    .await
 }

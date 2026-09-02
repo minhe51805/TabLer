@@ -1,6 +1,4 @@
-use crate::utils::safe_mode::{
-    assert_sql_allowed_at_level_with_approval, clamp_safe_mode_level,
-};
+use crate::utils::safe_mode::{assert_sql_allowed_at_level_with_approval, clamp_safe_mode_level};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::RwLock;

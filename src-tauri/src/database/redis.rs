@@ -241,7 +241,7 @@ impl DatabaseDriver for RedisDriver {
             let tables = Self::scan_keys(connection)?
                 .into_iter()
                 .map(|key| TableInfo {
-                create_date: None,
+                    create_date: None,
                     name: key,
                     schema: Some(Self::database_label(db_index)),
                     table_type: "KEY".to_string(),

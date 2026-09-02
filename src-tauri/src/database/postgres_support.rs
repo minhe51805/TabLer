@@ -273,7 +273,7 @@ impl PostgresDriver {
         .await?;
 
         objects.extend(view_rows.iter().map(|row| SchemaObjectInfo {
-                    create_date: None,
+            create_date: None,
             name: row.get(1),
             schema: row.try_get::<String, _>(0).ok(),
             object_type: "VIEW".to_string(),
@@ -301,7 +301,7 @@ impl PostgresDriver {
             let statement = row.try_get::<String, _>(6).ok();
 
             SchemaObjectInfo {
-                    create_date: None,
+                create_date: None,
                 name: row.get(1),
                 schema,
                 object_type: "TRIGGER".to_string(),
@@ -335,7 +335,7 @@ impl PostgresDriver {
         .await?;
 
         objects.extend(routine_rows.iter().map(|row| SchemaObjectInfo {
-                    create_date: None,
+            create_date: None,
             name: row.get(1),
             schema: row.try_get::<String, _>(0).ok(),
             object_type: row.get::<String, _>(2).to_ascii_uppercase(),

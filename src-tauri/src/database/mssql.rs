@@ -1,7 +1,7 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
 use super::query_common::{
-    statement_returns_rows, METADATA_QUERY_ROW_LIMIT, MAX_QUERY_RESULT_ROWS,
+    statement_returns_rows, MAX_QUERY_RESULT_ROWS, METADATA_QUERY_ROW_LIMIT,
 };
 use super::safety::{
     normalize_order_dir, qualify_mssql_table_name, quote_mssql_identifier, quote_mssql_order_by,
@@ -10,6 +10,7 @@ use super::safety::{
 use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use chrono::{Duration as ChronoDuration, NaiveDate};
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -330,6 +331,47 @@ port instead (e.g. 'localhost,1433'). Original error: {}",
             .unwrap_or_else(|| "master".to_string())
     }
 
+    /// Days since 0001-01-01 (TDS `date` type) to ISO date string.
+    fn ms_date_to_string(days: u32) -> String {
+        let base = NaiveDate::from_ymd_opt(1, 1, 1).expect("valid base date");
+        (base + ChronoDuration::days(i64::from(days)))
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    /// TDS `time` increments (10^-scale seconds since midnight) to ISO time.
+    fn ms_time_to_string(increments: u64, scale: u8) -> String {
+        let seconds = increments as f64 / 10f64.powi(i32::from(scale));
+        let whole = seconds.floor() as u64;
+        let fraction = seconds - whole as f64;
+        let hour = (whole / 3600) % 24;
+        let minute = (whole / 60) % 60;
+        let second = whole % 60;
+        if fraction > 0.0 {
+            let nanos = (fraction * 10_000_000.0).round() as u64;
+            format!("{hour:02}:{minute:02}:{second:02}.{nanos:07}")
+        } else {
+            format!("{hour:02}:{minute:02}:{second:02}")
+        }
+    }
+
+    /// TDS `datetime`/`smalldatetime` (days since 1900-01-01 plus second
+    /// fragments of `fragments_per_second` per second) to ISO string.
+    fn ms_datetime_to_string(days: i32, fragments: u32, fragments_per_second: f64) -> String {
+        let base = NaiveDate::from_ymd_opt(1900, 1, 1).expect("valid base date");
+        let seconds = f64::from(fragments) / fragments_per_second;
+        let whole_seconds = seconds.floor() as i64;
+        let date_time =
+            base + ChronoDuration::days(i64::from(days)) + ChronoDuration::seconds(whole_seconds);
+        let fraction = seconds - whole_seconds as f64;
+        if fraction > 0.0 {
+            let millis = (fraction * 1000.0).round() as u64;
+            format!("{}.{:03}", date_time.format("%Y-%m-%d %H:%M:%S"), millis)
+        } else {
+            date_time.format("%Y-%m-%d %H:%M:%S").to_string()
+        }
+    }
+
     fn ms_cell_to_json(value: &ColumnData<'static>) -> serde_json::Value {
         match value {
             ColumnData::U8(Some(v)) => serde_json::Value::from(*v),
@@ -347,12 +389,45 @@ port instead (e.g. 'localhost,1433'). Original error: {}",
                     .collect::<String>(),
             ),
             ColumnData::Numeric(Some(v)) => serde_json::Value::String(v.to_string()),
-            ColumnData::DateTime(Some(v)) => serde_json::Value::String(format!("{v:?}")),
-            ColumnData::SmallDateTime(Some(v)) => serde_json::Value::String(format!("{v:?}")),
-            ColumnData::Time(Some(v)) => serde_json::Value::String(format!("{v:?}")),
-            ColumnData::Date(Some(v)) => serde_json::Value::String(format!("{v:?}")),
-            ColumnData::DateTime2(Some(v)) => serde_json::Value::String(format!("{v:?}")),
-            ColumnData::DateTimeOffset(Some(v)) => serde_json::Value::String(format!("{v:?}")),
+            ColumnData::DateTime(Some(v)) => serde_json::Value::String(
+                Self::ms_datetime_to_string(v.days(), v.seconds_fragments(), 300.0),
+            ),
+            ColumnData::SmallDateTime(Some(v)) => {
+                serde_json::Value::String(Self::ms_datetime_to_string(
+                    i32::from(v.days()),
+                    u32::from(v.seconds_fragments()) * 60,
+                    60.0,
+                ))
+            }
+            ColumnData::Time(Some(v)) => {
+                serde_json::Value::String(Self::ms_time_to_string(v.increments(), v.scale()))
+            }
+            ColumnData::Date(Some(v)) => {
+                serde_json::Value::String(Self::ms_date_to_string(v.days()))
+            }
+            ColumnData::DateTime2(Some(v)) => {
+                let time = v.time();
+                serde_json::Value::String(format!(
+                    "{} {}",
+                    Self::ms_date_to_string(v.date().days()),
+                    Self::ms_time_to_string(time.increments(), time.scale())
+                ))
+            }
+            ColumnData::DateTimeOffset(Some(v)) => {
+                let dt2 = v.datetime2();
+                let time = dt2.time();
+                let offset = v.offset();
+                let sign = if offset < 0 { '-' } else { '+' };
+                let abs = offset.unsigned_abs();
+                serde_json::Value::String(format!(
+                    "{} {}{}{:02}:{:02}",
+                    Self::ms_date_to_string(dt2.date().days()),
+                    Self::ms_time_to_string(time.increments(), time.scale()),
+                    sign,
+                    abs / 60,
+                    abs % 60
+                ))
+            }
             _ => serde_json::Value::Null,
         }
     }
@@ -465,10 +540,7 @@ port instead (e.g. 'localhost,1433'). Original error: {}",
         let mut client = self.client.lock().await;
         let rows = client.simple_query(sql).await?.into_first_result().await?;
         let truncated = rows.len() > limit;
-        Ok((
-            rows.into_iter().take(limit).collect::<Vec<_>>(),
-            truncated,
-        ))
+        Ok((rows.into_iter().take(limit).collect::<Vec<_>>(), truncated))
     }
 
     async fn execute_statement(&self, sql: &str) -> Result<u64> {
@@ -1387,6 +1459,73 @@ mod mssql_live_diagnostics {
             Err(error) => println!("[tables diag] connect failed: {error:#}"),
         }
     }
+    /// Live probe: replicate the global-search multi pipeline end-to-end.
+    /// `cargo test --lib mssql_live_multi_search -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "requires a reachable local SQL Server"]
+    async fn mssql_live_multi_search() {
+        use crate::database::driver::DatabaseDriver;
+        use crate::database::mssql::config_defaults;
+        let mut config = config_defaults();
+        config.host = Some("localhost".to_string());
+        config.port = Some(14330);
+        config.additional_fields.insert(
+            "instance_name".to_string(),
+            "LAPTOP-JFECRE1C\\MINH".to_string(),
+        );
+        let driver: std::sync::Arc<dyn DatabaseDriver> =
+            std::sync::Arc::new(MssqlDriver::connect(&config).await.expect("connect"));
+
+        use crate::commands::search::fetch_searchable_text_columns;
+        let table = "dbo.SinhViens";
+        let text = fetch_searchable_text_columns(
+            &driver,
+            DatabaseType::MSSQL,
+            table,
+            "[QuanLySinhVienDB].",
+        )
+        .await
+        .iter()
+        .map(|c| c.name.clone())
+        .collect::<Vec<_>>();
+        println!("[multi probe] text columns (cross-db): {:?}", text);
+        assert!(!text.is_empty(), "no text columns found via cross-db scope");
+
+        let predicate = text
+            .iter()
+            .map(|name| format!("[{name}] LIKE :keyword ESCAPE '\\'"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let sql = format!(
+            "SELECT TOP (50) * FROM [QuanLySinhVienDB].[dbo].[SinhViens] WHERE {predicate}"
+        );
+        println!("[multi probe] sql: {sql}");
+
+        use crate::database::models::{QueryParameter, QueryParameterType};
+        let parameters = vec![QueryParameter {
+            name: "keyword".to_string(),
+            value: serde_json::Value::String("%ninh%".to_string()),
+            data_type: QueryParameterType::Text,
+        }];
+        // Compile exactly like the global-search command does.
+        use crate::database::models::DatabaseType;
+        use crate::database::parameterized_query::{
+            compile_parameterized_query, placeholder_style_for_database,
+        };
+        let style = placeholder_style_for_database(DatabaseType::MSSQL);
+        let compiled = compile_parameterized_query(&sql, &parameters, style).expect("compile");
+        println!("[multi probe] compiled: {}", compiled.sql);
+        let result = driver
+            .execute_parameterized_query(&compiled.sql, &compiled.parameters)
+            .await
+            .expect("execute");
+        println!("[multi probe] rows returned: {}", result.rows.len());
+        assert!(
+            !result.rows.is_empty(),
+            "expected matching rows for '%ninh%'"
+        );
+    }
+
     /// Live probe: verify what object_type values list_schema_objects returns
     /// against the real server (run with --ignored --nocapture).
     #[tokio::test]
@@ -1414,11 +1553,11 @@ mod mssql_live_diagnostics {
         for (kind, count) in &counts {
             println!("  object_type={kind:?} count={count}");
         }
-        for object in objects.iter().filter(|o| o.schema.as_deref() == Some("dbo")) {
-            println!(
-                "  dbo row: {} type={:?}",
-                object.name, object.object_type
-            );
+        for object in objects
+            .iter()
+            .filter(|o| o.schema.as_deref() == Some("dbo"))
+        {
+            println!("  dbo row: {} type={:?}", object.name, object.object_type);
         }
     }
 }

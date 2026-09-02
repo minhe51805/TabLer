@@ -22,9 +22,8 @@ use super::extraction::{
 };
 use super::prompt::build_ai_prompt;
 use super::providers::{
-    apply_attachments, apply_native_tools, build_provider_request_body,
-    effective_wire_provider, resolve_provider_body_shape, streaming_endpoint,
-    streaming_request_body,
+    apply_attachments, apply_native_tools, build_provider_request_body, effective_wire_provider,
+    resolve_provider_body_shape, streaming_endpoint, streaming_request_body,
 };
 use super::{ai_http_client, run_blocking_storage_task, AI_REQUEST_CANCELLED_ERROR};
 
@@ -389,9 +388,7 @@ pub(crate) async fn execute_ai_request(
                     return Err(ai_provider_api_error(&msg, api_key.as_deref()));
                 }
 
-                if let Some(action) =
-                    extract_tool_call_as_action_json(&wire_provider, &resp_json)
-                {
+                if let Some(action) = extract_tool_call_as_action_json(&wire_provider, &resp_json) {
                     return Ok(AIResponse {
                         text: action,
                         reasoning: None,

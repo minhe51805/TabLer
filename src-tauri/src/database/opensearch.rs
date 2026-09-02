@@ -386,7 +386,7 @@ impl DatabaseDriver for OpenSearchDriver {
                     .and_then(Value::as_str)
                     .and_then(|value| value.parse::<i64>().ok());
                 Some(TableInfo {
-                create_date: None,
+                    create_date: None,
                     name: index,
                     schema: None,
                     table_type: "index".to_string(),

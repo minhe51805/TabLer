@@ -59,7 +59,7 @@ use commands::query::*;
 use commands::restore::{preview_database_restore, restore_database_sql};
 use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
 use commands::schema_diff::{compare_schemas, generate_migration_script};
-use commands::search::{search_schema, search_table_data};
+use commands::search::{list_tables_in, search_schema, search_table_data, search_table_data_multi};
 use commands::table::*;
 use commands::tabs::{delete_tabs, load_tabs, save_tabs};
 use commands::terminal::{
@@ -304,6 +304,8 @@ pub fn run() {
             execute_query_progressive,
             search_schema,
             search_table_data,
+            search_table_data_multi,
+            list_tables_in,
             compare_schemas,
             generate_migration_script,
             preview_import_csv,

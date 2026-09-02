@@ -91,7 +91,12 @@ mod tests {
     fn level_one_allows_select_and_blocks_writes() {
         assert!(assert_sql_allowed_at_level_with_approval(1, "SELECT 1", false).is_ok());
         assert!(assert_sql_allowed_at_level_with_approval(1, "DELETE FROM users", false).is_err());
-        assert!(assert_sql_allowed_at_level_with_approval(1, "INSERT INTO users(id) VALUES (1)", false).is_err());
+        assert!(assert_sql_allowed_at_level_with_approval(
+            1,
+            "INSERT INTO users(id) VALUES (1)",
+            false
+        )
+        .is_err());
     }
 
     #[test]
@@ -103,16 +108,33 @@ mod tests {
 
     #[test]
     fn level_two_allows_insert_but_not_update() {
-        assert!(assert_sql_allowed_at_level_with_approval(2, "INSERT INTO users(id) VALUES (1)", false).is_ok());
-        assert!(assert_sql_allowed_at_level_with_approval(2, "UPDATE users SET id = 1", false).is_err());
+        assert!(assert_sql_allowed_at_level_with_approval(
+            2,
+            "INSERT INTO users(id) VALUES (1)",
+            false
+        )
+        .is_ok());
+        assert!(
+            assert_sql_allowed_at_level_with_approval(2, "UPDATE users SET id = 1", false).is_err()
+        );
         assert!(assert_sql_allowed_at_level_with_approval(2, "SELECT 1", false).is_ok());
     }
 
     #[test]
     fn level_three_blocks_drop_and_non_rename_alter() {
         assert!(assert_sql_allowed_at_level_with_approval(3, "DROP TABLE users", false).is_err());
-        assert!(assert_sql_allowed_at_level_with_approval(3, "ALTER TABLE users ADD COLUMN x int", false).is_err());
-        assert!(assert_sql_allowed_at_level_with_approval(3, "INSERT INTO users(id) VALUES (1)", false).is_ok());
+        assert!(assert_sql_allowed_at_level_with_approval(
+            3,
+            "ALTER TABLE users ADD COLUMN x int",
+            false
+        )
+        .is_err());
+        assert!(assert_sql_allowed_at_level_with_approval(
+            3,
+            "INSERT INTO users(id) VALUES (1)",
+            false
+        )
+        .is_ok());
     }
 
     #[test]
@@ -143,8 +165,12 @@ mod tests {
     #[test]
     fn user_approval_never_relaxes_levels_four_and_five() {
         assert!(assert_sql_allowed_at_level_with_approval(5, "DROP TABLE users", true).is_err());
-        assert!(assert_sql_allowed_at_level_with_approval(4, "TRUNCATE TABLE users", true).is_err());
+        assert!(
+            assert_sql_allowed_at_level_with_approval(4, "TRUNCATE TABLE users", true).is_err()
+        );
         // Plain writes were already allowed at 4-5 (confirm tier is UI-side).
-        assert!(assert_sql_allowed_at_level_with_approval(5, "UPDATE users SET id = 1", true).is_ok());
+        assert!(
+            assert_sql_allowed_at_level_with_approval(5, "UPDATE users SET id = 1", true).is_ok()
+        );
     }
 }

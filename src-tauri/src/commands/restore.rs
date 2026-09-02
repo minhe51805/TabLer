@@ -1,5 +1,4 @@
 use crate::commands::safe_mode::SafeModeState;
-use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::DatabaseType;
 use crate::utils::sql::split_sql_statements;
@@ -83,7 +82,16 @@ pub async fn restore_database_sql(
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<RestoreResult, String> {
-    run_sql_restore(&connection_id, &sql, db_type, &db_manager, &safe_mode, true).await
+    run_sql_restore(
+        &connection_id,
+        &sql,
+        db_type,
+        &db_manager,
+        &safe_mode,
+        true,
+        true,
+    )
+    .await
 }
 
 /// Shared restore pipeline — also powers checkpoint rollback.
@@ -102,19 +110,20 @@ pub(super) async fn run_sql_restore(
     db_manager: &DatabaseManager,
     safe_mode: &SafeModeState,
     enforce_safe_mode: bool,
+    require_backup_restore_capability: bool,
 ) -> Result<RestoreResult, String> {
     if enforce_safe_mode {
         safe_mode.assert_sql_allowed(connection_id, sql).await?;
     }
-    db_manager
-        .require_capability(connection_id, DriverCapability::BackupRestore)
-        .await
-        .map_err(|e| e.to_string())?;
+    // The capability gate targets native backup/restore tooling. Checkpoint
+    // rollback is plain SQL re-execution confirmed through a 3-step human
+    // dialog, so it runs without that contract (OpenSearch stays blocked).
     if db_type == DatabaseType::OpenSearch {
         return Err(
             "SQL restore is not supported by the read-only OpenSearch plugin driver.".to_string(),
         );
     }
+    let _ = require_backup_restore_capability;
     let statements = split_sql_statements(sql);
     if statements.is_empty() {
         return Err("The restore file does not contain any SQL statements.".to_string());

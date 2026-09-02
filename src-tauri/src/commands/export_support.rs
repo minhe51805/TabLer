@@ -137,8 +137,23 @@ pub(super) async fn build_sql_export(
     }
 
     let mut total_rows = 0_u64;
+    if db_type == DatabaseType::MSSQL && !ordered_tables.is_empty() {
+        // Snapshot restore replaces existing rows; suspend FK checks per table
+        // (3-part names, so this works regardless of connection context).
+        output.push_str("-- Snapshot restore: suspend constraint checks while rows are replaced\n");
+        for bundle in &ordered_tables {
+            let table_ref = qualify_name(db_type, &bundle.identifier, database)?;
+            output.push_str(&format!(
+                "ALTER TABLE {table_ref} NOCHECK CONSTRAINT ALL;\n"
+            ));
+        }
+        output.push('\n');
+    }
     for bundle in &ordered_tables {
         let table_ref = qualify_name(db_type, &bundle.identifier, database)?;
+        if db_type == DatabaseType::MSSQL {
+            output.push_str(&format!("DELETE FROM {table_ref};\n"));
+        }
         let mut offset = 0_u64;
 
         loop {
@@ -190,6 +205,16 @@ pub(super) async fn build_sql_export(
         {
             output.push_str(&statement);
             output.push('\n');
+        }
+    }
+
+    if db_type == DatabaseType::MSSQL && !ordered_tables.is_empty() {
+        output.push('\n');
+        for bundle in ordered_tables.iter().rev() {
+            let table_ref = qualify_name(db_type, &bundle.identifier, database)?;
+            output.push_str(&format!(
+                "ALTER TABLE {table_ref} WITH CHECK CHECK CONSTRAINT ALL;\n"
+            ));
         }
     }
 
@@ -473,20 +498,28 @@ pub(super) fn build_create_table_statement(
         }
     }
 
-    Ok(format!(
-        "CREATE TABLE IF NOT EXISTS {table_ref} (\n{}\n);",
-        definitions.join(",\n")
-    ))
+    let definitions_body = definitions.join(",\n");
+    Ok(match db_type {
+        // T-SQL has no `IF NOT EXISTS` on CREATE TABLE — the SSMS-style
+        // existence guard is an explicit OBJECT_ID check.
+        DatabaseType::MSSQL => format!(
+            "IF OBJECT_ID(N'{table_ref}', 'U') IS NULL\nCREATE TABLE {table_ref} (\n{definitions_body}\n);"
+        ),
+        _ => format!(
+            "CREATE TABLE IF NOT EXISTS {table_ref} (\n{definitions_body}\n);"
+        ),
+    })
 }
 
 pub(super) fn build_column_definition(
     db_type: DatabaseType,
     column: &ColumnDetail,
 ) -> Result<String> {
-    let mut parts = vec![
-        quote_identifier_for(db_type, &column.name)?,
-        normalized_column_type(column),
-    ];
+    let mut column_type = normalized_column_type(column);
+    if db_type == DatabaseType::MSSQL {
+        column_type = normalize_mssql_column_type(&column_type);
+    }
+    let mut parts = vec![quote_identifier_for(db_type, &column.name)?, column_type];
 
     if let Some(default_value) = column
         .default_value
@@ -521,6 +554,18 @@ pub(super) fn normalized_column_type(column: &ColumnDetail) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| column.data_type.trim())
         .to_string()
+}
+
+/// MSSQL treats a bare `nvarchar`/`varchar` in DDL as length 1, which would
+/// silently truncate restored rows. Widen them to `max` in generated dumps.
+pub(super) fn normalize_mssql_column_type(column_type: &str) -> String {
+    let trimmed = column_type.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if matches!(lower.as_str(), "nvarchar" | "varchar") && !lower.contains('(') {
+        format!("{trimmed}(max)")
+    } else {
+        trimmed.to_string()
+    }
 }
 
 pub(super) fn should_inline_foreign_keys(db_type: DatabaseType) -> bool {

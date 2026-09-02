@@ -713,7 +713,7 @@ impl BigQueryDriver {
             .unwrap_or_else(|| "TABLE".to_string())
             .to_ascii_uppercase();
         TableInfo {
-                create_date: None,
+            create_date: None,
             name: item.table_reference.table_id,
             schema: Some(item.table_reference.dataset_id),
             table_type,

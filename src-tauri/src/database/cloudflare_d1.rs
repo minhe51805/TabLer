@@ -394,7 +394,7 @@ impl DatabaseDriver for CloudflareD1Driver {
         Ok(rows
             .into_iter()
             .map(|row| SchemaObjectInfo {
-                    create_date: None,
+                create_date: None,
                 name: row
                     .get("name")
                     .and_then(JsonValue::as_str)

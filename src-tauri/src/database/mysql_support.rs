@@ -234,7 +234,7 @@ impl MySqlDriver {
         };
 
         objects.extend(view_rows.iter().map(|row| SchemaObjectInfo {
-                    create_date: None,
+            create_date: None,
             name: row.get(1),
             schema: row.try_get::<String, _>(0).ok(),
             object_type: "VIEW".to_string(),
@@ -276,7 +276,7 @@ impl MySqlDriver {
             };
             let definition_table_name = table_name.clone().unwrap_or_default();
             SchemaObjectInfo {
-                    create_date: None,
+                create_date: None,
                 name: row.get(1),
                 schema: schema.clone(),
                 object_type: "TRIGGER".to_string(),
@@ -318,7 +318,7 @@ impl MySqlDriver {
         };
 
         objects.extend(routine_rows.iter().map(|row| SchemaObjectInfo {
-                    create_date: None,
+            create_date: None,
             name: row.get(1),
             schema: row.try_get::<String, _>(0).ok(),
             object_type: row.get::<String, _>(2).to_ascii_uppercase(),

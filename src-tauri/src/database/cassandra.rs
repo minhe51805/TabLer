@@ -523,7 +523,7 @@ impl DatabaseDriver for CassandraDriver {
             .views
             .iter()
             .map(|(name, view)| SchemaObjectInfo {
-                    create_date: None,
+                create_date: None,
                 name: name.clone(),
                 schema: Some(keyspace.clone()),
                 object_type: "VIEW".to_string(),

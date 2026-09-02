@@ -43,10 +43,7 @@ pub(crate) fn streaming_request_body(
 /// Anthropic provider (body, auth headers, tool calls, response + stream
 /// parsing), so callers should route everything through this instead of the
 /// raw `config.provider_type`.
-pub(crate) fn effective_wire_provider(
-    config: &AIProviderConfig,
-    endpoint: &str,
-) -> AIProviderType {
+pub(crate) fn effective_wire_provider(config: &AIProviderConfig, endpoint: &str) -> AIProviderType {
     if matches!(
         config.provider_type,
         AIProviderType::Ollama | AIProviderType::Custom

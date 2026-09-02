@@ -255,7 +255,7 @@ impl DatabaseDriver for SnowflakeDriver {
             .rows
             .iter()
             .map(|row| SchemaObjectInfo {
-                    create_date: None,
+                create_date: None,
                 name: Self::cell_as_string(row, &views_result.columns, &["object_name"])
                     .unwrap_or_else(|| "view".to_string()),
                 schema: Self::cell_as_string(row, &views_result.columns, &["schema_name"]),
@@ -278,7 +278,7 @@ impl DatabaseDriver for SnowflakeDriver {
             .await?;
         objects.extend(materialized_result.rows.iter().map(|row| {
             SchemaObjectInfo {
-                    create_date: None,
+                create_date: None,
                 name: Self::cell_as_string(row, &materialized_result.columns, &["object_name"])
                     .unwrap_or_else(|| "materialized_view".to_string()),
                 schema: Self::cell_as_string(row, &materialized_result.columns, &["schema_name"]),

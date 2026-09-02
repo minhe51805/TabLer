@@ -60,12 +60,6 @@ const FILTER_PROPERTY_ROWS: { key: string; label: string; hint: string; placehol
     placeholder: "Filter by owner...",
   },
   {
-    key: "type",
-    label: "Type",
-    hint: "Object type, e.g. TABLE, VIEW",
-    placeholder: "Filter by type...",
-  },
-  {
     key: "create_date",
     label: "Create Date",
     hint: "Date the object was created (click the value cell to open the calendar)",
@@ -246,15 +240,14 @@ function SavePresetDialog({ isOpen, value, onChange, onSave, onCancel }: SavePre
 interface FilterToolbarProps {
   conditions: FilterCondition[];
   setConditions: (c: FilterCondition[]) => void;
-  conditionLogic: "AND" | "OR";
-  setConditionLogic: (l: "AND" | "OR") => void;
+  conditionLogic?: "AND" | "OR";
+  setConditionLogic?: (l: "AND" | "OR") => void;
   onClear: () => void;
   onClose: () => void;
 }
 
 export function FilterSettingsModal({
   conditions, setConditions,
-  conditionLogic, setConditionLogic,
   onClear,
   onClose,
 }: FilterToolbarProps) {
@@ -303,17 +296,6 @@ export function FilterSettingsModal({
         <div className="filter-settings-body">
       {/* Conditions grid (SSMS-style: Property | Operator | Value) */}
       <div className="filter-section">
-        <div className="filter-section-header">
-          <span className="filter-section-label">CONDITIONS</span>
-          <button
-            type="button"
-            className="filter-logic-btn filter-logic-btn-compact"
-            onClick={() => setConditionLogic(conditionLogic === "AND" ? "OR" : "AND")}
-            title={`Combine conditions with ${conditionLogic}. Click to toggle.`}
-          >
-            {conditionLogic}
-          </button>
-        </div>
         <div className="filter-conditions-grid">
           <div className="filter-grid-row filter-grid-head">
             <span>Property</span>
@@ -449,8 +431,6 @@ export function Sidebar() {
     columnModeActive,
     conditions,
     setConditions,
-    conditionLogic,
-    setConditionLogic,
     mixedStateFilter,
     handleMixedStateToggle,
     getMixedStateFilterForTable,
@@ -587,8 +567,6 @@ export function Sidebar() {
           <FilterSettingsModal
             conditions={conditions}
             setConditions={setConditions}
-            conditionLogic={conditionLogic}
-            setConditionLogic={setConditionLogic}
             onClear={handleClearFilters}
             onClose={() => setFilterToolbarOpen(false)}
           />

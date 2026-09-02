@@ -39,6 +39,10 @@ import {
   DEFAULT_FILTER_OPERATOR,
 } from "../../../types/filter-presets";
 import { useFilterPresetsStore } from "../../../stores/filterPresetsStore";
+import {
+  useDbVisibilityStore,
+  filterVisibleDatabases,
+} from "../../../stores/dbVisibilityStore";
 import { useTableFilterActions } from "./useTableFilterActions";
 
 export type CheckboxFilterState = "checked" | "unchecked" | "indeterminate";
@@ -201,6 +205,11 @@ export function useSidebar() {
     usePinnedTables(tableWorkspaceKey);
 
   const dbType = activeConnection?.db_type;
+  const hiddenDatabases = useDbVisibilityStore((state) => state.hiddenDatabases);
+  const visibleDatabases = useMemo(
+    () => filterVisibleDatabases(activeConnectionId, databases, currentDatabase, hiddenDatabases),
+    [activeConnectionId, databases, currentDatabase, hiddenDatabases],
+  );
 
   useEffect(() => {
     if (!activeConnectionId || !currentDatabase) return;
@@ -886,7 +895,7 @@ export function useSidebar() {
     activeConnectionId,
     connectedIds,
     connections,
-    databases,
+    databases: visibleDatabases,
     currentDatabase,
     tables,
     schemaObjects,

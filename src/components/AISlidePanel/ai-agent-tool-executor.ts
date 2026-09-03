@@ -41,6 +41,7 @@ import {
 import { getAdminQueryPreset, type AdminQueryKind } from "../../utils/admin-query-presets";
 import { saveSemanticGlossaryEntry } from "../../utils/semantic-glossary";
 import { requestAICheckpointPick } from "./ai-checkpoint-picker";
+import { useSkillUsageStore } from "../../stores/skillUsageStore";
 import { invokeMutation } from "../../utils/tauri-utils";
 import {
   isSupersededAIRequestError,
@@ -317,6 +318,8 @@ export function analyzeAgentSqlForAgent(
   }
   return { ok: true };
 }
+
+const AI_SKILL_BODY_MAX_CHARS = 12_000;
 
 export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const {
@@ -1324,10 +1327,18 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         window.dispatchEvent(new CustomEvent("workspace-activity", {
           detail: { connectionId, label: `Skill: ${content.name}`, durationMs: 0 },
         }));
+        useSkillUsageStore.getState().recordSkillRun(content.name || skillName, connectionId);
+        // Soft cost ceiling: a huge skill file would otherwise be re-injected
+        // into the prompt on every remaining run step.
+        const rawBody = content.body ?? "";
+        const body =
+          rawBody.length > AI_SKILL_BODY_MAX_CHARS
+            ? `${rawBody.slice(0, AI_SKILL_BODY_MAX_CHARS)}\n\n[Body cut at ${AI_SKILL_BODY_MAX_CHARS} characters — the skill file is larger. Follow the instructions above; ask the user to trim the skill if a needed section is missing.]`
+            : rawBody;
         return [
           `Skill "${content.name}" loaded. Follow these instructions for the remainder of the run:`,
           "",
-          content.body,
+          body,
         ].join("\n");
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;

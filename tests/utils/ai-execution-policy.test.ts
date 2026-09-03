@@ -114,3 +114,70 @@ describe("classifyAgentRun — single source for the safety nets", () => {
     expect(run.preApproved).toBe(false);
   });
 });
+
+describe("shouldAgentAutoRunSql — autonomy × risk matrix", () => {
+  const risks = ["safe", "review", "dangerous", undefined] as const;
+
+  it("review never auto-runs", () => {
+    for (const risk of risks) expect(shouldAgentAutoRunSql("review", risk)).toBe(false);
+  });
+
+  it("full always auto-runs", () => {
+    for (const risk of risks) expect(shouldAgentAutoRunSql("full", risk)).toBe(true);
+  });
+
+  it("smart auto-runs only safe-classified runs", () => {
+    expect(shouldAgentAutoRunSql("smart", "safe")).toBe(true);
+    for (const risk of ["review", "dangerous", undefined] as const) {
+      expect(shouldAgentAutoRunSql("smart", risk)).toBe(false);
+    }
+  });
+});
+
+describe("isSqlBlockedBySafeMode — level × statement matrix", () => {
+  it("level 0 disables the guard entirely", () => {
+    for (const sql of [
+      "SELECT 1",
+      "INSERT INTO t VALUES (1)",
+      "UPDATE t SET x = 1",
+      "DELETE FROM t",
+      "DROP TABLE t",
+    ]) {
+      expect(isSqlBlockedBySafeMode(sql, 0)).toBe(false);
+    }
+  });
+
+  it("level 1 read-only: only the SELECT family passes", () => {
+    expect(isSqlBlockedBySafeMode("SELECT * FROM t", 1)).toBe(false);
+    expect(isSqlBlockedBySafeMode("WITH q AS (SELECT 1) SELECT * FROM q", 1)).toBe(false);
+    expect(isSqlBlockedBySafeMode("INSERT INTO t VALUES (1)", 1)).toBe(true);
+    expect(isSqlBlockedBySafeMode("UPDATE t SET x = 1", 1)).toBe(true);
+    expect(isSqlBlockedBySafeMode("DELETE FROM t", 1)).toBe(true);
+    expect(isSqlBlockedBySafeMode("DROP TABLE t", 1)).toBe(true);
+  });
+
+  it("level 2 adds INSERT", () => {
+    expect(isSqlBlockedBySafeMode("INSERT INTO t VALUES (1)", 2)).toBe(false);
+    expect(isSqlBlockedBySafeMode("UPDATE t SET x = 1", 2)).toBe(true);
+    expect(isSqlBlockedBySafeMode("DELETE FROM t", 2)).toBe(true);
+  });
+
+  it("level 3 blocks DDL but allows DML (RENAME COLUMN exempt)", () => {
+    expect(isSqlBlockedBySafeMode("DROP TABLE t", 3)).toBe(true);
+    expect(isSqlBlockedBySafeMode("TRUNCATE TABLE t", 3)).toBe(true);
+    expect(isSqlBlockedBySafeMode("CREATE TABLE t (id int)", 3)).toBe(true);
+    expect(isSqlBlockedBySafeMode("ALTER TABLE t ADD c int", 3)).toBe(true);
+    expect(isSqlBlockedBySafeMode("ALTER TABLE t RENAME COLUMN a TO b", 3)).toBe(false);
+    expect(isSqlBlockedBySafeMode("UPDATE t SET x = 1", 3)).toBe(false);
+  });
+
+  it("levels 4-5 hard-block only the always-blocked set", () => {
+    for (const level of [4, 5] as const) {
+      expect(isSqlBlockedBySafeMode("DROP TABLE t", level)).toBe(true);
+      expect(isSqlBlockedBySafeMode("TRUNCATE TABLE t", level)).toBe(true);
+      expect(isSqlBlockedBySafeMode("CREATE TABLE t (id int)", level)).toBe(true);
+      expect(isSqlBlockedBySafeMode("UPDATE t SET x = 1", level)).toBe(false);
+      expect(isSqlBlockedBySafeMode("DELETE FROM t", level)).toBe(false);
+    }
+  });
+});

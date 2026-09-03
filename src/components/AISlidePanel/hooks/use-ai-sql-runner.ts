@@ -108,6 +108,7 @@ export function useAISqlRunner({
 
     const {
       requirement: confirmationRequirement,
+      needsDialog,
       willMutate: hasMutatingStatements,
       preApproved,
     } = classifyAgentRun(statements, runOptions?.agentAutonomy);
@@ -123,8 +124,7 @@ export function useAISqlRunner({
       // No dialog for read-only-classified runs or under the standing
       // "full autonomy" grant; otherwise the review dialog gates the run.
       const confirmed =
-        confirmationRequirement === null ||
-        (await requestAISqlConfirmation(confirmationRequirement, statements));
+        !needsDialog || (await requestAISqlConfirmation(confirmationRequirement, statements));
       if (!confirmed) throw new Error("Execution cancelled.");
 
       // Safety net #1: before any agent-driven write, snapshot the database

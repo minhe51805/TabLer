@@ -109,7 +109,16 @@ fn checkpoint_paths(dir: &PathBuf, file_name: &str) -> Result<(PathBuf, PathBuf)
 /// NVARCHAR so legacy checkpoints restore Unicode correctly.
 fn add_n_prefix_to_insert_literals(line: &str) -> String {
     const Q: char = '\u{27}';
-    if !line.starts_with("INSERT INTO") {
+    // The dump uses multi-line INSERTs: the header ("INSERT INTO [t] (...)")
+    // carries no literals, while the data rows are continuation lines that
+    // start with "(" (or a bare literal). Cover both, plus the single-line
+    // compact form. Other lines (IF OBJECT_ID guards, CREATE/DROP) keep the
+    // N they already have.
+    let trimmed = line.trim_start();
+    let carries_literals = trimmed.starts_with("INSERT INTO")
+        || trimmed.starts_with('(')
+        || trimmed.starts_with('\u{27}');
+    if !carries_literals || !line.contains('\'') {
         return line.to_string();
     }
     let chars: Vec<char> = line.chars().collect();
@@ -493,5 +502,27 @@ mod n_prefix_tests {
         let dump = "INSERT INTO [t] ([a]) VALUES ('O''Brien');";
         let out = normalize_legacy_mssql_dump(dump);
         assert!(out.contains("N'O''Brien'"), "escaped quote broken: {out}");
+    }
+}
+
+#[cfg(test)]
+mod n_prefix_multiline_tests {
+    use super::*;
+
+    #[test]
+    fn multiline_insert_data_rows_get_n_prefixed_too() {
+        let dump = "INSERT INTO [dbo].[SinhViens] ([MaSV], [HoTen]) VALUES\n".to_string()
+            + "('SV001', 'Nguy\u{1ec5}n V\u{103}n An'),\n"
+            + "('SV002', 'Tr\u{1ea7}n Th\u{1ecb} B\u{1ecb}');";
+        let out = normalize_legacy_mssql_dump(&dump);
+        assert!(out.contains("(N'SV001', N'Nguy\u{1ec5}n V\u{103}n An')"), "row1: {out}");
+        assert!(out.contains("(N'SV002', N'Tr\u{1ea7}n Th\u{1ecb} B\u{1ecb}')"), "row2: {out}");
+    }
+
+    #[test]
+    fn object_id_guard_lines_are_not_touched() {
+        let dump = "IF OBJECT_ID(N'[dbo].[T]', 'U') IS NULL CREATE TABLE [dbo].[T] ([a] int);";
+        let out = normalize_legacy_mssql_dump(dump);
+        assert!(out.contains("OBJECT_ID(N'[dbo].[T]', 'U')"), "guard mangled: {out}");
     }
 }

@@ -112,40 +112,41 @@ fn normalize_legacy_mssql_dump(sql: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n");
 
-    // Pre-fix dumps have no IDENTITY_INSERT guards: wrap each table's INSERT
-    // block (error 544 otherwise, because the DDL lost the IDENTITY property).
-    let mut out = String::with_capacity(body.len() + 256);
-    let mut insert_active = false;
-    let mut pending_table = String::new();
+    // Full-snapshot restore for MSSQL: drop ALL existing tables first (in
+    // reverse dependency order — children before parents), then run the
+    // CREATE TABLE + INSERT dump as a fresh schema. This eliminates errors
+    // 544 (identity), 8106 (SET IDENTITY_INSERT on non-identity), and 1919
+    // (nvarchar(max) in key) by always working with freshly created tables.
+    let mut pre_drop_pass = String::from("-- Pre-pass: drop existing tables (children first)\n");
+    let mut body_lines = Vec::new();
+    let mut table_refs = Vec::new();
 
     for line in body.split('\n') {
-        let trimmed = line.trim();
-
-        if trimmed.starts_with("INSERT INTO") && !insert_active {
-            // Extract the table ref to name the ON/OFF guards.
-            if let Some(table) = trimmed
-                .split("INSERT INTO ")
+        let mut patched = line.to_string();
+        if patched.contains("IF OBJECT_ID(N'") && patched.contains("', 'U') IS NULL") {
+            if let Some(table_ref) = patched
+                .split("OBJECT_ID(N'")
                 .nth(1)
-                .and_then(|rest| rest.split(" (").next())
+                .and_then(|rest| rest.split("', 'U')").next())
             {
-                pending_table = table.to_string();
-                out.push_str(&format!("SET IDENTITY_INSERT {pending_table} ON;\n"));
-                insert_active = true;
+                if !table_ref.is_empty() {
+                    table_refs.push(table_ref.to_string());
+                    // Replace the conditional CREATE with a plain CREATE.
+                    patched = patched
+                        .replace(&format!("IF OBJECT_ID(N'{table_ref}', 'U') IS NULL\n"), "");
+                }
             }
         }
-        out.push_str(line);
-        out.push('\n');
-        // An INSERT batch ends on the line whose statement terminator shows.
-        if insert_active && trimmed.ends_with(';') {
-            out.push_str(&format!("SET IDENTITY_INSERT {pending_table} OFF;\n"));
-            insert_active = false;
-            pending_table.clear();
-        }
+        body_lines.push(patched);
     }
-    if insert_active {
-        out.push_str("SET IDENTITY_INSERT OFF;\n");
+
+    // Reverse order so children (FK dependents) drop before parents.
+    for table_ref in table_refs.iter().rev() {
+        // table_ref already includes brackets: [dbo].[Table]
+        pre_drop_pass.push_str(&format!("DROP TABLE IF EXISTS {table_ref};\n"));
     }
-    out
+    pre_drop_pass.push('\n');
+    format!("{pre_drop_pass}{}", body_lines.join("\n"))
 }
 
 fn now_epoch_ms() -> u64 {

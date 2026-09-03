@@ -507,14 +507,12 @@ pub(super) fn build_create_table_statement(
 
     let definitions_body = definitions.join(",\n");
     Ok(match db_type {
-        // T-SQL has no `IF NOT EXISTS` on CREATE TABLE — the SSMS-style
-        // existence guard is an explicit OBJECT_ID check.
+        // Full-snapshot restore: DROP first (fresh recreate eliminates
+        // identity drift from the existing schema — errors 544/8106/1919).
         DatabaseType::MSSQL => format!(
-            "IF OBJECT_ID(N'{table_ref}', 'U') IS NULL\nCREATE TABLE {table_ref} (\n{definitions_body}\n);"
+            "DROP TABLE IF EXISTS {table_ref};\nCREATE TABLE {table_ref} (\n{definitions_body}\n);"
         ),
-        _ => format!(
-            "CREATE TABLE IF NOT EXISTS {table_ref} (\n{definitions_body}\n);"
-        ),
+        _ => format!("CREATE TABLE IF NOT EXISTS {table_ref} (\n{definitions_body}\n);"),
     })
 }
 

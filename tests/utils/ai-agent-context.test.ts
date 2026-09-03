@@ -256,3 +256,41 @@ describe("AI agent context builder", () => {
     expect(joinAgentInstructions(" first ", undefined, "", " second ")).toBe("first second");
   });
 });
+
+describe("agent memory index injection", () => {
+  it("injects the <agent_memory> index with freshness stamps", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "summarize orders",
+      assistIntent: "sql",
+      currentDatabase: "appdb",
+      availableTableNames: ["orders"],
+      steps: [],
+      workspaceToolsEnabled: true,
+      agentMemoryIndex: [
+        {
+          name: "metric-definitions",
+          description: "revenue = net sales minus refunds",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+    });
+    expect(prompt).toContain("<agent_memory>");
+    expect(prompt).toContain("metric-definitions");
+    expect(prompt).toContain("2026-01-01T00:00:00Z");
+    expect(prompt).toContain("read_memory");
+    expect(prompt).toContain("never credentials");
+  });
+
+  it("omits the memory block when the index is empty", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "hi",
+      assistIntent: "general",
+      currentDatabase: null,
+      availableTableNames: [],
+      steps: [],
+      workspaceToolsEnabled: true,
+      agentMemoryIndex: [],
+    });
+    expect(prompt).not.toContain("<agent_memory>");
+  });
+});

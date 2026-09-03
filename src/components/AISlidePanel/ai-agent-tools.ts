@@ -56,6 +56,26 @@ export type AIAgentRememberTermAction = AIAgentToolActionBase<
   AIAgentRememberTermArgs
 >;
 
+export interface AIAgentReadMemoryArgs extends Record<string, unknown> {
+  name: string;
+}
+
+export type AIAgentReadMemoryAction = AIAgentToolActionBase<
+  "read_memory",
+  AIAgentReadMemoryArgs
+>;
+
+export interface AIAgentSaveMemoryArgs extends Record<string, unknown> {
+  name: string;
+  description?: string;
+  body: string;
+}
+
+export type AIAgentSaveMemoryAction = AIAgentToolActionBase<
+  "save_memory",
+  AIAgentSaveMemoryArgs
+>;
+
 export interface AIAgentSkillArgs extends Record<string, unknown> {
   name: string;
 }
@@ -247,6 +267,8 @@ export type AIAgentToolAction =
   | AIAgentRunPresetAction
   | AIAgentPreviewWriteAction
   | AIAgentRememberTermAction
+  | AIAgentReadMemoryAction
+  | AIAgentSaveMemoryAction
   | AIAgentSkillAction
   | AIAgentCreateCheckpointAction
   | AIAgentRestoreCheckpointAction

@@ -641,3 +641,62 @@ describe("skill allowlist enforcement", () => {
     expect(obs).toContain("release steps");
   });
 });
+
+describe("agent memory tools", () => {
+  it("reads a memory entry through read_agent_memory in the run scope", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    vi.mocked(invokeMutation).mockResolvedValue({
+      name: "metric-definitions",
+      body: "revenue = net sales minus refunds",
+      updatedAt: "2026-01-01T00:00:00Z",
+    });
+    const deps = mkDeps({ memoryScope: { connectionId: CONNECTION_ID, database: DB } });
+    const obs = await run(deps, { action: "read_memory", args: { name: "metric-definitions" } });
+    expect(obs).toContain("revenue = net sales minus refunds");
+    expect(obs).toContain("last updated 2026-01-01T00:00:00Z");
+    expect(vi.mocked(invokeMutation)).toHaveBeenCalledWith("read_agent_memory", {
+      name: "metric-definitions",
+      connectionId: CONNECTION_ID,
+      database: DB,
+    });
+  });
+
+  it("saves memory through save_agent_memory and reports the scope", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    vi.mocked(invokeMutation).mockResolvedValue({
+      name: "naming-convention",
+      updatedAt: "2026-02-02T00:00:00Z",
+    });
+    const deps = mkDeps({ memoryScope: { connectionId: CONNECTION_ID, database: DB } });
+    const obs = await run(deps, {
+      action: "save_memory",
+      args: { name: "naming-convention", body: "orders tables always use snake_case", description: "table naming" },
+    });
+    expect(obs).toContain("saved for this connection/database scope");
+    expect(vi.mocked(invokeMutation)).toHaveBeenCalledWith("save_agent_memory", {
+      name: "naming-convention",
+      body: "orders tables always use snake_case",
+      description: "table naming",
+      connectionId: CONNECTION_ID,
+      database: DB,
+    });
+  });
+
+  it("surfaces backend refusals (index full, secrets, limits) as tool errors", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    vi.mocked(invokeMutation).mockRejectedValue(
+      "Refusing to save: the memory body looks like it contains a password. Never store credentials in memory.",
+    );
+    const obs = await run(mkDeps(), {
+      action: "save_memory",
+      args: { name: "creds", body: "password: hunter2" },
+    });
+    expect(obs).toContain("Tool error");
+    expect(obs).toContain("password");
+  });
+
+  it("requires name and body for save_memory", async () => {
+    const obs = await run(mkDeps(), { action: "save_memory", args: { name: "", body: "x" } });
+    expect(obs).toContain("requires non-empty args.name");
+  });
+});

@@ -146,6 +146,10 @@ export interface AgentToolExecutorDeps {
    * skill tool refuses anything outside the list so "injected == loadable"
    * stays true even if the catalog is later filtered or capped. */
   allowedSkillNames?: string[];
+  /** Scope for the agent-memory store (read_memory/save_memory tools). Memory
+   * is keyed by connection+database — the same scope as the glossary — so a
+   * different connection or database can never see another's memories. */
+  memoryScope?: { connectionId: string | null; database: string | null };
   currentDatabase: string | null;
   dbType?: DatabaseType;
   latestTables: TableInfo[];
@@ -329,6 +333,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const {
     connectionId,
     allowedSkillNames,
+    memoryScope,
     currentDatabase,
     dbType,
     latestTables,
@@ -1351,6 +1356,60 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;
         return `Tool error: could not load skill "${skillName}": ${formatExecutionError(errorValue)}`;
+      }
+    }
+
+    if (action.action === "read_memory") {
+      const memoryName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
+      if (!memoryName) {
+        return "Tool error: read_memory requires args.name taken from the <agent_memory> index.";
+      }
+      try {
+        const content = await invokeMutation<{ name: string; body: string; updatedAt?: string }>(
+          "read_agent_memory",
+          {
+            name: memoryName,
+            connectionId: memoryScope?.connectionId ?? null,
+            database: memoryScope?.database ?? null,
+          },
+        );
+        window.dispatchEvent(new CustomEvent("workspace-activity", {
+          detail: { connectionId, label: `Memory: ${content.name}`, durationMs: 0 },
+        }));
+        const updatedNote = content.updatedAt ? ` (last updated ${content.updatedAt})` : "";
+        return [
+          `Memory "${content.name}" loaded${updatedNote}. Treat it as a saved observation, not a live fact — re-verify anything the schema contradicts:`,
+          "",
+          content.body ?? "",
+        ].join("\n");
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: could not load memory "${memoryName}": ${formatExecutionError(errorValue)}`;
+      }
+    }
+
+    if (action.action === "save_memory") {
+      const memoryName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
+      const memoryBody = typeof action.args?.body === "string" ? action.args.body.trim() : "";
+      const memoryDescription = typeof action.args?.description === "string" ? action.args.description.trim() : "";
+      if (!memoryName || !memoryBody) {
+        return "Tool error: save_memory requires non-empty args.name (short slug) and args.body (the fact worth remembering).";
+      }
+      try {
+        const saved = await invokeMutation<{ name: string; updatedAt: string }>("save_agent_memory", {
+          name: memoryName,
+          body: memoryBody,
+          description: memoryDescription || null,
+          connectionId: memoryScope?.connectionId ?? null,
+          database: memoryScope?.database ?? null,
+        });
+        window.dispatchEvent(new CustomEvent("workspace-activity", {
+          detail: { connectionId, label: `Memory saved: ${saved.name}`, durationMs: 0 },
+        }));
+        return `Memory "${saved.name}" saved for this connection/database scope${saved.updatedAt ? ` at ${saved.updatedAt}` : ""}. Future runs in this scope will see it in their <agent_memory> index. Never store credentials in memory.`;
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: could not save memory "${memoryName}": ${formatExecutionError(errorValue)}`;
       }
     }
 

@@ -373,6 +373,8 @@ export function buildAgentControllerPrompt(params: {
   cachedTableSummaries?: string[];
   glossaryLines?: string[];
   availableSkills?: { name: string; description: string }[];
+  /** Frontmatter-only memory index for this connection/database scope. */
+  agentMemoryIndex?: { name: string; description: string; updatedAt: string }[];
   knownDatabaseNames?: string[];
   workspaceBoundDatabase?: string | null;
   /** Current checklist (from update_plan), rendered near the top of the prompt. */
@@ -392,6 +394,7 @@ export function buildAgentControllerPrompt(params: {
     cachedTableSummaries,
     glossaryLines,
     availableSkills,
+    agentMemoryIndex,
     knownDatabaseNames,
     workspaceBoundDatabase,
     planLines,
@@ -485,6 +488,15 @@ export function buildAgentControllerPrompt(params: {
             `<skill><name>${skill.name}</name><description>${skill.description}</description></skill>`),
           "</available_skills>",
           "When the user's task matches one of these skill descriptions, call the skill tool with that name FIRST and follow the returned instructions.",
+        ].join("\n")
+      : "",
+    (agentMemoryIndex ?? []).length > 0
+      ? [
+          "<agent_memory>",
+          ...(agentMemoryIndex ?? []).map((entry) =>
+            `<memory><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`),
+          "</agent_memory>",
+          "These are saved observations for THIS connection/database (freshness = <updated>). Load one of them with read_memory when it looks relevant; persist new durable facts with save_memory (never credentials; they are rejected).",
         ].join("\n")
       : "",
     (planLines ?? []).length > 0

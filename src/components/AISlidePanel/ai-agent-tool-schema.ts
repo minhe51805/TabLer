@@ -28,6 +28,8 @@ export const AI_AGENT_TOOL_NAMES = [
   "run_preset",
   "preview_write",
   "remember_term",
+  "read_memory",
+  "save_memory",
   "create_checkpoint",
   "restore_checkpoint",
   "skill",
@@ -83,6 +85,8 @@ const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "run_preset",
   "preview_write",
   "remember_term",
+  "read_memory",
+  "save_memory",
 ]);
 
 /** Minimal JSON Schema subset used for tool parameters (Draft 2020-12 compatible). */
@@ -419,6 +423,44 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
     ),
   },
 
+  read_memory: {
+    name: "read_memory",
+    description:
+      "Load the full text of one entry from the <agent_memory> index (saved observations for this connection/database). Use it when an index entry looks relevant before acting on it.",
+    parameters: objectSchema(
+      {
+        name: {
+          type: "string",
+          description: "Entry name exactly as listed in <agent_memory>.",
+        },
+      },
+      ["name"],
+    ),
+  },
+
+  save_memory: {
+    name: "save_memory",
+    description:
+      "Persist one durable, non-obvious fact for this connection/database (conventions, verified quirks, table roles, user-stated preferences). Overwrites an entry with the same name. NEVER store credentials or secrets. Keep it under 8000 characters.",
+    parameters: objectSchema(
+      {
+        name: {
+          type: "string",
+          description: "Short slug for the fact (letters, digits, '-', '_', '.').",
+        },
+        description: {
+          type: "string",
+          description: "One-line summary shown in the index (max 200 chars).",
+        },
+        body: {
+          type: "string",
+          description: "The fact itself, in full sentences a future run can act on.",
+        },
+      },
+      ["name", "body"],
+    ),
+  },
+
   create_checkpoint: {
     name: "create_checkpoint",
     description:
@@ -672,6 +714,14 @@ export function parseAgentToolArgs(
   action: AIAgentToolName,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
+  if (action === "save_memory") {
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    const body = typeof args.body === "string" ? args.body.trim() : "";
+    if (!name || !body) {
+      throw new Error("The save_memory action requires non-empty args.name and args.body.");
+    }
+  }
+
   if (action === "remember_term") {
     const term = typeof args.term === "string" ? args.term.trim() : "";
     const definition = typeof args.definition === "string" ? args.definition.trim() : "";

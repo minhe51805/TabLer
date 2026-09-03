@@ -1,4 +1,5 @@
 use tauri::{Emitter, Manager};
+mod agent_memory;
 mod ai_skills;
 mod ai_workspace_cache;
 mod ai_workspace_history;
@@ -373,6 +374,9 @@ pub fn run() {
             delete_all_ai_attachments,
             delete_ai_attachments_for_workspace,
             delete_ai_attachments_for_thread,
+            agent_memory::list_agent_memory,
+            agent_memory::read_agent_memory,
+            agent_memory::save_agent_memory,
             ai_skills::list_ai_skills,
             ai_skills::read_ai_skill, // File commands
             read_sql_file,

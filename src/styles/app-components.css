@@ -22178,6 +22178,27 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   overflow-y: auto;
 }
 
+
+.ckpt-item__stats {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+}
+.ckpt-item__stat {
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--bg-secondary, rgba(99, 102, 241, 0.08));
+  color: var(--text-muted, #8a90a0);
+  font-variant-numeric: tabular-nums;
+}
+.ckpt-item__chevron {
+  flex-shrink: 0;
+  color: var(--text-muted, #9aa1ad);
+}
+
 .ckpt-dialog__confirm-title {
   display: flex;
   align-items: center;

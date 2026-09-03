@@ -152,16 +152,6 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
     }
   };
 
-  const describeCheckpoint = (checkpoint: AIDatabaseCheckpoint) =>
-    [
-      formatCheckpointClock(checkpoint.createdAt, request.language),
-      checkpoint.engine,
-      checkpoint.database,
-      `${checkpoint.tableCount}T/${checkpoint.rowCount}R`,
-    ]
-      .filter(Boolean)
-      .join(" · ");
-
   return createPortal(
     <div
       className="ckpt-overlay"
@@ -236,9 +226,12 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                       </span>
                       <span className="ckpt-item__main">
                         <span className="ckpt-item__label">{checkpoint.label}</span>
-                        <span className="ckpt-item__meta">{describeCheckpoint(checkpoint)}</span>
                       </span>
-                      <ChevronRight size={15} className="ckpt-item__chevron" />
+                      <span className="ckpt-item__stats">
+                        <span className="ckpt-item__stat">{checkpoint.tableCount}T</span>
+                        <span className="ckpt-item__stat">{checkpoint.rowCount}R</span>
+                      </span>
+                      <ChevronRight size={14} className="ckpt-item__chevron" />
                     </button>
                     <button
                       type="button"
@@ -289,7 +282,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
               <div className="ckpt-confirm-card">
                 <div className="ckpt-confirm-card__main">
                   <span className="ckpt-confirm-card__label">{confirming.label}</span>
-                  <span className="ckpt-confirm-card__meta">{describeCheckpoint(confirming)}</span>
+                  <span className="ckpt-confirm-card__meta">{formatCheckpointClock(confirming.createdAt, request.language)} · {confirming.engine} · {confirming.database} · {confirming.tableCount}T/{confirming.rowCount}R</span>
                 </div>
               </div>
               {previewLoading ? (

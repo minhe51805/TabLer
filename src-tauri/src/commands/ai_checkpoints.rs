@@ -102,12 +102,58 @@ fn checkpoint_paths(dir: &PathBuf, file_name: &str) -> Result<(PathBuf, PathBuf)
 /// them at restore time so pre-fix checkpoints stay restorable. Only touches
 /// DDL type declarations; string literals in INSERTs never contain this shape
 /// after escaping (they are quoted and cannot contain a bare unquoted type).
+/// Legacy MSSQL dumps rendered string literals without the `N` prefix, so
+/// restoring them silently converted Vietnamese (and any Unicode) text to
+/// the server's windows-1252 codepage ("Nguy?n V?n An" mojibake). Prefixing
+/// every string literal inside INSERT statements with `N` keeps them
+/// NVARCHAR so legacy checkpoints restore Unicode correctly.
+fn add_n_prefix_to_insert_literals(line: &str) -> String {
+    const Q: char = '\u{27}';
+    if !line.starts_with("INSERT INTO") {
+        return line.to_string();
+    }
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len() + 16);
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == Q {
+            if out.ends_with('N') {
+                out.push(Q);
+            } else {
+                out.push('N');
+                out.push(Q);
+            }
+            i += 1;
+            while i < chars.len() {
+                out.push(chars[i]);
+                if chars[i] == Q {
+                    if i + 1 < chars.len() && chars[i + 1] == Q {
+                        out.push(Q);
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 fn normalize_legacy_mssql_dump(sql: &str) -> String {
     let body = sql
         .lines()
         .map(|line| {
-            line.replace("nvarchar(max)", "nvarchar(255)")
-                .replace("varchar(max)", "varchar(255)")
+            add_n_prefix_to_insert_literals(
+                &line
+                    .replace("nvarchar(max)", "nvarchar(255)")
+                    .replace("varchar(max)", "varchar(255)"),
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -420,4 +466,32 @@ pub async fn restore_database_checkpoint(
         false,
     )
     .await
+}
+
+#[cfg(test)]
+mod n_prefix_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_insert_lines_get_n_prefixed_literals() {
+        let dump = "INSERT INTO [dbo].[SinhViens] ([HoTen]) VALUES ('Nguy\u{1ec5}n V\u{103}n An');";
+        let out = normalize_legacy_mssql_dump(dump);
+        assert!(out.contains("VALUES (N'Nguy"), "missing N prefix: {out}");
+        assert!(out.contains("An');"));
+    }
+
+    #[test]
+    fn already_n_prefixed_literals_are_not_double_prefixed() {
+        let dump = "INSERT INTO [t] ([a],[b]) VALUES (N'x', 'y');";
+        let out = normalize_legacy_mssql_dump(dump);
+        assert!(out.contains("(N'x', N'y')"), "mixed prefix wrong: {out}");
+        assert!(!out.contains("NN'"), "double prefix: {out}");
+    }
+
+    #[test]
+    fn escaped_quotes_inside_literals_survive_n_prefixing() {
+        let dump = "INSERT INTO [t] ([a]) VALUES ('O''Brien');";
+        let out = normalize_legacy_mssql_dump(dump);
+        assert!(out.contains("N'O''Brien'"), "escaped quote broken: {out}");
+    }
 }

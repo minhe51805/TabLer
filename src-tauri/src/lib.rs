@@ -287,6 +287,7 @@ pub fn run() {
             get_saved_connections,
             connect_saved_connection,
             delete_saved_connection,
+            rename_saved_connection,
             check_connection_status,
             get_connection_capabilities,
             parse_connection_url,

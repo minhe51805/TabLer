@@ -53,6 +53,7 @@ export interface ConnectionState {
   disconnectFromDatabase: (connectionId: string, options?: { keepTabs?: boolean }) => Promise<void>;
   testConnection: (config: ConnectionConfig) => Promise<string>;
   deleteSavedConnection: (connectionId: string) => Promise<void>;
+  renameSavedConnection: (connectionId: string, name: string) => Promise<void>;
   fetchDatabases: (connectionId: string) => Promise<void>;
   switchDatabase: (connectionId: string, database: string) => Promise<void>;
   fetchTables: (connectionId: string, database?: string) => Promise<void>;
@@ -332,6 +333,20 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     } catch (error) {
       useGlobalErrorStore.getState().setError(`Delete failed: ${error}`);
     }
+  },
+
+  renameSavedConnection: async (connectionId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await invokeMutation("rename_saved_connection", {
+      connectionId,
+      name: trimmed,
+    });
+    set({
+      connections: get().connections.map((connection) =>
+        connection.id === connectionId ? { ...connection, name: trimmed } : connection,
+      ),
+    });
   },
 
   fetchDatabases: async (connectionId) => {

@@ -38665,3 +38665,42 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
 .ckpt-item-row:hover .ckpt-item__chevron-wrap {
   opacity: 0.25;
 }
+
+/* Rename affordance + inline input on connection rows */
+.startup-connection-rename {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #9aa1ad);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+}
+.startup-connection-row:hover .startup-connection-rename,
+.startup-connection-rename:focus-visible {
+  opacity: 1;
+}
+.startup-connection-rename:hover {
+  color: var(--accent, #0a84ff);
+  background: rgba(10, 132, 255, 0.1);
+}
+.startup-connection-rename-input {
+  width: 100%;
+  min-width: 0;
+  padding: 2px 8px;
+  border: 1px solid rgba(10, 132, 255, 0.55);
+  border-radius: 6px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #1f2430);
+  font-size: 13px;
+  font-weight: 600;
+}
+.startup-connection-rename-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.14);
+}

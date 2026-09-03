@@ -23,11 +23,13 @@ interface AICheckpointPickerModalProps {
 }
 
 /** Day label for the left rail, e.g. "Sep 3" in the panel language. */
-function formatCheckpointDay(epochMs: number, language: string) {
+function formatCheckpointDay(epochMs: number, _language: string) {
   try {
-    return new Intl.DateTimeFormat(language === "vi" ? "vi-VN" : language, {
-      month: "short",
-      day: "numeric",
+    // Numeric ISO-style day label (e.g. 2025-09-03): year included, no words.
+    return new Intl.DateTimeFormat("en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
     }).format(new Date(epochMs));
   } catch {
     return new Date(epochMs).toISOString().slice(0, 10);

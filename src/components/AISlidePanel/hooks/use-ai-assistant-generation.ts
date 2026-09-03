@@ -1,6 +1,7 @@
 import { useCallback, useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { useAIStore } from "../../../stores/aiStore";
 import type { AIConversationMessage, DatabaseType, MetricsWidgetType } from "../../../types";
+import { isMutatingStatement } from "../../SQLEditor/SQLEditorUtils";
 import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { invokeMutation } from "../../../utils/tauri-utils";
@@ -625,6 +626,7 @@ export function useAIAssistantGeneration({
       // auto-run (the run could only die with a raw Safe Mode error).
       const safeModeConnectionId = useConnectionStore.getState().activeConnectionId ?? undefined;
       const safeModeLevel = useSafeModeStore.getState().getEffectiveLevel(safeModeConnectionId);
+      const isMutatingSql = Boolean(result.sql && isMutatingStatement(result.sql));
       const fullAutonomyPreApproved = activeAgentAutonomy === "full" && safeModeLevel <= 3;
       const safeModeBlockedSql =
         interactionMode === "agent" &&
@@ -634,7 +636,11 @@ export function useAIAssistantGeneration({
       const agentCanAutoRun =
         interactionMode === "agent" &&
         Boolean(result.sql) &&
-        !agentAlreadyReadLiveData &&
+        // The "agent already read live data" guard only applies to read-only
+        // SQL. A mutation preview (preview_write) is not a substitute for the
+        // real write, so it must never suppress the auto-run of a mutating
+        // statement under "full" autonomy.
+        (isMutatingSql || !agentAlreadyReadLiveData) &&
         !safeModeBlockedSql &&
         shouldAgentAutoRunSql(activeAgentAutonomy, result.risk?.level);
       if (agentCanAutoRun && result.sql) {

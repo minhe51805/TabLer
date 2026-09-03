@@ -38464,7 +38464,7 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
 /* ── Checkpoint row: main button + hover delete ── */
 .app-root .ckpt-item-row {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: 4px;
   position: relative;
 }
@@ -38476,12 +38476,14 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  flex: 0 0 28px;
-  border-radius: 8px;
-  border: 1px solid transparent;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  margin-right: 6px;
+  border-radius: 6px;
+  border: none;
   background: transparent;
-  color: var(--text-secondary, rgba(128, 128, 128, 0.9));
+  color: var(--text-tertiary, rgba(128, 128, 128, 0.65));
   cursor: pointer;
   opacity: 0;
   transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
@@ -38492,7 +38494,7 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
 }
 .app-root .ckpt-item__delete:hover {
   color: #e5484d;
-  background: rgba(229, 72, 77, 0.12);
+  background: rgba(229, 72, 77, 0.1);
 }
 .app-root .ckpt-item__delete.is-confirm {
   opacity: 1;

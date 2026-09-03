@@ -607,3 +607,37 @@ describe("unknown tools and timeout hints", () => {
     expect(exhausted).toContain("budget exhausted");
   });
 });
+
+// Skill loading goes through the backend command; the allowlist gate lives in
+// the executor, so it is pinned here without touching the real transport.
+vi.mock("@/utils/tauri-utils", () => ({
+  invokeMutation: vi.fn(),
+}));
+
+describe("skill allowlist enforcement", () => {
+  it("refuses a skill outside the injected catalog (allowlist mode)", async () => {
+    const obs = await run(mkDeps({ allowedSkillNames: ["git-release"] }), {
+      action: "skill",
+      args: { name: "workspace-helper" },
+    });
+    expect(obs).toContain("is not in the injected <available_skills> catalog");
+  });
+
+  it("loads an allowlisted skill through read_ai_skill", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    vi.mocked(invokeMutation).mockResolvedValue({ name: "git-release", body: "release steps" });
+    const obs = await run(mkDeps({ allowedSkillNames: ["git-release"] }), {
+      action: "skill",
+      args: { name: "git-release" },
+    });
+    expect(obs).toContain("release steps");
+    expect(vi.mocked(invokeMutation)).toHaveBeenCalledWith("read_ai_skill", { name: "git-release" });
+  });
+
+  it("keeps permissive behavior when no allowlist is injected", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    vi.mocked(invokeMutation).mockResolvedValue({ name: "git-release", body: "release steps" });
+    const obs = await run(mkDeps(), { action: "skill", args: { name: "git-release" } });
+    expect(obs).toContain("release steps");
+  });
+});

@@ -142,6 +142,10 @@ export function computeSampleColumnStats(
 
 export interface AgentToolExecutorDeps {
   connectionId: string | null;
+  /** Names injected in this run's <available_skills> catalog. When set, the
+   * skill tool refuses anything outside the list so "injected == loadable"
+   * stays true even if the catalog is later filtered or capped. */
+  allowedSkillNames?: string[];
   currentDatabase: string | null;
   dbType?: DatabaseType;
   latestTables: TableInfo[];
@@ -324,6 +328,7 @@ const AI_SKILL_BODY_MAX_CHARS = 12_000;
 export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const {
     connectionId,
+    allowedSkillNames,
     currentDatabase,
     dbType,
     latestTables,
@@ -1319,6 +1324,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       const skillName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
       if (!skillName) {
         return "Tool error: skill requires args.name taken from the <available_skills> list.";
+      }
+      if (allowedSkillNames && !allowedSkillNames.includes(skillName)) {
+        return `Tool error: skill "${skillName}" is not in the injected <available_skills> catalog. Pick one of the listed skills.`;
       }
       try {
         const content = await invokeMutation<{ name: string; body: string }>("read_ai_skill", {

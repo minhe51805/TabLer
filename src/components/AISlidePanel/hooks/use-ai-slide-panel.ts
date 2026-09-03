@@ -83,6 +83,14 @@ import {
 } from "../ai-sql-response";
 import { useAISqlRunner } from "./use-ai-sql-runner";
 
+// Skill catalogs rarely change mid-session; caching for a minute keeps the
+// per-run filesystem discovery scan from repeating on every agent run.
+let skillsCatalogCache: {
+  at: number;
+  entries: { name: string; description: string; source: string }[];
+} | null = null;
+const SKILLS_CATALOG_TTL_MS = 60_000;
+
 export type { AIExecutedSqlResult } from "./use-ai-sql-runner";
 
 export interface AIGeneratedAssistResult {
@@ -559,9 +567,33 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
         // Agent Skills: frontmatter-only catalog (progressive disclosure — the
         // agent loads the full SKILL.md body through the skill tool on demand).
-        const availableSkills = await invokeMutation<
-          { name: string; description: string }[]
-        >("list_ai_skills", {}).catch(() => [] as { name: string; description: string }[]);
+        // Security: only GLOBAL skills are injected. Workspace skill folders
+        // ship inside repositories the user merely opened, so their
+        // descriptions must never reach the prompt without an explicit
+        // opt-in surface. The command is called without a workspace_dir, so
+        // discovery already scans the global root only — the filter keeps
+        // that guarantee explicit on the client side as well.
+        const availableSkills = workspaceToolsEnabled
+          ? await (async () => {
+              if (skillsCatalogCache && Date.now() - skillsCatalogCache.at < SKILLS_CATALOG_TTL_MS) {
+                return skillsCatalogCache.entries;
+              }
+              try {
+                const entries = await invokeMutation<
+                  { name: string; description: string; source: string }[]
+                >("list_ai_skills", {});
+                skillsCatalogCache = { at: Date.now(), entries };
+                return entries;
+              } catch (error) {
+                console.warn("[AIWorkspace] skill catalog unavailable:", error);
+                return [] as { name: string; description: string; source: string }[];
+              }
+            })().then((entries) =>
+              entries
+                .filter((entry) => entry.source === "global")
+                .slice(0, 32),
+            )
+          : undefined;
 
         // Honest database-mismatch signal: if the user explicitly names a
         // database other than the one this request is scoped to, the prompt
@@ -633,6 +665,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           },
         });
         const { runAgentTool } = createAgentToolExecutor({
+          allowedSkillNames: availableSkills?.map((entry) => entry.name),
           connectionId,
           currentDatabase,
           dbType: activeDbType,

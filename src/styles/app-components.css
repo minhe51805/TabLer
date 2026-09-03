@@ -38704,3 +38704,30 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   outline: none;
   box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.14);
 }
+
+/* ── Mode picker popover: compact single-line rows ────────────────
+   Description sits inline after the title at a smaller size so the
+   three mode rows stay short (see screenshot feedback). Description
+   truncates instead of wrapping; the full text stays on hover. */
+.app-root .ai-workspace-stage--sidebar .ai-workspace-command-popover .ai-workspace-command-item-copy {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-command-popover
+  .ai-workspace-command-item-copy strong {
+  flex: 0 0 auto;
+  font-size: var(--mm-fs-caption);
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-command-popover
+  .ai-workspace-command-item-copy span {
+  flex: 1 1 auto;
+  font-size: 10.5px;
+  opacity: 0.85;
+}

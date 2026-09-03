@@ -114,6 +114,10 @@ function getInteractionModeHint(mode: AIWorkspaceInteractionMode, copy: AIWorksp
   return copy.composer.modePromptHint;
 }
 
+function getInteractionModeHintTitle(mode: AIWorkspaceInteractionMode, copy: AIWorkspaceCopy) {
+  return getInteractionModeHint(mode, copy);
+}
+
 function renderInteractionModeIcon(mode: AIWorkspaceInteractionMode) {
   if (mode === "agent") return <Sparkles className="w-3.5 h-3.5" />;
   if (mode === "edit") return <PencilLine className="w-3.5 h-3.5" />;
@@ -413,7 +417,7 @@ export function AIComposerDock({
                           <span className="ai-workspace-command-item-icon">{renderInteractionModeIcon(mode)}</span>
                           <span className="ai-workspace-command-item-copy">
                             <strong>{getInteractionModeLabel(mode, copy)}</strong>
-                            <span>{getInteractionModeHint(mode, copy)}</span>
+                            <span title={getInteractionModeHintTitle(mode, copy)}>{getInteractionModeHint(mode, copy)}</span>
                           </span>
                           {mode === interactionMode && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
                         </button>

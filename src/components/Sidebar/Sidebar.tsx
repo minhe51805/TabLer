@@ -25,7 +25,7 @@ import {
   type FilterOperator,
   type FilterCondition,
 } from "../../types/filter-presets";
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 // ---------------------------------------------------------------------------
@@ -103,66 +103,101 @@ interface PresetMenuProps {
 }
 
 function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete, onSaveNew }: PresetMenuProps) {
-  const ref = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!isOpen || !anchorRef.current) {
+      setPosition(null);
+      return;
+    }
+    const rect = anchorRef.current.getBoundingClientRect();
+    const width = 260;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+    const panelHeight = 96 + Math.min(presets.length, 5) * 40;
+    const top = rect.bottom + panelHeight > window.innerHeight - 8
+      ? Math.max(8, rect.top - panelHeight - 6)
+      : rect.bottom + 6;
+    setPosition({ top, left });
+  }, [isOpen, presets.length]);
 
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) {
-        onClose();
+      if (
+        panelRef.current?.contains(e.target as Node) ||
+        anchorRef.current?.contains(e.target as Node)
+      ) {
+        return;
       }
+      onClose();
+    };
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
     };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("keydown", keyHandler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", keyHandler);
+    };
   }, [isOpen, onClose]);
 
   return (
-    <div className="filter-preset-menu" ref={ref}>
-      {isOpen && (
-        <div className="filter-preset-panel">
-          <div className="filter-preset-panel-header">
-            <span className="filter-preset-panel-title">Filter Presets</span>
-            <button
-              type="button"
-              className="filter-preset-save-btn"
-              onClick={() => { onSaveNew(); onClose(); }}
-              title="Save current filter as preset"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>Save</span>
-            </button>
-          </div>
-          {presets.length === 0 ? (
-            <div className="filter-preset-empty">No saved presets</div>
-          ) : (
-            <div className="filter-preset-list">
-              {presets.map((preset) => (
-                <div
-                  key={preset.id}
-                  className={`filter-preset-item ${activePresetId === preset.id ? "active" : ""}`}
-                >
-                  <button
-                    type="button"
-                    className="filter-preset-item-load"
-                    onClick={() => { onLoad(preset.id); onClose(); }}
-                  >
-                    <Bookmark className="w-3.5 h-3.5 shrink-0" />
-                    <span>{preset.name}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="filter-preset-item-delete"
-                    onClick={() => onDelete(preset.id)}
-                    title="Delete preset"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
+    <div className="sidebar-preset-wrapper" ref={anchorRef}>
+      {isOpen &&
+        position &&
+        createPortal(
+          <div
+            className="filter-preset-panel is-portal"
+            ref={panelRef}
+            style={{ top: position.top, left: position.left }}
+          >
+            <div className="filter-preset-panel-header">
+              <span className="filter-preset-panel-title">Filter Presets</span>
+              <button
+                type="button"
+                className="filter-preset-save-btn"
+                onClick={() => { onSaveNew(); onClose(); }}
+                title="Save current filter as preset"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Save</span>
+              </button>
             </div>
-          )}
-        </div>
-      )}
+            {presets.length === 0 ? (
+              <div className="filter-preset-empty">No saved presets</div>
+            ) : (
+              <div className="filter-preset-list">
+                {presets.map((preset) => (
+                  <div
+                    key={preset.id}
+                    className={`filter-preset-item ${activePresetId === preset.id ? "active" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className="filter-preset-item-load"
+                      onClick={() => { onLoad(preset.id); onClose(); }}
+                    >
+                      <Bookmark className="w-3.5 h-3.5 shrink-0" />
+                      <span>{preset.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="filter-preset-item-delete"
+                      onClick={() => onDelete(preset.id)}
+                      title="Delete preset"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

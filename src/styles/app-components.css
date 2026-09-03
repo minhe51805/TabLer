@@ -38731,3 +38731,16 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   font-size: 10.5px;
   opacity: 0.85;
 }
+
+/* ── Filter preset panel: portal variant ───────────────────────────
+   Rendered via createPortal to document.body so the scroll container
+   of the explorer can never clip or shift it. */
+.filter-preset-panel.is-portal {
+  position: fixed;
+  top: auto;
+  right: auto;
+  width: 260px;
+  max-height: min(360px, calc(100vh - 16px));
+  overflow-y: auto;
+  z-index: 2000;
+}

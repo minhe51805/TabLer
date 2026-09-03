@@ -242,7 +242,9 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
 
                 {/* Right pane: checkpoints of the selected day */}
                 <div className="ckpt-day-pane">
-                  <p className="ckpt-day-pane__title">{selectedDayKey}</p>
+                  {dayCheckpoints.length > 0 ? (
+                    <p className="ckpt-day-pane__title">{selectedDayKey}</p>
+                  ) : null}
                   <ul className="ckpt-list">
                 {dayCheckpoints.map((checkpoint) => (
                   <li key={checkpoint.fileName} className="ckpt-item-row">
@@ -259,6 +261,8 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                           <input
                             type="text"
                             className="ckpt-item__rename"
+                            aria-label={copy.checkpointRenameTitle}
+                            title={copy.checkpointRenameTitle}
                             autoFocus
                             value={renaming.value}
                             onChange={(event) =>
@@ -295,6 +299,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                                   .catch(() => setRenaming(null));
                               } else if (event.key === "Escape") {
                                 event.preventDefault();
+                                event.stopPropagation();
                                 setRenaming(null);
                               }
                             }}

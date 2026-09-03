@@ -38752,3 +38752,15 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   .ai-workspace-command-item-copy span {
   min-width: 0;
 }
+
+/* Mode picker rows: the hint span must ellipsize instead of pushing the
+   popover wider when a locale ships a longer mode description. */
+.app-root .ai-workspace-command-popover .ai-workspace-command-item-copy {
+  min-width: 0;
+  overflow: hidden;
+}
+.app-root .ai-workspace-command-popover .ai-workspace-command-item-copy > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

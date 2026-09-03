@@ -8,6 +8,7 @@ import {
   formatExecutionError,
   isSessionSwitchStatement,
   normalizeStatementForGuard,
+  isMutatingStatement,
 } from "../../SQLEditor/SQLEditorUtils";
 import { getAISqlConfirmationRequirement } from "../ai-execution-policy";
 import { requestAISqlConfirmation } from "../ai-sql-confirm";
@@ -110,7 +111,10 @@ export function useAISqlRunner({
       statements,
       runOptions?.agentAutonomy,
     );
-    const hasMutatingStatements = confirmationRequirement !== null;
+    const hasMutatingStatements =
+      confirmationRequirement !== null ||
+      (runOptions?.agentAutonomy === "full" &&
+        statements.some((statement) => isMutatingStatement(statement)));
     setIsRunning(true);
     setError(null);
 

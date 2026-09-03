@@ -100,9 +100,10 @@ interface PresetMenuProps {
   onLoad: (id: string) => void;
   onDelete: (id: string) => void;
   onSaveNew: () => void;
+  triggerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete, onSaveNew }: PresetMenuProps) {
+function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete, onSaveNew, triggerRef }: PresetMenuProps) {
   const anchorRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
@@ -112,7 +113,7 @@ function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete
       setPosition(null);
       return;
     }
-    const rect = anchorRef.current.getBoundingClientRect();
+    const rect = (triggerRef.current ?? anchorRef.current).getBoundingClientRect();
     const width = 260;
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
     const panelHeight = 96 + Math.min(presets.length, 5) * 40;
@@ -120,14 +121,15 @@ function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete
       ? Math.max(8, rect.top - panelHeight - 6)
       : rect.bottom + 6;
     setPosition({ top, left });
-  }, [isOpen, presets.length]);
+  }, [isOpen, presets.length, triggerRef]);
 
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: MouseEvent) => {
       if (
         panelRef.current?.contains(e.target as Node) ||
-        anchorRef.current?.contains(e.target as Node)
+        anchorRef.current?.contains(e.target as Node) ||
+        triggerRef.current?.contains(e.target as Node)
       ) {
         return;
       }
@@ -136,13 +138,24 @@ function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete
     const keyHandler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
+    // Anchor drifts when the sidebar or window changes size — close instead
+    // of letting the fixed panel float away from its trigger.
+    const onScroll = (e: Event) => {
+      if (panelRef.current?.contains(e.target as Node)) return;
+      onClose();
+    };
+    const onResize = () => onClose();
     document.addEventListener("mousedown", handler);
     document.addEventListener("keydown", keyHandler);
+    document.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
       document.removeEventListener("mousedown", handler);
       document.removeEventListener("keydown", keyHandler);
+      document.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, triggerRef]);
 
   return (
     <div className="sidebar-preset-wrapper" ref={anchorRef}>
@@ -407,6 +420,7 @@ import { isCapabilitySupported } from "../../types";
 // ---------------------------------------------------------------------------
 
 export function Sidebar() {
+  const presetTriggerRef = useRef<HTMLDivElement>(null);
   const [activeSidebarTab, setActiveSidebarTab] = useState<"database" | "linked">("database");
   const { t } = useI18n();
   const {
@@ -565,7 +579,7 @@ export function Sidebar() {
             <Filter className="w-3.5 h-3.5" />
           </button>
           {/* Preset button */}
-          <div className="sidebar-preset-wrapper">
+          <div className="sidebar-preset-wrapper" ref={presetTriggerRef}>
             <button
               type="button"
               className={`sidebar-preset-btn ${activePresetId ? "has-preset" : ""}`}
@@ -576,6 +590,7 @@ export function Sidebar() {
             </button>
             <PresetMenu
               isOpen={filterPresetMenuOpen}
+              triggerRef={presetTriggerRef}
               onClose={() => setFilterPresetMenuOpen(false)}
               presets={presets}
               activePresetId={activePresetId}

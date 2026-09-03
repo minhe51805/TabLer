@@ -413,7 +413,7 @@ export function AIComposerDock({
                           <span className="ai-workspace-command-item-icon">{renderInteractionModeIcon(mode)}</span>
                           <span className="ai-workspace-command-item-copy">
                             <strong>{getInteractionModeLabel(mode, copy)}</strong>
-                            <span title={getInteractionModeHint(mode, copy)}>{getInteractionModeHint(mode, copy)}</span>
+                            <span className="ai-workspace-command-item-hint">{getInteractionModeHint(mode, copy)}</span>
                           </span>
                           {mode === interactionMode && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
                         </button>

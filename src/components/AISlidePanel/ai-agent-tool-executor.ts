@@ -36,6 +36,7 @@ import {
   AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS,
   validateAIAgentReadonlySql,
   type AIAgentToolAction,
+  AI_AGENT_TOOL_NAMES,
 } from "./ai-agent-tools";
 import { getAdminQueryPreset, type AdminQueryKind } from "../../utils/admin-query-presets";
 import { saveSemanticGlossaryEntry } from "../../utils/semantic-glossary";
@@ -1337,7 +1338,10 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     if (action.action === "finish") {
       return "Tool error: finish does not execute a tool observation.";
     }
-    return `Tool error: unknown tool "${action.action}". Available tools: list_tables, search_schema, list_schema_objects, describe_table, describe_tables, sample_table_data, run_preset, read_page, run_readonly_sql, run_parameterized_sql, find_value, check_sql, preview_write, remember_term, create_checkpoint, restore_checkpoint, skill. Choose one of these, or return a finish action with args.response if the task is complete.`;
+    const availableTools = AI_AGENT_TOOL_NAMES
+      .filter((toolName) => toolName !== "finish")
+      .join(", ");
+    return `Tool error: unknown tool "${action.action}". Available tools: ${availableTools}. Choose one of these, or return a finish action with args.response if the task is complete.`;
   } catch (errorValue) {
     if (isSupersededAIRequestError(errorValue)) {
       throw errorValue;

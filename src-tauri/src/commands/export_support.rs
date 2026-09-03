@@ -861,15 +861,29 @@ pub(super) fn render_sql_value(
             }
         },
         JsonValue::Number(value) => value.to_string(),
-        JsonValue::String(value) => render_sql_string(value, column),
-        JsonValue::Array(_) | JsonValue::Object(_) => {
-            render_sql_string(&value.unwrap_or(&JsonValue::Null).to_string(), column)
-        }
+        JsonValue::String(value) => render_sql_string(value, db_type, column),
+        JsonValue::Array(_) | JsonValue::Object(_) => render_sql_string(
+            &value.unwrap_or(&JsonValue::Null).to_string(),
+            db_type,
+            column,
+        ),
     }
 }
 
-pub(super) fn render_sql_string(value: &str, _column: &ColumnInfo) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+pub(super) fn render_sql_string(
+    value: &str,
+    db_type: DatabaseType,
+    _column: &ColumnInfo,
+) -> String {
+    let escaped = format!("'{}'", value.replace('\'', "''"));
+    // MSSQL: without the N prefix, a string literal is converted to the
+    // server's default codepage (windows-1252), silently destroying any
+    // Unicode (Vietnamese) characters. The N prefix keeps it NVARCHAR.
+    if db_type == DatabaseType::MSSQL {
+        format!("N{escaped}")
+    } else {
+        escaped
+    }
 }
 
 pub(super) fn row_to_object(

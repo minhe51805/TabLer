@@ -31,8 +31,7 @@ use commands::ai::{
 };
 use commands::ai_checkpoints::{
     create_database_checkpoint, delete_database_checkpoint, list_database_checkpoints,
-    rename_database_checkpoint,
-    preview_database_checkpoint_restore, restore_database_checkpoint,
+    preview_database_checkpoint_restore, rename_database_checkpoint, restore_database_checkpoint,
 };
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};

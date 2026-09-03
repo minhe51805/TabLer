@@ -116,6 +116,9 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
     if (!request) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      // Nested rename inputs handle their own Esc (cancel rename) and stop
+      // the event from reaching this global listener.
+      if (event.defaultPrevented) return;
       window.dispatchEvent(
         new CustomEvent("ai-checkpoint-pick-response", {
           detail: { id: request.id, fileName: null },
@@ -291,6 +294,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                                   .then(() => setRenaming(null))
                                   .catch(() => setRenaming(null));
                               } else if (event.key === "Escape") {
+                                event.preventDefault();
                                 setRenaming(null);
                               }
                             }}

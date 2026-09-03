@@ -546,14 +546,23 @@ mod n_prefix_multiline_tests {
             + "('SV001', 'Nguy\u{1ec5}n V\u{103}n An'),\n"
             + "('SV002', 'Tr\u{1ea7}n Th\u{1ecb} B\u{1ecb}');";
         let out = normalize_legacy_mssql_dump(&dump);
-        assert!(out.contains("(N'SV001', N'Nguy\u{1ec5}n V\u{103}n An')"), "row1: {out}");
-        assert!(out.contains("(N'SV002', N'Tr\u{1ea7}n Th\u{1ecb} B\u{1ecb}')"), "row2: {out}");
+        assert!(
+            out.contains("(N'SV001', N'Nguy\u{1ec5}n V\u{103}n An')"),
+            "row1: {out}"
+        );
+        assert!(
+            out.contains("(N'SV002', N'Tr\u{1ea7}n Th\u{1ecb} B\u{1ecb}')"),
+            "row2: {out}"
+        );
     }
 
     #[test]
     fn object_id_guard_lines_are_not_touched() {
         let dump = "IF OBJECT_ID(N'[dbo].[T]', 'U') IS NULL CREATE TABLE [dbo].[T] ([a] int);";
         let out = normalize_legacy_mssql_dump(dump);
-        assert!(out.contains("OBJECT_ID(N'[dbo].[T]', 'U')"), "guard mangled: {out}");
+        assert!(
+            out.contains("OBJECT_ID(N'[dbo].[T]', 'U')"),
+            "guard mangled: {out}"
+        );
     }
 }

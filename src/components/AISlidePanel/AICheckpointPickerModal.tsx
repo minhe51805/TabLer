@@ -226,10 +226,11 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                       </span>
                       <span className="ckpt-item__main">
                         <span className="ckpt-item__label">{checkpoint.label}</span>
-                      </span>
-                      <span className="ckpt-item__stats">
-                        <span className="ckpt-item__stat">{checkpoint.tableCount}T</span>
-                        <span className="ckpt-item__stat">{checkpoint.rowCount}R</span>
+                        <span className="ckpt-item__meta">
+                          {formatCheckpointClock(checkpoint.createdAt, request.language)}
+                          · {checkpoint.database}
+                          · {checkpoint.tableCount}T/{checkpoint.rowCount}R
+                        </span>
                       </span>
                       <ChevronRight size={14} className="ckpt-item__chevron" />
                     </button>

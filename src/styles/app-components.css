@@ -38461,29 +38461,36 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   left: 17px;
 }
 
-/* ── Checkpoint row: main button + hover delete.
+/* ── Checkpoint row: the delete affordance lives INSIDE the card
+   (absolute, top-right), replacing the chevron on hover.
    NOTE: the picker modal portals into document.body, so these rules must
    NOT be scoped under .app-root (the portal escapes that subtree). ── */
 .ckpt-item-row {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  gap: 6px;
   margin: 0;
 }
-.ckpt-item-row .ckpt-item {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
+.ckpt-item {
+  position: relative;
 }
-.ckpt-item__delete {
-  align-self: center;
+.ckpt-item__chevron-wrap {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
-  flex: 0 0 24px;
+  color: var(--text-muted, #9aa1ad);
+  transition: opacity 120ms ease;
+}
+.ckpt-item__delete {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border-radius: 7px;
   border: none;
   background: transparent;
@@ -38491,6 +38498,9 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   cursor: pointer;
   opacity: 0;
   transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+}
+.ckpt-item-row:hover .ckpt-item__chevron-wrap {
+  opacity: 0;
 }
 .ckpt-item-row:hover .ckpt-item__delete,
 .ckpt-item__delete:focus-visible,

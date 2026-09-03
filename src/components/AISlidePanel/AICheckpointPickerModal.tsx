@@ -232,41 +232,50 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                           · {checkpoint.tableCount}T/{checkpoint.rowCount}R
                         </span>
                       </span>
-                      <ChevronRight size={14} className="ckpt-item__chevron" />
-                    </button>
-                    <button
-                      type="button"
-                      className={`ckpt-item__delete${deleteConfirmId === checkpoint.fileName ? " is-confirm" : ""}`}
-                      title={deleteConfirmId === checkpoint.fileName ? copy.checkpointDeleteConfirm : copy.checkpointDelete}
-                      aria-label={copy.checkpointDelete}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (deleteConfirmId !== checkpoint.fileName) {
-                          setDeleteConfirmId(checkpoint.fileName);
-                          window.setTimeout(() => setDeleteConfirmId((current) => (current === checkpoint.fileName ? null : current)), 3000);
-                          return;
-                        }
-                        setDeleteConfirmId(null);
-                        void invokeMutation("delete_database_checkpoint", {
-                          connectionId: request.connectionId,
-                          fileName: checkpoint.fileName,
-                        })
-                          .then(() =>
-                            setRequest((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    checkpoints: current.checkpoints.filter(
-                                      (entry) => entry.fileName !== checkpoint.fileName,
-                                    ),
-                                  }
-                                : current,
-                            ),
-                          )
-                          .catch(() => undefined);
-                      }}
-                    >
-                      <Trash2 size={13} />
+                      <span className="ckpt-item__chevron-wrap">
+                        <ChevronRight size={14} className="ckpt-item__chevron" />
+                      </span>
+                      <span
+                        className={`ckpt-item__delete${deleteConfirmId === checkpoint.fileName ? " is-confirm" : ""}`}
+                        role="button"
+                        tabIndex={0}
+                        title={deleteConfirmId === checkpoint.fileName ? copy.checkpointDeleteConfirm : copy.checkpointDelete}
+                        aria-label={copy.checkpointDelete}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (deleteConfirmId !== checkpoint.fileName) {
+                            setDeleteConfirmId(checkpoint.fileName);
+                            window.setTimeout(() => setDeleteConfirmId((current) => (current === checkpoint.fileName ? null : current)), 3000);
+                            return;
+                          }
+                          setDeleteConfirmId(null);
+                          void invokeMutation("delete_database_checkpoint", {
+                            connectionId: request.connectionId,
+                            fileName: checkpoint.fileName,
+                          })
+                            .then(() =>
+                              setRequest((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      checkpoints: current.checkpoints.filter(
+                                        (entry) => entry.fileName !== checkpoint.fileName,
+                                      ),
+                                    }
+                                  : current,
+                              ),
+                            )
+                            .catch(() => undefined);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            (event.currentTarget as HTMLElement).click();
+                          }
+                        }}
+                      >
+                        <Trash2 size={13} />
+                      </span>
                     </button>
                   </li>
                 ))}

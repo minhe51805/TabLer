@@ -25,6 +25,10 @@ pub struct AISkillContent {
     pub body: String,
 }
 
+const MAX_SKILL_DESCRIPTION_CHARS: usize = 200;
+const MAX_SKILLS_PER_CATALOG: usize = 32;
+const MAX_SKILL_BODY_CHARS: usize = 8_000;
+
 fn skill_roots(workspace_dir: Option<&str>) -> Vec<(PathBuf, String)> {
     let mut roots: Vec<(PathBuf, String)> = Vec::new();
     if let Some(workspace_dir) = workspace_dir {
@@ -68,6 +72,10 @@ fn parse_skill_md(raw: &str) -> (Option<String>, Option<String>, String) {
         name = name.or_else(|| read_value("name:"));
         description = description.or_else(|| read_value("description:"));
     }
+    // Keep the per-run catalog bounded: descriptions are injected for every
+    // available skill on every agent run.
+    let description =
+        description.map(|value| value.chars().take(MAX_SKILL_DESCRIPTION_CHARS).collect());
     (name, description, body)
 }
 
@@ -94,21 +102,47 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> Vec<AISkillSu
         };
         for entry in entries.flatten() {
             let dir_path = entry.path();
-            if !dir_path.is_dir() {
+            let Ok(entry_type) = entry.file_type() else {
+                continue;
+            };
+            // Symlinked skill directories are rejected: the body is read
+            // server-side and injected into the model context, so a link must
+            // never escape the skills root.
+            if !dir_path.is_dir() || entry_type.is_symlink() {
+                log::warn!(
+                    "ai_skills: skipping non-directory or symlink entry '{}' ({})",
+                    dir_path.display(),
+                    source
+                );
                 continue;
             }
             let Some(dir_name) = dir_display_name(&dir_path) else {
                 continue;
             };
             let Ok(raw) = std::fs::read_to_string(skill_md_path(&dir_path)) else {
+                log::warn!(
+                    "ai_skills: cannot read {} ({})",
+                    skill_md_path(&dir_path).display(),
+                    source
+                );
                 continue;
             };
             let (parsed_name, parsed_description, _) = parse_skill_md(&raw);
             // The Agent Skills standard requires name == directory name.
             let Some(parsed_name) = parsed_name else {
+                log::warn!(
+                    "ai_skills: '{}' ({}) has no frontmatter name — dropped",
+                    dir_name,
+                    source
+                );
                 continue;
             };
             if parsed_name != dir_name || parsed_name.len() > 64 {
+                log::warn!(
+                    "ai_skills: '{}' ({}) name/directory mismatch or name too long — dropped",
+                    parsed_name,
+                    source
+                );
                 continue;
             }
             if seen.contains(&parsed_name) {
@@ -123,6 +157,7 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> Vec<AISkillSu
         }
     }
     summaries.sort_by(|left, right| left.name.cmp(&right.name));
+    summaries.truncate(MAX_SKILLS_PER_CATALOG);
     summaries
 }
 
@@ -147,16 +182,42 @@ pub fn read_ai_skill_by_name(
     }
     for (root, source) in skill_roots(workspace_dir) {
         let dir_path = root.join(trimmed);
-        // Guard against traversal: the resolved path must stay inside the root.
-        if !dir_path.starts_with(&root) {
+        // Guard against traversal AND symlink escape: compare canonicalized
+        // paths so a link cannot resolve outside the skills root.
+        let (Ok(canonical_root), Ok(canonical_dir)) =
+            (root.canonicalize(), dir_path.canonicalize())
+        else {
+            continue;
+        };
+        if !canonical_dir.starts_with(&canonical_root) {
             continue;
         }
         let Ok(raw) = std::fs::read_to_string(skill_md_path(&dir_path)) else {
             continue;
         };
-        let (parsed_name, parsed_description, body) = parse_skill_md(&raw);
+        let (Some(parsed_name), parsed_description, body) = parse_skill_md(&raw) else {
+            // Same strictness as discovery: a frontmatter without a matching
+            // name must not be readable under a different name.
+            return Err(format!(
+                "Skill directory does not declare name '{trimmed}'."
+            ));
+        };
+        if parsed_name != trimmed {
+            return Err(format!(
+                "Skill '{}' declares a mismatched name '{parsed_name}'.",
+                trimmed
+            ));
+        }
+        // Soft cost ceiling: the body is injected into the model context, so
+        // an oversized skill file must not be re-billed on every run step.
+        let body = if body.chars().count() > MAX_SKILL_BODY_CHARS {
+            let cut = body.chars().take(MAX_SKILL_BODY_CHARS).collect::<String>();
+            format!("{cut}\n\n[body truncated at {MAX_SKILL_BODY_CHARS} characters — the skill file is larger]")
+        } else {
+            body
+        };
         return Ok(AISkillContent {
-            name: parsed_name.unwrap_or_else(|| trimmed.to_string()),
+            name: parsed_name,
             description: parsed_description.unwrap_or_default(),
             source,
             body,
@@ -246,5 +307,23 @@ mod tests {
         assert!(read_ai_skill_by_name(None, "../etc").is_err());
         assert!(read_ai_skill_by_name(None, "").is_err());
         assert!(read_ai_skill_by_name(None, "missing-skill").is_err());
+    }
+
+    #[test]
+    fn body_and_catalog_caps_are_bounded() {
+        assert_eq!(MAX_SKILL_BODY_CHARS, 8_000);
+        assert_eq!(MAX_SKILL_DESCRIPTION_CHARS, 200);
+        assert_eq!(MAX_SKILLS_PER_CATALOG, 32);
+    }
+
+    #[test]
+    fn discover_and_read_share_one_strict_contract() {
+        // Discovery requires name == directory name; the read path must be
+        // exactly as strict so a skill can never be loaded under a name it
+        // did not declare (Windows is case-insensitive on top of this).
+        let (name, description, _) =
+            parse_skill_md("---\nname: other-name\ndescription: mismatched\n---\nbody");
+        assert_eq!(name.as_deref(), Some("other-name"));
+        assert_ne!(description.as_deref(), Some("git-release"));
     }
 }

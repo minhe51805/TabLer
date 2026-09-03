@@ -1321,6 +1321,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const content = await invokeMutation<{ name: string; body: string }>("read_ai_skill", {
           name: skillName,
         });
+        window.dispatchEvent(new CustomEvent("workspace-activity", {
+          detail: { connectionId, label: `Skill: ${content.name}`, durationMs: 0 },
+        }));
         return [
           `Skill "${content.name}" loaded. Follow these instructions for the remainder of the run:`,
           "",

@@ -49,3 +49,39 @@ export function getAISqlConfirmationRequirement(
   if (statements.some(isMutatingStatement)) return "mutation";
   return null;
 }
+
+export interface AgentRunClassification {
+  /** Dialog requirement for this run — null when no dialog must be shown. */
+  requirement: AISqlConfirmationRequirement;
+  /** True when the review dialog must be shown for this run. */
+  needsDialog: boolean;
+  /** True when at least one statement will actually mutate data. */
+  willMutate: boolean;
+  /** True when Safe Mode levels 1-3 may treat this run as human-approved. */
+  preApproved: boolean;
+}
+
+/**
+ * Single source of truth for how an agent run maps onto the safety nets
+ * (checkpoint, explorer invalidation, rollback hint, Safe Mode pre-approval).
+ * Everything is derived from the statements + autonomy here so the bug class
+ * "boolean derived from a derived boolean" cannot come back.
+ *
+ * Known residual: under "full" autonomy a mutating statement the frontend
+ * regex mis-reads as a read (e.g. mutating CTEs) gets preApproved=true from
+ * the standing grant — that is by design (the grant covers levels 1-3), but
+ * it also means willMutate can be false for such a run, so no checkpoint is
+ * taken. The backend's stricter parser is the last line of defense there.
+ */
+export function classifyAgentRun(
+  statements: string[],
+  autonomy?: AIWorkspaceAgentAutonomy,
+): AgentRunClassification {
+  const requirement = getAISqlConfirmationRequirement(statements, autonomy);
+  const needsDialog = requirement !== null;
+  const willMutate =
+    needsDialog ||
+    (autonomy === "full" && statements.some((statement) => isMutatingStatement(statement)));
+  const preApproved = autonomy === "full" || needsDialog;
+  return { requirement, needsDialog, willMutate, preApproved };
+}

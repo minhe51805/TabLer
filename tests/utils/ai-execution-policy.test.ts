@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  classifyAgentRun,
   getAISqlConfirmationRequirement,
   isSqlBlockedBySafeMode,
   shouldAgentAutoRunSql,
@@ -74,5 +75,42 @@ describe("AI SQL execution policy", () => {
     expect(getAISqlConfirmationRequirement([
       "UPDATE users SET active = 1 WHERE id = 1",
     ])).toBe("mutation");
+  });
+});
+
+describe("classifyAgentRun — single source for the safety nets", () => {
+  it("review + high-risk mutation: dialog required, mutation claimed, pre-approved via the dialog", () => {
+    // UPDATE without WHERE is high-risk by design (whole-table write).
+    const run = classifyAgentRun(["UPDATE users SET x = 1"], "review");
+    expect(run.requirement).toBe("high-risk");
+    expect(run.needsDialog).toBe(true);
+    expect(run.willMutate).toBe(true);
+    expect(run.preApproved).toBe(true);
+  });
+
+  it("full + regex-read: no dialog, no mutation claim, standing pre-approval", () => {
+    const run = classifyAgentRun(["SELECT * FROM users"], "full");
+    expect(run.requirement).toBeNull();
+    expect(run.needsDialog).toBe(false);
+    expect(run.willMutate).toBe(false);
+    expect(run.preApproved).toBe(true);
+  });
+
+  it("full + UPDATE: willMutate + standing pre-approval without any dialog", () => {
+    // P1 regression: full autonomy mutations must still be classified as
+    // mutating so the auto-checkpoint / explorer invalidation / rollback
+    // hint all fire even though no dialog is shown.
+    const run = classifyAgentRun(["UPDATE users SET x = 1"], "full");
+    expect(run.requirement).toBeNull();
+    expect(run.needsDialog).toBe(false);
+    expect(run.willMutate).toBe(true);
+    expect(run.preApproved).toBe(true);
+  });
+
+  it("smart + read: no dialog, no mutation, no pre-approval", () => {
+    const run = classifyAgentRun(["SELECT * FROM users"], "smart");
+    expect(run.requirement).toBeNull();
+    expect(run.willMutate).toBe(false);
+    expect(run.preApproved).toBe(false);
   });
 });

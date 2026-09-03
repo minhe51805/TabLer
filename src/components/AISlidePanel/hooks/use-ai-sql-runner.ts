@@ -8,9 +8,8 @@ import {
   formatExecutionError,
   isSessionSwitchStatement,
   normalizeStatementForGuard,
-  isMutatingStatement,
 } from "../../SQLEditor/SQLEditorUtils";
-import { getAISqlConfirmationRequirement } from "../ai-execution-policy";
+import { classifyAgentRun } from "../ai-execution-policy";
 import { requestAISqlConfirmation } from "../ai-sql-confirm";
 import { summarizeRunResult } from "../ai-sql-response";
 import type { AIWorkspaceAgentAutonomy } from "../ai-workspace-types";
@@ -107,14 +106,11 @@ export function useAISqlRunner({
       throw new Error(message);
     }
 
-    const confirmationRequirement = getAISqlConfirmationRequirement(
-      statements,
-      runOptions?.agentAutonomy,
-    );
-    const hasMutatingStatements =
-      confirmationRequirement !== null ||
-      (runOptions?.agentAutonomy === "full" &&
-        statements.some((statement) => isMutatingStatement(statement)));
+    const {
+      requirement: confirmationRequirement,
+      willMutate: hasMutatingStatements,
+      preApproved,
+    } = classifyAgentRun(statements, runOptions?.agentAutonomy);
     setIsRunning(true);
     setError(null);
 
@@ -173,13 +169,6 @@ export function useAISqlRunner({
         }
       }
 
-      // Only claim Safe-Mode pre-approval when it is real: the standing
-      // "full autonomy" grant, or the review dialog was actually shown and
-      // approved. Read-classified runs (no dialog) must NOT claim it — the
-      // backend's stricter parser then stays fail-closed on anything the
-      // frontend regex mis-reads as a read (e.g. mutating CTEs).
-      const preApproved =
-        runOptions?.agentAutonomy === "full" || confirmationRequirement !== null;
       const queryResult = await executeSandboxQuery(connectionId, statements, undefined, { preApproved });
       if (hasMutatingStatements) {
         const invalidateStructure = statements.some((statement) => {

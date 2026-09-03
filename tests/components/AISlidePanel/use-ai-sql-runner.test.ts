@@ -2,6 +2,10 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestAISqlConfirmationMock = vi.fn();
+const invokeWithTimeoutMock = vi.fn();
+vi.mock("@/utils/tauri-utils", () => ({
+  invokeWithTimeout: (...args: unknown[]) => invokeWithTimeoutMock(...args),
+}));
 vi.mock("@/components/AISlidePanel/ai-sql-confirm", () => ({
   requestAISqlConfirmation: (...args: unknown[]) => requestAISqlConfirmationMock(...args),
 }));
@@ -32,6 +36,8 @@ function setupRunner() {
 describe("useAISqlRunner Safe Mode pre-approval", () => {
   beforeEach(() => {
     requestAISqlConfirmationMock.mockReset();
+    invokeWithTimeoutMock.mockReset();
+    invokeWithTimeoutMock.mockResolvedValue({ fileName: "ck.sql", tables: 2, rows: 5 });
     useConnectionStore.setState({ currentDatabase: "app" });
   });
 
@@ -97,5 +103,44 @@ describe("useAISqlRunner Safe Mode pre-approval", () => {
     ).rejects.toThrow("Execution cancelled.");
     expect(executeSandboxQuery).not.toHaveBeenCalled();
     expect(setError).toHaveBeenCalledWith("Execution cancelled.");
+  });
+});
+
+describe("useAISqlRunner auto-checkpoint safety net", () => {
+  beforeEach(() => {
+    requestAISqlConfirmationMock.mockReset();
+    invokeWithTimeoutMock.mockReset();
+    invokeWithTimeoutMock.mockResolvedValue({ fileName: "ck.sql", tables: 2, rows: 5 });
+    useConnectionStore.setState({
+      connections: [{ id: "conn-1", db_type: "mssql" }] as never,
+      currentDatabase: "app",
+    });
+  });
+
+  it("P1 regression: full autonomy + UPDATE still snapshots a checkpoint first", async () => {
+    const { result, executeSandboxQuery } = setupRunner();
+    await act(async () => {
+      await result.current.runSql("UPDATE users SET x = 1", { agentAutonomy: "full" });
+    });
+    expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
+      "create_database_checkpoint",
+      expect.objectContaining({ connectionId: "conn-1", label: "auto-before-agent-write" }),
+      60_000,
+      "Safety checkpoint",
+    );
+    expect(executeSandboxQuery).toHaveBeenCalledWith(
+      "conn-1",
+      ["UPDATE users SET x = 1"],
+      undefined,
+      { preApproved: true },
+    );
+  });
+
+  it("skips the checkpoint for read-classified runs", async () => {
+    const { result } = setupRunner();
+    await act(async () => {
+      await result.current.runSql("SELECT * FROM users", { agentAutonomy: "full" });
+    });
+    expect(invokeWithTimeoutMock).not.toHaveBeenCalled();
   });
 });

@@ -372,6 +372,44 @@ pub async fn restore_database_checkpoint(
     } else {
         sql
     };
+
+    // Pre-drop: query the server for existing user tables and drop them
+    // (children first via error-suppressed retry) so the dump's CREATE TABLE
+    // runs on a clean slate. This is the only reliable way to handle FK
+    // constraints during a full-snapshot restore.
+    if db_type == DatabaseType::MSSQL {
+        let driver = db_manager
+            .get_driver(&connection_id)
+            .await
+            .map_err(|error| format!("Failed to get driver for pre-drop: {error}"))?;
+        let tables = driver
+            .list_tables(None)
+            .await
+            .map_err(|error| format!("Failed to list tables for pre-drop: {error}"))?;
+        if !tables.is_empty() {
+            let table_refs: Vec<String> = tables
+                .iter()
+                .map(|t| {
+                    let schema = t.schema.as_deref().unwrap_or("dbo");
+                    format!("[{schema}].[{}]", t.name)
+                })
+                .collect();
+            // Two passes: first try all drops, then retry failures (FK order).
+            for pass in 0..2 {
+                for table_ref in &table_refs {
+                    let _ = driver
+                        .execute_query(&format!("DROP TABLE IF EXISTS {table_ref};"))
+                        .await;
+                }
+                if pass == 0 {
+                    // Small delay to let deferred constraint checks settle.
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+        drop(driver);
+    }
+
     run_sql_restore(
         &connection_id,
         &sql,

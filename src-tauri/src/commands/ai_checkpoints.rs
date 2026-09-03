@@ -103,14 +103,49 @@ fn checkpoint_paths(dir: &PathBuf, file_name: &str) -> Result<(PathBuf, PathBuf)
 /// DDL type declarations; string literals in INSERTs never contain this shape
 /// after escaping (they are quoted and cannot contain a bare unquoted type).
 fn normalize_legacy_mssql_dump(sql: &str) -> String {
-    sql.lines()
+    let body = sql
+        .lines()
         .map(|line| {
-            let patched = line
-                .replace("nvarchar(max)", "nvarchar(255)")
-                .replace("varchar(max)", "varchar(255)");
-            format!("{patched}\n")
+            line.replace("nvarchar(max)", "nvarchar(255)")
+                .replace("varchar(max)", "varchar(255)")
         })
-        .collect()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Pre-fix dumps have no IDENTITY_INSERT guards: wrap each table's INSERT
+    // block (error 544 otherwise, because the DDL lost the IDENTITY property).
+    let mut out = String::with_capacity(body.len() + 256);
+    let mut insert_active = false;
+    let mut pending_table = String::new();
+
+    for line in body.split('\n') {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("INSERT INTO") && !insert_active {
+            // Extract the table ref to name the ON/OFF guards.
+            if let Some(table) = trimmed
+                .split("INSERT INTO ")
+                .nth(1)
+                .and_then(|rest| rest.split(" (").next())
+            {
+                pending_table = table.to_string();
+                out.push_str(&format!("SET IDENTITY_INSERT {pending_table} ON;\n"));
+                insert_active = true;
+            }
+        }
+        out.push_str(line);
+        out.push('\n');
+        // An INSERT batch ends on the line whose statement terminator shows.
+        if insert_active && trimmed.ends_with(';') {
+            out.push_str(&format!("SET IDENTITY_INSERT {pending_table} OFF;\n"));
+            insert_active = false;
+            pending_table.clear();
+        }
+    }
+    if insert_active {
+        out.push_str("SET IDENTITY_INSERT OFF;\n");
+    }
+    out
 }
 
 fn now_epoch_ms() -> u64 {

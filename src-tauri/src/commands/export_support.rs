@@ -153,6 +153,10 @@ pub(super) async fn build_sql_export(
         let table_ref = qualify_name(db_type, &bundle.identifier, database)?;
         if db_type == DatabaseType::MSSQL {
             output.push_str(&format!("DELETE FROM {table_ref};\n"));
+            // Restore must re-insert the original identity values (error 544
+            // otherwise). IDENTITY_INSERT is session-scoped: OFF for every
+            // table up front keeps the ONs from shadowing each other.
+            output.push_str(&format!("SET IDENTITY_INSERT {table_ref} ON;\n"));
         }
         let mut offset = 0_u64;
 
@@ -190,6 +194,9 @@ pub(super) async fn build_sql_export(
             if (batch.rows.len() as u64) < EXPORT_BATCH_SIZE {
                 break;
             }
+        }
+        if db_type == DatabaseType::MSSQL {
+            output.push_str(&format!("SET IDENTITY_INSERT {table_ref} OFF;\n"));
         }
     }
 

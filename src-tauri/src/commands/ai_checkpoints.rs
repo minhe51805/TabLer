@@ -97,6 +97,22 @@ fn checkpoint_paths(dir: &PathBuf, file_name: &str) -> Result<(PathBuf, PathBuf)
     ))
 }
 
+/// Older checkpoints were dumped with `nvarchar(max)`/`varchar(max)` columns,
+/// which SQL Server rejects in key/index positions with error 1919. Normalize
+/// them at restore time so pre-fix checkpoints stay restorable. Only touches
+/// DDL type declarations; string literals in INSERTs never contain this shape
+/// after escaping (they are quoted and cannot contain a bare unquoted type).
+fn normalize_legacy_mssql_dump(sql: &str) -> String {
+    sql.lines()
+        .map(|line| {
+            let patched = line
+                .replace("nvarchar(max)", "nvarchar(255)")
+                .replace("varchar(max)", "varchar(255)");
+            format!("{patched}\n")
+        })
+        .collect()
+}
+
 fn now_epoch_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -260,6 +276,11 @@ pub fn preview_database_checkpoint_restore(
             sql_path.display()
         )
     })?;
+    let sql = if db_type == DatabaseType::MSSQL {
+        normalize_legacy_mssql_dump(&sql)
+    } else {
+        sql
+    };
     super::restore::build_restore_preview(&sql, db_type)
 }
 
@@ -310,6 +331,11 @@ pub async fn restore_database_checkpoint(
     })
     .await
     .map_err(|_| "Checkpoint read task failed unexpectedly.".to_string())??;
+    let sql = if db_type == DatabaseType::MSSQL {
+        normalize_legacy_mssql_dump(&sql)
+    } else {
+        sql
+    };
     run_sql_restore(
         &connection_id,
         &sql,

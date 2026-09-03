@@ -1510,7 +1510,7 @@ mod mssql_live_diagnostics {
         }
     }
     /// Live probe: preview_write_transaction must run the UPDATE inside
-    /// BEGIN/ROLLBACK and leave the row untouched.
+    /// BEGIN/ROLLBACK and leave every row untouched.
     /// `cargo test --lib mssql_live_preview_write -- --ignored --nocapture`
     #[tokio::test]
     #[ignore = "requires a reachable local SQL Server"]
@@ -1523,19 +1523,18 @@ mod mssql_live_diagnostics {
         let driver: std::sync::Arc<dyn DatabaseDriver> =
             std::sync::Arc::new(MssqlDriver::connect(&config).await.expect("connect"));
 
-        let count_sql = "SELECT COUNT(*) AS c FROM [QuanLySinhVienDB].[dbo].[SinhViens] WHERE HoTen LIKE N'%Ninh%'";
-        let before = driver
-            .execute_query(count_sql)
+        // Snapshot ALL rows first so the probe works on any dataset state.
+        let snapshot = driver
+            .execute_query("SELECT * FROM [QuanLySinhVienDB].[dbo].[SinhViens]")
             .await
-            .expect("count before")
-            .rows[0][0]
-            .as_i64()
-            .unwrap_or(0);
-        assert!(before > 0, "fixture rows missing");
+            .expect("snapshot before");
+        let before_count = snapshot.rows.len();
+        assert!(before_count > 0, "fixture rows missing");
 
         let preview = driver
             .preview_write_transaction(&[format!(
-                "UPDATE [QuanLySinhVienDB].[dbo].[SinhViens] SET HoTen = N'KHOA-PROBE' WHERE HoTen LIKE N'%Ninh%'"
+                "UPDATE [QuanLySinhVienDB].[dbo].[SinhViens] SET HoTen = N'KHOA-PROBE-{}' WHERE 1=1",
+                std::process::id()
             )])
             .await
             .expect("preview_write_transaction supported on MSSQL");
@@ -1545,14 +1544,14 @@ mod mssql_live_diagnostics {
         );
 
         let after = driver
-            .execute_query(count_sql)
+            .execute_query("SELECT * FROM [QuanLySinhVienDB].[dbo].[SinhViens]")
             .await
-            .expect("count after")
-            .rows[0][0]
-            .as_i64()
-            .unwrap_or(0);
-        assert_eq!(before, after, "rollback must leave data untouched");
-        println!("[preview probe] rolled back; {before} row(s) intact");
+            .expect("snapshot after");
+        assert_eq!(
+            snapshot.rows, after.rows,
+            "rollback must leave data untouched"
+        );
+        println!("[preview probe] rolled back; {before_count} row(s) intact");
     }
 
     /// Live probe: replicate the global-search multi pipeline end-to-end.

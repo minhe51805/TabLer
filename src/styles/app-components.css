@@ -38599,3 +38599,26 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   color: #fff;
   background: #e5484d;
 }
+
+/* Search box at the top of the checkpoint day rail */
+.ckpt-day-rail__search {
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--border, #e3e6ec);
+  border-radius: 8px;
+  background: var(--bg-primary, #f7f8fa);
+  color: var(--text-primary, #1f2430);
+  font-size: 12px;
+}
+.ckpt-day-rail__search::placeholder {
+  color: var(--text-muted, #9aa1ad);
+}
+.ckpt-day-rail__search:focus {
+  outline: none;
+  border-color: rgba(99, 102, 241, 0.55);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+.ckpt-day-rail__search::-webkit-search-cancel-button {
+  cursor: pointer;
+}

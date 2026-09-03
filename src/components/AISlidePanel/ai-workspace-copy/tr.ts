@@ -78,6 +78,8 @@ export const TR_COPY: AIWorkspaceCopy = {
       checkpointCancel: "İptal",
       checkpointDelete: "Kontrol noktasını sil",
       checkpointDeleteConfirm: "Silmeyi onaylamak için tekrar tıklayın",
+    checkpointSearchPlaceholder: 'Checkpoint ara…',
+    // Etiket, veritabanı veya motorla filtreleyin.
       checkpointBack: "Geri",
       checkpointConfirmTitle: "Bu kontrol noktası geri yüklensin mi?",
       checkpointPreviewBody: "Mevcut veritabanına {statements} ifade çalıştırılacak ({schema} şema, {data} veri, {destructive} yıkıcı).",

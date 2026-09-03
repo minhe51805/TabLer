@@ -48,6 +48,20 @@ function formatCheckpointClock(epochMs: number, language: string) {
   }
 }
 
+/** Filter checkpoints by a free-text query (label, database, engine). */
+function filterCheckpointsBySearch(
+  checkpoints: AIDatabaseCheckpoint[],
+  query: string,
+): AIDatabaseCheckpoint[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return checkpoints;
+  return checkpoints.filter((checkpoint) =>
+    [checkpoint.label, checkpoint.database, checkpoint.engine]
+      .filter(Boolean)
+      .some((field) => field!.toLowerCase().includes(needle)),
+  );
+}
+
 /** Group checkpoints by calendar day (newest day first), Provider-Settings rail style. */
 function groupCheckpointsByDay(
   checkpoints: AIDatabaseCheckpoint[],
@@ -75,6 +89,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
+  const [daySearch, setDaySearch] = useState("");
 
   useEffect(() => {
     setAICheckpointPickerHostMounted(true);
@@ -84,6 +99,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
       setPreview(null);
       setPreviewError(null);
       setSelectedDayKey(null);
+      setDaySearch("");
     };
     window.addEventListener("ai-checkpoint-pick-request", handleRequest);
     return () => {
@@ -113,7 +129,8 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
 
   if (!request) return null;
 
-  const dayGroups = groupCheckpointsByDay(request.checkpoints, request.language);
+  const searchableCheckpoints = filterCheckpointsBySearch(request.checkpoints, daySearch);
+  const dayGroups = groupCheckpointsByDay(searchableCheckpoints, request.language);
   const activeDayKey = selectedDayKey && dayGroups[selectedDayKey] ? selectedDayKey : Object.keys(dayGroups)[0] ?? null;
   const dayCheckpoints = activeDayKey ? dayGroups[activeDayKey]! : [];
 
@@ -193,9 +210,16 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
               </div>
             ) : (
               <div className="ckpt-day-grid">
-                {/* Left rail: one entry per day (Provider Settings style) */}
+                {/* Left rail: search + one entry per day (Provider Settings style) */}
                 <aside className="ckpt-day-rail">
-                  {Object.entries(groupCheckpointsByDay(request.checkpoints, request.language)).map(
+                  <input
+                    type="search"
+                    className="ckpt-day-rail__search"
+                    placeholder={copy.checkpointSearchPlaceholder}
+                    value={daySearch}
+                    onChange={(event) => setDaySearch(event.target.value)}
+                  />
+                  {Object.entries(groupCheckpointsByDay(filterCheckpointsBySearch(request.checkpoints, daySearch), request.language)).map(
                     ([dayKey, dayItems]) => (
                       <button
                         key={dayKey}

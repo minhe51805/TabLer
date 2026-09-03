@@ -78,6 +78,8 @@ export const ZH_COPY: AIWorkspaceCopy = {
       checkpointCancel: "取消",
       checkpointDelete: "删除检查点",
       checkpointDeleteConfirm: "再次点击以确认删除",
+    checkpointSearchPlaceholder: '搜索检查点…',
+    // 按标签、数据库或引擎筛选。
       checkpointBack: "返回",
       checkpointConfirmTitle: "还原此检查点？",
       checkpointPreviewBody: "将对当前数据库执行 {statements} 条语句（{schema} 架构、{data} 数据、{destructive} 破坏性）。",

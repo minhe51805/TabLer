@@ -78,6 +78,8 @@ export const EN_COPY: AIWorkspaceCopy = {
       checkpointCancel: "Cancel",
       checkpointDelete: "Delete checkpoint",
       checkpointDeleteConfirm: "Click again to confirm deletion",
+    checkpointSearchPlaceholder: 'Search checkpoints…',
+    // Filter by label, database, or engine.
       checkpointBack: "Back",
       checkpointConfirmTitle: "Restore this checkpoint?",
       checkpointPreviewBody: "Runs {statements} statements ({schema} schema, {data} data, {destructive} destructive) against the current database.",

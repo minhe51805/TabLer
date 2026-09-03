@@ -38461,43 +38461,47 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   left: 17px;
 }
 
-/* ── Checkpoint row: main button + hover delete ── */
-.app-root .ckpt-item-row {
+/* ── Checkpoint row: main button + hover delete.
+   NOTE: the picker modal portals into document.body, so these rules must
+   NOT be scoped under .app-root (the portal escapes that subtree). ── */
+.ckpt-item-row {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  position: relative;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0;
 }
-.app-root .ckpt-item-row .ckpt-item {
+.ckpt-item-row .ckpt-item {
   flex: 1 1 auto;
+  width: auto;
   min-width: 0;
 }
-.app-root .ckpt-item__delete {
+.ckpt-item__delete {
+  align-self: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
-  margin-right: 6px;
-  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 7px;
   border: none;
   background: transparent;
-  color: var(--text-tertiary, rgba(128, 128, 128, 0.65));
+  color: var(--text-muted, #9aa1ad);
   cursor: pointer;
   opacity: 0;
   transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
 }
-.app-root .ckpt-item-row:hover .ckpt-item__delete,
-.app-root .ckpt-item__delete:focus-visible {
+.ckpt-item-row:hover .ckpt-item__delete,
+.ckpt-item__delete:focus-visible,
+.ckpt-item__delete.is-confirm {
   opacity: 1;
 }
-.app-root .ckpt-item__delete:hover {
+.ckpt-item__delete:hover {
   color: #e5484d;
   background: rgba(229, 72, 77, 0.1);
 }
-.app-root .ckpt-item__delete.is-confirm {
-  opacity: 1;
+.ckpt-item__delete.is-confirm {
   color: #fff;
   background: #e5484d;
 }

@@ -31,6 +31,7 @@ use commands::ai::{
 };
 use commands::ai_checkpoints::{
     create_database_checkpoint, delete_database_checkpoint, list_database_checkpoints,
+    rename_database_checkpoint,
     preview_database_checkpoint_restore, restore_database_checkpoint,
 };
 use commands::connection::*;
@@ -320,6 +321,7 @@ pub fn run() {
             list_database_checkpoints,
             preview_database_checkpoint_restore,
             delete_database_checkpoint,
+            rename_database_checkpoint,
             restore_database_checkpoint,
             // Table commands
             list_tables,

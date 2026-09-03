@@ -401,6 +401,37 @@ pub async fn delete_database_checkpoint(
     Ok(())
 }
 
+/// Rename a checkpoint (updates the label in the meta sidecar). The SQL file
+/// name itself is left untouched — labels live in the sidecar only.
+#[tauri::command]
+pub async fn rename_database_checkpoint(
+    connection_id: String,
+    file_name: String,
+    label: String,
+) -> Result<CheckpointMeta, String> {
+    let dir = checkpoint_dir(&connection_id)?;
+    let (_sql_path, meta_path) = checkpoint_paths(&dir, &file_name)?;
+    let trimmed = label.trim();
+    if trimmed.is_empty() {
+        return Err("Checkpoint label must not be empty.".to_string());
+    }
+    let clean_label: String = trimmed.chars().take(MAX_LABEL_CHARS * 2).collect();
+    task::spawn_blocking(move || -> Result<CheckpointMeta, String> {
+        let content = fs::read_to_string(&meta_path)
+            .map_err(|error| format!("Failed to read checkpoint meta: {error}"))?;
+        let mut meta: CheckpointMeta = serde_json::from_str(&content)
+            .map_err(|error| format!("Failed to parse checkpoint meta: {error}"))?;
+        meta.label = clean_label;
+        let updated = serde_json::to_string_pretty(&meta)
+            .map_err(|error| format!("Failed to encode checkpoint meta: {error}"))?;
+        fs::write(&meta_path, updated)
+            .map_err(|error| format!("Failed to write checkpoint meta: {error}"))?;
+        Ok(meta)
+    })
+    .await
+    .map_err(|error| format!("Checkpoint rename task failed: {error}"))?
+}
+
 /// `/rollback` step 2b: run the checkpoint SQL through the shared restore
 /// pipeline (capability checks, statement splitting, transactional execution).
 /// Safe Mode is intentionally not re-asserted here: the human confirmed the

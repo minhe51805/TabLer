@@ -79,6 +79,8 @@ export const ZH_COPY: AIWorkspaceCopy = {
       checkpointDelete: "删除检查点",
       checkpointDeleteConfirm: "再次点击以确认删除",
     checkpointSearchPlaceholder: '搜索检查点…',
+    checkpointRename: '重命名检查点',
+    checkpointRenameTitle: '为此检查点输入新名称。',
     // 按标签、数据库或引擎筛选。
       checkpointBack: "返回",
       checkpointConfirmTitle: "还原此检查点？",

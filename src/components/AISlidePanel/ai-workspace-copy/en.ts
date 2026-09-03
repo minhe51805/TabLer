@@ -79,6 +79,8 @@ export const EN_COPY: AIWorkspaceCopy = {
       checkpointDelete: "Delete checkpoint",
       checkpointDeleteConfirm: "Click again to confirm deletion",
     checkpointSearchPlaceholder: 'Search checkpoints…',
+    checkpointRename: 'Rename checkpoint',
+    checkpointRenameTitle: 'Enter a new name for this checkpoint.',
     // Filter by label, database, or engine.
       checkpointBack: "Back",
       checkpointConfirmTitle: "Restore this checkpoint?",

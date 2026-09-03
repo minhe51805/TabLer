@@ -79,6 +79,8 @@ export const TR_COPY: AIWorkspaceCopy = {
       checkpointDelete: "Kontrol noktasını sil",
       checkpointDeleteConfirm: "Silmeyi onaylamak için tekrar tıklayın",
     checkpointSearchPlaceholder: 'Checkpoint ara…',
+    checkpointRename: 'Checkpoint yeniden adlandır',
+    checkpointRenameTitle: 'Bu checkpoint için yeni bir ad girin.',
     // Etiket, veritabanı veya motorla filtreleyin.
       checkpointBack: "Geri",
       checkpointConfirmTitle: "Bu kontrol noktası geri yüklensin mi?",

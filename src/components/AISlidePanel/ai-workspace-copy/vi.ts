@@ -79,6 +79,8 @@ export const VI_COPY: AIWorkspaceCopy = {
       checkpointDelete: "Xóa điểm khôi phục",
       checkpointDeleteConfirm: "Bấm lần nữa để xác nhận xóa",
     checkpointSearchPlaceholder: 'Tìm checkpoint…',
+    checkpointRename: 'Đổi tên checkpoint',
+    checkpointRenameTitle: 'Nhập tên mới cho checkpoint này.',
     // Lọc theo tên, database hoặc engine.
       checkpointBack: "Quay lại",
       checkpointConfirmTitle: "Khôi phục điểm này?",

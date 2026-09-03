@@ -79,6 +79,8 @@ export const KO_COPY: AIWorkspaceCopy = {
       checkpointDelete: "체크포인트 삭제",
       checkpointDeleteConfirm: "삭제를 확정하려면 다시 클릭",
     checkpointSearchPlaceholder: '체크포인트 검색…',
+    checkpointRename: '체크포인트 이름 변경',
+    checkpointRenameTitle: '이 체크포인트의 새 이름을 입력하세요.',
     // 라벨, 데이터베이스 또는 엔진으로 필터링합니다.
       checkpointBack: "뒤로",
       checkpointConfirmTitle: "이 체크포인트를 복원할까요?",

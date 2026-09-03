@@ -38622,3 +38622,46 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
 .ckpt-day-rail__search::-webkit-search-cancel-button {
   cursor: pointer;
 }
+
+/* Inline rename input + pencil affordance on checkpoint cards */
+.ckpt-item__rename {
+  width: 100%;
+  padding: 3px 7px;
+  border: 1px solid rgba(99, 102, 241, 0.55);
+  border-radius: 6px;
+  background: var(--bg-primary, #fff);
+  color: var(--text-primary, #1f2430);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ckpt-item__rename:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.14);
+}
+.ckpt-item__rename-btn {
+  position: absolute;
+  top: 50%;
+  right: 38px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-muted, #9aa1ad);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+}
+.ckpt-item-row:hover .ckpt-item__rename-btn,
+.ckpt-item__rename-btn:focus-visible {
+  opacity: 1;
+}
+.ckpt-item__rename-btn:hover {
+  color: #6366f1;
+  background: rgba(99, 102, 241, 0.1);
+}
+.ckpt-item-row:hover .ckpt-item__chevron-wrap {
+  opacity: 0.25;
+}

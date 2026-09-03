@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { History, Loader2, ShieldAlert, ChevronRight, Trash2, X } from "lucide-react";
+import { History, Loader2, Pencil, ShieldAlert, ChevronRight, Trash2, X } from "lucide-react";
 import { invokeMutation } from "../../utils/tauri-utils";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
@@ -90,6 +90,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
   const [daySearch, setDaySearch] = useState("");
+  const [renaming, setRenaming] = useState<{ fileName: string; value: string } | null>(null);
 
   useEffect(() => {
     setAICheckpointPickerHostMounted(true);
@@ -100,6 +101,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
       setPreviewError(null);
       setSelectedDayKey(null);
       setDaySearch("");
+      setRenaming(null);
     };
     window.addEventListener("ai-checkpoint-pick-request", handleRequest);
     return () => {
@@ -143,6 +145,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
     setRequest(null);
     setConfirming(null);
     setPreview(null);
+    setRenaming(null);
   };
 
   const close = () => respond(null);
@@ -249,7 +252,53 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                         <History size={15} />
                       </span>
                       <span className="ckpt-item__main">
-                        <span className="ckpt-item__label">{checkpoint.label}</span>
+                        {renaming?.fileName === checkpoint.fileName ? (
+                          <input
+                            type="text"
+                            className="ckpt-item__rename"
+                            autoFocus
+                            value={renaming.value}
+                            onChange={(event) =>
+                              setRenaming({ fileName: checkpoint.fileName, value: event.target.value })
+                            }
+                            onBlur={() => setRenaming(null)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                const next = renaming.value.trim();
+                                if (!next) {
+                                  setRenaming(null);
+                                  return;
+                                }
+                                void invokeMutation("rename_database_checkpoint", {
+                                  connectionId: request.connectionId,
+                                  fileName: checkpoint.fileName,
+                                  label: next,
+                                })
+                                  .then(() =>
+                                    setRequest((current) =>
+                                      current
+                                        ? {
+                                            ...current,
+                                            checkpoints: current.checkpoints.map((entry) =>
+                                              entry.fileName === checkpoint.fileName
+                                                ? { ...entry, label: next }
+                                                : entry,
+                                            ),
+                                          }
+                                        : current,
+                                    ),
+                                  )
+                                  .then(() => setRenaming(null))
+                                  .catch(() => setRenaming(null));
+                              } else if (event.key === "Escape") {
+                                setRenaming(null);
+                              }
+                            }}
+                            onClick={(event) => event.stopPropagation()}
+                          />
+                        ) : (
+                          <span className="ckpt-item__label">{checkpoint.label}</span>
+                        )}
                         <span className="ckpt-item__meta">
                           {formatCheckpointClock(checkpoint.createdAt, request.language)}
                           · {checkpoint.database}
@@ -299,6 +348,25 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                         }}
                       >
                         <Trash2 size={13} />
+                      </span>
+                      <span
+                        className="ckpt-item__rename-btn"
+                        role="button"
+                        tabIndex={0}
+                        title={copy.checkpointRename}
+                        aria-label={copy.checkpointRename}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setRenaming({ fileName: checkpoint.fileName, value: checkpoint.label });
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setRenaming({ fileName: checkpoint.fileName, value: checkpoint.label });
+                          }
+                        }}
+                      >
+                        <Pencil size={12} />
                       </span>
                     </button>
                   </li>

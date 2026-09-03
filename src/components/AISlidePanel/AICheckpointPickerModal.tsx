@@ -22,17 +22,41 @@ interface AICheckpointPickerModalProps {
   copy: AIWorkspaceCopy["composer"];
 }
 
-function formatCheckpointTime(epochMs: number, language: string) {
+/** Day label for the left rail, e.g. "Sep 3" in the panel language. */
+function formatCheckpointDay(epochMs: number, language: string) {
   try {
     return new Intl.DateTimeFormat(language === "vi" ? "vi-VN" : language, {
       month: "short",
       day: "numeric",
+    }).format(new Date(epochMs));
+  } catch {
+    return new Date(epochMs).toISOString().slice(0, 10);
+  }
+}
+
+/** Clock-only label for the right pane meta, e.g. "11:10 AM". */
+function formatCheckpointClock(epochMs: number, language: string) {
+  try {
+    return new Intl.DateTimeFormat(language === "vi" ? "vi-VN" : language, {
       hour: "2-digit",
       minute: "2-digit",
     }).format(new Date(epochMs));
   } catch {
-    return new Date(epochMs).toISOString();
+    return new Date(epochMs).toISOString().slice(11, 16);
   }
+}
+
+/** Group checkpoints by calendar day (newest day first), Provider-Settings rail style. */
+function groupCheckpointsByDay(
+  checkpoints: AIDatabaseCheckpoint[],
+  language: string,
+): Record<string, AIDatabaseCheckpoint[]> {
+  const groups: Record<string, AIDatabaseCheckpoint[]> = {};
+  for (const checkpoint of checkpoints) {
+    const key = formatCheckpointDay(checkpoint.createdAt, language);
+    (groups[key] ??= []).push(checkpoint);
+  }
+  return groups;
 }
 
 /**
@@ -48,6 +72,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
 
   useEffect(() => {
     setAICheckpointPickerHostMounted(true);
@@ -56,6 +81,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
       setConfirming(null);
       setPreview(null);
       setPreviewError(null);
+      setSelectedDayKey(null);
     };
     window.addEventListener("ai-checkpoint-pick-request", handleRequest);
     return () => {
@@ -84,6 +110,10 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
   }, [request]);
 
   if (!request) return null;
+
+  const dayGroups = groupCheckpointsByDay(request.checkpoints, request.language);
+  const activeDayKey = selectedDayKey && dayGroups[selectedDayKey] ? selectedDayKey : Object.keys(dayGroups)[0] ?? null;
+  const dayCheckpoints = activeDayKey ? dayGroups[activeDayKey]! : [];
 
   const respond = (fileName: string | null) => {
     window.dispatchEvent(
@@ -122,7 +152,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
 
   const describeCheckpoint = (checkpoint: AIDatabaseCheckpoint) =>
     [
-      formatCheckpointTime(checkpoint.createdAt, request.language),
+      formatCheckpointClock(checkpoint.createdAt, request.language),
       checkpoint.engine,
       checkpoint.database,
       `${checkpoint.tableCount}T/${checkpoint.rowCount}R`,
@@ -170,8 +200,29 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                 {copy.checkpointEmpty}
               </div>
             ) : (
-              <ul className="ckpt-list">
-                {request.checkpoints.map((checkpoint) => (
+              <div className="ckpt-day-grid">
+                {/* Left rail: one entry per day (Provider Settings style) */}
+                <aside className="ckpt-day-rail">
+                  {Object.entries(groupCheckpointsByDay(request.checkpoints, request.language)).map(
+                    ([dayKey, dayItems]) => (
+                      <button
+                        key={dayKey}
+                        type="button"
+                        className={`ckpt-day-rail__item${selectedDayKey === dayKey ? " is-active" : ""}`}
+                        onClick={() => setSelectedDayKey(dayKey)}
+                      >
+                        <span className="ckpt-day-rail__label">{dayKey}</span>
+                        <span className="ckpt-day-rail__count">{dayItems.length}</span>
+                      </button>
+                    ),
+                  )}
+                </aside>
+
+                {/* Right pane: checkpoints of the selected day */}
+                <div className="ckpt-day-pane">
+                  <p className="ckpt-day-pane__title">{selectedDayKey}</p>
+                  <ul className="ckpt-list">
+                {dayCheckpoints.map((checkpoint) => (
                   <li key={checkpoint.fileName} className="ckpt-item-row">
                     <button
                       type="button"
@@ -223,7 +274,9 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                     </button>
                   </li>
                 ))}
-              </ul>
+                  </ul>
+                </div>
+              </div>
             )
           ) : (
             <>

@@ -358,7 +358,7 @@ export function AIComposerDock({
           >
             <Paperclip className="w-3.5 h-3.5" />
           </button>
-          <div className={`ai-workspace-context-meter ${contextMeterState}`} title={`${copy.workspace.contextBadge} · ${usagePercent}%`}>
+          <div className={`ai-workspace-context-meter ${contextMeterState}`} title={`${copy.workspace.contextBadge} · ${usagePercent}% — conversation footprint; each request sends the digest + last messages only`}>
             <span className="ai-workspace-context-meter-value">{formatContextChars(effectiveContextUsage.used)}</span>
             <div className="ai-workspace-context-meter-track">
               <div className="ai-workspace-context-meter-fill" style={{ width: `${Math.max(2, usagePercent)}%` }} />

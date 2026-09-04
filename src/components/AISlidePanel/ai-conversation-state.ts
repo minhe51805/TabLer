@@ -76,6 +76,21 @@ export function getBubbleConversationText(bubble: AIWorkspaceBubbleData) {
   return normalizedDetail;
 }
 
+/**
+ * Full conversation footprint: every visible (non-compacted) bubble counted
+ * UNTRIMMED. The context meter shows this so /compact has a visible effect —
+ * folding old bubbles into the workspace digest is exactly what shrinks it.
+ * (Each request actually sends much less: the digest + last messages only.)
+ */
+export function estimateConversationFootprint(bubbles: AIWorkspaceBubbleData[]): number {
+  return bubbles
+    .filter((bubble) => bubble.status !== "loading" && !bubble.compactedAt)
+    .reduce(
+      (sum, bubble) => sum + (bubble.prompt?.length ?? 0) + getBubbleConversationText(bubble).length,
+      0,
+    );
+}
+
 export function buildConversationHistoryMessages(
   bubbles: AIWorkspaceBubbleData[],
 ): AIConversationMessage[] {

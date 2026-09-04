@@ -7,6 +7,7 @@ import {
   buildThreadLabel,
   createEmptyPersistedAIWorkspaceState,
   hasPersistedAIWorkspaceStateData,
+  estimateConversationFootprint,
   getBubbleConversationText,
   loadLegacyPersistedAIWorkspaceState,
   prunePersistedAIWorkspaceState,
@@ -167,5 +168,30 @@ describe("AI conversation state", () => {
       { role: "user", content: "First" },
       { role: "assistant", content: "Complete" },
     ]);
+  });
+});
+
+describe("estimateConversationFootprint", () => {
+  it("counts every ready bubble untrimmed — /compact must visibly shrink it", () => {
+    const longSql = "x".repeat(50_000);
+    const bubbles = [
+      bubble("b1", "t", { prompt: "SELECT 1", detail: longSql }),
+      bubble("b2", "t", { prompt: "y".repeat(20_000), detail: "answer" }),
+    ];
+    const footprint = estimateConversationFootprint(bubbles);
+    // Untrimmed: well beyond the send-window cap (4 bubbles x 1k) that used to
+    // make the meter freeze at ~10k regardless of conversation size.
+    expect(footprint).toBeGreaterThan(50_000);
+  });
+
+  it("excludes compacted and loading bubbles — compact drops the meter", () => {
+    const compactedAt = 12345;
+    const bubbles = [
+      bubble("old", "t", { prompt: "a".repeat(30_000), compactedAt }),
+      bubble("loading", "t", { prompt: "b".repeat(30_000), status: "loading" as const }),
+      bubble("kept", "t", { prompt: "kept prompt", detail: "kept answer" }),
+    ];
+    const footprint = estimateConversationFootprint(bubbles);
+    expect(footprint).toBe("kept prompt".length + "kept answer".length);
   });
 });

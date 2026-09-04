@@ -60,7 +60,7 @@ import {
   prefersVietnameseSystemReply,
   supportsOverviewMetricsBoard,
 } from "./ai-visualization-intent";
-import { buildAIWorkspaceKey, buildConversationHistoryMessages, createAIWorkspaceId, createChatThread, prunePersistedAIWorkspaceState, summarizePromptForDisplay, type AIChatThread, type PersistedAIWorkspaceState } from "./ai-conversation-state";
+import { buildAIWorkspaceKey, estimateConversationFootprint, buildConversationHistoryMessages, createAIWorkspaceId, createChatThread, prunePersistedAIWorkspaceState, summarizePromptForDisplay, type AIChatThread, type PersistedAIWorkspaceState } from "./ai-conversation-state";
 import { buildExecutionDetail, buildPromptWithSelection, isSingleSqlStatement, type SelectionContextState } from "./ai-panel-selection";
 import { processFilesIntoAttachmentDrafts, type AIAttachmentDraft } from "../../utils/ai-attachments";
 import type { AIAgentRecordLink } from "./ai-agent-record-links";
@@ -357,13 +357,18 @@ export function AISlidePanel({
     const configured = settings?.context_window;
     return configured && configured > 0 ? configured : AUTO_COMPACT_TRIGGER_CHARS;
   }, [activeProvider]);
+  // The meter counts the conversation FOOTPRINT (every visible bubble,
+  // untrimmed) — not the trimmed send window. Otherwise /compact could never
+  // visibly shrink the meter: it folds old bubbles into the digest, and the
+  // send window was already capped at the last 4 bubbles before any compact.
   const contextUsage = useMemo(
     () => ({
-      used: effectiveHistoryMessages.reduce((sum, message) => sum + message.content.length, 0)
+      used: estimateConversationFootprint(activeThreadBubbles)
+        + workspaceContextMessages.reduce((sum, message) => sum + message.content.length, 0)
         + promptDraft.length,
       limit: contextWindowLimit,
     }),
-    [contextWindowLimit, effectiveHistoryMessages, promptDraft]
+    [contextWindowLimit, activeThreadBubbles, workspaceContextMessages, promptDraft]
   );
   const conversationBubbles = useMemo(
     () => [...activeThreadBubbles].sort((left, right) => left.createdAt - right.createdAt),
@@ -1232,7 +1237,9 @@ export function AISlidePanel({
     // workspace context digest before the request goes out, so the prompt
     // never grows unbounded (same idea as Claude Code auto-compact).
     let historyForRun = effectiveHistoryMessages;
-    const historyChars = historyForRun.reduce((sum, message) => sum + message.content.length, 0);
+    // Auto-compact against the same footprint the meter shows (hơn là window
+    // trim đã cap sẵn ~10k — so sánh đó khiến auto-compact không bao giờ chạy).
+    const historyChars = estimateConversationFootprint(activeThreadBubbles);
     if (activeChatWorkspace && historyChars > contextWindowLimit) {
       const compacted = await handleCompactContext(true);
       if (compacted) historyForRun = compacted.recentHistory;

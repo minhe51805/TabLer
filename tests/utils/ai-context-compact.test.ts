@@ -1,14 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildCompactTranscript,
-  buildCompactUserPrompt,
-  buildPostCompactHistory,
-  buildWorkspaceContextMessages,
-  deriveMemoryTitle,
-  extractDigestFromReply,
-  extractMemoryKeywords,
-  isCompactCommand,
-} from "../../src/utils/ai-context-compact";
+import { buildCompactTranscript, buildCompactUserPrompt, buildPostCompactHistory, buildWorkspaceContextMessages, deriveMemoryTitle, extractDigestFromReply, extractMemoryKeywords, isCompactCommand, estimateTokensFromChars, formatTokensCompact } from "../../src/utils/ai-context-compact";
 import { buildAIWorkspaceKey } from "../../src/components/AISlidePanel/ai-conversation-state";
 import type { AIWorkspaceBubbleData } from "../../src/components/AISlidePanel/ai-workspace-types";
 
@@ -208,5 +199,21 @@ describe("deriveMemoryTitle", () => {
     const title = deriveMemoryTitle("- " + "x".repeat(200), "fallback");
     expect(title.length).toBeLessThanOrEqual(72);
     expect(title.endsWith("...")).toBe(true);
+  });
+});
+
+describe("token display helpers", () => {
+  it("estimates tokens with ceiling (never under-reports)", () => {
+    expect(estimateTokensFromChars(0)).toBe(0);
+    expect(estimateTokensFromChars(15)).toBe(4);
+    expect(estimateTokensFromChars(16)).toBe(4);
+  });
+
+  it("formats tokens like Claude-Code-style meters", () => {
+    expect(formatTokensCompact(999)).toBe("999");
+    expect(formatTokensCompact(24_000)).toBe("24k");
+    expect(formatTokensCompact(326_100)).toBe("326.1k");
+    expect(formatTokensCompact(1_000_000)).toBe("1M");
+    expect(formatTokensCompact(2_400_000)).toBe("2.4M");
   });
 });

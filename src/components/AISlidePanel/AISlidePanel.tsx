@@ -7,18 +7,7 @@ import { emitAppToast } from "../../utils/app-toast";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { inferDatabaseFromWorkspaceName, selectActiveAIChatWorkspace, useAIChatWorkspaceStore } from "../../stores/aiChatWorkspaceStore";
-import {
-  AUTO_COMPACT_TRIGGER_CHARS,
-  COMPACT_COMMAND,
-  buildCompactTranscript,
-  buildCompactUserPrompt,
-  buildPostCompactHistory,
-  buildWorkspaceContextMessages,
-  deriveMemoryTitle,
-  extractDigestFromReply,
-  extractMemoryKeywords,
-  isCompactCommand,
-} from "../../utils/ai-context-compact";
+import { AUTO_COMPACT_TRIGGER_CHARS, COMPACT_COMMAND, buildCompactTranscript, buildCompactUserPrompt, buildPostCompactHistory, buildWorkspaceContextMessages, deriveMemoryTitle, extractDigestFromReply, extractMemoryKeywords, isCompactCommand, estimateTokensFromChars, formatTokensCompact } from "../../utils/ai-context-compact";
 import type { AIConversationMessage, MetricsWidgetType } from "../../types";
 import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import { normalizeAIProviderConfigs } from "../../utils/ai-provider-registry";
@@ -351,10 +340,12 @@ export function AISlidePanel({
     () => [...workspaceContextMessages, ...historyMessages],
     [workspaceContextMessages, historyMessages]
   );
+  // Model context_window is authored in TOKENS (matches Claude-Code-style meters).
+  // null = not configured → meter falls back to the auto-compact display window.
   const contextWindowLimit = useMemo(() => {
     const settings = activeProvider?.model_settings?.[activeProvider.model ?? ""];
     const configured = settings?.context_window;
-    return configured && configured > 0 ? configured : AUTO_COMPACT_TRIGGER_CHARS;
+    return configured && configured > 0 ? configured : null;
   }, [activeProvider]);
   // The meter counts the conversation FOOTPRINT (every visible bubble,
   // untrimmed) — not the trimmed send window. Otherwise /compact could never
@@ -362,10 +353,12 @@ export function AISlidePanel({
   // send window was already capped at the last 4 bubbles before any compact.
   const contextUsage = useMemo(
     () => ({
-      used: estimateConversationFootprint(activeThreadBubbles)
+      used: estimateTokensFromChars(
+        estimateConversationFootprint(activeThreadBubbles)
         + workspaceContextMessages.reduce((sum, message) => sum + message.content.length, 0)
         + promptDraft.length,
-      limit: contextWindowLimit,
+      ),
+      limit: contextWindowLimit ?? estimateTokensFromChars(AUTO_COMPACT_TRIGGER_CHARS),
     }),
     [contextWindowLimit, activeThreadBubbles, workspaceContextMessages, promptDraft]
   );
@@ -937,6 +930,11 @@ export function AISlidePanel({
       // anything — compacting never destroys the original conversation (same
       // contract as opencode's pruned-but-stored entries / Claude Code's
       // pre-compaction scrollback).
+      const beforeBubbles = activeThreadBubbles.filter(
+        (bubble) => bubble.status !== "loading" && !bubble.compactedAt,
+      );
+      const beforeTokens = estimateTokensFromChars(estimateConversationFootprint(beforeBubbles));
+      const beforeMessages = beforeBubbles.length;
       const compactedAt = Date.now();
       const archivedBubbles = activeThreadBubbles.filter((bubble) => bubble.status !== "loading");
       try {
@@ -998,6 +996,12 @@ export function AISlidePanel({
           pointer: { x: 0, y: 0, visible: false },
           createdAt: Date.now(),
         };
+        const afterTokens = estimateTokensFromChars(
+          estimateConversationFootprint([markerBubble]),
+        );
+        const afterMessages = 1;
+        markerBubble.subtitle =
+          `${formatTokensCompact(beforeTokens)} → ${formatTokensCompact(afterTokens)} tokens · ${beforeMessages} → ${afterMessages} messages`;
         setBubbles((current) => [...current, markerBubble]);
       }
       return { digest: effectiveDigest, recentHistory: buildPostCompactHistory(effectiveDigest) };
@@ -1237,7 +1241,10 @@ export function AISlidePanel({
     // Auto-compact against the same footprint the meter shows (hơn là window
     // trim đã cap sẵn ~10k — so sánh đó khiến auto-compact không bao giờ chạy).
     const historyChars = estimateConversationFootprint(activeThreadBubbles);
-    if (activeChatWorkspace && historyChars > contextWindowLimit) {
+    const overContextWindow = contextWindowLimit
+      ? estimateTokensFromChars(historyChars) > contextWindowLimit
+      : historyChars > AUTO_COMPACT_TRIGGER_CHARS;
+    if (activeChatWorkspace && overContextWindow) {
       const compacted = await handleCompactContext(true);
       if (compacted) historyForRun = compacted.recentHistory;
     }

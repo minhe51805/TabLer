@@ -21,6 +21,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Fragment, useEffect, useRef, useState, type DragEvent, type KeyboardEventHandler, type ClipboardEvent, type RefObject } from "react";
+import { formatTokensCompact } from "../../utils/ai-context-compact";
 import type { AIProviderConfig } from "../../types";
 import { formatAIProviderTypeLabel } from "../../utils/ai-provider-registry";
 import { getAIFailoverConsent, setAIFailoverConsent } from "../../utils/ai-failover-consent";
@@ -89,18 +90,6 @@ type ComposerMenu = "mode" | "provider" | "utility";
 
 const INTERACTION_MODES: AIWorkspaceInteractionMode[] = ["prompt", "edit", "agent"];
 const AGENT_AUTONOMY_OPTIONS: AIWorkspaceAgentAutonomy[] = ["review", "smart", "full"];
-
-function formatContextChars(chars: number) {
-  if (chars >= 1_000_000) {
-    const millions = chars / 1_000_000;
-    return `${millions >= 10 || Number.isInteger(millions) ? Math.round(millions) : millions.toFixed(1)}M`;
-  }
-  if (chars >= 1_000) {
-    const thousands = chars / 1_000;
-    return `${thousands >= 10 || Number.isInteger(thousands) ? Math.round(thousands) : thousands.toFixed(1)}k`;
-  }
-  return String(chars);
-}
 
 function getInteractionModeLabel(mode: AIWorkspaceInteractionMode, copy: AIWorkspaceCopy) {
   if (mode === "agent") return copy.composer.modeAgent;
@@ -358,12 +347,12 @@ export function AIComposerDock({
           >
             <Paperclip className="w-3.5 h-3.5" />
           </button>
-          <div className={`ai-workspace-context-meter ${contextMeterState}`} title={`${copy.workspace.contextBadge} · ${usagePercent}% — conversation footprint; each request sends the digest + last messages only`}>
-            <span className="ai-workspace-context-meter-value">{formatContextChars(effectiveContextUsage.used)}</span>
+          <div className={`ai-workspace-context-meter ${contextMeterState}`} title={`${copy.workspace.contextBadge} · ${usagePercent}% — estimated tokens (~4 chars/token) · each request sends digest + last messages only`}>
+            <span className="ai-workspace-context-meter-value">{formatTokensCompact(effectiveContextUsage.used)}</span>
             <div className="ai-workspace-context-meter-track">
               <div className="ai-workspace-context-meter-fill" style={{ width: `${Math.max(2, usagePercent)}%` }} />
             </div>
-            <span className="ai-workspace-context-meter-limit">{formatContextChars(effectiveContextUsage.limit)}</span>
+            <span className="ai-workspace-context-meter-limit">{formatTokensCompact(effectiveContextUsage.limit)}</span>
           </div>
         </div>
 

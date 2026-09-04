@@ -15,6 +15,26 @@ export const COMPACT_COMMAND = "/compact";
 export const COMPACT_DIGEST_CHAR_BUDGET = 2400;
 /** Total request-history characters after which sending auto-compacts first. */
 export const AUTO_COMPACT_TRIGGER_CHARS = 24_000;
+
+/** Display conversion: ~4 characters per token (industry heuristic).
+ *  Internal accounting stays in characters; tokens are display-only. */
+export const CHARS_PER_TOKEN = 4;
+
+export function estimateTokensFromChars(chars: number): number {
+  return Math.ceil(chars / CHARS_PER_TOKEN);
+}
+
+export function formatTokensCompact(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000;
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
+  }
+  if (tokens >= 1_000) {
+    const thousands = tokens / 1_000;
+    return `${Number.isInteger(thousands) ? thousands : thousands.toFixed(1)}k`;
+  }
+  return String(tokens);
+}
 /** Characters of conversation text sampled per bubble when building the prompt. */
 const COMPACT_SAMPLE_PER_BUBBLE = 700;
 

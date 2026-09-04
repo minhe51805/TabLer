@@ -30,6 +30,7 @@ export const AI_AGENT_TOOL_NAMES = [
   "remember_term",
   "read_memory",
   "save_memory",
+  "edit_query_sql",
   "create_checkpoint",
   "restore_checkpoint",
   "skill",
@@ -87,6 +88,7 @@ const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "remember_term",
   "read_memory",
   "save_memory",
+  "edit_query_sql",
 ]);
 
 /** Minimal JSON Schema subset used for tool parameters (Draft 2020-12 compatible). */
@@ -461,6 +463,29 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
     ),
   },
 
+  edit_query_sql: {
+    name: "edit_query_sql",
+    description:
+      "Propose a corrected SQL for one open query tab (pick tabId from the Query tabs list in the context). Smoke-test your statement first: run_readonly_sql for SELECTs, preview_write for mutating SQL — a mutating statement that was never previewed this run is rejected. The user must accept the proposal in the tab; you cannot execute it yourself.",
+    parameters: objectSchema(
+      {
+        tabId: {
+          type: "string",
+          description: "Exact tabId of the target query tab from the Query tabs list.",
+        },
+        sql: {
+          type: "string",
+          description: "The corrected SQL that will replace the tab content on acceptance.",
+        },
+        reason: {
+          type: "string",
+          description: "One short line explaining what was wrong and what the fix does.",
+        },
+      },
+      ["tabId", "sql"],
+    ),
+  },
+
   create_checkpoint: {
     name: "create_checkpoint",
     description:
@@ -714,6 +739,14 @@ export function parseAgentToolArgs(
   action: AIAgentToolName,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
+  if (action === "edit_query_sql") {
+    const tabId = typeof args.tabId === "string" ? args.tabId.trim() : "";
+    const sql = typeof args.sql === "string" ? args.sql.trim() : "";
+    if (!tabId || !sql) {
+      throw new Error("The edit_query_sql action requires non-empty args.tabId and args.sql.");
+    }
+  }
+
   if (action === "save_memory") {
     const name = typeof args.name === "string" ? args.name.trim() : "";
     const body = typeof args.body === "string" ? args.body.trim() : "";

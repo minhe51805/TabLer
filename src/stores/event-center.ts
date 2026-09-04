@@ -39,6 +39,10 @@ export type EventMap = {
   "ai-panel-open": { prompt?: string; context?: Record<string, unknown> };
   "ai-panel-close": void;
   "ai-insert-sql": { sql: string; cursorOffset?: number };
+  // Agent proposes an edit to one query tab's SQL. The tab shows an
+  // Accept/Reject proposal — nothing is applied without user consent, and
+  // nothing is executed by the agent itself.
+  "ai-edit-query-sql": { tabId: string; sql: string; reason: string };
 
   // Theme events
   "theme-change": { themeId: string };

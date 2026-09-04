@@ -375,6 +375,8 @@ export function buildAgentControllerPrompt(params: {
   availableSkills?: { name: string; description: string }[];
   /** Frontmatter-only memory index for this connection/database scope. */
   agentMemoryIndex?: { name: string; description: string; updatedAt: string }[];
+  /** Open query tabs on this connection — enables edit_query_sql proposals. */
+  queryTabs?: { tabId: string; title: string; sql: string }[];
   knownDatabaseNames?: string[];
   workspaceBoundDatabase?: string | null;
   /** Current checklist (from update_plan), rendered near the top of the prompt. */
@@ -395,6 +397,7 @@ export function buildAgentControllerPrompt(params: {
     glossaryLines,
     availableSkills,
     agentMemoryIndex,
+    queryTabs,
     knownDatabaseNames,
     workspaceBoundDatabase,
     planLines,
@@ -497,6 +500,14 @@ export function buildAgentControllerPrompt(params: {
             `<memory><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`),
           "</agent_memory>",
           "These are saved observations for THIS connection/database (freshness = <updated>). Load one of them with read_memory when it looks relevant; persist new durable facts with save_memory (never credentials; they are rejected).",
+        ].join("\n")
+      : "",
+    (queryTabs ?? []).length > 0
+      ? [
+          "Query tabs open for this connection (tabId is required by edit_query_sql; sql is the current content to fix):",
+          ...(queryTabs ?? []).map((tab) =>
+            `<query_tab><tabId>${tab.tabId}</tabId><title>${tab.title}</title><sql>${tab.sql}</sql></query_tab>`),
+          "To fix a query in one of these tabs, call edit_query_sql with that tabId. Smoke-test mutating SQL with preview_write first. The user accepts or rejects the proposal in the tab; you cannot execute it.",
         ].join("\n")
       : "",
     (planLines ?? []).length > 0

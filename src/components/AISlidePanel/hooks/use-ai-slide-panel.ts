@@ -39,6 +39,7 @@ import {
   type AIAgentActionRequestReason,
 } from "../ai-agent-runner";
 import { getAgentMemoryIndex } from "./use-agent-memory";
+import { useUIStore } from "../../../stores/uiStore";
 import {
   DEFAULT_AGENT_TOKEN_BUDGET,
   extractAgentUsageTokens,
@@ -605,6 +606,20 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           database: currentDatabase ?? null,
         });
 
+        // Open query tabs on this connection: edit_query_sql needs their
+        // tabIds and the current SQL so the model can propose targeted fixes.
+        const queryTabs = workspaceToolsEnabled
+          ? useUIStore
+              .getState()
+              .tabs.filter((tab) => tab.type === "query" && tab.connectionId === connectionId)
+              .slice(0, 8)
+              .map((tab) => ({
+                tabId: tab.id,
+                title: tab.title,
+                sql: (tab.content ?? "").slice(0, 2_000),
+              }))
+          : undefined;
+
         // Honest database-mismatch signal: if the user explicitly names a
         // database other than the one this request is scoped to, the prompt
         // says so instead of letting schema evidence silently contradict them.
@@ -638,6 +653,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             glossaryLines,
             availableSkills,
             agentMemoryIndex,
+            queryTabs,
           });
 
         // Model-call layer: transient retry + parse-repair (extracted).

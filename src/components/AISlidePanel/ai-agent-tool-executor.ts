@@ -5,7 +5,7 @@ import {
   buildWorkspaceTableIdentifier,
 } from "./ai-agent-context";
 import { findAgentSchemaMatches, prioritizeSchemaScanCandidates } from "./ai-agent-schema-search";
-import { formatExecutionError, isHighRiskStatement, isMutatingStatement, isSessionSwitchStatement } from "../SQLEditor/SQLEditorUtils";
+import { formatExecutionError, isHighRiskStatement, isMutatingStatement, isSessionSwitchStatement, normalizeStatementForGuard } from "../SQLEditor/SQLEditorUtils";
 import {
   findMatchingTableName,
   findSystemCatalogReferences,
@@ -42,7 +42,9 @@ import { getAdminQueryPreset, type AdminQueryKind } from "../../utils/admin-quer
 import { saveSemanticGlossaryEntry } from "../../utils/semantic-glossary";
 import { requestAICheckpointPick } from "./ai-checkpoint-picker";
 import { useSkillUsageStore } from "../../stores/skillUsageStore";
+import { useUIStore } from "../../stores/uiStore";
 import { invokeMutation } from "../../utils/tauri-utils";
+import { EventCenter } from "../../stores/event-center";
 import {
   isSupersededAIRequestError,
   AI_REQUEST_REPLACED_MESSAGE,
@@ -375,6 +377,10 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
    * re-reads the archived original at zero cost.
    */
   const observationArchive: Array<{ action: string; full: string }> = [];
+  // Mutating statements successfully previewed this run (normalized). The
+  // edit_query_sql gate only accepts proposals for statements the agent has
+  // smoke-tested through preview_write's rollback transaction.
+  const previewedMutatingStatements = new Set<string>();
   let pendingFullObservation: string | null = null;
 
   /** Archives the full observation and returns the truncated trace version. */
@@ -1218,6 +1224,11 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
 
       try {
         const preview = await previewWriteTransaction(connectionId!, statements);
+        for (const statement of statements) {
+          if (isMutatingStatement(statement) || isHighRiskStatement(statement)) {
+            previewedMutatingStatements.add(normalizeStatementForGuard(statement));
+          }
+        }
         const summary = preview.results.map((result, index) => ({
           statement: statements[index] ?? `statement ${index + 1}`,
           affectedRows: result.affected_rows,
@@ -1361,6 +1372,43 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;
         return `Tool error: could not load skill "${skillName}": ${formatExecutionError(errorValue)}`;
       }
+    }
+
+    if (action.action === "edit_query_sql") {
+      const rawTabId = typeof action.args?.tabId === "string" ? action.args.tabId.trim() : "";
+      const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
+      const reason = typeof action.args?.reason === "string" ? action.args.reason.trim() : "";
+      if (!rawTabId || !sql) {
+        return "Tool error: edit_query_sql requires args.tabId and args.sql from the Query tabs list.";
+      }
+      // The tab must exist, be a query tab, and belong to THIS run's
+      // connection — the agent must not reach into another connection's
+      // editors.
+      const { tabs } = useUIStore.getState();
+      const target = tabs.find((tab) => tab.id === rawTabId);
+      if (!target || target.type !== "query") {
+        return "Tool error: edit_query_sql needs the exact tabId of an open query tab (see the Query tabs list in the context).";
+      }
+      if (target.connectionId !== connectionId) {
+        return `Tool error: query tab "${target.title}" belongs to another connection — edit_query_sql cannot reach across connections.`;
+      }
+      // Smoke-test gate: a mutating proposal that was never previewed in
+      // THIS run is rejected. Reads go through the sandbox naturally.
+      const mutating = isMutatingStatement(sql) || isHighRiskStatement(sql);
+      if (mutating && !previewedMutatingStatements.has(normalizeStatementForGuard(sql))) {
+        return "Tool error: this proposal contains mutating SQL that was not previewed in this run. Call preview_write with the exact statement first, then re-issue edit_query_sql.";
+      }
+      const reasonLine = reason || "Corrected SQL proposal from the agent.";
+      // Proposal only: the tab renders Accept/Reject. The agent never
+      // writes editor content directly and never executes the proposal.
+      EventCenter.emit("ai-edit-query-sql", { tabId: rawTabId, sql, reason: reasonLine });
+      return [
+        `Proposal sent to query tab "${target.title}" — waiting for the user to accept or reject it in the tab.`,
+        `Fix: ${reasonLine}`,
+        mutating
+          ? "Reminder: on accept the tab content changes only; the user still runs it (an auto-checkpoint is captured first)."
+          : "On accept the tab content changes only; the user still runs it.",
+      ].join("\n");
     }
 
     if (action.action === "read_memory") {

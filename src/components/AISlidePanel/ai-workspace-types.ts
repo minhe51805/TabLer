@@ -63,6 +63,7 @@ export type AIWorkspaceAgentActionName =
   | "remember_term"
   | "read_memory"
   | "save_memory"
+  | "edit_query_sql"
   | "create_checkpoint"
   | "restore_checkpoint"
   | "delegate"

@@ -294,3 +294,35 @@ describe("agent memory index injection", () => {
     expect(prompt).not.toContain("<agent_memory>");
   });
 });
+
+describe("query tab context injection", () => {
+  it("injects open query tabs with their tabId and current sql", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "fix the orders query",
+      assistIntent: "sql",
+      currentDatabase: "appdb",
+      availableTableNames: ["orders"],
+      steps: [],
+      workspaceToolsEnabled: true,
+      queryTabs: [
+        { tabId: "tab-7", title: "orders report", sql: "SELECT * FROM orders WHERE statuz = 1" },
+      ],
+    });
+    expect(prompt).toContain("<query_tab>");
+    expect(prompt).toContain("tab-7");
+    expect(prompt).toContain("edit_query_sql");
+    expect(prompt).toContain("preview_write");
+  });
+
+  it("omits the query tab block when none are provided", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "hi",
+      assistIntent: "general",
+      currentDatabase: null,
+      availableTableNames: [],
+      steps: [],
+      workspaceToolsEnabled: true,
+    });
+    expect(prompt).not.toContain("<query_tab>");
+  });
+});

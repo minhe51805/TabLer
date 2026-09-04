@@ -56,6 +56,17 @@ export type AIAgentRememberTermAction = AIAgentToolActionBase<
   AIAgentRememberTermArgs
 >;
 
+export interface AIAgentEditQuerySqlArgs extends Record<string, unknown> {
+  tabId: string;
+  sql: string;
+  reason?: string;
+}
+
+export type AIAgentEditQuerySqlAction = AIAgentToolActionBase<
+  "edit_query_sql",
+  AIAgentEditQuerySqlArgs
+>;
+
 export interface AIAgentReadMemoryArgs extends Record<string, unknown> {
   name: string;
 }
@@ -269,6 +280,7 @@ export type AIAgentToolAction =
   | AIAgentRememberTermAction
   | AIAgentReadMemoryAction
   | AIAgentSaveMemoryAction
+  | AIAgentEditQuerySqlAction
   | AIAgentSkillAction
   | AIAgentCreateCheckpointAction
   | AIAgentRestoreCheckpointAction

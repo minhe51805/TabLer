@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useUIStore } from "@/stores/uiStore";
+import { EventCenter } from "@/stores/event-center";
 import { agentToolAvailability } from "@/components/AISlidePanel/ai-agent-engine-gates";
 import { createAgentToolExecutor } from "@/components/AISlidePanel/ai-agent-tool-executor";
 import type { AgentToolExecutorDeps } from "@/components/AISlidePanel/ai-agent-tool-executor";
@@ -702,5 +704,84 @@ describe("agent memory tools", () => {
   it("requires name and body for save_memory", async () => {
     const obs = await run(mkDeps(), { action: "save_memory", args: { name: "", body: "x" } });
     expect(obs).toContain("requires non-empty args.name");
+  });
+});
+
+describe("edit_query_sql proposals", () => {
+  const originalTabs = useUIStore.getState().tabs;
+
+  const queryTab = {
+    id: "tab-1",
+    type: "query" as const,
+    title: "Fix me",
+    connectionId: CONNECTION_ID,
+  };
+
+  beforeEach(() => {
+    useUIStore.setState({ tabs: [queryTab] });
+  });
+
+  afterEach(() => {
+    useUIStore.setState({ tabs: originalTabs });
+    vi.restoreAllMocks();
+  });
+
+  it("refuses a mutating proposal that was never previewed this run", async () => {
+    const emitSpy = vi.spyOn(EventCenter, "emit");
+    const obs = await run(mkDeps(), {
+      action: "edit_query_sql",
+      args: {
+        tabId: "tab-1",
+        sql: "UPDATE orders SET status = 'done'",
+        reason: "fix status",
+      },
+    });
+    expect(obs).toContain("was not previewed in this run");
+    expect(emitSpy).not.toHaveBeenCalled();
+  });
+
+  it("accepts a mutating proposal after the same statement was previewed this run", async () => {
+    const emitSpy = vi.spyOn(EventCenter, "emit");
+    const deps = mkDeps();
+    const exec = createAgentToolExecutor(deps);
+    await exec.runAgentTool({
+      action: "preview_write",
+      args: { statements: ["UPDATE orders SET status = 'done'"] },
+    } as AIAgentToolAction);
+    const obs = await exec.runAgentTool({
+      action: "edit_query_sql",
+      args: {
+        tabId: "tab-1",
+        sql: "UPDATE orders SET status = 'done'",
+        reason: "fix status",
+      },
+    } as AIAgentToolAction);
+    expect(obs).toContain("waiting for the user to accept");
+    expect(emitSpy).toHaveBeenCalledWith("ai-edit-query-sql", {
+      tabId: "tab-1",
+      sql: "UPDATE orders SET status = 'done'",
+      reason: "fix status",
+    });
+  });
+
+  it("accepts read-only proposals without a preview", async () => {
+    const emitSpy = vi.spyOn(EventCenter, "emit");
+    const obs = await run(mkDeps(), {
+      action: "edit_query_sql",
+      args: {
+        tabId: "tab-1",
+        sql: "SELECT * FROM orders WHERE status = 'open'",
+      },
+    });
+    expect(obs).toContain("waiting for the user to accept");
+    expect(emitSpy).toHaveBeenCalledWith("ai-edit-query-sql", expect.objectContaining({ tabId: "tab-1" }));
+  });
+
+  it("refuses unknown or non-query tabIds", async () => {
+    const obs = await run(mkDeps(), {
+      action: "edit_query_sql",
+      args: { tabId: "tab-does-not-exist", sql: "SELECT 1" },
+    });
+    expect(obs).toContain("open query tab");
   });
 });

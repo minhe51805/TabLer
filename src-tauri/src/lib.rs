@@ -377,6 +377,7 @@ pub fn run() {
             agent_memory::list_agent_memory,
             agent_memory::read_agent_memory,
             agent_memory::save_agent_memory,
+            agent_memory::delete_agent_memory,
             ai_skills::list_ai_skills,
             ai_skills::read_ai_skill, // File commands
             read_sql_file,

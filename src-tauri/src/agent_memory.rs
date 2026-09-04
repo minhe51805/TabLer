@@ -208,7 +208,14 @@ pub fn discover_memories_in_root(root: &Path) -> Vec<MemoryEntrySummary> {
         });
     }
     summaries.sort_by(|left, right| left.name.cmp(&right.name));
-    summaries.truncate(MAX_MEMORY_ENTRIES);
+    if summaries.len() > MAX_MEMORY_ENTRIES {
+        log::warn!(
+            "agent_memory: index view truncated from {} to {} entries — consider pruning memories",
+            summaries.len(),
+            MAX_MEMORY_ENTRIES
+        );
+        summaries.truncate(MAX_MEMORY_ENTRIES);
+    }
     summaries
 }
 
@@ -236,7 +243,13 @@ fn write_memory_file(dir: &Path, frontmatter: &str, body: &str) -> Result<(), St
         return Err("Memory file is a symlink — refusing to write through it.".to_string());
     }
     let content = format!("---\n{frontmatter}---\n\n{body}");
-    std::fs::write(&file_path, content).map_err(|error| format!("Failed to write memory: {error}"))
+    // Staging file + same-volume rename: a crash mid-write can never leave a
+    // torn MEMORY.md behind (the previous file survives until the rename).
+    let staging_path = file_path.with_extension("md.tmp");
+    std::fs::write(&staging_path, &content)
+        .map_err(|error| format!("Failed to write memory staging file: {error}"))?;
+    std::fs::rename(&staging_path, &file_path)
+        .map_err(|error| format!("Failed to finalize memory write: {error}"))
 }
 
 /// Upsert one memory entry in the (connection, database) scope. Same name =
@@ -261,8 +274,16 @@ pub fn save_memory_entry_in(
             "Memory body exceeds {MAX_MEMORY_BODY_CHARS} characters — split or shorten it."
         ));
     }
+    // Frontmatter is line-delimited: a description carrying a newline could
+    // inject fake keys (e.g. `updated:`) and forge the freshness signal.
+    // Flatten to one line BEFORE the length cap.
     let description = params.description.map(|value| {
         value
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
             .chars()
             .take(MAX_MEMORY_DESCRIPTION_CHARS)
             .collect::<String>()
@@ -279,8 +300,11 @@ pub fn save_memory_entry_in(
     if dir.parent() != Some(scope.as_path()) {
         return Err("Memory name escapes its scope directory.".to_string());
     }
-    let existing = discover_memories_in_root(&scope);
-    if !existing.iter().any(|entry| entry.name == name) && existing.len() >= MAX_MEMORY_ENTRIES {
+    // Overwrite-vs-new is decided from the FILESYSTEM, not the (capped)
+    // index view: an entry sitting past the display cap still exists and must
+    // stay overwritable — reporting "full" for it was a dead end.
+    let target_exists = dir.join("MEMORY.md").exists();
+    if !target_exists && discover_memories_in_root(&scope).len() >= MAX_MEMORY_ENTRIES {
         return Err(format!(
             "Memory index for this scope is full ({MAX_MEMORY_ENTRIES} entries). Merge or remove an entry before saving a new one."
         ));
@@ -298,7 +322,44 @@ pub fn save_memory_entry_in(
     })
 }
 
-// __PART4__
+/// Removes one memory entry (directory + MEMORY.md). Without this, a full
+/// index is a dead end: overwrite alone cannot reclaim obsolete slots and
+/// users have no way to prune.
+#[tauri::command]
+pub fn delete_agent_memory(
+    connection_id: Option<String>,
+    database: Option<String>,
+    name: String,
+) -> Result<(), String> {
+    let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
+    delete_agent_memory_in(
+        &data_dir,
+        connection_id.as_deref(),
+        database.as_deref(),
+        &name,
+    )
+}
+
+pub(super) fn delete_agent_memory_in(
+    data_dir: &Path,
+    connection_id: Option<&str>,
+    database: Option<&str>,
+    raw_name: &str,
+) -> Result<(), String> {
+    let name = sanitize_memory_name(raw_name)?;
+    let scope = memory_scope_dir(data_dir, connection_id, database);
+    let dir = scope.join(&name);
+    if dir.parent() != Some(scope.as_path()) {
+        return Err("Memory name escapes its scope directory.".to_string());
+    }
+    if !dir.exists() {
+        return Err(format!("Memory '{name}' was not found in this scope."));
+    }
+    std::fs::remove_dir_all(&dir)
+        .map_err(|error| format!("Failed to delete memory '{name}': {error}"))?;
+    log::info!("agent_memory: deleted '{name}'");
+    Ok(())
+}
 
 /// Load one memory entry: canonicalize-then-starts_with containment (catches
 /// traversal AND symlink escape), strict name == directory, soft body ceiling.
@@ -594,6 +655,126 @@ mod tests {
             discover_memories_in_root(&memory_scope_dir(&base, Some("conn-9"), Some("other")))
                 .is_empty()
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn description_newlines_cannot_inject_frontmatter_keys() {
+        let base = std::env::temp_dir().join(format!("tabler-mem-inject-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let saved = save_memory_entry_in(
+            &base,
+            SaveMemoryParams {
+                connection_id: Some("conn-x".to_string()),
+                database: Some("db".to_string()),
+                name: "injection-probe".to_string(),
+                description: Some(
+                    "harmless text\nupdated: 1999-01-01T00:00:00Z\npoisoned: yes".to_string(),
+                ),
+                body: "body".to_string(),
+            },
+        )
+        .unwrap();
+        assert!(!saved.description.contains('\n'));
+        let scope = memory_scope_dir(&base, Some("conn-x"), Some("db"));
+        let raw = std::fs::read_to_string(scope.join("injection-probe").join("MEMORY.md")).unwrap();
+        let (_, parsed_description, parsed_updated, _) = parse_memory_md(&raw);
+        // The forged timestamp must NOT win — the real write time survives,
+        // and no injected line exists as a standalone frontmatter key.
+        assert_eq!(parsed_updated.as_deref(), Some(saved.updated_at.as_str()));
+        for line in raw.lines() {
+            assert!(
+                !line.starts_with("updated: 1999") && !line.starts_with("poisoned:"),
+                "forged frontmatter key leaked: {line}"
+            );
+        }
+        assert!(parsed_description
+            .unwrap()
+            .starts_with("harmless text updated: 1999"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn overwrite_works_even_when_entry_sits_past_the_truncated_index() {
+        let base = std::env::temp_dir().join(format!("tabler-mem-mask-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let make_params = |name: String| SaveMemoryParams {
+            connection_id: Some("conn".to_string()),
+            database: Some("db".to_string()),
+            name,
+            description: None,
+            body: "body".to_string(),
+        };
+        for index in 0..MAX_MEMORY_ENTRIES {
+            save_memory_entry_in(&base, make_params(format!("mem-{index:02}"))).unwrap();
+        }
+        // A 33rd file exists on disk but is cut from the capped index view —
+        // saving into it must OVERWRITE, not be misreported as "index full".
+        let masked = save_memory_entry_in(&base, make_params("mem-33".to_string()));
+        assert!(
+            masked.is_err(),
+            "a genuinely NEW entry past the cap must still be refused"
+        );
+        assert!(masked.unwrap_err().contains("full"));
+        let scope = memory_scope_dir(&base, Some("conn"), Some("db"));
+        let dir33 = scope.join("mem-33");
+        std::fs::create_dir_all(&dir33).unwrap();
+        std::fs::write(
+            memory_md_path(&dir33),
+            "---\nname: mem-33\ndescription: masked\nupdated: 2020-01-01T00:00:00Z\n---\n\nold body",
+        )
+        .unwrap();
+        let overwrite = save_memory_entry_in(&base, make_params("mem-33".to_string())).unwrap();
+        assert_eq!(overwrite.name, "mem-33");
+        let content = read_memory_entry_in(&base, Some("conn"), Some("db"), "mem-33").unwrap();
+        assert_eq!(content.body.trim(), "body");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn delete_removes_the_entry_and_reports_missing() {
+        let base = std::env::temp_dir().join(format!("tabler-mem-del-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        save_memory_entry_in(
+            &base,
+            SaveMemoryParams {
+                connection_id: Some("conn".to_string()),
+                database: Some("db".to_string()),
+                name: "obsolete".to_string(),
+                description: None,
+                body: "stale".to_string(),
+            },
+        )
+        .unwrap();
+        delete_agent_memory_in(&base, Some("conn"), Some("db"), "obsolete").unwrap();
+        let scope = memory_scope_dir(&base, Some("conn"), Some("db"));
+        assert!(discover_memories_in_root(&scope).is_empty());
+        assert!(delete_agent_memory_in(&base, Some("conn"), Some("db"), "obsolete").is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn save_leaves_no_staging_files_behind() {
+        let base = std::env::temp_dir().join(format!("tabler-mem-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        save_memory_entry_in(
+            &base,
+            SaveMemoryParams {
+                connection_id: Some("conn".to_string()),
+                database: Some("db".to_string()),
+                name: "atomic".to_string(),
+                description: None,
+                body: "body".to_string(),
+            },
+        )
+        .unwrap();
+        let scope = memory_scope_dir(&base, Some("conn"), Some("db"));
+        let staging: Vec<_> = std::fs::read_dir(&scope)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "tmp"))
+            .collect();
+        assert!(staging.is_empty());
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -43,6 +43,7 @@ import { saveSemanticGlossaryEntry } from "../../utils/semantic-glossary";
 import { requestAICheckpointPick } from "./ai-checkpoint-picker";
 import { useSkillUsageStore } from "../../stores/skillUsageStore";
 import { useUIStore } from "../../stores/uiStore";
+import { invalidateAgentMemoryIndex } from "./hooks/use-agent-memory";
 import { invokeMutation } from "../../utils/tauri-utils";
 import { EventCenter } from "../../stores/event-center";
 import {
@@ -1461,6 +1462,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         window.dispatchEvent(new CustomEvent("workspace-activity", {
           detail: { connectionId, label: `Memory saved: ${saved.name}`, durationMs: 0 },
         }));
+        // The injected index must not serve a stale (pre-save) view on the
+        // next run within the TTL window.
+        invalidateAgentMemoryIndex(connectionId ?? undefined);
         return `Memory "${saved.name}" saved for this connection/database scope${saved.updatedAt ? ` at ${saved.updatedAt}` : ""}. Future runs in this scope will see it in their <agent_memory> index. Never store credentials in memory.`;
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;

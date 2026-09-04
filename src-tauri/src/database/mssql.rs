@@ -18,7 +18,7 @@ use tiberius::{
     AuthMethod, Client, ColumnData, Config, EncryptionLevel, Query as TiberiusQuery, Row,
 };
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 pub type MssqlClient = Client<Compat<TcpStream>>;
@@ -37,6 +37,10 @@ pub(crate) struct MssqlServerAddress {
 pub struct MssqlDriver {
     client: Arc<Mutex<MssqlClient>>,
     current_db: Arc<RwLock<Option<String>>>,
+    /// Set when a transaction rollback fails on this connection: the session
+    /// is left inside an open transaction, so every further statement is
+    /// refused until the user reconnects.
+    poisoned: Arc<RwLock<Option<String>>>,
 }
 
 impl MssqlDriver {
@@ -53,6 +57,7 @@ impl MssqlDriver {
         Ok(Self {
             client: Arc::new(Mutex::new(client)),
             current_db: Arc::new(RwLock::new(Some(database_name.to_string()))),
+            poisoned: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -528,6 +533,26 @@ port instead (e.g. 'localhost,1433'). Original error: {}",
         }
     }
 
+    /// Client-access guard. A restore/write-preview whose automatic ROLLBACK
+    /// failed leaves the shared connection inside an open transaction:
+    /// further statements would silently run inside it (holding locks, and a
+    /// stray COMMIT could half-commit the restore). The only safe action
+    /// afterwards is reconnecting.
+    async fn acquire_client(&self) -> Result<MutexGuard<'_, MssqlClient>> {
+        if let Some(reason) = self.poisoned.read().unwrap().clone() {
+            return Err(anyhow!(
+                "Connection poisoned by a failed restore rollback ({reason}) — reconnect before issuing further statements."
+            ));
+        }
+        Ok(self.client.lock().await)
+    }
+
+    fn poison_connection(&self, reason: &str) {
+        if let Ok(mut poisoned) = self.poisoned.write() {
+            *poisoned = Some(reason.to_string());
+        }
+    }
+
     async fn query_rows(&self, sql: &str) -> Result<(Vec<Row>, bool)> {
         self.query_rows_with_limit(sql, MAX_QUERY_RESULT_ROWS).await
     }
@@ -537,7 +562,7 @@ port instead (e.g. 'localhost,1433'). Original error: {}",
     /// query cap on system databases (master alone has thousands of system
     /// objects), so it uses a much larger limit.
     async fn query_rows_with_limit(&self, sql: &str, limit: usize) -> Result<(Vec<Row>, bool)> {
-        let mut client = self.client.lock().await;
+        let mut client = self.acquire_client().await?;
         let rows = client.simple_query(sql).await?.into_first_result().await?;
         let truncated = rows.len() > limit;
         Ok((rows.into_iter().take(limit).collect::<Vec<_>>(), truncated))
@@ -574,7 +599,7 @@ port instead (e.g. 'localhost,1433'). Original error: {}",
     }
 
     async fn execute_bound(&self, sql: &str, values: &[serde_json::Value]) -> Result<u64> {
-        let mut client = self.client.lock().await;
+        let mut client = self.acquire_client().await?;
         let mut query = TiberiusQuery::new(sql);
         for value in values {
             Self::bind_json_value(&mut query, value);
@@ -587,7 +612,7 @@ port instead (e.g. 'localhost,1433'). Original error: {}",
         sql: &str,
         parameters: &[QueryParameter],
     ) -> Result<(Vec<Row>, bool)> {
-        let mut client = self.client.lock().await;
+        let mut client = self.acquire_client().await?;
         let mut query = TiberiusQuery::new(sql);
         for parameter in parameters {
             match parameter.data_type {
@@ -630,7 +655,7 @@ port instead (e.g. 'localhost,1433'). Original error: {}",
         sql: &str,
         parameters: &[QueryParameter],
     ) -> Result<u64> {
-        let mut client = self.client.lock().await;
+        let mut client = self.acquire_client().await?;
         let mut query = TiberiusQuery::new(sql);
         for parameter in parameters {
             match parameter.data_type {
@@ -932,7 +957,7 @@ impl DatabaseDriver for MssqlDriver {
     /// (unlike MySQL) supports transactional DDL, which makes the
     /// drop-recreate dump pipeline safe to abort mid-flight.
     async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
-        let mut client = self.client.lock().await;
+        let mut client = self.acquire_client().await?;
         TiberiusQuery::new("BEGIN TRANSACTION;")
             .execute(&mut *client)
             .await?;
@@ -956,17 +981,34 @@ impl DatabaseDriver for MssqlDriver {
                         Ok(_) => Err(anyhow!(
                             "Restore failed and was rolled back to the pre-restore state. Offending statement: {snippet} ({error})"
                         )),
-                        Err(rollback_error) => Err(anyhow!(
-                            "Restore failed at '{snippet}' ({error}) AND the automatic rollback also failed ({rollback_error}). The connection holds an open transaction — reconnect before issuing further statements."
-                        )),
+                        Err(rollback_error) => {
+                            self.poison_connection(&format!(
+                                "restore rollback failed: {rollback_error}"
+                            ));
+                            Err(anyhow!(
+                                "Restore failed at '{snippet}' ({error}) AND the automatic rollback also failed ({rollback_error}). The connection is poisoned and requires a reconnect before any further statement."
+                            ))
+                        }
                     };
                 }
             }
         }
 
-        TiberiusQuery::new("COMMIT TRANSACTION;")
+        if let Err(error) = TiberiusQuery::new("COMMIT TRANSACTION;")
             .execute(&mut *client)
-            .await?;
+            .await
+        {
+            // A failed COMMIT usually aborts the transaction server-side; try
+            // to unwind, and poison the connection if even ROLLBACK refuses.
+            if TiberiusQuery::new("ROLLBACK TRANSACTION;")
+                .execute(&mut *client)
+                .await
+                .is_err()
+            {
+                self.poison_connection("restore commit failed and rollback refused");
+            }
+            return Err(anyhow!("Restore commit failed: {error}"));
+        }
         Ok(total_affected)
     }
 
@@ -1001,7 +1043,7 @@ impl DatabaseDriver for MssqlDriver {
     /// BEGIN/ROLLBACK pair pinned to the driver's single client, so partial
     /// work is always discarded (same contract as the Postgres driver).
     async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
-        let mut client = self.client.lock().await;
+        let mut client = self.acquire_client().await?;
         // BEGIN/ROLLBACK must go as plain batches: sent via the prepared-RPC
         // path they run inside a nested scope and SQL Server raises 266
         // (transaction-count mismatch) when that scope exits.
@@ -1041,6 +1083,7 @@ impl DatabaseDriver for MssqlDriver {
         .await;
 
         if let Err(rollback_error) = client.simple_query("ROLLBACK TRANSACTION").await {
+            self.poison_connection(&format!("write-preview rollback failed: {rollback_error}"));
             log::warn!("write-preview rollback failed: {rollback_error}");
         }
         let results = execution?;

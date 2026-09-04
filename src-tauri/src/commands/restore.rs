@@ -22,6 +22,9 @@ pub struct RestoreResult {
     pub statement_count: usize,
     pub affected_rows: u64,
     pub transactional: bool,
+    /// Set when the pre-restore safety snapshot could not be captured — the
+    /// restore ran without a fresh fallback point and the UI must say so.
+    pub warning: Option<String>,
 }
 
 /// Builds a deterministic restore plan before any write reaches the selected database.
@@ -144,6 +147,7 @@ pub(super) async fn run_sql_restore(
         return Err("The restore file does not contain any SQL statements.".to_string());
     }
     let transactional = supports_transactional_restore(db_type);
+    let mut warning: Option<String> = None;
     // Engines that cannot roll a failed restore back get a snapshot of the
     // CURRENT state first — the last line of defense when a mid-restore
     // failure leaves earlier changes applied.
@@ -166,6 +170,9 @@ pub(super) async fn run_sql_restore(
                             ));
                         }
                         log::warn!("pre-restore snapshot failed, continuing anyway: {error}");
+                        warning = Some(format!(
+                            "Pre-restore snapshot failed ({error}) — the restore ran without a fresh fallback point."
+                        ));
                     }
                 }
             }
@@ -184,6 +191,7 @@ pub(super) async fn run_sql_restore(
         statement_count: statements.len(),
         affected_rows,
         transactional,
+        warning,
     })
 }
 

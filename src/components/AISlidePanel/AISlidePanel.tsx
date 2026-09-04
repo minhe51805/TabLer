@@ -1132,11 +1132,21 @@ export function AISlidePanel({
         activeConnectionDbType,
       );
       if (!fileName) return;
-      await invokeMutation("restore_database_checkpoint", {
+      const restoreResult = await invokeMutation<{
+        warning?: string | null;
+      }>("restore_database_checkpoint", {
         connectionId,
         fileName,
         dbType: activeConnectionDbType,
       });
+      if (restoreResult?.warning) {
+        emitAppToast({
+          tone: "error",
+          title: language === "vi" ? "Snapshot pre-restore thất bại" : "Pre-restore snapshot failed",
+          description: restoreResult.warning,
+          durationMs: 10_000,
+        });
+      }
       // Schema caches across the app must not keep serving pre-rollback data.
       window.dispatchEvent(
         new CustomEvent("table-data-updated", {

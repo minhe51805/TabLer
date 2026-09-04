@@ -39,6 +39,7 @@ import {
   type AIAgentActionRequestReason,
 } from "../ai-agent-runner";
 import { getAgentMemoryIndex } from "./use-agent-memory";
+import { emitAppToast } from "../../../utils/app-toast";
 import { useUIStore } from "../../../stores/uiStore";
 import {
   DEFAULT_AGENT_TOKEN_BUDGET,
@@ -221,12 +222,27 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     [],
   );
   const restoreCheckpoint = useCallback(
-    (restoreConnectionId: string, fileName: string, restoreDbType: string) =>
-      invokeMutation("restore_database_checkpoint", {
-        connectionId: restoreConnectionId,
-        fileName,
-        dbType: restoreDbType,
-      }),
+    async (restoreConnectionId: string, fileName: string, restoreDbType: string) => {
+      const result = await invokeMutation<{ warning?: string | null }>(
+        "restore_database_checkpoint",
+        {
+          connectionId: restoreConnectionId,
+          fileName,
+          dbType: restoreDbType,
+        },
+      );
+      // The rollback itself succeeded, but its safety snapshot may not have —
+      // the user must know /rollback has no fresh fallback point.
+      if (result?.warning) {
+        emitAppToast({
+          tone: "error",
+          title: "Pre-restore snapshot failed",
+          description: result.warning,
+          durationMs: 10_000,
+        });
+      }
+      return result;
+    },
     [],
   );
 
@@ -613,11 +629,17 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               .getState()
               .tabs.filter((tab) => tab.type === "query" && tab.connectionId === connectionId)
               .slice(0, 8)
-              .map((tab) => ({
-                tabId: tab.id,
-                title: tab.title,
-                sql: (tab.content ?? "").slice(0, 2_000),
-              }))
+              .map((tab) => {
+                const fullSql = tab.content ?? "";
+                // Long tabs are truncated WITH a loud marker, so the model
+                // never mistakes a partial view for the whole file and never
+                // proposes a full replacement built on unseen tail content.
+                const sql =
+                  fullSql.length > 2_000
+                    ? `${fullSql.slice(0, 2_000)}\n…[TRUNCATED — showing 2,000 of ${fullSql.length} chars. Never propose a full replacement for content you have not seen.]`
+                    : fullSql;
+                return { tabId: tab.id, title: tab.title, sql };
+              })
           : undefined;
 
         // Honest database-mismatch signal: if the user explicitly names a

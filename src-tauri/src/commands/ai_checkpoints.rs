@@ -356,32 +356,26 @@ pub(super) async fn create_pre_restore_snapshot(
     Ok(Some(checkpoint.meta))
 }
 
-/// Best-effort variant used by the rollback path: logs failures instead of
-/// aborting — recovery must never be blocked by its own safety net.
+/// Best-effort variant used by the rollback path: returns the failure to the
+/// caller (which surfaces it to the UI) but never aborts recovery.
 async fn capture_pre_restore_safety_snapshot(
     connection_id: &str,
     db_type: DatabaseType,
     db_manager: &DatabaseManager,
-) {
-    match snapshot_database(
+) -> Result<CheckpointMeta, String> {
+    let checkpoint = snapshot_database(
         connection_id,
         None,
         db_type,
         Some("pre-restore safety".to_string()),
         db_manager,
     )
-    .await
-    {
-        Ok(checkpoint) => {
-            log::info!(
-                "pre-restore snapshot captured: {}",
-                checkpoint.meta.file_name
-            );
-        }
-        Err(error) => {
-            log::warn!("pre-restore snapshot failed, continuing rollback anyway: {error}");
-        }
-    }
+    .await?;
+    log::info!(
+        "pre-restore snapshot captured: {}",
+        checkpoint.meta.file_name
+    );
+    Ok(checkpoint.meta)
 }
 
 /// `/rollback` step 1: list the checkpoints stored for this connection,
@@ -522,6 +516,8 @@ pub async fn restore_database_checkpoint(
         sql
     };
 
+    let mut pre_restore_warning: Option<String> = None;
+
     // Safety net for the recovery path itself: snapshot the CURRENT state so
     // even a mid-restore failure leaves a fallback checkpoint. Only engines
     // that can lose data on this path pay for it: MSSQL drops tables BEFORE
@@ -531,13 +527,28 @@ pub async fn restore_database_checkpoint(
     // blocks recovery (same policy as the agent auto-checkpoint).
     let restore_is_atomic = super::restore::supports_transactional_restore(db_type);
     if db_type != DatabaseType::MSSQL && !restore_is_atomic {
-        capture_pre_restore_safety_snapshot(&connection_id, db_type, &db_manager).await;
+        if let Err(error) =
+            capture_pre_restore_safety_snapshot(&connection_id, db_type, &db_manager).await
+        {
+            log::warn!("pre-restore snapshot failed, continuing rollback anyway: {error}");
+            pre_restore_warning = Some(format!(
+                "Pre-restore snapshot failed ({error}) — the rollback is running without a fresh fallback point."
+            ));
+        }
     }
 
     // MSSQL's pre-drop is destructive and sits OUTSIDE the transactional
-    // dump replay, so it always gets its own safety snapshot first.
+    // dump replay, so it always gets its own safety snapshot first. A failed
+    // snapshot must be visible to the user — the rollback proceeds unprotected.
     if db_type == DatabaseType::MSSQL {
-        capture_pre_restore_safety_snapshot(&connection_id, db_type, &db_manager).await;
+        if let Err(error) =
+            capture_pre_restore_safety_snapshot(&connection_id, db_type, &db_manager).await
+        {
+            log::warn!("pre-restore snapshot failed, rollback proceeds unprotected: {error}");
+            pre_restore_warning = Some(format!(
+                "Pre-restore snapshot failed ({error}) — the rollback proceeds unprotected. Create a /backup manually if this rollback misbehaves."
+            ));
+        }
     }
 
     // Pre-drop: query the server for existing user tables and drop them
@@ -577,7 +588,7 @@ pub async fn restore_database_checkpoint(
         drop(driver);
     }
 
-    run_sql_restore(
+    let mut result = run_sql_restore(
         &connection_id,
         &sql,
         db_type,
@@ -589,7 +600,9 @@ pub async fn restore_database_checkpoint(
         // BEFORE the destructive pre-drop, so the pipeline must not repeat it.
         PreRestoreSnapshot::CallerManaged,
     )
-    .await
+    .await?;
+    result.warning = pre_restore_warning;
+    Ok(result)
 }
 
 #[cfg(test)]

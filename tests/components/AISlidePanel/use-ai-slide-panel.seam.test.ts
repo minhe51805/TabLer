@@ -13,4 +13,8 @@ describe("edit_query_sql seam pin (hook wiring tripwire)", () => {
   it("scopes the edit surface to the run's connection", () => {
     expect(hookSource).toContain("tab.connectionId === connectionId");
   });
+
+  it("marks truncated tab sql so the model never sees a silent partial view", () => {
+    expect(hookSource).toContain("…[TRUNCATED");
+  });
 });

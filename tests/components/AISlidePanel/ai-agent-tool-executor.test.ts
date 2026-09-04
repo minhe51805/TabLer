@@ -777,6 +777,17 @@ describe("edit_query_sql proposals", () => {
     expect(emitSpy).toHaveBeenCalledWith("ai-edit-query-sql", expect.objectContaining({ tabId: "tab-1" }));
   });
 
+  it("refuses proposals that echo the truncation marker", async () => {
+    const obs = await run(mkDeps(), {
+      action: "edit_query_sql",
+      args: {
+        tabId: "tab-1",
+        sql: "SELECT 1 …[TRUNCATED — showing 2,000 of 9,000 chars]",
+      },
+    });
+    expect(obs).toContain("do not echo the truncation marker");
+  });
+
   it("refuses unknown or non-query tabIds", async () => {
     const obs = await run(mkDeps(), {
       action: "edit_query_sql",

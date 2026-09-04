@@ -1381,6 +1381,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       if (!rawTabId || !sql) {
         return "Tool error: edit_query_sql requires args.tabId and args.sql from the Query tabs list.";
       }
+      if (sql.includes("…[TRUNCATED")) {
+        return "Tool error: do not echo the truncation marker from the context. Propose only content you have actually seen; explain anything outside your view in args.reason.";
+      }
       // The tab must exist, be a query tab, and belong to THIS run's
       // connection — the agent must not reach into another connection's
       // editors.

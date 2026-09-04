@@ -1,4 +1,4 @@
-import { FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search } from "lucide-react";
+import { FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { exportToCSV, exportToJSON } from "../../utils/export-utils";
@@ -54,6 +54,8 @@ interface DataGridToolbarProps {
   filterValue?: string;
   onFilterChange?: (value: string) => void;
   canExportData?: boolean;
+  /** Refetch the current table from the database (manual reload button) */
+  onReloadData?: () => void;
   canImportCsv?: boolean;
   onExportFull?: (format: "csv" | "jsonl") => void;
   isExportingFull?: boolean;
@@ -98,6 +100,7 @@ export function DataGridToolbar({
   filterValue = "",
   onFilterChange,
   canExportData = true,
+  onReloadData,
   canImportCsv = true,
   onExportFull,
   isExportingFull = false,
@@ -408,6 +411,17 @@ export function DataGridToolbar({
               <ChevronDown className="!w-3 !h-3" />
             </button>
           </span>
+          {onReloadData && (
+            <button
+              type="button"
+              className="datagrid-footer-action"
+              onClick={onReloadData}
+              title="Reload data"
+            >
+              <RefreshCw className="!w-3.5 !h-3.5" />
+              <span>Reload</span>
+            </button>
+          )}
           {isExportingFull && onCancelExport && (
             <button
               type="button"

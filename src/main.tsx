@@ -128,6 +128,17 @@ window.addEventListener("unhandledrejection", (event) => {
   renderBootFailure("unhandledrejection", err);
 });
 
+// Suppress the WebView2/Chromium default right-click menu (Back / Refresh /
+// Save as / Print / Inspect…) — TableR renders its own context menus
+// (DataGrid, Sidebar tree, ERD, Metrics). Text fields keep the native
+// cut/copy/paste menu so clipboard actions still work there; devtools remain
+// reachable via F12 / Ctrl+Shift+I while devtools are enabled.
+document.addEventListener("contextmenu", (event) => {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("input, textarea, [contenteditable='true']")) return;
+  event.preventDefault();
+});
+
 async function startApp() {
   try {
     if (import.meta.env.MODE === "e2e") {

@@ -31,6 +31,7 @@ export const AI_AGENT_TOOL_NAMES = [
   "read_memory",
   "save_memory",
   "edit_query_sql",
+  "delete_memory",
   "create_checkpoint",
   "restore_checkpoint",
   "skill",
@@ -89,6 +90,7 @@ const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "read_memory",
   "save_memory",
   "edit_query_sql",
+  "delete_memory",
 ]);
 
 /** Minimal JSON Schema subset used for tool parameters (Draft 2020-12 compatible). */
@@ -463,6 +465,21 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
     ),
   },
 
+  delete_memory: {
+    name: "delete_memory",
+    description:
+      "Permanently delete ONE memory entry by its exact name — use when the index is full and an entry is obsolete, or when the user asks to forget something. This cannot be undone. Confirm with the user before deleting an entry you did not write this run.",
+    parameters: objectSchema(
+      {
+        name: {
+          type: "string",
+          description: "Entry name exactly as listed in <agent_memory>.",
+        },
+      },
+      ["name"],
+    ),
+  },
+
   edit_query_sql: {
     name: "edit_query_sql",
     description:
@@ -739,6 +756,13 @@ export function parseAgentToolArgs(
   action: AIAgentToolName,
   args: Record<string, unknown>,
 ): Record<string, unknown> {
+  if (action === "delete_memory") {
+    const name = typeof args.name === "string" ? args.name.trim() : "";
+    if (!name) {
+      throw new Error("The delete_memory action requires a non-empty args.name.");
+    }
+  }
+
   if (action === "edit_query_sql") {
     const tabId = typeof args.tabId === "string" ? args.tabId.trim() : "";
     const sql = typeof args.sql === "string" ? args.sql.trim() : "";

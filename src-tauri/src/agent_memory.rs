@@ -248,8 +248,12 @@ fn write_memory_file(dir: &Path, frontmatter: &str, body: &str) -> Result<(), St
     let staging_path = file_path.with_extension("md.tmp");
     std::fs::write(&staging_path, &content)
         .map_err(|error| format!("Failed to write memory staging file: {error}"))?;
-    std::fs::rename(&staging_path, &file_path)
-        .map_err(|error| format!("Failed to finalize memory write: {error}"))
+    if let Err(rename_error) = std::fs::rename(&staging_path, &file_path) {
+        // Never leave an orphaned staging file inside the scope.
+        let _ = std::fs::remove_file(&staging_path);
+        return Err(format!("Failed to finalize memory write: {rename_error}"));
+    }
+    Ok(())
 }
 
 /// Upsert one memory entry in the (connection, database) scope. Same name =
@@ -352,8 +356,28 @@ pub(super) fn delete_agent_memory_in(
     if dir.parent() != Some(scope.as_path()) {
         return Err("Memory name escapes its scope directory.".to_string());
     }
-    if !dir.exists() {
-        return Err(format!("Memory '{name}' was not found in this scope."));
+    // Same policy as read/write: never traverse a symlinked entry. A dangling
+    // link is removed as the pointer itself — that is the cleanup the user
+    // asked for (exists() is false for it, so handle it explicitly).
+    match std::fs::symlink_metadata(&dir) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            // Distinguish a live link (target still resolvable → refuse: never
+            // delete data through a link) from a dangling one — removing the
+            // dead pointer is exactly the cleanup being asked for. Windows
+            // needs RemoveDirectory for dir links; Unix file links unlink.
+            if std::fs::metadata(&dir).is_ok() {
+                return Err(format!(
+                    "Memory '{name}' is a symlink — refusing to delete through it. Remove the link manually if it is obsolete."
+                ));
+            }
+            let removed = std::fs::remove_file(&dir).or_else(|_| std::fs::remove_dir(&dir));
+            removed
+                .map_err(|error| format!("Failed to remove dangling memory symlink: {error}"))?;
+            log::info!("agent_memory: removed dangling symlink '{name}'");
+            return Ok(());
+        }
+        Ok(_) => {}
+        Err(_) => return Err(format!("Memory '{name}' was not found in this scope.")),
     }
     std::fs::remove_dir_all(&dir)
         .map_err(|error| format!("Failed to delete memory '{name}': {error}"))?;
@@ -750,6 +774,34 @@ mod tests {
         let scope = memory_scope_dir(&base, Some("conn"), Some("db"));
         assert!(discover_memories_in_root(&scope).is_empty());
         assert!(delete_agent_memory_in(&base, Some("conn"), Some("db"), "obsolete").is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn delete_refuses_live_symlink_and_removes_dangling_pointer() {
+        let base = std::env::temp_dir().join(format!("tabler-mem-delsym-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let scope = memory_scope_dir(&base, Some("conn"), Some("db"));
+        let target = base.join("outside");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("MEMORY.md"), "---\nname: linked\n---\n\nbody").unwrap();
+        let link = scope.join("linked");
+        std::fs::create_dir_all(&scope).unwrap();
+        #[cfg(unix)]
+        let link_result = std::os::unix::fs::symlink(&target, &link);
+        #[cfg(windows)]
+        let link_result = std::os::windows::fs::symlink_dir(&target, &link);
+        if link_result.is_err() {
+            let _ = std::fs::remove_dir_all(&base);
+            return; // host without symlink privilege — policy covered elsewhere
+        }
+        // Live symlink: refuse, and the pointed-to data must survive.
+        assert!(delete_agent_memory_in(&base, Some("conn"), Some("db"), "linked").is_err());
+        assert!(target.join("MEMORY.md").exists());
+        // Dangling pointer: removing the link itself is the right cleanup.
+        std::fs::remove_dir_all(&target).unwrap();
+        assert!(delete_agent_memory_in(&base, Some("conn"), Some("db"), "linked").is_ok());
+        assert!(!link.exists());
         let _ = std::fs::remove_dir_all(&base);
     }
 

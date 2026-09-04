@@ -27,6 +27,7 @@ describe("AI agent tool contract", () => {
       "read_memory",
       "save_memory",
       "edit_query_sql",
+      "delete_memory",
       "create_checkpoint",
       "restore_checkpoint",
       "skill",

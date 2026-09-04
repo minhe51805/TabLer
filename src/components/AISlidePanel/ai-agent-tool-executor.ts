@@ -1415,6 +1415,33 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       ].join("\n");
     }
 
+    if (action.action === "delete_memory") {
+      const memoryName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
+      if (!memoryName) {
+        return "Tool error: delete_memory requires args.name taken from the <agent_memory> index.";
+      }
+      if (!memoryScope?.connectionId) {
+        return "Tool error: delete_memory requires an active connection scope.";
+      }
+      try {
+        await invokeMutation("delete_agent_memory", {
+          name: memoryName,
+          connectionId: memoryScope.connectionId,
+          database: memoryScope.database ?? null,
+        });
+        // Same freshness contract as saves: the next run must not serve a
+        // deleted entry from the TTL cache.
+        invalidateAgentMemoryIndex(memoryScope.connectionId);
+        window.dispatchEvent(new CustomEvent("workspace-activity", {
+          detail: { connectionId, label: `Memory deleted: ${memoryName}`, durationMs: 0 },
+        }));
+        return `Memory "${memoryName}" permanently deleted from this scope. The freed slot is available to the next save_memory.`;
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: could not delete memory "${memoryName}": ${formatExecutionError(errorValue)}`;
+      }
+    }
+
     if (action.action === "read_memory") {
       const memoryName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
       if (!memoryName) {

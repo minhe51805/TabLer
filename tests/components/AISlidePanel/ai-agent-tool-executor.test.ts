@@ -615,6 +615,10 @@ describe("unknown tools and timeout hints", () => {
 vi.mock("@/utils/tauri-utils", () => ({
   invokeMutation: vi.fn(),
 }));
+vi.mock("@/components/AISlidePanel/hooks/use-agent-memory", () => ({
+  invalidateAgentMemoryIndex: vi.fn(),
+  getAgentMemoryIndex: vi.fn(),
+}));
 
 describe("skill allowlist enforcement", () => {
   it("refuses a skill outside the injected catalog (allowlist mode)", async () => {
@@ -786,6 +790,32 @@ describe("edit_query_sql proposals", () => {
       },
     });
     expect(obs).toContain("do not echo the truncation marker");
+  });
+
+  it("deletes memory through the backend and invalidates the cache", async () => {
+    const { invalidateAgentMemoryIndex } = await import(
+      "@/components/AISlidePanel/hooks/use-agent-memory"
+    );
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    vi.mocked(invokeMutation).mockResolvedValue(undefined as never);
+    const dispatchSpy = vi.spyOn(window, "dispatchEvent");
+    const deps = mkDeps({ memoryScope: { connectionId: CONNECTION_ID, database: DB } });
+    const obs = await run(deps, { action: "delete_memory", args: { name: "obsolete" } });
+    expect(obs).toContain("permanently deleted");
+    expect(vi.mocked(invokeMutation)).toHaveBeenCalledWith("delete_agent_memory", {
+      name: "obsolete",
+      connectionId: CONNECTION_ID,
+      database: DB,
+    });
+    expect(invalidateAgentMemoryIndex).toHaveBeenCalledWith(CONNECTION_ID);
+    expect(dispatchSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "workspace-activity" }),
+    );
+  });
+
+  it("requires a name for delete_memory", async () => {
+    const obs = await run(mkDeps(), { action: "delete_memory", args: { name: "" } });
+    expect(obs).toContain("requires args.name");
   });
 
   it("refuses unknown or non-query tabIds", async () => {

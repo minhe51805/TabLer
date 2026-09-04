@@ -87,6 +87,15 @@ export type AIAgentSaveMemoryAction = AIAgentToolActionBase<
   AIAgentSaveMemoryArgs
 >;
 
+export interface AIAgentDeleteMemoryArgs extends Record<string, unknown> {
+  name: string;
+}
+
+export type AIAgentDeleteMemoryAction = AIAgentToolActionBase<
+  "delete_memory",
+  AIAgentDeleteMemoryArgs
+>;
+
 export interface AIAgentSkillArgs extends Record<string, unknown> {
   name: string;
 }
@@ -280,6 +289,7 @@ export type AIAgentToolAction =
   | AIAgentRememberTermAction
   | AIAgentReadMemoryAction
   | AIAgentSaveMemoryAction
+  | AIAgentDeleteMemoryAction
   | AIAgentEditQuerySqlAction
   | AIAgentSkillAction
   | AIAgentCreateCheckpointAction

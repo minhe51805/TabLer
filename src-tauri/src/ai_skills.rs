@@ -119,10 +119,24 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> Vec<AISkillSu
             let Some(dir_name) = dir_display_name(&dir_path) else {
                 continue;
             };
-            let Ok(raw) = std::fs::read_to_string(skill_md_path(&dir_path)) else {
+            let file_path = skill_md_path(&dir_path);
+            // A symlinked SKILL.md file is an escape vector even when the
+            // directory itself is real: reject before reading.
+            let file_is_symlink = std::fs::symlink_metadata(&file_path)
+                .map(|meta| meta.file_type().is_symlink())
+                .unwrap_or(false);
+            if file_is_symlink {
+                log::warn!(
+                    "ai_skills: SKILL.md is a symlink — rejecting '{}' ({})",
+                    dir_path.display(),
+                    source
+                );
+                continue;
+            }
+            let Ok(raw) = std::fs::read_to_string(&file_path) else {
                 log::warn!(
                     "ai_skills: cannot read {} ({})",
-                    skill_md_path(&dir_path).display(),
+                    file_path.display(),
                     source
                 );
                 continue;
@@ -157,7 +171,14 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> Vec<AISkillSu
         }
     }
     summaries.sort_by(|left, right| left.name.cmp(&right.name));
-    summaries.truncate(MAX_SKILLS_PER_CATALOG);
+    if summaries.len() > MAX_SKILLS_PER_CATALOG {
+        log::warn!(
+            "ai_skills: catalog truncated from {} to {} entries — consider pruning skills",
+            summaries.len(),
+            MAX_SKILLS_PER_CATALOG
+        );
+        summaries.truncate(MAX_SKILLS_PER_CATALOG);
+    }
     summaries
 }
 
@@ -171,6 +192,15 @@ pub fn read_ai_skill_by_name(
     workspace_dir: Option<&str>,
     name: &str,
 ) -> Result<AISkillContent, String> {
+    read_skill_in_roots(&skill_roots(workspace_dir), name)
+}
+
+/// Resolve one skill across explicit roots — split out so tests can drive the
+/// real read path against a temporary root instead of the global data dir.
+pub fn read_skill_in_roots(
+    roots: &[(PathBuf, String)],
+    name: &str,
+) -> Result<AISkillContent, String> {
     let trimmed = name.trim();
     if trimmed.is_empty()
         || trimmed.len() > 64
@@ -180,7 +210,7 @@ pub fn read_ai_skill_by_name(
     {
         return Err("Invalid skill name.".to_string());
     }
-    for (root, source) in skill_roots(workspace_dir) {
+    for (root, source) in roots {
         let dir_path = root.join(trimmed);
         // Guard against traversal AND symlink escape: compare canonicalized
         // paths so a link cannot resolve outside the skills root.
@@ -192,7 +222,17 @@ pub fn read_ai_skill_by_name(
         if !canonical_dir.starts_with(&canonical_root) {
             continue;
         }
-        let Ok(raw) = std::fs::read_to_string(skill_md_path(&dir_path)) else {
+        let file_path = skill_md_path(&dir_path);
+        // The directory containment above does not cover a symlinked SKILL.md
+        // file: read_to_string would happily follow it outside the root.
+        // Canonicalize the file itself and require containment.
+        let Ok(canonical_file) = file_path.canonicalize() else {
+            continue;
+        };
+        if !canonical_file.starts_with(&canonical_root) {
+            continue;
+        }
+        let Ok(raw) = std::fs::read_to_string(&file_path) else {
             continue;
         };
         let (Some(parsed_name), parsed_description, body) = parse_skill_md(&raw) else {
@@ -219,7 +259,7 @@ pub fn read_ai_skill_by_name(
         return Ok(AISkillContent {
             name: parsed_name,
             description: parsed_description.unwrap_or_default(),
-            source,
+            source: source.to_string(),
             body,
         });
     }
@@ -317,13 +357,58 @@ mod tests {
     }
 
     #[test]
-    fn discover_and_read_share_one_strict_contract() {
-        // Discovery requires name == directory name; the read path must be
-        // exactly as strict so a skill can never be loaded under a name it
+    fn read_rejects_name_directory_mismatch_end_to_end() {
+        // Discovery requires name == directory name; the real read path must
+        // be exactly as strict so a skill can never be loaded under a name it
         // did not declare (Windows is case-insensitive on top of this).
-        let (name, description, _) =
-            parse_skill_md("---\nname: other-name\ndescription: mismatched\n---\nbody");
-        assert_eq!(name.as_deref(), Some("other-name"));
-        assert_ne!(description.as_deref(), Some("git-release"));
+        let base = std::env::temp_dir().join(format!("tabler-skill-strict-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("declared-elsewhere");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            skill_md_path(&dir),
+            "---\nname: other-name\ndescription: mismatched\n---\nbody",
+        )
+        .unwrap();
+        let result =
+            read_skill_in_roots(&[(base.clone(), "test".to_string())], "declared-elsewhere");
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn read_rejects_symlinked_skill_file_outside_root() {
+        // A symlinked SKILL.md must not be followed out of the root even when
+        // the containing directory is real. Skipped quietly on hosts that do
+        // not grant symlink privileges (the canonicalize check still holds).
+        let base =
+            std::env::temp_dir().join(format!("tabler-skill-symlink-{}", std::process::id()));
+        let outside =
+            std::env::temp_dir().join(format!("tabler-skill-outside-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_file(&outside);
+        let dir = base.join("linked-skill");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            &outside,
+            "---\nname: linked-skill\ndescription: outside\n---\nESCAPED",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        let link_result = std::os::unix::fs::symlink(&outside, skill_md_path(&dir));
+        #[cfg(windows)]
+        let link_result = std::os::windows::fs::symlink_file(&outside, skill_md_path(&dir));
+        if link_result.is_err() {
+            let _ = std::fs::remove_dir_all(&base);
+            let _ = std::fs::remove_file(&outside);
+            return;
+        }
+        let result = read_skill_in_roots(&[(base.clone(), "test".to_string())], "linked-skill");
+        assert!(result.is_err());
+        if let Ok(content) = result {
+            assert!(!content.body.contains("ESCAPED"));
+        }
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_file(&outside);
     }
 }

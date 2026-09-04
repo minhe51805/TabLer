@@ -327,7 +327,10 @@ export function analyzeAgentSqlForAgent(
   return { ok: true };
 }
 
-const AI_SKILL_BODY_MAX_CHARS = 12_000;
+// Matches the backend ceiling in ai_skills.rs (MAX_SKILL_BODY_CHARS = 8_000).
+// The backend truncates authoritatively; this FE check is a redundant backstop
+// so the two layers must not drift apart again.
+const AI_SKILL_BODY_MAX_CHARS = 8_000;
 
 export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const {
@@ -1330,7 +1333,8 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       if (!skillName) {
         return "Tool error: skill requires args.name taken from the <available_skills> list.";
       }
-      if (allowedSkillNames && !allowedSkillNames.includes(skillName)) {
+      // Fail-closed: only names injected in this run's catalog may load.
+      if (!allowedSkillNames?.includes(skillName)) {
         return `Tool error: skill "${skillName}" is not in the injected <available_skills> catalog. Pick one of the listed skills.`;
       }
       try {

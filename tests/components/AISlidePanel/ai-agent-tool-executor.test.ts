@@ -634,11 +634,15 @@ describe("skill allowlist enforcement", () => {
     expect(vi.mocked(invokeMutation)).toHaveBeenCalledWith("read_ai_skill", { name: "git-release" });
   });
 
-  it("keeps permissive behavior when no allowlist is injected", async () => {
+  it("refuses every skill when no allowlist is injected (fail-closed)", async () => {
     const { invokeMutation } = await import("@/utils/tauri-utils");
     vi.mocked(invokeMutation).mockResolvedValue({ name: "git-release", body: "release steps" });
     const obs = await run(mkDeps(), { action: "skill", args: { name: "git-release" } });
-    expect(obs).toContain("release steps");
+    expect(obs).toContain("is not in the injected <available_skills> catalog");
+    expect(vi.mocked(invokeMutation)).not.toHaveBeenCalledWith(
+      "read_ai_skill",
+      expect.anything(),
+    );
   });
 });
 

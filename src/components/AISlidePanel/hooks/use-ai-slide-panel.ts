@@ -665,7 +665,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           },
         });
         const { runAgentTool } = createAgentToolExecutor({
-          allowedSkillNames: availableSkills?.map((entry) => entry.name),
+          // Fail-closed: an absent catalog means NO skill may load, otherwise
+          // a model could call the skill tool for entries never vetted.
+          allowedSkillNames: availableSkills?.map((entry) => entry.name) ?? [],
           connectionId,
           currentDatabase,
           dbType: activeDbType,

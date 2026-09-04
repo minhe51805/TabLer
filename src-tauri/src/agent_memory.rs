@@ -168,11 +168,21 @@ pub fn discover_memories_in_root(root: &Path) -> Vec<MemoryEntrySummary> {
         let Some(dir_name) = dir_path.file_name().and_then(|value| value.to_str()) else {
             continue;
         };
-        let Ok(raw) = std::fs::read_to_string(memory_md_path(&dir_path)) else {
+        let file_path = memory_md_path(&dir_path);
+        // A symlinked MEMORY.md file is an escape vector even when the
+        // directory itself is real: reject before reading.
+        let file_is_symlink = std::fs::symlink_metadata(&file_path)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
+        if file_is_symlink {
             log::warn!(
-                "agent_memory: cannot read {}",
-                memory_md_path(&dir_path).display()
+                "agent_memory: MEMORY.md is a symlink — rejecting '{}'",
+                dir_path.display()
             );
+            continue;
+        }
+        let Ok(raw) = std::fs::read_to_string(&file_path) else {
+            log::warn!("agent_memory: cannot read {}", file_path.display());
             continue;
         };
         let (parsed_name, parsed_description, parsed_updated, _) = parse_memory_md(&raw);
@@ -215,9 +225,17 @@ pub struct SaveMemoryParams {
 fn write_memory_file(dir: &Path, frontmatter: &str, body: &str) -> Result<(), String> {
     std::fs::create_dir_all(dir)
         .map_err(|error| format!("Failed to create memory directory: {error}"))?;
+    let file_path = memory_md_path(dir);
+    // Writing follows symlinks: a pre-existing MEMORY.md link would redirect
+    // the write outside the scope. Refuse instead of overwriting through it.
+    let target_is_symlink = std::fs::symlink_metadata(&file_path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false);
+    if target_is_symlink {
+        return Err("Memory file is a symlink — refusing to write through it.".to_string());
+    }
     let content = format!("---\n{frontmatter}---\n\n{body}");
-    std::fs::write(memory_md_path(dir), content)
-        .map_err(|error| format!("Failed to write memory: {error}"))
+    std::fs::write(&file_path, content).map_err(|error| format!("Failed to write memory: {error}"))
 }
 
 /// Upsert one memory entry in the (connection, database) scope. Same name =
@@ -292,7 +310,17 @@ fn read_memory_entry(
     if !canonical_dir.starts_with(&canonical_scope) {
         return Err("Memory path escapes its scope directory.".to_string());
     }
-    let raw = std::fs::read_to_string(memory_md_path(&dir))
+    let file_path = memory_md_path(&dir);
+    // Directory containment does not cover a symlinked MEMORY.md file:
+    // read_to_string would follow it outside the scope. Canonicalize the
+    // file itself and require containment.
+    let Ok(canonical_file) = file_path.canonicalize() else {
+        return Err(format!("Memory '{name}' was not found in this scope."));
+    };
+    if !canonical_file.starts_with(&canonical_scope) {
+        return Err("Memory file escapes its scope directory.".to_string());
+    }
+    let raw = std::fs::read_to_string(&file_path)
         .map_err(|_| format!("Memory '{name}' was not found in this scope."))?;
     let (Some(parsed_name), parsed_description, parsed_updated, body) = parse_memory_md(&raw)
     else {

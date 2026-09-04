@@ -10,7 +10,6 @@ import { inferDatabaseFromWorkspaceName, selectActiveAIChatWorkspace, useAIChatW
 import {
   AUTO_COMPACT_TRIGGER_CHARS,
   COMPACT_COMMAND,
-  COMPACT_PRESERVE_RECENT_BUBBLES,
   buildCompactTranscript,
   buildCompactUserPrompt,
   buildPostCompactHistory,
@@ -927,13 +926,12 @@ export function AISlidePanel({
           console.error("[AIWorkspace] Failed to cache digest:", digestCacheError);
         }
       }
+      // Claude Code / opencode semantics: the digest is the essence of the
+      // WHOLE conversation up to this point — every ready bubble is folded in
+      // (the summarizer sees them all via buildCompactTranscript) and no
+      // verbatim scrollback survives beside the digest afterwards.
       const sortedReady = [...readyBubbles].sort((left, right) => left.createdAt - right.createdAt);
-      const keepIds = new Set(
-        sortedReady.slice(-COMPACT_PRESERVE_RECENT_BUBBLES).map((bubble) => bubble.id)
-      );
-      const removedIds = sortedReady
-        .filter((bubble) => !keepIds.has(bubble.id))
-        .map((bubble) => bubble.id);
+      const removedIds = sortedReady.map((bubble) => bubble.id);
 
       // Archive the FULL thread transcript in the SQLite cache before touching
       // anything — compacting never destroys the original conversation (same
@@ -958,7 +956,6 @@ export function AISlidePanel({
         )));
       }
 
-      const keptBubbles = sortedReady.slice(-COMPACT_PRESERVE_RECENT_BUBBLES);
       const effectiveDigest = digest.trim() || activeChatWorkspace.contextDigest;
 
       // Codex-style memory: name this thread's digest and tag it with
@@ -1003,7 +1000,7 @@ export function AISlidePanel({
         };
         setBubbles((current) => [...current, markerBubble]);
       }
-      return { digest: effectiveDigest, recentHistory: buildPostCompactHistory(effectiveDigest, keptBubbles) };
+      return { digest: effectiveDigest, recentHistory: buildPostCompactHistory(effectiveDigest) };
     } catch (compactError) {
       setError(compactError instanceof Error ? compactError.message : String(compactError));
       return null;

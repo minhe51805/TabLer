@@ -127,7 +127,11 @@ describe("buildWorkspaceContextMessages", () => {
 });
 
 describe("buildPostCompactHistory", () => {
-  it("combines the digest pair with recent bubble history", () => {
+  it("carries the digest ALONE — the essence of the whole conversation, no verbatim scrollback", () => {
+    // Claude Code / opencode semantics: the digest summarizes the ENTIRE
+    // conversation up to the compact point (including the last turns), so
+    // nothing verbatim survives beside it — otherwise those turns would be
+    // double-billed and the digest would not be the single source of truth.
     const bubbles = Array.from({ length: 6 }, (_, index) =>
       makeBubble({
         id: `bubble-${index}`,
@@ -138,12 +142,15 @@ describe("buildPostCompactHistory", () => {
     );
     const messages = buildPostCompactHistory("digest body", bubbles, 5_000);
 
+    expect(messages).toHaveLength(2);
     expect(messages[0].role).toBe("user");
     expect(messages[0].content).toContain("digest body");
     expect(messages[1].role).toBe("assistant");
     const flattened = messages.map((message) => message.content).join("\n");
-    expect(flattened).toContain("question 4");
-    expect(flattened).toContain("question 5");
+    for (const bubble of bubbles) {
+      expect(flattened).not.toContain(bubble.prompt!);
+      expect(flattened).not.toContain(bubble.detail!);
+    }
   });
 
   it("truncates an oversized digest to the char budget", () => {

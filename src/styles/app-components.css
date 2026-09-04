@@ -38764,3 +38764,24 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* DataGrid topbar: keep filter + actions on ONE row at every width.
+   The search control shrinks; the action side scrolls horizontally if space
+   runs out — instead of wrapping into two stacked lines (media queries at
+   lines ~18890/~26658 force column layout, this block wins the cascade). */
+.app-root .datagrid-topbar {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.app-root .datagrid-topbar-side {
+  flex: 0 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.app-root .datagrid-topbar > .datagrid-filter-control {
+  flex: 1 1 140px;
+  min-width: 120px;
+}

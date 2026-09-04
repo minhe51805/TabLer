@@ -1423,6 +1423,14 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       if (!memoryScope?.connectionId) {
         return "Tool error: delete_memory requires an active connection scope.";
       }
+      // Destructive and irreversible: same standing-consent dialog preview_write
+      // uses — the prompt guidance alone is not a gate.
+      if (requestDataReadConsent) {
+        const approved = await requestDataReadConsent();
+        if (!approved) {
+          return "Tool blocked: The user did not approve deleting this memory.";
+        }
+      }
       try {
         await invokeMutation("delete_agent_memory", {
           name: memoryName,

@@ -813,6 +813,20 @@ describe("edit_query_sql proposals", () => {
     );
   });
 
+  it("blocks delete_memory when the user withholds consent", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    const deps = mkDeps({
+      memoryScope: { connectionId: CONNECTION_ID, database: DB },
+      requestDataReadConsent: vi.fn().mockResolvedValue(false),
+    });
+    const obs = await run(deps, { action: "delete_memory", args: { name: "obsolete" } });
+    expect(obs).toContain("did not approve");
+    expect(vi.mocked(invokeMutation)).not.toHaveBeenCalledWith(
+      "delete_agent_memory",
+      expect.anything(),
+    );
+  });
+
   it("requires a name for delete_memory", async () => {
     const obs = await run(mkDeps(), { action: "delete_memory", args: { name: "" } });
     expect(obs).toContain("requires args.name");

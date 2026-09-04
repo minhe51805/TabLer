@@ -344,6 +344,30 @@ pub fn delete_agent_memory(
     )
 }
 
+/// The delete policy, separated from the filesystem so it stays pinned by
+/// unit tests on hosts that cannot create symlinks (unprivileged CI).
+#[derive(Debug, PartialEq)]
+enum MemoryDeletePlan {
+    /// Live symlink: never delete data through a link.
+    RefuseSymlink,
+    /// Symlink whose target is gone: removing the dead pointer IS the cleanup.
+    RemoveDanglingLink,
+    /// Real directory: remove contents.
+    RemoveTree,
+}
+
+fn plan_memory_delete(is_symlink: bool, target_resolvable: bool) -> MemoryDeletePlan {
+    if is_symlink {
+        if target_resolvable {
+            MemoryDeletePlan::RefuseSymlink
+        } else {
+            MemoryDeletePlan::RemoveDanglingLink
+        }
+    } else {
+        MemoryDeletePlan::RemoveTree
+    }
+}
+
 pub(super) fn delete_agent_memory_in(
     data_dir: &Path,
     connection_id: Option<&str>,
@@ -360,23 +384,30 @@ pub(super) fn delete_agent_memory_in(
     // link is removed as the pointer itself — that is the cleanup the user
     // asked for (exists() is false for it, so handle it explicitly).
     match std::fs::symlink_metadata(&dir) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            // Distinguish a live link (target still resolvable → refuse: never
-            // delete data through a link) from a dangling one — removing the
-            // dead pointer is exactly the cleanup being asked for. Windows
-            // needs RemoveDirectory for dir links; Unix file links unlink.
-            if std::fs::metadata(&dir).is_ok() {
-                return Err(format!(
-                    "Memory '{name}' is a symlink — refusing to delete through it. Remove the link manually if it is obsolete."
-                ));
+        Ok(meta) => {
+            let plan = plan_memory_delete(
+                meta.file_type().is_symlink(),
+                std::fs::metadata(&dir).is_ok(),
+            );
+            match plan {
+                MemoryDeletePlan::RefuseSymlink => {
+                    return Err(format!(
+                        "Memory '{name}' is a symlink — refusing to delete through it. Remove the link manually if it is obsolete."
+                    ));
+                }
+                MemoryDeletePlan::RemoveDanglingLink => {
+                    // Windows needs RemoveDirectory for dir links; Unix file
+                    // links unlink. Both remove the pointer only.
+                    let removed = std::fs::remove_file(&dir).or_else(|_| std::fs::remove_dir(&dir));
+                    removed.map_err(|error| {
+                        format!("Failed to remove dangling memory symlink: {error}")
+                    })?;
+                    log::info!("agent_memory: removed dangling symlink '{name}'");
+                    return Ok(());
+                }
+                MemoryDeletePlan::RemoveTree => {}
             }
-            let removed = std::fs::remove_file(&dir).or_else(|_| std::fs::remove_dir(&dir));
-            removed
-                .map_err(|error| format!("Failed to remove dangling memory symlink: {error}"))?;
-            log::info!("agent_memory: removed dangling symlink '{name}'");
-            return Ok(());
         }
-        Ok(_) => {}
         Err(_) => return Err(format!("Memory '{name}' was not found in this scope.")),
     }
     std::fs::remove_dir_all(&dir)
@@ -775,6 +806,27 @@ mod tests {
         assert!(discover_memories_in_root(&scope).is_empty());
         assert!(delete_agent_memory_in(&base, Some("conn"), Some("db"), "obsolete").is_err());
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn delete_plan_pins_the_symlink_policy_without_needing_symlinks() {
+        // The classifier carries the policy, so unprivileged CI still runs it.
+        assert_eq!(
+            plan_memory_delete(true, true),
+            MemoryDeletePlan::RefuseSymlink
+        );
+        assert_eq!(
+            plan_memory_delete(true, false),
+            MemoryDeletePlan::RemoveDanglingLink
+        );
+        assert_eq!(
+            plan_memory_delete(false, true),
+            MemoryDeletePlan::RemoveTree
+        );
+        assert_eq!(
+            plan_memory_delete(false, false),
+            MemoryDeletePlan::RemoveTree
+        );
     }
 
     #[test]

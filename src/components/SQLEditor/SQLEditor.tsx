@@ -180,7 +180,7 @@ export function SQLEditor({
             onChange={(value) => {
               if (value === undefined) return;
               setDraftSql(value);
-              notifyManualEditorChange();
+              notifyManualEditorChange(value);
               if (tabId) schedulePersistedContent(value);
             }}
             onMount={handleEditorMount}

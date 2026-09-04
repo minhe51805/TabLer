@@ -182,7 +182,12 @@ export function useSQLEditor({
       schedulePersistedContent(aiProposal.sql);
       agentEditedRef.current = true;
     } finally {
-      applyingProposalRef.current = false;
+      // Monaco onChange is synchronous today, but a wrapper/version change
+      // could defer it to a microtask — keep the guard alive past the
+      // current task so a deferred onChange still observes applying = true.
+      queueMicrotask(() => {
+        applyingProposalRef.current = false;
+      });
     }
     setAiProposal(null);
     editor.focus();
@@ -194,12 +199,17 @@ export function useSQLEditor({
   }, []);
 
   // Manual typing immediately invalidates the agent-edit flag: the
-  // auto-checkpoint only guards runs of the text the agent proposed.
-  const notifyManualEditorChange = useCallback(() => {
-    if (!applyingProposalRef.current) {
+  // auto-checkpoint only covers runs of the text the agent proposed. The
+  // accepted proposal text itself does NOT invalidate it — belt-and-
+  // suspenders against guard timing (value comparison, not just the flag).
+  const notifyManualEditorChange = useCallback(
+    (value?: string) => {
+      if (applyingProposalRef.current) return;
+      if (value !== undefined && aiProposal && value === aiProposal.sql) return;
       agentEditedRef.current = false;
-    }
-  }, []);
+    },
+    [aiProposal],
+  );
 
   useEffect(() => {
     onChromeChangeRef.current = onChromeChange;

@@ -214,6 +214,7 @@ pub fn discover_memories_in_root(root: &Path) -> Vec<MemoryEntrySummary> {
 
 // __PART3__
 
+#[derive(Clone)]
 pub struct SaveMemoryParams {
     pub connection_id: Option<String>,
     pub database: Option<String>,
@@ -243,6 +244,13 @@ fn write_memory_file(dir: &Path, frontmatter: &str, body: &str) -> Result<(), St
 /// never a silent drop (lesson from the 2.1.210/211 memory budget fixes).
 pub fn save_memory_entry(params: SaveMemoryParams) -> Result<MemoryEntrySummary, String> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
+    save_memory_entry_in(&data_dir, params)
+}
+
+pub fn save_memory_entry_in(
+    data_dir: &Path,
+    params: SaveMemoryParams,
+) -> Result<MemoryEntrySummary, String> {
     let name = sanitize_memory_name(&params.name)?;
     let body = params.body.trim().to_string();
     if body.is_empty() {
@@ -300,6 +308,15 @@ fn read_memory_entry(
     raw_name: &str,
 ) -> Result<MemoryEntryContent, String> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
+    read_memory_entry_in(&data_dir, connection_id, database, raw_name)
+}
+
+fn read_memory_entry_in(
+    data_dir: &Path,
+    connection_id: Option<&str>,
+    database: Option<&str>,
+    raw_name: &str,
+) -> Result<MemoryEntryContent, String> {
     let name = sanitize_memory_name(raw_name)?;
     let scope = memory_scope_dir(&data_dir, connection_id, database);
     let dir = scope.join(&name);
@@ -531,5 +548,52 @@ mod tests {
         assert_eq!(MAX_MEMORY_ENTRIES, 32);
         assert_eq!(MAX_MEMORY_DESCRIPTION_CHARS, 200);
         assert_eq!(MAX_MEMORY_BODY_CHARS, 8_000);
+    }
+
+    #[test]
+    fn save_discover_read_roundtrip_is_scope_faithful() {
+        // Full write→index→read cycle against a temp data dir: the write path
+        // was previously unpinned, so a regression here would go unnoticed.
+        let base =
+            std::env::temp_dir().join(format!("tabler-mem-roundtrip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let params = SaveMemoryParams {
+            connection_id: Some("conn-9".to_string()),
+            database: Some("appdb".to_string()),
+            name: "metric-definitions".to_string(),
+            description: Some("curated metrics".to_string()),
+            body: "revenue = net sales minus refunds".to_string(),
+        };
+        let saved = save_memory_entry_in(&base, params.clone()).unwrap();
+        assert_eq!(saved.name, "metric-definitions");
+        assert!(!saved.updated_at.is_empty());
+        let scope = memory_scope_dir(&base, Some("conn-9"), Some("appdb"));
+        assert_eq!(discover_memories_in_root(&scope).len(), 1);
+        let content =
+            read_memory_entry_in(&base, Some("conn-9"), Some("appdb"), "metric-definitions")
+                .unwrap();
+        assert_eq!(content.body.trim(), "revenue = net sales minus refunds");
+        assert_eq!(content.updated_at, saved.updated_at);
+        // Upsert by name: no duplicate entry, fresh body and timestamp win.
+        let updated = save_memory_entry_in(
+            &base,
+            SaveMemoryParams {
+                body: "revenue = net sales".to_string(),
+                ..params
+            },
+        )
+        .unwrap();
+        assert_eq!(discover_memories_in_root(&scope).len(), 1);
+        let refreshed =
+            read_memory_entry_in(&base, Some("conn-9"), Some("appdb"), "metric-definitions")
+                .unwrap();
+        assert_eq!(refreshed.body.trim(), "revenue = net sales");
+        assert_eq!(refreshed.updated_at, updated.updated_at);
+        // A sibling database scope must not see the entry.
+        assert!(
+            discover_memories_in_root(&memory_scope_dir(&base, Some("conn-9"), Some("other")))
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

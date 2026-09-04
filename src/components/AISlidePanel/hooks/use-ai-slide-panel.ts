@@ -38,6 +38,7 @@ import {
   runAIAgentToolLoop,
   type AIAgentActionRequestReason,
 } from "../ai-agent-runner";
+import { getAgentMemoryIndex } from "./use-agent-memory";
 import {
   DEFAULT_AGENT_TOKEN_BUDGET,
   extractAgentUsageTokens,
@@ -595,6 +596,15 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             )
           : undefined;
 
+        // Agent memory: frontmatter-only index for THIS (connection, database)
+        // scope — same progressive-disclosure contract as skills (see
+        // use-agent-memory.ts for the scope-keyed TTL cache contract).
+        const agentMemoryIndex = await getAgentMemoryIndex({
+          workspaceToolsEnabled,
+          connectionId,
+          database: currentDatabase ?? null,
+        });
+
         // Honest database-mismatch signal: if the user explicitly names a
         // database other than the one this request is scoped to, the prompt
         // says so instead of letting schema evidence silently contradict them.
@@ -627,6 +637,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             cachedTableSummaries,
             glossaryLines,
             availableSkills,
+            agentMemoryIndex,
           });
 
         // Model-call layer: transient retry + parse-repair (extracted).
@@ -668,6 +679,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           // Fail-closed: an absent catalog means NO skill may load, otherwise
           // a model could call the skill tool for entries never vetted.
           allowedSkillNames: availableSkills?.map((entry) => entry.name) ?? [],
+          // Memory tools must operate on the run's (connection, database)
+          // scope — a null scope would orphan saves into global/default.
+          memoryScope: { connectionId, database: currentDatabase ?? null },
           connectionId,
           currentDatabase,
           dbType: activeDbType,

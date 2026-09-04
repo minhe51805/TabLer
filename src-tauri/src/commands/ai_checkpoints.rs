@@ -20,7 +20,7 @@ use tauri::State;
 use tokio::task;
 
 use super::export_support::build_sql_export;
-use super::restore::{run_sql_restore, RestorePreview, RestoreResult};
+use super::restore::{run_sql_restore, PreRestoreSnapshot, RestorePreview, RestoreResult};
 use super::safe_mode::SafeModeState;
 
 const CHECKPOINT_DIR_NAME: &str = "ai-checkpoints";
@@ -253,12 +253,25 @@ pub async fn create_database_checkpoint(
     label: Option<String>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<DatabaseCheckpoint, String> {
+    snapshot_database(&connection_id, database, db_type, label, &db_manager).await
+}
+
+/// Shared snapshot core: dump schema + data and persist it (with a meta
+/// sidecar) under the connection's checkpoint folder. Powers `/backup`, the
+/// agent's create_checkpoint tool, and the pre-restore safety snapshot.
+pub(super) async fn snapshot_database(
+    connection_id: &str,
+    database: Option<String>,
+    db_type: DatabaseType,
+    label: Option<String>,
+    db_manager: &DatabaseManager,
+) -> Result<DatabaseCheckpoint, String> {
     db_manager
-        .require_capability(&connection_id, DriverCapability::DataExport)
+        .require_capability(connection_id, DriverCapability::DataExport)
         .await
         .map_err(|error| error.to_string())?;
     let driver = db_manager
-        .get_driver(&connection_id)
+        .get_driver(connection_id)
         .await
         .map_err(|error| error.to_string())?;
     let driver_ref: &dyn DatabaseDriver = &*driver;
@@ -292,7 +305,7 @@ pub async fn create_database_checkpoint(
         row_count: content.row_count,
     };
 
-    let dir = checkpoint_dir(&connection_id)?;
+    let dir = checkpoint_dir(connection_id)?;
     let (sql_path, meta_path) = checkpoint_paths(&dir, &meta.file_name)?;
     let meta_for_write = meta.clone();
     let sql_body = content.content.clone();
@@ -319,6 +332,56 @@ pub async fn create_database_checkpoint(
     prune_old_checkpoints(&dir);
 
     Ok(DatabaseCheckpoint { size_bytes, meta })
+}
+
+/// Best-effort safety snapshot before a restore on engines that cannot abort
+/// a failed restore atomically. Returns `None` for transactional engines —
+/// their restore rolls itself back, so a snapshot would be redundant cost.
+pub(super) async fn create_pre_restore_snapshot(
+    connection_id: &str,
+    db_type: DatabaseType,
+    db_manager: &DatabaseManager,
+) -> Result<Option<CheckpointMeta>, String> {
+    if super::restore::supports_transactional_restore(db_type) {
+        return Ok(None);
+    }
+    let checkpoint = snapshot_database(
+        connection_id,
+        None,
+        db_type,
+        Some("pre-restore safety".to_string()),
+        db_manager,
+    )
+    .await?;
+    Ok(Some(checkpoint.meta))
+}
+
+/// Best-effort variant used by the rollback path: logs failures instead of
+/// aborting — recovery must never be blocked by its own safety net.
+async fn capture_pre_restore_safety_snapshot(
+    connection_id: &str,
+    db_type: DatabaseType,
+    db_manager: &DatabaseManager,
+) {
+    match snapshot_database(
+        connection_id,
+        None,
+        db_type,
+        Some("pre-restore safety".to_string()),
+        db_manager,
+    )
+    .await
+    {
+        Ok(checkpoint) => {
+            log::info!(
+                "pre-restore snapshot captured: {}",
+                checkpoint.meta.file_name
+            );
+        }
+        Err(error) => {
+            log::warn!("pre-restore snapshot failed, continuing rollback anyway: {error}");
+        }
+    }
 }
 
 /// `/rollback` step 1: list the checkpoints stored for this connection,
@@ -459,6 +522,24 @@ pub async fn restore_database_checkpoint(
         sql
     };
 
+    // Safety net for the recovery path itself: snapshot the CURRENT state so
+    // even a mid-restore failure leaves a fallback checkpoint. Only engines
+    // that can lose data on this path pay for it: MSSQL drops tables BEFORE
+    // its transactional dump replay, and non-transactional engines apply
+    // statement-by-statement. Fully-atomic engines (PostgreSQL/SQLite family)
+    // skip the cost. Best effort — a failed snapshot is logged but never
+    // blocks recovery (same policy as the agent auto-checkpoint).
+    let restore_is_atomic = super::restore::supports_transactional_restore(db_type);
+    if db_type != DatabaseType::MSSQL && !restore_is_atomic {
+        capture_pre_restore_safety_snapshot(&connection_id, db_type, &db_manager).await;
+    }
+
+    // MSSQL's pre-drop is destructive and sits OUTSIDE the transactional
+    // dump replay, so it always gets its own safety snapshot first.
+    if db_type == DatabaseType::MSSQL {
+        capture_pre_restore_safety_snapshot(&connection_id, db_type, &db_manager).await;
+    }
+
     // Pre-drop: query the server for existing user tables and drop them
     // (children first via error-suppressed retry) so the dump's CREATE TABLE
     // runs on a clean slate. This is the only reliable way to handle FK
@@ -504,6 +585,9 @@ pub async fn restore_database_checkpoint(
         &safe_mode,
         false,
         false,
+        // The rollback path already captured its own pre-restore snapshot
+        // BEFORE the destructive pre-drop, so the pipeline must not repeat it.
+        PreRestoreSnapshot::CallerManaged,
     )
     .await
 }

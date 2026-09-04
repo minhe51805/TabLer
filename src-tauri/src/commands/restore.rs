@@ -74,6 +74,19 @@ pub(super) fn build_restore_preview(
     })
 }
 
+/// Pre-restore snapshot policy for engines whose restore cannot abort
+/// atomically (see [`supports_transactional_restore`]).
+#[derive(Debug, Clone, Copy)]
+pub enum PreRestoreSnapshot {
+    /// The caller already captured a safety snapshot before destructive
+    /// pre-steps — do not duplicate it.
+    CallerManaged,
+    /// Capture a best-effort snapshot before applying. `require = true`
+    /// aborts the restore when the snapshot cannot be taken (manual import
+    /// path); `require = false` logs and continues.
+    Auto { require: bool },
+}
+
 #[tauri::command]
 pub async fn restore_database_sql(
     connection_id: String,
@@ -90,6 +103,7 @@ pub async fn restore_database_sql(
         &safe_mode,
         true,
         true,
+        PreRestoreSnapshot::Auto { require: true },
     )
     .await
 }
@@ -111,6 +125,7 @@ pub(super) async fn run_sql_restore(
     safe_mode: &SafeModeState,
     enforce_safe_mode: bool,
     require_backup_restore_capability: bool,
+    pre_restore: PreRestoreSnapshot,
 ) -> Result<RestoreResult, String> {
     if enforce_safe_mode {
         safe_mode.assert_sql_allowed(connection_id, sql).await?;
@@ -129,6 +144,33 @@ pub(super) async fn run_sql_restore(
         return Err("The restore file does not contain any SQL statements.".to_string());
     }
     let transactional = supports_transactional_restore(db_type);
+    // Engines that cannot roll a failed restore back get a snapshot of the
+    // CURRENT state first — the last line of defense when a mid-restore
+    // failure leaves earlier changes applied.
+    if !transactional {
+        match pre_restore {
+            PreRestoreSnapshot::CallerManaged => {}
+            PreRestoreSnapshot::Auto { require } => {
+                match super::ai_checkpoints::create_pre_restore_snapshot(
+                    connection_id,
+                    db_type,
+                    db_manager,
+                )
+                .await
+                {
+                    Ok(_) => {}
+                    Err(error) => {
+                        if require {
+                            return Err(format!(
+                                "Refusing a non-transactional restore without a safety snapshot: {error}"
+                            ));
+                        }
+                        log::warn!("pre-restore snapshot failed, continuing anyway: {error}");
+                    }
+                }
+            }
+        }
+    }
     let driver = db_manager
         .get_driver(connection_id)
         .await
@@ -176,13 +218,19 @@ fn is_destructive(statement: &str) -> bool {
         .any(|keyword| normalized.starts_with(keyword))
 }
 
-fn supports_transactional_restore(db_type: DatabaseType) -> bool {
+/// Engines whose restore path aborts atomically on failure. PostgreSQL-family
+/// and SQLite-family drivers override `execute_restore_statements` with a
+/// transaction; MSSQL does the same at the driver level (SQL Server supports
+/// transactional DDL). MySQL-family engines commit DDL implicitly and can
+/// never qualify — they rely on the pre-restore snapshot instead.
+pub(super) fn supports_transactional_restore(db_type: DatabaseType) -> bool {
     matches!(
         db_type,
         DatabaseType::PostgreSQL
             | DatabaseType::CockroachDB
             | DatabaseType::Greenplum
             | DatabaseType::Redshift
+            | DatabaseType::MSSQL
             | DatabaseType::SQLite
             | DatabaseType::DuckDB
             | DatabaseType::LibSQL
@@ -303,6 +351,41 @@ mod tests {
             .unwrap();
         assert!(
             result.rows[0][0].is_null(),
+            "the failed restore must roll back CREATE TABLE"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a SQL Server service and TABLER_TEST_MSSQL_* environment variables"]
+    async fn mssql_restore_rolls_back_schema_and_data_after_a_failure() {
+        let driver = crate::database::mssql::MssqlDriver::connect(&integration_config(
+            DatabaseType::MSSQL,
+            "MSSQL",
+            1433,
+        ))
+        .await
+        .unwrap();
+        let table = format!("tabler_restore_{}", Uuid::new_v4().simple());
+        let statements = vec![
+            format!(
+                "CREATE TABLE [dbo].[{table}] (id INT PRIMARY KEY, name NVARCHAR(64) NOT NULL)"
+            ),
+            format!("INSERT INTO [dbo].[{table}] (id, name) VALUES (1, N'Ada')"),
+            "INSERT INTO [dbo].[definitely_missing_table] (id) VALUES (1)".to_string(),
+        ];
+
+        assert!(driver
+            .execute_restore_statements(&statements)
+            .await
+            .is_err());
+        let result = driver
+            .execute_query(&format!(
+                "SELECT COUNT(*) AS c FROM sys.tables WHERE name = '{table}'"
+            ))
+            .await
+            .unwrap();
+        assert!(
+            result.rows[0][0] == serde_json::json!(0),
             "the failed restore must roll back CREATE TABLE"
         );
     }

@@ -926,6 +926,50 @@ impl DatabaseDriver for MssqlDriver {
         })
     }
 
+    /// Checkpoint restore, atomic: every statement runs inside one explicit
+    /// transaction on the driver's single client connection, so a failure at
+    /// any point rolls the database back to its pre-restore state. SQL Server
+    /// (unlike MySQL) supports transactional DDL, which makes the
+    /// drop-recreate dump pipeline safe to abort mid-flight.
+    async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        let mut client = self.client.lock().await;
+        TiberiusQuery::new("BEGIN TRANSACTION;")
+            .execute(&mut *client)
+            .await?;
+
+        let mut total_affected = 0u64;
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
+            let query = TiberiusQuery::new(statement);
+            match query.execute(&mut *client).await {
+                Ok(result) => total_affected += result.total(),
+                Err(error) => {
+                    // Undo everything executed so far: the restore either
+                    // completes fully or not at all.
+                    let rollback_result = TiberiusQuery::new("ROLLBACK TRANSACTION;")
+                        .execute(&mut *client)
+                        .await;
+                    let snippet: String = statement.chars().take(80).collect();
+                    return match rollback_result {
+                        Ok(_) => Err(anyhow!(
+                            "Restore failed and was rolled back to the pre-restore state. Offending statement: {snippet} ({error})"
+                        )),
+                        Err(rollback_error) => Err(anyhow!(
+                            "Restore failed at '{snippet}' ({error}) AND the automatic rollback also failed ({rollback_error}). The connection holds an open transaction — reconnect before issuing further statements."
+                        )),
+                    };
+                }
+            }
+        }
+
+        TiberiusQuery::new("COMMIT TRANSACTION;")
+            .execute(&mut *client)
+            .await?;
+        Ok(total_affected)
+    }
+
     async fn execute_parameterized_query(
         &self,
         sql: &str,

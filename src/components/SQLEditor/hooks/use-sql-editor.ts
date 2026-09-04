@@ -23,6 +23,8 @@ import { registerSchemaCompletionProvider, defineTableRTheme } from "../SQLEdito
 import { formatSql } from "../../../utils/sql-formatter";
 import { parseExplainOutput, buildExplainQuery, type ParsedExplainPlan } from "../../../utils/explain-parser";
 import { extractNamedSqlParameters, toQueryParameters, type SqlParameterDraft } from "../../../utils/sql-parameters";
+import { EventCenter } from "../../../stores/event-center";
+import { captureAgentEditedRunCheckpoint } from "../agent-edit-safety";
 
 export interface QueryChromeState {
   isRunning: boolean;
@@ -91,6 +93,15 @@ export function useSQLEditor({
   const selectionContextDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const contentPersistTimerRef = useRef<number | null>(null);
   const cursorPersistTimerRef = useRef<number | null>(null);
+  // Agent proposal state: the model can only PROPOSE an edit to this tab's
+  // SQL — the user accepts or rejects it here. Nothing auto-applies.
+  const [aiProposal, setAiProposal] = useState<{
+    sql: string;
+    reason: string;
+    previousSql: string;
+  } | null>(null);
+  const agentEditedRef = useRef(false);
+  const applyingProposalRef = useRef(false);
   const vimModeRef = useRef<VimAdapterInstance | null>(null);
   const contentDraftRef = useRef(initialContent);
   const onChromeChangeRef = useRef(onChromeChange);
@@ -161,6 +172,35 @@ export function useSQLEditor({
     [connectionId, tabId, updateTab]
   );
 
+  const acceptAiProposal = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor || !aiProposal) return;
+    applyingProposalRef.current = true;
+    try {
+      // Monaco keeps its own undo stack: Ctrl+Z reverts the proposal.
+      editor.setValue(aiProposal.sql);
+      schedulePersistedContent(aiProposal.sql);
+      agentEditedRef.current = true;
+    } finally {
+      applyingProposalRef.current = false;
+    }
+    setAiProposal(null);
+    editor.focus();
+  }, [aiProposal, schedulePersistedContent]);
+
+  const rejectAiProposal = useCallback(() => {
+    agentEditedRef.current = false;
+    setAiProposal(null);
+  }, []);
+
+  // Manual typing immediately invalidates the agent-edit flag: the
+  // auto-checkpoint only guards runs of the text the agent proposed.
+  const notifyManualEditorChange = useCallback(() => {
+    if (!applyingProposalRef.current) {
+      agentEditedRef.current = false;
+    }
+  }, []);
+
   useEffect(() => {
     onChromeChangeRef.current = onChromeChange;
   }, [onChromeChange]);
@@ -172,6 +212,21 @@ export function useSQLEditor({
   useEffect(() => {
     parameterDraftsRef.current = parameterDrafts;
   }, [parameterDrafts]);
+
+  // Agent proposals target this tab by id; stale or foreign proposals are
+  // ignored at the listener level.
+  useEffect(() => {
+    if (!tabId) return undefined;
+    return EventCenter.on("ai-edit-query-sql", (event) => {
+      if (event.detail.tabId !== tabId) return;
+      const currentSql = editorRef.current?.getValue?.() ?? "";
+      setAiProposal({
+        sql: event.detail.sql,
+        reason: event.detail.reason,
+        previousSql: currentSql,
+      });
+    });
+  }, [tabId]);
 
   const handleExecute = useCallback(async () => {
     const editor = editorRef.current;
@@ -198,6 +253,25 @@ export function useSQLEditor({
       setNotice(translateCurrent("tabs.noSqlToExecute"));
       editor.focus();
       return;
+    }
+
+    // Agent-edited content: the first real execution of an accepted proposal
+    // gets a rollback point (best effort, loud on failure). One-shot per
+    // accepted proposal; manual typing clears the flag.
+    if (agentEditedRef.current && isMutatingStatement(sql)) {
+      const storeState = useConnectionStore.getState();
+      const checkpoint = await captureAgentEditedRunCheckpoint({
+        connectionId,
+        database: storeState.currentDatabase || null,
+        dbType:
+          storeState.connections.find((c) => c.id === connectionId)?.db_type ?? "sqlite",
+      });
+      agentEditedRef.current = false;
+      setNotice(
+        checkpoint
+          ? "Safety checkpoint captured before running the agent-edited query."
+          : "Safety checkpoint failed — /rollback has no new point. Consider /backup first.",
+      );
     }
 
     const parameterNames = extractNamedSqlParameters(sql);
@@ -769,5 +843,9 @@ export function useSQLEditor({
     explainPlan,
     isRunningExplain,
     setExplainPlan,
+    aiProposal,
+    acceptAiProposal,
+    rejectAiProposal,
+    notifyManualEditorChange,
   };
 }

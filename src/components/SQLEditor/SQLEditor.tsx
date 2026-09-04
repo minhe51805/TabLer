@@ -103,6 +103,10 @@ export function SQLEditor({
     isRunningExplain,
     handleExplain,
     setExplainPlan,
+    aiProposal,
+    acceptAiProposal,
+    rejectAiProposal,
+    notifyManualEditorChange,
   } = useSQLEditor({
     connectionId,
     tabId,
@@ -124,6 +128,51 @@ export function SQLEditor({
           className="sql-editor-pane"
           style={{ height: showResultsPane ? `${editorHeight}%` : "100%", minHeight: 96 }}
         >
+          {aiProposal ? (
+            <div
+              role="status"
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "center",
+                flexWrap: "wrap",
+                padding: "6px 10px",
+                margin: "0 0 6px",
+                border: "1px solid #3b82f6",
+                borderRadius: 6,
+                background: "rgba(59, 130, 246, 0.12)",
+                color: "#dbeafe",
+                fontSize: 12,
+              }}
+            >
+              <span
+                style={{
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                AI edit proposal: {aiProposal.reason}
+              </span>
+              <button
+                type="button"
+                onClick={acceptAiProposal}
+                className="sql-editor-tool-btn"
+                style={{ color: "#86efac" }}
+              >
+                Accept
+              </button>
+              <button
+                type="button"
+                onClick={rejectAiProposal}
+                className="sql-editor-tool-btn"
+                style={{ color: "#fca5a5" }}
+              >
+                Reject
+              </button>
+            </div>
+          ) : null}
           <Editor
             defaultLanguage={queryProfile.editorLanguage}
             defaultValue={restoredContent}
@@ -131,6 +180,7 @@ export function SQLEditor({
             onChange={(value) => {
               if (value === undefined) return;
               setDraftSql(value);
+              notifyManualEditorChange();
               if (tabId) schedulePersistedContent(value);
             }}
             onMount={handleEditorMount}

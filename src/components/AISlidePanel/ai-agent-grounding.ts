@@ -12,11 +12,19 @@ const MAX_AGENT_OBSERVATION_VALUE_CHARS = 120;
 
 const SENSITIVE_COLUMN_PATTERN = /(?:^|[_-])(?:password|passwd|pwd|secret|token|api[_-]?key|credential|private[_-]?key|access[_-]?key|refresh[_-]?token)(?:$|[_-])/i;
 
+const MAX_AGENT_MEMORY_OBSERVATION_CHARS = 8000;
+
 export function truncateAgentObservation(text: string) {
-  if (text.length <= MAX_AGENT_TRACE_OBSERVATION_CHARS) {
+  // Memory reads are the payload the agent explicitly asked for — cutting
+  // them at 1400 chars made round-trip verification impossible (memory
+  // bodies run up to the backend 8k cap).
+  const cap = text.startsWith("Memory \"")
+    ? MAX_AGENT_MEMORY_OBSERVATION_CHARS
+    : MAX_AGENT_TRACE_OBSERVATION_CHARS;
+  if (text.length <= cap) {
     return text;
   }
-  return `${text.slice(0, MAX_AGENT_TRACE_OBSERVATION_CHARS - 3)}...`;
+  return `${text.slice(0, cap - 3)}...`;
 }
 
 export function sanitizeAgentObservationValue(

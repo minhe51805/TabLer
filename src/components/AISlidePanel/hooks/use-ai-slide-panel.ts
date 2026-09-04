@@ -729,6 +729,22 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           inspectedAgentTables,
           requestId,
           requestIdRef,
+          openQueryTab: ({ sql: tabSql, title, autoRun }) => {
+            window.dispatchEvent(
+              new CustomEvent("open-ai-workspace-query", {
+                detail: {
+                  sql: tabSql,
+                  connectionId,
+                  database: currentDatabase || undefined,
+                  title,
+                  resultViewMode: "table" as const,
+                  autoRun,
+                  focusWorkspace: true,
+                },
+              }),
+            );
+            return true;
+          },
           requestDataReadConsent,
           publishAgentProgress,
           onAgentPlanUpdate: (plan) => {

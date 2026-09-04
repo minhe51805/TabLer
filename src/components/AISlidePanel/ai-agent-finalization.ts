@@ -2,7 +2,7 @@ import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import type { AIAgentFinishAction, AIAgentToolAction } from "./ai-agent-tools";
 import { joinAgentInstructions, type AgentTraceStep } from "./ai-agent-context";
 import { sqlResponseConflictsWithSchema } from "./ai-agent-grounding";
-import { extractSqlFromResponse, hasSqlStartKeyword, stripSqlCodeBlocksFromResponse } from "./ai-sql-response";
+import { extractSqlFromResponse, hasSqlStartKeyword, removeDuplicateSqlParagraphs, stripSqlCodeBlocksFromResponse } from "./ai-sql-response";
 import type { AIWorkspaceAgentStep } from "./ai-workspace-types";
 
 export interface AgentFinalization {
@@ -132,7 +132,7 @@ export async function finalizeAgentResult(options: FinalizeAgentResultOptions): 
   // otherwise the model's own code fence duplicates the exact same statement
   // as a second card. An empty remainder is fine — only the SQL card shows.
   const rawResponse = shouldExposeSql
-    ? stripSqlCodeBlocksFromResponse(responseBody).trim()
+    ? removeDuplicateSqlParagraphs(stripSqlCodeBlocksFromResponse(responseBody), sql).trim()
     : stripSqlCodeBlocksFromResponse(responseBody) || responseBody;
   const widgets = buildWidgets(args as Record<string, unknown>);
   return { rawResponse, sql: shouldExposeSql ? sql : null, agentSteps: buildSteps(agentTraceSteps), agentWidgets: widgets.length ? widgets : undefined };

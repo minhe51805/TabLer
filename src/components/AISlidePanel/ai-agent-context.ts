@@ -509,7 +509,9 @@ export function buildAgentControllerPrompt(params: {
             `<query_tab><tabId>${tab.tabId}</tabId><title>${tab.title}</title><sql>${tab.sql}</sql></query_tab>`),
           "To fix a query in one of these tabs, call edit_query_sql with that tabId. Smoke-test mutating SQL with preview_write first. The user accepts or rejects the proposal in the tab; you cannot execute it.",
         ].join("\n")
-      : "",
+      : [
+          "No query tab is open. To fix a broken query or land SQL into a tab, call edit_query_sql with createIfMissing: true (omit tabId) — a new AI Query tab is created pre-filled with the proposed SQL.",
+        ].join("\n"),
     (planLines ?? []).length > 0
       ? [
           "Current plan (from your latest update_plan):",

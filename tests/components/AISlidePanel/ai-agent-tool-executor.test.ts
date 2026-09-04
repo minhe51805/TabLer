@@ -840,3 +840,33 @@ describe("edit_query_sql proposals", () => {
     expect(obs).toContain("open query tab");
   });
 });
+
+describe("edit_query_sql createIfMissing", () => {
+  it("opens a NEW AI Query tab pre-filled with the SQL when none is open", async () => {
+    const openQueryTab = vi.fn(() => true);
+    const { runAgentTool } = createAgentToolExecutor(mkDeps({ openQueryTab }));
+    const action = {
+      action: "edit_query_sql",
+      message: "fix tab sql",
+      args: { sql: "SELECT TOP 5 * FROM SinhViens", reason: "align tab with schema", createIfMissing: true },
+    } as AIAgentToolAction;
+    const observation = await runAgentTool(action);
+    expect(observation).toContain("created a new AI Query tab");
+    expect(openQueryTab).toHaveBeenCalledWith(
+      expect.objectContaining({ sql: "SELECT TOP 5 * FROM SinhViens", autoRun: true }),
+    );
+  });
+
+  it("refuses mutating createIfMissing proposals that were never previewed", async () => {
+    const openQueryTab = vi.fn(() => true);
+    const { runAgentTool } = createAgentToolExecutor(mkDeps({ openQueryTab }));
+    const action = {
+      action: "edit_query_sql",
+      message: "fix tab sql",
+      args: { sql: "UPDATE SinhViens SET HoTen = 'x'", createIfMissing: true },
+    } as AIAgentToolAction;
+    const observation = await runAgentTool(action);
+    expect(observation).toContain("preview_write");
+    expect(openQueryTab).not.toHaveBeenCalled();
+  });
+});

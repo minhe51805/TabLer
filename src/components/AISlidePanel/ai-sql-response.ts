@@ -106,3 +106,23 @@ export function summarizeRunResult(result: QueryResult) {
   }
   return `Execution completed in ${result.execution_time_ms} ms.`;
 }
+
+function normalizeSqlForCompare(text: string) {
+  return text.replace(/\s+/g, " ").trim().replace(/;+\s*$/, "").toLowerCase();
+}
+
+/** Drops paragraphs (bare or fenced) whose SQL matches the exposed
+ *  args.sql — the model loves repeating the statement, and each repeat
+ *  rendered a duplicate SQL card beside the canonical one. */
+export function removeDuplicateSqlParagraphs(aiResponse: string, sql: string) {
+  const target = normalizeSqlForCompare(sql);
+  if (!target) return aiResponse.trim();
+  const kept = aiResponse
+    .split(/\n{2,}/)
+    .filter((block) => {
+      const withoutFences = block.replace(/```sql/gi, "").replace(/```/g, "").trim();
+      return normalizeSqlForCompare(withoutFences) !== target;
+    })
+    .join("\n\n");
+  return kept.trim();
+}

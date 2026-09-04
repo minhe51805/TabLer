@@ -57,9 +57,12 @@ export type AIAgentRememberTermAction = AIAgentToolActionBase<
 >;
 
 export interface AIAgentEditQuerySqlArgs extends Record<string, unknown> {
-  tabId: string;
+  /** Required when targeting an open tab; omit when createIfMissing is set. */
+  tabId?: string;
   sql: string;
   reason?: string;
+  /** Opens a NEW AI Query tab pre-filled with the SQL when none is open. */
+  createIfMissing?: boolean;
 }
 
 export type AIAgentEditQuerySqlAction = AIAgentToolActionBase<

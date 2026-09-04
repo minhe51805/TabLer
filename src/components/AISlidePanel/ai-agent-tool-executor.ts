@@ -153,6 +153,9 @@ export interface AgentToolExecutorDeps {
    * is keyed by connection+database — the same scope as the glossary — so a
    * different connection or database can never see another's memories. */
   memoryScope?: { connectionId: string | null; database: string | null };
+  /** Opens a NEW AI Query tab for the edit_query_sql createIfMissing path.
+   *  Read-only proposals auto-run; mutating ones wait for the user. */
+  openQueryTab?: (args: { sql: string; title: string; autoRun: boolean }) => boolean;
   currentDatabase: string | null;
   dbType?: DatabaseType;
   latestTables: TableInfo[];
@@ -338,6 +341,7 @@ const AI_SKILL_BODY_MAX_CHARS = 8_000;
 export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const {
     connectionId,
+    openQueryTab,
     allowedSkillNames,
     memoryScope,
     currentDatabase,
@@ -1379,8 +1383,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       const rawTabId = typeof action.args?.tabId === "string" ? action.args.tabId.trim() : "";
       const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
       const reason = typeof action.args?.reason === "string" ? action.args.reason.trim() : "";
-      if (!rawTabId || !sql) {
-        return "Tool error: edit_query_sql requires args.tabId and args.sql from the Query tabs list.";
+      const createIfMissing = action.args?.createIfMissing === true;
+      if (!sql) {
+        return "Tool error: edit_query_sql requires args.sql.";
       }
       if (sql.includes("…[TRUNCATED")) {
         return "Tool error: do not echo the truncation marker from the context. Propose only content you have actually seen; explain anything outside your view in args.reason.";
@@ -1389,11 +1394,11 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       // connection — the agent must not reach into another connection's
       // editors.
       const { tabs } = useUIStore.getState();
-      const target = tabs.find((tab) => tab.id === rawTabId);
-      if (!target || target.type !== "query") {
+      const target = rawTabId ? tabs.find((tab) => tab.id === rawTabId) : undefined;
+      if (rawTabId && (!target || target.type !== "query")) {
         return "Tool error: edit_query_sql needs the exact tabId of an open query tab (see the Query tabs list in the context).";
       }
-      if (target.connectionId !== connectionId) {
+      if (target && target.connectionId !== connectionId) {
         return `Tool error: query tab "${target.title}" belongs to another connection — edit_query_sql cannot reach across connections.`;
       }
       // Smoke-test gate: a mutating proposal that was never previewed in
@@ -1402,6 +1407,23 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       if (mutating && !previewedMutatingStatements.has(normalizeStatementForGuard(sql))) {
         return "Tool error: this proposal contains mutating SQL that was not previewed in this run. Call preview_write with the exact statement first, then re-issue edit_query_sql.";
       }
+      if (!target) {
+        if (!createIfMissing) {
+          return "Tool error: no open query tab matched. Pass the exact tabId of an open query tab, or set args.createIfMissing: true to open a new AI Query tab with this SQL.";
+        }
+        const title = (reason || "AI query proposal").slice(0, 60);
+        const created = openQueryTab?.({ sql, title, autoRun: !mutating });
+        if (!created) {
+          return "Tool error: could not open a new AI Query tab (no active connection?).";
+        }
+        return [
+          `No query tab was open — created a new AI Query tab "${title}" pre-filled with the proposed SQL.`,
+          mutating
+            ? "It is NOT auto-run: review the tab and press Run (Safe Mode will confirm)."
+            : "It auto-runs the read-only statement.",
+        ].join(" ");
+      }
+
       const reasonLine = reason || "Corrected SQL proposal from the agent.";
       // Proposal only: the tab renders Accept/Reject. The agent never
       // writes editor content directly and never executes the proposal.

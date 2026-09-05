@@ -605,11 +605,11 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   finish: {
     name: "finish",
     description:
-      "End the run with the final answer for the user. Put the single best runnable SELECT in sql, and 3-6 dashboard widgets in metricsWidgets when the request is a metrics board.",
+      "End the run with the final answer for the user. args.response is REQUIRED: it must contain the complete user-facing answer (a full markdown table when a report, bảng, tổng hợp, or list was requested) built from verified observations — never an empty string or a one-line placeholder. Put the single best runnable SELECT in sql, and 3-6 dashboard widgets in metricsWidgets when the request is a metrics board.",
     parameters: {
       type: "object",
       properties: {
-        response: { type: "string", description: "Markdown answer for the user." },
+        response: { type: "string", description: "REQUIRED. Complete markdown answer for the user, grounded in the observations collected this run." },
         sql: { type: "string", description: "Optional grounded SQL for later human approval." },
         metricsWidgets: {
           type: "array",

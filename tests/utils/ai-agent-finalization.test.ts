@@ -113,4 +113,46 @@ describe("agent finalization", () => {
     expect(result.rawResponse).toContain("sandbox validation");
     expect(result.rawResponse).toContain("column does not exist");
   });
+
+  it("recovers when the finish action carries no answer text and no SQL", async () => {
+    // Regression for the "did not produce a usable final answer" bubble: a
+    // finish with an empty response and no SQL now triggers one bounded
+    // recovery round instead of surfacing the dead fallback body.
+    const result = await finalizeAgentResult({
+      availableSchemaTables: ["users"],
+      buildControllerPrompt: () => "recover-answer",
+      initialAction: { action: "finish", message: "", args: {} },
+      initialSteps: [{ step: 1, action: "list_tables", message: "Inspect", observation: "TABLES=users" }],
+      recoverFinishAction: async () => { throw new Error("recovery round should have produced the answer"); },
+      requestAgentAction: async () => ({
+        action: "finish",
+        message: "Recovered",
+        args: { response: "| Bảng | Số lượng |\n|---|---|\n| users | 12 |" },
+      }),
+      sharedAgentInstruction: "grounded",
+    });
+
+    expect(result.rawResponse).toContain("| Bảng | Số lượng |");
+    expect(result.rawResponse).not.toContain("did not produce a usable final answer");
+    expect(result.agentSteps?.some((s) => (s.observation ?? "").includes("no final answer text and no SQL"))).toBe(true);
+  });
+
+  it("falls back to the forced finish when the recovery round still has no payload", async () => {
+    const result = await finalizeAgentResult({
+      availableSchemaTables: ["users"],
+      buildControllerPrompt: () => "recover-answer",
+      initialAction: { action: "finish", message: "Ready", args: {} },
+      initialSteps: [],
+      recoverFinishAction: async () => ({
+        action: "finish",
+        message: "Forced",
+        args: { response: "Recovered full answer." },
+      }),
+      requestAgentAction: async () => ({ action: "finish", message: "Still empty", args: {} }),
+      sharedAgentInstruction: "grounded",
+    });
+
+    expect(result.rawResponse).toBe("Recovered full answer.");
+    expect(result.agentSteps?.some((s) => s.status === "error")).toBe(true);
+  });
 });

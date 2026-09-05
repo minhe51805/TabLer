@@ -726,6 +726,7 @@ export function useAIAssistantGeneration({
                 risk: result.risk,
                 reasoning: result.reasoning,
                 agentSteps: result.agentSteps,
+                askUserOptions: result.askUserOptions ?? undefined,
               }
             : bubble
         )

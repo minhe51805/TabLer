@@ -106,6 +106,8 @@ export interface AIGeneratedAssistResult {
   agentSteps?: AIWorkspaceAgentStep[];
   /** Metrics widgets the agent designed for a dashboard request. */
   agentWidgets?: AIMetricsWidgetSpec[];
+  /** Structured options from an ask_user finish; rendered as quick-reply buttons. */
+  askUserOptions?: string[];
 }
 
 const MAX_AGENT_STEPS = 10;
@@ -1085,7 +1087,14 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 return {
                   action: "finish" as const,
                   message: action.message || "Asking the user for clarification.",
-                  args: { response: `${action.args.question}${optionsBlock}${suffix}` },
+                  args: {
+                    response: `${action.args.question}${optionsBlock}${suffix}`,
+                    options: Array.isArray(action.args.options)
+                      ? action.args.options
+                          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+                          .slice(0, 8)
+                      : [],
+                  },
                 };
               }
               // A bare finish (no response, no message, no SQL) throws away
@@ -1404,6 +1413,14 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             }
           },
         });
+        // Structured options from an ask_user finish; the conversation view
+        // renders them as one-click reply buttons on the final bubble.
+        const finalActionArgs = (finalAction.args ?? {}) as Record<string, unknown>;
+        const askUserOptions = Array.isArray(finalActionArgs.options)
+          ? (finalActionArgs.options as unknown[])
+              .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+              .slice(0, 8)
+          : undefined;
         const hasValidSql = Boolean(finalization.sql);
 
         return {
@@ -1417,6 +1434,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           // alongside the runner trace so they survive reloads.
           agentSteps: mergeRunNotes(finalization.agentSteps ?? [], manualSwitchNotes),
           agentWidgets: finalization.agentWidgets,
+          askUserOptions,
         };
 
       }

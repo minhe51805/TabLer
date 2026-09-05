@@ -188,6 +188,7 @@ export const VI_COPY: AIWorkspaceCopy = {
       runSuccessDirectSubtitle: "Đã thực thi trực tiếp",
       runFailedTitle: "Chạy thất bại",
       runFailedSubtitle: "Sandbox đã dừng thực thi",
+      askUserCustomAnswer: "Trả lời của bạn…",
       openedInWorkspaceTitle: "Đã mở trong workspace",
       openedInWorkspaceSubtitle: "Đã gửi sang tab workspace",
       openedInWorkspacePreview: "Mình đã mở cái này trong một tab workspace để bạn xem kết quả ở đó. Đoạn chat này vẫn ở đây để bạn hỏi tiếp.",

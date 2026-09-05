@@ -4,6 +4,7 @@ import {
   AI_WORKSPACE_HISTORY_VERSION,
   buildAIWorkspaceKey,
   buildConversationHistoryMessages,
+  stripAskUserTrailingOptions,
   buildThreadLabel,
   createEmptyPersistedAIWorkspaceState,
   hasPersistedAIWorkspaceStateData,
@@ -193,5 +194,26 @@ describe("estimateConversationFootprint", () => {
     ];
     const footprint = estimateConversationFootprint(bubbles);
     expect(footprint).toBe("kept prompt".length + "kept answer".length);
+  });
+});
+
+
+describe("stripAskUserTrailingOptions", () => {
+  it("strips the numbered option block and the reply hint", () => {
+    expect(
+      stripAskUserTrailingOptions(
+        "Bạn muốn xem gì?\n\n1. Bảng sinh viên\n2. Bảng điểm\n\n_(Trả lời bằng số thứ tự...)_",
+      ),
+    ).toBe("Bạn muốn xem gì?");
+  });
+
+  it("strips only the italic hint when no numbered block exists", () => {
+    expect(
+      stripAskUserTrailingOptions("Xác nhận nhé?\n\n_(Trả lời...)_"),
+    ).toBe("Xác nhận nhé?");
+  });
+
+  it("leaves answers without ask_user markers untouched", () => {
+    expect(stripAskUserTrailingOptions("Kết quả: 11 sinh viên.")).toBe("Kết quả: 11 sinh viên.");
   });
 });

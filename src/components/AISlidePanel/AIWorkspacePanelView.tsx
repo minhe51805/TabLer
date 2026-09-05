@@ -47,6 +47,10 @@ export interface AIWorkspacePanelViewModel {
   renameChatWorkspace: (id: string, name: string) => void; deleteChatWorkspace: (id: string) => void; importChatThreads: (ids: string[]) => void;
   databases: string[]; rebindChatWorkspace: (id: string, database: string) => void;
   generate: () => void; cancelGeneration: () => void; openSettings: () => void; requestDeleteThread: (id: string, event: React.MouseEvent) => void;
+  /** One-click reply to an agent ask_user question. */
+  sendAskUserReply: (option: string) => void;
+  /** Focuses the composer textarea for a custom reply. */
+  focusComposerInput: () => void;
   openAttachmentManager: () => void; closeAttachmentManager: () => void; addAttachmentFiles: (files: File[]) => void; removeAttachment: (id: string) => void;
   retryBubble: (bubble: AIWorkspaceBubbleData) => void; rewriteBubble: (bubble: AIWorkspaceBubbleData, note: string) => void; runBubble: (bubble: AIWorkspaceBubbleData) => void;
   openAgentRecord: (link: AIAgentRecordLink) => void;
@@ -171,7 +175,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                   </div>
                 )}
               </div><button type="button" className="ai-workspace-chat-tab-add" onClick={m.reloadChat} disabled={m.isGenerating || m.isRunning} title={m.aiCopy.composer.reloadChatTitle}><RotateCcw className="w-3.5 h-3.5" /></button></div></div>
-        <AIConversationView bubbles={m.conversationBubbles} copy={m.aiCopy} threadRef={m.chatThreadRef} onOpenDetail={handleOpenDetail} onInsert={m.insertBubble} onRun={m.runBubble} onRetry={m.retryBubble} onOpenRecord={m.openAgentRecord} onUseSuggestion={handleUseSuggestion} />
+        <AIConversationView bubbles={m.conversationBubbles} copy={m.aiCopy} threadRef={m.chatThreadRef} onOpenDetail={handleOpenDetail} onInsert={m.insertBubble} onRun={m.runBubble} onRetry={m.retryBubble} onOpenRecord={m.openAgentRecord} onUseSuggestion={handleUseSuggestion} onAskUserOptionSelect={m.sendAskUserReply} onAskUserCustomInput={m.focusComposerInput} />
         <AIComposerDock copy={m.aiCopy} prompt={m.promptDraft} textareaRef={m.composerTextareaRef} footerNote={m.composerFooterNote} contextUsage={m.contextUsage} attachedSelectionSource={m.attachedSelection?.source} hasAttachedSelectionText={Boolean(m.attachedSelection?.text.trim())} attachments={m.composerAttachments} canAttachImages={m.canAttachImages} onAddAttachmentFiles={m.addAttachmentFiles} onRemoveAttachment={m.removeAttachment} onOpenAttachmentManager={m.openAttachmentManager} interactionMode={m.activeInteractionMode} agentAutonomy={m.activeAgentAutonomy} activeProvider={m.activeProvider} providers={m.switchableProviders} isSwitchingProvider={m.isSwitchingProvider} isGenerating={m.isGenerating} isCancelling={m.isCancelling} isConnectionAvailable={Boolean(m.connectionId)} isSessionDataReadEnabled={m.isSessionDataReadEnabled} sessionDataReadLabel={m.sessionDataReadButtonLabel} sessionDataReadTitle={m.sessionDataReadButtonTitle} showThinking={m.showThinking} onPromptChange={m.setPromptDraft} onKeyDown={m.composerKeyDown} slashMenu={m.slashMenu} onSelectSlashCommand={m.onSelectSlashCommand} onDismissSelection={m.dismissSelection} onSelectInteractionMode={m.selectInteractionMode} onSelectAgentAutonomy={handleSelectAgentAutonomy} onActivateProvider={m.activateProvider} onToggleModelVisibility={m.toggleModelVisibility} onSetSessionDataReadEnabled={m.setSessionDataReadEnabled} onSetShowThinking={m.setShowThinking} onOpenSettings={m.openSettings} safeModeEnabled={m.safeModeEnabled} onToggleSafeMode={m.onToggleSafeMode} onCloseHistory={() => m.setHistoryOpen(false)} onGenerate={m.generate} onCancelGeneration={m.cancelGeneration} />
       </div></div></aside>
     </div>

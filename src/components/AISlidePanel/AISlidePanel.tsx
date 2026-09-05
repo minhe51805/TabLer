@@ -1203,9 +1203,9 @@ export function AISlidePanel({
     setPromptDraft(value);
   }, []);
 
-  const handleGenerate = useCallback(async () => {
+  const handleGenerate = useCallback(async (overrideDraft?: string) => {
     if (isGenerating) return;
-    const normalizedPrompt = promptDraft.trim();
+    const normalizedPrompt = (overrideDraft ?? promptDraft).trim();
     if (isCompactCommand(normalizedPrompt)) {
       setPromptDraft("");
       await handleCompactContext(false);
@@ -1267,6 +1267,16 @@ export function AISlidePanel({
       }
     }
   }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, composerAttachments, contextWindowLimit, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleBackupCommand, handleCompactContext, handleRollbackCommand, isGenerating, promptDraft]);
+
+  // ask_user quick replies: clicking an option sends it as the next message;
+  // the custom button just focuses the composer for free-form input.
+  const handleAskUserOptionSelect = useCallback((option: string) => {
+    if (isGenerating) return;
+    void handleGenerate(option);
+  }, [handleGenerate, isGenerating]);
+  const handleAskUserCustomInput = useCallback(() => {
+    composerTextareaRef.current?.focus();
+  }, []);
 
   const handleCancelGeneration = useCallback(() => {
     const activeBubbleId = activeGenerationBubbleIdRef.current;
@@ -1879,7 +1889,7 @@ export function AISlidePanel({
   if (!isOpen) return null;
   const visibleError = error && error !== AI_REQUEST_REPLACED_MESSAGE ? error : null;
 
-  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isAttachmentManagerOpen, canAttachImages, composerAttachments, isCancelling, isGenerating, isHistoryOpen, isLongformComposer, isRunning, isSessionDataReadEnabled, language, promptDraft, recentWorkspaceThreads, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, failoverConsentPending: failoverConsentState, chatThreadRef, contextUsage, activeChatWorkspaceId, activeChatWorkspaceName: activeChatWorkspace?.name ?? null, activeChatWorkspaceContextUpdatedAt: activeChatWorkspace?.contextUpdatedAt ?? null, chatWorkspaces, importableChatThreads, threadMemories, isCompacting, isSwitchingProvider: isProviderSwitching, safeModeEnabled, onToggleSafeMode: handleToggleSafeMode, listCheckpoints, restoreCheckpoint, close: () => { handleCancelGeneration(); onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, reloadChat: () => void handleReloadChat(), dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, openSettings: handleOpenAISettings, openAttachmentManager: () => setIsAttachmentManagerOpen(true), closeAttachmentManager: () => setIsAttachmentManagerOpen(false), addAttachmentFiles: (files) => void handleAddComposerAttachmentFiles(files), removeAttachment: handleRemoveComposerAttachment, requestDeleteThread: handleRequestDeleteThread, renameThread: handleRenameChatThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setPromptDraft: handleComposerPromptChange, slashMenu: slashMenuOpen ? { commands: slashMatches, activeIndex: Math.min(slashActiveIndex, slashMatches.length - 1) } : null, onSelectSlashCommand: runSlashCommand, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomyWithSafeMode, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id, model) => {
+  return <AIWorkspacePanelView model={{ activeAgentAutonomy, activeInteractionMode, activeProvider, aiCopy, attachedSelection, bubbleCountByThread, composerFooterNote, composerRef, composerTextareaRef, connectionId, conversationBubbles, currentDatabase, currentThread, deleteThreadPending, detailBubble, historyPanelRef, isAttachmentManagerOpen, canAttachImages, composerAttachments, isCancelling, isGenerating, isHistoryOpen, isLongformComposer, isRunning, isSessionDataReadEnabled, language, promptDraft, recentWorkspaceThreads, sessionDataReadButtonLabel, sessionDataReadButtonTitle, showThinking, switchableProviders, tableContextCount, visibleError, visualizationConsentPending, failoverConsentPending: failoverConsentState, chatThreadRef, contextUsage, activeChatWorkspaceId, activeChatWorkspaceName: activeChatWorkspace?.name ?? null, activeChatWorkspaceContextUpdatedAt: activeChatWorkspace?.contextUpdatedAt ?? null, chatWorkspaces, importableChatThreads, threadMemories, isCompacting, isSwitchingProvider: isProviderSwitching, safeModeEnabled, onToggleSafeMode: handleToggleSafeMode, listCheckpoints, restoreCheckpoint, close: () => { handleCancelGeneration(); onClose(); }, confirmDeleteThread: handleConfirmDeleteThread, createThread: handleCreateChatThread, reloadChat: () => void handleReloadChat(), dismissError: () => setError(null), dismissSelection: () => setAttachedSelection(null), generate: () => void handleGenerate(), cancelGeneration: handleCancelGeneration, sendAskUserReply: handleAskUserOptionSelect, focusComposerInput: handleAskUserCustomInput, openSettings: handleOpenAISettings, openAttachmentManager: () => setIsAttachmentManagerOpen(true), closeAttachmentManager: () => setIsAttachmentManagerOpen(false), addAttachmentFiles: (files) => void handleAddComposerAttachmentFiles(files), removeAttachment: handleRemoveComposerAttachment, requestDeleteThread: handleRequestDeleteThread, renameThread: handleRenameChatThread, retryBubble: (bubble) => void handleRetryBubble(bubble), rewriteBubble: (bubble, note) => void handleRewriteBubble(bubble, note), runBubble: (bubble) => void handleRunBubble(bubble), copyBubble: (bubble) => void handleCopyBubble(bubble), insertBubble: handleInsertBubble, openAgentRecord: handleOpenAgentRecord, reset: handleResetStage, selectThread: handleSelectThread, setDetailBubbleId, setHistoryOpen: setIsHistoryOpen, setPromptDraft: handleComposerPromptChange, slashMenu: slashMenuOpen ? { commands: slashMatches, activeIndex: Math.min(slashActiveIndex, slashMatches.length - 1) } : null, onSelectSlashCommand: runSlashCommand, setSessionDataReadEnabled, setShowThinking, selectAgentAutonomy: handleSelectAgentAutonomyWithSafeMode, selectInteractionMode: handleSelectInteractionMode, activateProvider: (id, model) => {
                 const wasRunning = isRunning || isGenerating;
                 void handleActivateProvider(id, model).then(() => {
                   // Mid-run manual switch: announce it in the conversation as

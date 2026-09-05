@@ -173,6 +173,7 @@ export const TR_COPY: AIWorkspaceCopy = {
       runSuccessDirectSubtitle: "Doğrudan çalıştırıldı",
       runFailedTitle: "Çalıştırma başarısız",
       runFailedSubtitle: "Sandbox çalıştırmayı durdurdu",
+      askUserCustomAnswer: "Kendi cevabını yaz…",
       openedInWorkspaceTitle: "Çalışma alanında açıldı",
       openedInWorkspaceSubtitle: "Bir çalışma alanı sekmesine gönderildi",
       openedInWorkspacePreview: "Bunu bir çalışma alanı sekmesinde açtım, sonucu orada inceleyebilirsin. Bu sohbet, takip soruları için burada kalıyor.",

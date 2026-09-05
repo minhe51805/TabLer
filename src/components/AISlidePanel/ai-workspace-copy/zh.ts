@@ -188,6 +188,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
       runSuccessDirectSubtitle: "已直接执行",
       runFailedTitle: "运行失败",
       runFailedSubtitle: "沙箱执行已停止",
+      askUserCustomAnswer: "输入你的回答…",
       openedInWorkspaceTitle: "已在工作区打开",
       openedInWorkspaceSubtitle: "已发送到工作区标签页",
       openedInWorkspacePreview: "我已在工作区标签页中打开它，你可以在那里查看结果。此对话会保留以便继续提问。",

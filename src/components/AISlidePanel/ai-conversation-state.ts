@@ -329,3 +329,16 @@ export function createChatThread(index: number, workspaceKey: string): AIChatThr
     isAutoLabel: true,
   };
 }
+
+/** Strips the numbered ask_user option list and the italic reply hint from
+ *  an answer text so the conversation view can render them as one-click
+ *  buttons instead of duplicated plain-text lines. Only called when the
+ *  bubble carries askUserOptions. */
+export function stripAskUserTrailingOptions(answer: string): string {
+  const trimmed = answer.trimEnd();
+  const optionsStart = trimmed.search(/\n\n\d+\.\s/u);
+  if (optionsStart === -1) {
+    return trimmed.replace(/\n\n_\([^)]*\)_\s*$/u, "").trimEnd();
+  }
+  return trimmed.slice(0, optionsStart).trimEnd();
+}

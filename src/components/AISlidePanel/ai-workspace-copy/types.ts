@@ -171,6 +171,7 @@ export interface AIWorkspaceCopy {
     runSuccessDirectSubtitle: string;
     runFailedTitle: string;
     runFailedSubtitle: string;
+    askUserCustomAnswer: string;
     openedInWorkspaceTitle: string;
     openedInWorkspaceSubtitle: string;
     openedInWorkspacePreview: string;

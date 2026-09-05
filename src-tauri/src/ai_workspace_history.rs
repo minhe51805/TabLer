@@ -86,6 +86,12 @@ pub struct AIWorkspaceBubbleData {
     /// without it, buttons/SQL visibility flipped after an app restart.
     #[serde(default)]
     pub agent_steps: Vec<JsonValue>,
+
+    /// Options captured when the agent ended its turn with an ask_user
+    /// question; the conversation view renders them as one-click reply
+    /// buttons on the final bubble.
+    #[serde(default)]
+    pub ask_user_options: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -295,6 +301,7 @@ mod tests {
             auto_dismiss_at: None,
             compacted_at: None,
             agent_steps: Vec::new(),
+            ask_user_options: vec!["Option A".into(), "Option B".into()],
             attachments: vec![super::AIWorkspaceBubbleAttachment {
                 id: "att-1".into(),
                 kind: "image".into(),
@@ -318,6 +325,9 @@ mod tests {
         assert_eq!(attachments.len(), 1);
         assert_eq!(attachments[0].id, "att-1");
         assert_eq!(attachments[0].mime_type, "image/jpeg");
+        let ask_options = &loaded.bubbles[0].ask_user_options;
+        assert_eq!(ask_options.len(), 2);
+        assert_eq!(ask_options[0], "Option A");
 
         let _ = std::fs::remove_file(path);
     }

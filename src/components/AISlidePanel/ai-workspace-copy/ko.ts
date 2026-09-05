@@ -173,6 +173,7 @@ export const KO_COPY: AIWorkspaceCopy = {
       runSuccessDirectSubtitle: "직접 실행됨",
       runFailedTitle: "실행 실패",
       runFailedSubtitle: "샌드박스 실행 중지됨",
+      askUserCustomAnswer: "직접 답변 입력…",
       openedInWorkspaceTitle: "워크스페이스에서 열림",
       openedInWorkspaceSubtitle: "워크스페이스 탭으로 전송됨",
       openedInWorkspacePreview: "이것을 워크스페이스 탭에서 열어 결과를 거기서 확인할 수 있습니다. 이 대화는 후속 질문을 위해 여기에 유지됩니다.",

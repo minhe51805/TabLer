@@ -246,6 +246,7 @@ export interface AIAgentFinishArgs extends Record<string, unknown> {
   response?: unknown;
   sql?: unknown;
   metricsWidgets?: unknown;
+  options?: unknown;
 }
 
 export type AIAgentFinishAction = AIAgentToolActionBase<"finish", AIAgentFinishArgs>;

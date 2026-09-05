@@ -124,6 +124,10 @@ export interface AIWorkspaceBubbleData {
   /** Metadata of files/images attached by the user to this turn. Image bytes
    *  live in the ai_attachments SQLite table and are fetched on demand. */
   attachments?: AIWorkspaceAttachment[];
+  /** Options captured when the agent ended its turn with an ask_user
+   *  question; the conversation view renders them as one-click reply
+   *  buttons on the final bubble. */
+  askUserOptions?: string[];
 }
 
 /** Persisted metadata of a user attachment; bytes live in the backend table. */

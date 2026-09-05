@@ -9,6 +9,7 @@ import {
 } from "./ai-workspace-types";
 import {
   getBubbleConversationText,
+  stripAskUserTrailingOptions,
   summarizePromptForDisplay,
 } from "./ai-conversation-state";
 import { fetchAttachmentDataUrl } from "../../utils/ai-attachments";
@@ -28,6 +29,10 @@ interface AIConversationViewProps {
   onRetry: (bubble: AIWorkspaceBubbleData) => void;
   onOpenRecord: (link: AIAgentRecordLink) => void;
   onUseSuggestion: (prompt: string) => void;
+  /** One-click reply: sends the chosen ask_user option as a new message. */
+  onAskUserOptionSelect?: (option: string) => void;
+  /** Focuses the composer so the user can type a custom reply instead. */
+  onAskUserCustomInput?: () => void;
 }
 
 /** Fetches a persisted image attachment's data URL (metadata-only bubbles). */
@@ -131,6 +136,8 @@ export const AIConversationView = memo(function AIConversationView({
   onRetry,
   onOpenRecord,
   onUseSuggestion,
+  onAskUserOptionSelect,
+  onAskUserCustomInput,
 }: AIConversationViewProps) {
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
   const [viewerImage, setViewerImage] = useState<{ url: string; name: string } | null>(null);
@@ -163,8 +170,18 @@ export const AIConversationView = memo(function AIConversationView({
       <div className={`ai-workspace-chat-surface ${hasConversation ? "" : "is-empty"}`}>
         {hasConversation ? (
           <div ref={threadRef} className="ai-workspace-chat-thread">
-            {bubbles.map((bubble) => {
+            {bubbles.map((bubble, bubbleIndex) => {
               const conversationText = getBubbleConversationText(bubble);
+              // ask_user bubbles at the tail of the thread render their
+              // options as one-click reply buttons instead of plain text.
+              const askUserOptions = bubble.askUserOptions?.length
+                && bubbleIndex === bubbles.length - 1
+                && bubble.status === "ready"
+                ? bubble.askUserOptions
+                : null;
+              const displayConversationText = askUserOptions
+                ? stripAskUserTrailingOptions(conversationText)
+                : conversationText;
               // Keep the agent step log available after the answer lands: it
               // collapses automatically once every step settles, so users can
               // re-open the reasoning without the toggle.
@@ -241,8 +258,20 @@ export const AIConversationView = memo(function AIConversationView({
                       </div>
                     ) : bubble.status !== "loading" ? (
                       conversationText
-                        && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={conversationText} />
+                        && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={displayConversationText} />
                     ) : null}
+                    {askUserOptions && (
+                      <div className="ai-workspace-ask-user">
+                        {askUserOptions.map((option) => (
+                          <button key={option} type="button" className="ai-workspace-ask-user-option" onClick={() => onAskUserOptionSelect?.(option)}>
+                            {option}
+                          </button>
+                        ))}
+                        <button type="button" className="ai-workspace-ask-user-option is-custom" onClick={() => onAskUserCustomInput?.()}>
+                          {copy.bubbleStates.askUserCustomAnswer}
+                        </button>
+                      </div>
+                    )}
                     {recordLinks.length > 0 && (
                       <div className="ai-workspace-agent-record-links">
                         {recordLinks.map((link) => (

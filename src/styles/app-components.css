@@ -20851,7 +20851,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: fit-content;
+  width: 100%;
+  justify-content: flex-end;
   padding: 0;
   border: 0;
   background: transparent;

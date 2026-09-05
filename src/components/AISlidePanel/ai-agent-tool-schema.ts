@@ -768,10 +768,18 @@ export function parseAgentToolArgs(
   }
 
   if (action === "edit_query_sql") {
-    const tabId = typeof args.tabId === "string" ? args.tabId.trim() : "";
     const sql = typeof args.sql === "string" ? args.sql.trim() : "";
-    if (!tabId || !sql) {
-      throw new Error("The edit_query_sql action requires non-empty args.tabId and args.sql.");
+    // tabId is only required for the existing-tab path; the createIfMissing
+    // path intentionally omits it (that combination used to be rejected here,
+    // which killed every createIfMissing call in the normalizer before the
+    // executor could open a tab).
+    const createIfMissing =
+      args.createIfMissing === true || args.createIfMissing === "true" || args.createIfMissing === 1;
+    const tabId = typeof args.tabId === "string" ? args.tabId.trim() : "";
+    if (!sql || (!createIfMissing && !tabId)) {
+      throw new Error(
+        "The edit_query_sql action requires non-empty args.sql plus either args.tabId or createIfMissing: true.",
+      );
     }
   }
 

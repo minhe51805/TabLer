@@ -260,4 +260,32 @@ line two","args":{"response":"done"}}\nThanks`;
   ])("blocks non-read-only observation SQL: %s", (sql) => {
     expect(() => validateAIAgentReadonlySql(sql)).toThrow(/only allows|read-only/);
   });
+
+  it("recovers native tool arguments the backend could not parse", () => {
+    // Rust ships unparseable function.arguments verbatim under
+    // `unparsedArguments`; the normalizer must repair it, not drop it.
+    const raw = JSON.stringify({
+      action: "edit_query_sql",
+      message: "",
+      args: {
+        unparsedArguments: '{"sql":"SELECT COUNT(*) FROM dbo.SinhViens", "createIfMissing":true,',
+      },
+    });
+    const action = parseAIAgentToolAction(raw);
+    expect(action.action).toBe("edit_query_sql");
+    expect(action.args).toMatchObject({
+      sql: "SELECT COUNT(*) FROM dbo.SinhViens",
+      createIfMissing: true,
+    });
+    expect(action.args).not.toHaveProperty("unparsedArguments");
+  });
+
+  it("throws on unrecoverable native tool arguments so the repair round can retry", () => {
+    const raw = JSON.stringify({
+      action: "edit_query_sql",
+      message: "",
+      args: { unparsedArguments: "no json here at all" },
+    });
+    expect(() => parseAIAgentToolAction(raw)).toThrow("malformed tool arguments");
+  });
 });

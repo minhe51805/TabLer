@@ -474,7 +474,34 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
     throw new Error("The agent returned invalid tool arguments.");
   }
 
-  const args = (parsed.args as Record<string, unknown> | undefined) || {};
+  // Native tool-calls from weak providers can arrive with `function.arguments`
+  // that the backend could not parse (shipped verbatim under
+  // `unparsedArguments` instead of being silently emptied). Run that payload
+  // through the same repair pipeline as text finals; an unrecoverable payload
+  // throws so the caller's bounded repair round can ask the model to re-emit
+  // the action with valid arguments.
+  let args = (parsed.args as Record<string, unknown> | undefined) ?? {};
+  const unparsedArguments = args.unparsedArguments;
+  if (typeof unparsedArguments === "string") {
+    const candidate = repairTruncatedJson(
+      sanitizeJsonStringLiterals(extractJsonObjectCandidate(unparsedArguments)),
+    );
+    let recovered: unknown = null;
+    try {
+      recovered = JSON.parse(candidate);
+    } catch {
+      recovered = null;
+    }
+    if (recovered && typeof recovered === "object" && !Array.isArray(recovered)) {
+      const recoveredArgs = { ...(recovered as Record<string, unknown>) };
+      delete recoveredArgs.unparsedArguments;
+      args = recoveredArgs;
+    } else {
+      throw new Error(
+        `The agent returned malformed tool arguments: ${unparsedArguments.trim().slice(0, 200)}`,
+      );
+    }
+  }
   const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
 
   return {

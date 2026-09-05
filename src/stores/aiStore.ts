@@ -5,6 +5,7 @@ import { getCurrentAppLanguage, translateLanguage } from "../i18n";
 import {
   type AIConversationMessage,
   type AIProviderConfig,
+  type AIRequestAttachment,
   type AIRequestIntent,
   type AIRequestMode,
   type LocalOllamaSetupResult,
@@ -20,13 +21,126 @@ import { useGlobalErrorStore } from "./globalErrorStore";
 const AI_TIMEOUTS = {
   default: 60_000,
   remotePanel: 180_000,
-  remoteAgentPanel: 360_000,
+  // Agent steps are single-purpose model calls; 2 minutes is enough for even
+  // slow reasoning models. The old 6-minute ceiling let one hanging endpoint
+  // stall an agent step for 3 provider attempts × 6 min = 18 silent minutes.
+  remoteAgentPanel: 120_000,
   localOllamaPanel: 600_000,
   localOllamaInline: 120_000,
 } as const;
 
-/** Active provider first, then at most this many enabled fallbacks. */
-const MAX_PROVIDER_ATTEMPTS = 3;
+/**
+ * Enabled model ids for a provider, in failover order: the configured model
+ * first (the one the old single-model chain used), then the rest of the
+ * catalog minus hidden models. Mirrors the composer switcher, so the chain
+ * only ever picks models the user could pick themselves.
+ */
+function providerModelCandidates(config: AIProviderConfig): string[] {
+  const configured = config.model.trim();
+  const hidden = new Set(config.disabled_models ?? []);
+  const extras = (config.models ?? [])
+    .map((model) => model.trim())
+    .filter((model) => model && model !== configured && !hidden.has(model));
+  return configured ? [configured, ...extras] : extras;
+}
+
+/** One stop in the request-level failover chain: a provider plus one model. */
+interface AIChainAttempt {
+  config: AIProviderConfig;
+  providerId: string;
+  model?: string;
+}
+
+/**
+ * Full failover chain over every enabled provider AND every enabled model of
+ * each provider: one broken endpoint (or one broken model on a multi-model
+ * provider) no longer kills a run. The active provider/model goes first;
+ * providers that timed out within the last 2 minutes are skipped while
+ * healthy ones exist (kept otherwise so a lone provider still retries), and
+ * within the pool the most recently timed-out provider goes last.
+ */
+function buildFailoverChain(
+  configs: AIProviderConfig[],
+  activeConfig: AIProviderConfig,
+): AIChainAttempt[] {
+  const attemptsOf = (config: AIProviderConfig): AIChainAttempt[] =>
+    providerModelCandidates(config).map((model) => ({
+      config,
+      providerId: config.id,
+      model,
+    }));
+  const enabledFallbacks = configs.filter(
+    (candidate) => candidate.is_enabled && candidate.id !== activeConfig.id,
+  );
+  const now = Date.now();
+  const healthyFallbacks = enabledFallbacks.filter((candidate) => {
+    const timedOutAt = recentProviderTimeouts.get(candidate.id);
+    return timedOutAt === undefined || now - timedOutAt >= PROVIDER_TIMEOUT_RETRY_AFTER_MS;
+  });
+  const fallbackPool = healthyFallbacks.length > 0 ? healthyFallbacks : enabledFallbacks;
+  const sortedPool = [...fallbackPool]
+    .sort((left, right) => providerPenaltyRank(left.id) - providerPenaltyRank(right.id));
+  const activeAttempts = attemptsOf(activeConfig);
+  // Degenerate config guard: an active provider with no configured model and
+  // no visible catalog entries would otherwise produce an EMPTY chain (and a
+  // pointless "undefined" error). Keep one model-less attempt so the backend
+  // still tries the provider's stored configuration.
+  const chain = [
+    ...(activeAttempts.length > 0
+      ? activeAttempts
+      : [{ config: activeConfig, providerId: activeConfig.id }]),
+    ...sortedPool.flatMap((config) => attemptsOf(config)),
+  ];
+  return chain;
+}
+
+/**
+ * Providers that recently timed out (hung without answering). They are pushed
+ * to the back of — or briefly dropped from — the failover chain so a hanging
+ * endpoint cannot eat another full timeout on the very next agent step.
+ */
+const PROVIDER_TIMEOUT_RETRY_AFTER_MS = 120_000;
+const recentProviderTimeouts = new Map<string, number>();
+function markProviderTimeout(providerId: string) {
+  const now = Date.now();
+  recentProviderTimeouts.set(providerId, now);
+  // Keep the map tiny: drop entries old enough to be irrelevant anyway.
+  for (const [id, at] of recentProviderTimeouts) {
+    if (now - at >= PROVIDER_TIMEOUT_RETRY_AFTER_MS) recentProviderTimeouts.delete(id);
+  }
+}
+function providerPenaltyRank(providerId: string): number {
+  const at = recentProviderTimeouts.get(providerId);
+  return at === undefined ? 0 : at;
+}
+
+/**
+ * Explicit user provider switches win over automatic failover: the panel
+ * hook marks the moment of a manual pick, and the agent retry loop skips
+ * auto-promotion when the user chose a provider during the current run.
+ */
+let manualProviderOverrideAt = 0;
+export function markManualProviderOverride() {
+  manualProviderOverrideAt = Date.now();
+}
+export function getManualProviderOverrideAt() {
+  return manualProviderOverrideAt;
+}
+
+/**
+ * All provider-config persistence funnels through one chain, so an automatic
+ * failover write and a user switch can never interleave and clobber each
+ * other — last queued write wins, in order.
+ */
+const configSaveChain = { current: Promise.resolve() };
+function enqueueConfigSave<T>(task: () => Promise<T>): Promise<T> {
+  const run = configSaveChain.current.then(task, task);
+  configSaveChain.current = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 export type AIRequestPhase = "idle" | "requesting" | "cancelling";
 
@@ -60,6 +174,8 @@ export interface AIState {
   streamingText: string;
   streamingReasoning: boolean;
   streamingUsage: Record<string, unknown> | null;
+  /** True while an automatic provider failover is switching the active provider. */
+  isProviderFailingOver: boolean;
 
   loadAIConfigs: () => Promise<{
     aiConfigs: AIProviderConfig[];
@@ -81,14 +197,18 @@ export interface AIState {
     context: string,
     mode?: AIRequestMode,
     intent?: AIRequestIntent,
-    history?: AIConversationMessage[]
+    history?: AIConversationMessage[],
+    attachments?: AIRequestAttachment[],
+    options?: { correlationId?: string },
   ) => Promise<string>;
   askAIWithReasoning: (
     prompt: string,
     context: string,
     mode?: AIRequestMode,
     intent?: AIRequestIntent,
-    history?: AIConversationMessage[]
+    history?: AIConversationMessage[],
+    attachments?: AIRequestAttachment[],
+    options?: { correlationId?: string },
   ) => Promise<{ text: string; reasoning?: string }>;
   /**
    * Promotes the next enabled provider (cyclic list order, skipping the
@@ -114,7 +234,9 @@ function switchActiveProvider(
   const normalized = normalizeAIProviderConfigs(
     configs.map((config) => ({ ...config, is_primary: config.id === next.id })),
   );
-  set({ aiConfigs: normalized });
+  // Surface the automatic switch in the panel: the composer model trigger
+  // shows the spinner until the (queued) persistence settles.
+  set({ aiConfigs: normalized, isProviderFailingOver: true });
   emitAppToast({
     title: translateLanguage(getCurrentAppLanguage(), "ai.toast.providerFailover", {
       failed: failed.name || failed.id,
@@ -125,12 +247,15 @@ function switchActiveProvider(
   });
   // Best-effort persistence: the retried request must not wait on the disk
   // write, and a failed save still leaves the runtime switch in place.
-  void invokeMutation<[AIProviderConfig[], Record<string, boolean>]>(
-    "save_ai_configs",
-    { providers: normalized, apiKeyUpdates: {}, clearedProviderIds: [] },
-  )
+  // Queued behind other config saves so it can never clobber a user pick.
+  void enqueueConfigSave(() =>
+    invokeMutation<[AIProviderConfig[], Record<string, boolean>]>(
+      "save_ai_configs",
+      { providers: normalized, apiKeyUpdates: {}, clearedProviderIds: [] },
+    ))
     .then(([aiConfigs]) => set({ aiConfigs }))
-    .catch((error) => console.warn("[AI] Failed to persist provider failover:", error));
+    .catch((error) => console.warn("[AI] Failed to persist provider failover:", error))
+    .finally(() => set({ isProviderFailingOver: false }));
 }
 
 export const useAIStore = create<AIState>((set, get) => ({
@@ -140,6 +265,7 @@ export const useAIStore = create<AIState>((set, get) => ({
   streamingText: "",
   streamingReasoning: false,
   streamingUsage: null,
+  isProviderFailingOver: false,
 
   loadAIConfigs: async () => {
     try {
@@ -156,9 +282,11 @@ export const useAIStore = create<AIState>((set, get) => ({
 
   saveAIConfigs: async (configs, apiKeyUpdates, clearedProviderIds) => {
     try {
-      const [aiConfigs, aiKeyStatus] = await invokeMutation<
-        [AIProviderConfig[], Record<string, boolean>]
-      >("save_ai_configs", { providers: configs, apiKeyUpdates, clearedProviderIds });
+      const [aiConfigs, aiKeyStatus] = await enqueueConfigSave(() =>
+        invokeMutation<[AIProviderConfig[], Record<string, boolean>]>(
+          "save_ai_configs",
+          { providers: configs, apiKeyUpdates, clearedProviderIds },
+        ));
       set({ aiConfigs });
       return { aiConfigs, aiKeyStatus };
     } catch (e) {
@@ -232,6 +360,8 @@ export const useAIStore = create<AIState>((set, get) => ({
     mode = "panel",
     intent = "sql",
     history = [],
+    attachments,
+    options,
   ) => {
     const activeConfig = getActiveAIProvider(get().aiConfigs);
     if (!activeConfig) {
@@ -241,16 +371,11 @@ export const useAIStore = create<AIState>((set, get) => ({
       );
     }
 
-    // Failover chain: the active provider first, then the next enabled
-    // providers, so one rate-limited or broken endpoint no longer kills a run.
-    const fallbackConfigs = get()
-      .aiConfigs
-      .filter((candidate) => candidate.is_enabled && candidate.id !== activeConfig.id)
-      .slice(0, MAX_PROVIDER_ATTEMPTS - 1);
-    const chain: Array<{ config: AIProviderConfig; providerId?: string }> = [
-      { config: activeConfig },
-      ...fallbackConfigs.map((config) => ({ config, providerId: config.id })),
-    ];
+    // Failover chain: the active (provider, model) first, then every other
+    // enabled model of that provider, then every other enabled provider with
+    // each of its enabled models — one rate-limited or broken endpoint (or one
+    // broken model on a multi-model provider) no longer kills a run.
+    const chain = buildFailoverChain(get().aiConfigs, activeConfig);
 
     let lastError: unknown;
     for (const [index, attempt] of chain.entries()) {
@@ -300,12 +425,14 @@ export const useAIStore = create<AIState>((set, get) => ({
               request: {
                 request_id: requestId,
                 provider_id: attempt.providerId ?? null,
+                model: attempt.model ?? null,
                 prompt,
                 context,
                 mode,
                 intent,
                 language: getCurrentAppLanguage(),
                 history,
+                attachments: attachments && attachments.length > 0 ? attachments : undefined,
               },
             },
             timeoutMs,
@@ -324,12 +451,14 @@ export const useAIStore = create<AIState>((set, get) => ({
             request: {
               request_id: requestId,
               provider_id: attempt.providerId ?? null,
+              model: attempt.model ?? null,
               prompt,
               context,
               mode,
               intent,
               language: getCurrentAppLanguage(),
               history,
+              attachments: attachments && attachments.length > 0 ? attachments : undefined,
               ...(nativeToolPayload
                 ? {
                     tools: nativeToolPayload.tools,
@@ -351,16 +480,31 @@ export const useAIStore = create<AIState>((set, get) => ({
         lastError = errorValue;
         const requestError = normalizeAIRequestError(errorValue);
         if (requestError.code === "cancelled") throw requestError;
+        // A timed-out provider hung for the full window — deprioritize (or
+        // briefly skip) it on subsequent calls so it cannot eat them too.
+        if (requestError.code === "timeout") markProviderTimeout(config.id);
         const canFailOver = requestError.code === "timeout" || requestError.code === "provider";
         if (!canFailOver || index === chain.length - 1) throw requestError;
         // Stop the superseded backend request before switching endpoints.
         void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
+        // Surface silent chain failovers to any listening agent run so the
+        // conversation shows why a step took an extra attempt.
+        window.dispatchEvent(new CustomEvent("ai-provider-chain-failover", {
+          detail: {
+            failedProvider: config.name.trim() || config.id,
+            failedModel: attempt.model ?? null,
+            reason: requestError.code,
+            attempt: index + 1,
+            total: chain.length,
+            ...(options?.correlationId ? { correlationId: options.correlationId } : {}),
+          },
+        }));
         // Deliberately no primary change here: the request-level chain tries
         // the remaining providers silently, and the single visible promotion
         // is owned by the agent hook (promoteNextEnabledProvider) so the
         // selector moves exactly once per run instead of flip-flopping.
         console.warn(
-          `[AI] Provider "${config.name || config.id}" failed (${requestError.code}); failing over to the next enabled provider.`,
+          `[AI] Provider "${config.name || config.id}"${attempt.model ? ` (model ${attempt.model})` : ""} failed (${requestError.code}); failing over to the next model/provider in the chain.`,
         );
       } finally {
         unlisten?.();
@@ -376,8 +520,8 @@ export const useAIStore = create<AIState>((set, get) => ({
     throw normalizeAIRequestError(lastError);
   },
 
-  askAI: async (prompt, context, mode = "panel", intent = "sql", history = []) => {
-    const response = await get().askAIWithReasoning(prompt, context, mode, intent, history);
+  askAI: async (prompt, context, mode = "panel", intent = "sql", history = [], attachments, options) => {
+    const response = await get().askAIWithReasoning(prompt, context, mode, intent, history, attachments, options);
     return response.text;
   },
 }));

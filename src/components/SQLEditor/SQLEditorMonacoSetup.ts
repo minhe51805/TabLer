@@ -30,12 +30,33 @@ export interface CompletionProviderDeps {
   dbType: DatabaseType | undefined;
 }
 
+/** Max parallel `get_table_structure` calls for schema completions; keeps a
+ *  first-use burst from hammering a remote database (or the IPC bridge). */
+const STRUCTURE_FETCH_CONCURRENCY = 4;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await worker(items[index]);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 export function registerSchemaCompletionProvider(
    
   monaco: any,
   deps: CompletionProviderDeps,
   _onDispose?: () => void
-): { dispose: () => void } {
+): { dispose: () => void; prefetchStructures?: () => Promise<void> } {
   const { getTables, getTableStructure, dbType } = deps;
 
   async function fetchStructure(tableName: string): Promise<TableStructure> {
@@ -202,8 +223,10 @@ export function registerSchemaCompletionProvider(
           );
         } else {
           const tables = getTables();
-          await Promise.all(
-            tables.map(async (t) => {
+          await mapWithConcurrency(
+            tables,
+            STRUCTURE_FETCH_CONCURRENCY,
+            async (t) => {
               try {
                 const structure = await fetchStructure(t.name);
                 for (const col of structure.columns) {
@@ -218,7 +241,7 @@ export function registerSchemaCompletionProvider(
               } catch {
                 // Skip tables we can't fetch structure for
               }
-            })
+            }
           );
         }
 
@@ -254,8 +277,10 @@ export function registerSchemaCompletionProvider(
           );
         } else {
           const tables = getTables();
-          await Promise.all(
-            tables.map(async (t) => {
+          await mapWithConcurrency(
+            tables,
+            STRUCTURE_FETCH_CONCURRENCY,
+            async (t) => {
               try {
                 const structure = await fetchStructure(t.name);
                 for (const col of structure.columns) {
@@ -270,7 +295,7 @@ export function registerSchemaCompletionProvider(
               } catch {
                 // Skip
               }
-            })
+            }
           );
         }
 
@@ -316,8 +341,10 @@ export function registerSchemaCompletionProvider(
           );
         } else {
           const tables = getTables();
-          await Promise.all(
-            tables.map(async (t) => {
+          await mapWithConcurrency(
+            tables,
+            STRUCTURE_FETCH_CONCURRENCY,
+            async (t) => {
               try {
                 const structure = await fetchStructure(t.name);
                 for (const col of structure.columns) {
@@ -332,7 +359,7 @@ export function registerSchemaCompletionProvider(
               } catch {
                 // Skip
               }
-            })
+            }
           );
         }
 
@@ -527,10 +554,22 @@ export function registerSchemaCompletionProvider(
     return { suggestions, incomplete: hasActiveWord };
   }
 
-  return monaco.languages.registerCompletionItemProvider("sql", {
+  const disposable = monaco.languages.registerCompletionItemProvider("sql", {
     provideCompletionItems,
     triggerCharacters: [" ", ".", "(", ",", "*"],
   });
+
+  return {
+    dispose: () => disposable.dispose(),
+    /** Warms the versioned structure cache so the first completion burst
+     *  never fires dozens of parallel metadata queries. */
+    prefetchStructures: () =>
+      mapWithConcurrency(
+        getTables(),
+        3,
+        (t) => fetchStructure(t.name).catch(() => undefined),
+      ).then(() => undefined),
+  };
 }
 
 /** Legacy completion provider providing only table names + basic SQL keywords. */

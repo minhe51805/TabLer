@@ -107,6 +107,7 @@ export function useQueryWorkspaceState() {
         connectionId: targetConnectionId,
         database: detail.database || currentDatabase || undefined,
         content: sql,
+        source: "ai",
       });
       setQuerySessionByTab((current) => ({
         ...current,

@@ -1,5 +1,9 @@
-use crate::database::ai_models::{AIProviderConfig, AIProviderType, AIRequestMode};
+use crate::database::ai_models::{
+    AIProviderConfig, AIProviderType, AIRequestAttachment, AIRequestMode,
+};
 use serde_json::json;
+#[cfg(test)]
+use std::collections::HashMap;
 
 use super::endpoints::{
     is_nvidia_integrate_endpoint, is_ollama_native_chat_endpoint,
@@ -21,6 +25,9 @@ pub(crate) fn streaming_request_body(
         if matches!(
             config.provider_type,
             AIProviderType::OpenAI | AIProviderType::OpenRouter | AIProviderType::Custom
+        ) && !matches!(
+            resolve_provider_body_shape(config, endpoint),
+            ProviderBodyShape::Anthropic
         ) {
             object.insert(
                 "stream_options".to_string(),
@@ -29,6 +36,25 @@ pub(crate) fn streaming_request_body(
         }
     }
     body
+}
+
+/// The provider identity a config behaves as on the wire. Custom/Ollama
+/// configs with an explicit `anthropic` API format act exactly like a native
+/// Anthropic provider (body, auth headers, tool calls, response + stream
+/// parsing), so callers should route everything through this instead of the
+/// raw `config.provider_type`.
+pub(crate) fn effective_wire_provider(config: &AIProviderConfig, endpoint: &str) -> AIProviderType {
+    if matches!(
+        config.provider_type,
+        AIProviderType::Ollama | AIProviderType::Custom
+    ) && matches!(
+        resolve_provider_body_shape(config, endpoint),
+        ProviderBodyShape::Anthropic
+    ) {
+        AIProviderType::Anthropic
+    } else {
+        config.provider_type.clone()
+    }
 }
 
 pub(crate) fn streaming_endpoint(config: &AIProviderConfig, endpoint: &str) -> String {
@@ -110,13 +136,21 @@ fn build_gemini_body(system_prompt: &str, prompt: &str) -> serde_json::Value {
     })
 }
 
-pub(crate) fn build_provider_request_body(
+/// Wire shape a provider request body uses. Resolved once so body building and
+/// image attachment injection always agree on the same dialect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderBodyShape {
+    OpenAiLike,
+    OllamaChat,
+    OllamaGenerate,
+    Anthropic,
+    Gemini,
+}
+
+pub(crate) fn resolve_provider_body_shape(
     config: &AIProviderConfig,
     endpoint: &str,
-    system_prompt: &str,
-    prompt: &str,
-    mode: &AIRequestMode,
-) -> serde_json::Value {
+) -> ProviderBodyShape {
     // An explicit API format wins over URL sniffing so users can point a
     // Custom provider at any path (e.g. an Ollama server behind a proxy).
     if matches!(
@@ -124,33 +158,10 @@ pub(crate) fn build_provider_request_body(
         AIProviderType::Ollama | AIProviderType::Custom
     ) {
         match super::endpoints::explicit_api_format(config) {
-            Some("ollama-chat") => {
-                return json!({
-                    "model": config.model,
-                    "messages": [
-                        { "role": "system", "content": system_prompt },
-                        { "role": "user", "content": prompt }
-                    ],
-                    "stream": false
-                });
-            }
-            Some("ollama-generate") => {
-                return json!({
-                    "model": config.model,
-                    "system": system_prompt,
-                    "prompt": prompt,
-                    "stream": false
-                });
-            }
-            Some("chat-completions") => {
-                return build_openai_like_body(
-                    &config.model,
-                    system_prompt,
-                    prompt,
-                    mode,
-                    endpoint,
-                );
-            }
+            Some("ollama-chat") => return ProviderBodyShape::OllamaChat,
+            Some("ollama-generate") => return ProviderBodyShape::OllamaGenerate,
+            Some("chat-completions") => return ProviderBodyShape::OpenAiLike,
+            Some("anthropic") => return ProviderBodyShape::Anthropic,
             _ => {}
         }
     }
@@ -158,33 +169,165 @@ pub(crate) fn build_provider_request_body(
     match config.provider_type {
         AIProviderType::Ollama | AIProviderType::Custom => {
             if is_ollama_native_chat_endpoint(endpoint) {
-                return json!({
-                    "model": config.model,
-                    "messages": [
-                        { "role": "system", "content": system_prompt },
-                        { "role": "user", "content": prompt }
-                    ],
-                    "stream": false
-                });
+                ProviderBodyShape::OllamaChat
+            } else if is_ollama_native_generate_endpoint(endpoint) {
+                ProviderBodyShape::OllamaGenerate
+            } else {
+                ProviderBodyShape::OpenAiLike
             }
-
-            if is_ollama_native_generate_endpoint(endpoint) {
-                return json!({
-                    "model": config.model,
-                    "system": system_prompt,
-                    "prompt": prompt,
-                    "stream": false
-                });
-            }
-
-            build_openai_like_body(&config.model, system_prompt, prompt, mode, endpoint)
         }
-        AIProviderType::Anthropic => {
+        AIProviderType::Anthropic => ProviderBodyShape::Anthropic,
+        AIProviderType::Gemini => ProviderBodyShape::Gemini,
+        AIProviderType::OpenAI | AIProviderType::OpenRouter => ProviderBodyShape::OpenAiLike,
+    }
+}
+
+pub(crate) fn build_provider_request_body(
+    config: &AIProviderConfig,
+    endpoint: &str,
+    system_prompt: &str,
+    prompt: &str,
+    mode: &AIRequestMode,
+) -> serde_json::Value {
+    match resolve_provider_body_shape(config, endpoint) {
+        ProviderBodyShape::OllamaChat => {
+            json!({
+                "model": config.model,
+                "messages": [
+                    { "role": "system", "content": system_prompt },
+                    { "role": "user", "content": prompt }
+                ],
+                "stream": false
+            })
+        }
+        ProviderBodyShape::OllamaGenerate => {
+            json!({
+                "model": config.model,
+                "system": system_prompt,
+                "prompt": prompt,
+                "stream": false
+            })
+        }
+        ProviderBodyShape::Anthropic => {
             build_anthropic_body(&config.model, system_prompt, prompt, mode)
         }
-        AIProviderType::Gemini => build_gemini_body(system_prompt, prompt),
-        AIProviderType::OpenAI | AIProviderType::OpenRouter => {
+        ProviderBodyShape::Gemini => build_gemini_body(system_prompt, prompt),
+        ProviderBodyShape::OpenAiLike => {
             build_openai_like_body(&config.model, system_prompt, prompt, mode, endpoint)
+        }
+    }
+}
+
+/// Injects user image attachments into an already-built request body for the
+/// resolved wire shape. Strict no-op when there are no image attachments, so
+/// the classic text path keeps a byte-identical body.
+///
+/// Only `kind == "image"` attachments become multimodal parts; text-file
+/// contents are inlined into the prompt by the frontend before the request.
+pub(crate) fn apply_attachments(
+    body: &mut serde_json::Value,
+    shape: ProviderBodyShape,
+    prompt: &str,
+    attachments: &[AIRequestAttachment],
+) {
+    let images: Vec<&AIRequestAttachment> = attachments
+        .iter()
+        .filter(|attachment| attachment.kind == "image" && !attachment.data.trim().is_empty())
+        .collect();
+    if images.is_empty() {
+        return;
+    }
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+
+    let base64_images: Vec<String> = images.iter().map(|image| image.data.clone()).collect();
+    match shape {
+        ProviderBodyShape::OpenAiLike => {
+            let Some(messages) = object.get_mut("messages").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            let Some(user_message) = messages
+                .iter_mut()
+                .rev()
+                .find(|message| message.get("role").and_then(|v| v.as_str()) == Some("user"))
+            else {
+                return;
+            };
+            let mut parts = vec![json!({ "type": "text", "text": prompt })];
+            for image in &images {
+                parts.push(json!({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": format!("data:{};base64,{}", image.mime_type, image.data)
+                    }
+                }));
+            }
+            user_message["content"] = serde_json::Value::Array(parts);
+        }
+        ProviderBodyShape::OllamaChat => {
+            let Some(messages) = object.get_mut("messages").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            let Some(user_message) = messages
+                .iter_mut()
+                .rev()
+                .find(|message| message.get("role").and_then(|v| v.as_str()) == Some("user"))
+            else {
+                return;
+            };
+            user_message["images"] = json!(base64_images);
+        }
+        ProviderBodyShape::OllamaGenerate => {
+            object.insert("images".to_string(), json!(base64_images));
+        }
+        ProviderBodyShape::Anthropic => {
+            let Some(messages) = object.get_mut("messages").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            let Some(user_message) = messages
+                .iter_mut()
+                .rev()
+                .find(|message| message.get("role").and_then(|v| v.as_str()) == Some("user"))
+            else {
+                return;
+            };
+            let mut blocks: Vec<serde_json::Value> = images
+                .iter()
+                .map(|image| {
+                    json!({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": image.mime_type,
+                            "data": image.data
+                        }
+                    })
+                })
+                .collect();
+            blocks.push(json!({ "type": "text", "text": prompt }));
+            user_message["content"] = serde_json::Value::Array(blocks);
+        }
+        ProviderBodyShape::Gemini => {
+            let Some(contents) = object.get_mut("contents").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            let Some(last_content) = contents.last_mut() else {
+                return;
+            };
+            let mut parts: Vec<serde_json::Value> = images
+                .iter()
+                .map(|image| {
+                    json!({
+                        "inline_data": {
+                            "mime_type": image.mime_type,
+                            "data": image.data
+                        }
+                    })
+                })
+                .collect();
+            parts.push(json!({ "text": prompt }));
+            last_content["parts"] = serde_json::Value::Array(parts);
         }
     }
 }
@@ -243,6 +386,7 @@ pub(crate) fn sample_provider(provider_type: AIProviderType) -> AIProviderConfig
         api_format: None,
         models: Vec::new(),
         disabled_models: Vec::new(),
+        model_settings: HashMap::new(),
     }
 }
 
@@ -250,6 +394,130 @@ pub(crate) fn sample_provider(provider_type: AIProviderType) -> AIProviderConfig
 mod tests {
     use super::super::extraction::take_visible_stream_delta;
     use super::*;
+
+    #[test]
+    fn apply_attachments_is_a_noop_without_images() {
+        let mut body = json!({
+            "model": "m",
+            "messages": [{ "role": "user", "content": "look" }]
+        });
+        let before = body.clone();
+        apply_attachments(&mut body, ProviderBodyShape::OpenAiLike, "look", &[]);
+        assert_eq!(before, body);
+
+        // Text attachments never become image parts.
+        let text_only = AIRequestAttachment {
+            kind: "text".to_string(),
+            name: "notes.txt".to_string(),
+            mime_type: "text/plain".to_string(),
+            data: "hello".to_string(),
+        };
+        apply_attachments(
+            &mut body,
+            ProviderBodyShape::OpenAiLike,
+            "look",
+            &[text_only],
+        );
+        assert_eq!(before, body);
+    }
+
+    fn sample_image() -> AIRequestAttachment {
+        AIRequestAttachment {
+            kind: "image".to_string(),
+            name: "shot.png".to_string(),
+            mime_type: "image/png".to_string(),
+            data: "AAAA".to_string(),
+        }
+    }
+
+    #[test]
+    fn apply_attachments_injects_openai_image_parts() {
+        let mut body = json!({
+            "model": "m",
+            "messages": [
+                { "role": "system", "content": "sys" },
+                { "role": "user", "content": "look" }
+            ]
+        });
+        apply_attachments(
+            &mut body,
+            ProviderBodyShape::OpenAiLike,
+            "look",
+            &[sample_image()],
+        );
+        let content = &body["messages"][1]["content"];
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "look");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,AAAA");
+    }
+
+    #[test]
+    fn apply_attachments_injects_anthropic_image_blocks() {
+        let mut body = json!({
+            "model": "m",
+            "max_tokens": 1024,
+            "messages": [{ "role": "user", "content": "look" }]
+        });
+        apply_attachments(
+            &mut body,
+            ProviderBodyShape::Anthropic,
+            "look",
+            &[sample_image()],
+        );
+        let content = &body["messages"][0]["content"];
+        assert_eq!(content[0]["type"], "image");
+        assert_eq!(content[0]["source"]["type"], "base64");
+        assert_eq!(content[0]["source"]["media_type"], "image/png");
+        assert_eq!(content[0]["source"]["data"], "AAAA");
+        assert_eq!(content[1]["type"], "text");
+        assert_eq!(content[1]["text"], "look");
+    }
+
+    #[test]
+    fn apply_attachments_injects_gemini_inline_data() {
+        let mut body = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": "look" }] }]
+        });
+        apply_attachments(
+            &mut body,
+            ProviderBodyShape::Gemini,
+            "look",
+            &[sample_image()],
+        );
+        let parts = &body["contents"][0]["parts"];
+        assert_eq!(parts[0]["inline_data"]["mime_type"], "image/png");
+        assert_eq!(parts[0]["inline_data"]["data"], "AAAA");
+        assert_eq!(parts[1]["text"], "look");
+    }
+
+    #[test]
+    fn apply_attachments_injects_ollama_images() {
+        let mut chat = json!({
+            "model": "m",
+            "messages": [
+                { "role": "system", "content": "sys" },
+                { "role": "user", "content": "look" }
+            ],
+            "stream": false
+        });
+        apply_attachments(
+            &mut chat,
+            ProviderBodyShape::OllamaChat,
+            "look",
+            &[sample_image()],
+        );
+        assert_eq!(chat["messages"][1]["images"], json!(["AAAA"]));
+
+        let mut generate = json!({ "model": "m", "prompt": "look", "stream": false });
+        apply_attachments(
+            &mut generate,
+            ProviderBodyShape::OllamaGenerate,
+            "look",
+            &[sample_image()],
+        );
+        assert_eq!(generate["images"], json!(["AAAA"]));
+    }
 
     #[test]
     fn apply_native_tools_is_a_noop_when_tools_absent() {
@@ -336,6 +604,71 @@ mod tests {
         );
         assert!(body.get("messages").is_some());
         assert!(body.get("prompt").is_none());
+    }
+
+    #[test]
+    fn explicit_anthropic_format_uses_anthropic_wire_shape() {
+        let mut provider = sample_provider(AIProviderType::Custom);
+        provider.endpoint = "https://proxy.example.com/v1/messages".to_string();
+        provider.api_format = Some("anthropic".to_string());
+
+        // Wire identity + body shape follow the Anthropic contract.
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "https://proxy.example.com/v1/messages"
+        );
+        assert_eq!(
+            effective_wire_provider(&provider, &provider.endpoint),
+            AIProviderType::Anthropic
+        );
+        let body = build_provider_request_body(
+            &provider,
+            &provider.endpoint,
+            "sys",
+            "usr",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(body["system"], "sys");
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert!(body.get("prompt").is_none());
+
+        // Streaming stays on the Anthropic contract: `stream` flips on but the
+        // OpenAI-only `stream_options` key must not appear.
+        let stream_body = streaming_request_body(
+            &provider,
+            &provider.endpoint,
+            "sys",
+            "usr",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(stream_body["stream"], json!(true));
+        assert!(stream_body.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn explicit_anthropic_format_resolves_base_urls_like_native_anthropic() {
+        let mut provider = sample_provider(AIProviderType::Custom);
+        provider.api_format = Some("anthropic".to_string());
+
+        // Blank endpoint defaults to the real Anthropic API.
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "https://api.anthropic.com/v1/messages"
+        );
+
+        // Unwired base URLs get `/messages` appended, like the native provider.
+        provider.endpoint = "https://proxy.example.com/v1".to_string();
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "https://proxy.example.com/v1/messages"
+        );
+
+        // Fully wired URLs are kept as-is (proxies may rewrite the path).
+        provider.endpoint = "https://proxy.example.com/my-gateway".to_string();
+        assert_eq!(
+            super::super::endpoints::resolve_provider_endpoint(&provider),
+            "https://proxy.example.com/my-gateway"
+        );
     }
 
     #[test]

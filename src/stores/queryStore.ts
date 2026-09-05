@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
 import type { ColumnDetail, QueryParameter, QueryResult, TableCellUpdateRequest, TableRowDeleteRequest, TableStructure } from "../types";
 import { assertQueryAllowed } from "../utils/safe-mode-query-guard";
@@ -13,18 +14,38 @@ export interface QueryState {
   isExecutingQuery: boolean;
   activeQueryRequestId: string | null;
   activeQueryConnectionId: string | null;
+  /** Roadmap Phase 3B: progressive row delivery for large read-only queries. */
+  progressiveDeliveryEnabled: boolean;
+  /** Live count of rows delivered by the progressive channel (null when idle). */
+  progressiveRowCount: number | null;
+  setProgressiveDeliveryEnabled: (enabled: boolean) => void;
 
-  executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
+  executeQuery: (
+    connectionId: string,
+    sql: string,
+    options?: { preApproved?: boolean },
+  ) => Promise<QueryResult>;
   cancelQuery: () => Promise<boolean>;
-  executeParameterizedQuery: (connectionId: string, sql: string, parameters: QueryParameter[]) => Promise<QueryResult>;
+  executeParameterizedQuery: (
+    connectionId: string,
+    sql: string,
+    parameters: QueryParameter[],
+    options?: { userInitiated?: boolean; preApproved?: boolean },
+  ) => Promise<QueryResult>;
   executeSandboxQuery: (
     connectionId: string,
     statements: string[],
     requireReadOnly?: boolean,
+    options?: { userInitiated?: boolean; preApproved?: boolean },
   ) => Promise<QueryResult>;
   executeAgentReadonlyQuery: (
     connectionId: string,
     statements: string[],
+  ) => Promise<QueryResult>;
+  executeAgentParameterizedQuery: (
+    connectionId: string,
+    sql: string,
+    parameters: QueryParameter[],
   ) => Promise<QueryResult>;
   previewWriteTransaction: (connectionId: string, statements: string[]) => Promise<{
     results: QueryResult[];
@@ -93,13 +114,43 @@ export interface QueryState {
   ) => Promise<Array<{ value: string | number; label: string }>>;
 }
 
+const PROGRESSIVE_DELIVERY_STORAGE_KEY = "tablerogrid.progressive-delivery";
+
+/**
+ * Roadmap Phase 3B: only single read-only row-returning statements go through
+ * the progressive channel; everything else keeps the legacy path.
+ */
+export function isProgressiveEligible(sql: string): boolean {
+  const trimmed = sql.trim().replace(/;+\s*$/, "");
+  if (!trimmed || trimmed.includes(";")) return false;
+  return /^(select|with|table|values)\b/i.test(trimmed);
+}
+
 export const useQueryStore = create<QueryState>((set, get) => ({
   isExecutingQuery: false,
   activeQueryRequestId: null,
   activeQueryConnectionId: null,
+  progressiveDeliveryEnabled: (() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(PROGRESSIVE_DELIVERY_STORAGE_KEY) !== "off";
+  })(),
+  progressiveRowCount: null,
+  setProgressiveDeliveryEnabled: (enabled: boolean) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(PROGRESSIVE_DELIVERY_STORAGE_KEY, enabled ? "on" : "off");
+    }
+    set({ progressiveDeliveryEnabled: enabled });
+  },
 
-  executeQuery: async (connectionId: string, sql: string) => {
-    const safety = await assertQueryAllowed(sql, connectionId);
+  executeQuery: async (connectionId: string, sql: string, options?: { preApproved?: boolean }) => {
+    // The editor's Run button is a human decision: a Safe Mode block becomes
+    // an interactive confirmation instead of a dead end — unless the AI tab
+    // carries the standing full-autonomy grant (`preApproved`). All other
+    // callers (agent tools, programmatic sandbox calls) keep the hard block.
+    const safety = await assertQueryAllowed(sql, connectionId, {
+      userInitiated: true,
+      preApproved: options?.preApproved,
+    });
     const requestId = crypto.randomUUID();
     set({
       isExecutingQuery: true,
@@ -107,11 +158,39 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       activeQueryConnectionId: connectionId,
     });
     try {
-      const result = await invokeMutation<QueryResult>("execute_query", {
-        connectionId,
-        sql,
-        requestId,
-      });
+      let result: QueryResult | null = null;
+      let unlisten: UnlistenFn | null = null;
+      if (get().progressiveDeliveryEnabled && isProgressiveEligible(sql)) {
+        // Phase 3B: stream row batches so the UI can show live delivery
+        // progress; the command still resolves with the complete result and
+        // any failure falls back to the legacy path transparently.
+        try {
+          unlisten = await listen<{ connectionId: string; rows: unknown[][]; totalRows: number }>("query-row-batch", (event) => {
+            if (event.payload.connectionId !== connectionId) return;
+            set({ progressiveRowCount: event.payload.totalRows });
+          });
+          result = await invokeMutation<QueryResult>("execute_query_progressive", {
+            connectionId,
+            sql,
+            chunkSize: null,
+            requestId,
+            safeModeApprovedByUser: safety.userConfirmed === true,
+          });
+        } catch {
+          result = null; // fall back below
+        } finally {
+          unlisten?.();
+        }
+      }
+      if (result === null) {
+        result = await invokeMutation<QueryResult>("execute_query", {
+          connectionId,
+          sql,
+          requestId,
+          safeModeApprovedByUser: safety.userConfirmed === true,
+        });
+      }
+      set({ progressiveRowCount: null });
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
@@ -121,7 +200,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       return result;
     } catch (e) {
       set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null, progressiveRowCount: null }
         : state);
       throw e;
     }
@@ -138,8 +217,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     connectionId: string,
     statements: string[],
     requireReadOnly = false,
+    options?: { userInitiated?: boolean; preApproved?: boolean },
   ) => {
-    const safety = await assertQueryAllowed(statements.join(";\n"), connectionId);
+    const safety = await assertQueryAllowed(statements.join(";\n"), connectionId, options);
     const requestId = crypto.randomUUID();
     set({
       isExecutingQuery: true,
@@ -149,7 +229,13 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     try {
       const result = await invokeAIWorkspaceToolMutation(
         "execute_sandboxed_query",
-        { connectionId, statements, requireReadOnly, requestId },
+        {
+          connectionId,
+          statements,
+          requireReadOnly,
+          requestId,
+          safeModeApprovedByUser: safety.userConfirmed === true,
+        },
       );
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
@@ -184,6 +270,41 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       const result = await invokeAIWorkspaceToolMutation(
         "execute_agent_readonly_query",
         { connectionId, statements, requestId },
+      );
+      if (safety.hasSchemaMutation) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      return result;
+    } catch (e) {
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      throw e;
+    }
+  },
+
+  executeAgentParameterizedQuery: async (
+    connectionId: string,
+    sql: string,
+    parameters: QueryParameter[],
+  ) => {
+    // Read-only AND prepared-parameters are both pinned server-side by the
+    // `execute_agent_parameterized_query` command; the local safe-mode guard
+    // only makes blocked policies fail fast with a clear message.
+    const safety = await assertQueryAllowed(sql, connectionId);
+    const requestId = crypto.randomUUID();
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
+    try {
+      const result = await invokeAIWorkspaceToolMutation(
+        "execute_agent_parameterized_query",
+        { connectionId, sql, parameters, requestId },
       );
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
@@ -344,8 +465,11 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     return affectedRows;
   },
 
-  executeParameterizedQuery: async (connectionId, sql, parameters) => {
-    const safety = await assertQueryAllowed(sql, connectionId);
+  executeParameterizedQuery: async (connectionId, sql, parameters, options) => {
+    // Same human-decision treatment as the plain execute path: an editor Run
+    // with named parameters must get the confirmation dialog (levels <= 3)
+    // instead of a dead end, and a full-autonomy AI tab passes pre-approved.
+    const safety = await assertQueryAllowed(sql, connectionId, options);
     const requestId = crypto.randomUUID();
     set({
       isExecutingQuery: true,
@@ -358,6 +482,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         sql,
         parameters,
         requestId,
+        safeModeApprovedByUser: safety.userConfirmed === true,
       });
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);

@@ -6,7 +6,7 @@ import type { AIConversationMessage } from "../../types";
 
 export const AI_WORKSPACE_HISTORY_VERSION = 1;
 export const AI_WORKSPACE_HISTORY_LEGACY_STORAGE_KEY = "tabler.ai.workspace.history.v1";
-export const AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS = 300;
+export const AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS = 1_200;
 
 const MAX_STORED_THREADS_PER_WORKSPACE = 12;
 const MAX_STORED_BUBBLES_PER_THREAD = 24;
@@ -76,6 +76,21 @@ export function getBubbleConversationText(bubble: AIWorkspaceBubbleData) {
   return normalizedDetail;
 }
 
+/**
+ * Full conversation footprint: every visible (non-compacted) bubble counted
+ * UNTRIMMED. The context meter shows this so /compact has a visible effect —
+ * folding old bubbles into the workspace digest is exactly what shrinks it.
+ * (Each request actually sends much less: the digest + last messages only.)
+ */
+export function estimateConversationFootprint(bubbles: AIWorkspaceBubbleData[]): number {
+  return bubbles
+    .filter((bubble) => bubble.status !== "loading" && !bubble.compactedAt)
+    .reduce(
+      (sum, bubble) => sum + (bubble.prompt?.length ?? 0) + getBubbleConversationText(bubble).length,
+      0,
+    );
+}
+
 export function buildConversationHistoryMessages(
   bubbles: AIWorkspaceBubbleData[],
 ): AIConversationMessage[] {
@@ -107,7 +122,10 @@ export function buildThreadLabel(prompt: string, index: number) {
   return summary.length > 24 ? `${summary.slice(0, 21).trimEnd()}...` : summary;
 }
 
-export function buildAIWorkspaceKey(connectionId: string | null, database: string | null) {
+export function buildAIWorkspaceKey(connectionId: string | null, database: string | null, userWorkspaceId?: string | null) {
+  // An explicit user workspace ("player bao bên ngoài") fully scopes threads:
+  // context lives with the workspace, not the raw connection/database pair.
+  if (userWorkspaceId) return `uw:${userWorkspaceId}`;
   return `${connectionId || "no-connection"}::${database || "no-database"}`;
 }
 
@@ -309,5 +327,47 @@ export function createChatThread(index: number, workspaceKey: string): AIChatThr
     createdAt: now,
     updatedAt: now,
     isAutoLabel: true,
+  };
+}
+
+/** Strips the numbered ask_user option list and the italic reply hint from
+ *  an answer text so the conversation view can render them as one-click
+ *  buttons instead of duplicated plain-text lines. Only called when the
+ *  bubble carries askUserOptions. */
+export function stripAskUserTrailingOptions(answer: string): string {
+  const trimmed = answer.trimEnd();
+  const optionsStart = trimmed.search(/\n\n\d+\.\s/u);
+  if (optionsStart === -1) {
+    return trimmed.replace(/\n\n_\([^)]*\)_\s*$/u, "").trimEnd();
+  }
+  return trimmed.slice(0, optionsStart).trimEnd();
+}
+
+/** Recovers a choice list the model wrote into an ask_user question instead
+ *  of passing it via the options argument. The last consecutive run of
+ *  numbered ("1. x") or bulleted ("- x", "* x", "• x") lines counts as the
+ *  option menu when it has at least two entries; the block is removed from
+ *  the returned question so the list is not rendered twice (once as buttons,
+ *  once as plain text). */
+export function extractAskUserOptionsFromQuestion(
+  question: string,
+): { question: string; options: string[] } {
+  const lines = question.replace(/\r\n/g, "\n").trimEnd().split("\n");
+  const options: string[] = [];
+  let blockStart = lines.length;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const match = lines[index].match(/^\s*(?:\d{1,2}[.)]\s+|[-*•]\s+)(.+)$/u);
+    if (!match) break;
+    const item = match[1].trim();
+    if (!item) break;
+    options.unshift(item);
+    blockStart = index;
+  }
+  if (options.length < 2) {
+    return { question, options: [] };
+  }
+  return {
+    question: lines.slice(0, blockStart).join("\n").trimEnd(),
+    options: options.slice(0, 8),
   };
 }

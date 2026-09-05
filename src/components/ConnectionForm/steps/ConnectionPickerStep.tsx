@@ -63,6 +63,7 @@ export interface ConnectionPickerStepProps {
   language: AppLanguage;
   bootstrapMode: boolean;
   editConnection?: boolean;
+  showCloseButton?: boolean;
   selectedDb: DbEntry | null;
   pickerSearch: string;
   pickerSections: PickerSection[];
@@ -292,6 +293,7 @@ export function ConnectionPickerStep({
   roadmapCount,
   localRoadmapCount,
   strings,
+  showCloseButton = true,
   onSearchChange,
   onSelectDb,
   onDoubleClickDb,
@@ -374,129 +376,97 @@ export function ConnectionPickerStep({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="connection-picker-close connection-picker-topbar-close"
-            title={strings.close}
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {showCloseButton && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="connection-picker-close connection-picker-topbar-close"
+              title={strings.close}
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 
       <div className="connection-picker-body">
         <div className="connection-picker-layout">
           <div className="connection-picker-main">
-            <div className="connection-picker-browser">
-              <div className="connection-picker-browser-head">
-                <div className="connection-picker-searchbar">
-                  <Search className="connection-picker-search-icon h-4 w-4 shrink-0" />
-                  <input
-                    type="text"
-                    value={pickerSearch}
-                    onChange={(e) => onSearchChange(e.target.value)}
-                    placeholder={strings.searchPlaceholder}
-                    className="connection-picker-search-input"
-                    autoFocus
-                  />
-                </div>
+            <div className="connection-picker-rail">
+              <div className="connection-picker-searchbar">
+                <Search className="connection-picker-search-icon h-4 w-4 shrink-0" />
+                <input
+                  type="text"
+                  value={pickerSearch}
+                  onChange={(e) => onSearchChange(e.target.value)}
+                  placeholder={strings.searchPlaceholder}
+                  className="connection-picker-search-input"
+                  autoFocus
+                />
+              </div>
 
-                <div className="connection-picker-filter-row">
-                  {pickerSections.map((section) => (
-                    <span key={section.key} className="connection-picker-filter-pill">
-                      <strong>{section.items.length}</strong>
+              {filteredDbs.length === 0 ? (
+                <div className="connection-picker-empty">
+                  <Search className="w-4 h-4" />
+                  <span>{strings.emptySearch}</span>
+                </div>
+              ) : (
+                pickerSections.map((section) => (
+                  <div
+                    key={section.key}
+                    className="connection-picker-rail-group"
+                    data-tone={section.key.includes("roadmap") ? "roadmap" : "ready"}
+                  >
+                    <span className="connection-picker-rail-group-label">
                       <span>{section.title}</span>
+                      <span className="connection-picker-rail-group-count">
+                        {section.items.length}
+                      </span>
                     </span>
-                  ))}
-                </div>
-              </div>
 
-              <div className="connection-picker-grid-shell">
-                {filteredDbs.length === 0 ? (
-                  <div className="connection-picker-empty">
-                    <Search className="w-4 h-4" />
-                    <span>{strings.emptySearch}</span>
+                    {section.items.map((db) => {
+                      const brandStyle = { "--db-brand": db.color } as CSSProperties;
+                      const isSelected = selectedDb?.key === db.key;
+                      const status = getPickerStatus(db, bootstrapMode, language);
+
+                      return (
+                        <button
+                          key={db.key}
+                          type="button"
+                          onClick={() => onSelectDb(db)}
+                          onDoubleClick={() => {
+                            if (status.canContinue) {
+                              onDoubleClickDb(db);
+                            }
+                          }}
+                          className={[
+                            "connection-picker-rail-item",
+                            status.tone,
+                            isSelected ? "selected" : "",
+                          ].join(" ")}
+                        >
+                          <span
+                            className="connection-db-tile-icon connection-picker-rail-icon"
+                            style={brandStyle}
+                          >
+                            <DatabaseBrandIcon
+                              dbKey={db.key}
+                              label={db.label}
+                              className="connection-db-brand-sm"
+                              fallbackClassName="!w-3.5 !h-3.5 text-white"
+                            />
+                          </span>
+                          <span className="connection-picker-rail-name">{db.label}</span>
+                          <span
+                            className={`connection-picker-rail-dot ${status.tone}`}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      );
+                    })}
                   </div>
-                ) : (
-                  pickerSections.map((section) => (
-                    <section
-                      key={section.key}
-                      className="connection-picker-section"
-                      data-tone={section.key.includes("roadmap") ? "roadmap" : "ready"}
-                    >
-                      <div className="connection-picker-section-head">
-                        <div className="connection-picker-section-copy">
-                          <h3 className="connection-picker-section-title">{section.title}</h3>
-                          <p className="connection-picker-section-caption">{section.caption}</p>
-                        </div>
-                        <span className="connection-picker-section-count">{section.items.length}</span>
-                      </div>
-
-                      <div className="connection-picker-grid">
-                        {section.items.map((db) => {
-                          const brandStyle = { "--db-brand": db.color } as CSSProperties;
-                          const isSelected = selectedDb?.key === db.key;
-                          const status = getPickerStatus(db, bootstrapMode, language);
-
-                          return (
-                            <button
-                              key={db.key}
-                              type="button"
-                              onClick={() => onSelectDb(db)}
-                              onDoubleClick={() => {
-                                if (status.canContinue) {
-                                  onDoubleClickDb(db);
-                                }
-                              }}
-                              className={[
-                                "connection-picker-card",
-                                status.tone,
-                                isSelected ? "selected" : "",
-                              ].join(" ")}
-                              data-tone={status.tone}
-                            >
-                              <div className="connection-picker-card-top">
-                                <div className="connection-db-tile-icon" style={brandStyle}>
-                                  <DatabaseBrandIcon
-                                    dbKey={db.key}
-                                    label={db.label}
-                                    className="connection-db-brand-lg"
-                                    fallbackClassName="!w-6 !h-6 text-white"
-                                  />
-                                </div>
-
-                                <div className="connection-picker-card-copy">
-                                  <div className="connection-picker-card-head">
-                                    <span className="connection-picker-card-title">{db.label}</span>
-                                    <span className={`connection-picker-card-status ${status.tone}`}>
-                                      {status.label}
-                                    </span>
-                                  </div>
-                                  <span className="connection-picker-card-meta">{getPickerMetaLabel(db, language)}</span>
-                                  <span className="connection-picker-card-note">
-                                    {getPickerDescription(db, bootstrapMode, language)}
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div className="connection-picker-card-footer">
-                                <div className="connection-picker-card-tags">
-                                  {getPickerCapabilities(db, bootstrapMode, language).slice(0, 2).map((capability) => (
-                                    <span key={`${db.key}-${capability}`} className="connection-picker-card-tag">
-                                      {capability}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-                  ))
-                )}
-              </div>
+                ))
+              )}
             </div>
           </div>
 
@@ -610,4 +580,7 @@ export function ConnectionPickerStep({
 }
 
 export { LOCAL_BOOTSTRAP_PLANNED, LOCAL_BOOTSTRAP_READY };
+// Shared picker helpers live beside the component so one wizard file stays
+// self-contained; splitting them out would be churn for fast-refresh only.
+// eslint-disable-next-line react-refresh/only-export-components
 export { getPickerStatus, getPickerMetaLabel, getPickerDescription, getPickerCapabilities, getPickerHighlights };

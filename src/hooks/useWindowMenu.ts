@@ -18,7 +18,6 @@ import { isCapabilitySupported } from "../types";
 // ─── Action interface ─────────────────────────────────────────────────────────
 
 export interface WindowMenuActions {
-  readonly onNewConnection: () => void;
   readonly onOpenDatabaseFile: () => void;
   readonly onImportSqlFile: () => void;
   readonly onImportSqlIntoCurrentDatabase: () => void;
@@ -111,7 +110,6 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
         key: "file",
         label: t("menu.section.file"),
         items: [
-          { label: t("menu.item.newConnection"), action: () => { actions.onNewConnection(); closeMenu(); } },
           { label: t("menu.item.newQuery"), action: () => { actions.onNewQuery(); closeMenu(); }, disabled: !isConnected },
           { label: t("menu.item.openDatabaseFile"), action: () => { actions.onOpenDatabaseFile(); closeMenu(); }, shortcut: "Ctrl+Shift+O" },
           { label: t("menu.item.openSqlFile"), action: () => { actions.onImportSqlFile(); closeMenu(); }, shortcut: "Ctrl+O", disabled: !supportsSqlFileActions },
@@ -244,7 +242,6 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
         ],
       },
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       t, isConnected, supportsSqlFileActions, connectionsCount, uiFontScale, vimModeEnabled,
       themeMenuLabel, toggleTerminalLabel, themeMenuOptions, activeTheme.id,

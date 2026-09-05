@@ -62,7 +62,7 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
     loadSavedConnections,
     connectSavedConnection,
     disconnectFromDatabase,
-    deleteSavedConnection,
+    deleteSavedConnection, renameSavedConnection,
     fetchDatabases,
     fetchTables,
   } = useConnectionStore(
@@ -75,6 +75,7 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
       connectSavedConnection: state.connectSavedConnection,
       disconnectFromDatabase: state.disconnectFromDatabase,
       deleteSavedConnection: state.deleteSavedConnection,
+      renameSavedConnection: state.renameSavedConnection,
       fetchDatabases: state.fetchDatabases,
       fetchTables: state.fetchTables,
     })),
@@ -214,6 +215,19 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
     deleteGroup(groupId);
     refreshGroups();
     setCollapsedGroupIds(getCollapsedGroupIds());
+  };
+
+  const handleRenameConnection = async (connection: ConnectionConfig, name: string) => {
+    try {
+      await renameSavedConnection(connection.id, name);
+      emitAppToast({
+        tone: "success",
+        title: t("common.rename"),
+        description: name,
+      });
+    } catch (error) {
+      emitAppToast({ tone: "error", title: String(error) });
+    }
   };
 
 
@@ -413,6 +427,7 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
             onSelectConnection={setSelectedConnectionId}
             onConnect={handleOpenConnection}
             onDeleteConnection={handleDeleteConnection}
+            onRenameConnection={handleRenameConnection}
             onHover={handleConnectionHover}
             onLeaveHover={() => setHoverPreview(null)}
             onNewConnection={onNewConnection}

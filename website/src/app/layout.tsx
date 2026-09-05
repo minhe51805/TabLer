@@ -48,8 +48,8 @@ export const metadata: Metadata = {
     images: [
       {
         url: "/screenshots/table-r-query-workspace.png",
-        width: 1296,
-        height: 809,
+        width: 1280,
+        height: 801,
         alt: "TableR query workspace",
       },
     ],
@@ -69,8 +69,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html lang="en" suppressHydrationWarning>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable}`}
+        suppressHydrationWarning
+      >
         <a className="skip-link" href="#main">
           Skip to content
         </a>

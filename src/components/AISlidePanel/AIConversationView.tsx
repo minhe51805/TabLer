@@ -1,15 +1,20 @@
-import { CornerDownLeft, ExternalLink, Eye, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
-import { useEffect, useState, type RefObject } from "react";
+import { CornerDownLeft, ExternalLink, Eye, FileText, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
+import { memo, useEffect, useState, type RefObject } from "react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
   aiModeAllowsInsert,
   aiModeAllowsRun,
+  type AIWorkspaceAttachment,
   type AIWorkspaceBubbleData,
 } from "./ai-workspace-types";
 import {
   getBubbleConversationText,
+  stripAskUserTrailingOptions,
   summarizePromptForDisplay,
 } from "./ai-conversation-state";
+import { fetchAttachmentDataUrl } from "../../utils/ai-attachments";
+import { AIWorkspaceSqlBlock } from "./AIWorkspaceMarkdown";
+import { AIImageViewer } from "./AIImageViewer";
 import { AIAgentSteps } from "./AIAgentSteps";
 import { extractAgentRecordLinks, type AIAgentRecordLink } from "./ai-agent-record-links";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
@@ -17,7 +22,6 @@ import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 interface AIConversationViewProps {
   bubbles: AIWorkspaceBubbleData[];
   copy: AIWorkspaceCopy;
-  showThinking: boolean;
   threadRef: RefObject<HTMLDivElement | null>;
   onOpenDetail: (bubble: AIWorkspaceBubbleData) => void;
   onInsert: (bubble: AIWorkspaceBubbleData) => void;
@@ -25,12 +29,106 @@ interface AIConversationViewProps {
   onRetry: (bubble: AIWorkspaceBubbleData) => void;
   onOpenRecord: (link: AIAgentRecordLink) => void;
   onUseSuggestion: (prompt: string) => void;
+  /** One-click reply: sends the chosen ask_user option as a new message. */
+  onAskUserOptionSelect?: (option: string) => void;
+  /** Focuses the composer so the user can type a custom reply instead. */
+  onAskUserCustomInput?: () => void;
 }
 
-export function AIConversationView({
+/** Fetches a persisted image attachment's data URL (metadata-only bubbles). */
+function AIAttachmentImageCard({
+  attachment,
+  onOpen,
+}: {
+  attachment: AIWorkspaceAttachment;
+  onOpen: (url: string, name: string) => void;
+}) {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFailed(false);
+    setDataUrl(null);
+    void fetchAttachmentDataUrl(attachment.id).then((url) => {
+      if (cancelled) return;
+      if (url) setDataUrl(url);
+      else setFailed(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [attachment.id]);
+
+  if (failed) {
+    return (
+      <span className="ai-workspace-attachment-strip-chip" title={attachment.name}>
+        <FileText className="w-3 h-3" />
+        {attachment.name}
+      </span>
+    );
+  }
+
+  if (!dataUrl) {
+    return (
+      <span
+        className="ai-workspace-attachment-image-card is-loading"
+        title={attachment.name}
+        aria-label={attachment.name}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="ai-workspace-attachment-image-card"
+      onClick={() => onOpen(dataUrl, attachment.name)}
+      title={attachment.name}
+    >
+      <img src={dataUrl} alt={attachment.name} draggable={false} />
+    </button>
+  );
+}
+
+/** Claude-style gallery: images render above the message text, click to zoom. */
+function AIAttachmentImages({
+  attachments,
+  onOpenImage,
+}: {
+  attachments: AIWorkspaceAttachment[];
+  onOpenImage: (url: string, name: string) => void;
+}) {
+  const images = attachments.filter((attachment) => attachment.kind === "image");
+  if (images.length === 0) return null;
+  return (
+    <div className="ai-workspace-attachment-images">
+      {images.map((attachment) => (
+        <AIAttachmentImageCard key={attachment.id} attachment={attachment} onOpen={onOpenImage} />
+      ))}
+    </div>
+  );
+}
+
+/** Non-image attachments render as file chips under the message text. */
+function AIAttachmentFileChips({ attachments }: { attachments: AIWorkspaceAttachment[] }) {
+  const files = attachments.filter((attachment) => attachment.kind !== "image");
+  if (files.length === 0) return null;
+  return (
+    <div className="ai-workspace-attachment-strip">
+      {files.map((attachment) => (
+        <span key={attachment.id} className="ai-workspace-attachment-strip-chip" title={attachment.name}>
+          <FileText className="w-3 h-3" />
+          {attachment.name}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+export const AIConversationView = memo(function AIConversationView({
   bubbles,
   copy,
-  showThinking,
   threadRef,
   onOpenDetail,
   onInsert,
@@ -38,8 +136,11 @@ export function AIConversationView({
   onRetry,
   onOpenRecord,
   onUseSuggestion,
+  onAskUserOptionSelect,
+  onAskUserCustomInput,
 }: AIConversationViewProps) {
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
+  const [viewerImage, setViewerImage] = useState<{ url: string; name: string } | null>(null);
   const hasConversation = bubbles.length > 0;
 
   useEffect(() => {
@@ -69,10 +170,22 @@ export function AIConversationView({
       <div className={`ai-workspace-chat-surface ${hasConversation ? "" : "is-empty"}`}>
         {hasConversation ? (
           <div ref={threadRef} className="ai-workspace-chat-thread">
-            {bubbles.map((bubble) => {
+            {bubbles.map((bubble, bubbleIndex) => {
               const conversationText = getBubbleConversationText(bubble);
-              const hasVisibleAgentProgress = showThinking
-                && bubble.interactionMode === "agent"
+              // ask_user bubbles at the tail of the thread render their
+              // options as one-click reply buttons instead of plain text.
+              const askUserOptions = bubble.askUserOptions?.length
+                && bubbleIndex === bubbles.length - 1
+                && bubble.status === "ready"
+                ? bubble.askUserOptions
+                : null;
+              const displayConversationText = askUserOptions
+                ? stripAskUserTrailingOptions(conversationText)
+                : conversationText;
+              // Keep the agent step log available after the answer lands: it
+              // collapses automatically once every step settles, so users can
+              // re-open the reasoning without the toggle.
+              const hasVisibleAgentProgress = bubble.interactionMode === "agent"
                 && (bubble.agentSteps?.length ?? 0) > 0;
               const recordLinks = extractAgentRecordLinks(bubble.agentSteps);
               const agentReadLiveData = bubble.interactionMode === "agent"
@@ -97,10 +210,19 @@ export function AIConversationView({
                   <div className="ai-workspace-chat-turn-header">
                     <strong className="ai-workspace-chat-turn-label">{copy.modal.originalRequest}</strong>
                   </div>
+                  {bubble.attachments && bubble.attachments.length > 0 && (
+                    <AIAttachmentImages
+                      attachments={bubble.attachments}
+                      onOpenImage={(url, name) => setViewerImage({ url, name })}
+                    />
+                  )}
                   <div className="ai-workspace-chat-message ai-workspace-chat-message--user">
                     <p className="ai-workspace-chat-text">
                       {bubble.promptSummary || summarizePromptForDisplay(bubble.prompt)}
                     </p>
+                    {bubble.attachments && bubble.attachments.length > 0 && (
+                      <AIAttachmentFileChips attachments={bubble.attachments} />
+                    )}
                   </div>
                   <div className="ai-workspace-chat-turn-header ai-workspace-chat-turn-header--assistant">
                     <strong className="ai-workspace-chat-turn-label">{copy.modal.assistantExplanation}</strong>
@@ -112,7 +234,7 @@ export function AIConversationView({
                             <span />
                             <span />
                           </span>
-                          {copy.bubbleMeta.thinking}
+                          <span className="sr-only">{copy.bubbleMeta.thinking}</span>
                         </>
                       ) : bubble.status === "partial"
                         ? copy.bubbleStates.partialTitle
@@ -126,7 +248,7 @@ export function AIConversationView({
                       <p className="ai-workspace-chat-subtitle">{bubble.subtitle}</p>
                     )}
                     {hasVisibleAgentProgress
-                      && <AIAgentSteps steps={bubble.agentSteps ?? []} compact />}
+                      && <AIAgentSteps steps={bubble.agentSteps ?? []} compact durationMs={bubble.settledAt ? Math.max(0, bubble.settledAt - bubble.createdAt) : undefined} />}
                     {bubble.status === "loading" && !hasVisibleAgentProgress ? (
                       <div className="ai-workspace-thinking-line">
                         <span className="ai-workspace-thinking-orb" aria-hidden="true" />
@@ -136,8 +258,20 @@ export function AIConversationView({
                       </div>
                     ) : bubble.status !== "loading" ? (
                       conversationText
-                        && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={conversationText} />
+                        && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={displayConversationText} />
                     ) : null}
+                    {askUserOptions && (
+                      <div className="ai-workspace-ask-user">
+                        {askUserOptions.map((option) => (
+                          <button key={option} type="button" className="ai-workspace-ask-user-option" onClick={() => onAskUserOptionSelect?.(option)}>
+                            {option}
+                          </button>
+                        ))}
+                        <button type="button" className="ai-workspace-ask-user-option is-custom" onClick={() => onAskUserCustomInput?.()}>
+                          {copy.bubbleStates.askUserCustomAnswer}
+                        </button>
+                      </div>
+                    )}
                     {recordLinks.length > 0 && (
                       <div className="ai-workspace-agent-record-links">
                         {recordLinks.map((link) => (
@@ -153,8 +287,8 @@ export function AIConversationView({
                         ))}
                       </div>
                     )}
-                    {bubble.sql && bubble.status !== "error" && !agentReadLiveData && (
-                      <pre className="ai-workspace-chat-code">{bubble.sql}</pre>
+                    {bubble.sql && bubble.status !== "error" && (
+                      <AIWorkspaceSqlBlock code={bubble.sql} />
                     )}
                     {(canShowDetail || canInsert || canRun || canRetry) && (
                       <div className="ai-workspace-chat-actions">
@@ -256,6 +390,11 @@ export function AIConversationView({
           </div>
         )}
       </div>
+      <AIImageViewer
+        image={viewerImage}
+        labels={copy.imageViewer}
+        onClose={() => setViewerImage(null)}
+      />
     </div>
   );
-}
+})

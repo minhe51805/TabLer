@@ -2,7 +2,7 @@ import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import type { AIAgentFinishAction, AIAgentToolAction } from "./ai-agent-tools";
 import { joinAgentInstructions, type AgentTraceStep } from "./ai-agent-context";
 import { sqlResponseConflictsWithSchema } from "./ai-agent-grounding";
-import { extractSqlFromResponse, hasSqlStartKeyword, stripSqlCodeBlocksFromResponse } from "./ai-sql-response";
+import { extractSqlFromResponse, hasSqlStartKeyword, removeDuplicateSqlParagraphs, stripSqlCodeBlocksFromResponse } from "./ai-sql-response";
 import type { AIWorkspaceAgentStep } from "./ai-workspace-types";
 
 export interface AgentFinalization {
@@ -73,6 +73,41 @@ export async function finalizeAgentResult(options: FinalizeAgentResultOptions): 
     if (sql) sql = extractSqlFromResponse(sql) || sql;
   }
 
+  // Empty-finish guard: a finish with neither user-facing answer text nor SQL
+  // leaves the user with a dead bubble ("did not produce a usable final
+  // answer"). Give the model exactly one bounded recovery round to emit the
+  // real answer grounded in the observations it already collected; if that
+  // still carries no payload, close through the forced finish recovery.
+  const finishResponseText = typeof finalAction.args?.response === "string" ? finalAction.args.response.trim() : "";
+  if (finalAction.action !== "finish" || (!sql && !finishResponseText)) {
+    agentTraceSteps.push({
+      step: agentTraceSteps.length + 1,
+      action: "finish",
+      message: finalAction.message || "Final answer incomplete.",
+      observation: "Tool error: The finish action carried no final answer text and no SQL.",
+    });
+    const recovered = await requestAgentAction(
+      buildControllerPrompt(
+        true,
+        joinAgentInstructions(
+          sharedAgentInstruction,
+          "Your finish action had no user-facing answer: args.response was empty and no SQL was attached. Return a corrected finish action NOW with args.response holding the COMPLETE final answer for the user — a full markdown table when a report, bảng, tổng hợp, or list was requested — grounded strictly in the observations you already collected. If the request called for SQL, also put the single best runnable SELECT in args.sql.",
+        ),
+      ),
+      false,
+    );
+    const recoveredArgs: Record<string, unknown> = (recovered.args ?? {}) as Record<string, unknown>;
+    const recoveredResponse = typeof recoveredArgs.response === "string" ? recoveredArgs.response.trim() : "";
+    const recoveredSql = typeof recoveredArgs.sql === "string" ? recoveredArgs.sql.trim() : "";
+    if (recovered.action === "finish" && (recoveredResponse || recoveredSql)) {
+      finalAction = recovered;
+    } else {
+      finalAction = await recoverFinishAction("The agent failed to produce a usable final answer after recovery.");
+    }
+    sql = typeof finalAction.args?.sql === "string" ? finalAction.args.sql.trim() : "";
+    if (sql) sql = extractSqlFromResponse(sql) || sql;
+  }
+
   // Sandbox pre-flight: a final SQL the agent never executed may still fail
   // (hallucinated columns, engine dialect slips). Run it once, and on error
   // give the model exactly one repair round before anything reaches the user.
@@ -128,8 +163,11 @@ export async function finalizeAgentResult(options: FinalizeAgentResultOptions): 
     : baseResponseBody;
   // Agent steps are returned separately for the live trace UI. Never append them
   // to the user-facing response, otherwise internal tool logs leak into chat.
+  // When the SQL card is rendered separately, strip fenced SQL from the text:
+  // otherwise the model's own code fence duplicates the exact same statement
+  // as a second card. An empty remainder is fine — only the SQL card shows.
   const rawResponse = shouldExposeSql
-    ? responseBody
+    ? removeDuplicateSqlParagraphs(stripSqlCodeBlocksFromResponse(responseBody), sql).trim()
     : stripSqlCodeBlocksFromResponse(responseBody) || responseBody;
   const widgets = buildWidgets(args as Record<string, unknown>);
   return { rawResponse, sql: shouldExposeSql ? sql : null, agentSteps: buildSteps(agentTraceSteps), agentWidgets: widgets.length ? widgets : undefined };

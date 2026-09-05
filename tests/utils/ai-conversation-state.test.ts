@@ -4,9 +4,12 @@ import {
   AI_WORKSPACE_HISTORY_VERSION,
   buildAIWorkspaceKey,
   buildConversationHistoryMessages,
+  extractAskUserOptionsFromQuestion,
+  stripAskUserTrailingOptions,
   buildThreadLabel,
   createEmptyPersistedAIWorkspaceState,
   hasPersistedAIWorkspaceStateData,
+  estimateConversationFootprint,
   getBubbleConversationText,
   loadLegacyPersistedAIWorkspaceState,
   prunePersistedAIWorkspaceState,
@@ -167,5 +170,89 @@ describe("AI conversation state", () => {
       { role: "user", content: "First" },
       { role: "assistant", content: "Complete" },
     ]);
+  });
+});
+
+describe("estimateConversationFootprint", () => {
+  it("counts every ready bubble untrimmed — /compact must visibly shrink it", () => {
+    const longSql = "x".repeat(50_000);
+    const bubbles = [
+      bubble("b1", "t", { prompt: "SELECT 1", detail: longSql }),
+      bubble("b2", "t", { prompt: "y".repeat(20_000), detail: "answer" }),
+    ];
+    const footprint = estimateConversationFootprint(bubbles);
+    // Untrimmed: well beyond the send-window cap (4 bubbles x 1k) that used to
+    // make the meter freeze at ~10k regardless of conversation size.
+    expect(footprint).toBeGreaterThan(50_000);
+  });
+
+  it("excludes compacted and loading bubbles — compact drops the meter", () => {
+    const compactedAt = 12345;
+    const bubbles = [
+      bubble("old", "t", { prompt: "a".repeat(30_000), compactedAt }),
+      bubble("loading", "t", { prompt: "b".repeat(30_000), status: "loading" as const }),
+      bubble("kept", "t", { prompt: "kept prompt", detail: "kept answer" }),
+    ];
+    const footprint = estimateConversationFootprint(bubbles);
+    expect(footprint).toBe("kept prompt".length + "kept answer".length);
+  });
+});
+
+
+describe("extractAskUserOptionsFromQuestion", () => {
+  it("recovers a trailing numbered option list and removes it from the question", () => {
+    const result = extractAskUserOptionsFromQuestion(
+      "Bạn muốn xem gì?\n\n1. Sinh viên kèm tên ngành\n2. Danh sách học phần\n3. Top sinh viên",
+    );
+    expect(result.question).toBe("Bạn muốn xem gì?");
+    expect(result.options).toEqual(["Sinh viên kèm tên ngành", "Danh sách học phần", "Top sinh viên"]);
+  });
+
+  it("recovers bulleted option lists", () => {
+    const result = extractAskUserOptionsFromQuestion("Which schema?\n- dbo\n- sales");
+    expect(result.question).toBe("Which schema?");
+    expect(result.options).toEqual(["dbo", "sales"]);
+  });
+
+  it("ignores a single trailing list line (not a menu)", () => {
+    const question = "Xem bảng SinhViens chứ?\n- bảng duy nhất";
+    expect(extractAskUserOptionsFromQuestion(question)).toEqual({ question, options: [] });
+  });
+
+  it("keeps the question untouched when no trailing list exists", () => {
+    const question = "Bạn muốn xem thông tin gì trong QuanLySinhVienDB?";
+    expect(extractAskUserOptionsFromQuestion(question)).toEqual({ question, options: [] });
+  });
+
+  it("caps recovered options at 8", () => {
+    const list = Array.from({ length: 12 }, (_, index) => `${index + 1}. Option ${index + 1}`).join("\n");
+    const result = extractAskUserOptionsFromQuestion(`Chọn?\n${list}`);
+    expect(result.options).toHaveLength(8);
+    expect(result.question).toBe("Chọn?");
+  });
+
+  it("does not strip a list that is followed by more prose", () => {
+    const question = "Danh sách gợi ý:\n1. A\n2. B\nBạn muốn bắt đầu từ đâu?";
+    expect(extractAskUserOptionsFromQuestion(question)).toEqual({ question, options: [] });
+  });
+});
+
+describe("stripAskUserTrailingOptions", () => {
+  it("strips the numbered option block and the reply hint", () => {
+    expect(
+      stripAskUserTrailingOptions(
+        "Bạn muốn xem gì?\n\n1. Bảng sinh viên\n2. Bảng điểm\n\n_(Trả lời bằng số thứ tự...)_",
+      ),
+    ).toBe("Bạn muốn xem gì?");
+  });
+
+  it("strips only the italic hint when no numbered block exists", () => {
+    expect(
+      stripAskUserTrailingOptions("Xác nhận nhé?\n\n_(Trả lời...)_"),
+    ).toBe("Xác nhận nhé?");
+  });
+
+  it("leaves answers without ask_user markers untouched", () => {
+    expect(stripAskUserTrailingOptions("Kết quả: 11 sinh viên.")).toBe("Kết quả: 11 sinh viên.");
   });
 });

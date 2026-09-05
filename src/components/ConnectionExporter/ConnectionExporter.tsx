@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { X, Download, CheckCircle2, AlertCircle, Lock, Eye, EyeOff } from "lucide-react";
+import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff } from "lucide-react";
 import type { ConnectionConfig } from "../../types/database";
 import { exportConnections } from "../../utils/connection-export";
+import "../../styles/lazy-overlays.css";
 
 interface ConnectionExporterProps {
   connections: ConnectionConfig[];
@@ -64,73 +65,100 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[80vh]">
+    <div className="cex-backdrop">
+      <div className="cex-modal">
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--border)]">
-          <div className="flex items-center justify-center w-10 h-10 rounded-full bg-green-500/10 text-green-500">
-            <Download className="w-5 h-5" />
+        <div className="cex-header">
+          <div className="cex-header-copy">
+            <h2 className="cex-title">Export Connections</h2>
+            <p className="cex-subtitle">Save connections as an encrypted, versioned export</p>
           </div>
-          <div className="flex-1">
-            <h2 className="text-base font-semibold text-[var(--text-primary)]">Export Connections</h2>
-            <p className="text-xs text-[var(--text-muted)]">Save connections as an encrypted, versioned export</p>
+          <div className="cex-header-actions">
+            {result ? (
+              <button type="button" onClick={handleClose} className="cex-btn-primary">
+                <Check className="w-4 h-4" />
+                Done
+              </button>
+            ) : (
+              <>
+                <button type="button" onClick={onClose} className="cex-btn-cancel" disabled={isExporting}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExport}
+                  disabled={isExporting || selected.size === 0 || !password}
+                  className="cex-btn-primary"
+                >
+                  {isExporting ? (
+                    "Exporting..."
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      Export {selected.size} Connection{selected.size !== 1 ? "s" : ""}
+                    </>
+                  )}
+                </button>
+              </>
+            )}
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-muted)]">
-            <X className="w-4 h-4" />
-          </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-          {result ? (
-            <div className="flex flex-col items-center gap-3 py-6">
-              <CheckCircle2 className="w-12 h-12 text-green-500" />
-              <p className="text-sm font-medium text-[var(--text-primary)]">{result.message}</p>
+        {result ? (
+          <div className="cex-body cex-body-centered">
+            <div className="cex-success">
+              <CheckCircle2 />
+              <p>{result.message}</p>
               <button onClick={handleClose} className="btn btn-primary">Done</button>
             </div>
-          ) : (
-            <>
-              {/* Connection selection */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs uppercase tracking-wide text-[var(--text-muted)]">
-                    Select Connections ({selected.size}/{connections.length})
-                  </label>
-                  <button
-                    onClick={toggleAll}
-                    className="text-xs text-[var(--accent)] hover:underline"
-                  >
-                    {selected.size === connections.length ? "Deselect All" : "Select All"}
-                  </button>
-                </div>
-                <div className="space-y-1 max-h-48 overflow-y-auto border border-[var(--border)] rounded-lg p-2">
-                  {connections.map((conn) => (
+          </div>
+        ) : (
+          <div className="cex-body">
+            {/* Left rail: connection selection */}
+            <aside className="cex-rail">
+              <div className="cex-rail-head">
+                <label className="cex-section-label">
+                  Select ({selected.size}/{connections.length})
+                </label>
+                <button onClick={toggleAll} className="cex-toggle-all">
+                  {selected.size === connections.length ? "Deselect All" : "Select All"}
+                </button>
+              </div>
+              <div className="cex-rail-list">
+                {connections.length === 0 ? (
+                  <p className="cex-rail-empty">No saved connections to export.</p>
+                ) : (
+                  connections.map((conn) => (
                     <label
                       key={conn.id}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-tertiary)] cursor-pointer"
+                      className={`cex-rail-item ${selected.has(conn.id) ? "is-selected" : ""}`}
                     >
                       <input
                         type="checkbox"
                         checked={selected.has(conn.id)}
                         onChange={() => toggleSelect(conn.id)}
-                        className="rounded"
                       />
-                      <span className="text-sm text-[var(--text-primary)]">{conn.name || conn.host || conn.db_type}</span>
-                      <span className="text-xs text-[var(--text-muted)]">{conn.db_type}</span>
+                      <span className="cex-rail-item-name">{conn.name || conn.host || conn.db_type}</span>
+                      <span className="cex-rail-item-meta">{conn.db_type}</span>
                     </label>
-                  ))}
-                </div>
+                  ))
+                )}
               </div>
+            </aside>
+
+            {/* Right detail: encryption */}
+            <div className="cex-detail">
 
               {/* Encryption password */}
-              <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 flex items-start gap-2">
-                <Lock className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-                <p className="text-xs text-[var(--text-secondary)]">
+              <div className="cex-warning">
+                <Lock className="w-4 h-4" />
+                <p>
                   Connections will be encrypted with AES-256-GCM. Passwords are not exported — you will need to re-enter them when importing.
                 </p>
               </div>
 
-              <div className="space-y-3">
+              <div className="cex-fieldset">
                 <div className="connection-form-field">
                   <label className="form-label uppercase tracking-wide">
                     Encryption Password <span className="text-red-400">*</span>
@@ -170,26 +198,12 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
               </div>
 
               {error && (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/5 border border-red-500/20">
-                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-                  <p className="text-sm text-red-400">{error}</p>
+                <div className="cex-error">
+                  <AlertCircle className="w-4 h-4" />
+                  <p>{error}</p>
                 </div>
               )}
-            </>
-          )}
-        </div>
-
-        {/* Footer */}
-        {!result && (
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[var(--border)]">
-            <button onClick={onClose} className="btn btn-secondary">Cancel</button>
-            <button
-              onClick={handleExport}
-              disabled={isExporting || selected.size === 0 || !password}
-              className="btn btn-primary"
-            >
-              {isExporting ? "Exporting..." : `Export ${selected.size} Connection${selected.size !== 1 ? "s" : ""}`}
-            </button>
+            </div>
           </div>
         )}
       </div>

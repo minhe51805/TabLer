@@ -5,13 +5,14 @@ import {
   RefreshCw,
   Search,
   Terminal,
-  ChevronDown,
   Bookmark,
   Save,
   Trash2,
   Filter,
   X,
   Check,
+  Info,
+  Eraser,
 } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useSidebar } from "./hooks/use-sidebar";
@@ -24,67 +25,66 @@ import {
   type FilterOperator,
   type FilterCondition,
 } from "../../types/filter-presets";
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useLayoutEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 // ---------------------------------------------------------------------------
 // Filter operator selector dropdown
 // ---------------------------------------------------------------------------
 
-interface OperatorSelectorProps {
-  value: FilterOperator;
-  onChange: (op: FilterOperator) => void;
-  isOpen: boolean;
-  onToggle: () => void;
+// ---------------------------------------------------------------------------
+// Filter operator selector (native <select> with optgroups — immune to
+// z-index/stacking/clipping issues inside the portaled settings modal)
+// ---------------------------------------------------------------------------
+const OPERATOR_GROUPS: [string, FilterOperator[]][] = FILTER_OPERATOR_CATEGORIES.map(
+  ({ category, operators }) => [category as string, operators as FilterOperator[]],
+);
+
+function operatorLabelText(op: FilterOperator): string {
+  return FILTER_OPERATOR_LABELS[op]?.label ?? op;
 }
 
-function OperatorSelector({ value, onChange, isOpen, onToggle }: OperatorSelectorProps) {
-  const ref = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => onToggle(), [onToggle]);
+// SSMS-style fixed property rows for the conditions grid. `key` matches
+// FilterCondition.column ("" = object name, "schema" = owner, "type" = type).
+const FILTER_PROPERTY_ROWS: { key: string; label: string; hint: string; placeholder: string }[] = [
+  {
+    key: "",
+    label: "Name",
+    hint: "Matches the object name (schema.table)",
+    placeholder: "Filter by name...",
+  },
+  {
+    key: "schema",
+    label: "Owner",
+    hint: "Schema that owns the object",
+    placeholder: "Filter by owner...",
+  },
+  {
+    key: "create_date",
+    label: "Create Date",
+    hint: "Date the object was created (click the value cell to open the calendar)",
+    placeholder: "mm/dd/yyyy",
+  },
+];
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) {
-        close();
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [isOpen, close]);
-
+function OperatorSelector({ value, onChange }: { value: FilterOperator; onChange: (op: FilterOperator) => void }) {
   return (
-    <div className="filter-operator-selector" ref={ref}>
-      <button
-        type="button"
-        className="filter-operator-trigger"
-        onClick={onToggle}
-        title={FILTER_OPERATOR_LABELS[value]?.hint ?? ""}
-      >
-        <span className="filter-operator-label">{FILTER_OPERATOR_LABELS[value]?.label ?? value}</span>
-        <ChevronDown className="w-3.5 h-3.5 opacity-60" />
-      </button>
-      {isOpen && (
-        <div className="filter-operator-menu">
-          {FILTER_OPERATOR_CATEGORIES.map(({ category, operators }) => (
-            <div key={category} className="filter-operator-group">
-              <div className="filter-operator-group-label">{category}</div>
-              {operators.map((op) => (
-                <button
-                  key={op}
-                  type="button"
-                  className={`filter-operator-option ${value === op ? "active" : ""}`}
-                  onClick={() => { onChange(op); onToggle(); }}
-                  title={FILTER_OPERATOR_LABELS[op]?.hint ?? ""}
-                >
-                  <span>{FILTER_OPERATOR_LABELS[op]?.label ?? op}</span>
-                  {value === op && <Check className="w-3 h-3 shrink-0" />}
-                </button>
-              ))}
-            </div>
+    <select
+      className="filter-operator-trigger filter-operator-select"
+      value={value}
+      onChange={(e) => onChange(e.target.value as FilterOperator)}
+      title={FILTER_OPERATOR_LABELS[value]?.hint ?? ""}
+    >
+      {OPERATOR_GROUPS.map(([category, operators]) => (
+        <optgroup key={category} label={category}>
+          {operators.map((op) => (
+            <option key={op} value={op}>
+              {operatorLabelText(op)}
+            </option>
           ))}
-        </div>
-      )}
-    </div>
+        </optgroup>
+      ))}
+    </select>
   );
 }
 
@@ -100,69 +100,117 @@ interface PresetMenuProps {
   onLoad: (id: string) => void;
   onDelete: (id: string) => void;
   onSaveNew: () => void;
+  triggerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete, onSaveNew }: PresetMenuProps) {
-  const ref = useRef<HTMLDivElement>(null);
+function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete, onSaveNew, triggerRef }: PresetMenuProps) {
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!isOpen || !anchorRef.current) {
+      setPosition(null);
+      return;
+    }
+    const rect = (triggerRef.current ?? anchorRef.current).getBoundingClientRect();
+    const width = 260;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+    const panelHeight = 96 + Math.min(presets.length, 5) * 40;
+    const top = rect.bottom + panelHeight > window.innerHeight - 8
+      ? Math.max(8, rect.top - panelHeight - 6)
+      : rect.bottom + 6;
+    setPosition({ top, left });
+  }, [isOpen, presets.length, triggerRef]);
 
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) {
-        onClose();
+      if (
+        panelRef.current?.contains(e.target as Node) ||
+        anchorRef.current?.contains(e.target as Node) ||
+        triggerRef.current?.contains(e.target as Node)
+      ) {
+        return;
       }
+      onClose();
     };
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    // Anchor drifts when the sidebar or window changes size — close instead
+    // of letting the fixed panel float away from its trigger.
+    const onScroll = (e: Event) => {
+      if (panelRef.current?.contains(e.target as Node)) return;
+      onClose();
+    };
+    const onResize = () => onClose();
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [isOpen, onClose]);
+    document.addEventListener("keydown", keyHandler);
+    document.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", keyHandler);
+      document.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [isOpen, onClose, triggerRef]);
 
   return (
-    <div className="filter-preset-menu" ref={ref}>
-      {isOpen && (
-        <div className="filter-preset-panel">
-          <div className="filter-preset-panel-header">
-            <span className="filter-preset-panel-title">Filter Presets</span>
-            <button
-              type="button"
-              className="filter-preset-save-btn"
-              onClick={() => { onSaveNew(); onClose(); }}
-              title="Save current filter as preset"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>Save</span>
-            </button>
-          </div>
-          {presets.length === 0 ? (
-            <div className="filter-preset-empty">No saved presets</div>
-          ) : (
-            <div className="filter-preset-list">
-              {presets.map((preset) => (
-                <div
-                  key={preset.id}
-                  className={`filter-preset-item ${activePresetId === preset.id ? "active" : ""}`}
-                >
-                  <button
-                    type="button"
-                    className="filter-preset-item-load"
-                    onClick={() => { onLoad(preset.id); onClose(); }}
-                  >
-                    <Bookmark className="w-3.5 h-3.5 shrink-0" />
-                    <span>{preset.name}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="filter-preset-item-delete"
-                    onClick={() => onDelete(preset.id)}
-                    title="Delete preset"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
+    <div className="sidebar-preset-wrapper" ref={anchorRef}>
+      {isOpen &&
+        position &&
+        createPortal(
+          <div
+            className="filter-preset-panel is-portal"
+            ref={panelRef}
+            style={{ top: position.top, left: position.left }}
+          >
+            <div className="filter-preset-panel-header">
+              <span className="filter-preset-panel-title">Filter Presets</span>
+              <button
+                type="button"
+                className="filter-preset-save-btn"
+                onClick={() => { onSaveNew(); onClose(); }}
+                title="Save current filter as preset"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Save</span>
+              </button>
             </div>
-          )}
-        </div>
-      )}
+            {presets.length === 0 ? (
+              <div className="filter-preset-empty">No saved presets</div>
+            ) : (
+              <div className="filter-preset-list">
+                {presets.map((preset) => (
+                  <div
+                    key={preset.id}
+                    className={`filter-preset-item ${activePresetId === preset.id ? "active" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className="filter-preset-item-load"
+                      onClick={() => { onLoad(preset.id); onClose(); }}
+                    >
+                      <Bookmark className="w-3.5 h-3.5 shrink-0" />
+                      <span>{preset.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="filter-preset-item-delete"
+                      onClick={() => onDelete(preset.id)}
+                      title="Delete preset"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -234,177 +282,136 @@ function SavePresetDialog({ isOpen, value, onChange, onSave, onCancel }: SavePre
 }
 
 // ---------------------------------------------------------------------------
-// Filter toolbar (collapsed into search bar)
+// Filter settings modal (SSMS-style dialog; keeps the sidebar explorer compact)
 // ---------------------------------------------------------------------------
 
 interface FilterToolbarProps {
-  tableOperator: FilterOperator;
-  setTableOperator: (op: FilterOperator) => void;
-  columnModeActive: boolean;
-  setColumnModeActive: (v: boolean) => void;
-  columnPattern: string;
-  setColumnPattern: (v: string) => void;
-  columnOperator: "name_contains" | "name_equals" | "name_matches_regex";
-  setColumnOperator: (op: "name_contains" | "name_equals" | "name_matches_regex") => void;
   conditions: FilterCondition[];
   setConditions: (c: FilterCondition[]) => void;
-  conditionLogic: "AND" | "OR";
-  setConditionLogic: (l: "AND" | "OR") => void;
-  operatorSelectorOpen: boolean;
-  setOperatorSelectorOpen: (v: boolean) => void;
+  conditionLogic?: "AND" | "OR";
+  setConditionLogic?: (l: "AND" | "OR") => void;
+  onClear: () => void;
   onClose: () => void;
 }
 
-function FilterToolbar({
-  tableOperator, setTableOperator,
-  columnModeActive, setColumnModeActive,
-  columnPattern, setColumnPattern,
-  columnOperator, setColumnOperator,
+export function FilterSettingsModal({
   conditions, setConditions,
-  conditionLogic, setConditionLogic,
-  operatorSelectorOpen, setOperatorSelectorOpen,
-  onClose: _onClose,
+  onClear,
+  onClose,
 }: FilterToolbarProps) {
-  const addCondition = () => {
-    setConditions([
-      ...conditions,
-      { id: crypto.randomUUID(), operator: "contains", value: "" },
-    ]);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  // Ensure exactly one condition per property row (SSMS fixed-row grid):
+  // editing a row creates its condition on first change, the eraser removes it.
+  const setConditionFor = (column: string, operator: FilterOperator, value: string) => {
+    const existing = conditions.find((c) => (c.column ?? "") === column);
+    if (existing) {
+      setConditions(
+        conditions.map((c) => (c.id === existing.id ? { ...c, operator, value } : c)),
+      );
+    } else {
+      setConditions([...conditions, { id: crypto.randomUUID(), column, operator, value }]);
+    }
   };
 
-  const removeCondition = (id: string) => {
-    setConditions(conditions.filter((c) => c.id !== id));
+  const removeConditionFor = (column: string) => {
+    setConditions(conditions.filter((c) => (c.column ?? "") !== column));
   };
 
-  const updateCondition = (id: string, updates: Partial<FilterCondition>) => {
-    setConditions(conditions.map((c) => c.id === id ? { ...c, ...updates } : c));
-  };
+  // Portal to <body> so `position: fixed` isn't trapped by transformed
+  // sidebar ancestors (which anchored the dialog inside the explorer panel).
+  return createPortal(
+    <div className="filter-settings-overlay" onClick={onClose}>
+      <div
+        className="filter-settings-modal"
+        role="dialog"
+        aria-label="Filter settings"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="filter-settings-header">
+          <span className="filter-settings-title">Filter Settings</span>
+          <button type="button" className="filter-settings-close" onClick={onClose} title="Close">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
 
-  return (
-    <div className="filter-toolbar">
-      {/* Filter Mode Row */}
+        <div className="filter-settings-body">
+      {/* Conditions grid (SSMS-style: Property | Operator | Value) */}
       <div className="filter-section">
-        <div className="filter-section-header">
-          <span className="filter-section-label">FILTER</span>
-          <span className="filter-section-sublabel">MODE</span>
-        </div>
-        <div className="filter-mode-toggles">
-          <button
-            type="button"
-            className={`filter-mode-btn ${!columnModeActive ? "active" : ""}`}
-            onClick={() => setColumnModeActive(false)}
-          >
-            <span>Table</span>
-            <span className="filter-mode-btn-sub">name</span>
-          </button>
-          <button
-            type="button"
-            className={`filter-mode-btn ${columnModeActive ? "active" : ""}`}
-            onClick={() => setColumnModeActive(true)}
-          >
-            <span>Column</span>
-            <span className="filter-mode-btn-sub">name</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Operator Row */}
-      {!columnModeActive && (
-        <div className="filter-section">
-          <div className="filter-section-header">
-            <span className="filter-section-label">OPERATOR</span>
+        <div className="filter-conditions-grid">
+          <div className="filter-grid-row filter-grid-head">
+            <span>Property</span>
+            <span>Operator</span>
+            <span>Value</span>
+            <span aria-hidden="true" />
           </div>
-          <div className="filter-operator-row">
-            <OperatorSelector
-              value={tableOperator}
-              onChange={setTableOperator}
-              isOpen={operatorSelectorOpen}
-              onToggle={() => setOperatorSelectorOpen(!operatorSelectorOpen)}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Column Mode Row */}
-      {columnModeActive && (
-        <div className="filter-section">
-          <div className="filter-section-header">
-            <span className="filter-section-label">COLUMN</span>
-          </div>
-          <div className="filter-column-layout">
-            <div className="filter-column-op">
-              <select
-                className="filter-toolbar-select"
-                value={columnOperator}
-                onChange={(e) => setColumnOperator(e.target.value as typeof columnOperator)}
-              >
-                <option value="name_contains">Contains</option>
-                <option value="name_equals">Equals</option>
-                <option value="name_matches_regex">Regex</option>
-              </select>
-            </div>
-            <input
-              type="text"
-              className="filter-toolbar-input filter-column-input"
-              value={columnPattern}
-              onChange={(e) => setColumnPattern(e.target.value)}
-              placeholder="Pattern..."
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Conditions Row */}
-      <div className="filter-section">
-        <div className="filter-section-header">
-          <span className="filter-section-label">CONDITIONS</span>
-        </div>
-        <div className="filter-conditions-area">
-          <button
-            type="button"
-            className="filter-logic-btn"
-            onClick={() => setConditionLogic(conditionLogic === "AND" ? "OR" : "AND")}
-            title={`Current: ${conditionLogic}. Click to toggle.`}
-          >
-            {conditionLogic}
-          </button>
-          <div className="filter-conditions-list">
-            {conditions.map((cond) => (
-              <div key={cond.id} className="filter-condition-row">
+          {FILTER_PROPERTY_ROWS.map((prop) => {
+            const cond = conditions.find((c) => (c.column ?? "") === prop.key);
+            return (
+              <div key={prop.key || "name"} className="filter-grid-row">
+                <span className="filter-grid-prop-label" title={prop.hint}>
+                  {prop.label}
+                  <Info className="filter-prop-info" />
+                </span>
+                <OperatorSelector
+                  value={cond?.operator ?? (prop.key === "create_date" ? "equals" : "contains")}
+                  onChange={(op) => setConditionFor(prop.key, op, cond?.value ?? "")}
+                />
+                {prop.key === "create_date" ? (
+                  <input
+                    type="date"
+                    className="filter-condition-value filter-grid-value filter-grid-date"
+                    value={cond?.value ?? ""}
+                    disabled={cond?.operator === "is_empty" || cond?.operator === "is_not_empty"}
+                    onChange={(e) => setConditionFor(prop.key, cond?.operator ?? "equals", e.target.value)}
+                  />
+                ) : (
                 <input
                   type="text"
-                  className="filter-condition-value"
-                  value={cond.value}
-                  onChange={(e) => updateCondition(cond.id, { value: e.target.value })}
-                  placeholder="Value..."
+                  className="filter-condition-value filter-grid-value"
+                  value={cond?.value ?? ""}
+                  disabled={cond?.operator === "is_empty" || cond?.operator === "is_not_empty"}
+                  onChange={(e) => setConditionFor(prop.key, cond?.operator ?? "contains", e.target.value)}
+                  placeholder={prop.placeholder}
                 />
+                )}
                 <button
                   type="button"
                   className="filter-condition-remove"
-                  onClick={() => removeCondition(cond.id)}
-                  title="Remove condition"
+                  onClick={() => removeConditionFor(prop.key)}
+                  title="Clear this condition"
                 >
-                  <X className="w-3 h-3" />
+                  <Eraser className="w-3.5 h-3.5" />
                 </button>
               </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="filter-condition-add"
-            onClick={addCondition}
-          >
-            + Add condition
+            );
+          })}
+        </div>
+      </div>
+        </div>
+
+        <div className="filter-settings-footer">
+          <button type="button" className="filter-settings-btn" onClick={onClear}>
+            Clear
+          </button>
+          <button type="button" className="filter-settings-btn is-primary" onClick={onClose}>
+            Done
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
 import { LinkedFoldersPanel } from "./LinkedFoldersPanel";
 import { FolderSearch } from "lucide-react";
-import { useState } from "react";
 import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
 import { isCapabilitySupported } from "../../types";
 
@@ -413,6 +420,7 @@ import { isCapabilitySupported } from "../../types";
 // ---------------------------------------------------------------------------
 
 export function Sidebar() {
+  const presetTriggerRef = useRef<HTMLDivElement>(null);
   const [activeSidebarTab, setActiveSidebarTab] = useState<"database" | "linked">("database");
   const { t } = useI18n();
   const {
@@ -465,22 +473,13 @@ export function Sidebar() {
     setSavePresetDialogOpen,
     presetNameInput,
     setPresetNameInput,
-    operatorSelectorOpen,
-    setOperatorSelectorOpen,
-    tableOperator,
-    setTableOperator,
+    tableOperator: _tableOperator,
+    setTableOperator: _setTableOperator,
     schemaOperator: _schemaOperator,
     setSchemaOperator: _setSchemaOperator,
     columnModeActive,
-    setColumnModeActive,
-    columnPattern,
-    setColumnPattern,
-    columnOperator,
-    setColumnOperator,
     conditions,
     setConditions,
-    conditionLogic,
-    setConditionLogic,
     mixedStateFilter,
     handleMixedStateToggle,
     getMixedStateFilterForTable,
@@ -574,13 +573,13 @@ export function Sidebar() {
           <button
             type="button"
             className={`sidebar-filter-btn ${hasActiveFilter ? "active" : ""}`}
-            onClick={() => setFilterToolbarOpen((v) => !v)}
+            onClick={() => setFilterToolbarOpen(true)}
             title="Advanced filter"
           >
             <Filter className="w-3.5 h-3.5" />
           </button>
           {/* Preset button */}
-          <div className="sidebar-preset-wrapper">
+          <div className="sidebar-preset-wrapper" ref={presetTriggerRef}>
             <button
               type="button"
               className={`sidebar-preset-btn ${activePresetId ? "has-preset" : ""}`}
@@ -591,6 +590,7 @@ export function Sidebar() {
             </button>
             <PresetMenu
               isOpen={filterPresetMenuOpen}
+              triggerRef={presetTriggerRef}
               onClose={() => setFilterPresetMenuOpen(false)}
               presets={presets}
               activePresetId={activePresetId}
@@ -612,23 +612,12 @@ export function Sidebar() {
           )}
         </div>
 
-        {/* Expanded filter toolbar */}
+        {/* Filter settings modal (SSMS-style; opened from the filter button) */}
         {filterToolbarOpen && (
-          <FilterToolbar
-            tableOperator={tableOperator}
-            setTableOperator={setTableOperator}
-            columnModeActive={columnModeActive}
-            setColumnModeActive={setColumnModeActive}
-            columnPattern={columnPattern}
-            setColumnPattern={setColumnPattern}
-            columnOperator={columnOperator}
-            setColumnOperator={setColumnOperator}
+          <FilterSettingsModal
             conditions={conditions}
             setConditions={setConditions}
-            conditionLogic={conditionLogic}
-            setConditionLogic={setConditionLogic}
-            operatorSelectorOpen={operatorSelectorOpen}
-            setOperatorSelectorOpen={setOperatorSelectorOpen}
+            onClear={handleClearFilters}
             onClose={() => setFilterToolbarOpen(false)}
           />
         )}

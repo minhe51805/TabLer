@@ -266,6 +266,7 @@ impl DatabaseDriver for MongoDbDriver {
         Ok(tables
             .into_iter()
             .map(|name| TableInfo {
+                create_date: None,
                 name,
                 schema: Some(db_name.clone()),
                 table_type: "collection".to_string(),

@@ -46,14 +46,29 @@ export type AIWorkspaceAgentActionName =
   | "plan"
   | "think"
   | "ask_user"
+  | "update_plan"
+  | "skill"
   | "list_tables"
   | "search_schema"
+  | "list_schema_objects"
   | "describe_table"
   | "describe_tables"
   | "sample_table_data"
   | "run_readonly_sql"
+  | "run_parameterized_sql"
+  | "find_value"
+  | "check_sql"
+  | "run_preset"
   | "preview_write"
   | "remember_term"
+  | "read_memory"
+  | "save_memory"
+  | "edit_query_sql"
+  | "delete_memory"
+  | "create_checkpoint"
+  | "restore_checkpoint"
+  | "delegate"
+  | "read_page"
   | "finish";
 
 export type AIWorkspaceAgentStepStatus = "running" | "done" | "error";
@@ -99,4 +114,29 @@ export interface AIWorkspaceBubbleData {
   /** Set once this SQL has been pushed to a Query tab; further "Duyệt chạy"
    *  clicks keep the button but must not spawn another tab. */
   openedInWorkspace?: boolean;
+  /** Timestamp when /compact folded this bubble into the workspace digest.
+   *  Compacted bubbles stay persisted (archived in SQLite) but are hidden
+   *  from the conversation and excluded from request history. */
+  compactedAt?: number;
+  /** Timestamp captured when the run left "loading"; powers the thinking
+   *  duration shown on the collapsed agent step header. */
+  settledAt?: number;
+  /** Metadata of files/images attached by the user to this turn. Image bytes
+   *  live in the ai_attachments SQLite table and are fetched on demand. */
+  attachments?: AIWorkspaceAttachment[];
+  /** Options captured when the agent ended its turn with an ask_user
+   *  question; the conversation view renders them as one-click reply
+   *  buttons on the final bubble. */
+  askUserOptions?: string[];
+}
+
+/** Persisted metadata of a user attachment; bytes live in the backend table. */
+export interface AIWorkspaceAttachment {
+  id: string;
+  kind: "image" | "text";
+  name: string;
+  mimeType: string;
+  /** Approximate stored size in bytes (post-compression for images). */
+  size: number;
+  createdAt: number;
 }

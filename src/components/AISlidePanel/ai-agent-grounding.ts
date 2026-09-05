@@ -1,8 +1,9 @@
-import type { AIResponseLanguage, QueryResult, TableStructure } from "../../types";
+import type { AIResponseLanguage, DatabaseType, QueryResult, TableStructure } from "../../types";
 import { encodeStructureForAI } from "./AISlidePanelUtils";
 import type { AIWorkspaceInteractionMode } from "./ai-workspace-types";
 import type { AssistIntent } from "./ai-agent-context";
 import { buildKnownTableNameSet, normalizeIntentText } from "./ai-assist-intent";
+import { getExplainHotspots, parseExplainOutput } from "../../utils/explain-parser";
 
 const MAX_AGENT_QUERY_PREVIEW_ROWS = 5;
 const MAX_AGENT_QUERY_PREVIEW_COLUMNS = 8;
@@ -11,11 +12,19 @@ const MAX_AGENT_OBSERVATION_VALUE_CHARS = 120;
 
 const SENSITIVE_COLUMN_PATTERN = /(?:^|[_-])(?:password|passwd|pwd|secret|token|api[_-]?key|credential|private[_-]?key|access[_-]?key|refresh[_-]?token)(?:$|[_-])/i;
 
+const MAX_AGENT_MEMORY_OBSERVATION_CHARS = 8000;
+
 export function truncateAgentObservation(text: string) {
-  if (text.length <= MAX_AGENT_TRACE_OBSERVATION_CHARS) {
+  // Memory reads are the payload the agent explicitly asked for — cutting
+  // them at 1400 chars made round-trip verification impossible (memory
+  // bodies run up to the backend 8k cap).
+  const cap = text.startsWith("Memory \"")
+    ? MAX_AGENT_MEMORY_OBSERVATION_CHARS
+    : MAX_AGENT_TRACE_OBSERVATION_CHARS;
+  if (text.length <= cap) {
     return text;
   }
-  return `${text.slice(0, MAX_AGENT_TRACE_OBSERVATION_CHARS - 3)}...`;
+  return `${text.slice(0, cap - 3)}...`;
 }
 
 export function sanitizeAgentObservationValue(
@@ -35,9 +44,14 @@ export function redactAgentSqlLiterals(sql: string) {
   return sql.replace(/'(?:''|[^'])*'/g, "'[REDACTED]'");
 }
 
+/** Full (untruncated) observation text — the read_page tool archives this so
+ *  truncated trace output can always be re-read page by page. */
+export function stringifyAgentObservationFull(data: unknown) {
+  return typeof data === "string" ? data : JSON.stringify(data, null, 2);
+}
+
 export function stringifyAgentObservation(data: unknown) {
-  const content = typeof data === "string" ? data : JSON.stringify(data, null, 2);
-  return truncateAgentObservation(content);
+  return truncateAgentObservation(stringifyAgentObservationFull(data));
 }
 
 export function findMatchingTableName(tableName: string, availableTableNames: string[]) {
@@ -49,6 +63,7 @@ export function findMatchingTableName(tableName: string, availableTableNames: st
 }
 
 const MAX_EXPLAIN_PLAN_CHARS = 800;
+const MAX_EXPLAIN_SUMMARY_CHARS = 2400;
 
 /** Condenses an EXPLAIN result into a bounded plan preview for observations. */
 export function summarizeAgentExplainPlan(result: QueryResult) {
@@ -60,6 +75,45 @@ export function summarizeAgentExplainPlan(result: QueryResult) {
   return text.length <= MAX_EXPLAIN_PLAN_CHARS
     ? text
     : `${text.slice(0, MAX_EXPLAIN_PLAN_CHARS)}\n[plan truncated]`;
+}
+
+/**
+ * Structured EXPLAIN summary: parses the raw plan with the same engine the
+ * ExplainVisualizer uses and emits cost totals plus the hottest operations,
+ * falling back to the bounded raw text when a plan cannot be parsed.
+ */
+export function summarizeAgentExplainPlanStructured(
+  result: QueryResult,
+  dbType: DatabaseType | undefined,
+) {
+  const rawText = summarizeAgentExplainPlan(result);
+  if (!rawText) return "";
+  try {
+    const plan = parseExplainOutput(dbType ?? "postgresql", rawText.replace("\n[plan truncated]", ""));
+    if (plan.nodes.length === 0 && plan.warnings.length === 0) return rawText;
+    const hotspots = getExplainHotspots(plan, 3);
+    const summary = {
+      engine: plan.dbType,
+      analyzed: plan.analyzed,
+      totalCost: plan.totalCost,
+      warnings: plan.warnings.length > 0 ? plan.warnings : undefined,
+      hotspots: hotspots.map((hotspot) => ({
+        operation: hotspot.node.operation,
+        cost: hotspot.node.cost,
+        estimatedRows: hotspot.node.estimatedRows,
+        actualRows: hotspot.node.actualRows,
+        actualTimeMs: hotspot.node.actualTimeMs,
+        reasons: hotspot.reasons,
+      })),
+      rawPlan: rawText,
+    };
+    const content = JSON.stringify(summary, null, 2);
+    return content.length <= MAX_EXPLAIN_SUMMARY_CHARS
+      ? content
+      : `${content.slice(0, MAX_EXPLAIN_SUMMARY_CHARS)}\n[plan summary truncated]`;
+  } catch {
+    return rawText;
+  }
 }
 
 export function summarizeAgentQueryObservation(result: QueryResult) {
@@ -123,6 +177,8 @@ export function summarizeAgentSchemaSummaryObservation(tableName: string, summar
 
 export function extractReferencedTableNamesFromSql(sql: string) {
   const candidates = new Set<string>();
+  // CTE aliases defined in this statement are not workspace tables.
+  const cteNames = extractCteNamesFromSql(sql);
   const patterns = [
     /\bfrom\s+([a-z_"`][a-z0-9_$."`]*)/gi,
     /\bjoin\s+([a-z_"`][a-z0-9_$."`]*)/gi,
@@ -134,10 +190,21 @@ export function extractReferencedTableNamesFromSql(sql: string) {
     /\bdrop\s+table\s+([a-z_"`][a-z0-9_$."`]*)/gi,
   ];
 
-  for (const pattern of patterns) {
+  for (const [patternIndex, pattern] of patterns.entries()) {
+    // Indexes 0-1 are the FROM/JOIN row-source patterns: the only places a
+    // set-returning function call (`generate_series(...)`) can appear as the
+    // captured identifier, where a trailing "(" means a call, not grammar
+    // like `INSERT INTO t(...)`.
+    const isRowSource = patternIndex <= 1;
     for (const match of sql.matchAll(pattern)) {
       const raw = match[1];
       if (!raw) continue;
+      // In a FROM/JOIN clause, `generate_series(...)` / `unnest(...)` are
+      // set-returning function calls, not tables: the captured identifier is
+      // immediately followed by an argument list. (Elsewhere — e.g.
+      // `INSERT INTO t(...)` — a trailing "(" is normal grammar.)
+      const afterIdentifier = sql.slice((match.index ?? 0) + match[0].length);
+      if (isRowSource && afterIdentifier.trimStart().startsWith("(")) continue;
       const normalized = raw
         .replace(/["`]/g, "")
         .split(".")
@@ -145,13 +212,25 @@ export function extractReferencedTableNamesFromSql(sql: string) {
         .pop()
         ?.trim()
         .toLowerCase();
-      if (normalized) {
+      if (normalized && !cteNames.has(normalized)) {
         candidates.add(normalized);
       }
     }
   }
 
   return [...candidates];
+}
+
+/**
+ * CTE aliases defined in the same statement (`WITH x AS (…), y AS (…)`).
+ * Referencing them is legitimate SQL — they must not count as unknown tables.
+ */
+export function extractCteNamesFromSql(sql: string): Set<string> {
+  const names = new Set<string>();
+  for (const match of sql.matchAll(/\b(?:with|,)\s*([a-z_][a-z0-9_]*)\s+as\s*\(/gi)) {
+    names.add(match[1].toLowerCase());
+  }
+  return names;
 }
 
 const SYSTEM_BARE_NAME_PATTERN =
@@ -193,9 +272,15 @@ export function getAgentSqlSchemaRequirements(
   // the schema requirement ignores them. The dedicated catalog guard in the
   // run_readonly_sql tool decides whether they are allowed.
   const sanitizedSql = sql.replace(QUALIFIED_CATALOG_REF_PATTERN, " catalog_ref");
+  const cteNames = extractCteNamesFromSql(sanitizedSql);
 
   for (const referencedTable of extractReferencedTableNamesFromSql(sanitizedSql)) {
     if (referencedTable === "catalog_ref" || SYSTEM_BARE_NAME_PATTERN.test(referencedTable)) {
+      continue;
+    }
+    // A CTE alias defined in this statement (or a set-returning function) is
+    // not a workspace table — never block on it.
+    if (cteNames.has(referencedTable)) {
       continue;
     }
     const matchedTable = findMatchingTableName(referencedTable, availableTableNames);
@@ -295,6 +380,12 @@ export function isOverviewContextMissingResponse(response: string) {
     "database was not provided", "schema was not provided", "please provide", "share details",
     "share the tables", "share the columns", "no database context", "no schema context",
     "没有提供", "没有数据库", "没有上下文", "请提供", "提供更多信息", "分享表", "分享字段",
+    // Korean weak signals (audit fix: ko/tr previously fell through silently).
+    "정보가 없", "데이터가 없", "컨텍스트가 없", "제공해 주세요", "제공해주세요",
+    "제공되지 않았", "데이터베이스가 제공", "스키마가 제공", "테이블을 알려",
+    // Turkish weak signals, written post-NFD (ğ→g, ü→u; dotless ı avoided).
+    "bilgi yok", "veri yok", "baglam yok", "saglay", "veritaban verildi", "sema saglandi",
+    "tablo veya sutun", "alan veya tablo",
   ];
 
   return weakSignals.some((signal) => normalizedResponse.includes(signal));
@@ -336,6 +427,32 @@ export function buildSchemaRegroundingPrompt(
         ? "这是一次重新阅读当前数据库的请求。请给出 overview、主要表、可推断的关系或 join path，以及简短备注。既然 schema 已提供，就不要再说缺少 schema。"
         : "请只依据当前 schema 回答用户问题。如果 schema 不足以确认细节，可以说明限制，但仍然必须严格基于当前可见表。",
       "不要编造 schema 中不存在的业务域、表、字段或关系。",
+      "", originalPrompt,
+    ].join("\n");
+  }
+
+  if (language === "ko") {
+    return [
+      `현재 데이터베이스 "${databaseLabel}"을(를) 기준으로 처음부터 다시 답변해 주세요.`,
+      `검증된 다음 테이블만 사용할 수 있습니다: ${tableList}.`,
+      "현재 스키마와 일치하지 않는 이전 가정이나 이전 답변은 모두 무시하세요.",
+      assistIntent === "overview"
+        ? "현재 데이터베이스를 다시 읽는 요청입니다. 개요, 주요 테이블, 추론 가능한 관계나 조인 경로, 그리고 짧은 메모를 제공해 주세요. 스키마가 이미 제공되었으므로 스키마가 없다고 말하지 마세요."
+        : "사용자의 질문에 현재 스키마만 근거로 답변해 주세요. 스키마만으로 세부 사항을 확인할 수 없다면 그 한계를 명확히 말하되, 보이는 테이블 범위 안에서 답변해야 합니다.",
+      "현재 스키마에 없는 도메인, 테이블, 컬럼, 관계를 지어내지 마세요.",
+      "", originalPrompt,
+    ].join("\n");
+  }
+
+  if (language === "tr") {
+    return [
+      `Baştan yanıt verin ve yalnızca "${databaseLabel}" veritabanına sıkı sıkıya bağlı kalın.`,
+      `Yalnızca şu doğrulanmış tabloları kullanabilirsiniz: ${tableList}.`,
+      "Geçerli şemayla uyuşmayan eski varsayım ve yanıtları tamamen yok sayın.",
+      assistIntent === "overview"
+        ? "Bu, mevcut veritabanını yeniden okuma isteğidir. Genel bakış, ana tablolar, çıkarılabilecek ilişkiler veya join yolları ve kısa notlar sunun. Şema zaten eklendiği için şemanın eksik olduğunu söylemeyin."
+        : "Kullanıcının sorusunu yalnızca mevcut şemayı temel alarak yanıtlayın. Şema bir ayrıntıyı doğrulamaya yetmiyorsa bu sınırı açıkça belirtin ama görünür tablolara bağlı kalın.",
+      "Geçerli şemada olmayan hiçbir alan, tablo, sütun veya ilişki uydurmayın.",
       "", originalPrompt,
     ].join("\n");
   }

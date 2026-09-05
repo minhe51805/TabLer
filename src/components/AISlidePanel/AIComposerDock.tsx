@@ -6,8 +6,10 @@ import {
   ChevronDown,
   Database,
   Eye,
+  FileText,
   Loader2,
   MessageSquare,
+  Paperclip,
   PencilLine,
   Settings2,
   Shield,
@@ -18,11 +20,15 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { Fragment, useEffect, useRef, useState, type KeyboardEventHandler, type RefObject } from "react";
+import { Fragment, useEffect, useRef, useState, type DragEvent, type KeyboardEventHandler, type ClipboardEvent, type RefObject } from "react";
+import { formatTokensCompact } from "../../utils/ai-context-compact";
 import type { AIProviderConfig } from "../../types";
 import { formatAIProviderTypeLabel } from "../../utils/ai-provider-registry";
 import { getAIFailoverConsent, setAIFailoverConsent } from "../../utils/ai-failover-consent";
+import { formatAttachmentBytes, type AIAttachmentDraft } from "../../utils/ai-attachments";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
+import { AISlashCommandMenu } from "./AISlashCommandMenu";
+import type { AISlashCommand } from "./ai-slash-commands";
 import type {
   AIWorkspaceAgentAutonomy,
   AIWorkspaceInteractionMode,
@@ -57,9 +63,27 @@ interface AIComposerDockProps {
   onSetSessionDataReadEnabled: (enabled: boolean) => void;
   onSetShowThinking: (show: boolean) => void;
   onOpenSettings: () => void;
+  /** Whether Safe Mode is currently enabled (level >= 1). */
+  safeModeEnabled?: boolean;
+  /** Flip the global Safe Mode level between 0 (off) and 1 (read-only). */
+  onToggleSafeMode?: (next: boolean) => void;
   onCloseHistory: () => void;
   onGenerate: () => void;
   onCancelGeneration: () => void;
+  contextUsage?: { used: number; limit: number };
+  /** Draft attachments waiting to be sent with the next message. */
+  attachments?: AIAttachmentDraft[];
+  /** Whether the active model advertises image input (`input_types`). */
+  canAttachImages?: boolean;
+  onAddAttachmentFiles?: (files: File[]) => void;
+  onRemoveAttachment?: (id: string) => void;
+  onOpenAttachmentManager?: () => void;
+  /** Open "/" command menu state; null keeps the menu hidden. */
+  slashMenu?: {
+    commands: AISlashCommand[];
+    activeIndex: number;
+  } | null;
+  onSelectSlashCommand?: (name: string) => void;
 }
 
 type ComposerMenu = "mode" | "provider" | "utility";
@@ -132,14 +156,34 @@ export function AIComposerDock({
   onSetSessionDataReadEnabled,
   onSetShowThinking,
   onOpenSettings,
+  safeModeEnabled,
+  onToggleSafeMode,
   onCloseHistory,
   onGenerate,
   onCancelGeneration,
+  contextUsage,
+  attachments = [],
+  onAddAttachmentFiles = () => {},
+  onRemoveAttachment = () => {},
+  onOpenAttachmentManager = () => {},
+  slashMenu = null,
+  onSelectSlashCommand,
 }: AIComposerDockProps) {
   const [openMenu, setOpenMenu] = useState<ComposerMenu | null>(null);
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
   const [showHiddenModels, setShowHiddenModels] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const commandBarRef = useRef<HTMLDivElement>(null);
+  const effectiveContextUsage = contextUsage ?? { used: 0, limit: 24_000 };
+  const usagePercent = effectiveContextUsage.limit > 0
+    ? Math.min(100, Math.round((effectiveContextUsage.used / effectiveContextUsage.limit) * 100))
+    : 0;
+  const contextMeterState = usagePercent >= 90
+    ? "is-critical"
+    : usagePercent >= 70
+      ? "is-warn"
+      : "";
   const activeProviderValue = activeProvider?.model?.trim()
     || activeProvider?.name?.trim()
     || copy.composer.noProvider;
@@ -204,7 +248,56 @@ export function AIComposerDock({
   }, []);
 
   return (
-    <div className="ai-workspace-compose-dock">
+    <div
+      className={`ai-workspace-compose-dock ${isDragOver ? "is-dragover" : ""}`}
+      onDragOver={(event: DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(event: DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        setIsDragOver(false);
+        const files = Array.from(event.dataTransfer.files ?? []);
+        if (files.length > 0) onAddAttachmentFiles(files);
+      }}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="ai-workspace-attachment-input"
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          if (files.length > 0) onAddAttachmentFiles(files);
+          event.target.value = "";
+        }}
+      />
+      {attachments.length > 0 && (
+        <div className="ai-workspace-attachment-row">
+          {attachments.map((attachment) => (
+            <div key={attachment.id} className={`ai-workspace-attachment-chip ${attachment.kind === "image" ? "is-image" : "is-file"}`}>
+              {attachment.kind === "image" && attachment.dataUrl ? (
+                <img className="ai-workspace-attachment-thumb" src={attachment.dataUrl} alt={attachment.name} />
+              ) : (
+                <FileText className="w-3.5 h-3.5 ai-workspace-attachment-kind-icon" />
+              )}
+              <span className="ai-workspace-attachment-chip-copy">
+                <strong title={attachment.name}>{attachment.name}</strong>
+                <span>{formatAttachmentBytes(attachment.size)}</span>
+              </span>
+              <button
+                type="button"
+                className="ai-workspace-attachment-chip-dismiss"
+                onClick={() => onRemoveAttachment(attachment.id)}
+                title={copy.attachments.removeAttachment}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {attachedSelectionSource && (
         <div className="ai-workspace-selection-chip">
           <div className="ai-workspace-selection-chip-copy">
@@ -218,14 +311,50 @@ export function AIComposerDock({
       )}
 
       <div className="ai-workspace-compose-box">
+        {slashMenu && onSelectSlashCommand && (
+          <AISlashCommandMenu
+            title={copy.composer.slashCommandsTitle}
+            emptyHint={copy.composer.slashNoMatch}
+            query={prompt.replace(/^\//, "")}
+            commands={slashMenu.commands}
+            activeIndex={slashMenu.activeIndex}
+            onSelect={onSelectSlashCommand}
+          />
+        )}
         <textarea
           ref={textareaRef}
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={(event: ClipboardEvent<HTMLTextAreaElement>) => {
+            const files = Array.from(event.clipboardData?.files ?? []);
+            if (files.length > 0) {
+              event.preventDefault();
+              onAddAttachmentFiles(files);
+            }
+          }}
           className="ai-workspace-composer-textarea"
           placeholder={copy.composer.placeholder}
         />
+
+        <div className="ai-workspace-meter-row">
+          <button
+            type="button"
+            className="ai-workspace-attach-btn"
+            onClick={() => fileInputRef.current?.click()}
+            title={copy.attachments.attachButton}
+            aria-label={copy.attachments.attachButton}
+          >
+            <Paperclip className="w-3.5 h-3.5" />
+          </button>
+          <div className={`ai-workspace-context-meter ${contextMeterState}`} title={`${copy.workspace.contextBadge} · ${usagePercent}% — estimated tokens (~4 chars/token) · each request sends digest + last messages only`}>
+            <span className="ai-workspace-context-meter-value">{formatTokensCompact(effectiveContextUsage.used)}</span>
+            <div className="ai-workspace-context-meter-track">
+              <div className="ai-workspace-context-meter-fill" style={{ width: `${Math.max(2, usagePercent)}%` }} />
+            </div>
+            <span className="ai-workspace-context-meter-limit">{formatTokensCompact(effectiveContextUsage.limit)}</span>
+          </div>
+        </div>
 
         <div className={`ai-workspace-composer-footer ${footerNote ? "" : "is-note-hidden"}`}>
           <div className="ai-workspace-composer-footer-main">
@@ -273,7 +402,7 @@ export function AIComposerDock({
                           <span className="ai-workspace-command-item-icon">{renderInteractionModeIcon(mode)}</span>
                           <span className="ai-workspace-command-item-copy">
                             <strong>{getInteractionModeLabel(mode, copy)}</strong>
-                            <span>{getInteractionModeHint(mode, copy)}</span>
+                            <span className="ai-workspace-command-item-hint">{getInteractionModeHint(mode, copy)}</span>
                           </span>
                           {mode === interactionMode && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
                         </button>
@@ -289,7 +418,6 @@ export function AIComposerDock({
                   className={`ai-workspace-command-trigger ai-workspace-command-trigger--provider ${openMenu === "provider" ? "is-active" : ""}`}
                   aria-expanded={openMenu === "provider"}
                   aria-haspopup="menu"
-                  disabled={isSwitchingProvider}
                   onClick={() => toggleMenu("provider")}
                   title={activeProviderValue}
                 >
@@ -429,6 +557,25 @@ export function AIComposerDock({
                     <button type="button" className="ai-workspace-command-settings-link" onClick={onOpenSettings}>
                       {copy.composer.openSettings}
                     </button>
+                    {onToggleSafeMode && (
+                      <div className="ai-workspace-command-safemode" role="group" aria-label={copy.composer.safeModeToggle}>
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        <span>{copy.composer.safeModeToggle}</span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={safeModeEnabled}
+                          aria-label={copy.composer.safeModeToggle}
+                          className={`ai-ws-safemode-switch ${safeModeEnabled ? "is-on" : ""}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onToggleSafeMode(!safeModeEnabled);
+                          }}
+                        >
+                          <span className="ai-ws-safemode-knob" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -522,6 +669,18 @@ export function AIComposerDock({
                       className="ai-workspace-command-utility-item"
                       onClick={() => {
                         setOpenMenu(null);
+                        onOpenAttachmentManager();
+                      }}
+                    >
+                      <span className="ai-workspace-command-utility-icon"><Paperclip className="w-3.5 h-3.5" /></span>
+                      <span className="ai-workspace-command-utility-copy"><strong>{copy.attachments.managerOpen}</strong></span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="ai-workspace-command-utility-item"
+                      onClick={() => {
+                        setOpenMenu(null);
                         onOpenSettings();
                       }}
                     >
@@ -538,7 +697,7 @@ export function AIComposerDock({
             type="button"
             className={`ai-workspace-generate-btn ${isGenerating || isCancelling ? "is-cancel" : ""}`}
             onClick={isGenerating ? onCancelGeneration : onGenerate}
-            disabled={isCancelling || (!isGenerating && (!prompt.trim() && !hasAttachedSelectionText))}
+            disabled={isCancelling || (!isGenerating && !prompt.trim() && !hasAttachedSelectionText && attachments.length === 0)}
             aria-label={
               isCancelling
                 ? copy.composer.cancelling

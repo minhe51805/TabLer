@@ -250,6 +250,7 @@ impl DatabaseDriver for SqliteDriver {
         let tables = rows
             .iter()
             .map(|row| TableInfo {
+                create_date: None,
                 name: row.get(0),
                 table_type: row.get(1),
                 schema: None,

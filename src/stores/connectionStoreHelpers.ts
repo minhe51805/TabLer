@@ -74,8 +74,18 @@ export function deriveConnectionName(config: ConnectionConfig): string {
 }
 
 export function resolveConnectionConfig(config: ConnectionConfig): ConnectionConfig {
+  // Port must survive serde as u16 (0..=65535) — a stray negative or empty
+  // value from the number input would otherwise reject the whole command.
+  const port =
+    config.port != null &&
+    Number.isInteger(config.port) &&
+    config.port > 0 &&
+    config.port <= 65535
+      ? config.port
+      : undefined;
   const resolvedConfig = {
     ...config,
+    port,
     host: config.host ? resolveEnvVars(config.host) : config.host,
     username: config.username ? resolveEnvVars(config.username) : config.username,
     password: config.password ? resolveEnvVars(config.password) : config.password,

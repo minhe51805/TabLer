@@ -10,17 +10,42 @@ describe("AI agent tool contract", () => {
   it("exposes only executable controller actions", () => {
     expect(AI_AGENT_TOOL_NAMES).toEqual([
       "ask_user",
+      "update_plan",
       "list_tables",
       "search_schema",
+      "list_schema_objects",
       "describe_table",
       "describe_tables",
       "sample_table_data",
       "run_readonly_sql",
+      "run_parameterized_sql",
+      "find_value",
+      "check_sql",
+      "run_preset",
       "preview_write",
       "remember_term",
+      "read_memory",
+      "save_memory",
+      "edit_query_sql",
+      "delete_memory",
+      "create_checkpoint",
+      "restore_checkpoint",
+      "skill",
+      "delegate",
+      "read_page",
       "finish",
     ]);
     expect(AI_AGENT_TOOL_NAMES).not.toContain("plan");
+  });
+
+  it("parses skill loads and trims the skill name", () => {
+    expect(parseAIAgentToolAction(
+      '{"action":"skill","message":"This matches the db-audit skill","args":{"name":" db-audit "}}',
+    )).toEqual({
+      action: "skill",
+      message: "This matches the db-audit skill",
+      args: { name: "db-audit" },
+    });
   });
 
   it("parses ask_user questions with bounded, cleaned options", () => {
@@ -192,8 +217,11 @@ line two","args":{"response":"done"}}\nThanks`;
       message: "",
     });
 
-    expect(() => parseAIAgentToolAction('{"action":"describe_table","args":{}}'))
-      .toThrow("args.table");
+    // describe_table with no args now parses (both forms are optional); the
+    // executor reports the missing table/tables at run time.
+    expect(
+      parseAIAgentToolAction('{"action":"describe_table","args":{}}').args,
+    ).toEqual({});
     expect(() => parseAIAgentToolAction('{"action":"search_schema","args":{"query":" "}}'))
       .toThrow("args.query");
     expect(() => parseAIAgentToolAction('{"action":"run_readonly_sql","args":{"sql":" "}}'))
@@ -231,5 +259,33 @@ line two","args":{"response":"done"}}\nThanks`;
     "USE another_database",
   ])("blocks non-read-only observation SQL: %s", (sql) => {
     expect(() => validateAIAgentReadonlySql(sql)).toThrow(/only allows|read-only/);
+  });
+
+  it("recovers native tool arguments the backend could not parse", () => {
+    // Rust ships unparseable function.arguments verbatim under
+    // `unparsedArguments`; the normalizer must repair it, not drop it.
+    const raw = JSON.stringify({
+      action: "edit_query_sql",
+      message: "",
+      args: {
+        unparsedArguments: '{"sql":"SELECT COUNT(*) FROM dbo.SinhViens", "createIfMissing":true,',
+      },
+    });
+    const action = parseAIAgentToolAction(raw);
+    expect(action.action).toBe("edit_query_sql");
+    expect(action.args).toMatchObject({
+      sql: "SELECT COUNT(*) FROM dbo.SinhViens",
+      createIfMissing: true,
+    });
+    expect(action.args).not.toHaveProperty("unparsedArguments");
+  });
+
+  it("throws on unrecoverable native tool arguments so the repair round can retry", () => {
+    const raw = JSON.stringify({
+      action: "edit_query_sql",
+      message: "",
+      args: { unparsedArguments: "no json here at all" },
+    });
+    expect(() => parseAIAgentToolAction(raw)).toThrow("malformed tool arguments");
   });
 });

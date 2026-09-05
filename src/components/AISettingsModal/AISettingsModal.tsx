@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Plus, Trash2, Brain, Loader2, Check, Download, Pencil } from "lucide-react";
+import { Plus, Trash2, Brain, Loader2, Check, Download, Pencil, Lock, X } from "lucide-react";
 import { useAIStore } from "../../stores/aiStore";
 import { invokeWithTimeout } from "../../utils/tauri-utils";
 import { getCurrentAppLanguage } from "../../i18n";
@@ -30,7 +30,14 @@ export function AISettingsModal({ onClose }: Props) {
     const [clearedKeyIds, setClearedKeyIds] = useState<string[]>([]);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [saveError, setSaveError] = useState<string | null>(null);
-    const [modelDialog, setModelDialog] = useState<{ index: number; value: string } | null>(null);
+    const [modelDialog, setModelDialog] = useState<{
+        index: number;
+        value: string;
+        contextWindow: string;
+        maxOutputTokens: string;
+        inputTypes: string[];
+        outputTypes: string[];
+    } | null>(null);
     const [modelDialogError, setModelDialogError] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [connectionCheckStatus, setConnectionCheckStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
@@ -185,10 +192,13 @@ export function AISettingsModal({ onClose }: Props) {
         // Removing the active model promotes the first remaining one so the
         // provider never points at a model that no longer exists.
         const nextModel = activeConfig.model === removed ? (models[0] ?? "") : activeConfig.model;
+        const modelSettings = { ...(activeConfig.model_settings ?? {}) };
+        delete modelSettings[removed];
         updateConfig(activeConfig.id, {
             models,
             model: nextModel,
             disabled_models: (activeConfig.disabled_models ?? []).filter((entry) => entry !== removed),
+            model_settings: modelSettings,
         });
     };
 
@@ -240,7 +250,22 @@ export function AISettingsModal({ onClose }: Props) {
         // A brand-new first model, or a rename of the active model, keeps the
         // provider pointing at something that exists.
         const nextModel = wasActiveModel || !activeConfig.model?.trim() ? value : activeConfig.model;
-        updateConfig(activeConfig.id, { models, model: nextModel, disabled_models: disabledModels });
+        // Persist per-model settings; renaming remaps the settings key.
+        const modelSettings = { ...(activeConfig.model_settings ?? {}) };
+        if (modelDialog.index >= 0 && previousName && previousName !== value) {
+            delete modelSettings[previousName];
+        }
+        const parseCount = (raw: string): number | null => {
+            const parsed = Number(raw.replace(/[_,\s]/g, ""));
+            return raw.trim() && Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
+        };
+        modelSettings[value] = {
+            context_window: parseCount(modelDialog.contextWindow),
+            max_output_tokens: parseCount(modelDialog.maxOutputTokens),
+            input_types: modelDialog.inputTypes.length > 0 ? modelDialog.inputTypes : ["text"],
+            output_types: modelDialog.outputTypes.length > 0 ? modelDialog.outputTypes : ["text"],
+        };
+        updateConfig(activeConfig.id, { models, model: nextModel, disabled_models: disabledModels, model_settings: modelSettings });
         setModelDialog(null);
         setModelDialogError(null);
     };
@@ -739,7 +764,17 @@ export function AISettingsModal({ onClose }: Props) {
                                                             className="ai-settings-icon-btn"
                                                             title="Edit model"
                                                             disabled={isSettingUpLocalOllama}
-                                                            onClick={() => setModelDialog({ index, value: modelName })}
+                                                            onClick={() => {
+                                                                const existing = activeConfig?.model_settings?.[modelName];
+                                                                setModelDialog({
+                                                                    index,
+                                                                    value: modelName,
+                                                                    contextWindow: existing?.context_window != null ? String(existing.context_window) : "",
+                                                                    maxOutputTokens: existing?.max_output_tokens != null ? String(existing.max_output_tokens) : "",
+                                                                    inputTypes: existing?.input_types ?? ["text"],
+                                                                    outputTypes: existing?.output_types ?? ["text"],
+                                                                });
+                                                            }}
                                                         >
                                                             <Pencil className="w-3.5 h-3.5" />
                                                         </button>
@@ -761,7 +796,7 @@ export function AISettingsModal({ onClose }: Props) {
                                                     type="button"
                                                     className="ai-settings-btn-toggle"
                                                     disabled={isSettingUpLocalOllama}
-                                                    onClick={() => setModelDialog({ index: -1, value: "" })}
+                                                    onClick={() => setModelDialog({ index: -1, value: "", contextWindow: "", maxOutputTokens: "", inputTypes: ["text"], outputTypes: ["text"] })}
                                                 >
                                                     + Add model
                                                 </button>
@@ -778,14 +813,28 @@ export function AISettingsModal({ onClose }: Props) {
                                                 >
                                                     <option value="auto">Auto-detect from URL</option>
                                                     <option value="chat-completions">Chat completions (/chat/completions)</option>
+                                                    <option value="anthropic">Anthropic (/v1/messages)</option>
                                                     <option value="ollama-chat">Ollama /api/chat</option>
                                                     <option value="ollama-generate">Ollama /api/generate</option>
                                                 </select>
                                             </div>
                                         ) : null}
                                         {modelDialog ? (
-                                            <div className="ai-settings-model-dialog-backdrop" role="dialog" aria-label="Edit model">
+                                            <div className="ai-settings-model-dialog-backdrop" role="dialog" aria-label="Edit model settings">
                                                 <div className="ai-settings-model-dialog">
+                                                    <div className="ai-settings-model-dialog-head">
+                                                        <span className="ai-settings-model-dialog-title">
+                                                            {modelDialog.index >= 0 ? "Edit model settings" : "Add model"}
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            className="ai-settings-icon-btn"
+                                                            title="Close"
+                                                            onClick={() => setModelDialog(null)}
+                                                        >
+                                                            <X className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
                                                     <label className="ai-settings-label">Model ID</label>
                                                     <input
                                                         autoFocus
@@ -795,10 +844,80 @@ export function AISettingsModal({ onClose }: Props) {
                                                         onChange={(e) => setModelDialog({ ...modelDialog, value: e.target.value })}
                                                         placeholder="e.g. deepseek-v4-flash"
                                                     />
+                                                    <label className="ai-settings-label">Context window</label>
+                                                    <input
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        className="ai-settings-input"
+                                                        value={modelDialog.contextWindow}
+                                                        onChange={(e) => setModelDialog({ ...modelDialog, contextWindow: e.target.value })}
+                                                        placeholder="e.g. 1000000 (tokens)"
+                                                    />
+                                                    <label className="ai-settings-label">Max output tokens</label>
+                                                    <input
+                                                        type="text"
+                                                        inputMode="numeric"
+                                                        className="ai-settings-input"
+                                                        value={modelDialog.maxOutputTokens}
+                                                        onChange={(e) => setModelDialog({ ...modelDialog, maxOutputTokens: e.target.value })}
+                                                        placeholder="e.g. 128000 (tokens)"
+                                                    />
+                                                    <label className="ai-settings-label">Input types</label>
+                                                    <div className="ai-settings-type-chips">
+                                                        {(["text", "image", "video"] as const).map((type) => {
+                                                            const isLocked = type === "text";
+                                                            const checked = isLocked || modelDialog.inputTypes.includes(type);
+                                                            return (
+                                                                <button
+                                                                    key={type}
+                                                                    type="button"
+                                                                    className={`ai-settings-type-chip ${checked ? "is-on" : ""}`}
+                                                                    disabled={isLocked}
+                                                                    title={isLocked ? "Text input is always supported" : undefined}
+                                                                    onClick={() => setModelDialog({
+                                                                        ...modelDialog,
+                                                                        inputTypes: checked
+                                                                            ? modelDialog.inputTypes.filter((entry) => entry !== type)
+                                                                            : [...modelDialog.inputTypes, type],
+                                                                    })}
+                                                                >
+                                                                    <span className="ai-settings-type-check">{checked ? <Check className="w-3 h-3" /> : null}</span>
+                                                                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                                                                    {isLocked ? <Lock className="w-3 h-3" /> : null}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                    <label className="ai-settings-label">Output types</label>
+                                                    <div className="ai-settings-type-chips">
+                                                        {(["text", "image", "video"] as const).map((type) => {
+                                                            const isLocked = type === "text";
+                                                            const checked = isLocked || modelDialog.outputTypes.includes(type);
+                                                            return (
+                                                                <button
+                                                                    key={type}
+                                                                    type="button"
+                                                                    className={`ai-settings-type-chip ${checked ? "is-on" : ""}`}
+                                                                    disabled={isLocked}
+                                                                    title={isLocked ? "Text output is always supported" : undefined}
+                                                                    onClick={() => setModelDialog({
+                                                                        ...modelDialog,
+                                                                        outputTypes: checked
+                                                                            ? modelDialog.outputTypes.filter((entry) => entry !== type)
+                                                                            : [...modelDialog.outputTypes, type],
+                                                                    })}
+                                                                >
+                                                                    <span className="ai-settings-type-check">{checked ? <Check className="w-3 h-3" /> : null}</span>
+                                                                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                                                                    {isLocked ? <Lock className="w-3 h-3" /> : null}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
                                                     {modelDialogError ? <div className="ai-settings-error">{modelDialogError}</div> : null}
                                                     <div className="ai-settings-model-dialog-actions">
                                                         <button type="button" className="ai-settings-btn-cancel" onClick={() => setModelDialog(null)}>Cancel</button>
-                                                        <button type="button" className="ai-settings-btn-save" onClick={handleSaveModelDialog}>Save model</button>
+                                                        <button type="button" className="ai-settings-btn-save" onClick={handleSaveModelDialog}>Save</button>
                                                     </div>
                                                 </div>
                                             </div>

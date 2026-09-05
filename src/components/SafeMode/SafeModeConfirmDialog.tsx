@@ -1,24 +1,36 @@
-import { useState, useEffect } from "react";
-import { ShieldAlert, X, AlertTriangle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { ShieldAlert, X, Info, Copy, Check } from "lucide-react";
 import { useSafeModeStore } from "../../stores/safeModeStore";
 import { SAFE_MODE_LABELS } from "../../types/safe-mode";
 
 interface ConfirmRequest {
+  id?: number;
   sql: string;
   connectionId?: string;
   level: number;
 }
 
 interface ConfirmResponse {
+  id?: number;
   sql: string;
   approved: boolean;
 }
 
+const MAX_PREVIEW_CHARS = 800;
+
+/**
+ * Host for Safe Mode run approvals. Listens for confirm requests dispatched
+ * by `safe-mode-query-guard` and renders a themed modal with the full SQL
+ * preview. Rendered through a portal so the overlay always covers the app
+ * regardless of stacking contexts.
+ */
 export function SafeModeConfirmDialog() {
   const [open, setOpen] = useState(false);
   const [request, setRequest] = useState<ConfirmRequest | null>(null);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [copied, setCopied] = useState(false);
   const { hasAdminPassword, verifyAdminPassword } = useSafeModeStore();
 
   useEffect(() => {
@@ -36,12 +48,24 @@ export function SafeModeConfirmDialog() {
     };
   }, []);
 
+  const respond = (approved: boolean) => {
+    if (!request) return;
+    window.dispatchEvent(
+      new CustomEvent<ConfirmResponse>("safe-mode-confirm-response", {
+        detail: { id: request.id, sql: request.sql, approved },
+      }),
+    );
+    setOpen(false);
+    setRequest(null);
+    setPassword("");
+    setPasswordError("");
+  };
+
   const handleApprove = () => {
     if (!request) return;
-    const { level } = request;
 
     // Level 4-5 need admin password
-    if (level >= 4) {
+    if (request.level >= 4) {
       if (!hasAdminPassword()) {
         setPasswordError("No admin password set. Please set one in Safe Mode settings first.");
         return;
@@ -52,100 +76,112 @@ export function SafeModeConfirmDialog() {
       }
     }
 
-    const response: ConfirmResponse = { sql: request.sql, approved: true };
-    window.dispatchEvent(new CustomEvent("safe-mode-confirm-response", { detail: response }));
-    setOpen(false);
-    setRequest(null);
-    setPassword("");
-    setPasswordError("");
+    respond(true);
   };
 
-  const handleCancel = () => {
-    if (!request) return;
-    const response: ConfirmResponse = { sql: request.sql, approved: false };
-    window.dispatchEvent(new CustomEvent("safe-mode-confirm-response", { detail: response }));
-    setOpen(false);
-    setRequest(null);
-    setPassword("");
-    setPasswordError("");
-  };
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") respond(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, request]);
 
   if (!open || !request) return null;
 
   const level = request.level as 0 | 1 | 2 | 3 | 4 | 5;
   const levelInfo = SAFE_MODE_LABELS[level];
   const needsPassword = level >= 4;
+  const isStrict = level >= 4;
 
-  // Estimate rows for level 5 preview (we show a rough note)
-  const sqlSnippet = request.sql.length > 500 ? request.sql.slice(0, 500) + "..." : request.sql;
+  const previewSql = request.sql.length > MAX_PREVIEW_CHARS
+    ? `${request.sql.slice(0, MAX_PREVIEW_CHARS)}…`
+    : request.sql;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+  const handleCopySql = async () => {
+    try {
+      await navigator.clipboard.writeText(request.sql);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* clipboard unavailable — ignore */
+    }
+  };
+
+  const dialog = (
+    <div className="safe-mode-overlay" onClick={() => respond(false)}>
+      <div
+        className={`safe-mode-dialog${isStrict ? " safe-mode-dialog--strict" : ""}`}
+        onClick={(event) => event.stopPropagation()}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="safe-mode-dialog-title"
+      >
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-[var(--border)]">
-          <div className="flex items-center justify-center w-10 h-10 rounded-full bg-amber-500/10 text-amber-500">
-            <ShieldAlert className="w-5 h-5" />
+        <div className="safe-mode-dialog__header">
+          <div className="safe-mode-dialog__icon">
+            <ShieldAlert size={21} strokeWidth={2} />
           </div>
-          <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold text-[var(--text-primary)]">
+          <div className="safe-mode-dialog__heading">
+            <h2 id="safe-mode-dialog-title" className="safe-mode-dialog__title">
               Safe Mode: Confirmation Required
             </h2>
-            <p className="text-xs text-[var(--text-muted)]">
-              Level {level} — {levelInfo.label}
-            </p>
+            <span className="safe-mode-dialog__level-chip">
+              LEVEL {level} · {levelInfo.label.toUpperCase()}
+            </span>
           </div>
           <button
-            onClick={handleCancel}
-            className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-muted)]"
+            type="button"
+            onClick={() => respond(false)}
+            className="safe-mode-dialog__close"
+            aria-label="Close"
           >
-            <X className="w-4 h-4" />
+            <X size={16} />
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-          <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
-            <p className="text-sm text-[var(--text-secondary)]">
-              {levelInfo.description}
-            </p>
-          </div>
+        <div className="safe-mode-dialog__body">
+          <p className="safe-mode-dialog__description">{levelInfo.description}</p>
 
           {/* SQL Preview */}
           <div>
-            <p className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-2">
-              SQL Statement
-            </p>
-            <div className="bg-[var(--bg-primary)] rounded-lg p-3 border border-[var(--border)] overflow-x-auto">
-              <pre className="text-xs font-mono text-[var(--text-secondary)] whitespace-pre-wrap break-all">
-                {sqlSnippet}
-              </pre>
+            <div className="safe-mode-dialog__sql-label">
+              <span>SQL Statement</span>
+              <button type="button" onClick={handleCopySql} className="safe-mode-dialog__copy">
+                {copied ? <Check size={12} /> : <Copy size={12} />}
+                {copied ? "Copied" : "Copy"}
+              </button>
             </div>
-            {request.sql.length > 500 && (
-              <p className="text-xs text-[var(--text-muted)] mt-1">
-                Statement truncated for display (full length: {request.sql.length} chars)
+            <pre className="safe-mode-dialog__sql">{previewSql}</pre>
+            {request.sql.length > MAX_PREVIEW_CHARS && (
+              <p className="safe-mode-dialog__sql-length">
+                Showing first {MAX_PREVIEW_CHARS} of {request.sql.length} chars
               </p>
             )}
           </div>
 
           {/* Level 5: estimated row count info */}
           {level === 5 && (
-            <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
-              <AlertTriangle className="w-4 h-4 text-blue-400 mt-0.5 shrink-0" />
-              <p className="text-xs text-[var(--text-secondary)]">
-                At Paranoid level, you may want to preview affected rows with a COUNT query
-                before executing. Consider running <code className="font-mono text-[var(--text-primary)]">SELECT COUNT(*) ...</code> first.
-              </p>
+            <div className="safe-mode-dialog__hint">
+              <Info size={14} />
+              <span>
+                At Paranoid level, preview affected rows with a{" "}
+                <code>SELECT COUNT(*) …</code> query before executing.
+              </span>
             </div>
           )}
 
           {/* Admin password for level 4-5 */}
           {needsPassword && (
             <div>
-              <label className="text-xs uppercase tracking-wide text-[var(--text-muted)] block mb-2">
+              <label className="safe-mode-dialog__field-label" htmlFor="safe-mode-admin-password">
                 Admin Password (required for level {level})
               </label>
               <input
+                id="safe-mode-admin-password"
                 type="password"
                 value={password}
                 onChange={(e) => {
@@ -154,17 +190,16 @@ export function SafeModeConfirmDialog() {
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") handleApprove();
-                  if (e.key === "Escape") handleCancel();
                 }}
                 placeholder="Enter admin password"
-                className="input h-11 w-full"
+                className="safe-mode-dialog__password"
                 autoFocus
               />
               {passwordError && (
-                <p className="text-xs text-red-400 mt-1.5">{passwordError}</p>
+                <p className="safe-mode-dialog__field-error">{passwordError}</p>
               )}
               {!hasAdminPassword() && (
-                <p className="text-xs text-[var(--text-muted)] mt-1">
+                <p className="safe-mode-dialog__field-note">
                   No admin password is set. Configure one in Settings &gt; Safe Mode first.
                 </p>
               )}
@@ -173,11 +208,12 @@ export function SafeModeConfirmDialog() {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[var(--border)]">
-          <button onClick={handleCancel} className="btn btn-secondary">
+        <div className="safe-mode-dialog__footer">
+          <button type="button" onClick={() => respond(false)} className="btn btn-secondary" autoFocus>
             Cancel
           </button>
           <button
+            type="button"
             onClick={handleApprove}
             disabled={needsPassword && !password}
             className="btn btn-primary"
@@ -188,4 +224,6 @@ export function SafeModeConfirmDialog() {
       </div>
     </div>
   );
+
+  return createPortal(dialog, document.body);
 }

@@ -90,6 +90,22 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       }, ctx),
     },
     {
+      id: "tools.schema-diff",
+      label: "Schema Diff (compare two connections)",
+      category: "Tools",
+      action: makeAction("tools.schema-diff", () => {
+        window.dispatchEvent(new CustomEvent("open-schema-diff-palette"));
+      }, ctx),
+    },
+    {
+      id: "tools.import-csv",
+      label: "Import CSV data",
+      category: "Tools",
+      action: makeAction("tools.import-csv", () => {
+        window.dispatchEvent(new CustomEvent("open-data-import-palette"));
+      }, ctx),
+    },
+    {
       id: "file.close-tab",
       label: "Close Tab",
       shortcut: "Ctrl+W",

@@ -13,7 +13,10 @@ import { verifyAgentResponseAgainstEvidence } from "./ai-agent-verification";
 export function hasExecutedReadStep(steps: AgentTraceStep[]): boolean {
   return steps.some(
     (step) =>
-      (step.action === "run_readonly_sql" || step.action === "sample_table_data")
+      (step.action === "run_readonly_sql"
+        || step.action === "run_parameterized_sql"
+        || step.action === "find_value"
+        || step.action === "sample_table_data")
       && Boolean(step.observation)
       && !step.observation.startsWith("Tool error")
       && !step.observation.startsWith("Tool blocked"),
@@ -25,13 +28,15 @@ export function finishHasSql(action: AIAgentFinishAction): boolean {
   return typeof action.args?.sql === "string" && Boolean(action.args.sql.trim());
 }
 
+import { readStepFacts } from "./ai-agent-context";
+
 /**
  * Matches claims that a query/sandbox run executed successfully (covering the
  * UI languages). Used to catch finishes that celebrate a run which actually
  * failed — the trace, not the model, is the source of truth.
  */
 const SUCCESS_CLAIM_PATTERN =
-  /(?:successfully\s+(?:ran|executed)|ran\s+successfully|executed\s+successfully|(?:query|sql|sandbox)\s+(?:ran|executed|works?)\s+(?:fine|ok|correctly|well)|th\u1ef1c\s*thi\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang|\u1ed5n)|\u0111\u00fang\s*th\u1ef1c\s*thi|ch\u1ea1y\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang|\u1ed5n)|\u0111\u00e3\s*ch\u1ea1y\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang)|沙箱?运行成功|执行成功|성공적으로\s*실행)/i;
+  /(?:successfully\s+(?:ran|executed)|ran\s+successfully|executed\s+successfully|(?:query|sql|sandbox)\s+(?:ran|executed|works?)\s+(?:fine|ok|correctly|well)|th\u1ef1c\s*thi\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang|\u1ed5n)|\u0111\u00fang\s*th\u1ef1c\s*thi|ch\u1ea1y\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang|\u1ed5n)|\u0111\u00e3\s*ch\u1ea1y\s*(?:th\u00e0nh\s*c\u00f4ng|\u0111\u00fang)|沙箱?运行成功|执行成功|성공적으로\s*실행|başarıyla\s*(?:çalıştır|çalış|gerçekleştir|uygula)|başarılı\s*(?:şekilde\s*)?(?:çalıştır|çalış|gerçekleştir|uygula)\w*|sorgu\s*başarılı|başarıyla\s*tamamlandı)/i;
 
 /** True when the response asserts a successful execution. */
 export function responseClaimsSuccessfulExecution(response: string | undefined): boolean {
@@ -42,12 +47,28 @@ export function responseClaimsSuccessfulExecution(response: string | undefined):
 export function hasSuccessfulReadStep(steps: AgentTraceStep[]): boolean {
   return steps.some(
     (step) =>
-      (step.action === "run_readonly_sql" || step.action === "sample_table_data")
+      (step.action === "run_readonly_sql"
+        || step.action === "run_parameterized_sql"
+        || step.action === "find_value"
+        || step.action === "sample_table_data")
       && Boolean(step.observation)
       && !step.observation.startsWith("Tool error")
       && !step.observation.startsWith("Tool blocked")
-      && (step.action === "sample_table_data" || /"sandboxed"/.test(step.observation)),
+      && hasSuccessfulReadEvidence(step),
   );
+}
+
+/**
+ * Structured-facts-first evidence check (roadmap #7): when the executor
+ * embedded facts, they are the source of truth (rows actually returned);
+ * older traces without facts fall back to the legacy observation regex.
+ */
+function hasSuccessfulReadEvidence(step: AgentTraceStep): boolean {
+  const facts = readStepFacts(step);
+  if (facts && facts.rowsReturned !== undefined) {
+    return facts.rowsReturned > 0;
+  }
+  return step.action === "sample_table_data" || /"sandboxed"/.test(step.observation);
 }
 
 /** True when the response text contains a markdown table block. */
@@ -137,7 +158,7 @@ export function buildAgentRecoveryInstruction(params: {
       ? "This is the final round. Run the one read that answers the request, or finish with the complete answer built from the evidence already gathered. Do not end with a promise."
       : !verification.ok
         ? `Your answer cites figures that no tool observation supports (e.g. ${verification.unsupported.slice(0, 4).join(", ")}). Either run the read that verifies them, or correct the answer to cite only observed figures.`
-        : "Your previous finish returned no SQL and no executed query, but this request needs real workspace data. Either call sample_table_data, describe_tables, or run_readonly_sql now, or if that is genuinely impossible, finish again with a complete explanation instead of a promise.";
+        : "Your previous finish returned no SQL and no executed query, but this request needs real workspace data. Either call sample_table_data, describe_table, or run_readonly_sql now, or if that is genuinely impossible, finish again with a complete explanation instead of a promise.";
 }
 
 /** Wraps the shared agent instruction for a specific action-request reason. */

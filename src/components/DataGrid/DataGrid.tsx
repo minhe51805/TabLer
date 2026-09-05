@@ -244,6 +244,10 @@ export function DataGrid({
   const dataGridInstanceIdRef = useRef(`datagrid-${Math.random().toString(36).slice(2)}`);
   const csvImportOperationIdRef = useRef<string | null>(null);
   const tableExportOperationIdRef = useRef<string | null>(null);
+  // A table-data-updated event that arrived while this grid was in a
+  // background tab marks the data stale; refetch as soon as the tab is
+  // active again (the event-time fetch is skipped for inactive grids).
+  const pendingDataRefreshRef = useRef(false);
   const loadedTablePagesRef = useRef(new Map<number, QueryResult>());
   const assignInputRef = useCallback((element: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null) => {
     editorRef.current = element;
@@ -721,10 +725,16 @@ export function DataGrid({
         Boolean(detail.invalidateStructure),
       );
 
-      if (!tableName || externalResult || !isActiveRef.current) return;
+      if (!tableName || externalResult) return;
       if (detail.tableName && detail.tableName !== tableName) return;
       if (detail.sourceId === dataGridInstanceIdRef.current) return;
 
+      if (!isActiveRef.current) {
+        pendingDataRefreshRef.current = true;
+        return;
+      }
+
+      pendingDataRefreshRef.current = false;
       void fetchData(currentPage);
     };
 
@@ -733,6 +743,15 @@ export function DataGrid({
       window.removeEventListener("table-data-updated", handleTableDataUpdated);
     };
   }, [connectionId, currentPage, database, externalResult, fetchData, tableName]);
+
+  // Deferred refresh: an update event may land while this grid is a
+  // background tab; refetch on the next activation.
+  useEffect(() => {
+    if (!isActive || !tableName || externalResult) return;
+    if (!pendingDataRefreshRef.current) return;
+    pendingDataRefreshRef.current = false;
+    void fetchData(currentPage);
+  }, [isActive, currentPage, externalResult, fetchData, tableName]);
 
   useEffect(() => {
     setEditingCell(null);
@@ -1541,6 +1560,7 @@ export function DataGrid({
         handleCopyAsDeleteParam={handleCopyAsDeleteParam}
         isTableEditable={isTableEditable}
         canExportData={allowsDataExport}
+        onReloadData={tableName && !externalResult ? refreshTableFromStart : undefined}
         onExportFull={tableName && !externalResult ? handleFullTableExport : undefined}
         isExportingFull={isExportingFull}
         exportedRowCount={exportedRowCount}

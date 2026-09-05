@@ -28,4 +28,28 @@ describe("AI request errors", () => {
       retryable: false,
     });
   });
+
+  // Contract with the Rust side (`commands/ai/errors.rs`): retryable provider
+  // HTTP failures (429/5xx) embed a machine-readable `retry_after_ms=<n>`
+  // marker built from the provider's Retry-After header. This pins the exact
+  // sentence shape both ends agree on.
+  it("extracts the backend retry_after_ms marker from provider HTTP errors", () => {
+    const message =
+      'The AI provider "OpenAI" at api.openai.com returned HTTP 429 Too Many Requests. '
+      + "This looks temporary on the provider side. It asks to retry after 4 s (retry_after_ms=4000).";
+    const normalized = normalizeAIRequestError(new Error(message));
+    expect(normalized.code).toBe("provider");
+    expect(normalized.retryable).toBe(true);
+    expect(normalized.providerRetryAfterMs).toBe(4000);
+  });
+
+  it("treats retryable provider failures without the marker as retryable with no wait hint", () => {
+    const message =
+      'The AI provider "OpenAI" at api.openai.com returned HTTP 503 Service Unavailable. '
+      + "This looks temporary on the provider side. Please try again in a moment.";
+    const normalized = normalizeAIRequestError(new Error(message));
+    expect(normalized.code).toBe("provider");
+    expect(normalized.retryable).toBe(true);
+    expect(normalized.providerRetryAfterMs).toBeUndefined();
+  });
 });

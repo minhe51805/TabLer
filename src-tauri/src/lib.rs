@@ -1,7 +1,11 @@
 use tauri::{Emitter, Manager};
+mod agent_memory;
+mod ai_skills;
+mod ai_workspace_cache;
 mod ai_workspace_history;
 mod commands;
 pub mod database;
+pub mod error;
 pub mod mcp;
 pub mod mcp_local;
 pub mod mcp_security;
@@ -12,14 +16,28 @@ pub mod storage;
 mod utils;
 mod watcher;
 
+use ai_workspace_cache::{
+    delete_ai_attachments, delete_ai_attachments_for_thread, delete_ai_attachments_for_workspace,
+    delete_all_ai_attachments, delete_thread_memories_for_workspace,
+    delete_thread_memory_for_thread, delete_workspace_context_snapshots, get_ai_attachment_data,
+    get_latest_workspace_digest, list_ai_attachments, list_latest_workspace_digests,
+    list_thread_memories, list_workspace_context_snapshots, save_ai_attachments,
+    save_workspace_context_snapshot, upsert_thread_memory,
+};
+
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
     ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_agent_trace, save_ai_configs,
     AIRequestCancellationState,
 };
+use commands::ai_checkpoints::{
+    create_database_checkpoint, delete_database_checkpoint, list_database_checkpoints,
+    preview_database_checkpoint_restore, rename_database_checkpoint, restore_database_checkpoint,
+};
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
 use commands::data_export::{cancel_table_export, export_table_data, TableExportCancellationState};
+use commands::data_import::{import_csv, preview_import_csv};
 use commands::deep_link::parse_deep_link;
 use commands::diagnostics::{
     export_diagnostic_bundle, preview_diagnostic_bundle, DiagnosticReviewState,
@@ -41,6 +59,8 @@ use commands::plugins::{
 use commands::query::*;
 use commands::restore::{preview_database_restore, restore_database_sql};
 use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
+use commands::schema_diff::{compare_schemas, generate_migration_script};
+use commands::search::{list_tables_in, search_schema, search_table_data, search_table_data_multi};
 use commands::table::*;
 use commands::tabs::{delete_tabs, load_tabs, save_tabs};
 use commands::terminal::{
@@ -89,7 +109,12 @@ pub fn run() {
     };
     if let Err(error) = observability::initialize(&data_dir) {
         eprintln!("TableR logging initialization failed: {error}");
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+        // The updater plugin logs every unreachable endpoint at error level
+        // (e.g. no published release yet), which spams the console on every
+        // launch; the check failure is already surfaced to the UI instead.
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .filter_module("tauri_plugin_updater", log::LevelFilter::Off)
+            .init();
     }
     info!("[TableR] Application starting");
     if let Err(error) = storage::migrations::run_storage_migrations(&data_dir) {
@@ -166,7 +191,10 @@ pub fn run() {
     };
     let connection_rate_limiter = ConnectionAttemptLimiter::new(
         Duration::from_secs(60),
-        8,
+        // Generous enough for legitimate retry loops ("test connection" +
+        // "connect" during first-time setup / debugging), still capped to
+        // blunt credential brute-forcing.
+        20,
         "Too many connection attempts in a short time. Please wait about a minute and try again.",
     );
     let ai_rate_limiter = AIRequestLimiter::new(
@@ -259,6 +287,7 @@ pub fn run() {
             get_saved_connections,
             connect_saved_connection,
             delete_saved_connection,
+            rename_saved_connection,
             check_connection_status,
             get_connection_capabilities,
             parse_connection_url,
@@ -273,12 +302,28 @@ pub fn run() {
             set_safe_mode_policy,
             cancel_query,
             execute_parameterized_query,
+            execute_agent_parameterized_query,
+            execute_query_progressive,
+            search_schema,
+            search_table_data,
+            search_table_data_multi,
+            list_tables_in,
+            compare_schemas,
+            generate_migration_script,
+            preview_import_csv,
+            import_csv,
             execute_sandboxed_query,
             execute_agent_readonly_query,
             preview_write_transaction,
             save_agent_trace,
             preview_database_restore,
             restore_database_sql,
+            create_database_checkpoint,
+            list_database_checkpoints,
+            preview_database_checkpoint_restore,
+            delete_database_checkpoint,
+            rename_database_checkpoint,
+            restore_database_checkpoint,
             // Table commands
             list_tables,
             list_schema_objects,
@@ -313,7 +358,28 @@ pub fn run() {
             // AI workspace history commands
             get_ai_workspace_history,
             save_ai_workspace_history,
-            // File commands
+            save_workspace_context_snapshot,
+            list_workspace_context_snapshots,
+            get_latest_workspace_digest,
+            list_latest_workspace_digests,
+            delete_workspace_context_snapshots,
+            upsert_thread_memory,
+            list_thread_memories,
+            delete_thread_memories_for_workspace,
+            delete_thread_memory_for_thread,
+            save_ai_attachments,
+            list_ai_attachments,
+            get_ai_attachment_data,
+            delete_ai_attachments,
+            delete_all_ai_attachments,
+            delete_ai_attachments_for_workspace,
+            delete_ai_attachments_for_thread,
+            agent_memory::list_agent_memory,
+            agent_memory::read_agent_memory,
+            agent_memory::save_agent_memory,
+            agent_memory::delete_agent_memory,
+            ai_skills::list_ai_skills,
+            ai_skills::read_ai_skill, // File commands
             read_sql_file,
             read_sql_file_from_path,
             read_csv_file,

@@ -22,6 +22,13 @@ impl Log for RedactingLogger {
         if !self.enabled(record.metadata()) {
             return;
         }
+        // The updater plugin logs every unreachable endpoint at error level
+        // (e.g. when no release has been published yet) on each launch; the
+        // failure is already surfaced to the UI, so keep it out of the
+        // console and the log file.
+        if record.target().starts_with("tauri_plugin_updater") {
+            return;
+        }
         let message = redact(&record.args().to_string());
         let operation_id = event_field(&message, "operation_id");
         let operation = event_field(&message, "operation");

@@ -5,12 +5,15 @@ import {
   Copy,
   Square,
   X,
-  Settings2,
-  PanelRightClose,
   ChevronRight,
+  Database,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { RefObject } from "react";
+import { useState } from "react";
+import { useShallow } from "zustand/react/shallow";
+import { useConnectionStore } from "../stores/connectionStore";
+import { DatabaseVisibilityModal } from "./Sidebar/components/DatabaseVisibilityModal";
 import type { ConnectionConfig } from "../types/database";
 import { AppUpdateButton } from "./StartupConnectionManager/AppUpdateButton";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
@@ -31,6 +34,7 @@ interface AppTitleBarProps {
   windowMenuSections: { key: WindowMenuSectionKey; label: string; items: WindowMenuItem[] }[];
   onToggleSidebar: () => void;
   onOpenAISettings: () => void;
+
   onToggleMaximizeWindow: () => void;
   onMinimizeWindow: () => void;
   onCloseWindow: () => void;
@@ -271,8 +275,6 @@ export function AppTitleBar({
   activeWindowMenuItemPath,
   windowMenuRef,
   windowMenuSections,
-  onToggleSidebar,
-  onOpenAISettings,
   onToggleMaximizeWindow,
   onMinimizeWindow,
   onCloseWindow,
@@ -282,6 +284,13 @@ export function AppTitleBar({
   isDesktopWindow,
   t,
 }: AppTitleBarProps) {
+  const { activeConnectionId, databases } = useConnectionStore(
+    useShallow((state) => ({
+      activeConnectionId: state.activeConnectionId,
+      databases: state.databases,
+    })),
+  );
+  const [dbVisibilityOpen, setDbVisibilityOpen] = useState(false);
   const renderWindowControls = (
     className?: string,
     options?: { lockSize?: boolean },
@@ -412,34 +421,31 @@ export function AppTitleBar({
               <span className="truncate">{t("titlebar.noActiveConnection")}</span>
             </div>
           )}
+          {isConnected && activeConn ? (
+            <button
+              type="button"
+              className="titlebar-db-visibility-btn"
+              title={t("dbVisibility.button")}
+              aria-label={t("dbVisibility.button")}
+              onClick={() => setDbVisibilityOpen(true)}
+            >
+              <Database className="w-3.5 h-3.5" />
+            </button>
+          ) : null}
         </div>
 
         <div className="titlebar-spacer" />
       </div>
 
-      <div className="titlebar-actions" data-no-window-drag="true">
-        <span className="popover-container" data-popover="AI Settings">
-          <button
-            onClick={onOpenAISettings}
-            className="titlebar-icon-btn"
-            title={t("titlebar.aiSettings")}
-          >
-            <Settings2 className="w-4 h-4" />
-          </button>
-        </span>
-
-        <span className="popover-container" data-popover="Toggle Sidebar">
-          <button
-            onClick={onToggleSidebar}
-            className="titlebar-icon-btn"
-            title={t("titlebar.expandSidebar")}
-          >
-            <PanelRightClose className="w-4 h-4" />
-          </button>
-        </span>
-      </div>
-
       {renderWindowControls()}
+
+      <DatabaseVisibilityModal
+        open={dbVisibilityOpen}
+        connectionId={activeConnectionId}
+        databases={databases}
+        t={t}
+        onClose={() => setDbVisibilityOpen(false)}
+      />
     </header>
   );
 }

@@ -4,6 +4,7 @@ import { initVimMode, type VimAdapterInstance } from "monaco-vim";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useUIStore } from "../../../stores/uiStore";
 import { useQueryStore } from "../../../stores/queryStore";
+import { useAIAutonomyStore } from "../../../stores/aiAutonomyStore";
 import { useEditorPreferencesStore } from "../../../stores/editorPreferencesStore";
 import { useQueryHistoryStore } from "../../../stores/queryHistoryStore";
 import type { QueryResult } from "../../../types";
@@ -22,6 +23,8 @@ import { registerSchemaCompletionProvider, defineTableRTheme } from "../SQLEdito
 import { formatSql } from "../../../utils/sql-formatter";
 import { parseExplainOutput, buildExplainQuery, type ParsedExplainPlan } from "../../../utils/explain-parser";
 import { extractNamedSqlParameters, toQueryParameters, type SqlParameterDraft } from "../../../utils/sql-parameters";
+import { EventCenter } from "../../../stores/event-center";
+import { captureAgentEditedRunCheckpoint } from "../agent-edit-safety";
 
 export interface QueryChromeState {
   isRunning: boolean;
@@ -45,6 +48,8 @@ export interface QueryEditorSessionState {
 export interface UseSQLEditorOptions {
   connectionId: string;
   tabId?: string;
+  /** Origin of the owning tab ("ai" tabs honor the full-autonomy grant). */
+  tabSource?: "ai" | "user";
   initialContent: string;
   initialCursor?: { lineNumber: number; column: number };
   vimStatusRef?: RefObject<HTMLDivElement | null>;
@@ -58,6 +63,7 @@ export interface UseSQLEditorOptions {
 export function useSQLEditor({
   connectionId,
   tabId,
+  tabSource,
   initialContent,
   initialCursor,
   vimStatusRef,
@@ -83,9 +89,19 @@ export function useSQLEditor({
   const splitRef = useRef<HTMLDivElement>(null);
   const inlineCompletionDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const structurePrefetchKeysRef = useRef<Set<string>>(new Set());
   const selectionContextDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const contentPersistTimerRef = useRef<number | null>(null);
   const cursorPersistTimerRef = useRef<number | null>(null);
+  // Agent proposal state: the model can only PROPOSE an edit to this tab's
+  // SQL — the user accepts or rejects it here. Nothing auto-applies.
+  const [aiProposal, setAiProposal] = useState<{
+    sql: string;
+    reason: string;
+    previousSql: string;
+  } | null>(null);
+  const agentEditedRef = useRef(false);
+  const applyingProposalRef = useRef(false);
   const vimModeRef = useRef<VimAdapterInstance | null>(null);
   const contentDraftRef = useRef(initialContent);
   const onChromeChangeRef = useRef(onChromeChange);
@@ -156,6 +172,45 @@ export function useSQLEditor({
     [connectionId, tabId, updateTab]
   );
 
+  const acceptAiProposal = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor || !aiProposal) return;
+    applyingProposalRef.current = true;
+    try {
+      // Monaco keeps its own undo stack: Ctrl+Z reverts the proposal.
+      editor.setValue(aiProposal.sql);
+      schedulePersistedContent(aiProposal.sql);
+      agentEditedRef.current = true;
+    } finally {
+      // Monaco onChange is synchronous today, but a wrapper/version change
+      // could defer it to a microtask — keep the guard alive past the
+      // current task so a deferred onChange still observes applying = true.
+      queueMicrotask(() => {
+        applyingProposalRef.current = false;
+      });
+    }
+    setAiProposal(null);
+    editor.focus();
+  }, [aiProposal, schedulePersistedContent]);
+
+  const rejectAiProposal = useCallback(() => {
+    agentEditedRef.current = false;
+    setAiProposal(null);
+  }, []);
+
+  // Manual typing immediately invalidates the agent-edit flag: the
+  // auto-checkpoint only covers runs of the text the agent proposed. The
+  // accepted proposal text itself does NOT invalidate it — belt-and-
+  // suspenders against guard timing (value comparison, not just the flag).
+  const notifyManualEditorChange = useCallback(
+    (value?: string) => {
+      if (applyingProposalRef.current) return;
+      if (value !== undefined && aiProposal && value === aiProposal.sql) return;
+      agentEditedRef.current = false;
+    },
+    [aiProposal],
+  );
+
   useEffect(() => {
     onChromeChangeRef.current = onChromeChange;
   }, [onChromeChange]);
@@ -168,9 +223,32 @@ export function useSQLEditor({
     parameterDraftsRef.current = parameterDrafts;
   }, [parameterDrafts]);
 
+  // Agent proposals target this tab by id; stale or foreign proposals are
+  // ignored at the listener level.
+  useEffect(() => {
+    if (!tabId) return undefined;
+    return EventCenter.on("ai-edit-query-sql", (event) => {
+      if (event.detail.tabId !== tabId) return;
+      const currentSql = editorRef.current?.getValue?.() ?? "";
+      setAiProposal({
+        sql: event.detail.sql,
+        reason: event.detail.reason,
+        previousSql: currentSql,
+      });
+    });
+  }, [tabId]);
+
   const handleExecute = useCallback(async () => {
     const editor = editorRef.current;
     if (!editor || isBatchExecuting) return;
+
+    // AI-origin tabs honor the full-autonomy grant scoped to their own
+    // connection: the standing human approval lets Safe Mode-blocked
+    // statements (levels <= 3) run without the confirmation dialog. Regular
+    // tabs and other connections keep the confirmation.
+    const fullAutonomyPreApproved =
+      tabSource === "ai" &&
+      useAIAutonomyStore.getState().getAutonomy(connectionId) === "full";
 
     const selection = editor.getSelection();
     let sql = "";
@@ -187,6 +265,25 @@ export function useSQLEditor({
       return;
     }
 
+    // Agent-edited content: the first real execution of an accepted proposal
+    // gets a rollback point (best effort, loud on failure). One-shot per
+    // accepted proposal; manual typing clears the flag.
+    if (agentEditedRef.current && isMutatingStatement(sql)) {
+      const storeState = useConnectionStore.getState();
+      const checkpoint = await captureAgentEditedRunCheckpoint({
+        connectionId,
+        database: storeState.currentDatabase || null,
+        dbType:
+          storeState.connections.find((c) => c.id === connectionId)?.db_type ?? "sqlite",
+      });
+      agentEditedRef.current = false;
+      setNotice(
+        checkpoint
+          ? "Safety checkpoint captured before running the agent-edited query."
+          : "Safety checkpoint failed — /rollback has no new point. Consider /backup first.",
+      );
+    }
+
     const parameterNames = extractNamedSqlParameters(sql);
     if (parameterNames.length > 0) {
       const commandText = sql.trim();
@@ -196,7 +293,12 @@ export function useSQLEditor({
       setIsBatchExecuting(true);
       try {
         const parameters = toQueryParameters(parameterNames, parameterDraftsRef.current);
-        const queryResult = await executeParameterizedQuery(connectionId, commandText, parameters);
+        const queryResult = await executeParameterizedQuery(
+          connectionId,
+          commandText,
+          parameters,
+          fullAutonomyPreApproved ? { preApproved: true } : { userInitiated: true },
+        );
         setResult(queryResult);
         if (queryResult.rows.length > 0) setShowResultsPane(true);
         setQueryCount((count) => count + 1);
@@ -221,7 +323,11 @@ export function useSQLEditor({
       setIsBatchExecuting(true);
 
       try {
-        const queryResult = await executeQuery(connectionId, commandText);
+        const queryResult = await executeQuery(
+          connectionId,
+          commandText,
+          fullAutonomyPreApproved ? { preApproved: true } : undefined,
+        );
         setResult(queryResult);
         if (queryResult.rows.length > 0) {
           setShowResultsPane(true);
@@ -312,7 +418,15 @@ export function useSQLEditor({
         await switchDatabase(connectionId, targetDatabaseFromUse);
       }
 
-      const queryResult = await executeSandboxQuery(connectionId, statementsToExecute);
+      // The Run button is a human decision even on the sandbox gateway path:
+      // a Safe Mode block becomes an interactive confirmation (levels <= 3)
+      // instead of a dead end — unless full autonomy pre-approves the run.
+      const queryResult = await executeSandboxQuery(
+        connectionId,
+        statementsToExecute,
+        undefined,
+        fullAutonomyPreApproved ? { preApproved: true } : { userInitiated: true },
+      );
       setResult(queryResult);
       if (queryResult.rows.length > 0) {
         setShowResultsPane(true);
@@ -365,7 +479,7 @@ export function useSQLEditor({
       setIsExecutingCurrent(false);
       setIsBatchExecuting(false);
     }
-  }, [connectionId, executeParameterizedQuery, executeQuery, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase, usesDirectExecution]);
+  }, [connectionId, executeParameterizedQuery, executeQuery, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase, tabSource, usesDirectExecution]);
 
   /** Formats the selected text (or entire editor content) using the connection's SQL dialect. */
   const handleFormatSql = useCallback(() => {
@@ -517,6 +631,18 @@ export function useSQLEditor({
           dbType,
         })
       : null;
+
+    // Warm the structure cache in the background: without this, the FIRST
+    // completion request fired one metadata query per table in parallel and
+    // stalled the editor (and the connection pool) for seconds.
+    const completionProvider = completionDisposableRef.current as
+      | { dispose: () => void; prefetchStructures?: () => Promise<void> }
+      | null;
+    const prefetchKey = `${connectionId ?? ""}|${dbType ?? ""}`;
+    if (completionProvider?.prefetchStructures && connectionId && !structurePrefetchKeysRef.current.has(prefetchKey)) {
+      structurePrefetchKeysRef.current.add(prefetchKey);
+      void completionProvider.prefetchStructures();
+    }
 
     selectionContextDisposableRef.current?.dispose();
     selectionContextDisposableRef.current = editor.onDidChangeCursorSelection(() => {
@@ -727,5 +853,9 @@ export function useSQLEditor({
     explainPlan,
     isRunningExplain,
     setExplainPlan,
+    aiProposal,
+    acceptAiProposal,
+    rejectAiProposal,
+    notifyManualEditorChange,
   };
 }

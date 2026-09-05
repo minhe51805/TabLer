@@ -4,11 +4,21 @@ export type ConnectionEngineMode = "network" | "file";
 export type ConnectionFieldMode = "required" | "optional" | "hidden";
 export type PasswordKind = "password" | "token";
 export type LocalBootstrapStatus = "ready" | "planned" | "none";
-export type EngineExtraFieldType = "text" | "password" | "number";
+export type EngineExtraFieldType = "text" | "password" | "number" | "select" | "checkbox";
+
+export interface EngineExtraFieldOption {
+  value: string;
+  label: string;
+  labelVi?: string;
+  disabled?: boolean;
+}
 
 export interface EngineExtraField {
   key: string;
   type?: EngineExtraFieldType;
+  options?: EngineExtraFieldOption[];
+  /// Value assumed when the user has not touched the field (checkboxes).
+  defaultValue?: string;
   label: string;
   labelVi?: string;
   placeholder?: string;
@@ -188,10 +198,58 @@ export const ENGINE_EXTRA_FIELDS = {
   ] satisfies EngineExtraField[],
   mssql: [
     {
+      key: "auth_type",
+      type: "select",
+      label: "Authentication",
+      labelVi: "Xác thực",
+      options: [
+        { value: "windows", label: "Windows Authentication", labelVi: "Windows Authentication" },
+        { value: "sql", label: "SQL Server Authentication", labelVi: "SQL Server Authentication" },
+        {
+          value: "azure",
+          label: "Microsoft Entra (not supported yet)",
+          labelVi: "Microsoft Entra (chưa hỗ trợ)",
+          disabled: true,
+        },
+      ],
+      hint: "Auto-detected from the server name: local servers and SERVER\\INSTANCE default to Windows Authentication; Azure SQL defaults to SQL Server Authentication.",
+      hintVi: "Tự nhận theo Server name: máy local và SERVER\\INSTANCE dùng Windows Authentication; Azure SQL dùng SQL Server Authentication.",
+    },
+    {
       key: "instance_name",
       label: "Instance name",
-      labelVi: "Ten instance",
+      labelVi: "Tên instance",
       placeholder: "instance_name",
+      hint: "Optional. You can also put it in the host as SERVER\\INSTANCE.",
+      hintVi: "Tùy chọn. Có thể điền thẳng SERVER\\INSTANCE vào ô Host.",
+    },
+    {
+      key: "encrypt_mode",
+      type: "select",
+      label: "Encrypt",
+      options: [
+        {
+          value: "optional",
+          label: "Optional — encrypt if the server requires it",
+          labelVi: "Optional — mã hóa nếu server yêu cầu",
+        },
+        {
+          value: "mandatory",
+          label: "Mandatory — always encrypt",
+          labelVi: "Mandatory — luôn mã hóa",
+        },
+      ],
+      hint: "Local defaults to Optional; Azure SQL always uses Mandatory.",
+      hintVi: "Local mặc định dùng Optional; Azure SQL luôn dùng Mandatory.",
+    },
+    {
+      key: "trust_server_cert",
+      type: "checkbox",
+      defaultValue: "true",
+      label: "Trust server certificate",
+      labelVi: "Tin server certificate",
+      hint: "Local SQL Server uses a self-signed certificate — keep this checked (same as the mssql VS Code extension). Uncheck for strict certificate validation.",
+      hintVi: "SQL Server local dùng certificate tự ký — giữ checked (giống extension mssql của VS Code). Bỏ check nếu cần xác thực nghiêm ngặt.",
     },
   ] satisfies EngineExtraField[],
   redis: [

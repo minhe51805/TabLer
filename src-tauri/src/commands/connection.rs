@@ -324,6 +324,12 @@ pub async fn create_local_database(
         )
         .await
         .map_err(|_| "Local MySQL bootstrap timed out after 60 seconds.".to_string())?,
+        DatabaseType::MSSQL => timeout(
+            BOOTSTRAP_TIMEOUT,
+            create_local_mssql_database(&config, requested_database, &bootstrap_statements),
+        )
+        .await
+        .map_err(|_| "Local SQL Server bootstrap timed out after 60 seconds.".to_string())?,
         _ => Err(format!(
             "{:?} local database bootstrap is not wired into this build yet.",
             config.db_type
@@ -434,6 +440,34 @@ pub async fn connect_saved_connection(
     connect_result?;
 
     Ok(config.id)
+}
+
+/// Rename a saved connection (title shown in the launcher and Explorer).
+#[tauri::command]
+pub async fn rename_saved_connection(
+    connection_id: String,
+    name: String,
+    conn_storage: State<'_, ConnectionStorage>,
+) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Connection name must not be empty.".to_string());
+    }
+    if trimmed.chars().count() > 80 {
+        return Err("Connection name is too long (max 80 characters).".to_string());
+    }
+    let storage = conn_storage.inner().clone();
+    let clean_name = trimmed.to_string();
+    run_blocking_storage_task(move || {
+        let mut config = storage
+            .load_connection_by_id(&connection_id)
+            .map_err(|_| "Failed to load the saved connection.".to_string())?;
+        config.name = clean_name;
+        storage
+            .save_connection(&config)
+            .map_err(|_| "Failed to save the renamed connection.".to_string())
+    })
+    .await
 }
 
 #[tauri::command]

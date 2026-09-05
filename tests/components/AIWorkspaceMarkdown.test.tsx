@@ -33,9 +33,23 @@ describe("AIWorkspaceMarkdown", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Copy code" }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith(sql));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining("FROM")));
+    // Copy returns the pretty-printed SQL the user actually sees.
+    const copied = writeText.mock.calls[0][0] as string;
+    expect(copied.replace(/\s+/g, " ").trim()).toBe(sql.replace(/\s+/g, " ").trim());
   });
 
+  it("pretty-prints an unfenced single-line SQL paragraph without a semicolon", () => {
+    const sql =
+      "SELECT u.id, u.email FROM public.users u JOIN public.roles r ON r.id = u.role_id WHERE u.email = 'a@b.c' ORDER BY u.id";
+    render(<AIWorkspaceMarkdown text={sql} />);
+
+    // Detected as SQL and rendered as a formatted code frame, not prose.
+    expect(screen.getByText("sql")).toBeInTheDocument();
+    const code = document.querySelector(".ai-workspace-markdown-code");
+    expect(code).not.toBeNull();
+    expect(code?.textContent).toContain("\n");
+  });
   it("leaves non-sql code blocks unhighlighted", () => {
     render(<AIWorkspaceMarkdown text={"```text\nplain notes```"} />);
 

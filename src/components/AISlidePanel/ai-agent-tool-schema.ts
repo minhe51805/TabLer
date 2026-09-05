@@ -483,7 +483,7 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   edit_query_sql: {
     name: "edit_query_sql",
     description:
-      "Propose corrected SQL for a query tab. If an AI Query tab is already open, pick its tabId from the Query tabs list. If none is open, set createIfMissing: true (omit tabId) and a new AI Query tab is created pre-filled with your SQL. Smoke-test your statement first: run_readonly_sql for SELECTs, preview_write for mutating SQL — a mutating statement that was never previewed this run is rejected. You cannot execute proposals yourself; the user accepts or runs them.",
+      "Propose corrected SQL for a query tab. If an AI Query tab is already open, pick its tabId from the Query tabs list. If none is open, set createIfMissing: true (omit tabId) and a new AI Query tab is created pre-filled with your SQL. Never leave a requested tab fix undone because no tab is open — createIfMissing is the intended path for that case, not a reason to skip. Smoke-test your statement first: run_readonly_sql for SELECTs, preview_write for mutating SQL — a mutating statement that was never previewed this run is rejected. You cannot execute proposals yourself; the user accepts or runs them.",
     parameters: objectSchema(
       {
         tabId: {
@@ -500,7 +500,7 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
         },
         createIfMissing: {
           type: "boolean",
-          description: "Set true when no query tab is open: a new AI Query tab is created pre-filled with the SQL. Read-only SQL auto-runs; mutating SQL waits for the user to press Run.",
+          description: "Set true when no query tab is open: a new AI Query tab is created pre-filled with the SQL (read-only SQL auto-runs; mutating SQL waits for the user to press Run). Never skip a requested tab fix because no tab is open.",
         },
       },
       ["sql"],

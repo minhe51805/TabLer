@@ -510,7 +510,7 @@ export function buildAgentControllerPrompt(params: {
           "To fix a query in one of these tabs, call edit_query_sql with that tabId. Smoke-test mutating SQL with preview_write first. The user accepts or rejects the proposal in the tab; you cannot execute it.",
         ].join("\n")
       : [
-          "No query tab is open. To fix a broken query or land SQL into a tab, call edit_query_sql with createIfMissing: true (omit tabId) — a new AI Query tab is created pre-filled with the proposed SQL.",
+          "No query tab is open. If the user's task involves fixing or landing SQL in a query tab, NEVER skip for lack of a tab: call edit_query_sql with createIfMissing: true (omit tabId) — a new AI Query tab opens automatically, pre-filled with your SQL (read-only SQL runs right away). Skipping because no tab exists is wrong; auto-creating one IS fulfilling the request.",
         ].join("\n"),
     (planLines ?? []).length > 0
       ? [

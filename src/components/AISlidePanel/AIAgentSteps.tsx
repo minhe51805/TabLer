@@ -162,6 +162,10 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
                 ? copy.modal.agentStatusError
                 : copy.modal.agentStatusDone;
           const isPlan = step.action === "plan";
+          // A running "think" step ("Deciding next action (step N).") renders
+          // as a dots-only live pill like the plan row — the message stays
+          // available for the collapsed header and the settled trace.
+          const isThinkWait = step.action === "think" && step.status === "running";
           // The machine-readable `@@facts:` footer is harness plumbing — it
           // feeds the quality gates but must never render into the visible
           // trace (audit fix: it used to leak raw JSON into the bubble).
@@ -182,7 +186,7 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
               <div className="ai-agent-step-body">
                 <div className="ai-agent-step-line">
                   <span className="ai-agent-step-action">{getActionLabel(step.action, copy)}</span>
-                  {!isPlan && (
+                  {!isPlan && !isThinkWait && (
                     <span className={`ai-agent-step-status ai-agent-step-status--${step.status}`}>
                       {step.status === "running" ? (
                         <Loader2 className="w-3 h-3 ai-agent-step-spin" />
@@ -202,8 +206,14 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
                     <span>{copy.modal.agentStatusRunning}</span>
                   </div>
                 )}
+                {isThinkWait && (
+                  <div className="ai-agent-step-live-activity" aria-live="polite">
+                    <span className="ai-agent-step-live-dots" aria-hidden="true"><span /><span /><span /></span>
+                    <span className="sr-only">{statusLabel}</span>
+                  </div>
+                )}
 
-                {displayMessage && (
+                {displayMessage && !isThinkWait && (
                   isPlan ? (
                     <AIWorkspaceMarkdown className="ai-agent-step-plan-text" compact text={displayMessage} />
                   ) : (

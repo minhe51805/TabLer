@@ -217,7 +217,7 @@ export const AIConversationView = memo(function AIConversationView({
                             <span />
                             <span />
                           </span>
-                          {copy.bubbleMeta.thinking}
+                          <span className="sr-only">{copy.bubbleMeta.thinking}</span>
                         </>
                       ) : bubble.status === "partial"
                         ? copy.bubbleStates.partialTitle

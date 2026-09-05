@@ -20876,7 +20876,6 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .ai-agent-steps-duration {
   flex-shrink: 0;
-  margin-left: auto;
   padding: 0 5px;
   border-radius: 999px;
   border: 1px solid var(--mm-border);
@@ -20886,9 +20885,20 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   font-weight: 700;
 }
 
+/* Right cluster of the collapsed header: live status + duration + chevron
+   travel together as one flex group pinned to the pill's right edge, so the
+   status text always sits next to the chevron regardless of label length. */
+.ai-agent-steps-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
 .ai-agent-steps-title {
   flex-shrink: 1;
-  margin-left: auto;
   min-width: 0;
   max-width: 320px;
   overflow: hidden;
@@ -20900,7 +20910,6 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .ai-agent-steps-chevron {
   flex-shrink: 0;
-  margin-left: auto;
 }
 
 .ai-agent-steps-list {

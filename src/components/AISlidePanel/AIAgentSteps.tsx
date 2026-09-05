@@ -158,11 +158,13 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
       >
         <Sparkles className="w-3.5 h-3.5" />
         <span>{copy.modal.agentStepsLabel}</span>
-        {showDuration && <span className="ai-agent-steps-duration">{formatStepsDuration(durationMs as number)}</span>}
-        {thinkingTitle && <span className="ai-agent-steps-title">{thinkingTitle}</span>}
-        {expanded
-          ? <ChevronDown className="w-3.5 h-3.5 ai-agent-steps-chevron" />
-          : <ChevronRight className="w-3.5 h-3.5 ai-agent-steps-chevron" />}
+        <span className="ai-agent-steps-head-right">
+          {showDuration && <span className="ai-agent-steps-duration">{formatStepsDuration(durationMs as number)}</span>}
+          {thinkingTitle && <span className="ai-agent-steps-title">{thinkingTitle}</span>}
+          {expanded
+            ? <ChevronDown className="w-3.5 h-3.5 ai-agent-steps-chevron" />
+            : <ChevronRight className="w-3.5 h-3.5 ai-agent-steps-chevron" />}
+        </span>
       </button>
       {expanded && (
       <ol className="ai-agent-steps-list">

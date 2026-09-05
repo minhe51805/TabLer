@@ -20852,7 +20852,6 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   align-items: center;
   gap: 6px;
   width: 100%;
-  justify-content: flex-end;
   padding: 0;
   border: 0;
   background: transparent;
@@ -20877,6 +20876,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .ai-agent-steps-duration {
   flex-shrink: 0;
+  margin-left: auto;
   padding: 0 5px;
   border-radius: 999px;
   border: 1px solid var(--mm-border);
@@ -20888,6 +20888,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .ai-agent-steps-title {
   flex-shrink: 1;
+  margin-left: auto;
   min-width: 0;
   max-width: 320px;
   overflow: hidden;
@@ -20895,6 +20896,11 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   white-space: nowrap;
   color: var(--text-muted);
   font-weight: 500;
+}
+
+.ai-agent-steps-chevron {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .ai-agent-steps-list {

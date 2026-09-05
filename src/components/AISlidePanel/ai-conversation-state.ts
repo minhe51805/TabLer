@@ -342,3 +342,32 @@ export function stripAskUserTrailingOptions(answer: string): string {
   }
   return trimmed.slice(0, optionsStart).trimEnd();
 }
+
+/** Recovers a choice list the model wrote into an ask_user question instead
+ *  of passing it via the options argument. The last consecutive run of
+ *  numbered ("1. x") or bulleted ("- x", "* x", "• x") lines counts as the
+ *  option menu when it has at least two entries; the block is removed from
+ *  the returned question so the list is not rendered twice (once as buttons,
+ *  once as plain text). */
+export function extractAskUserOptionsFromQuestion(
+  question: string,
+): { question: string; options: string[] } {
+  const lines = question.replace(/\r\n/g, "\n").trimEnd().split("\n");
+  const options: string[] = [];
+  let blockStart = lines.length;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const match = lines[index].match(/^\s*(?:\d{1,2}[.)]\s+|[-*•]\s+)(.+)$/u);
+    if (!match) break;
+    const item = match[1].trim();
+    if (!item) break;
+    options.unshift(item);
+    blockStart = index;
+  }
+  if (options.length < 2) {
+    return { question, options: [] };
+  }
+  return {
+    question: lines.slice(0, blockStart).join("\n").trimEnd(),
+    options: options.slice(0, 8),
+  };
+}

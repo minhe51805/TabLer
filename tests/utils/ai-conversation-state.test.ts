@@ -4,6 +4,7 @@ import {
   AI_WORKSPACE_HISTORY_VERSION,
   buildAIWorkspaceKey,
   buildConversationHistoryMessages,
+  extractAskUserOptionsFromQuestion,
   stripAskUserTrailingOptions,
   buildThreadLabel,
   createEmptyPersistedAIWorkspaceState,
@@ -197,6 +198,44 @@ describe("estimateConversationFootprint", () => {
   });
 });
 
+
+describe("extractAskUserOptionsFromQuestion", () => {
+  it("recovers a trailing numbered option list and removes it from the question", () => {
+    const result = extractAskUserOptionsFromQuestion(
+      "Bạn muốn xem gì?\n\n1. Sinh viên kèm tên ngành\n2. Danh sách học phần\n3. Top sinh viên",
+    );
+    expect(result.question).toBe("Bạn muốn xem gì?");
+    expect(result.options).toEqual(["Sinh viên kèm tên ngành", "Danh sách học phần", "Top sinh viên"]);
+  });
+
+  it("recovers bulleted option lists", () => {
+    const result = extractAskUserOptionsFromQuestion("Which schema?\n- dbo\n- sales");
+    expect(result.question).toBe("Which schema?");
+    expect(result.options).toEqual(["dbo", "sales"]);
+  });
+
+  it("ignores a single trailing list line (not a menu)", () => {
+    const question = "Xem bảng SinhViens chứ?\n- bảng duy nhất";
+    expect(extractAskUserOptionsFromQuestion(question)).toEqual({ question, options: [] });
+  });
+
+  it("keeps the question untouched when no trailing list exists", () => {
+    const question = "Bạn muốn xem thông tin gì trong QuanLySinhVienDB?";
+    expect(extractAskUserOptionsFromQuestion(question)).toEqual({ question, options: [] });
+  });
+
+  it("caps recovered options at 8", () => {
+    const list = Array.from({ length: 12 }, (_, index) => `${index + 1}. Option ${index + 1}`).join("\n");
+    const result = extractAskUserOptionsFromQuestion(`Chọn?\n${list}`);
+    expect(result.options).toHaveLength(8);
+    expect(result.question).toBe("Chọn?");
+  });
+
+  it("does not strip a list that is followed by more prose", () => {
+    const question = "Danh sách gợi ý:\n1. A\n2. B\nBạn muốn bắt đầu từ đâu?";
+    expect(extractAskUserOptionsFromQuestion(question)).toEqual({ question, options: [] });
+  });
+});
 
 describe("stripAskUserTrailingOptions", () => {
   it("strips the numbered option block and the reply hint", () => {

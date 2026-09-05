@@ -147,7 +147,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
           items: { type: "string" },
           uniqueItems: true,
           maxItems: AI_AGENT_ASK_USER_OPTIONS_LIMIT,
-          description: "Optional list of selectable answers.",
+          description:
+            "Selectable answers rendered as quick-reply buttons. ALWAYS pass 2-4 short options as this array — never write the option list inside the question text.",
         },
         multiple: {
           type: "boolean",

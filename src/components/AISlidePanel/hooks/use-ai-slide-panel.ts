@@ -13,6 +13,8 @@ import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { getSemanticGlossary } from "../../../utils/semantic-glossary";
 import { invokeMutation } from "../../../utils/tauri-utils";
 import { analyzeGeneratedSql, type SqlRiskAnalysis } from "../AISlidePanelUtils";
+import { extractAskUserOptionsFromQuestion } from "../ai-conversation-state";
+import { AI_AGENT_ASK_USER_OPTIONS_LIMIT } from "../ai-agent-tool-schema";
 import {
   type AIWorkspaceAgentActionName,
   type AIWorkspaceAgentStep,
@@ -1068,18 +1070,37 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 // clarifying question ends the turn: the reply arrives as the
                 // next message with full history attached.
                 endedWithAskUser = true;
-                const optionsBlock = action.args.options?.length
-                  ? `\n\n${action.args.options.map((option, index) => `${index + 1}. ${option}`).join("\n")}`
+                const structuredOptions = Array.isArray(action.args.options)
+                  ? action.args.options
+                      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+                      .slice(0, AI_AGENT_ASK_USER_OPTIONS_LIMIT)
+                  : [];
+                // Models often ignore the optional options array and write the
+                // choice list straight into the question text (live evidence:
+                // ask_user bubbles persisted with askUserOptions: []); recover
+                // the trailing list so the quick-reply buttons still render.
+                const questionText = typeof action.args.question === "string"
+                  ? action.args.question.trim()
                   : "";
-                const suffix = appLanguage === "vi"
-                  ? "\n\n_(Trả lời bằng số thứ tự hoặc nội dung của bạn.)_"
-                  : "\n\n_(Reply with an option number or your own answer.)_";
+                const extracted = structuredOptions.length > 0
+                  ? { question: questionText, options: structuredOptions }
+                  : extractAskUserOptionsFromQuestion(questionText);
+                const askQuestion = extracted.question;
+                const askOptions = extracted.options;
+                const optionsBlock = askOptions.length
+                  ? `\n\n${askOptions.map((option, index) => `${index + 1}. ${option}`).join("\n")}`
+                  : "";
+                const suffix = askOptions.length
+                  ? appLanguage === "vi"
+                    ? "\n\n_(Trả lời bằng số thứ tự hoặc nội dung của bạn.)_"
+                    : "\n\n_(Reply with an option number or your own answer.)_"
+                  : "";
                 agentTraceSteps = [
                   ...steps,
                   {
                     step: steps.length + 1,
                     action: "ask_user",
-                    message: action.args.question,
+                    message: askQuestion,
                     observation: "",
                   },
                 ];
@@ -1088,12 +1109,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                   action: "finish" as const,
                   message: action.message || "Asking the user for clarification.",
                   args: {
-                    response: `${action.args.question}${optionsBlock}${suffix}`,
-                    options: Array.isArray(action.args.options)
-                      ? action.args.options
-                          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-                          .slice(0, 8)
-                      : [],
+                    response: `${askQuestion}${optionsBlock}${suffix}`,
+                    options: askOptions,
                   },
                 };
               }

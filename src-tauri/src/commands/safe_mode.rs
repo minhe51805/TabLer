@@ -1,4 +1,4 @@
-use crate::utils::safe_mode::{assert_sql_allowed_at_level, clamp_safe_mode_level};
+use crate::utils::safe_mode::{assert_sql_allowed_at_level_with_approval, clamp_safe_mode_level};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::RwLock;
@@ -71,8 +71,22 @@ impl SafeModeState {
     }
 
     pub async fn assert_sql_allowed(&self, connection_id: &str, sql: &str) -> Result<(), String> {
+        self.assert_sql_allowed_with_approval(connection_id, sql, false)
+            .await
+    }
+
+    /// Same policy, but `user_approved` marks runs the human explicitly
+    /// confirmed in the UI (query editor confirmation dialog or the standing
+    /// full-autonomy grant). Only relaxes the level 1-3 block; levels 4-5
+    /// and parse failures stay hard.
+    pub async fn assert_sql_allowed_with_approval(
+        &self,
+        connection_id: &str,
+        sql: &str,
+        user_approved: bool,
+    ) -> Result<(), String> {
         let level = self.effective_level(connection_id).await;
-        assert_sql_allowed_at_level(level, sql)
+        assert_sql_allowed_at_level_with_approval(level, sql, user_approved)
     }
 }
 

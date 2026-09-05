@@ -55,6 +55,18 @@ pub struct AIConversationMessage {
     pub content: String,
 }
 
+/// A user attachment riding the current request. `kind` is "image" or "text";
+/// images carry base64 `data` (no data-URL prefix), text files carry the file
+/// contents inline. Field names stay snake_case to match the frontend wire
+/// format.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AIRequestAttachment {
+    pub kind: String,
+    pub name: String,
+    pub mime_type: String,
+    pub data: String,
+}
+
 /// Optional per-model metadata: context budget and I/O capabilities, keyed by
 /// model id on `AIProviderConfig::model_settings`. Absent = provider defaults.
 /// Field names stay snake_case to match the frontend wire format.
@@ -107,6 +119,11 @@ pub struct AIRequest {
     /// Powers the frontend failover chain across enabled providers.
     #[serde(default)]
     pub provider_id: Option<String>,
+    /// Optional per-request model override; when absent the provider's
+    /// configured model is used. Powers the model-level tier of the frontend
+    /// failover chain (try the provider's other models before leaving it).
+    #[serde(default)]
+    pub model: Option<String>,
     pub prompt: String,
     pub context: String, // DB schema context
     #[serde(default = "default_ai_request_mode")]
@@ -117,6 +134,11 @@ pub struct AIRequest {
     pub language: AIResponseLanguage,
     #[serde(default)]
     pub history: Vec<AIConversationMessage>,
+    /// User attachments for the current turn (images become multimodal parts;
+    /// text-file contents are already inlined into `prompt` by the frontend).
+    /// Empty keeps the classic text path byte-identical.
+    #[serde(default)]
+    pub attachments: Vec<AIRequestAttachment>,
     /// Native function-calling tool definitions, already shaped for the target
     /// provider's wire format on the frontend. `None` (the default) keeps the
     /// classic text path with a byte-identical request body, so this field is

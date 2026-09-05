@@ -8,15 +8,33 @@
  */
 import type { AIConversationMessage } from "../types";
 import type { AIWorkspaceBubbleData } from "../components/AISlidePanel/ai-workspace-types";
-import { buildConversationHistoryMessages, getBubbleConversationText } from "../components/AISlidePanel/ai-conversation-state";
+import { getBubbleConversationText } from "../components/AISlidePanel/ai-conversation-state";
 
 export const COMPACT_COMMAND = "/compact";
-/** Bubbles newer than this index are kept verbatim after a compact. */
-export const COMPACT_PRESERVE_RECENT_BUBBLES = 4;
 /** Approximate character budget of the summarized digest. */
 export const COMPACT_DIGEST_CHAR_BUDGET = 2400;
 /** Total request-history characters after which sending auto-compacts first. */
 export const AUTO_COMPACT_TRIGGER_CHARS = 24_000;
+
+/** Display conversion: ~4 characters per token (industry heuristic).
+ *  Internal accounting stays in characters; tokens are display-only. */
+export const CHARS_PER_TOKEN = 4;
+
+export function estimateTokensFromChars(chars: number): number {
+  return Math.ceil(chars / CHARS_PER_TOKEN);
+}
+
+export function formatTokensCompact(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000;
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
+  }
+  if (tokens >= 1_000) {
+    const thousands = tokens / 1_000;
+    return `${Number.isInteger(thousands) ? thousands : thousands.toFixed(1)}k`;
+  }
+  return String(tokens);
+}
 /** Characters of conversation text sampled per bubble when building the prompt. */
 const COMPACT_SAMPLE_PER_BUBBLE = 700;
 
@@ -147,12 +165,18 @@ export function buildWorkspaceContextMessages(digest: string | null | undefined)
   ];
 }
 
-/** History for the next request: digest (as system-style user turn) + recent bubbles verbatim. */
+/**
+ * History for the next request after a compact: the DIGEST ALONE (Claude Code
+ * / opencode semantics). The digest is the essence of the ENTIRE conversation
+ * up to the compact point — including the turns right before it — so no
+ * verbatim scrollback survives beside it. Continuing turns append fresh.
+ */
 export function buildPostCompactHistory(
   digest: string,
-  bubbles: AIWorkspaceBubbleData[],
+  _bubbles: AIWorkspaceBubbleData[] = [],
   maxChars = COMPACT_DIGEST_CHAR_BUDGET,
 ): AIConversationMessage[] {
+  void _bubbles;
   const messages: AIConversationMessage[] = [];
   const trimmedDigest = digest.length > maxChars
     ? `${digest.slice(0, maxChars).trimEnd()}…`
@@ -166,9 +190,6 @@ export function buildPostCompactHistory(
       role: "assistant",
       content: "Understood. I'll keep this workspace context in mind.",
     });
-  }
-  if (bubbles.length > 0) {
-    messages.push(...buildConversationHistoryMessages(bubbles.slice(-COMPACT_PRESERVE_RECENT_BUBBLES)));
   }
   return messages;
 }

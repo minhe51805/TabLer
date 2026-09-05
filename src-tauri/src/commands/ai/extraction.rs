@@ -381,7 +381,23 @@ pub(crate) fn extract_tool_call_as_action_json(
             // back into an object so the frontend normalizer sees real args.
             let arguments = match call.get("arguments") {
                 Some(serde_json::Value::String(raw)) => {
-                    serde_json::from_str(raw).unwrap_or_else(|_| serde_json::json!({}))
+                    if raw.trim().is_empty() {
+                        serde_json::json!({})
+                    } else {
+                        match serde_json::from_str::<serde_json::Value>(raw) {
+                            Ok(value) => value,
+                            // Weak providers emit malformed JSON in
+                            // function.arguments. Silently degrading to empty
+                            // args loses the model's intent: the tool then
+                            // fails with "requires args.x" while the trace
+                            // shows a call that clearly carried arguments,
+                            // inviting fabricated PASS summaries. Ship the raw
+                            // string verbatim under `unparsedArguments` so the
+                            // frontend repair pipeline can recover it (and
+                            // surface a real parse error if it cannot).
+                            Err(_) => serde_json::json!({ "unparsedArguments": raw }),
+                        }
+                    }
                 }
                 Some(other) => other.clone(),
                 None => serde_json::json!({}),
@@ -459,6 +475,48 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
         assert_eq!(parsed["action"], "search_schema");
         assert_eq!(parsed["args"]["query"], "email");
+    }
+
+    #[test]
+    fn tool_call_extraction_ships_unparseable_arguments_verbatim() {
+        let payload = json!({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "type": "function",
+                        "function": {
+                            "name": "edit_query_sql",
+                            "arguments": "{\"sql\":\"SELECT 1\", \"createIfMissing\":true,"
+                        }
+                    }]
+                }
+            }]
+        });
+        let action = extract_tool_call_as_action_json(&AIProviderType::OpenAI, &payload).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
+        assert_eq!(parsed["action"], "edit_query_sql");
+        assert_eq!(
+            parsed["args"]["unparsedArguments"],
+            "{\"sql\":\"SELECT 1\", \"createIfMissing\":true,"
+        );
+    }
+
+    #[test]
+    fn tool_call_extraction_treats_empty_arguments_as_empty_object() {
+        let payload = json!({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "type": "function",
+                        "function": { "name": "finish", "arguments": "   " }
+                    }]
+                }
+            }]
+        });
+        let action = extract_tool_call_as_action_json(&AIProviderType::OpenAI, &payload).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
+        assert_eq!(parsed["action"], "finish");
+        assert_eq!(parsed["args"], json!({}));
     }
 
     #[test]

@@ -16,6 +16,8 @@ import {
   type ScatterSeries,
 } from "./chart-utils";
 
+// Shared helper re-exported beside the chart component on purpose.
+// eslint-disable-next-line react-refresh/only-export-components
 export { selectRelevantChartTypes };
 export type { ChartType };
 import { EmptyState } from "./chart-primitives";

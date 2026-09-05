@@ -20,6 +20,8 @@ interface ColumnEditorProps {
   ) => void;
 }
 
+// Factory helper shared by the modal form; not a component.
+// eslint-disable-next-line react-refresh/only-export-components
 export function createEmptyColumn(): ColumnDraft {
   return {
     id: crypto.randomUUID(),

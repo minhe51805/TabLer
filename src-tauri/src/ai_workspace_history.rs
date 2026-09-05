@@ -38,6 +38,20 @@ pub struct AIWorkspacePointerState {
     pub visible: bool,
 }
 
+/// Metadata-only attachment reference carried by a persisted user bubble.
+/// Bytes live in the separate `ai_attachments` table and are fetched on demand.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIWorkspaceBubbleAttachment {
+    pub id: String,
+    /// "image" | "text"
+    pub kind: String,
+    pub name: String,
+    pub mime_type: String,
+    pub size: i64,
+    pub created_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AIWorkspaceBubbleData {
@@ -62,6 +76,22 @@ pub struct AIWorkspaceBubbleData {
     pub auto_dismiss_at: Option<i64>,
     #[serde(default)]
     pub compacted_at: Option<i64>,
+    /// Without this field serde silently drops attachment metadata on every
+    /// save, so images disappeared from user bubbles after an app reload.
+    #[serde(default)]
+    pub attachments: Vec<AIWorkspaceBubbleAttachment>,
+
+    /// Agent trace steps. Persisting them keeps gating such as "the agent
+    /// already read live data" consistent between the live run and a reload;
+    /// without it, buttons/SQL visibility flipped after an app restart.
+    #[serde(default)]
+    pub agent_steps: Vec<JsonValue>,
+
+    /// Options captured when the agent ended its turn with an ask_user
+    /// question; the conversation view renders them as one-click reply
+    /// buttons on the final bubble.
+    #[serde(default)]
+    pub ask_user_options: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -234,6 +264,70 @@ mod tests {
                 .map(String::as_str),
             Some("thread-1")
         );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn round_trips_bubble_attachment_metadata() {
+        let path = temp_history_db_path();
+        let storage =
+            AIWorkspaceHistoryStorage::new_with_file(path.clone()).expect("storage should init");
+
+        let mut state = PersistedAIWorkspaceState::default();
+        state.bubbles.push(super::AIWorkspaceBubbleData {
+            id: "bubble-1".into(),
+            thread_id: "thread-1".into(),
+            workspace_key: "workspace-1".into(),
+            interaction_mode: "agent".into(),
+            kind: "user".into(),
+            status: "ready".into(),
+            title: String::new(),
+            subtitle: String::new(),
+            prompt: "what role".into(),
+            prompt_summary: None,
+            preview: String::new(),
+            detail: String::new(),
+            sql: None,
+            risk: None,
+            x: 0.0,
+            y: 0.0,
+            pointer: super::AIWorkspacePointerState {
+                x: 0.0,
+                y: 0.0,
+                visible: false,
+            },
+            created_at: 1,
+            auto_dismiss_at: None,
+            compacted_at: None,
+            agent_steps: Vec::new(),
+            ask_user_options: vec!["Option A".into(), "Option B".into()],
+            attachments: vec![super::AIWorkspaceBubbleAttachment {
+                id: "att-1".into(),
+                kind: "image".into(),
+                name: "clipboard-image.png".into(),
+                mime_type: "image/jpeg".into(),
+                size: 1024,
+                created_at: 1,
+            }],
+        });
+
+        storage
+            .save_state(&state)
+            .await
+            .expect("save should succeed");
+        let loaded = storage.load_state().await.expect("load should succeed");
+
+        // Attachment metadata must survive the persist/reload roundtrip
+        // (serde used to drop the unknown field silently).
+        assert_eq!(loaded.bubbles.len(), 1);
+        let attachments = &loaded.bubbles[0].attachments;
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].id, "att-1");
+        assert_eq!(attachments[0].mime_type, "image/jpeg");
+        let ask_options = &loaded.bubbles[0].ask_user_options;
+        assert_eq!(ask_options.len(), 2);
+        assert_eq!(ask_options[0], "Option A");
 
         let _ = std::fs::remove_file(path);
     }

@@ -61,29 +61,24 @@ describe("aiStore", () => {
     expect(useAIStore.getState().aiConfigs).toEqual([provider]);
   });
 
-  it("collects streamed text using the agent timeout policy", async () => {
+  it("collects non-streaming agent responses using the agent timeout policy (native tool calling)", async () => {
     useAIStore.setState({ aiConfigs: [provider] });
-    invokeWithTimeoutMock.mockImplementation(async (_command, args) => {
-      const requestId = args.request.request_id;
-      streamListener?.({
-        payload: { requestId, kind: "reasoning_delta", text: "private" },
-      });
-      streamListener?.({
-        payload: { requestId, kind: "text_delta", text: "SELECT " },
-      });
-      streamListener?.({
-        payload: { requestId, kind: "text_delta", text: "1" },
-      });
+    invokeWithTimeoutMock.mockImplementation(async (command) => {
+      if (command === "load_ai_configs") {
+        return [[provider], { "provider-1": true }];
+      }
+      // Native tool calling rides the non-streaming path.
+      return { text: "SELECT 1", reasoning: "private" };
     });
 
     await expect(
       useAIStore
         .getState()
         .askAIWithReasoning("write SQL", "schema", "panel", "agent"),
-    ).resolves.toEqual({ text: "SELECT 1" });
+    ).resolves.toEqual({ text: "SELECT 1", reasoning: "private" });
 
     expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
-      "ask_ai_stream",
+      "ask_ai",
       expect.objectContaining({
         request: expect.objectContaining({
           prompt: "write SQL",
@@ -91,15 +86,19 @@ describe("aiStore", () => {
           mode: "panel",
           intent: "agent",
           request_id: expect.any(String),
+          tools: expect.any(Array),
+          tool_choice: "auto",
         }),
       }),
-      360_000,
+      120_000,
       "AI request",
       expect.objectContaining({ onTimeout: expect.any(Function) }),
     );
     expect(useAIStore.getState().requestPhase).toBe("idle");
     expect(useAIStore.getState().streamingText).toBe("");
-    expect(listenMock).toHaveBeenCalledWith("ai-stream-event", expect.any(Function));
+    // Native tool calling rides the non-streaming path: no stream subscription.
+    expect(listenMock).not.toHaveBeenCalledWith("ai-stream-event", expect.any(Function));
+    expect(streamListener).toBeUndefined();
   });
 
   it("cancels the active provider request", async () => {
@@ -261,5 +260,73 @@ describe("aiStore", () => {
       "save_ai_configs",
       expect.anything(),
     );
+  });
+
+  it("walks every enabled model of every enabled provider in the failover chain", async () => {
+    const multiModelProvider: AIProviderConfig = {
+      ...provider,
+      models: ["gpt-test", "gpt-alt"],
+    };
+    const second: AIProviderConfig = {
+      ...provider,
+      id: "provider-2",
+      name: "Claude",
+      provider_type: "anthropic",
+      model: "claude-test",
+      is_primary: false,
+    };
+    const third: AIProviderConfig = {
+      ...provider,
+      id: "provider-3",
+      name: "Gemini",
+      provider_type: "gemini",
+      model: "gem-a",
+      models: ["gem-a", "gem-b"],
+      // Hidden models stay out of the chain, mirroring the composer switcher.
+      disabled_models: ["gem-b"],
+      is_primary: false,
+    };
+    const fourth: AIProviderConfig = {
+      ...provider,
+      id: "provider-4",
+      name: "Llama",
+      model: "llama-test",
+      is_primary: false,
+    };
+    useAIStore.setState({ aiConfigs: [multiModelProvider, second, third, fourth] });
+    invokeMutationMock.mockImplementation(async (command: string) => {
+      if (command === "cancel_ai_request") return true;
+      return null;
+    });
+    const chainStops: Array<{ providerId: string | null; model: string | null }> = [];
+    invokeWithTimeoutMock.mockImplementation(async (command: string, args?: {
+      request?: { provider_id?: string | null; model?: string | null };
+    }) => {
+      if (command === "ask_ai_stream") {
+        chainStops.push({
+          providerId: args?.request?.provider_id ?? null,
+          model: args?.request?.model ?? null,
+        });
+        throw new Error("HTTP 503 Service Unavailable");
+      }
+      return null;
+    });
+
+    // Every stop in the chain fails, so the run exhausts the full chain and
+    // surfaces the last error instead of silently giving up early.
+    await expect(
+      useAIStore.getState().askAI("prompt", "context", "panel", "sql"),
+    ).rejects.toThrow();
+
+    // Active provider's configured model first, then its other models, then
+    // the remaining enabled providers in order — including the fourth one,
+    // which the old 3-attempt cap never reached.
+    expect(chainStops).toEqual([
+      { providerId: "provider-1", model: "gpt-test" },
+      { providerId: "provider-1", model: "gpt-alt" },
+      { providerId: "provider-2", model: "claude-test" },
+      { providerId: "provider-3", model: "gem-a" },
+      { providerId: "provider-4", model: "llama-test" },
+    ]);
   });
 });

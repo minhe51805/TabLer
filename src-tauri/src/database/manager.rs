@@ -26,7 +26,7 @@ use tokio::sync::RwLock;
 /// Owns the connection pool, lifecycle, and primary database interface.
 #[allow(dead_code)]
 pub struct DatabaseManager {
-    connections: Arc<RwLock<HashMap<String, Box<dyn DatabaseDriver>>>>,
+    connections: Arc<RwLock<HashMap<String, Arc<dyn DatabaseDriver>>>>,
     connection_types: Arc<RwLock<HashMap<String, DatabaseType>>>,
     ssh_tunnels: Arc<RwLock<HashMap<String, TunnelHandle>>>,
     ssh_manager: Arc<SshTunnelManager>,
@@ -137,31 +137,31 @@ impl DatabaseManager {
             }
         }
 
-        let driver: Box<dyn DatabaseDriver> = match actual_config.db_type {
+        let driver: Arc<dyn DatabaseDriver> = match actual_config.db_type {
             DatabaseType::MySQL | DatabaseType::MariaDB => {
-                Box::new(MySqlDriver::connect(&actual_config).await?)
+                Arc::new(MySqlDriver::connect(&actual_config).await?)
             }
             DatabaseType::PostgreSQL
             | DatabaseType::CockroachDB
             | DatabaseType::Greenplum
             | DatabaseType::Redshift
-            | DatabaseType::Vertica => Box::new(PostgresDriver::connect(&actual_config).await?),
+            | DatabaseType::Vertica => Arc::new(PostgresDriver::connect(&actual_config).await?),
             DatabaseType::SQLite => {
                 let path = actual_config.file_path.as_deref().unwrap_or(":memory:");
-                Box::new(SqliteDriver::connect(path).await?)
+                Arc::new(SqliteDriver::connect(path).await?)
             }
-            DatabaseType::DuckDB => Box::new(DuckDbDriver::connect(&actual_config).await?),
-            DatabaseType::Cassandra => Box::new(CassandraDriver::connect(&actual_config).await?),
-            DatabaseType::Snowflake => Box::new(SnowflakeDriver::connect(&actual_config).await?),
-            DatabaseType::MSSQL => Box::new(MssqlDriver::connect(&actual_config).await?),
-            DatabaseType::LibSQL => Box::new(LibSqlDriver::connect(&actual_config).await?),
-            DatabaseType::ClickHouse => Box::new(ClickHouseDriver::connect(&actual_config).await?),
-            DatabaseType::BigQuery => Box::new(BigQueryDriver::connect(&actual_config).await?),
+            DatabaseType::DuckDB => Arc::new(DuckDbDriver::connect(&actual_config).await?),
+            DatabaseType::Cassandra => Arc::new(CassandraDriver::connect(&actual_config).await?),
+            DatabaseType::Snowflake => Arc::new(SnowflakeDriver::connect(&actual_config).await?),
+            DatabaseType::MSSQL => Arc::new(MssqlDriver::connect(&actual_config).await?),
+            DatabaseType::LibSQL => Arc::new(LibSqlDriver::connect(&actual_config).await?),
+            DatabaseType::ClickHouse => Arc::new(ClickHouseDriver::connect(&actual_config).await?),
+            DatabaseType::BigQuery => Arc::new(BigQueryDriver::connect(&actual_config).await?),
             DatabaseType::CloudflareD1 => {
-                Box::new(CloudflareD1Driver::connect(&actual_config).await?)
+                Arc::new(CloudflareD1Driver::connect(&actual_config).await?)
             }
-            DatabaseType::Redis => Box::new(RedisDriver::connect(&actual_config).await?),
-            DatabaseType::MongoDB => Box::new(MongoDbDriver::connect(&actual_config).await?),
+            DatabaseType::Redis => Arc::new(RedisDriver::connect(&actual_config).await?),
+            DatabaseType::MongoDB => Arc::new(MongoDbDriver::connect(&actual_config).await?),
             DatabaseType::OpenSearch => {
                 let plugin_id = actual_config
                     .additional_fields
@@ -197,7 +197,7 @@ impl DatabaseManager {
                         "The selected plugin driver is incompatible with the OpenSearch host ABI"
                     ));
                 }
-                Box::new(OpenSearchDriver::connect(&actual_config, active.plugin_id).await?)
+                Arc::new(OpenSearchDriver::connect(&actual_config, active.plugin_id).await?)
             }
         };
 
@@ -261,13 +261,12 @@ impl DatabaseManager {
         Ok(())
     }
 
-    /// Get a reference to a driver by connection ID
-    pub async fn get_driver(
-        &self,
-        connection_id: &str,
-    ) -> Result<impl std::ops::Deref<Target = Box<dyn DatabaseDriver>> + '_> {
+    /// Get a driver by connection ID. Returns an `Arc` clone so the map's
+    /// read-lock is released immediately: pings and long queries no longer
+    /// block connect/disconnect (write-lock) while waiting on the network.
+    pub async fn get_driver(&self, connection_id: &str) -> Result<Arc<dyn DatabaseDriver>> {
         let conns = self.connections.read().await;
-        tokio::sync::RwLockReadGuard::try_map(conns, |map| map.get(connection_id)).map_err(|_| {
+        conns.get(connection_id).cloned().ok_or_else(|| {
             anyhow!(
                 "Connection '{}' not found. Please connect first.",
                 connection_id
@@ -275,14 +274,14 @@ impl DatabaseManager {
         })
     }
 
-    /// Check if a connection exists and is alive
+    /// Check if a connection exists and is alive. The ping runs on a cloned
+    /// `Arc` with the map lock released, so a slow network round-trip never
+    /// stalls connect/disconnect.
     pub async fn is_connected(&self, connection_id: &str) -> bool {
-        let conns = self.connections.read().await;
-        if let Some(driver) = conns.get(connection_id) {
-            driver.ping().await.is_ok()
-        } else {
-            false
-        }
+        let Ok(driver) = self.get_driver(connection_id).await else {
+            return false;
+        };
+        driver.ping().await.is_ok()
     }
 
     pub async fn connection_database_type(&self, connection_id: &str) -> Result<DatabaseType> {

@@ -11,6 +11,13 @@ export interface AIChatWorkspace {
   name: string;
   /** Connection this workspace was created for; informational binding. */
   connectionId: string | null;
+  /**
+   * Database this workspace was created on. Selecting the workspace switches
+   * the active connection to this database so the AI schema context (tables,
+   * schema objects, live reads) always follows the workspace — like separate
+   * SSMS windows, one per database.
+   */
+  database: string | null;
   createdAt: number;
   updatedAt: number;
   /** Durable summary produced by /compact — injected into every request. */
@@ -29,10 +36,12 @@ interface AIChatWorkspaceState {
   workspaces: AIChatWorkspace[];
   /** null = auto mode: threads follow the active connection + database key. */
   activeWorkspaceId: string | null;
-  createWorkspace: (name: string, connectionId?: string | null) => string;
+  createWorkspace: (name: string, connectionId?: string | null, database?: string | null) => string;
   renameWorkspace: (id: string, name: string) => void;
   deleteWorkspace: (id: string) => void;
   setActiveWorkspace: (id: string | null) => void;
+  /** Pins a database to a workspace (also used to backfill legacy workspaces). */
+  bindWorkspaceDatabase: (id: string, database: string) => void;
   saveContextDigest: (id: string, digest: string) => void;
   /**
    * Merges digests persisted in the SQLite cache back into the store after a
@@ -47,7 +56,7 @@ export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
       workspaces: [],
       activeWorkspaceId: null,
 
-      createWorkspace: (name, connectionId = null) => {
+      createWorkspace: (name, connectionId = null, database = null) => {
         const id = createAIChatWorkspaceId();
         const now = Date.now();
         set((state) => ({
@@ -57,6 +66,7 @@ export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
               id,
               name: name.trim() || `Workspace ${state.workspaces.length + 1}`,
               connectionId: connectionId ?? null,
+              database: database ?? null,
               createdAt: now,
               updatedAt: now,
               contextDigest: "",
@@ -94,6 +104,33 @@ export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
 
       setActiveWorkspace: (id) => {
         set({ activeWorkspaceId: id });
+      },
+
+      /** Pin a workspace to a database; empty string = unbind (auto mode). */
+      bindWorkspaceDatabase: (id, database) => {
+        const clean = database.trim();
+        const nextDatabase = clean || null;
+        set((state) => {
+          const changed = state.workspaces.some(
+            (workspace) => workspace.id === id && workspace.database !== nextDatabase,
+          );
+          if (!changed) return state;
+          return {
+            workspaces: state.workspaces.map((workspace) => {
+              if (workspace.id !== id) return workspace;
+              const rebound = workspace.database !== nextDatabase;
+              return {
+                ...workspace,
+                database: nextDatabase,
+                updatedAt: Date.now(),
+                // A stale digest summarises the OLD database's context; keeping
+                // it after a rebind would poison every future request with
+                // schema facts from a database this workspace no longer owns.
+                ...(rebound ? { contextDigest: "", contextUpdatedAt: null } : {}),
+              };
+            }),
+          };
+        });
       },
 
       saveContextDigest: (id, digest) => {
@@ -139,6 +176,29 @@ export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
 export function selectActiveAIChatWorkspace(state: Pick<AIChatWorkspaceState, "workspaces" | "activeWorkspaceId">): AIChatWorkspace | null {
   if (!state.activeWorkspaceId) return null;
   return state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId) ?? null;
+}
+
+/**
+ * Legacy workspaces were created before database binding existed; users named
+ * them after their database (e.g. "db QL_BAN_HANG"). Match the name against
+ * the connection's database catalog so switching those workspaces still
+ * re-scopes the AI context to the right database.
+ */
+export function inferDatabaseFromWorkspaceName(
+  name: string,
+  availableDatabases: readonly { name: string }[],
+): string | null {
+  const cleaned = name.trim().toLowerCase();
+  if (!cleaned || availableDatabases.length === 0) return null;
+  const stripped = cleaned.replace(/^db\s+/, "");
+  const exact = availableDatabases.find(
+    (database) => database.name.toLowerCase() === stripped,
+  );
+  if (exact) return exact.name;
+  const containing = availableDatabases.filter(
+    (database) => cleaned.includes(database.name.toLowerCase()),
+  );
+  return containing.length === 1 ? containing[0].name : null;
 }
 
 /** Test/export helper mirroring the store's default naming. */

@@ -86,7 +86,7 @@ pub async fn export_database(
         .get_driver(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
-    let driver_ref: &dyn DatabaseDriver = &**driver;
+    let driver_ref: &dyn DatabaseDriver = &*driver;
 
     let requested_database = database
         .as_deref()
@@ -216,6 +216,7 @@ mod tests {
             table_type: "TABLE".to_string(),
             row_count: None,
             engine: None,
+            create_date: None,
         };
         let sql =
             build_create_table_statement(DatabaseType::SQLite, &table, &sample_structure(), None)

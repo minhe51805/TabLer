@@ -14,8 +14,16 @@ import {
 export {
   AI_AGENT_ASK_USER_OPTIONS_LIMIT,
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
+  AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS,
+  AI_AGENT_DELEGATE_ANSWER_CHARS,
+  AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT,
+  AI_AGENT_DELEGATE_MAX_CALLS,
+  AI_AGENT_PLAN_STEP_LIMIT,
   AI_AGENT_PREVIEW_STATEMENT_LIMIT,
+  AI_AGENT_READ_PAGE_MAX_CHARS,
   AI_AGENT_SAMPLE_MAX_ROWS,
+  AI_AGENT_SCHEMA_OBJECTS_LIMIT,
+  AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS,
   AI_AGENT_TOOL_NAMES,
 } from "./ai-agent-tool-schema";
 export type { AIAgentToolName } from "./ai-agent-tool-schema";
@@ -48,6 +56,49 @@ export type AIAgentRememberTermAction = AIAgentToolActionBase<
   AIAgentRememberTermArgs
 >;
 
+export interface AIAgentEditQuerySqlArgs extends Record<string, unknown> {
+  /** Required when targeting an open tab; omit when createIfMissing is set. */
+  tabId?: string;
+  sql: string;
+  reason?: string;
+  /** Opens a NEW AI Query tab pre-filled with the SQL when none is open. */
+  createIfMissing?: boolean;
+}
+
+export type AIAgentEditQuerySqlAction = AIAgentToolActionBase<
+  "edit_query_sql",
+  AIAgentEditQuerySqlArgs
+>;
+
+export interface AIAgentReadMemoryArgs extends Record<string, unknown> {
+  name: string;
+}
+
+export type AIAgentReadMemoryAction = AIAgentToolActionBase<
+  "read_memory",
+  AIAgentReadMemoryArgs
+>;
+
+export interface AIAgentSaveMemoryArgs extends Record<string, unknown> {
+  name: string;
+  description?: string;
+  body: string;
+}
+
+export type AIAgentSaveMemoryAction = AIAgentToolActionBase<
+  "save_memory",
+  AIAgentSaveMemoryArgs
+>;
+
+export interface AIAgentDeleteMemoryArgs extends Record<string, unknown> {
+  name: string;
+}
+
+export type AIAgentDeleteMemoryAction = AIAgentToolActionBase<
+  "delete_memory",
+  AIAgentDeleteMemoryArgs
+>;
+
 export interface AIAgentSkillArgs extends Record<string, unknown> {
   name: string;
 }
@@ -55,6 +106,35 @@ export interface AIAgentSkillArgs extends Record<string, unknown> {
 export type AIAgentSkillAction = AIAgentToolActionBase<
   "skill",
   AIAgentSkillArgs
+>;
+
+export interface AIAgentCreateCheckpointArgs extends Record<string, unknown> {
+  label?: string;
+}
+
+export type AIAgentCreateCheckpointAction = AIAgentToolActionBase<
+  "create_checkpoint",
+  AIAgentCreateCheckpointArgs
+>;
+
+export interface AIAgentRestoreCheckpointArgs extends Record<string, unknown> {
+  label_hint?: string;
+}
+
+export type AIAgentRestoreCheckpointAction = AIAgentToolActionBase<
+  "restore_checkpoint",
+  AIAgentRestoreCheckpointArgs
+>;
+
+export interface AIAgentReadPageArgs extends Record<string, unknown> {
+  ref?: number;
+  offset?: number;
+  limit?: number;
+}
+
+export type AIAgentReadPageAction = AIAgentToolActionBase<
+  "read_page",
+  AIAgentReadPageArgs
 >;
 
 export interface AIAgentPreviewWriteArgs extends Record<string, unknown> {
@@ -83,9 +163,21 @@ export type AIAgentSearchSchemaAction = AIAgentToolActionBase<
   { query: string }
 >;
 
+export interface AIAgentListSchemaObjectsArgs extends Record<string, unknown> {
+  objectType?: "view" | "trigger" | "routine" | "all";
+  pattern?: string;
+  withDefinition?: boolean;
+  limit?: number;
+}
+
+export type AIAgentListSchemaObjectsAction = AIAgentToolActionBase<
+  "list_schema_objects",
+  AIAgentListSchemaObjectsArgs
+>;
+
 export type AIAgentDescribeTableAction = AIAgentToolActionBase<
   "describe_table",
-  { table: string }
+  { table?: string; tables?: string[] }
 >;
 
 export interface AIAgentDescribeTablesArgs extends Record<string, unknown> {
@@ -100,6 +192,7 @@ export type AIAgentDescribeTablesAction = AIAgentToolActionBase<
 export interface AIAgentSampleTableDataArgs extends Record<string, unknown> {
   table: string;
   limit?: number;
+  stats?: "auto" | "sample" | "off";
 }
 
 export type AIAgentSampleTableDataAction = AIAgentToolActionBase<
@@ -112,25 +205,101 @@ export type AIAgentRunReadonlySqlAction = AIAgentToolActionBase<
   { sql: string }
 >;
 
+export interface AIAgentRunParameterizedSqlArgs extends Record<string, unknown> {
+  sql: string;
+  parameters: Array<{ name: string; value?: unknown; dataType?: string }>;
+}
+
+export type AIAgentRunParameterizedSqlAction = AIAgentToolActionBase<
+  "run_parameterized_sql",
+  AIAgentRunParameterizedSqlArgs
+>;
+
+export interface AIAgentFindValueArgs extends Record<string, unknown> {
+  table: string;
+  column: string;
+  value: unknown;
+  limit?: number;
+}
+
+export type AIAgentFindValueAction = AIAgentToolActionBase<
+  "find_value",
+  AIAgentFindValueArgs
+>;
+
+export type AIAgentCheckSqlAction = AIAgentToolActionBase<
+  "check_sql",
+  { sql: string }
+>;
+
+export interface AIAgentRunPresetArgs extends Record<string, unknown> {
+  presetId?: "process-list" | "user-management";
+  list?: boolean;
+}
+
+export type AIAgentRunPresetAction = AIAgentToolActionBase<
+  "run_preset",
+  AIAgentRunPresetArgs
+>;
+
 export interface AIAgentFinishArgs extends Record<string, unknown> {
   response?: unknown;
   sql?: unknown;
   metricsWidgets?: unknown;
+  options?: unknown;
 }
 
 export type AIAgentFinishAction = AIAgentToolActionBase<"finish", AIAgentFinishArgs>;
 
+export interface AIAgentUpdatePlanStep {
+  title: string;
+  status?: "pending" | "in_progress" | "done";
+}
+
+export interface AIAgentUpdatePlanArgs extends Record<string, unknown> {
+  steps: AIAgentUpdatePlanStep[];
+}
+
+export type AIAgentUpdatePlanAction = AIAgentToolActionBase<
+  "update_plan",
+  AIAgentUpdatePlanArgs
+>;
+
+export interface AIAgentDelegateArgs extends Record<string, unknown> {
+  instruction: string;
+  focusTables?: string[];
+}
+
+export type AIAgentDelegateAction = AIAgentToolActionBase<
+  "delegate",
+  AIAgentDelegateArgs
+>;
+
 export type AIAgentToolAction =
   | AIAgentAskUserAction
+  | AIAgentUpdatePlanAction
   | AIAgentListTablesAction
   | AIAgentSearchSchemaAction
+  | AIAgentListSchemaObjectsAction
   | AIAgentDescribeTableAction
   | AIAgentDescribeTablesAction
   | AIAgentSampleTableDataAction
   | AIAgentRunReadonlySqlAction
+  | AIAgentRunParameterizedSqlAction
+  | AIAgentFindValueAction
+  | AIAgentCheckSqlAction
+  | AIAgentRunPresetAction
   | AIAgentPreviewWriteAction
   | AIAgentRememberTermAction
+  | AIAgentReadMemoryAction
+  | AIAgentSaveMemoryAction
+  | AIAgentDeleteMemoryAction
+  | AIAgentEditQuerySqlAction
   | AIAgentSkillAction
+  | AIAgentCreateCheckpointAction
+  | AIAgentRestoreCheckpointAction
+  | AIAgentDelegateAction
+  | AIAgentReadPageAction
   | AIAgentFinishAction;
 
 function stripOptionalCodeFence(text: string) {
@@ -306,7 +475,34 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
     throw new Error("The agent returned invalid tool arguments.");
   }
 
-  const args = (parsed.args as Record<string, unknown> | undefined) || {};
+  // Native tool-calls from weak providers can arrive with `function.arguments`
+  // that the backend could not parse (shipped verbatim under
+  // `unparsedArguments` instead of being silently emptied). Run that payload
+  // through the same repair pipeline as text finals; an unrecoverable payload
+  // throws so the caller's bounded repair round can ask the model to re-emit
+  // the action with valid arguments.
+  let args = (parsed.args as Record<string, unknown> | undefined) ?? {};
+  const unparsedArguments = args.unparsedArguments;
+  if (typeof unparsedArguments === "string") {
+    const candidate = repairTruncatedJson(
+      sanitizeJsonStringLiterals(extractJsonObjectCandidate(unparsedArguments)),
+    );
+    let recovered: unknown = null;
+    try {
+      recovered = JSON.parse(candidate);
+    } catch {
+      recovered = null;
+    }
+    if (recovered && typeof recovered === "object" && !Array.isArray(recovered)) {
+      const recoveredArgs = { ...(recovered as Record<string, unknown>) };
+      delete recoveredArgs.unparsedArguments;
+      args = recoveredArgs;
+    } else {
+      throw new Error(
+        `The agent returned malformed tool arguments: ${unparsedArguments.trim().slice(0, 200)}`,
+      );
+    }
+  }
   const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
 
   return {

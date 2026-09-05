@@ -594,8 +594,16 @@ export function ConnectionDetailsStep({
                 </div>
                 <input
                   type="number"
+                  min={1}
+                  max={65535}
                   value={formData.port || ""}
-                  onChange={(e) => onFieldChange("port", parseInt(e.target.value) || undefined)}
+                  onChange={(e) => {
+                    const parsed = parseInt(e.target.value, 10);
+                    onFieldChange(
+                      "port",
+                      Number.isFinite(parsed) && parsed > 0 && parsed <= 65535 ? parsed : undefined,
+                    );
+                  }}
                   placeholder={portPlaceholder}
                   className="input h-11"
                 />
@@ -753,8 +761,19 @@ export function ConnectionDetailsStep({
                   <label className="form-label uppercase tracking-wide">SSH Port</label>
                   <input
                     type="number"
+                    min={1}
+                    max={65535}
                     value={formData.ssh_config.port || ""}
-                    onChange={(e) => onFieldChange("ssh_config", { ...formData.ssh_config!, port: parseInt(e.target.value) || 22 })}
+                    onChange={(e) => {
+                      const parsed = parseInt(e.target.value, 10);
+                      onFieldChange(
+                        "ssh_config",
+                        {
+                          ...formData.ssh_config!,
+                          port: Number.isFinite(parsed) && parsed > 0 && parsed <= 65535 ? parsed : 22,
+                        },
+                      );
+                    }}
                     placeholder="22"
                     className="input h-11"
                   />
@@ -883,13 +902,47 @@ export function ConnectionDetailsStep({
                         {getExtraFieldLabel(field)}
                         {!field.required && <span className="opacity-60"> ({strings.optional})</span>}
                       </label>
-                      <input
-                        type={field.type === "number" ? "number" : field.type === "password" ? "password" : "text"}
-                        value={additionalFields[field.key] || ""}
-                        onChange={(e) => onAdditionalFieldChange(field.key, e.target.value)}
-                        placeholder={getExtraFieldPlaceholder(field)}
-                        className="input h-11"
-                      />
+                      {field.type === "checkbox" ? (
+                        <label className="flex items-center gap-2 h-11 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={
+                              (additionalFields[field.key] ?? field.defaultValue ?? "false") === "true"
+                            }
+                            onChange={(e) =>
+                              onAdditionalFieldChange(field.key, e.target.checked ? "true" : "false")
+                            }
+                            className="w-4 h-4 accent-[var(--accent-color,#3b82f6)]"
+                          />
+                          <span className="text-sm opacity-80">
+                            {isVi ? "Bật" : "Enabled"}
+                          </span>
+                        </label>
+                      ) : field.type === "select" && field.options ? (
+                        <select
+                          value={
+                            additionalFields[field.key] ||
+                            field.options.find((option) => !option.disabled)?.value ||
+                            ""
+                          }
+                          onChange={(e) => onAdditionalFieldChange(field.key, e.target.value)}
+                          className="input h-11"
+                        >
+                          {field.options.map((option) => (
+                            <option key={option.value} value={option.value} disabled={option.disabled}>
+                              {isVi && option.labelVi ? option.labelVi : option.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.type === "number" ? "number" : field.type === "password" ? "password" : "text"}
+                          value={additionalFields[field.key] || ""}
+                          onChange={(e) => onAdditionalFieldChange(field.key, e.target.value)}
+                          placeholder={getExtraFieldPlaceholder(field)}
+                          className="input h-11"
+                        />
+                      )}
                       {getExtraFieldHint(field) && (
                         <span className="connection-form-field-hint">{getExtraFieldHint(field)}</span>
                       )}

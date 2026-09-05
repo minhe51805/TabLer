@@ -171,12 +171,26 @@ pub(crate) fn ai_provider_api_error(message: &str, api_key: Option<&str>) -> Str
     )
 }
 
+/// Read the provider's `Retry-After` header (seconds form, the common 429
+/// case) so the frontend can wait exactly as long as the provider asks
+/// instead of guessing. HTTP-date forms are ignored — the seconds form is
+/// what every rate-limiting AI provider emits.
+pub(crate) fn response_retry_after_seconds(response: &reqwest::Response) -> Option<u64> {
+    let raw = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?;
+    raw.trim().parse::<u64>().ok()
+}
+
 pub(crate) fn ai_provider_http_status_error(
     config: &AIProviderConfig,
     endpoint: &str,
     status: StatusCode,
     body: &str,
     api_key: Option<&str>,
+    retry_after_seconds: Option<u64>,
 ) -> String {
     let provider_label = if config.name.trim().is_empty() {
         format!("{:?}", config.provider_type)
@@ -206,9 +220,18 @@ pub(crate) fn ai_provider_http_status_error(
             | StatusCode::GATEWAY_TIMEOUT
             | StatusCode::TOO_MANY_REQUESTS
     ) {
-        " This looks temporary on the provider side. Please try again in a moment."
+        match retry_after_seconds {
+            // Machine-readable marker: normalizeAIRequestError on the
+            // frontend extracts `retry_after_ms=<n>` from this text and
+            // waits exactly that long before retrying.
+            Some(seconds) => format!(
+                " This looks temporary on the provider side. It asks to retry after {seconds} s (retry_after_ms={}).",
+                seconds.saturating_mul(1000)
+            ),
+            None => " This looks temporary on the provider side. Please try again in a moment.".to_string(),
+        }
     } else {
-        ""
+        String::new()
     };
 
     if preview.is_empty() {
@@ -318,5 +341,61 @@ mod tests {
         let preview = compact_response_preview(&unicode_body, None);
         assert!(preview.chars().count() <= 320);
         assert!(preview.ends_with("..."));
+    }
+
+    /// Contract with the frontend (`normalizeAIRequestError` in
+    /// `src/utils/ai-request-errors.ts`): retryable provider HTTP failures
+    /// (429/5xx with a Retry-After header) embed a machine-readable
+    /// `retry_after_ms=<n>` marker parsed by the frontend to wait exactly as
+    /// long as the provider asked.
+    #[test]
+    fn provider_http_error_carries_machine_readable_retry_after_marker() {
+        use crate::database::ai_models::AIProviderType;
+
+        let config: AIProviderConfig = serde_json::from_str(&format!(
+            r#"{{"id":"p1","name":"OpenAI","provider_type":{},"endpoint":"https://api.openai.com/v1/chat/completions","model":"gpt-test","is_enabled":true}}"#,
+            serde_json::to_string(&AIProviderType::OpenAI).unwrap()
+        ))
+        .expect("provider config should deserialize");
+
+        let endpoint = "https://api.openai.com/v1/chat/completions";
+
+        let with_marker = ai_provider_http_status_error(
+            &config,
+            endpoint,
+            StatusCode::TOO_MANY_REQUESTS,
+            "{}",
+            None,
+            Some(4),
+        );
+        assert!(
+            with_marker.contains("retry_after_ms=4000"),
+            "message was: {with_marker}"
+        );
+
+        // Retryable status without a parseable Retry-After header: no marker,
+        // just the human-facing note.
+        let without_marker = ai_provider_http_status_error(
+            &config,
+            endpoint,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{}",
+            None,
+            None,
+        );
+        assert!(!without_marker.contains("retry_after_ms="));
+        assert!(without_marker.contains("Please try again in a moment."));
+
+        // Non-retryable statuses never carry the marker even if a header
+        // slipped through.
+        let bad_request = ai_provider_http_status_error(
+            &config,
+            endpoint,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            None,
+            Some(4),
+        );
+        assert!(!bad_request.contains("retry_after_ms="));
     }
 }

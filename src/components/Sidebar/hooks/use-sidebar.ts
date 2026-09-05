@@ -12,7 +12,7 @@ import {
   copyToClipboard,
 } from "../SidebarUtils";
 import {
-  applyConditions,
+  applyConditionsWith,
   applyCondition,
   buildCloneScript,
   buildDeleteTemplate,
@@ -28,6 +28,7 @@ import {
   usePinnedTables,
   useSchemaSections,
   useExplorerSummary,
+  explorerSectionObjectCount,
 } from "./useTreeState";
 import { EXPLORER_PINNED_TABLES_STORAGE_KEY } from "./useTreeState";
 import type { DatabaseInfo, SchemaObjectInfo, TableInfo } from "../../../types";
@@ -38,6 +39,10 @@ import {
   DEFAULT_FILTER_OPERATOR,
 } from "../../../types/filter-presets";
 import { useFilterPresetsStore } from "../../../stores/filterPresetsStore";
+import {
+  useDbVisibilityStore,
+  filterVisibleDatabases,
+} from "../../../stores/dbVisibilityStore";
 import { useTableFilterActions } from "./useTableFilterActions";
 
 export type CheckboxFilterState = "checked" | "unchecked" | "indeterminate";
@@ -200,6 +205,11 @@ export function useSidebar() {
     usePinnedTables(tableWorkspaceKey);
 
   const dbType = activeConnection?.db_type;
+  const hiddenDatabases = useDbVisibilityStore((state) => state.hiddenDatabases);
+  const visibleDatabases = useMemo(
+    () => filterVisibleDatabases(activeConnectionId, databases, currentDatabase, hiddenDatabases),
+    [activeConnectionId, databases, currentDatabase, hiddenDatabases],
+  );
 
   useEffect(() => {
     if (!activeConnectionId || !currentDatabase) return;
@@ -289,7 +299,7 @@ export function useSidebar() {
     (e: React.MouseEvent, object: SchemaObjectInfo) => {
       e.stopPropagation();
       if (!activeConnectionId) return;
-      const tabKind = object.object_type.toLowerCase();
+      const tabKind = (object.object_type ?? "").toLowerCase();
       addTab({
         id: `query-${crypto.randomUUID()}`,
         type: "query",
@@ -472,9 +482,25 @@ export function useSidebar() {
     }
     return tables.filter((table) => {
       const qualifiedName = table.schema ? `${table.schema}.${table.name}` : table.name;
-      // Apply conditions if any
+      // Apply conditions if any — each condition targets the field chosen in
+      // the Property column of the filter settings modal (Name / Schema).
       if (conditions.length > 0) {
-        if (!applyConditions(qualifiedName, conditions, conditionLogic)) return false;
+        if (
+          !applyConditionsWith(
+            (cond) =>
+              cond.column === "schema"
+                ? (table.schema ?? "")
+                : cond.column === "type"
+                  ? (table.table_type ?? "")
+                  : cond.column === "create_date"
+                    ? (table.create_date ?? "")
+                    : qualifiedName,
+            conditions,
+            conditionLogic,
+          )
+        ) {
+          return false;
+        }
       }
       // Apply search filter if search text exists
       if (search.trim()) {
@@ -491,12 +517,28 @@ export function useSidebar() {
     return schemaObjects.filter((object) => {
       const qualifiedName = object.schema ? `${object.schema}.${object.name}` : object.name;
       const relatedTable = object.related_table || "";
-      const typeName = object.object_type.toLowerCase();
+      // Some schema objects (e.g. system folders) may lack object_type.
+      const typeName = (object.object_type ?? "").toLowerCase();
 
-      // Apply conditions if any
+      // Apply conditions if any — each condition targets the field chosen in
+      // the Property column of the filter settings modal (Name / Schema).
       if (conditions.length > 0) {
-        const combinedValue = `${qualifiedName} ${relatedTable} ${object.object_type}`;
-        if (!applyConditions(combinedValue, conditions, conditionLogic)) return false;
+        if (
+          !applyConditionsWith(
+            (cond) =>
+              cond.column === "schema"
+                ? (object.schema ?? "")
+                : cond.column === "type"
+                  ? typeName
+                  : cond.column === "create_date"
+                    ? (object.create_date ?? "")
+                    : qualifiedName,
+            conditions,
+            conditionLogic,
+          )
+        ) {
+          return false;
+        }
       }
 
       // Apply search filter if search text exists
@@ -516,7 +558,14 @@ export function useSidebar() {
     [filteredTables],
   );
 
-  const schemaSections = useSchemaSections(actualTables, filteredSchemaObjects, pinnedTableSet);
+  // SSMS parity: on SQL Server fold `sys`/`INFORMATION_SCHEMA` objects into the
+  // `dbo` section so "System …" folders render like SSMS's database node.
+  const schemaSections = useSchemaSections(
+    actualTables,
+    filteredSchemaObjects,
+    pinnedTableSet,
+    dbType === "mssql",
+  );
 
   const availableSchemaNames = useMemo(
     () => schemaSections.map((section) => section.schemaName),
@@ -534,23 +583,14 @@ export function useSidebar() {
         value: "all",
         label: t("explorer.allSchemas"),
         count: schemaSections.reduce(
-          (total, section) =>
-            total +
-            section.tables.length +
-            section.views.length +
-            section.triggers.length +
-            section.routines.length,
+          (total, section) => total + section.tables.length + explorerSectionObjectCount(section),
           0
         ),
       },
       ...schemaSections.map((section) => ({
         value: section.schemaName,
         label: section.schemaName,
-        count:
-          section.tables.length +
-          section.views.length +
-          section.triggers.length +
-          section.routines.length,
+        count: section.tables.length + explorerSectionObjectCount(section),
       })),
     ],
     [schemaSections, t],
@@ -855,7 +895,7 @@ export function useSidebar() {
     activeConnectionId,
     connectedIds,
     connections,
-    databases,
+    databases: visibleDatabases,
     currentDatabase,
     tables,
     schemaObjects,

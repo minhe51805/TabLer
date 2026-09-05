@@ -39,8 +39,8 @@
 
 TableR brings the tools used during day-to-day database work into one native
 desktop application. Browse database objects, write and run SQL in Monaco,
-inspect or export results, build charts and ER diagrams, and use a
-database-aware AI workspace without switching applications.
+inspect or export results, build charts and ER diagrams, and keep a
+database-aware AI assistant beside the query instead of in another window.
 
 ## Highlights
 
@@ -50,30 +50,32 @@ database-aware AI workspace without switching applications.
 | Data exploration | Searchable schema explorer, table data browsing, row inspection, pagination, sorting, and filtering |
 | Results and exports | Table and chart views with CSV, JSON, Excel, and SQL-oriented export workflows |
 | Visual database tools | Interactive ER diagrams, minimap and layout controls, metrics boards, and query plan visualization |
-| AI assistance | Prompt, edit, and agent workflows with database context and configurable model providers |
-| Desktop workflow | Saved connections, local database bootstrap, secure credential handling, command palette, terminal, and session persistence |
+| AI assistance | Prompt, edit, and agent modes with schema context, file and image attachments, review-before-run SQL, and configurable providers |
+| Desktop workflow | Saved connections, local database bootstrap, OS keyring credentials, command palette, terminal, and session persistence |
 
 ## Product Tour
 
 ### Connection launcher
 
-Choose from remote, saved, file-based, or locally bootstrapped database
-workspaces. The launcher exposes engine capabilities before opening the
-connection form.
+Reopen a saved workspace, or create a new one from 18 ready engines. The picker
+shows what each engine can do — remote connections, file databases, or a local
+bootstrap — before you fill in the form. Credentials stay in the operating
+system keyring.
 
 ![TableR connection launcher](docs/screenshots/table-r-connection-launcher.png)
 
 ### AI workspace
 
-Keep schema context, generated SQL, query execution, and the assistant visible
-in the same workspace.
+Keep schema context, generated SQL, query execution, and the assistant in the
+same view. Attach images or text files, switch Prompt / Edit / Agent, and
+review SQL before anything writes to the database.
 
 ![TableR AI workspace](docs/screenshots/table-r-ai-workspace.png)
 
 ### ER diagrams
 
-Select only the tables you need, automatically arrange them, inspect
-relationships, fit the canvas, and export the result.
+Select the tables that matter, auto-layout the graph, inspect relationships,
+fit the canvas, and export PNG or SQL.
 
 ![TableR ER diagram](docs/screenshots/table-r-er-diagram.png)
 
@@ -163,9 +165,10 @@ directory on Vercel.
 | --- | --- |
 | `Ctrl+N` | Create a query tab |
 | `Ctrl+Enter` | Run the active query |
-| `Ctrl+P` | Open the AI assistant from the editor |
-| `Ctrl+B` | Toggle the database explorer |
 | `Ctrl+Space` | Toggle the AI workspace |
+| `Ctrl+P` | Open the quick switcher |
+| `Ctrl+Shift+P` | Open the command palette |
+| `Ctrl+B` | Toggle the database explorer |
 | <kbd>Ctrl</kbd> + <kbd>&#96;</kbd> | Toggle the terminal |
 | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>&#96;</kbd> | Toggle query results |
 | `Ctrl+H` | Open query history |

@@ -29,6 +29,7 @@ interface Props {
   onSelectConnection: (id: string) => void;
   onConnect: (connection: ConnectionConfig) => void;
   onDeleteConnection: (connection: ConnectionConfig) => void;
+  onRenameConnection: (connection: ConnectionConfig, name: string) => void;
   onHover: (e: React.MouseEvent<HTMLDivElement>, id: string) => void;
   onLeaveHover: () => void;
   onNewConnection: () => void;
@@ -56,6 +57,7 @@ export function ConnectionListView({
   onSelectConnection,
   onConnect,
   onDeleteConnection,
+  onRenameConnection,
   onHover,
   onLeaveHover,
   onNewConnection,
@@ -230,6 +232,8 @@ export function ConnectionListView({
                     void onConnect(conn);
                   }}
                   onDelete={() => onDeleteConnection(conn)}
+                  onRename={(name) => onRenameConnection(conn, name)}
+                  renameLabel={t("common.rename")}
                   deleteLabel={t("connections.delete")}
                   onMouseEnter={(e) => onHover(e, conn.id)}
                   onMouseLeave={onLeaveHover}

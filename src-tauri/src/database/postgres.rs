@@ -262,6 +262,7 @@ impl DatabaseDriver for PostgresDriver {
         Ok(rows
             .iter()
             .map(|row| TableInfo {
+                create_date: None,
                 name: row.get(0),
                 table_type: row.get(1),
                 schema: row.try_get::<String, _>(2).ok(),

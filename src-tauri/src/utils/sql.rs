@@ -1,6 +1,11 @@
 use serde::Serialize;
-use sqlparser::dialect::GenericDialect;
+use sqlparser::dialect::{
+    BigQueryDialect, ClickHouseDialect, DuckDbDialect, GenericDialect, MsSqlDialect, MySqlDialect,
+    PostgreSqlDialect, SQLiteDialect, SnowflakeDialect,
+};
 use sqlparser::parser::Parser;
+
+use crate::database::models::DatabaseType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,8 +91,20 @@ fn canonical_statement_kind(statement: &str) -> SqlStatementKind {
 /// Parse once at the backend boundary and provide the canonical safety decision used by
 /// the editor, AI tools, MCP, timeouts, and schema-cache invalidation.
 pub fn classify_sql(sql: &str) -> SqlSafetyDecision {
-    let dialect = GenericDialect {};
-    match Parser::parse_sql(&dialect, sql) {
+    classify_sql_with_dialect(sql, None)
+}
+
+/// Dialect-aware classification. MySQL-family engines expose server commands
+/// (`SHOW FULL PROCESSLIST`, `DESCRIBE t`, …) that the generic parser cannot
+/// read; parsing them with the connection's real dialect (plus a read-only
+/// fallback for those inherently read-only server commands) keeps admin
+/// presets from being rejected as PARSE_ERR.
+pub fn classify_sql_with_dialect(
+    sql: &str,
+    database_type: Option<DatabaseType>,
+) -> SqlSafetyDecision {
+    let dialect = sql_dialect_for(database_type);
+    match Parser::parse_sql(&*dialect, sql) {
         Ok(parsed) if parsed.is_empty() => SqlSafetyDecision {
             statements: Vec::new(),
             read_only: false,
@@ -117,6 +134,38 @@ pub fn classify_sql(sql: &str) -> SqlSafetyDecision {
             }
         }
         Err(error) => {
+            // MySQL-family server commands (SHOW FULL PROCESSLIST, DESCRIBE t,
+            // EXPLAIN SELECT …) are inherently read-only; when the real
+            // dialect still fails to parse them, classify as read instead of
+            // PARSE_ERR so admin presets work on MySQL/MariaDB.
+            if is_mysql_family(database_type)
+                && split_sql_statements(sql)
+                    .iter()
+                    .filter(|statement| !strip_leading_comments(statement).is_empty())
+                    .all(|statement| is_mysql_readonly_server_command(statement))
+            {
+                let statements = split_sql_statements(sql)
+                    .into_iter()
+                    .filter_map(|statement| {
+                        if strip_leading_comments(&statement).is_empty() {
+                            return None;
+                        }
+                        Some(SqlStatementDecision {
+                            sql: statement,
+                            kind: SqlStatementKind::Read,
+                            read_only: true,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if !statements.is_empty() {
+                    return SqlSafetyDecision {
+                        read_only: true,
+                        has_schema_mutation: false,
+                        statements,
+                        parse_error: None,
+                    };
+                }
+            }
             let statements = split_sql_statements(sql)
                 .into_iter()
                 .filter_map(|statement| {
@@ -139,6 +188,53 @@ pub fn classify_sql(sql: &str) -> SqlSafetyDecision {
             }
         }
     }
+}
+
+/// Maps a connection's engine to the matching sqlparser dialect so server
+/// commands (`SHOW …`, `DESCRIBE …`) parse under the grammar that owns them.
+pub fn sql_dialect_for(
+    database_type: Option<DatabaseType>,
+) -> Box<dyn sqlparser::dialect::Dialect> {
+    match database_type {
+        Some(DatabaseType::MySQL) | Some(DatabaseType::MariaDB) => Box::new(MySqlDialect {}),
+        Some(DatabaseType::PostgreSQL)
+        | Some(DatabaseType::CockroachDB)
+        | Some(DatabaseType::Greenplum)
+        | Some(DatabaseType::Redshift) => Box::new(PostgreSqlDialect {}),
+        Some(DatabaseType::MSSQL) => Box::new(MsSqlDialect {}),
+        Some(DatabaseType::SQLite)
+        | Some(DatabaseType::LibSQL)
+        | Some(DatabaseType::CloudflareD1) => Box::new(SQLiteDialect {}),
+        Some(DatabaseType::DuckDB) => Box::new(DuckDbDialect {}),
+        Some(DatabaseType::BigQuery) => Box::new(BigQueryDialect {}),
+        Some(DatabaseType::Snowflake) => Box::new(SnowflakeDialect {}),
+        Some(DatabaseType::ClickHouse) => Box::new(ClickHouseDialect {}),
+        _ => Box::new(GenericDialect {}),
+    }
+}
+
+fn is_mysql_family(database_type: Option<DatabaseType>) -> bool {
+    matches!(
+        database_type,
+        Some(DatabaseType::MySQL) | Some(DatabaseType::MariaDB)
+    )
+}
+
+/// Server commands that are read-only by construction; used only when the
+/// MySQL dialect parser still rejects them (coverage gaps like
+/// `SHOW FULL PROCESSLIST`).
+fn is_mysql_readonly_server_command(statement: &str) -> bool {
+    let cleaned = strip_leading_comments(statement);
+    let upper = cleaned.to_uppercase();
+    upper.starts_with("SHOW ")
+        || upper.starts_with("SHOW;")
+        || upper == "SHOW"
+        || upper.starts_with("DESCRIBE ")
+        || upper == "DESCRIBE"
+        || upper.starts_with("DESC ")
+        || upper == "DESC"
+        || upper.starts_with("EXPLAIN ")
+        || upper == "EXPLAIN"
 }
 
 fn strip_leading_comments(statement: &str) -> &str {

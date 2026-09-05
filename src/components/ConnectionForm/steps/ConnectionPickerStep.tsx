@@ -580,4 +580,7 @@ export function ConnectionPickerStep({
 }
 
 export { LOCAL_BOOTSTRAP_PLANNED, LOCAL_BOOTSTRAP_READY };
+// Shared picker helpers live beside the component so one wizard file stays
+// self-contained; splitting them out would be churn for fast-refresh only.
+// eslint-disable-next-line react-refresh/only-export-components
 export { getPickerStatus, getPickerMetaLabel, getPickerDescription, getPickerCapabilities, getPickerHighlights };

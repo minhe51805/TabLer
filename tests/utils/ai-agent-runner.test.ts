@@ -172,6 +172,69 @@ describe("AI agent tool runner", () => {
     ]);
   });
 
+  it("does not let planning actions consume the step budget", async () => {
+    // Mirrors the full-capability-test failure: a model that updates its plan
+    // and re-lists tables repeatedly used to burn the budget before reaching
+    // the late capabilities (memory, edit_tab). Planning is free while under
+    // the allowance, so the real work still fits inside the same budget.
+    const plan = (n: number) =>
+      action("update_plan", `Plan update ${n}`, { revision: n });
+    const requestAction = vi.fn()
+      .mockResolvedValueOnce(action("list_tables", "Inspect tables"))
+      .mockResolvedValueOnce(plan(1))
+      .mockResolvedValueOnce(plan(2))
+      .mockResolvedValueOnce(plan(3))
+      .mockResolvedValueOnce(plan(4))
+      .mockResolvedValueOnce(plan(5)) // free allowance spent → consumes budget
+      .mockResolvedValueOnce(action("run_readonly_sql", "Count rows", { sql: "SELECT COUNT(*)" }))
+      .mockResolvedValue(action("finish", "All capabilities covered"));
+    const runTool = vi.fn().mockResolvedValue("observation");
+
+    const result = await runAIAgentToolLoop({
+      workspaceToolsEnabled: true,
+      stepBudget: 2,
+      requestAction,
+      runTool,
+      recoverFinish: vi.fn(),
+    });
+
+    expect(result.finalAction.message).toBe("All capabilities covered");
+    // 4 plan updates stayed free — the readonly step only reached iteration 3
+    // (list=1, plan#5=2, readonly=3), never tripping the budget guard.
+    const readonlyRequest = requestAction.mock.calls
+      .map(([request]) => request)
+      .find((request) => request.reason === "iterate");
+    expect(readonlyRequest).toBeTruthy();
+    expect(requestAction.mock.calls.filter(([request]) => request.reason === "budget")).toHaveLength(0);
+    // All 7 actions ran as tool steps (1 list + 5 plans + 1 readonly).
+    expect(result.steps).toHaveLength(7);
+  });
+
+  it("charges planning actions against the budget once the free allowance is spent", async () => {
+    // Same update_plan args repeated: after 4 free calls the 5th consumes the
+    // budget, the run is unproductive (identical signature), so it closes
+    // through the standard budget finish instead of planning forever.
+    const requestAction = vi.fn()
+      .mockImplementation(async (request: { reason: string }) =>
+        request.reason === "budget"
+          ? action("finish", "Wrapped up after planning loop")
+          : action("update_plan", "Plan again", { revision: 1 }));
+    const recoverFinish = vi.fn();
+
+    await runAIAgentToolLoop({
+      workspaceToolsEnabled: true,
+      stepBudget: 1,
+      requestAction,
+      runTool: vi.fn().mockResolvedValue("plan recorded"),
+      recoverFinish,
+    });
+
+    const iterateCalls = requestAction.mock.calls.filter(([request]) => request.reason === "iterate");
+    expect(iterateCalls).toHaveLength(5); // 4 free + 1 charged
+    expect(recoverFinish).not.toHaveBeenCalled();
+    expect(requestAction.mock.calls.filter(([request]) => request.reason === "budget")).toHaveLength(1);
+  });
+
   it("recovers when the budget request still returns a tool action", async () => {
     const requestAction = vi.fn()
       .mockResolvedValueOnce(action("list_tables"))

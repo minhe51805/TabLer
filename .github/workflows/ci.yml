@@ -39,6 +39,9 @@ jobs:
       - name: Typecheck, lint, test, and build
         run: npm run check:frontend
 
+      - name: Agent golden-set eval
+        run: npm run eval:agent
+
   rust:
     name: Rust quality
     runs-on: ubuntu-22.04

@@ -137,8 +137,27 @@ pub(super) async fn build_sql_export(
     }
 
     let mut total_rows = 0_u64;
+    if db_type == DatabaseType::MSSQL && !ordered_tables.is_empty() {
+        // Snapshot restore replaces existing rows; suspend FK checks per table
+        // (3-part names, so this works regardless of connection context).
+        output.push_str("-- Snapshot restore: suspend constraint checks while rows are replaced\n");
+        for bundle in &ordered_tables {
+            let table_ref = qualify_name(db_type, &bundle.identifier, database)?;
+            output.push_str(&format!(
+                "ALTER TABLE {table_ref} NOCHECK CONSTRAINT ALL;\n"
+            ));
+        }
+        output.push('\n');
+    }
     for bundle in &ordered_tables {
         let table_ref = qualify_name(db_type, &bundle.identifier, database)?;
+        if db_type == DatabaseType::MSSQL {
+            output.push_str(&format!("DELETE FROM {table_ref};\n"));
+            // Restore must re-insert the original identity values (error 544
+            // otherwise). IDENTITY_INSERT is session-scoped: OFF for every
+            // table up front keeps the ONs from shadowing each other.
+            output.push_str(&format!("SET IDENTITY_INSERT {table_ref} ON;\n"));
+        }
         let mut offset = 0_u64;
 
         loop {
@@ -176,6 +195,9 @@ pub(super) async fn build_sql_export(
                 break;
             }
         }
+        if db_type == DatabaseType::MSSQL {
+            output.push_str(&format!("SET IDENTITY_INSERT {table_ref} OFF;\n"));
+        }
     }
 
     for bundle in &ordered_tables {
@@ -190,6 +212,16 @@ pub(super) async fn build_sql_export(
         {
             output.push_str(&statement);
             output.push('\n');
+        }
+    }
+
+    if db_type == DatabaseType::MSSQL && !ordered_tables.is_empty() {
+        output.push('\n');
+        for bundle in ordered_tables.iter().rev() {
+            let table_ref = qualify_name(db_type, &bundle.identifier, database)?;
+            output.push_str(&format!(
+                "ALTER TABLE {table_ref} WITH CHECK CHECK CONSTRAINT ALL;\n"
+            ));
         }
     }
 
@@ -473,20 +505,26 @@ pub(super) fn build_create_table_statement(
         }
     }
 
-    Ok(format!(
-        "CREATE TABLE IF NOT EXISTS {table_ref} (\n{}\n);",
-        definitions.join(",\n")
-    ))
+    let definitions_body = definitions.join(",\n");
+    Ok(match db_type {
+        // Full-snapshot restore: DROP first (fresh recreate eliminates
+        // identity drift from the existing schema — errors 544/8106/1919).
+        DatabaseType::MSSQL => format!(
+            "DROP TABLE IF EXISTS {table_ref};\nCREATE TABLE {table_ref} (\n{definitions_body}\n);"
+        ),
+        _ => format!("CREATE TABLE IF NOT EXISTS {table_ref} (\n{definitions_body}\n);"),
+    })
 }
 
 pub(super) fn build_column_definition(
     db_type: DatabaseType,
     column: &ColumnDetail,
 ) -> Result<String> {
-    let mut parts = vec![
-        quote_identifier_for(db_type, &column.name)?,
-        normalized_column_type(column),
-    ];
+    let mut column_type = normalized_column_type(column);
+    if db_type == DatabaseType::MSSQL {
+        column_type = normalize_mssql_column_type(&column_type);
+    }
+    let mut parts = vec![quote_identifier_for(db_type, &column.name)?, column_type];
 
     if let Some(default_value) = column
         .default_value
@@ -521,6 +559,20 @@ pub(super) fn normalized_column_type(column: &ColumnDetail) -> String {
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| column.data_type.trim())
         .to_string()
+}
+
+/// MSSQL treats a bare `nvarchar`/`varchar` in DDL as length 1, which would
+/// silently truncate restored rows. Widen them to 255 in generated dumps —
+/// deliberately NOT `max`: key/index columns reject `nvarchar(max)` with
+/// error 1919, which used to break checkpoint restore on keyed columns.
+pub(super) fn normalize_mssql_column_type(column_type: &str) -> String {
+    let trimmed = column_type.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if matches!(lower.as_str(), "nvarchar" | "varchar") && !lower.contains('(') {
+        format!("{trimmed}(255)")
+    } else {
+        trimmed.to_string()
+    }
 }
 
 pub(super) fn should_inline_foreign_keys(db_type: DatabaseType) -> bool {
@@ -809,15 +861,29 @@ pub(super) fn render_sql_value(
             }
         },
         JsonValue::Number(value) => value.to_string(),
-        JsonValue::String(value) => render_sql_string(value, column),
-        JsonValue::Array(_) | JsonValue::Object(_) => {
-            render_sql_string(&value.unwrap_or(&JsonValue::Null).to_string(), column)
-        }
+        JsonValue::String(value) => render_sql_string(value, db_type, column),
+        JsonValue::Array(_) | JsonValue::Object(_) => render_sql_string(
+            &value.unwrap_or(&JsonValue::Null).to_string(),
+            db_type,
+            column,
+        ),
     }
 }
 
-pub(super) fn render_sql_string(value: &str, _column: &ColumnInfo) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+pub(super) fn render_sql_string(
+    value: &str,
+    db_type: DatabaseType,
+    _column: &ColumnInfo,
+) -> String {
+    let escaped = format!("'{}'", value.replace('\'', "''"));
+    // MSSQL: without the N prefix, a string literal is converted to the
+    // server's default codepage (windows-1252), silently destroying any
+    // Unicode (Vietnamese) characters. The N prefix keeps it NVARCHAR.
+    if db_type == DatabaseType::MSSQL {
+        format!("N{escaped}")
+    } else {
+        escaped
+    }
 }
 
 pub(super) fn row_to_object(

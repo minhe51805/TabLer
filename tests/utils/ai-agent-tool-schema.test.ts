@@ -37,7 +37,8 @@ describe("AI agent tool schema", () => {
   it("mirrors the normalizer's required fields and numeric bounds", () => {
     expect(AI_AGENT_TOOL_SPECS.ask_user.parameters.required).toEqual(["question"]);
     expect(AI_AGENT_TOOL_SPECS.search_schema.parameters.required).toEqual(["query"]);
-    expect(AI_AGENT_TOOL_SPECS.describe_table.parameters.required).toEqual(["table"]);
+    expect(AI_AGENT_TOOL_SPECS.describe_table.parameters.required ?? []).toEqual([]);
+    // describe_tables is hidden from the catalog (superseded by the batch form).
     expect(AI_AGENT_TOOL_SPECS.describe_tables.parameters.required).toEqual(["tables"]);
     expect(AI_AGENT_TOOL_SPECS.sample_table_data.parameters.required).toEqual(["table"]);
     expect(AI_AGENT_TOOL_SPECS.run_readonly_sql.parameters.required).toEqual(["sql"]);
@@ -88,19 +89,21 @@ describe("AI agent tool schema", () => {
     expect(tools[0]).not.toHaveProperty("parameters");
   });
 
-  it("converts to Gemini function declarations", () => {
+  it("converts to Gemini function declarations (normalized to the Gemini proto)", () => {
     const decls = toGeminiFunctionDeclarations();
     expect(decls).toHaveLength(AI_AGENT_TOOL_NAMES.length);
     expect(decls.map((decl) => decl.name)).toEqual([...AI_AGENT_TOOL_NAMES]);
-    expect(decls[0].parameters).toBe(AI_AGENT_TOOL_SPECS.ask_user.parameters);
+    const parameters = decls[0].parameters as unknown as Record<string, unknown>;
+    expect(parameters.type).toBe("OBJECT");
+    expect(parameters.required).toEqual(["question"]);
   });
 
-  it("keeps native tool calling gated off by default so the text path stays default", () => {
-    expect(NATIVE_TOOL_CALLING_ENABLED).toBe(false);
-    // While the flag is off the request builder must be inert for every caller.
-    expect(buildNativeToolPayload("openai", "agent")).toBeNull();
-    expect(buildNativeToolPayload("anthropic", "agent")).toBeNull();
-    expect(buildNativeToolPayload("openai", "agent", "redis")).toBeNull();
+  it("enables native tool calling for the agent intent on supported providers", () => {
+    expect(NATIVE_TOOL_CALLING_ENABLED).toBe(true);
+    expect(buildNativeToolPayload("openai", "agent")).not.toBeNull();
+    expect(buildNativeToolPayload("anthropic", "agent")).not.toBeNull();
+    // Non-agent intents must still ride the classic streaming text path.
+    expect(buildNativeToolPayload("openai", "sql")).toBeNull();
   });
 
   it("only ever offers tools for the agent intent", () => {
@@ -111,7 +114,7 @@ describe("AI agent tool schema", () => {
   it("shapes the OpenAI-family tool payload with a top-level tool_choice", () => {
     for (const provider of ["openai", "openrouter", "ollama", "custom"] as const) {
       const payload = nativeToolPayloadForProvider(provider);
-      expect(payload.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length);
+      expect(payload.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
       expect(payload.tool_choice).toBe("auto");
       expect((payload.tools[0] as { type: string }).type).toBe("function");
     }
@@ -119,20 +122,47 @@ describe("AI agent tool schema", () => {
 
   it("shapes Anthropic and Gemini tool payloads in their native formats", () => {
     const anthropic = nativeToolPayloadForProvider("anthropic");
-    expect(anthropic.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length);
+    expect(anthropic.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
     expect((anthropic.tools[0] as Record<string, unknown>)).toHaveProperty("input_schema");
     expect(anthropic.tool_choice).toEqual({ type: "auto" });
 
     const gemini = nativeToolPayloadForProvider("gemini");
-    expect(gemini.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length);
+    expect(gemini.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
     expect(gemini.tool_choice).toEqual({ function_calling_config: { mode: "AUTO" } });
+  });
+
+  it("normalizes Gemini schemas to the Gemini proto (audit fix)", () => {
+    const gemini = nativeToolPayloadForProvider("gemini");
+    const declarations = gemini.tools as Array<Record<string, unknown>>;
+    const sample = declarations.find((declaration) => declaration.name === "sample_table_data");
+    expect(sample).toBeDefined();
+    const parameters = sample!.parameters as Record<string, unknown>;
+    // type must be the UPPERCASE proto enum, not the JSON Schema spelling.
+    expect(parameters.type).toBe("OBJECT");
+    // JSON-Schema-only keys must not leak into the wire format.
+    expect(JSON.stringify(parameters)).not.toContain("additionalProperties");
+    expect(JSON.stringify(parameters)).not.toContain("uniqueItems");
+    // Number bounds rename to minValue/maxValue.
+    const limit = (parameters.properties as Record<string, Record<string, unknown>>).limit;
+    expect(limit.type).toBe("INTEGER");
+    expect(limit.maximum).toBeUndefined();
+    expect(limit.maxValue).toBe(AI_AGENT_SAMPLE_MAX_ROWS);
   });
 
   it("lists every registry tool in the controller catalog, and only non-SQL tools when tools are off", () => {
     const enabled = formatAgentToolCatalog(true);
-    expect(enabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual([...AI_AGENT_TOOL_NAMES]);
+    expect(enabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual([
+      ...AI_AGENT_TOOL_NAMES.filter((name) => name !== "describe_tables"),
+    ]);
     const disabled = formatAgentToolCatalog(false);
-    expect(disabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual(["ask_user", "skill", "finish"]);
+    expect(disabled.map((line) => line.match(/"action":"([^"]+)"/)?.[1])).toEqual([
+      "ask_user",
+      "update_plan",
+      "skill",
+      "delegate",
+      "read_page",
+      "finish",
+    ]);
     expect(disabled.join("\n")).not.toContain("metricsWidgets");
   });
 
@@ -167,7 +197,6 @@ describe("parseAgentToolArgs", () => {
   it.each([
     ["ask_user", {}, /args.question/],
     ["search_schema", { query: " " }, /args.query/],
-    ["describe_table", {}, /args.table/],
     ["describe_tables", { tables: [] }, /args.tables array/],
     ["sample_table_data", { table: "" }, /args.table/],
     ["run_readonly_sql", { sql: "   " }, /args.sql/],
@@ -187,5 +216,63 @@ describe("parseAgentToolArgs", () => {
     expect(parseAgentToolArgs("ask_user", { question: "Go?", multiple: "yes" })).toEqual({
       question: "Go?",
     });
+  });
+});
+
+describe("native tool calling wire parity", () => {
+  const PROVIDER_TYPES = [
+    "openai",
+    "anthropic",
+    "gemini",
+    "openrouter",
+    "ollama",
+    "custom",
+  ] as const;
+
+  /** Extracts tool names from any provider shape (OpenAI/Anthropic/Gemini). */
+  function extractToolNames(payload: { tools: unknown[] }): string[] {
+    return payload.tools.flatMap((tool) => {
+      const record = tool as Record<string, unknown>;
+      if (typeof record.name === "string") return [record.name]; // Anthropic
+      const fn = record.function as { name?: unknown } | undefined;
+      if (fn && typeof fn.name === "string") return [fn.name]; // OpenAI family
+      const declarations = record.function_declarations as
+        | Array<{ name?: unknown }>
+        | undefined; // Gemini
+      if (Array.isArray(declarations)) {
+        return declarations
+          .filter((declaration) => typeof declaration.name === "string")
+          .map((declaration) => declaration.name as string);
+      }
+      return [];
+    });
+  }
+
+  it("keeps every provider family aligned: non-null payload, tool_choice, identical tool set", () => {
+    const nameSets = PROVIDER_TYPES.map((provider) => {
+      const payload = buildNativeToolPayload(provider, "agent");
+      expect(payload, `${provider} must produce a native payload`).not.toBeNull();
+      expect(payload?.tools.length).toBeGreaterThan(0);
+      expect(payload?.tool_choice).toBeDefined();
+      const names = extractToolNames(payload as { tools: unknown[] });
+      expect(names.length).toBeGreaterThan(0);
+      // Catalog essentials must survive every wire format.
+      expect(names).toContain("list_tables");
+      expect(names).toContain("describe_table");
+      expect(names).toContain("finish");
+      return names;
+    });
+
+    // Parity: no provider family drops or gains tools relative to the others.
+    for (const names of nameSets.slice(1)) {
+      expect(names).toEqual(nameSets[0]);
+    }
+  });
+
+  it("rides only the agent intent and stays null elsewhere", () => {
+    expect(buildNativeToolPayload("openai", "agent")).not.toBeNull();
+    expect(buildNativeToolPayload("openai", "general")).toBeNull();
+    expect(buildNativeToolPayload("openai", "sql")).toBeNull();
+    expect(buildNativeToolPayload("anthropic", "fix-error")).toBeNull();
   });
 });

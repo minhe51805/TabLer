@@ -1,14 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildCompactTranscript,
-  buildCompactUserPrompt,
-  buildPostCompactHistory,
-  buildWorkspaceContextMessages,
-  deriveMemoryTitle,
-  extractDigestFromReply,
-  extractMemoryKeywords,
-  isCompactCommand,
-} from "../../src/utils/ai-context-compact";
+import { buildCompactTranscript, buildCompactUserPrompt, buildPostCompactHistory, buildWorkspaceContextMessages, deriveMemoryTitle, extractDigestFromReply, extractMemoryKeywords, isCompactCommand, estimateTokensFromChars, formatTokensCompact } from "../../src/utils/ai-context-compact";
 import { buildAIWorkspaceKey } from "../../src/components/AISlidePanel/ai-conversation-state";
 import type { AIWorkspaceBubbleData } from "../../src/components/AISlidePanel/ai-workspace-types";
 
@@ -127,7 +118,11 @@ describe("buildWorkspaceContextMessages", () => {
 });
 
 describe("buildPostCompactHistory", () => {
-  it("combines the digest pair with recent bubble history", () => {
+  it("carries the digest ALONE — the essence of the whole conversation, no verbatim scrollback", () => {
+    // Claude Code / opencode semantics: the digest summarizes the ENTIRE
+    // conversation up to the compact point (including the last turns), so
+    // nothing verbatim survives beside it — otherwise those turns would be
+    // double-billed and the digest would not be the single source of truth.
     const bubbles = Array.from({ length: 6 }, (_, index) =>
       makeBubble({
         id: `bubble-${index}`,
@@ -138,12 +133,15 @@ describe("buildPostCompactHistory", () => {
     );
     const messages = buildPostCompactHistory("digest body", bubbles, 5_000);
 
+    expect(messages).toHaveLength(2);
     expect(messages[0].role).toBe("user");
     expect(messages[0].content).toContain("digest body");
     expect(messages[1].role).toBe("assistant");
     const flattened = messages.map((message) => message.content).join("\n");
-    expect(flattened).toContain("question 4");
-    expect(flattened).toContain("question 5");
+    for (const bubble of bubbles) {
+      expect(flattened).not.toContain(bubble.prompt!);
+      expect(flattened).not.toContain(bubble.detail!);
+    }
   });
 
   it("truncates an oversized digest to the char budget", () => {
@@ -201,5 +199,21 @@ describe("deriveMemoryTitle", () => {
     const title = deriveMemoryTitle("- " + "x".repeat(200), "fallback");
     expect(title.length).toBeLessThanOrEqual(72);
     expect(title.endsWith("...")).toBe(true);
+  });
+});
+
+describe("token display helpers", () => {
+  it("estimates tokens with ceiling (never under-reports)", () => {
+    expect(estimateTokensFromChars(0)).toBe(0);
+    expect(estimateTokensFromChars(15)).toBe(4);
+    expect(estimateTokensFromChars(16)).toBe(4);
+  });
+
+  it("formats tokens like Claude-Code-style meters", () => {
+    expect(formatTokensCompact(999)).toBe("999");
+    expect(formatTokensCompact(24_000)).toBe("24k");
+    expect(formatTokensCompact(326_100)).toBe("326.1k");
+    expect(formatTokensCompact(1_000_000)).toBe("1M");
+    expect(formatTokensCompact(2_400_000)).toBe("2.4M");
   });
 });

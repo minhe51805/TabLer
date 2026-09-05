@@ -13,6 +13,7 @@ interface KeyboardHandlerProps {
   onToggleVimMode: () => void;
   onOpenCommandPalette: () => void;
   onOpenQuickSwitcher: () => void;
+  onOpenGlobalSearch: () => void;
   setUiFontScale: (fn: (current: number) => number) => void;
   setShowAISlidePanel: (value: boolean | ((current: boolean) => boolean)) => void;
 }
@@ -28,6 +29,7 @@ export function AppKeyboardHandler({
   onToggleVimMode,
   onOpenCommandPalette,
   onOpenQuickSwitcher,
+  onOpenGlobalSearch,
   setUiFontScale,
   setShowAISlidePanel,
 }: KeyboardHandlerProps) {
@@ -73,6 +75,13 @@ export function AppKeyboardHandler({
       if (metaPressed && e.shiftKey && key === "p") {
         e.preventDefault();
         onOpenCommandPalette();
+        return;
+      }
+
+      // Global Search: Ctrl+Shift+F / Cmd+Shift+F
+      if (metaPressed && e.shiftKey && key === "f") {
+        e.preventDefault();
+        onOpenGlobalSearch();
         return;
       }
 

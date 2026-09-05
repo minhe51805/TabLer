@@ -120,6 +120,8 @@ export interface TableInfo {
   table_type: string;
   row_count?: number | null;
   engine?: string;
+  /** Object creation date (ISO yyyy-mm-dd where the backend provides it). */
+  create_date?: string | null;
 }
 
 export interface SchemaObjectInfo {
@@ -128,6 +130,8 @@ export interface SchemaObjectInfo {
   object_type: string;
   related_table?: string;
   definition?: string;
+  /** Object creation date (ISO yyyy-mm-dd where the backend provides it). */
+  create_date?: string | null;
 }
 
 export interface DatabaseInfo {
@@ -279,4 +283,11 @@ export interface Tab {
   workspaceEntityId?: string;
   workspaceEntityRevision?: string;
   workspaceEntityUpdatedAt?: string;
+  /**
+   * Where the tab came from. `"ai"` tabs were created by the AI workspace
+   * and honor the agent-autonomy grant (full autonomy runs Safe Mode-blocked
+   * statements without the confirmation dialog). Omitted/`"user"` tabs are
+   * regular manual tabs and always confirm.
+   */
+  source?: "ai" | "user";
 }

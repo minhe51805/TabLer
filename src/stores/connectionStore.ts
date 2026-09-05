@@ -23,7 +23,6 @@ import {
   FRONTEND_TIMEOUTS,
   inFlightSchemaObjectFetches,
   inFlightTableFetches,
-  isMissingConnectionError,
   metadataFetchKey,
   resolveConnectionConfig,
   runWithInFlight,
@@ -54,6 +53,7 @@ export interface ConnectionState {
   disconnectFromDatabase: (connectionId: string, options?: { keepTabs?: boolean }) => Promise<void>;
   testConnection: (config: ConnectionConfig) => Promise<string>;
   deleteSavedConnection: (connectionId: string) => Promise<void>;
+  renameSavedConnection: (connectionId: string, name: string) => Promise<void>;
   fetchDatabases: (connectionId: string) => Promise<void>;
   switchDatabase: (connectionId: string, database: string) => Promise<void>;
   fetchTables: (connectionId: string, database?: string) => Promise<void>;
@@ -68,6 +68,21 @@ export interface ConnectionState {
   pickSqliteDatabasePath: (databaseName: string) => Promise<string | null>;
 }
 
+const SYSTEM_DATABASE_NAMES = new Set([
+  "master",
+  "tempdb",
+  "model",
+  "msdb",
+  "mysql",
+  "sys",
+  "performance_schema",
+  "information_schema",
+  "postgres",
+  "template0",
+  "template1",
+  "rdsadmin",
+]);
+
 export const useConnectionStore = create<ConnectionState>((set, get) => {
   type ConnectSnapshot = Pick<
     ConnectionState,
@@ -81,20 +96,51 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     schemaObjects: get().schemaObjects,
   });
 
+  // Database switches are serialized and sequence-stamped: `use_database` is
+  // stateful on the backend, so a fast workspace/database toggle (A→B) must
+  // never interleave — a superseded switch must not overwrite `tables` after
+  // the newer one finished, and the backend USE must land in click order.
+  let databaseSwitchSequence = 0;
+  let databaseSwitchQueue: Promise<void> = Promise.resolve();
+  /** (connectionId, database) of the last fully completed switch; enables the
+   *  redundant-switch skip below without re-fetching metadata. */
+  let lastCompletedDatabaseSwitchKey: string | null = null;
+
+  /**
+   * True when a connect attempt targets the connection+database whose
+   * metadata is already loaded and displayed — reconnecting to it may keep
+   * the tables/schema objects instead of blanking them mid-reconnect.
+   */
+  const reconnectTargetsShownMetadata = (targetId: string, database: string | null | undefined) =>
+    get().activeConnectionId === targetId
+    && Boolean(database)
+    && get().currentDatabase === database;
+
   const markConnected = (
     connectionId: string,
     database: string | null | undefined,
     connectionsPatch?: { connections: ConnectionConfig[] },
+    options?: { keepExistingMetadata?: boolean },
   ) => {
     const connectedIds = new Set(get().connectedIds);
     connectedIds.add(connectionId);
+    // Reconnecting to the database whose metadata is already on screen keeps
+    // tables/schemaObjects (no empty flash, no redundant refetch); every
+    // other connect drops them so metadata from another connection/database
+    // is never presented under the new scope.
+    const keepExistingMetadata = options?.keepExistingMetadata === true
+      && Boolean(database)
+      && get().activeConnectionId === connectionId
+      && get().currentDatabase === database;
+    if (keepExistingMetadata && typeof database === "string") {
+      lastCompletedDatabaseSwitchKey = metadataFetchKey(connectionId, database);
+    }
     set({
       ...(connectionsPatch ?? {}),
       connectedIds,
       activeConnectionId: connectionId,
       currentDatabase: database ?? null,
-      schemaObjects: [],
-      ...(database ? {} : { tables: [] }),
+      ...(keepExistingMetadata ? {} : { schemaObjects: [], tables: [] }),
       isConnecting: false,
     });
   };
@@ -110,11 +156,26 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
   };
 
   const loadMetadataAfterConnect = (connectionId: string, database: string | null | undefined) => {
-    void get().fetchDatabases(connectionId);
     if (database) {
+      void get().fetchDatabases(connectionId);
       void get().fetchTables(connectionId, database);
       void get().fetchSchemaObjects(connectionId, database);
+      return;
     }
+    // Connected without a database (e.g. SQL Server with blank CSDL): fall
+    // back to the first user database so the workspace still loads tables and
+    // the AI assistant has schema context, instead of an empty catalog.
+    void (async () => {
+      await get().fetchDatabases(connectionId);
+      const databases = get().databases;
+      const firstUserDatabase = databases.find(
+        (item) => !SYSTEM_DATABASE_NAMES.has(item.name.toLowerCase()),
+      );
+      const fallbackDatabase = firstUserDatabase?.name ?? databases[0]?.name;
+      if (fallbackDatabase) {
+        await get().switchDatabase(connectionId, fallbackDatabase);
+      }
+    })();
   };
 
   return {
@@ -161,12 +222,15 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     if (get().isConnecting) return;
     const previousState = snapshotForRestore();
     const normalizedConfig = resolveConnectionConfig(config);
+    const keepsExistingMetadata = reconnectTargetsShownMetadata(
+      normalizedConfig.id,
+      normalizedConfig.database,
+    );
     set({
       isConnecting: true,
       activeConnectionId: normalizedConfig.id,
       currentDatabase: normalizedConfig.database ?? null,
-      schemaObjects: [],
-      ...(normalizedConfig.database ? {} : { tables: [] }),
+      ...(keepsExistingMetadata ? {} : { schemaObjects: [], tables: [] }),
     });
 
     try {
@@ -188,7 +252,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         connections: connections.some((item) => item.id === normalizedConfig.id)
           ? connections.map((item) => (item.id === normalizedConfig.id ? savedConfig : item))
           : [...connections, savedConfig],
-      });
+      }, { keepExistingMetadata: keepsExistingMetadata });
 
       await executeStartupCommands(
         normalizedConfig.id,
@@ -204,12 +268,12 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     if (get().isConnecting) return;
     const previousState = snapshotForRestore();
     const connection = get().connections.find((item) => item.id === connectionId);
+    const keepsExistingMetadata = reconnectTargetsShownMetadata(connectionId, connection?.database);
     set({
       isConnecting: true,
       activeConnectionId: connectionId,
       currentDatabase: connection?.database ?? null,
-      schemaObjects: [],
-      ...(connection?.database ? {} : { tables: [] }),
+      ...(keepsExistingMetadata ? {} : { schemaObjects: [], tables: [] }),
     });
 
     try {
@@ -224,7 +288,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         },
       );
       invalidateConnectionCapabilities(connectionId);
-      markConnected(connectionId, connection?.database);
+      markConnected(connectionId, connection?.database, undefined, { keepExistingMetadata: keepsExistingMetadata });
 
       await executeStartupCommands(connectionId, connection?.startupCommands ?? "");
       loadMetadataAfterConnect(connectionId, connection?.database);
@@ -271,6 +335,20 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     }
   },
 
+  renameSavedConnection: async (connectionId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await invokeMutation("rename_saved_connection", {
+      connectionId,
+      name: trimmed,
+    });
+    set({
+      connections: get().connections.map((connection) =>
+        connection.id === connectionId ? { ...connection, name: trimmed } : connection,
+      ),
+    });
+  },
+
   fetchDatabases: async (connectionId) => {
     set({ isLoadingDatabases: true });
     try {
@@ -285,78 +363,128 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       const message = `Failed to list databases: ${error}`;
       set({
         isLoadingDatabases: false,
-        ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
-      });
+        });
       useGlobalErrorStore.getState().setError(message);
     }
   },
 
-  switchDatabase: async (connectionId, database) => {
-    set({ isSwitchingDatabase: true });
-    try {
-      await invokeMutation("use_database", { connectionId, database });
-      set({ currentDatabase: database, schemaObjects: [], isSwitchingDatabase: false });
-      useUIStore.getState().removeTabsForStaleCatalog(connectionId, database);
-      await Promise.all([
-        get().fetchTables(connectionId, database),
-        get().fetchSchemaObjects(connectionId, database),
-      ]);
-    } catch (error) {
-      set({
-        isSwitchingDatabase: false,
-        ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
-      });
-      useGlobalErrorStore.getState().setError(`Failed to switch database: ${error}`);
-    }
+  switchDatabase: (connectionId, database) => {
+    const requestSequence = ++databaseSwitchSequence;
+    const isLatestRequest = () => requestSequence === databaseSwitchSequence;
+    const completedKeyFor = () => metadataFetchKey(connectionId, database);
+
+    const run = databaseSwitchQueue.then(async () => {
+      // Superseded by a newer switch (rapid workspace/database toggling) or the
+      // connection is gone: do not run `use_database` nor touch any state.
+      if (!isLatestRequest() || get().activeConnectionId !== connectionId) return;
+      // Redundant switch: the connection already sits on this database with a
+      // fully completed metadata load — skip the backend round-trip entirely.
+      if (
+        get().currentDatabase === database
+        && lastCompletedDatabaseSwitchKey === completedKeyFor()
+      ) {
+        return;
+      }
+      set({ isSwitchingDatabase: true });
+      try {
+        await invokeMutation("use_database", { connectionId, database });
+        if (!isLatestRequest()) return;
+        set({ currentDatabase: database, schemaObjects: [], isSwitchingDatabase: false });
+        useUIStore.getState().removeTabsForStaleCatalog(connectionId, database);
+        await Promise.all([
+          get().fetchTables(connectionId, database),
+          get().fetchSchemaObjects(connectionId, database),
+        ]);
+        if (isLatestRequest()) {
+          lastCompletedDatabaseSwitchKey = completedKeyFor();
+        }
+      } catch (error) {
+        if (!isLatestRequest()) return;
+        set({
+          isSwitchingDatabase: false,
+          });
+        useGlobalErrorStore.getState().setError(`Failed to switch database: ${error}`);
+      }
+    });
+    // Keep the queue alive even when a switch fails.
+    databaseSwitchQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   },
 
   fetchTables: async (connectionId, database) =>
     runWithInFlight(inFlightTableFetches, metadataFetchKey(connectionId, database), async () => {
+      const targetDatabase = database ?? get().currentDatabase ?? null;
       set({ isLoadingTables: true });
       try {
         const tables = await getOrLoadSchemaTables(
-          { connectionId, database },
+          { connectionId, database: targetDatabase ?? undefined },
           () => invokeAIWorkspaceToolWithTimeout(
             "list_tables",
-            { connectionId, database: database || null },
+            { connectionId, database: targetDatabase || null },
             FRONTEND_TIMEOUTS.metadata,
             "Listing tables",
           ),
         );
+        // Staleness guard: drop results that belong to a database the user has
+        // already navigated away from (a slow or error-retried fetch overtaken
+        // by a switch). Otherwise the header shows one DB while the tree holds
+        // another DB's tables.
+        const current = get();
+        if (current.activeConnectionId !== connectionId || current.currentDatabase !== targetDatabase) {
+          return;
+        }
         set({ tables, isLoadingTables: false });
       } catch (error) {
+        const current = get();
+        const stillRelevant =
+          current.activeConnectionId === connectionId && current.currentDatabase === targetDatabase;
         set({
           isLoadingTables: false,
-          ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
-        });
-        useGlobalErrorStore
-          .getState()
-          .setError(`Failed to list tables: ${error}`);
+            });
+        if (stillRelevant) {
+          useGlobalErrorStore
+            .getState()
+            .setError(`Failed to list tables: ${error}`);
+        }
       }
     }),
 
   fetchSchemaObjects: async (connectionId, database) =>
     runWithInFlight(inFlightSchemaObjectFetches, metadataFetchKey(connectionId, database), async () => {
+      const targetDatabase = database ?? get().currentDatabase ?? null;
       set({ isLoadingSchemaObjects: true });
       try {
         const schemaObjects = await getOrLoadSchemaObjects(
-          { connectionId, database },
+          { connectionId, database: targetDatabase ?? undefined },
           () => invokeWithTimeout<SchemaObjectInfo[]>(
             "list_schema_objects",
-            { connectionId, database: database || null },
+            { connectionId, database: targetDatabase || null },
             FRONTEND_TIMEOUTS.metadata,
             "Listing schema objects",
           ),
         );
+        // Same staleness guard as fetchTables: a late response for a database
+        // the user already left must never overwrite the current tree.
+        const current = get();
+        if (current.activeConnectionId !== connectionId || current.currentDatabase !== targetDatabase) {
+          return;
+        }
         set({ schemaObjects, isLoadingSchemaObjects: false });
       } catch (error) {
+        const current = get();
+        const stillRelevant =
+          current.activeConnectionId === connectionId && current.currentDatabase === targetDatabase;
         set({
           isLoadingSchemaObjects: false,
-          ...(isMissingConnectionError(error) ? disconnectedPatch(get(), connectionId) : {}),
-        });
-        useGlobalErrorStore
-          .getState()
-          .setError(`Failed to list schema objects: ${error}`);
+            });
+        if (stillRelevant) {
+          useGlobalErrorStore
+            .getState()
+            .setError(`Failed to list schema objects: ${error}`);
+        }
       }
     }),
 

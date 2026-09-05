@@ -57,6 +57,15 @@
   --mm-warning-soft: rgba(197, 91, 0, 0.10);
   --mm-error-soft: rgba(215, 0, 21, 0.08);
 
+  /* Accent + surface aliases — several components reference --mm-accent and
+     --mm-surface, which were never defined; every color-mix() chain built on
+     them silently dropped its border/background (ask_user quick replies
+     rendered with no visible button frame). Point them at the canonical
+     brand tokens so the whole family resolves. */
+  --mm-accent: #007AFF;
+  --mm-accent-hover: #0A6CFF;
+  --mm-surface: var(--mm-surface-0);
+
   /* Surface */
   --mm-surface-0: #FFFFFF;
   --mm-surface-1: #F7F7F8;

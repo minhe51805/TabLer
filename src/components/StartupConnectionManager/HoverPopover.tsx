@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import type { HoverPopoverData } from "./types";
 import { useI18n } from "../../i18n";
 
@@ -12,12 +13,20 @@ export function HoverPopover({ data }: Props) {
 
   const { connection, statusLabel, endpointLabel, databaseLabel, isActive, isConnected, style } = data;
 
-  return (
+  // Portaled to <body> so no ancestor (overflow containers, backdrop-filter
+  // wrappers) can clip the popover; clamped so it never spills past the
+  // viewport edge when the hovered card sits near the right/bottom border.
+  const width = Math.min(244, window.innerWidth - 32);
+  const left = Math.max(8, Math.min(style.left, window.innerWidth - width - 8));
+  const top = Math.max(8, Math.min(style.top, window.innerHeight - 240));
+
+  return createPortal(
     <div
       className="startup-connection-floating-popover"
       style={{
-        top: `${style.top}px`,
-        left: `${style.left}px`,
+        top: `${top}px`,
+        left: `${left}px`,
+        width: `${width}px`,
       }}
     >
       <div className="startup-connection-hover-head">
@@ -61,6 +70,7 @@ export function HoverPopover({ data }: Props) {
           </span>
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

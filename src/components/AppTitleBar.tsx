@@ -6,9 +6,14 @@ import {
   Square,
   X,
   ChevronRight,
+  Database,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { RefObject } from "react";
+import { useState } from "react";
+import { useShallow } from "zustand/react/shallow";
+import { useConnectionStore } from "../stores/connectionStore";
+import { DatabaseVisibilityModal } from "./Sidebar/components/DatabaseVisibilityModal";
 import type { ConnectionConfig } from "../types/database";
 import { AppUpdateButton } from "./StartupConnectionManager/AppUpdateButton";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
@@ -279,6 +284,13 @@ export function AppTitleBar({
   isDesktopWindow,
   t,
 }: AppTitleBarProps) {
+  const { activeConnectionId, databases } = useConnectionStore(
+    useShallow((state) => ({
+      activeConnectionId: state.activeConnectionId,
+      databases: state.databases,
+    })),
+  );
+  const [dbVisibilityOpen, setDbVisibilityOpen] = useState(false);
   const renderWindowControls = (
     className?: string,
     options?: { lockSize?: boolean },
@@ -409,12 +421,31 @@ export function AppTitleBar({
               <span className="truncate">{t("titlebar.noActiveConnection")}</span>
             </div>
           )}
+          {isConnected && activeConn ? (
+            <button
+              type="button"
+              className="titlebar-db-visibility-btn"
+              title={t("dbVisibility.button")}
+              aria-label={t("dbVisibility.button")}
+              onClick={() => setDbVisibilityOpen(true)}
+            >
+              <Database className="w-3.5 h-3.5" />
+            </button>
+          ) : null}
         </div>
 
         <div className="titlebar-spacer" />
       </div>
 
       {renderWindowControls()}
+
+      <DatabaseVisibilityModal
+        open={dbVisibilityOpen}
+        connectionId={activeConnectionId}
+        databases={databases}
+        t={t}
+        onClose={() => setDbVisibilityOpen(false)}
+      />
     </header>
   );
 }

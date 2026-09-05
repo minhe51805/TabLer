@@ -12,7 +12,16 @@ import { deriveConnectionName, useConnectionStore } from "@/stores/connectionSto
 import { sanitizeConnectionConfig } from "@/stores/connectionStoreHelpers";
 import { useGlobalErrorStore } from "@/stores/globalErrorStore";
 import { useUIStore } from "@/stores/uiStore";
+import { resetSchemaCacheForTests } from "@/utils/schema-cache";
 import type { ConnectionConfig } from "@/types";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
 
 const connection = (updates: Partial<ConnectionConfig> = {}): ConnectionConfig => ({
   id: "connection-1",
@@ -67,6 +76,7 @@ describe("connectionStore", () => {
   beforeEach(() => {
     invokeMutationMock.mockReset();
     invokeWithTimeoutMock.mockReset();
+    resetSchemaCacheForTests();
     useGlobalErrorStore.getState().clearError();
     useUIStore.setState({ tabs: [], activeTabId: null });
     useConnectionStore.setState({
@@ -144,7 +154,9 @@ describe("connectionStore", () => {
     );
   });
 
-  it("clears stale connection state when metadata reports a missing connection", async () => {
+  it("keeps the workspace connected when metadata reports a missing connection", async () => {
+    // A single failed metadata command must NOT tear the workspace down or
+    // kick the user back to the launcher; only an explicit disconnect does.
     useConnectionStore.setState({
       activeConnectionId: "connection-1",
       connectedIds: new Set(["connection-1"]),
@@ -154,8 +166,8 @@ describe("connectionStore", () => {
 
     await useConnectionStore.getState().fetchTables("connection-1", "app");
 
-    expect(useConnectionStore.getState().activeConnectionId).toBeNull();
-    expect(useConnectionStore.getState().connectedIds.size).toBe(0);
+    expect(useConnectionStore.getState().activeConnectionId).toBe("connection-1");
+    expect(useConnectionStore.getState().connectedIds.has("connection-1")).toBe(true);
     expect(useGlobalErrorStore.getState().error).toContain("Failed to list tables");
   });
 
@@ -187,6 +199,108 @@ describe("connectionStore", () => {
 
     expect(useUIStore.getState().tabs.map((tab) => tab.id)).toEqual(["query-1"]);
     expect(useConnectionStore.getState().currentDatabase).toBe("analytics");
+  });
+
+  it("serializes rapid switches so a superseded switch cannot clobber tables", async () => {
+    const slowTables = deferred<unknown>();
+    invokeMutationMock.mockResolvedValue(undefined);
+    invokeWithTimeoutMock.mockImplementation((command: string, args: { database?: string | null }) => {
+      if (command === "list_tables") {
+        const database = args?.database ?? "";
+        // The first (soon superseded) switch resolves its metadata very late.
+        if (database === "slow-a") return slowTables.promise;
+        return Promise.resolve([{ name: `table_${database}`, table_type: "table" }]);
+      }
+      return Promise.resolve([]);
+    });
+    useConnectionStore.setState({
+      activeConnectionId: "connection-1",
+      connectedIds: new Set(["connection-1"]),
+      currentDatabase: null,
+    });
+
+    const first = useConnectionStore.getState().switchDatabase("connection-1", "slow-a");
+    const second = useConnectionStore.getState().switchDatabase("connection-1", "fast-b");
+    await Promise.all([first, second]);
+
+    // The superseded switch must never run `use_database` nor write its
+    // tables; only the newest switch (fast-b) may land.
+    const useCalls = invokeMutationMock.mock.calls.filter((call) => call[0] === "use_database");
+    expect(useCalls).toHaveLength(1);
+    expect(useCalls[0][1]).toEqual({ connectionId: "connection-1", database: "fast-b" });
+    expect(useConnectionStore.getState().currentDatabase).toBe("fast-b");
+    expect(useConnectionStore.getState().tables).toEqual([{ name: "table_fast-b", table_type: "table" }]);
+    expect(useConnectionStore.getState().isSwitchingDatabase).toBe(false);
+  });
+
+  it("skips the backend round-trip when re-selecting the current database", async () => {
+    invokeMutationMock.mockResolvedValue(undefined);
+    invokeWithTimeoutMock.mockResolvedValue([]);
+    useConnectionStore.setState({
+      activeConnectionId: "connection-1",
+      connectedIds: new Set(["connection-1"]),
+      currentDatabase: "analytics",
+    });
+
+    const { switchDatabase } = useConnectionStore.getState();
+    await switchDatabase("connection-1", "analytics");
+    expect(
+      invokeMutationMock.mock.calls.filter(([command]) => command === "use_database"),
+    ).toHaveLength(1);
+  });
+
+  it("keeps displayed metadata when reconnecting to the same connection and database", async () => {
+    invokeMutationMock.mockResolvedValue(undefined);
+    // connect_database resolves; metadata fetches stay pending so the
+    // preserved state is observable without any re-fetch landing.
+    invokeWithTimeoutMock.mockImplementation((command: string) => {
+      if (command === "connect_database") return Promise.resolve(undefined);
+      return new Promise(() => {});
+    });
+    const tables = [{ name: "users", table_type: "table" }];
+    const schemaObjects = [{ name: "v_orders", object_type: "view" }];
+    useConnectionStore.setState({
+      activeConnectionId: "connection-1",
+      connectedIds: new Set(["connection-1"]),
+      currentDatabase: "analytics",
+      tables,
+      schemaObjects,
+    });
+
+    await useConnectionStore.getState().connectToDatabase(
+      connection({ id: "connection-1", database: "analytics" }),
+    );
+
+    const state = useConnectionStore.getState();
+    expect(state.isConnecting).toBe(false);
+    expect(state.currentDatabase).toBe("analytics");
+    // Same connection + same database: the on-screen metadata survives.
+    expect(state.tables).toEqual([{ name: "users", table_type: "table" }]);
+    expect(state.schemaObjects).toEqual(schemaObjects);
+  });
+
+  it("clears displayed metadata when connecting to a different database", async () => {
+    invokeMutationMock.mockResolvedValue(undefined);
+    invokeWithTimeoutMock.mockImplementation((command: string) => {
+      if (command === "connect_database") return Promise.resolve(undefined);
+      return new Promise(() => {});
+    });
+    useConnectionStore.setState({
+      activeConnectionId: "connection-1",
+      connectedIds: new Set(["connection-1"]),
+      currentDatabase: "analytics",
+      tables: [{ name: "old_table", table_type: "table" }],
+      schemaObjects: [{ name: "v_orders", object_type: "view" }],
+    });
+
+    await useConnectionStore.getState().connectToDatabase(
+      connection({ id: "connection-1", database: "other" }),
+    );
+
+    const state = useConnectionStore.getState();
+    expect(state.currentDatabase).toBe("other");
+    expect(state.schemaObjects).toEqual([]);
+    expect(state.tables).toEqual([]);
   });
 
   it("removes connection tabs after a successful disconnect", async () => {

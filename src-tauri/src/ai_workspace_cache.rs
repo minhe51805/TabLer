@@ -31,6 +31,48 @@ pub struct WorkspaceDigestEntry {
     pub updated_at: i64,
 }
 
+/// A persisted AI chat attachment (image or text file). `data` holds base64
+/// image bytes (no data-URL prefix) or the text file contents; it is excluded
+/// from listing payloads so the manager stays light and image bytes are only
+/// fetched on demand.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIAttachmentRecord {
+    pub id: String,
+    pub workspace_key: String,
+    pub thread_id: String,
+    /// "image" | "text"
+    pub kind: String,
+    pub name: String,
+    pub mime_type: String,
+    pub size: i64,
+    pub data: String,
+    pub created_at: i64,
+}
+
+/// Listing row: everything except `data`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIAttachmentMeta {
+    pub id: String,
+    pub workspace_key: String,
+    pub thread_id: String,
+    pub kind: String,
+    pub name: String,
+    pub mime_type: String,
+    pub size: i64,
+    pub created_at: i64,
+}
+
+/// On-demand payload for rendering a persisted attachment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIAttachmentData {
+    pub id: String,
+    pub mime_type: String,
+    pub data: String,
+}
+
 #[derive(Clone)]
 pub struct AIWorkspaceCacheStorage {
     file_path: PathBuf,
@@ -118,6 +160,25 @@ impl AIWorkspaceCacheStorage {
         .execute(pool)
         .await
         .map_err(|error| format!("Failed to create thread memory schema: {error}"))?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS ai_attachments (
+                id TEXT PRIMARY KEY,
+                workspace_key TEXT NOT NULL,
+                thread_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                size INTEGER NOT NULL,
+                data TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .map_err(|error| format!("Failed to create AI attachment schema: {error}"))?;
 
         sqlx::query(
             r#"
@@ -468,6 +529,143 @@ impl AIWorkspaceCacheStorage {
             .map_err(|error| format!("Failed to delete thread memory: {error}"))?;
         Ok(())
     }
+
+    /// Persists chat attachments. Existing ids are kept (INSERT OR IGNORE) so a
+    /// retry never duplicates rows or overwrites stored bytes.
+    pub async fn save_ai_attachments(
+        &self,
+        attachments: &[AIAttachmentRecord],
+    ) -> Result<(), String> {
+        if attachments.is_empty() {
+            return Ok(());
+        }
+        let pool = self.connect_pool().await?;
+        for record in attachments {
+            sqlx::query(
+                r#"
+                INSERT OR IGNORE INTO ai_attachments
+                    (id, workspace_key, thread_id, kind, name, mime_type, size, data, created_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                "#,
+            )
+            .bind(&record.id)
+            .bind(&record.workspace_key)
+            .bind(&record.thread_id)
+            .bind(&record.kind)
+            .bind(&record.name)
+            .bind(&record.mime_type)
+            .bind(record.size)
+            .bind(&record.data)
+            .bind(record.created_at)
+            .execute(&pool)
+            .await
+            .map_err(|error| format!("Failed to save AI attachment: {error}"))?;
+        }
+        Ok(())
+    }
+
+    /// Lists attachment metadata (no `data`) newest-first for the manager UI.
+    pub async fn list_ai_attachments(&self) -> Result<Vec<AIAttachmentMeta>, String> {
+        let pool = self.connect_pool().await?;
+        let rows = sqlx::query(
+            r#"
+            SELECT id, workspace_key, thread_id, kind, name, mime_type, size, created_at
+            FROM ai_attachments
+            ORDER BY created_at DESC
+            "#,
+        )
+        .fetch_all(&pool)
+        .await
+        .map_err(|error| format!("Failed to list AI attachments: {error}"))?;
+
+        Ok(rows
+            .iter()
+            .map(|row| AIAttachmentMeta {
+                id: row.try_get("id").unwrap_or_default(),
+                workspace_key: row.try_get("workspace_key").unwrap_or_default(),
+                thread_id: row.try_get("thread_id").unwrap_or_default(),
+                kind: row.try_get("kind").unwrap_or_default(),
+                name: row.try_get("name").unwrap_or_default(),
+                mime_type: row.try_get("mime_type").unwrap_or_default(),
+                size: row.try_get("size").unwrap_or_default(),
+                created_at: row.try_get("created_at").unwrap_or_default(),
+            })
+            .collect())
+    }
+
+    /// Fetches stored payloads for the given attachment ids (rendering, resend).
+    pub async fn get_ai_attachment_data(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<AIAttachmentData>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let pool = self.connect_pool().await?;
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            let row = sqlx::query("SELECT id, mime_type, data FROM ai_attachments WHERE id = ?1")
+                .bind(id)
+                .fetch_optional(&pool)
+                .await
+                .map_err(|error| format!("Failed to load AI attachment: {error}"))?;
+            if let Some(row) = row {
+                results.push(AIAttachmentData {
+                    id: row.try_get("id").unwrap_or_default(),
+                    mime_type: row.try_get("mime_type").unwrap_or_default(),
+                    data: row.try_get("data").unwrap_or_default(),
+                });
+            }
+        }
+        Ok(results)
+    }
+
+    pub async fn delete_ai_attachments(&self, ids: &[String]) -> Result<(), String> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let pool = self.connect_pool().await?;
+        for id in ids {
+            sqlx::query("DELETE FROM ai_attachments WHERE id = ?1")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .map_err(|error| format!("Failed to delete AI attachment: {error}"))?;
+        }
+        Ok(())
+    }
+
+    pub async fn delete_all_ai_attachments(&self) -> Result<i64, String> {
+        let pool = self.connect_pool().await?;
+        let result = sqlx::query("DELETE FROM ai_attachments")
+            .execute(&pool)
+            .await
+            .map_err(|error| format!("Failed to delete AI attachments: {error}"))?;
+        Ok(result.rows_affected() as i64)
+    }
+
+    pub async fn delete_ai_attachments_for_workspace(
+        &self,
+        workspace_key: &str,
+    ) -> Result<(), String> {
+        let pool = self.connect_pool().await?;
+        sqlx::query("DELETE FROM ai_attachments WHERE workspace_key = ?1")
+            .bind(workspace_key)
+            .execute(&pool)
+            .await
+            .map_err(|error| format!("Failed to delete AI attachments: {error}"))?;
+        Ok(())
+    }
+
+    pub async fn delete_ai_attachments_for_thread(&self, thread_id: &str) -> Result<(), String> {
+        let pool = self.connect_pool().await?;
+        sqlx::query("DELETE FROM ai_attachments WHERE thread_id = ?1")
+            .bind(thread_id)
+            .execute(&pool)
+            .await
+            .map_err(|error| format!("Failed to delete AI attachments: {error}"))?;
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -506,9 +704,56 @@ pub async fn delete_thread_memory_for_thread(thread_id: String) -> Result<(), St
         .await
 }
 
+#[tauri::command]
+pub async fn save_ai_attachments(attachments: Vec<AIAttachmentRecord>) -> Result<(), String> {
+    AIWorkspaceCacheStorage::new()?
+        .save_ai_attachments(&attachments)
+        .await
+}
+
+#[tauri::command]
+pub async fn list_ai_attachments() -> Result<Vec<AIAttachmentMeta>, String> {
+    AIWorkspaceCacheStorage::new()?.list_ai_attachments().await
+}
+
+#[tauri::command]
+pub async fn get_ai_attachment_data(ids: Vec<String>) -> Result<Vec<AIAttachmentData>, String> {
+    AIWorkspaceCacheStorage::new()?
+        .get_ai_attachment_data(&ids)
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_ai_attachments(ids: Vec<String>) -> Result<(), String> {
+    AIWorkspaceCacheStorage::new()?
+        .delete_ai_attachments(&ids)
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_all_ai_attachments() -> Result<i64, String> {
+    AIWorkspaceCacheStorage::new()?
+        .delete_all_ai_attachments()
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_ai_attachments_for_workspace(workspace_key: String) -> Result<(), String> {
+    AIWorkspaceCacheStorage::new()?
+        .delete_ai_attachments_for_workspace(&workspace_key)
+        .await
+}
+
+#[tauri::command]
+pub async fn delete_ai_attachments_for_thread(thread_id: String) -> Result<(), String> {
+    AIWorkspaceCacheStorage::new()?
+        .delete_ai_attachments_for_thread(&thread_id)
+        .await
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AIWorkspaceCacheStorage, WorkspaceContextSnapshot};
+    use super::{AIAttachmentRecord, AIWorkspaceCacheStorage, WorkspaceContextSnapshot};
     use serde_json::json;
     use std::path::PathBuf;
     use uuid::Uuid;
@@ -592,6 +837,53 @@ mod tests {
         assert_eq!(mine.len(), 2);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn saves_lists_and_deletes_ai_attachments() {
+        let path = temp_cache_db_path();
+        let storage =
+            AIWorkspaceCacheStorage::new_with_file(path.clone()).expect("storage should build");
+
+        let record = AIAttachmentRecord {
+            id: "att-1".to_string(),
+            workspace_key: "ws-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            kind: "image".to_string(),
+            name: "shot.png".to_string(),
+            mime_type: "image/png".to_string(),
+            size: 4,
+            data: "AAAA".to_string(),
+            created_at: 1_700_000_000_000,
+        };
+        storage
+            .save_ai_attachments(&[record.clone()])
+            .await
+            .expect("save should succeed");
+        // INSERT OR IGNORE: a duplicate save must not fail or duplicate.
+        storage
+            .save_ai_attachments(&[record])
+            .await
+            .expect("duplicate save should succeed");
+
+        let listed = storage.list_ai_attachments().await.expect("list works");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "att-1");
+        assert_eq!(listed[0].kind, "image");
+
+        let data = storage
+            .get_ai_attachment_data(&["att-1".to_string()])
+            .await
+            .expect("data works");
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0].data, "AAAA");
+
+        storage
+            .delete_ai_attachments(&["att-1".to_string()])
+            .await
+            .expect("delete works");
+        let emptied = storage.list_ai_attachments().await.expect("list works");
+        assert!(emptied.is_empty());
     }
 
     #[tokio::test]

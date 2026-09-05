@@ -1,4 +1,5 @@
-import { ChevronRight, LoaderCircle, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { ChevronRight, LoaderCircle, Pencil, Trash2 } from "lucide-react";
 import type { ConnectionRowProps } from "./types";
 
 interface Props extends ConnectionRowProps {
@@ -7,6 +8,8 @@ interface Props extends ConnectionRowProps {
   envBadge?: { label: string; color: string } | null;
   onDelete: () => void;
   deleteLabel: string;
+  onRename: (name: string) => void;
+  renameLabel: string;
 }
 
 export function ConnectionRow({
@@ -14,6 +17,8 @@ export function ConnectionRow({
   onClick,
   onDelete,
   deleteLabel,
+  onRename,
+  renameLabel,
   onMouseEnter,
   onMouseLeave,
   tagName,
@@ -33,6 +38,15 @@ export function ConnectionRow({
     databaseLabel,
     secondaryBadgeLabel,
   } = data;
+
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(connection.name);
+
+  const commitRename = () => {
+    const next = renameValue.trim();
+    setIsRenaming(false);
+    if (next && next !== connection.name) onRename(next);
+  };
 
   return (
     <div
@@ -74,9 +88,29 @@ export function ConnectionRow({
 
       <div className="startup-connection-copy">
         <div className="startup-connection-title-row">
+          {isRenaming ? (
+            <input
+              type="text"
+              className="startup-connection-rename-input"
+              autoFocus
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onBlur={commitRename}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") commitRename();
+                if (event.key === "Escape") {
+                  setRenameValue(connection.name);
+                  setIsRenaming(false);
+                }
+              }}
+            />
+          ) : (
           <strong className="startup-connection-title">
             {connection.name || "Untitled"}
           </strong>
+          )}
 
           <div className="startup-connection-title-actions">
             {envBadge ? (
@@ -134,6 +168,21 @@ export function ConnectionRow({
             {statusLabel}
           </span>
         ) : null}
+
+        <button
+          type="button"
+          className="startup-connection-rename"
+          onClick={(event) => {
+            event.stopPropagation();
+            setRenameValue(connection.name);
+            setIsRenaming(true);
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+          title={renameLabel}
+          aria-label={renameLabel}
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
 
         <button
           type="button"

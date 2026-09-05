@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { agentToolAvailability } from "@/components/AISlidePanel/ai-agent-engine-gates";
+import { nativeToolPayloadForProvider } from "@/components/AISlidePanel/ai-agent-tool-schema";
 import {
   buildAgentControllerPrompt,
+  detectDatabaseMentionMismatch,
   buildAgentPlanPrompt,
   buildAgentRecoveryContext,
   buildAgentVisibleTableNames,
@@ -13,6 +15,38 @@ import {
 } from "@/components/AISlidePanel/ai-agent-context";
 
 describe("AI agent context builder", () => {
+  describe("detectDatabaseMentionMismatch", () => {
+    it("flags a different database explicitly mentioned in the prompt", () => {
+      expect(
+        detectDatabaseMentionMismatch({
+          userPrompt: "liet ke hoa don trong db QL_CUA_HANG",
+          knownDatabaseNames: ["QL_BAN_HANG", "QL_CUA_HANG"],
+          boundDatabase: "QL_BAN_HANG",
+        }),
+      ).toBe("QL_CUA_HANG");
+    });
+
+    it("returns null when the prompt mentions only the bound database", () => {
+      expect(
+        detectDatabaseMentionMismatch({
+          userPrompt: "show me all orders in QL_BAN_HANG",
+          knownDatabaseNames: ["QL_BAN_HANG", "QL_CUA_HANG"],
+          boundDatabase: "QL_BAN_HANG",
+        }),
+      ).toBeNull();
+    });
+
+    it("does not fire on substring collisions", () => {
+      expect(
+        detectDatabaseMentionMismatch({
+          userPrompt: "analyze salestrends for me",
+          knownDatabaseNames: ["QL_BAN_HANG", "sales"],
+          boundDatabase: "QL_BAN_HANG",
+        }),
+      ).toBeNull();
+    });
+  });
+
   it("builds workspace identifiers without duplicating the active database qualifier", () => {
     expect(buildWorkspaceTableIdentifier({ name: "users", schema: "public" }, "public"))
       .toBe("users");
@@ -102,11 +136,19 @@ describe("AI agent context builder", () => {
       workspaceToolsEnabled: true,
     });
 
-    expect(prompt).toContain('"action":"run_readonly_sql"');
-    expect(prompt).toContain('"action":"search_schema"');
-    expect(prompt).toContain('"action":"sample_table_data"');
-    expect(prompt).toContain('"action":"describe_tables"');
-    expect(prompt).toContain('"action":"ask_user"');
+    expect(prompt).toContain("native function calling");
+    // Tool schemas travel in the native payload; gating must still hold there.
+    const nativePayload = JSON.stringify(
+      nativeToolPayloadForProvider("openai", {
+        workspaceToolsEnabled: true,
+        availability: { sqlRead: true, sqlWritePreview: true },
+      }),
+    );
+    expect(nativePayload).toContain('"run_readonly_sql"');
+    expect(nativePayload).toContain('"search_schema"');
+    expect(nativePayload).toContain('"sample_table_data"');
+    expect(nativePayload).toContain('"describe_table"');
+    expect(nativePayload).toContain('"ask_user"');
     expect(prompt).toContain("every table in FROM or JOIN must be inspected");
     expect(prompt).toContain("Observation (older, condensed)");
     expect(prompt).not.toContain("narration");
@@ -142,9 +184,16 @@ describe("AI agent context builder", () => {
     });
 
     expect(prompt).toContain("Engine: MongoDB (document)");
-    expect(prompt).not.toContain('"action":"run_readonly_sql"');
-    expect(prompt).not.toContain('"action":"preview_write"');
-    expect(prompt).toContain('"action":"sample_table_data"');
+    // SQL gating moves to the native payload: MongoDB must not receive the
+    // read-only SQL tool at all.
+    const mongoPayload = JSON.stringify(
+      nativeToolPayloadForProvider("openai", {
+        workspaceToolsEnabled: true,
+        availability: agentToolAvailability("mongodb"),
+      }),
+    );
+    expect(mongoPayload).not.toContain('"run_readonly_sql"');
+    expect(mongoPayload).not.toContain('"preview_write"');
     expect(prompt).toContain("Omit finish.args.sql");
     expect(prompt).not.toContain("run run_readonly_sql before finishing");
   });
@@ -159,8 +208,15 @@ describe("AI agent context builder", () => {
       workspaceToolsEnabled: true,
       toolAvailability: agentToolAvailability("clickhouse"),
     });
-    expect(prompt).toContain('"action":"run_readonly_sql"');
-    expect(prompt).toContain('"action":"preview_write"');
+    expect(prompt).toContain("native function calling");
+    const clickhousePayload = JSON.stringify(
+      nativeToolPayloadForProvider("openai", {
+        workspaceToolsEnabled: true,
+        availability: agentToolAvailability("clickhouse"),
+      }),
+    );
+    expect(clickhousePayload).toContain('"run_readonly_sql"');
+    expect(clickhousePayload).toContain('"preview_write"');
   });
 
   it("injects pre-inspected summaries and caps them to save describe_table steps", () => {
@@ -184,6 +240,20 @@ describe("AI agent context builder", () => {
     expect(prompt).not.toContain("T=extra_6");
   });
 
+  it("forbids fabricated toolbelt limits and finishing over untried plan steps", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "Run the full capability test",
+      assistIntent: "sql",
+      currentDatabase: "db",
+      availableTableNames: ["t"],
+      steps: [],
+      workspaceToolsEnabled: true,
+    });
+    expect(prompt).toContain("Never invent limits on your own toolbelt");
+    expect(prompt).toContain("do not finish. A step may end blocked");
+    expect(prompt).toContain("Report every step honestly");
+  });
+
   it("caps oversized controller prompts and composes optional instructions", () => {
     const prompt = buildAgentControllerPrompt({
       userPrompt: "x".repeat(60_000),
@@ -198,5 +268,75 @@ describe("AI agent context builder", () => {
     expect(prompt.length).toBeLessThanOrEqual(48_000);
     expect(prompt).toContain("Trace truncated to fit the prompt budget");
     expect(joinAgentInstructions(" first ", undefined, "", " second ")).toBe("first second");
+  });
+});
+
+describe("agent memory index injection", () => {
+  it("injects the <agent_memory> index with freshness stamps", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "summarize orders",
+      assistIntent: "sql",
+      currentDatabase: "appdb",
+      availableTableNames: ["orders"],
+      steps: [],
+      workspaceToolsEnabled: true,
+      agentMemoryIndex: [
+        {
+          name: "metric-definitions",
+          description: "revenue = net sales minus refunds",
+          updatedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+    });
+    expect(prompt).toContain("<agent_memory>");
+    expect(prompt).toContain("metric-definitions");
+    expect(prompt).toContain("2026-01-01T00:00:00Z");
+    expect(prompt).toContain("read_memory");
+    expect(prompt).toContain("never credentials");
+  });
+
+  it("omits the memory block when the index is empty", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "hi",
+      assistIntent: "general",
+      currentDatabase: null,
+      availableTableNames: [],
+      steps: [],
+      workspaceToolsEnabled: true,
+      agentMemoryIndex: [],
+    });
+    expect(prompt).not.toContain("<agent_memory>");
+  });
+});
+
+describe("query tab context injection", () => {
+  it("injects open query tabs with their tabId and current sql", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "fix the orders query",
+      assistIntent: "sql",
+      currentDatabase: "appdb",
+      availableTableNames: ["orders"],
+      steps: [],
+      workspaceToolsEnabled: true,
+      queryTabs: [
+        { tabId: "tab-7", title: "orders report", sql: "SELECT * FROM orders WHERE statuz = 1" },
+      ],
+    });
+    expect(prompt).toContain("<query_tab>");
+    expect(prompt).toContain("tab-7");
+    expect(prompt).toContain("edit_query_sql");
+    expect(prompt).toContain("preview_write");
+  });
+
+  it("omits the query tab block when none are provided", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "hi",
+      assistIntent: "general",
+      currentDatabase: null,
+      availableTableNames: [],
+      steps: [],
+      workspaceToolsEnabled: true,
+    });
+    expect(prompt).not.toContain("<query_tab>");
   });
 });

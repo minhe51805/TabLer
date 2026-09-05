@@ -1,5 +1,6 @@
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, memo, useMemo, type ReactNode, useState } from "react";
 import { Check, Copy } from "lucide-react";
+import { formatAgentSql } from "../../utils/ai-sql-format";
 
 interface AIWorkspaceMarkdownProps {
   text?: string | null;
@@ -99,18 +100,25 @@ function renderSqlCode(code: string, keyPrefix: string): ReactNode[] {
 function MarkdownCodeBlock({ language, code }: { language?: string; code: string }) {
   const [copied, setCopied] = useState(false);
 
+  const label = language ? language.toLowerCase() : "code";
+  const isSql = SQL_LANGUAGE_PATTERN.test(label);
+
+  // Pretty-print SQL (line breaks + indentation) once per snippet; plain code
+  // and unparseable SQL pass through untouched.
+  const displayCode = useMemo(
+    () => (isSql ? formatAgentSql(code, language) : code),
+    [code, language, isSql],
+  );
+
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(code);
+      await navigator.clipboard.writeText(displayCode);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
       setCopied(false);
     }
   };
-
-  const label = language ? language.toLowerCase() : "code";
-  const isSql = SQL_LANGUAGE_PATTERN.test(label);
 
   return (
     <div className="ai-workspace-markdown-code-frame">
@@ -129,12 +137,20 @@ function MarkdownCodeBlock({ language, code }: { language?: string; code: string
         </button>
       </div>
       <pre className="ai-workspace-markdown-code" data-language={language ?? ""}>
-        {isSql ? renderSqlCode(code, "sql") : code}
+        {isSql ? renderSqlCode(displayCode, "sql") : displayCode}
       </pre>
     </div>
   );
 }
 
+/**
+ * Standalone SQL code frame (formatted + highlighted + copy button) for
+ * callers that hold a raw SQL string outside a markdown document, e.g. the
+ * agent SQL block on a chat bubble.
+ */
+export function AIWorkspaceSqlBlock({ code }: { code: string }) {
+  return <MarkdownCodeBlock language="sql" code={code} />;
+}
 function isTableSeparator(line: string) {
   return /^\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?$/.test(line.trim());
 }
@@ -143,15 +159,23 @@ const SQL_BLOCK_START_PATTERN =
   /^(?:SELECT|WITH|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+(?:TABLE|VIEW|INDEX|DATABASE|SCHEMA|TRIGGER|FUNCTION)|DROP\s+(?:TABLE|VIEW|INDEX|DATABASE|SCHEMA)|ALTER\s+TABLE|EXPLAIN|SHOW\s+(?:TABLES|DATABASES|COLUMNS)|DESCRIBE|PRAGMA)\b/i;
 const SQL_BLOCK_BODY_PATTERN = /\b(?:FROM|INTO|SET|VALUES|TABLE|JOIN)\b/i;
 
+/** Unmistakable SQL clause structure: FROM plus a second clause keyword. */
+const SQL_CLAUSE_HINT_PATTERN = /\b(?:JOIN|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|UNION|ON\s+["\w.]+\s*=)\b/i;
+
 /**
- * Detects unfenced SQL paragraphs so they render as code frames. Kept
- * conservative: a single line without a trailing ";" (e.g. "SELECT server as a
- * concept?") is treated as prose, not SQL.
+ * Detects unfenced SQL paragraphs so they render as formatted code frames.
+ * Prose questions like "SELECT server as a concept?" stay prose; but a
+ * single-line query without a trailing semicolon that carries real clause
+ * structure (FROM + JOIN/WHERE/ORDER BY...) is SQL and gets pretty-printed.
  */
 function isLikelySqlParagraph(lines: string[]) {
-  if (!SQL_BLOCK_START_PATTERN.test(lines[0])) return false;
-  if (!SQL_BLOCK_BODY_PATTERN.test(lines.join("\n"))) return false;
-  if (lines.length === 1 && !/;\s*$/.test(lines[0])) return false;
+  const first = lines[0] ?? "";
+  if (!SQL_BLOCK_START_PATTERN.test(first)) return false;
+  const joined = lines.join("\n");
+  if (!SQL_BLOCK_BODY_PATTERN.test(joined)) return false;
+  if (lines.length === 1 && !/;\s*$/.test(first)) {
+    return SQL_CLAUSE_HINT_PATTERN.test(first) && !/\?\s*$/.test(first);
+  }
   return true;
 }
 
@@ -367,8 +391,12 @@ function parseMarkdownBlocks(text: string): MarkdownBlock[] {
   return blocks;
 }
 
-export function AIWorkspaceMarkdown({ text, className, compact = false }: AIWorkspaceMarkdownProps) {
-  const blocks = parseMarkdownBlocks(text ?? "");
+export const AIWorkspaceMarkdown = memo(function AIWorkspaceMarkdown({ text, className, compact = false }: AIWorkspaceMarkdownProps) {
+  // Parsing is the expensive part of every message render; memoizing on `text`
+  // keeps unchanged bubbles cheap when the conversation re-renders (agent
+  // progress, streaming chunks, composer keystrokes...).
+  const blocks = useMemo(() => parseMarkdownBlocks(text ?? ""), [text]);
+
 
   if (!blocks.length) return null;
 
@@ -441,4 +469,4 @@ export function AIWorkspaceMarkdown({ text, className, compact = false }: AIWork
       })}
     </div>
   );
-}
+})

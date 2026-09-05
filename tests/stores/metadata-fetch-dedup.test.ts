@@ -30,6 +30,9 @@ describe("metadata fetch dedup", () => {
     const d = deferred<unknown>();
     invokeMock.mockReturnValue(d.promise);
 
+    // Realistic state: the guard drops responses for scopes the user already
+    // left, so the test must mirror an active session for this scope.
+    useConnectionStore.setState({ activeConnectionId: "conn-1", currentDatabase: "db" });
     const { fetchTables } = useConnectionStore.getState();
     const p1 = fetchTables("conn-1", "db");
     const p2 = fetchTables("conn-1", "db");
@@ -66,6 +69,7 @@ describe("metadata fetch dedup", () => {
     const d = deferred<unknown>();
     invokeMock.mockReturnValue(d.promise);
 
+    useConnectionStore.setState({ activeConnectionId: "conn-1", currentDatabase: "db" });
     const { fetchSchemaObjects } = useConnectionStore.getState();
     const p1 = fetchSchemaObjects("conn-1", "db");
     const p2 = fetchSchemaObjects("conn-1", "db");

@@ -26,6 +26,42 @@
   animation: qs-slide-in 0.15s ease;
 }
 
+/* Overlay + panel pair used by GlobalSearchPanel / SchemaDiffView / ImportWizard
+   (these render inline inside AppGlobalModals, so they need their own fixed
+   backdrop — unlike QuickSwitcher which mounts a qs-backdrop itself). */
+.qs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 15vh;
+}
+
+.qs-panel {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--mm-surface-0);
+  border: 1px solid rgba(0, 122, 255, 0.4);
+  border-radius: 10px;
+  box-shadow: var(--mm-shadow-3), rgba(0, 122, 255, 0.1) 0 0 0 1px;
+  overflow: hidden;
+  animation: qs-slide-in 0.15s ease;
+}
+
+.qs-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--mm-border);
+}
+
 .qs-search {
   display: flex;
   align-items: center;

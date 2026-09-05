@@ -7,6 +7,10 @@ pub struct TableInfo {
     pub table_type: String,
     pub row_count: Option<i64>,
     pub engine: Option<String>,
+    /// Object creation date (ISO `yyyy-mm-dd`); SQL Server only — other
+    /// providers leave this `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +75,10 @@ pub struct SchemaObjectInfo {
     pub object_type: String,
     pub related_table: Option<String>,
     pub definition: Option<String>,
+    /// Object creation date (ISO `yyyy-mm-dd`); SQL Server only — other
+    /// providers leave this `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub create_date: Option<String>,
 }
 
 /// A single value for FK lookup dropdowns: { value, label }

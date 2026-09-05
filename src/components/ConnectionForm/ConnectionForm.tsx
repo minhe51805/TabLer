@@ -96,6 +96,9 @@ export function ConnectionForm({
   const [showSqliteAdvancedPath, setShowSqliteAdvancedPath] = useState(false);
   const [sqlitePathTouched, setSqlitePathTouched] = useState(false);
   const bootstrapFileInputRef = useRef<HTMLInputElement | null>(null);
+  // Tracks whether the user manually picked a SQL Server authentication mode;
+  // until then the auto-detection effect keeps it in sync with the host.
+  const mssqlAuthTypeTouchedRef = useRef(false);
 
   // --- Derived ---
   const bootstrapMode = !editConnection && intentMode === "bootstrap";
@@ -384,6 +387,10 @@ export function ConnectionForm({
   };
 
   const updateAdditionalField = (key: string, value: string) => {
+    if (key === "auth_type") {
+      // Once the user picks an authentication mode manually, stop overriding it.
+      mssqlAuthTypeTouchedRef.current = true;
+    }
     setFormData((prev) => ({
       ...prev,
       additional_fields: {
@@ -395,6 +402,31 @@ export function ConnectionForm({
   };
 
   const handleSelectDb = (db: DbEntry) => setSelectedDb(db);
+
+  // --- SSMS-style authentication auto-detection for SQL Server --------------
+  // SERVER\INSTANCE / local servers default to Windows Authentication;
+  // Azure SQL (*.database.windows.net) defaults to SQL Server Authentication.
+  // The choice is only applied until the user picks one manually.
+  useEffect(() => {
+    if (formData.db_type !== "mssql") {
+      mssqlAuthTypeTouchedRef.current = false;
+      return;
+    }
+    const host = (formData.host ?? "").trim().toLowerCase();
+    if (!host) return;
+    const detected = host.includes("database.windows.net") ? "sql" : "windows";
+    setFormData((prev) => {
+      if (mssqlAuthTypeTouchedRef.current) return prev;
+      if ((prev.additional_fields?.auth_type ?? "") === detected) return prev;
+      return {
+        ...prev,
+        additional_fields: {
+          ...(prev.additional_fields ?? {}),
+          auth_type: detected,
+        },
+      };
+    });
+  }, [formData.db_type, formData.host]);
 
   const handleSwitchIntent = (nextIntent: "connect" | "bootstrap") => {
     if (editConnection || nextIntent === intentMode) return;

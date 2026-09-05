@@ -242,7 +242,6 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
         ],
       },
     ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       t, isConnected, supportsSqlFileActions, connectionsCount, uiFontScale, vimModeEnabled,
       themeMenuLabel, toggleTerminalLabel, themeMenuOptions, activeTheme.id,

@@ -15,6 +15,62 @@ const COLORS = [
 ];
 
 export function getBootstrapPresetSql(preset: BootstrapPreset, dbType: DatabaseType) {
+  // SQL Server has no CREATE TABLE IF NOT EXISTS; use OBJECT_ID guards.
+  if (dbType === "mssql") {
+    const ts = "DATETIME2 DEFAULT CURRENT_TIMESTAMP";
+
+    if (preset === "starter_core") {
+      return [
+        "IF OBJECT_ID(N'dbo.users', N'U') IS NULL",
+        "CREATE TABLE dbo.users (",
+        "  id BIGINT PRIMARY KEY,",
+        "  email VARCHAR(255) NOT NULL,",
+        "  full_name VARCHAR(255),",
+        `  created_at ${ts}`,
+        ");",
+        "",
+        "IF OBJECT_ID(N'dbo.audit_log', N'U') IS NULL",
+        "CREATE TABLE dbo.audit_log (",
+        "  id BIGINT PRIMARY KEY,",
+        "  entity_type VARCHAR(80) NOT NULL,",
+        "  entity_id BIGINT,",
+        "  [action] VARCHAR(80) NOT NULL,",
+        `  created_at ${ts}`,
+        ");",
+      ].join("\n");
+    }
+
+    if (preset === "starter_commerce") {
+      return [
+        "IF OBJECT_ID(N'dbo.customers', N'U') IS NULL",
+        "CREATE TABLE dbo.customers (",
+        "  id BIGINT PRIMARY KEY,",
+        "  email VARCHAR(255) NOT NULL,",
+        "  full_name VARCHAR(255),",
+        `  created_at ${ts}`,
+        ");",
+        "",
+        "IF OBJECT_ID(N'dbo.products', N'U') IS NULL",
+        "CREATE TABLE dbo.products (",
+        "  id BIGINT PRIMARY KEY,",
+        "  name VARCHAR(255) NOT NULL,",
+        "  sku VARCHAR(120),",
+        "  price DECIMAL(12,2) NOT NULL",
+        ");",
+        "",
+        "IF OBJECT_ID(N'dbo.orders', N'U') IS NULL",
+        "CREATE TABLE dbo.orders (",
+        "  id BIGINT PRIMARY KEY,",
+        "  customer_id BIGINT NOT NULL,",
+        "  status VARCHAR(80) NOT NULL,",
+        `  created_at ${ts}`,
+        ");",
+      ].join("\n");
+    }
+
+    return "";
+  }
+
   const timestampType = dbType === "mysql" || dbType === "mariadb" ? "DATETIME" : "TIMESTAMP";
 
   if (preset === "starter_core") {

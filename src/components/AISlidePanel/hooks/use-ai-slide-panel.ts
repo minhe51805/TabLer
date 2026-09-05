@@ -109,9 +109,9 @@ export interface AIGeneratedAssistResult {
 }
 
 const MAX_AGENT_STEPS = 10;
-const MAX_REMOTE_AGENT_STEPS = 8;
+const MAX_REMOTE_AGENT_STEPS = 10;
 const MAX_LOCAL_COMPLEX_AGENT_STEPS = 14;
-const MAX_REMOTE_COMPLEX_AGENT_STEPS = 10;
+const MAX_REMOTE_COMPLEX_AGENT_STEPS = 12;
 
 /**
  * Wait window before a promoted re-run, so a rate-limited endpoint has a
@@ -482,7 +482,14 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         // Live checklist posted through update_plan — re-read on every
         // controller prompt build so the model always sees current statuses.
         let agentPlanLines: string[] = [];
-        const inspectedAgentTables = new Set<string>();
+        // Seed inspection state from the schema context: tables whose verified
+        // summaries were already fetched (and injected into the controller
+        // prompt as "Pre-inspected tables — do NOT call describe_table for
+        // these") count as inspected, so run_readonly_sql's describe-gate can
+        // never contradict the prompt by blocking a read the prompt itself
+        // encouraged. Keys use the same workspace identifier format as
+        // availableSchemaTables, matching findMatchingTableName results.
+        const inspectedAgentTables = new Set<string>(relationalSchemaSummaryByTable.keys());
         // Snapshot completed steps plus an optional in-flight step, then stream
         // them to the UI so the bubble can show the agent working live.
         // Manual provider switches are kept separately because agentTraceSteps

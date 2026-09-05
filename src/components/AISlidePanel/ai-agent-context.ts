@@ -529,6 +529,10 @@ export function buildAgentControllerPrompt(params: {
     NATIVE_TOOL_CALLING_ENABLED
       ? "- Use only the native tool names provided via function calling."
       : "- Use only the action names above.",
+    "- Never invent limits on your own toolbelt. Every tool attached to this request stays callable for the whole run; claims like \"the toolbelt is limited\" or \"only planning and search are available\" are always false. Execute every requested capability yourself.",
+    workspaceToolsEnabled
+      ? "- Work through the FULL request: while your plan still has steps you have not attempted with a real tool call, do not finish. A step may end blocked, but only after you actually invoked its tool."
+      : "",
     "- If the request is ambiguous about which table, metric, or meaning is intended, call ask_user once with one short question and up to 4 concrete options instead of guessing.",
     workspaceToolsEnabled
       ? "- Tables can be EMPTY. Before building any report, overview, or dashboard, prefer tables whose rowCount is greater than zero in list_tables output (or pass args {\"minRows\":1}), confirm with sample_table_data when unsure, and skip zero-row tables instead of presenting them as content."

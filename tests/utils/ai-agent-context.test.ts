@@ -240,6 +240,19 @@ describe("AI agent context builder", () => {
     expect(prompt).not.toContain("T=extra_6");
   });
 
+  it("forbids fabricated toolbelt limits and finishing over untried plan steps", () => {
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "Run the full capability test",
+      assistIntent: "sql",
+      currentDatabase: "db",
+      availableTableNames: ["t"],
+      steps: [],
+      workspaceToolsEnabled: true,
+    });
+    expect(prompt).toContain("Never invent limits on your own toolbelt");
+    expect(prompt).toContain("do not finish. A step may end blocked");
+  });
+
   it("caps oversized controller prompts and composes optional instructions", () => {
     const prompt = buildAgentControllerPrompt({
       userPrompt: "x".repeat(60_000),

@@ -251,6 +251,7 @@ describe("AI agent context builder", () => {
     });
     expect(prompt).toContain("Never invent limits on your own toolbelt");
     expect(prompt).toContain("do not finish. A step may end blocked");
+    expect(prompt).toContain("Report every step honestly");
   });
 
   it("caps oversized controller prompts and composes optional instructions", () => {

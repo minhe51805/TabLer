@@ -1383,7 +1383,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       const rawTabId = typeof action.args?.tabId === "string" ? action.args.tabId.trim() : "";
       const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
       const reason = typeof action.args?.reason === "string" ? action.args.reason.trim() : "";
-      const createIfMissing = action.args?.createIfMissing === true;
+      // Weak providers frequently send booleans as strings ("true"). The
+      // schema says boolean, but rejecting the call over the type would just
+      // push the model to fabricate a PASS — coerce the common shapes instead.
+      const rawCreateIfMissing: unknown = action.args?.createIfMissing;
+      const createIfMissing =
+        rawCreateIfMissing === true || rawCreateIfMissing === "true" || rawCreateIfMissing === 1;
       if (!sql) {
         return "Tool error: edit_query_sql requires args.sql.";
       }

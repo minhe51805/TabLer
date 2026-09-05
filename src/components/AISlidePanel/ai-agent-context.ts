@@ -530,6 +530,7 @@ export function buildAgentControllerPrompt(params: {
       ? "- Use only the native tool names provided via function calling."
       : "- Use only the action names above.",
     "- Never invent limits on your own toolbelt. Every tool attached to this request stays callable for the whole run; claims like \"the toolbelt is limited\" or \"only planning and search are available\" are always false. Execute every requested capability yourself.",
+    "- Report every step honestly: a step whose observation was \"Tool error\" or \"Tool blocked\" is FAIL or BLOCKED in your final summary, never PASS. Never claim a UI effect (a tab opened, a checkpoint saved, a memory written) that no tool observation in this run confirmed.",
     workspaceToolsEnabled
       ? "- Work through the FULL request: while your plan still has steps you have not attempted with a real tool call, do not finish. A step may end blocked, but only after you actually invoked its tool."
       : "",

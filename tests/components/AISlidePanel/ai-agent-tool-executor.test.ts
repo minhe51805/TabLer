@@ -869,4 +869,29 @@ describe("edit_query_sql createIfMissing", () => {
     expect(observation).toContain("preview_write");
     expect(openQueryTab).not.toHaveBeenCalled();
   });
+
+  it("coerces a string createIfMissing from weak providers", async () => {
+    const openQueryTab = vi.fn(() => true);
+    const { runAgentTool } = createAgentToolExecutor(mkDeps({ openQueryTab }));
+    const action = {
+      action: "edit_query_sql",
+      message: "open a tab",
+      args: { sql: "SELECT TOP 5 * FROM SinhViens", reason: "show rows", createIfMissing: "true" },
+    } as unknown as AIAgentToolAction;
+    const observation = await runAgentTool(action);
+    expect(observation).toContain("created a new AI Query tab");
+    expect(openQueryTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports failure when the requested tab was not actually opened", async () => {
+    const openQueryTab = vi.fn(() => false);
+    const { runAgentTool } = createAgentToolExecutor(mkDeps({ openQueryTab }));
+    const action = {
+      action: "edit_query_sql",
+      message: "open a tab",
+      args: { sql: "SELECT TOP 5 * FROM SinhViens", createIfMissing: true },
+    } as AIAgentToolAction;
+    const observation = await runAgentTool(action);
+    expect(observation).toContain("could not open a new AI Query tab");
+  });
 });

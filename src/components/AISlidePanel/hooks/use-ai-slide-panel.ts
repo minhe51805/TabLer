@@ -737,6 +737,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           requestId,
           requestIdRef,
           openQueryTab: ({ sql: tabSql, title, autoRun }) => {
+            const tabIdsBefore = new Set(useUIStore.getState().tabs.map((tab) => tab.id));
             window.dispatchEvent(
               new CustomEvent("open-ai-workspace-query", {
                 detail: {
@@ -750,7 +751,14 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 },
               }),
             );
-            return true;
+            // dispatchEvent runs listeners synchronously, so a handled event
+            // has already added the tab to the UI store. Verify instead of
+            // blindly returning true: if no new query tab appeared, report
+            // failure so the agent's observation cannot claim a tab that was
+            // never opened.
+            return useUIStore
+              .getState()
+              .tabs.some((tab) => tab.type === "query" && !tabIdsBefore.has(tab.id));
           },
           requestDataReadConsent,
           publishAgentProgress,

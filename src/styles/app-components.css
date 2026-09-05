@@ -20865,7 +20865,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .ai-agent-steps-head:hover {
-  text-decoration: underline;
+  color: var(--text-primary);
 }
 
 .ai-agent-steps.is-collapsed .ai-agent-steps-head {

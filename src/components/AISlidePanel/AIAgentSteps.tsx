@@ -162,9 +162,9 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
                 ? copy.modal.agentStatusError
                 : copy.modal.agentStatusDone;
           const isPlan = step.action === "plan";
-          // A running "think" step ("Deciding next action (step N).") renders
-          // as a dots-only live pill like the plan row — the message stays
-          // available for the collapsed header and the settled trace.
+          // A running "think" step ("Thinking…" / "Composing response…")
+          // renders as a dots-only live pill like the plan row — the message
+          // stays available for the collapsed header and the settled trace.
           const isThinkWait = step.action === "think" && step.status === "running";
           // The machine-readable `@@facts:` footer is harness plumbing — it
           // feeds the quality gates but must never render into the visible

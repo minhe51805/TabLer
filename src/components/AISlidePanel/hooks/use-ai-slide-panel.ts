@@ -1304,14 +1304,17 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             } else if (snapshot.phase === "requesting-action") {
               // The model call is the longest part of every step; show it
               // explicitly so the trace never looks frozen between tools.
+              // Kept terse on purpose: this text is surfaced verbatim in the
+              // collapsed "Agent steps" header, so no step counters or long
+              // clauses — just the live verb.
               publishAgentProgress({
                 action: "think",
                 message:
                   snapshot.requestReason === "budget"
-                    ? "Tool budget reached — wrapping up with the evidence gathered."
+                    ? "Wrapping up…"
                     : snapshot.requestReason === "direct"
-                      ? "Composing response."
-                      : `Deciding next action (step ${Math.min(snapshot.iteration, snapshot.stepBudget)}).`,
+                      ? "Composing response…"
+                      : "Thinking…",
               });
             } else if (snapshot.phase === "recovering-finish") {
               publishAgentProgress({ action: "think", message: "Finalizing answer." });

@@ -16,12 +16,24 @@ interface AIAgentStepsProps {
 }
 
 /** One-liner for the collapsed header: what the agent was actually doing. */
+/** Live-run status verbs shown in the collapsed header and think rows. Older
+ *  persisted runs still carry the long "Deciding next action (step N)." strings
+ *  inside their saved agentSteps — normalize them to the current terse verbs so
+ *  re-opened conversations read the same as fresh runs. */
+function normalizeThinkMessage(message: string): string {
+  const flat = message.replace(/\s+/g, " ").trim();
+  if (/^Deciding next action \(step \d+\)\.?$/u.test(flat)) return "Thinking…";
+  if (/^Tool budget reached\b/u.test(flat)) return "Wrapping up…";
+  if (flat === "Composing response.") return "Composing response…";
+  return flat;
+}
+
 function headerThinkingTitle(steps: AIWorkspaceAgentStep[]): string {
-  const flat = (steps.find((step) => step.action === "think"
-    && step.message
-    && step.message !== "No message provided.")?.message ?? "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const flat = normalizeThinkMessage(
+    steps.find((step) => step.action === "think"
+      && step.message
+      && step.message !== "No message provided.")?.message ?? "",
+  );
   if (!flat) return "";
   return flat.length > 90 ? `${flat.slice(0, 87)}...` : flat;
 }
@@ -173,7 +185,9 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
           // Models sometimes omit the per-step message; fall back to a
           // localized action label instead of showing "No message provided.".
           const displayMessage = step.message.trim() && step.message !== "No message provided."
-            ? step.message
+            ? step.action === "think"
+              ? normalizeThinkMessage(step.message)
+              : step.message
             : getActionLabel(step.action, copy);
           return (
             <li

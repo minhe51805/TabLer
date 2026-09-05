@@ -145,7 +145,7 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
         title={expanded ? copy.modal.agentStatusDone : thinkingTitle || undefined}
       >
         <Sparkles className="w-3.5 h-3.5" />
-        <span>{copy.modal.agentStepsLabel} ({steps.length})</span>
+        <span>{copy.modal.agentStepsLabel}</span>
         {showDuration && <span className="ai-agent-steps-duration">{formatStepsDuration(durationMs as number)}</span>}
         {thinkingTitle && <span className="ai-agent-steps-title">{thinkingTitle}</span>}
         {expanded

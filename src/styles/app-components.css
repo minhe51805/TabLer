@@ -20424,11 +20424,11 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   min-height: 30px;
   max-width: 100%;
   padding: 5px 12px;
-  border: 1px solid color-mix(in srgb, var(--mm-accent) 35%, var(--mm-border));
+  border: 1px solid color-mix(in srgb, var(--mm-accent, #007AFF) 40%, var(--mm-border, #D8D8DC));
   border-radius: 8px;
-  background: color-mix(in srgb, var(--mm-accent) 8%, var(--mm-surface));
-  color: var(--mm-accent);
-  font-size: var(--mm-fs-caption);
+  background: color-mix(in srgb, var(--mm-accent, #007AFF) 8%, var(--mm-surface, #FFFFFF));
+  color: var(--mm-accent, #007AFF);
+  font-size: var(--mm-fs-caption, 12px);
   font-weight: 650;
   line-height: 1.3;
   text-align: left;
@@ -20437,16 +20437,16 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .ai-workspace-ask-user-option:hover {
-  border-color: var(--mm-accent);
-  background: color-mix(in srgb, var(--mm-accent) 14%, var(--mm-surface));
+  border-color: var(--mm-accent, #007AFF);
+  background: color-mix(in srgb, var(--mm-accent, #007AFF) 14%, var(--mm-surface, #FFFFFF));
 }
 
 .ai-workspace-ask-user-option:active {
-  background: color-mix(in srgb, var(--mm-accent) 20%, var(--mm-surface));
+  background: color-mix(in srgb, var(--mm-accent, #007AFF) 20%, var(--mm-surface, #FFFFFF));
 }
 
 .ai-workspace-ask-user-option:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--mm-accent) 70%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--mm-accent, #007AFF) 70%, transparent);
   outline-offset: 2px;
 }
 
@@ -20457,8 +20457,8 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .ai-workspace-ask-user-option.is-custom:hover {
-  border-color: color-mix(in srgb, var(--mm-accent) 60%, var(--mm-border));
-  background: color-mix(in srgb, var(--mm-accent) 5%, transparent);
+  border-color: color-mix(in srgb, var(--mm-accent, #007AFF) 60%, var(--mm-border, #D8D8DC));
+  background: color-mix(in srgb, var(--mm-accent, #007AFF) 5%, transparent);
   color: var(--text-primary);
 }
 

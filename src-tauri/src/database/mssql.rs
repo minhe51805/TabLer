@@ -154,7 +154,20 @@ impl MssqlDriver {
         let password = config.password.as_deref().unwrap_or("");
 
         let auth = match (user, auth_type.as_str()) {
-            (Some(user), "windows") => AuthMethod::windows(user.to_string(), password.to_string()),
+            // `AuthMethod::windows` (SSPI with explicit credentials) is gated
+            // to Windows targets inside tiberius itself
+            // (#[cfg(all(windows, feature = "winauth"))]): on Linux/macOS the
+            // associated function does not exist, so this arm must be
+            // cfg-gated too — otherwise every non-Windows CI job fails with
+            // E0599 before it even reaches the auth logic.
+            #[cfg(windows)]
+            (Some(user), "windows") => {
+                AuthMethod::windows(user.to_string(), password.to_string())
+            }
+            #[cfg(not(windows))]
+            (Some(_), "windows") => anyhow::bail!(
+                "Windows Authentication with explicit credentials is only supported on Windows hosts."
+            ),
             (Some(user), _) => AuthMethod::sql_server(user.to_string(), password.to_string()),
             (None, "sql") => anyhow::bail!("SQL Server authentication requires a username."),
             (None, _) => {

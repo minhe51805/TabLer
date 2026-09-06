@@ -164,9 +164,7 @@ fn validate_sandbox_batch(
     database_type: Option<crate::database::models::DatabaseType>,
 ) -> Result<(), String> {
     if statements.is_empty() {
-        return Err("Sandbox execution requires at least one SQL statement."
-            .to_string()
-            .into());
+        return Err("Sandbox execution requires at least one SQL statement.".to_string());
     }
     for statement in statements {
         validate_sandbox_statement(statement, database_type)?;
@@ -175,9 +173,7 @@ fn validate_sandbox_batch(
         let combined = statements.join(";\n");
         let decision = classify_sql_with_dialect(&combined, database_type);
         if decision.parse_error.is_some() || !decision.read_only {
-            return Err("This execution boundary only permits read-only SQL."
-                .to_string()
-                .into());
+            return Err("This execution boundary only permits read-only SQL.".to_string());
         }
     }
     Ok(())

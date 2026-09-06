@@ -928,6 +928,11 @@ export function DataGrid({
     rowIndex?: number,
   ) => {
     e.preventDefault();
+    // Keep this event away from the document-level close listener below —
+    // otherwise a right-click while a menu is open (or a stale armed listener)
+    // sets the fresh menu state back to null within the same event, and the
+    // menu never appears.
+    e.stopPropagation();
     setContextMenu({ x: e.clientX, y: e.clientY, type, colName, rowIndex });
   }, []);
 
@@ -937,7 +942,13 @@ export function DataGrid({
     const handler = () => setContextMenu(null);
     document.addEventListener("click", handler, { once: true });
     document.addEventListener("contextmenu", handler, { once: true });
-    return () => document.removeEventListener("click", handler);
+    return () => {
+      document.removeEventListener("click", handler);
+      // The contextmenu listener is { once: true } but only consumes itself on
+      // a contextmenu event; if the menu closes first (item click / re-render),
+      // it stays armed and would swallow the NEXT right-click's menu. Remove it.
+      document.removeEventListener("contextmenu", handler);
+    };
   }, [contextMenu]);
 
   const handleOpenRowInspector = useCallback(
@@ -1695,20 +1706,38 @@ export function DataGrid({
           <tbody onContextMenu={(e) => {
             e.preventDefault();
             const target = e.target as HTMLElement;
-            const rowEl = target.closest("tr.datagrid-row");
             const thEl = target.closest("th.datagrid-th");
+            const rowEl = target.closest("tr.datagrid-row");
             if (thEl) {
               const colId = thEl.getAttribute("data-col-id") || undefined;
               handleContextMenu(e, "header", colId);
-            } else if (rowEl) {
-              const rowIdx = rowEl.querySelector(".datagrid-index-selectable, .datagrid-index-value");
-              if (rowIdx) {
-                const idx = Number(rowIdx.textContent?.trim() ?? -1) - 1;
-                handleContextMenu(e, "row", undefined, idx >= 0 ? idx : undefined);
-              }
-            } else {
-              handleContextMenu(e, "cell");
+              return;
             }
+            if (rowEl) {
+              // Always open a menu on a row: prefer cell-scoped actions when
+              // the click lands on a data cell, otherwise row-scoped ones.
+              // Never fall through silently — that read as "no context menu".
+              const cellEl = target.closest("td[data-col-id]");
+              const indexEl = rowEl.querySelector(".datagrid-index-selectable, .datagrid-index-value");
+              // <tr data-index> carries the 0-based source row index already;
+              // only the visible 1-based number inside the index cell needs -1.
+              const dataIndexAttr = rowEl.getAttribute("data-index");
+              let rowIndex = -1;
+              if (dataIndexAttr !== null) {
+                rowIndex = Number(dataIndexAttr);
+              } else {
+                const shown = Number(indexEl?.textContent?.trim() ?? NaN);
+                if (Number.isFinite(shown) && shown >= 1) rowIndex = shown - 1;
+              }
+              const colId = cellEl?.getAttribute("data-col-id") || undefined;
+              if (colId && colId !== "_row_num") {
+                handleContextMenu(e, "cell", colId, rowIndex >= 0 ? rowIndex : undefined);
+              } else {
+                handleContextMenu(e, "row", undefined, rowIndex >= 0 ? rowIndex : undefined);
+              }
+              return;
+            }
+            handleContextMenu(e, "cell");
           }}>
             {virtualPaddingTop > 0 && (
               <tr aria-hidden="true" className="datagrid-virtual-spacer">
@@ -1750,6 +1779,7 @@ export function DataGrid({
                       column.id === "_row_num" ? "datagrid-td-index" : "",
                       stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
                     ].join(" ")}
+                    data-col-id={column.id}
                     style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -1775,6 +1805,7 @@ export function DataGrid({
                         "datagrid-td",
                         stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
                       ].join(" ")}
+                      data-col-id={column.id}
                       style={{ width, minWidth: width }}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -1831,33 +1862,37 @@ export function DataGrid({
         )}
       </div>
 
-      {/* Context Menu */}
-      {contextMenu && (
-        <DataGridContextMenu
-          menu={contextMenu}
-          connectionId={connectionId}
-          database={database}
-          tableName={tableName}
-          columnDisplayFormats={columnDisplayFormats}
-          table={table}
-          onClose={() => setContextMenu(null)}
-          onSortAsc={handleSortAsc}
-          onSortDesc={handleSortDesc}
-          onInsertRow={handleInsertRow}
-          onDuplicateRowByIndex={handleDuplicateRowByIndex}
-          onOpenRowInspector={handleOpenRowInspector}
-          onColumnAutoFit={handleColumnAutoFit}
-          setColumnOrder={setColumnOrder}
-          setColumnPinning={setColumnPinning}
-          setColumnSizes={setColumnSizes}
-          setColumnVisibility={setColumnVisibility}
-          setFilterDraft={setFilterDraft}
-          setTableFilter={setTableFilter}
-          setSortColumn={setSortColumn}
-          setSortDir={setSortDir}
-          setColumnDisplayFormats={setColumnDisplayFormats}
-        />
-      )}
+      {/* Context Menu — portaled to document.body: ancestors like .main-content
+          keep an animated transform applied, which turns them into the containing
+          block for position:fixed and offsets the menu away from the cursor. */}
+      {contextMenu &&
+        createPortal(
+          <DataGridContextMenu
+            menu={contextMenu}
+            connectionId={connectionId}
+            database={database}
+            tableName={tableName}
+            columnDisplayFormats={columnDisplayFormats}
+            table={table}
+            onClose={() => setContextMenu(null)}
+            onSortAsc={handleSortAsc}
+            onSortDesc={handleSortDesc}
+            onInsertRow={handleInsertRow}
+            onDuplicateRowByIndex={handleDuplicateRowByIndex}
+            onOpenRowInspector={handleOpenRowInspector}
+            onColumnAutoFit={handleColumnAutoFit}
+            setColumnOrder={setColumnOrder}
+            setColumnPinning={setColumnPinning}
+            setColumnSizes={setColumnSizes}
+            setColumnVisibility={setColumnVisibility}
+            setFilterDraft={setFilterDraft}
+            setTableFilter={setTableFilter}
+            setSortColumn={setSortColumn}
+            setSortDir={setSortDir}
+            setColumnDisplayFormats={setColumnDisplayFormats}
+          />,
+          document.body,
+        )}
 
       {/* FK Preview Popover */}
       {fkPreview && (

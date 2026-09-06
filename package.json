@@ -2,7 +2,7 @@
   "name": "tabler",
   "private": true,
   "version": "0.1.5",
-  "releaseLabel": "0.1.5c",
+  "releaseLabel": "0.1.5d",
   "type": "module",
   "scripts": {
     "dev": "vite",

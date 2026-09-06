@@ -5616,7 +5616,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   flex-direction: column;
   box-shadow: none;
   backdrop-filter: none;
-  animation: shellPaneEnter 260ms var(--transition) both;
+  /* No fill-mode: a retained animation transform would make this pane the
+     containing block for position:fixed descendants (context menus, popovers). */
+  animation: shellPaneEnter 260ms var(--transition);
 }
 
 .resize-handle {
@@ -5654,7 +5656,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   box-shadow: none;
   backdrop-filter: none;
   position: relative;
-  animation: shellPaneEnter 320ms var(--transition) both;
+  /* No fill-mode: a retained animation transform would make this pane the
+     containing block for position:fixed descendants (context menus, popovers). */
+  animation: shellPaneEnter 320ms var(--transition);
 }
 
 .main-content::before {
@@ -5910,6 +5914,19 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .toolbar-btn.icon-only:hover:not(:disabled) {
   border-color: var(--mm-border);
   background: var(--mm-surface-2);
+}
+
+/* A primary action collapsed to an icon (New Query) keeps its blue identity
+   — the generic icon-only ghost styling above must not wash it out. */
+.toolbar-btn.primary.icon-only {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.toolbar-btn.primary.icon-only:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: transparent;
+  color: #ffffff;
 }
 
 .statusbar {
@@ -16080,7 +16097,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
+  /* Single row: a wrapping toolbar shifted the whole grid whenever selecting
+     rows revealed extra actions (SQL, Reload, Delete selected). */
+  flex-wrap: nowrap;
   gap: 8px 12px;
   padding: 0;
   border: 0;
@@ -16090,11 +16109,27 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   box-shadow: none;
 }
 
+.datagrid-topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.datagrid-topbar-actions::-webkit-scrollbar {
+  display: none;
+}
+
 .datagrid-topbar-side {
   display: flex;
   flex-direction: row;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 8px;
   flex: 1 1 460px;
@@ -16105,9 +16140,12 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
 .datagrid-stat-pill {
@@ -16171,6 +16209,30 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .datagrid-topbar-actions .datagrid-footer-action.active:hover {
   background: var(--mm-surface-2);
+}
+
+/* Icon-only toolbar button (e.g. Reload): square pill, label lives in the
+   hover tooltip (title) instead of taking toolbar width. */
+.datagrid-footer-action.datagrid-icon-action {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+
+/* View toggle (Table / Chart): icon-only — the labels stay available via
+   the hover tooltip. */
+.datagrid-view-toggle .datachart-toggle-btn span {
+  display: none;
+}
+
+.datagrid-view-toggle .datachart-toggle-btn {
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  justify-content: center;
 }
 
 /* ========== Change Tracking Modal ========== */
@@ -17048,9 +17110,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .datagrid-context-menu {
   position: fixed;
   z-index: 9999;
-  min-width: 180px;
-  padding: 6px;
-  border-radius: 12px;
+  min-width: 168px;
+  padding: 5px;
+  border-radius: 10px;
   background: #ffffff;
   border: 1px solid var(--mm-border);
   box-shadow:
@@ -17062,7 +17124,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border: none;
   background: transparent;
   color: #3f3f3f;
@@ -17084,6 +17146,62 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   height: 1px;
   background: #eeeeef;
   margin: 6px 0;
+}
+
+/* "Copy As" flyout inside the grid context menu. Items reuse the export
+   menu styling (icon + label + hint) so it matches the toolbar Copy menu. */
+.datagrid-context-menu-item.has-submenu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.datagrid-context-menu-item.has-submenu .submenu-chevron {
+  flex: 0 0 auto;
+  opacity: 0.55;
+}
+
+.datagrid-context-menu.datagrid-context-submenu {
+  position: absolute;
+  top: -5px;
+  left: 100%;
+  display: none;
+  width: max-content;
+  max-width: 250px;
+  margin: 0;
+  padding: 5px;
+}
+
+/* Compact single-line items inside the flyout — the roomy two-line
+   export-menu layout stays reserved for the toolbar Copy menu. */
+.datagrid-context-submenu .datagrid-export-menu-item {
+  padding: 5px 8px;
+  gap: 8px;
+  border-radius: 6px;
+}
+
+.datagrid-context-submenu .datagrid-export-menu-copy {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.datagrid-context-submenu .datagrid-export-menu-copy strong {
+  font-weight: 600;
+}
+
+.datagrid-context-submenu .datagrid-export-menu-copy span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.datagrid-context-menu-item.has-submenu:hover > .datagrid-context-menu.datagrid-context-submenu,
+.datagrid-context-menu-item.has-submenu:focus-within > .datagrid-context-menu.datagrid-context-submenu {
+  display: block;
 }
 
 .datagrid-empty {
@@ -26233,7 +26351,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .datagrid-topbar-actions {
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .datagrid-stat-pill,

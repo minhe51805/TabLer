@@ -112,9 +112,11 @@ export function DataGridToolbar({
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
+  const [showSqlMenu, setShowSqlMenu] = useState(false);
   const settingsBtnRef = useRef<HTMLSpanElement>(null);
   const exportBtnRef = useRef<HTMLSpanElement>(null);
   const copyBtnRef = useRef<HTMLSpanElement>(null);
+  const sqlBtnRef = useRef<HTMLSpanElement>(null);
   const { settings, updateSettings } = useDataGridSettings();
   const installedPlugins = usePluginStore((state) => state.plugins);
   const pluginsHaveLoaded = usePluginStore((state) => state.hasLoaded);
@@ -129,21 +131,23 @@ export function DataGridToolbar({
   }, [loadPlugins, pluginsHaveLoaded]);
 
   useEffect(() => {
-    if (!showExportMenu && !showSettings && !showCopyMenu) return;
+    if (!showExportMenu && !showSettings && !showCopyMenu && !showSqlMenu) return;
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (target && exportBtnRef.current?.contains(target)) return;
       if (target && settingsBtnRef.current?.contains(target)) return;
       if (target && copyBtnRef.current?.contains(target)) return;
+      if (target && sqlBtnRef.current?.contains(target)) return;
       const inPopover = target instanceof Element && target.closest(".datagrid-export-menu, .datagrid-settings-popover");
       if (inPopover) return;
       setShowExportMenu(false);
       setShowSettings(false);
       setShowCopyMenu(false);
+      setShowSqlMenu(false);
     };
     window.addEventListener("mousedown", handlePointerDown, true);
     return () => window.removeEventListener("mousedown", handlePointerDown, true);
-  }, [showExportMenu, showSettings, showCopyMenu]);
+  }, [showExportMenu, showSettings, showCopyMenu, showSqlMenu]);
 
   // Filter input: rendered on the left side of the grid toolbar.
   const showFilter = Boolean((tableName || externalResult) && onFilterChange);
@@ -346,84 +350,18 @@ export function DataGridToolbar({
           )}
 
           {selectedRowCount > 0 && tableName && (
-            <>
-              <span
-                className="popover-container"
-                data-popover={`Copy ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""} as INSERT SQL`}
+            <span ref={sqlBtnRef} className="popover-container" data-popover={`Copy ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""} as SQL`}>
+              <button
+                type="button"
+                className={`datagrid-footer-action ${showSqlMenu ? "active" : ""}`}
+                onClick={() => setShowSqlMenu((v) => !v)}
+                title="Copy selected rows as SQL"
               >
-                <button
-                  type="button"
-                  className="datagrid-footer-action"
-                  onClick={() => void handleCopyAsInsert()}
-                  title="Copy as INSERT SQL"
-                >
-                  <Copy className="!w-3.5 !h-3.5" />
-                  <span>Copy INSERT</span>
-                </button>
-              </span>
-
-              <span
-                className="popover-container"
-                data-popover={`Copy ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""} as UPDATE SQL`}
-              >
-                <button
-                  type="button"
-                  className="datagrid-footer-action"
-                  onClick={() => void handleCopyAsUpdate()}
-                  title="Copy as UPDATE SQL"
-                >
-                  <FilePen className="!w-3.5 !h-3.5" />
-                  <span>Copy UPDATE</span>
-                </button>
-              </span>
-
-              <span
-                className="popover-container"
-                data-popover="Copy INSERT SQL with $.columnName placeholders"
-              >
-                <button
-                  type="button"
-                  className="datagrid-footer-action"
-                  onClick={() => void handleCopyAsInsertParam()}
-                  title="Copy parameterized INSERT SQL"
-                >
-                  <Braces className="!w-3.5 !h-3.5" />
-                  <span>INSERT $.</span>
-                </button>
-              </span>
-
-              <span
-                className="popover-container"
-                data-popover="Copy UPDATE SQL with $.columnName placeholders"
-              >
-                <button
-                  type="button"
-                  className="datagrid-footer-action"
-                  onClick={() => void handleCopyAsUpdateParam()}
-                  title="Copy parameterized UPDATE SQL"
-                >
-                  <Braces className="!w-3.5 !h-3.5" />
-                  <span>UPDATE $.</span>
-                </button>
-              </span>
-
-              {selectedRowCount > 0 && tableName && primaryKeyColumns?.length > 0 && (
-                <span
-                  className="popover-container"
-                  data-popover="Copy DELETE SQL with $.columnName placeholders"
-                >
-                  <button
-                    type="button"
-                    className="datagrid-footer-action"
-                    onClick={() => void handleCopyAsDeleteParam()}
-                    title="Copy parameterized DELETE SQL"
-                  >
-                    <Braces className="!w-3.5 !h-3.5" />
-                    <span>DELETE $.</span>
-                  </button>
-                </span>
-              )}
-            </>
+                <Braces className="!w-3.5 !h-3.5" />
+                <span>SQL</span>
+                <ChevronDown className="!w-3 !h-3" />
+              </button>
+            </span>
           )}
 
           {undoableChanges > 0 && tableName && (
@@ -472,6 +410,56 @@ export function DataGridToolbar({
             </span>
           )}
 
+          {useMemo(() => {
+            if (!showSqlMenu || !sqlBtnRef.current) return null;
+            const rect = sqlBtnRef.current.getBoundingClientRect();
+            const top = rect.bottom + 6;
+            const right = window.innerWidth - rect.right;
+            const hasPk = (primaryKeyColumns?.length ?? 0) > 0;
+            const sqlOptions: Array<{ label: string; hint: string; icon: typeof Braces; run: () => void }> = [
+              { label: "INSERT", hint: "For the selected rows", icon: Copy, run: () => void handleCopyAsInsert() },
+              { label: "UPDATE", hint: "For the selected rows", icon: FilePen, run: () => void handleCopyAsUpdate() },
+              { label: "INSERT $.", hint: "Parameterized placeholders", icon: Braces, run: () => void handleCopyAsInsertParam() },
+              { label: "UPDATE $.", hint: "Parameterized placeholders", icon: Braces, run: () => void handleCopyAsUpdateParam() },
+              ...(hasPk
+                ? [{ label: "DELETE $.", hint: "By primary key placeholders", icon: Braces, run: () => void handleCopyAsDeleteParam() }]
+                : []),
+            ];
+            const sqlMenu = (
+              <div className="datagrid-export-menu" style={{ position: "fixed", top, right, zIndex: 9999 }}>
+                {sqlOptions.map((opt) => {
+                  const OptIcon = opt.icon;
+                  return (
+                    <button
+                      key={opt.label}
+                      type="button"
+                      className="datagrid-export-menu-item"
+                      onClick={() => {
+                        opt.run();
+                        setShowSqlMenu(false);
+                      }}
+                    >
+                      <OptIcon className="!w-4 !h-4" />
+                      <span className="datagrid-export-menu-copy">
+                        <strong>{opt.label}</strong>
+                        <span>{opt.hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+            return createPortal(sqlMenu, document.body);
+          }, [
+            showSqlMenu,
+            primaryKeyColumns,
+            handleCopyAsInsert,
+            handleCopyAsUpdate,
+            handleCopyAsInsertParam,
+            handleCopyAsUpdateParam,
+            handleCopyAsDeleteParam,
+          ])}
+
           <span ref={exportBtnRef} className="popover-container" data-popover={canExport ? "Export data" : "No data to export"}>
             <button
               type="button"
@@ -501,12 +489,12 @@ export function DataGridToolbar({
           {onReloadData && (
             <button
               type="button"
-              className="datagrid-footer-action"
+              className="datagrid-footer-action datagrid-icon-action"
               onClick={onReloadData}
               title="Reload data"
+              aria-label="Reload data"
             >
               <RefreshCw className="!w-3.5 !h-3.5" />
-              <span>Reload</span>
             </button>
           )}
           {isExportingFull && onCancelExport && (
@@ -634,16 +622,17 @@ export function DataGridToolbar({
             >
               <button
                 type="button"
-                className="datagrid-footer-action danger"
+                className="datagrid-footer-action danger datagrid-icon-action"
                 onClick={() => void handleDeleteSelectedRows()}
                 disabled={isDeletingRows}
+                title={`Delete ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""}`}
+                aria-label={`Delete ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""}`}
               >
                 {isDeletingRows ? (
                   <Loader2 className="!w-3.5 !h-3.5 animate-spin" />
                 ) : (
                   <Trash2 className="!w-3.5 !h-3.5" />
                 )}
-                <span>Delete selected</span>
               </button>
             </span>
           )}

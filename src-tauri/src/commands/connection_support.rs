@@ -665,8 +665,14 @@ pub(super) async fn create_local_mssql_database(
 
 #[cfg(test)]
 mod mssql_bootstrap_live {
+    // Every test in this module targets a live local SQL Server instance with
+    // SSPI auth and is Windows-only; gate the imports too so Linux/macOS
+    // `--include-ignored` CI runs don't emit unused-import warnings.
+    #[cfg(windows)]
     use super::create_local_mssql_database;
+    #[cfg(windows)]
     use crate::database::models::{ConnectionConfig, DatabaseType};
+    #[cfg(windows)]
     use std::collections::HashMap;
 
     /// Requires a live local SQL Server instance. Run manually:

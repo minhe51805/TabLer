@@ -16216,7 +16216,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .datagrid-view-toggle .datachart-toggle-btn {
   padding: 0;
   width: 28px;
+  height: 28px;
   min-width: 28px;
+  min-height: 28px;
   justify-content: center;
 }
 

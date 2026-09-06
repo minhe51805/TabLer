@@ -17086,6 +17086,35 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   margin: 6px 0;
 }
 
+/* "Copy As" flyout inside the grid context menu. Items reuse the export
+   menu styling (icon + label + hint) so it matches the toolbar Copy menu. */
+.datagrid-context-menu-item.has-submenu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.datagrid-context-menu-item.has-submenu .submenu-chevron {
+  flex: 0 0 auto;
+  opacity: 0.55;
+}
+
+.datagrid-context-menu.datagrid-context-submenu {
+  position: absolute;
+  top: -6px;
+  left: 100%;
+  display: none;
+  min-width: 280px;
+  margin: 0;
+}
+
+.datagrid-context-menu-item.has-submenu:hover > .datagrid-context-menu.datagrid-context-submenu,
+.datagrid-context-menu-item.has-submenu:focus-within > .datagrid-context-menu.datagrid-context-submenu {
+  display: block;
+}
+
 .datagrid-empty {
   display: flex;
   align-items: center;

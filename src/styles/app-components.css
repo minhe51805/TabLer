@@ -5616,7 +5616,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   flex-direction: column;
   box-shadow: none;
   backdrop-filter: none;
-  animation: shellPaneEnter 260ms var(--transition) both;
+  /* No fill-mode: a retained animation transform would make this pane the
+     containing block for position:fixed descendants (context menus, popovers). */
+  animation: shellPaneEnter 260ms var(--transition);
 }
 
 .resize-handle {
@@ -5654,7 +5656,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   box-shadow: none;
   backdrop-filter: none;
   position: relative;
-  animation: shellPaneEnter 320ms var(--transition) both;
+  /* No fill-mode: a retained animation transform would make this pane the
+     containing block for position:fixed descendants (context menus, popovers). */
+  animation: shellPaneEnter 320ms var(--transition);
 }
 
 .main-content::before {

@@ -228,7 +228,10 @@ export function DataGridContextMenu({
   return (
         <div
           className="datagrid-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={{
+            left: Math.min(contextMenu.x, window.innerWidth - 300),
+            top: Math.min(contextMenu.y, window.innerHeight - 260),
+          }}
         >
           {contextMenu.type === "header" && contextMenu.colName && (
             <>

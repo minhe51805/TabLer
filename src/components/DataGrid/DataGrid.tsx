@@ -1862,33 +1862,37 @@ export function DataGrid({
         )}
       </div>
 
-      {/* Context Menu */}
-      {contextMenu && (
-        <DataGridContextMenu
-          menu={contextMenu}
-          connectionId={connectionId}
-          database={database}
-          tableName={tableName}
-          columnDisplayFormats={columnDisplayFormats}
-          table={table}
-          onClose={() => setContextMenu(null)}
-          onSortAsc={handleSortAsc}
-          onSortDesc={handleSortDesc}
-          onInsertRow={handleInsertRow}
-          onDuplicateRowByIndex={handleDuplicateRowByIndex}
-          onOpenRowInspector={handleOpenRowInspector}
-          onColumnAutoFit={handleColumnAutoFit}
-          setColumnOrder={setColumnOrder}
-          setColumnPinning={setColumnPinning}
-          setColumnSizes={setColumnSizes}
-          setColumnVisibility={setColumnVisibility}
-          setFilterDraft={setFilterDraft}
-          setTableFilter={setTableFilter}
-          setSortColumn={setSortColumn}
-          setSortDir={setSortDir}
-          setColumnDisplayFormats={setColumnDisplayFormats}
-        />
-      )}
+      {/* Context Menu — portaled to document.body: ancestors like .main-content
+          keep an animated transform applied, which turns them into the containing
+          block for position:fixed and offsets the menu away from the cursor. */}
+      {contextMenu &&
+        createPortal(
+          <DataGridContextMenu
+            menu={contextMenu}
+            connectionId={connectionId}
+            database={database}
+            tableName={tableName}
+            columnDisplayFormats={columnDisplayFormats}
+            table={table}
+            onClose={() => setContextMenu(null)}
+            onSortAsc={handleSortAsc}
+            onSortDesc={handleSortDesc}
+            onInsertRow={handleInsertRow}
+            onDuplicateRowByIndex={handleDuplicateRowByIndex}
+            onOpenRowInspector={handleOpenRowInspector}
+            onColumnAutoFit={handleColumnAutoFit}
+            setColumnOrder={setColumnOrder}
+            setColumnPinning={setColumnPinning}
+            setColumnSizes={setColumnSizes}
+            setColumnVisibility={setColumnVisibility}
+            setFilterDraft={setFilterDraft}
+            setTableFilter={setTableFilter}
+            setSortColumn={setSortColumn}
+            setSortDir={setSortDir}
+            setColumnDisplayFormats={setColumnDisplayFormats}
+          />,
+          document.body,
+        )}
 
       {/* FK Preview Popover */}
       {fkPreview && (

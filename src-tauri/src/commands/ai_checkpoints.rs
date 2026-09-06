@@ -14,7 +14,7 @@ use crate::database::models::DatabaseType;
 use crate::utils::paths::resolve_data_dir;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 use tokio::task;
@@ -83,7 +83,7 @@ fn checkpoint_dir(connection_id: &str) -> Result<PathBuf, String> {
         .join(sanitize_component(connection_id)))
 }
 
-fn checkpoint_paths(dir: &PathBuf, file_name: &str) -> Result<(PathBuf, PathBuf), String> {
+fn checkpoint_paths(dir: &Path, file_name: &str) -> Result<(PathBuf, PathBuf), String> {
     // Never trust client-supplied file names with separators.
     if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
         return Err("Invalid checkpoint file name.".to_string());
@@ -405,7 +405,7 @@ pub fn list_database_checkpoints(connection_id: String) -> Result<Vec<DatabaseCh
             Some(DatabaseCheckpoint { meta, size_bytes })
         })
         .collect();
-    checkpoints.sort_by(|left, right| right.meta.created_at.cmp(&left.meta.created_at));
+    checkpoints.sort_by_key(|checkpoint| std::cmp::Reverse(checkpoint.meta.created_at));
     Ok(checkpoints)
 }
 

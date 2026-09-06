@@ -294,7 +294,7 @@ pub fn save_memory_entry_in(
     });
     reject_secret_shaped_payload(&name, &body, &description)?;
     let scope = memory_scope_dir(
-        &data_dir,
+        data_dir,
         params.connection_id.as_deref(),
         params.database.as_deref(),
     );
@@ -434,7 +434,7 @@ fn read_memory_entry_in(
     raw_name: &str,
 ) -> Result<MemoryEntryContent, String> {
     let name = sanitize_memory_name(raw_name)?;
-    let scope = memory_scope_dir(&data_dir, connection_id, database);
+    let scope = memory_scope_dir(data_dir, connection_id, database);
     let dir = scope.join(&name);
     let (Ok(canonical_scope), Ok(canonical_dir)) = (scope.canonicalize(), dir.canonicalize())
     else {

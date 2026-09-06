@@ -58,7 +58,7 @@ pub fn detect_delimiter(prefix: &str) -> u8 {
         .enumerate()
         .max_by_key(|(_, count)| **count)
         .unwrap();
-    [b',', b';', b'\t'][best_index]
+    b",;\t"[best_index]
 }
 
 fn read_records(path: &std::path::Path, delimiter: u8) -> Result<Vec<StringRecord>, String> {

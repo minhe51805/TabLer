@@ -2,6 +2,7 @@ import type {
   InstalledPluginRecord,
   PluginFormatContribution,
 } from "../types/plugin";
+import { saveExportFile } from "./tauri-utils";
 
 export interface RuntimePluginFormat extends PluginFormatContribution {
   pluginId: string;
@@ -77,20 +78,16 @@ export function serializePluginFormat(
   return lines.join("\r\n");
 }
 
-export function downloadPluginFormat(
+export async function downloadPluginFormat(
   format: RuntimePluginFormat,
   columns: string[],
   rows: (string | number | boolean | null)[][],
   filename: string,
-) {
+): Promise<void> {
   const content = serializePluginFormat(format, columns, rows);
-  const blob = new Blob([content], { type: `${format.mimeType};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+  await saveExportFile({
+    fileName: filename,
+    content,
+    filters: [{ name: format.label, extensions: [format.extension] }],
+  });
 }

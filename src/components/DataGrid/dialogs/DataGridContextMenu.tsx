@@ -8,6 +8,29 @@ import type {
 import type { ColumnDisplayFormat } from "../editors";
 import { clearColumnLayout } from "../../../stores/column-layout-store";
 import { clearColumnWidths } from "../../../stores/column-width-store";
+import { buildCsvContent, buildTsvContent } from "../../../utils/export-utils";
+import { emitAppToast } from "../../../utils/app-toast";
+
+/** Normalizes a raw cell value for text formats: objects become JSON text so
+ *  row/column copies never render "[object Object]". */
+function normalizeCellValue(value: unknown): string | number | boolean | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "object") return JSON.stringify(value);
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") {
+    return value;
+  }
+  return String(value);
+}
+
+/** Clipboard write with the same toast feedback as the toolbar Copy menu. */
+async function copyWithToast(content: string, label: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(content);
+    emitAppToast({ title: `Copied ${label}`, tone: "success" });
+  } catch (error) {
+    emitAppToast({ title: "Copy failed", description: String(error), tone: "error" });
+  }
+}
 
 export interface DataGridMenuTarget {
   x: number;
@@ -73,6 +96,49 @@ export function DataGridContextMenu({
 }: DataGridContextMenuProps) {
   const contextMenu = menu;
 
+  /** Copies the right-clicked row (visible columns, raw values) in the chosen
+   *  text format — same serializers the toolbar Copy menu uses. */
+  const copyRowAs = (format: "csv" | "tsv" | "json") => {
+    const columns = table
+      .getAllLeafColumns()
+      .filter((column) => column.getIsVisible() && column.id !== "_row_num");
+    const row = table.getRowModel().rows[contextMenu.rowIndex ?? 0];
+    if (!row) return;
+    const names = columns.map((column) => column.id);
+    const values = columns.map((column) => normalizeCellValue(row.getValue(column.id)));
+    if (format === "json") {
+      const obj: Record<string, string | number | boolean | null> = {};
+      names.forEach((name, index) => {
+        obj[name] = values[index];
+      });
+      void copyWithToast(JSON.stringify(obj, null, 2), "row as JSON");
+    } else {
+      const content = format === "csv"
+        ? buildCsvContent(names, [values])
+        : buildTsvContent(names, [values]);
+      void copyWithToast(content, `row as ${format.toUpperCase()}`);
+    }
+    onClose();
+  };
+
+  /** Copies every loaded value of the right-clicked column (current view
+   *  order) as a one-column CSV or a plain JSON array. */
+  const copyColumnAs = (format: "csv" | "json") => {
+    const columnId = contextMenu.colName!;
+    const rows = table.getRowModel().rows;
+    if (format === "json") {
+      const values = rows.map((row) => normalizeCellValue(row.getValue(columnId)));
+      void copyWithToast(JSON.stringify(values, null, 2), "column as JSON");
+    } else {
+      const content = buildCsvContent(
+        [columnId],
+        rows.map((row) => [normalizeCellValue(row.getValue(columnId))]),
+      );
+      void copyWithToast(content, "column as CSV");
+    }
+    onClose();
+  };
+
   return (
         <div
           className="datagrid-context-menu"
@@ -119,6 +185,18 @@ export function DataGridContextMenu({
                 }}
               >
                 Copy as SELECT
+              </button>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => copyColumnAs("csv")}
+              >
+                Copy column as CSV
+              </button>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => copyColumnAs("json")}
+              >
+                Copy column as JSON
               </button>
               <div className="datagrid-context-menu-separator" />
               <button
@@ -279,6 +357,26 @@ export function DataGridContextMenu({
               >
                 Duplicate row
               </button>
+              <div className="datagrid-context-menu-separator" />
+              <div className="datagrid-context-menu-label" style={{ padding: "4px 12px", fontSize: "11px", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Copy Row As</div>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => copyRowAs("csv")}
+              >
+                CSV
+              </button>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => copyRowAs("tsv")}
+              >
+                TSV (spreadsheet)
+              </button>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => copyRowAs("json")}
+              >
+                JSON
+              </button>
             </>
           )}
           {contextMenu.type === "cell" && (
@@ -291,6 +389,26 @@ export function DataGridContextMenu({
                 }}
               >
                 Add row
+              </button>
+              <div className="datagrid-context-menu-separator" />
+              <div className="datagrid-context-menu-label" style={{ padding: "4px 12px", fontSize: "11px", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Copy Row As</div>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => copyRowAs("csv")}
+              >
+                CSV
+              </button>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => copyRowAs("tsv")}
+              >
+                TSV (spreadsheet)
+              </button>
+              <button
+                className="datagrid-context-menu-item"
+                onClick={() => copyRowAs("json")}
+              >
+                JSON
               </button>
             </>
           )}

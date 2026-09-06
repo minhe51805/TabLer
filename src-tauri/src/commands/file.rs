@@ -5,6 +5,69 @@ use std::path::PathBuf;
 
 const CSV_PREVIEW_RECORD_LIMIT: usize = 200;
 
+/// Saves exported content through a native save dialog. Anchor downloads
+/// (`<a download>` over `blob:` URLs) are silent no-ops inside the Tauri
+/// WebView, so every grid export (CSV/JSON/XLSX/MQL/plugins) funnels here:
+/// the dialog picks the destination and the bytes are written with std::fs.
+/// Binary payloads (e.g. the XLSX workbook) arrive base64-encoded.
+#[tauri::command]
+pub async fn save_export_file(
+    file_name: String,
+    content: String,
+    filters: Option<Vec<SaveExportFilter>>,
+    encoding: Option<String>,
+    content_base64: Option<String>,
+) -> Result<Option<String>, String> {
+    // rfd dialogs must run on the main thread; hop off the async runtime so
+    // the blocking dialog never stalls a tokio worker.
+    let requested_name = file_name;
+    let dialog_filters = filters.unwrap_or_default();
+    let target = tokio::task::spawn_blocking(move || {
+        let mut dialog = FileDialog::new().set_file_name(&requested_name);
+        for filter in &dialog_filters {
+            dialog = dialog.add_filter(&filter.name, &filter.extensions);
+        }
+        dialog.save_file()
+    })
+    .await
+    .map_err(|error| format!("Save dialog failed: {error}"))?;
+
+    let Some(path) = target else {
+        // User dismissed the dialog — not an error.
+        return Ok(None);
+    };
+    let saved_path = path.to_string_lossy().to_string();
+
+    let is_base64 = encoding.as_deref() == Some("base64");
+    let write_result = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        if is_base64 {
+            use base64::Engine as _;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(content_base64.as_deref().unwrap_or_default())
+                .map_err(|error| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Invalid base64 export payload: {error}"),
+                    )
+                })?;
+            fs::write(&path, bytes)
+        } else {
+            fs::write(&path, content)
+        }
+    })
+    .await
+    .map_err(|error| format!("Save task failed: {error}"))?;
+
+    write_result.map_err(|error| format!("Failed to write export file: {error}"))?;
+    Ok(Some(saved_path))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SaveExportFilter {
+    pub name: String,
+    pub extensions: Vec<String>,
+}
+
 /// Opens a file picker dialog filtered to SQL/text files and returns the file contents.
 /// Returns the full file path and content on success, or an error message.
 #[tauri::command]

@@ -8,6 +8,7 @@ import writeXlsxFile, {
   type Sheet,
   type SheetData,
 } from "write-excel-file/browser";
+import { saveExportFile } from "./tauri-utils";
 
 const BLOB_TYPE_MARKERS = ["blob", "binary", "bytea", "geometry", "raster"];
 const NUMBER_TYPE_MARKERS = [
@@ -138,5 +139,13 @@ export async function exportXLSX(sheets: XlsxSheet[], filename?: string): Promis
   }));
 
   const workbook = writeXlsxFile(workbookSheets);
-  await workbook.toFile(filename ?? buildExportFilename(nonEmptySheets[0]?.name));
+  const blob = await workbook.toBlob();
+  const buffer = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (const byte of buffer) binary += String.fromCharCode(byte);
+  await saveExportFile({
+    fileName: filename ?? buildExportFilename(nonEmptySheets[0]?.name),
+    contentBase64: btoa(binary),
+    filters: [{ name: "Excel workbook", extensions: ["xlsx"] }],
+  });
 }

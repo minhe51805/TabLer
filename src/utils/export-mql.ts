@@ -2,20 +2,18 @@
  * MQL (MongoDB Shell) export utility.
  * Converts query results to MongoDB shell syntax: db.collection.insertOne / insertMany / deleteMany.
  */
+import { saveExportFile } from "./tauri-utils";
 
 const LARGE_EXPORT_THRESHOLD = 1000;
 
-/** Triggers a browser download of text content */
-function downloadText(content: string, filename: string): void {
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+/** Opens the native save dialog and writes the MQL script. Anchor downloads
+ *  are silent no-ops inside the Tauri WebView. */
+async function downloadText(content: string, filename: string): Promise<void> {
+  await saveExportFile({
+    fileName: filename,
+    content,
+    filters: [{ name: "MongoDB shell script", extensions: ["js"] }],
+  });
 }
 
 /** Builds a timestamped filename */
@@ -210,15 +208,12 @@ export async function confirmLargeExport(rowCount: number): Promise<boolean> {
 }
 
 /**
- * Exports data to MongoDB shell script format.
- * Uses insertOne for 1 doc, insertMany for 2+, deleteMany for empty set.
- *
- * @param options - Export options
+ * Builds the MongoDB shell script body (header comments, use statement,
+ * insertOne/insertMany/deleteMany calls). Exported so the toolbar's Copy
+ * action can place the same script on the clipboard.
  */
-export async function exportToMQL(options: MqlExportOptions): Promise<void> {
-  const { collectionName, databaseName, columns, rows, filename } = options;
-
-  if (!(await confirmLargeExport(rows.length))) return;
+export function buildMqlContent(options: MqlExportOptions): string {
+  const { collectionName, databaseName, columns, rows } = options;
 
   const collection = safeCollectionName(collectionName);
   const lines: string[] = [];
@@ -259,7 +254,21 @@ export async function exportToMQL(options: MqlExportOptions): Promise<void> {
     }
   }
 
-  const content = lines.join("\n");
+  return lines.join("\n");
+}
+
+/**
+ * Exports data to MongoDB shell script format.
+ * Uses insertOne for 1 doc, insertMany for 2+, deleteMany for empty set.
+ *
+ * @param options - Export options
+ */
+export async function exportToMQL(options: MqlExportOptions): Promise<void> {
+  const { collectionName, filename, rows } = options;
+
+  if (!(await confirmLargeExport(rows.length))) return;
+
+  const content = buildMqlContent(options);
   const fname = filename ?? buildExportFilename(collectionName, "js");
-  downloadText(content, fname);
+  await downloadText(content, fname);
 }

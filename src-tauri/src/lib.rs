@@ -384,6 +384,7 @@ pub fn run() {
             read_sql_file_from_path,
             read_csv_file,
             pick_database_file,
+            save_export_file,
             export_database,
             // Terminal commands
             open_terminal,

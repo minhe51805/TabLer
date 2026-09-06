@@ -66,6 +66,17 @@ pub(super) enum MongoUpdatePayload {
     Pipeline(Vec<Document>),
 }
 
+/// Strips a `<database>.` prefix from a table reference when it names the
+/// currently resolved database. MongoDB's list_tables reports the database as
+/// the schema, so SQL-style callers (the Explorer tab opener, the AI tooling)
+/// hand over names like "avtech_operations.users" — a dotted collection name
+/// that does not exist and silently reads as empty. A genuine collection
+/// named exactly "<db>.<something>" collides only in pathological cases.
+fn strip_database_prefix<'a>(table: &'a str, db_name: &str) -> &'a str {
+    let db_prefix = format!("{db_name}.");
+    table.strip_prefix(db_prefix.as_str()).unwrap_or(table)
+}
+
 impl MongoDbDriver {
     pub async fn connect(config: &ConnectionConfig) -> Result<Self> {
         let connection_uri = Self::build_connection_uri(config)?;
@@ -112,10 +123,36 @@ impl MongoDbDriver {
             .filter(|value| !value.is_empty())
             .context("MongoDB host is required")?;
 
-        let host = if raw_host.contains(':') && !raw_host.starts_with('[') {
-            format!("[{raw_host}]")
+        // Detect Atlas/SRV targets: either an explicit `mongodb+srv://` scheme
+        // pasted into the host field or an official Atlas hostname. SRV is
+        // required to discover the cluster (plain mongodb:// only reaches one
+        // node and Atlas rejects it), and SRV connections are always TLS.
+        let mut is_srv = false;
+        let mut host = raw_host.to_string();
+        if let Some(rest) = host.strip_prefix("mongodb+srv://") {
+            is_srv = true;
+            host = rest.to_string();
+        } else if let Some(rest) = host.strip_prefix("mongodb://") {
+            host = rest.to_string();
+        } else if host
+            .split('/')
+            .next()
+            .is_some_and(|host_part| host_part.trim_end_matches('.').ends_with(".mongodb.net"))
+        {
+            is_srv = true;
+        }
+        // A full connection URL pasted into the host field: keep only the
+        // host portion, dropping any embedded `user:pass@` credentials (the
+        // structured username/password fields are authoritative). An embedded
+        // path is ignored in favor of config.database.
+        host = host.split('/').next().unwrap_or_default().to_string();
+        if let Some((_, without_credentials)) = host.rsplit_once('@') {
+            host = without_credentials.to_string();
+        }
+        let host = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]")
         } else {
-            raw_host.to_string()
+            host
         };
 
         let username = config
@@ -135,7 +172,11 @@ impl MongoDbDriver {
             ));
         }
 
-        let mut uri = String::from("mongodb://");
+        let mut uri = String::from(if is_srv {
+            "mongodb+srv://"
+        } else {
+            "mongodb://"
+        });
         if let Some(username) = username {
             uri.push_str(&Self::percent_encode(username));
             if let Some(password) = password {
@@ -145,9 +186,12 @@ impl MongoDbDriver {
             uri.push('@');
         }
         uri.push_str(&host);
-        if let Some(port) = config.port.filter(|value| *value > 0) {
-            uri.push(':');
-            uri.push_str(&port.to_string());
+        // SRV records already encode the port — appending one is invalid.
+        if !is_srv {
+            if let Some(port) = config.port.filter(|value| *value > 0) {
+                uri.push(':');
+                uri.push_str(&port.to_string());
+            }
         }
 
         let database = config
@@ -178,9 +222,26 @@ impl MongoDbDriver {
         {
             query_params.push(format!("replicaSet={}", Self::percent_encode(replica_set)));
         }
+        // Atlas users live in the admin database, but the URI path carries the
+        // target database — without an explicit authSource the server would
+        // look the user up there and fail. Only defaulted for SRV targets;
+        // explicit auth_source always wins.
+        if is_srv
+            && username.is_some()
+            && !query_params
+                .iter()
+                .any(|param| param.starts_with("authSource="))
+        {
+            query_params.push("authSource=admin".to_string());
+        }
         query_params.push(format!(
             "tls={}",
-            if config.use_ssl { "true" } else { "false" }
+            // SRV targets are Atlas, which rejects plain connections.
+            if is_srv || config.use_ssl {
+                "true"
+            } else {
+                "false"
+            }
         ));
 
         if !query_params.is_empty() {
@@ -209,7 +270,6 @@ impl MongoDbDriver {
         }
         self.current_db.read().await.clone()
     }
-
     async fn database_handle(&self, database: Option<&str>) -> Database {
         let name = self.database_name(database).await;
         self.client.database(&name)
@@ -224,7 +284,18 @@ impl MongoDbDriver {
         if table_name.is_empty() {
             return Err(anyhow!("MongoDB collection name cannot be empty"));
         }
-        Ok(self.database_handle(database).await.collection(table_name))
+        // SQL-style callers pass schema-qualified names (`<db>.<collection>`)
+        // because MongoDB's list_tables reports the database as the schema —
+        // the Explorer then opens tabs like "avtech_operations.users", which
+        // reads as a nonexistent dotted collection and silently yields zero
+        // rows. Strip the resolved-database prefix; a real collection sharing
+        // that exact dotted name is pathological enough to accept.
+        let db_name = self.database_name(database).await;
+        let collection_name = strip_database_prefix(table_name, &db_name);
+        Ok(self
+            .database_handle(database)
+            .await
+            .collection(collection_name))
     }
 }
 
@@ -699,7 +770,7 @@ impl DatabaseDriver for MongoDbDriver {
 
 #[cfg(test)]
 mod tests {
-    use super::{MongoDbDriver, MongoQueryCommand, MongoUpdatePayload};
+    use super::{strip_database_prefix, MongoDbDriver, MongoQueryCommand, MongoUpdatePayload};
     use mongodb::bson::Bson;
 
     #[test]
@@ -746,5 +817,180 @@ mod tests {
             },
             _ => panic!("expected updateMany command"),
         }
+    }
+
+    fn config_with(
+        host: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+        database: Option<&str>,
+    ) -> crate::database::models::ConnectionConfig {
+        crate::database::models::ConnectionConfig {
+            host: Some(host.to_string()),
+            username: username.map(str::to_string),
+            password: password.map(str::to_string),
+            database: database.map(str::to_string),
+            ..crate::database::models::ConnectionConfig::default()
+        }
+    }
+
+    #[test]
+    fn atlas_host_builds_srv_uri_with_admin_auth_source() {
+        let config = config_with(
+            "cluster0.67gwy4b.mongodb.net",
+            Some("avtech_operations_db_user"),
+            Some("secret"),
+            Some("avtech_operations"),
+        );
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.starts_with("mongodb+srv://"));
+        assert!(uri.contains("authSource=admin"));
+        assert!(uri.contains("tls=true"));
+        assert!(!uri.contains(":27017"), "SRV URIs must not carry a port");
+        assert!(
+            uri.contains("/avtech_operations?"),
+            "target db must be the URI path: {uri}"
+        );
+    }
+
+    #[test]
+    fn pasted_connection_url_host_is_reduced_to_the_host_part() {
+        let config = config_with(
+            "avtech_operations_db_user:pw@cluster0.67gwy4b.mongodb.net/avtech_operations?retryWrites=true",
+            None,
+            None,
+            None,
+        );
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.starts_with("mongodb+srv://"));
+        assert!(uri.contains("cluster0.67gwy4b.mongodb.net"));
+        assert!(!uri.contains("avtech_operations_db_user"));
+        assert!(!uri.contains("retryWrites"));
+    }
+
+    #[test]
+    fn local_host_keeps_plain_scheme_and_port() {
+        let config = crate::database::models::ConnectionConfig {
+            host: Some("localhost".to_string()),
+            port: Some(27017),
+            username: Some("dev".to_string()),
+            password: Some("dev".to_string()),
+            database: Some("localdb".to_string()),
+            ..crate::database::models::ConnectionConfig::default()
+        };
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.starts_with("mongodb://"));
+        assert!(uri.contains("localhost:27017"));
+        assert!(!uri.contains("authSource=admin"));
+        assert!(uri.contains("tls=false"));
+    }
+
+    /// Live diagnostic against a real Atlas cluster. Run manually:
+    /// `cargo test --lib mongo_live_probe -- --ignored --nocapture`
+    /// Requires TABLER_TEST_MONGO_URI (full mongodb+srv connection string).
+    #[tokio::test]
+    #[ignore = "requires TABLER_TEST_MONGO_URI"]
+    async fn mongo_live_probe() {
+        use crate::database::driver::DatabaseDriver;
+        let uri = std::env::var("TABLER_TEST_MONGO_URI")
+            .expect("TABLER_TEST_MONGO_URI must be set (full mongodb+srv:// string)");
+        // The embedded credentials must go through the structured fields (the
+        // builder strips them from the host on purpose). Without them the
+        // connection is anonymous — MongoDB's ping succeeds unauthenticated,
+        // which masks the missing credentials until the first real command.
+        let authority = uri
+            .split("//")
+            .nth(1)
+            .and_then(|rest| rest.split('@').next())
+            .unwrap_or_default();
+        let (username, password) = match authority.split_once(':') {
+            Some((user, pass)) => (Some(user.to_string()), Some(pass.to_string())),
+            None => (None, None),
+        };
+        let config = crate::database::models::ConnectionConfig {
+            id: "mongo-probe".to_string(),
+            name: "mongo-probe".to_string(),
+            db_type: crate::database::models::DatabaseType::MongoDB,
+            host: Some(uri),
+            port: None,
+            username,
+            password,
+            database: Some("avtech_operations".to_string()),
+            file_path: None,
+            use_ssl: true,
+            ssl_mode: None,
+            ssl_ca_cert_path: None,
+            ssl_client_cert_path: None,
+            ssl_client_key_path: None,
+            ssl_skip_host_verification: None,
+            color: None,
+            additional_fields: std::collections::HashMap::new(),
+            startup_commands: None,
+            pre_connect_script: None,
+            ssh_config: None,
+        };
+        let driver = MongoDbDriver::connect(&config).await.expect("connect");
+        // Note: Atlas users scoped to a single database lack listDatabases on
+        // admin — that call panics the probe, so it stays removed here.
+        let tables = driver
+            .list_tables(Some("avtech_operations"))
+            .await
+            .expect("list_tables");
+        println!(
+            "[probe] avtech_operations collections: {:?}",
+            tables.iter().map(|t| &t.name).collect::<Vec<_>>()
+        );
+
+        for collection in ["users", "projects", "teams"] {
+            match driver
+                .count_rows(collection, Some("avtech_operations"))
+                .await
+            {
+                Ok(count) => println!("[probe] {collection}: count={count}"),
+                Err(error) => println!("[probe] {collection}: count ERROR: {error:#}"),
+            }
+            match driver
+                .get_table_data(
+                    collection,
+                    Some("avtech_operations"),
+                    0,
+                    10,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+            {
+                Ok(data) => println!(
+                    "[probe] {collection}: fetched={} columns={:?} first_row={:?}",
+                    data.rows.len(),
+                    data.columns.iter().map(|c| &c.name).collect::<Vec<_>>(),
+                    data.rows.first().map(|row| row.first()),
+                ),
+                Err(error) => println!("[probe] {collection}: fetch ERROR: {error:#}"),
+            }
+        }
+    }
+
+    #[test]
+    fn strips_schema_qualified_collection_prefix() {
+        // The Explorer opens tabs as "<db>.<collection>" because MongoDB's
+        // list_tables reports the database as the schema.
+        assert_eq!(
+            strip_database_prefix("avtech_operations.users", "avtech_operations"),
+            "users"
+        );
+        // Already-bare names pass through untouched.
+        assert_eq!(strip_database_prefix("users", "avtech_operations"), "users");
+        // A different database prefix is NOT stripped.
+        assert_eq!(
+            strip_database_prefix("other_db.users", "avtech_operations"),
+            "other_db.users"
+        );
+        // The bare database name itself is left alone.
+        assert_eq!(
+            strip_database_prefix("avtech_operations", "avtech_operations"),
+            "avtech_operations"
+        );
     }
 }

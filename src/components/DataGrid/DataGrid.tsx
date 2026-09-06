@@ -1695,20 +1695,31 @@ export function DataGrid({
           <tbody onContextMenu={(e) => {
             e.preventDefault();
             const target = e.target as HTMLElement;
-            const rowEl = target.closest("tr.datagrid-row");
             const thEl = target.closest("th.datagrid-th");
+            const rowEl = target.closest("tr.datagrid-row");
             if (thEl) {
               const colId = thEl.getAttribute("data-col-id") || undefined;
               handleContextMenu(e, "header", colId);
-            } else if (rowEl) {
-              const rowIdx = rowEl.querySelector(".datagrid-index-selectable, .datagrid-index-value");
-              if (rowIdx) {
-                const idx = Number(rowIdx.textContent?.trim() ?? -1) - 1;
-                handleContextMenu(e, "row", undefined, idx >= 0 ? idx : undefined);
-              }
-            } else {
-              handleContextMenu(e, "cell");
+              return;
             }
+            if (rowEl) {
+              // Always open a menu on a row: prefer cell-scoped actions when
+              // the click lands on a data cell, otherwise row-scoped ones.
+              // Never fall through silently — that read as "no context menu".
+              const cellEl = target.closest("td[data-col-id]");
+              const indexEl = rowEl.querySelector(".datagrid-index-selectable, .datagrid-index-value");
+              const rawIndex = rowEl.getAttribute("data-index")
+                ?? (indexEl?.textContent?.trim() ?? "-1");
+              const rowIndex = Number(rawIndex) - 1;
+              const colId = cellEl?.getAttribute("data-col-id") || undefined;
+              if (colId && colId !== "_row_num") {
+                handleContextMenu(e, "cell", colId, rowIndex >= 0 ? rowIndex : undefined);
+              } else {
+                handleContextMenu(e, "row", undefined, rowIndex >= 0 ? rowIndex : undefined);
+              }
+              return;
+            }
+            handleContextMenu(e, "cell");
           }}>
             {virtualPaddingTop > 0 && (
               <tr aria-hidden="true" className="datagrid-virtual-spacer">
@@ -1750,6 +1761,7 @@ export function DataGrid({
                       column.id === "_row_num" ? "datagrid-td-index" : "",
                       stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
                     ].join(" ")}
+                    data-col-id={column.id}
                     style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
                   >
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -1775,6 +1787,7 @@ export function DataGrid({
                         "datagrid-td",
                         stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
                       ].join(" ")}
+                      data-col-id={column.id}
                       style={{ width, minWidth: width }}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}

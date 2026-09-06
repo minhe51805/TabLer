@@ -16207,19 +16207,17 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   justify-content: center;
 }
 
-/* View toggle (Table / Chart): collapse to icon-only on narrow windows —
-   the labels stay available via the hover tooltip. */
-@media (max-width: 1100px) {
-  .datagrid-view-toggle .datachart-toggle-btn span {
-    display: none;
-  }
+/* View toggle (Table / Chart): icon-only — the labels stay available via
+   the hover tooltip. */
+.datagrid-view-toggle .datachart-toggle-btn span {
+  display: none;
+}
 
-  .datagrid-view-toggle .datachart-toggle-btn {
-    padding: 0;
-    width: 28px;
-    min-width: 28px;
-    justify-content: center;
-  }
+.datagrid-view-toggle .datachart-toggle-btn {
+  padding: 0;
+  width: 28px;
+  min-width: 28px;
+  justify-content: center;
 }
 
 /* ========== Change Tracking Modal ========== */

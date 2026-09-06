@@ -674,6 +674,10 @@ mod mssql_bootstrap_live {
     /// Reproduces the exact "Tao & Mo" (create & open) flow the UI runs:
     /// user config (instance field with SERVER\INSTANCE garbage) + the
     /// starter_core preset SQL from connection-form-utils.ts.
+    // Live probe bound to the dev machine's SQL Server instance (SSPI auth):
+    // compiled only on Windows targets so `--include-ignored` CI runs on
+    // Linux/macOS never reach it.
+    #[cfg(windows)]
     #[tokio::test]
     #[ignore]
     async fn mssql_live_bootstrap() {

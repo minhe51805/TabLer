@@ -1097,11 +1097,11 @@ export function AppWorkspacePanel({
                     <button
                       type="button"
                       onClick={onNewQuery}
-                      className="toolbar-btn primary"
+                      className="toolbar-btn primary icon-only"
                       title={t("toolbar.newQueryShortcut")}
+                      aria-label={t("toolbar.newQuery")}
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>{t("toolbar.newQuery")}</span>
                     </button>
                   )}
 

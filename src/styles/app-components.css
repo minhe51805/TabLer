@@ -5916,6 +5916,19 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   background: var(--mm-surface-2);
 }
 
+/* A primary action collapsed to an icon (New Query) keeps its blue identity
+   — the generic icon-only ghost styling above must not wash it out. */
+.toolbar-btn.primary.icon-only {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.toolbar-btn.primary.icon-only:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: transparent;
+  color: #ffffff;
+}
+
 .statusbar {
   height: 28px;
   padding: 0 10px;

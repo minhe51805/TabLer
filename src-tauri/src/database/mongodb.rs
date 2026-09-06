@@ -112,10 +112,36 @@ impl MongoDbDriver {
             .filter(|value| !value.is_empty())
             .context("MongoDB host is required")?;
 
-        let host = if raw_host.contains(':') && !raw_host.starts_with('[') {
-            format!("[{raw_host}]")
+        // Detect Atlas/SRV targets: either an explicit `mongodb+srv://` scheme
+        // pasted into the host field or an official Atlas hostname. SRV is
+        // required to discover the cluster (plain mongodb:// only reaches one
+        // node and Atlas rejects it), and SRV connections are always TLS.
+        let mut is_srv = false;
+        let mut host = raw_host.to_string();
+        if let Some(rest) = host.strip_prefix("mongodb+srv://") {
+            is_srv = true;
+            host = rest.to_string();
+        } else if let Some(rest) = host.strip_prefix("mongodb://") {
+            host = rest.to_string();
+        } else if host
+            .split('/')
+            .next()
+            .is_some_and(|host_part| host_part.trim_end_matches('.').ends_with(".mongodb.net"))
+        {
+            is_srv = true;
+        }
+        // A full connection URL pasted into the host field: keep only the
+        // host portion, dropping any embedded `user:pass@` credentials (the
+        // structured username/password fields are authoritative). An embedded
+        // path is ignored in favor of config.database.
+        host = host.split('/').next().unwrap_or_default().to_string();
+        if let Some((_, without_credentials)) = host.rsplit_once('@') {
+            host = without_credentials.to_string();
+        }
+        let host = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]")
         } else {
-            raw_host.to_string()
+            host
         };
 
         let username = config
@@ -135,7 +161,11 @@ impl MongoDbDriver {
             ));
         }
 
-        let mut uri = String::from("mongodb://");
+        let mut uri = String::from(if is_srv {
+            "mongodb+srv://"
+        } else {
+            "mongodb://"
+        });
         if let Some(username) = username {
             uri.push_str(&Self::percent_encode(username));
             if let Some(password) = password {
@@ -145,9 +175,12 @@ impl MongoDbDriver {
             uri.push('@');
         }
         uri.push_str(&host);
-        if let Some(port) = config.port.filter(|value| *value > 0) {
-            uri.push(':');
-            uri.push_str(&port.to_string());
+        // SRV records already encode the port — appending one is invalid.
+        if !is_srv {
+            if let Some(port) = config.port.filter(|value| *value > 0) {
+                uri.push(':');
+                uri.push_str(&port.to_string());
+            }
         }
 
         let database = config
@@ -178,9 +211,26 @@ impl MongoDbDriver {
         {
             query_params.push(format!("replicaSet={}", Self::percent_encode(replica_set)));
         }
+        // Atlas users live in the admin database, but the URI path carries the
+        // target database — without an explicit authSource the server would
+        // look the user up there and fail. Only defaulted for SRV targets;
+        // explicit auth_source always wins.
+        if is_srv
+            && username.is_some()
+            && !query_params
+                .iter()
+                .any(|param| param.starts_with("authSource="))
+        {
+            query_params.push("authSource=admin".to_string());
+        }
         query_params.push(format!(
             "tls={}",
-            if config.use_ssl { "true" } else { "false" }
+            // SRV targets are Atlas, which rejects plain connections.
+            if is_srv || config.use_ssl {
+                "true"
+            } else {
+                "false"
+            }
         ));
 
         if !query_params.is_empty() {
@@ -746,5 +796,71 @@ mod tests {
             },
             _ => panic!("expected updateMany command"),
         }
+    }
+
+    fn config_with(
+        host: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+        database: Option<&str>,
+    ) -> crate::database::models::ConnectionConfig {
+        crate::database::models::ConnectionConfig {
+            host: Some(host.to_string()),
+            username: username.map(str::to_string),
+            password: password.map(str::to_string),
+            database: database.map(str::to_string),
+            ..crate::database::models::ConnectionConfig::default()
+        }
+    }
+
+    #[test]
+    fn atlas_host_builds_srv_uri_with_admin_auth_source() {
+        let config = config_with(
+            "cluster0.67gwy4b.mongodb.net",
+            Some("avtech_operations_db_user"),
+            Some("secret"),
+            Some("avtech_operations"),
+        );
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.starts_with("mongodb+srv://"));
+        assert!(uri.contains("authSource=admin"));
+        assert!(uri.contains("tls=true"));
+        assert!(!uri.contains(":27017"), "SRV URIs must not carry a port");
+        assert!(
+            uri.contains("/avtech_operations?"),
+            "target db must be the URI path: {uri}"
+        );
+    }
+
+    #[test]
+    fn pasted_connection_url_host_is_reduced_to_the_host_part() {
+        let config = config_with(
+            "avtech_operations_db_user:pw@cluster0.67gwy4b.mongodb.net/avtech_operations?retryWrites=true",
+            None,
+            None,
+            None,
+        );
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.starts_with("mongodb+srv://"));
+        assert!(uri.contains("cluster0.67gwy4b.mongodb.net"));
+        assert!(!uri.contains("avtech_operations_db_user"));
+        assert!(!uri.contains("retryWrites"));
+    }
+
+    #[test]
+    fn local_host_keeps_plain_scheme_and_port() {
+        let config = crate::database::models::ConnectionConfig {
+            host: Some("localhost".to_string()),
+            port: Some(27017),
+            username: Some("dev".to_string()),
+            password: Some("dev".to_string()),
+            database: Some("localdb".to_string()),
+            ..crate::database::models::ConnectionConfig::default()
+        };
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.starts_with("mongodb://"));
+        assert!(uri.contains("localhost:27017"));
+        assert!(!uri.contains("authSource=admin"));
+        assert!(uri.contains("tls=false"));
     }
 }

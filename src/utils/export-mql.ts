@@ -2,20 +2,18 @@
  * MQL (MongoDB Shell) export utility.
  * Converts query results to MongoDB shell syntax: db.collection.insertOne / insertMany / deleteMany.
  */
+import { saveExportFile } from "./tauri-utils";
 
 const LARGE_EXPORT_THRESHOLD = 1000;
 
-/** Triggers a browser download of text content */
-function downloadText(content: string, filename: string): void {
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+/** Opens the native save dialog and writes the MQL script. Anchor downloads
+ *  are silent no-ops inside the Tauri WebView. */
+async function downloadText(content: string, filename: string): Promise<void> {
+  await saveExportFile({
+    fileName: filename,
+    content,
+    filters: [{ name: "MongoDB shell script", extensions: ["js"] }],
+  });
 }
 
 /** Builds a timestamped filename */

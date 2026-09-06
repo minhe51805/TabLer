@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { exportToCSV, exportToJSON } from "../../utils/export-utils";
 import { exportXLSX } from "../../utils/export-xlsx";
 import { exportToMQL } from "../../utils/export-mql";
+import { emitAppToast } from "../../utils/app-toast";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import { usePluginStore } from "../../stores/pluginStore";
 import {
@@ -176,7 +177,9 @@ export function DataGridToolbar({
       return;
     }
     const cols = resolvedColumns.map((c) => c.name);
-    exportToCSV(cols, dataRows, buildExportFilename(exportFilenameBase, "csv"));
+    exportToCSV(cols, dataRows, buildExportFilename(exportFilenameBase, "csv")).catch((error) => {
+      emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
+    });
   }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName]);
 
   const handleExportJSON = useCallback(() => {
@@ -186,27 +189,37 @@ export function DataGridToolbar({
       return;
     }
     const cols = resolvedColumns.map((c) => c.name);
-    exportToJSON(cols, dataRows, buildExportFilename(exportFilenameBase, "json"));
+    exportToJSON(cols, dataRows, buildExportFilename(exportFilenameBase, "json")).catch((error) => {
+      emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
+    });
   }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName]);
 
   const handleExportXLSX = useCallback(async () => {
     if (!canExport) return;
     const cols = resolvedColumns.map((c) => ({ name: c.name, data_type: c.data_type || "" }));
-    await exportXLSX(
-      [{ name: tableName || "Result", columns: cols, rows: dataRows }],
-      buildExportFilename(exportFilenameBase, "xlsx"),
-    );
+    try {
+      await exportXLSX(
+        [{ name: tableName || "Result", columns: cols, rows: dataRows }],
+        buildExportFilename(exportFilenameBase, "xlsx"),
+      );
+    } catch (error) {
+      emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
+    }
   }, [canExport, dataRows, exportFilenameBase, resolvedColumns, tableName]);
 
   const handleExportMQL = useCallback(async () => {
     if (!canExport) return;
     const cols = resolvedColumns.map((c) => c.name);
-    await exportToMQL({
-      collectionName: tableName,
-      databaseName: database,
-      columns: cols,
-      rows: dataRows,
-    });
+    try {
+      await exportToMQL({
+        collectionName: tableName,
+        databaseName: database,
+        columns: cols,
+        rows: dataRows,
+      });
+    } catch (error) {
+      emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
+    }
   }, [canExport, dataRows, database, resolvedColumns, tableName]);
 
   const handlePluginExport = useCallback((format: RuntimePluginFormat) => {
@@ -216,7 +229,9 @@ export function DataGridToolbar({
       resolvedColumns.map((column) => column.name),
       dataRows,
       buildExportFilename(exportFilenameBase, format.extension),
-    );
+    ).catch((error) => {
+      emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
+    });
   }, [canExport, dataRows, exportFilenameBase, resolvedColumns]);
 
   return (

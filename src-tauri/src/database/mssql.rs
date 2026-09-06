@@ -1433,6 +1433,7 @@ mod mssql_live_diagnostics {
 
     /// Requires a live SQL Server instance on this machine. Run manually:
     /// `cargo test --lib mssql_live_connection -- --ignored --nocapture`
+    #[cfg(windows)]
     #[tokio::test]
     #[ignore]
     async fn mssql_live_connection() {
@@ -1611,6 +1612,10 @@ mod mssql_live_diagnostics {
     /// Live probe: preview_write_transaction must run the UPDATE inside
     /// BEGIN/ROLLBACK and leave every row untouched.
     /// `cargo test --lib mssql_live_preview_write -- --ignored --nocapture`
+    // Live probe bound to the dev machine's SQL Server instance (SSPI auth):
+    // compiled only on Windows targets so `--include-ignored` CI runs on
+    // Linux/macOS never reach it.
+    #[cfg(windows)]
     #[tokio::test]
     #[ignore = "requires a reachable local SQL Server"]
     async fn mssql_live_preview_write() {
@@ -1655,6 +1660,10 @@ mod mssql_live_diagnostics {
 
     /// Live probe: replicate the global-search multi pipeline end-to-end.
     /// `cargo test --lib mssql_live_multi_search -- --ignored --nocapture`
+    // Live probe bound to the dev machine's SQL Server instance (SSPI auth):
+    // compiled only on Windows targets so `--include-ignored` CI runs on
+    // Linux/macOS never reach it.
+    #[cfg(windows)]
     #[tokio::test]
     #[ignore = "requires a reachable local SQL Server"]
     async fn mssql_live_multi_search() {
@@ -1722,6 +1731,10 @@ mod mssql_live_diagnostics {
 
     /// Live probe: verify what object_type values list_schema_objects returns
     /// against the real server (run with --ignored --nocapture).
+    // Live probe bound to the dev machine's SQL Server instance (SSPI auth):
+    // compiled only on Windows targets so `--include-ignored` CI runs on
+    // Linux/macOS never reach it.
+    #[cfg(windows)]
     #[tokio::test]
     #[ignore]
     async fn mssql_live_schema_objects() {

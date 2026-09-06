@@ -1093,8 +1093,7 @@ export function AppWorkspacePanel({
             <div className="workspace-toolbar-actions">
               {isConnected && (
                 <>
-                  {!isMetricsWorkspace &&
-                    workspaceQueryProfile.surface !== "command" && (
+                  {!isMetricsWorkspace && (
                     <button
                       type="button"
                       onClick={onNewQuery}

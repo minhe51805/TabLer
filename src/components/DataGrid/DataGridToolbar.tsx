@@ -622,16 +622,17 @@ export function DataGridToolbar({
             >
               <button
                 type="button"
-                className="datagrid-footer-action danger"
+                className="datagrid-footer-action danger datagrid-icon-action"
                 onClick={() => void handleDeleteSelectedRows()}
                 disabled={isDeletingRows}
+                title={`Delete ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""}`}
+                aria-label={`Delete ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""}`}
               >
                 {isDeletingRows ? (
                   <Loader2 className="!w-3.5 !h-3.5 animate-spin" />
                 ) : (
                   <Trash2 className="!w-3.5 !h-3.5" />
                 )}
-                <span>Delete selected</span>
               </button>
             </span>
           )}

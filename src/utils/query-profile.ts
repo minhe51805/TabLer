@@ -30,8 +30,9 @@ const COMMAND_PROFILES: Partial<Record<DatabaseType, QueryProfile>> = {
     editorLanguage: "javascript",
     executionPath: "direct",
     supportsFormatting: false,
-    defaultTabTitle: "Mongo Shell",
-    defaultContent: 'db.runCommand({"ping": 1})',
+    // Plain empty query tab like every other engine — no seeded shell noise.
+    defaultTabTitle: "Query",
+    defaultContent: "",
     surfaceLabel: "Mongo Shell",
   },
   redis: {
@@ -39,8 +40,8 @@ const COMMAND_PROFILES: Partial<Record<DatabaseType, QueryProfile>> = {
     editorLanguage: "shell",
     executionPath: "direct",
     supportsFormatting: false,
-    defaultTabTitle: "Redis CLI",
-    defaultContent: "SCAN 0 MATCH * COUNT 100",
+    defaultTabTitle: "Query",
+    defaultContent: "",
     surfaceLabel: "Redis CLI",
   },
 };

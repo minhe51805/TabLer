@@ -928,6 +928,11 @@ export function DataGrid({
     rowIndex?: number,
   ) => {
     e.preventDefault();
+    // Keep this event away from the document-level close listener below —
+    // otherwise a right-click while a menu is open (or a stale armed listener)
+    // sets the fresh menu state back to null within the same event, and the
+    // menu never appears.
+    e.stopPropagation();
     setContextMenu({ x: e.clientX, y: e.clientY, type, colName, rowIndex });
   }, []);
 
@@ -937,7 +942,13 @@ export function DataGrid({
     const handler = () => setContextMenu(null);
     document.addEventListener("click", handler, { once: true });
     document.addEventListener("contextmenu", handler, { once: true });
-    return () => document.removeEventListener("click", handler);
+    return () => {
+      document.removeEventListener("click", handler);
+      // The contextmenu listener is { once: true } but only consumes itself on
+      // a contextmenu event; if the menu closes first (item click / re-render),
+      // it stays armed and would swallow the NEXT right-click's menu. Remove it.
+      document.removeEventListener("contextmenu", handler);
+    };
   }, [contextMenu]);
 
   const handleOpenRowInspector = useCallback(
@@ -1708,9 +1719,16 @@ export function DataGrid({
               // Never fall through silently — that read as "no context menu".
               const cellEl = target.closest("td[data-col-id]");
               const indexEl = rowEl.querySelector(".datagrid-index-selectable, .datagrid-index-value");
-              const rawIndex = rowEl.getAttribute("data-index")
-                ?? (indexEl?.textContent?.trim() ?? "-1");
-              const rowIndex = Number(rawIndex) - 1;
+              // <tr data-index> carries the 0-based source row index already;
+              // only the visible 1-based number inside the index cell needs -1.
+              const dataIndexAttr = rowEl.getAttribute("data-index");
+              let rowIndex = -1;
+              if (dataIndexAttr !== null) {
+                rowIndex = Number(dataIndexAttr);
+              } else {
+                const shown = Number(indexEl?.textContent?.trim() ?? NaN);
+                if (Number.isFinite(shown) && shown >= 1) rowIndex = shown - 1;
+              }
               const colId = cellEl?.getAttribute("data-col-id") || undefined;
               if (colId && colId !== "_row_num") {
                 handleContextMenu(e, "cell", colId, rowIndex >= 0 ? rowIndex : undefined);

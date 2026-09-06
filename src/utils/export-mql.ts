@@ -208,15 +208,12 @@ export async function confirmLargeExport(rowCount: number): Promise<boolean> {
 }
 
 /**
- * Exports data to MongoDB shell script format.
- * Uses insertOne for 1 doc, insertMany for 2+, deleteMany for empty set.
- *
- * @param options - Export options
+ * Builds the MongoDB shell script body (header comments, use statement,
+ * insertOne/insertMany/deleteMany calls). Exported so the toolbar's Copy
+ * action can place the same script on the clipboard.
  */
-export async function exportToMQL(options: MqlExportOptions): Promise<void> {
-  const { collectionName, databaseName, columns, rows, filename } = options;
-
-  if (!(await confirmLargeExport(rows.length))) return;
+export function buildMqlContent(options: MqlExportOptions): string {
+  const { collectionName, databaseName, columns, rows } = options;
 
   const collection = safeCollectionName(collectionName);
   const lines: string[] = [];
@@ -257,7 +254,21 @@ export async function exportToMQL(options: MqlExportOptions): Promise<void> {
     }
   }
 
-  const content = lines.join("\n");
+  return lines.join("\n");
+}
+
+/**
+ * Exports data to MongoDB shell script format.
+ * Uses insertOne for 1 doc, insertMany for 2+, deleteMany for empty set.
+ *
+ * @param options - Export options
+ */
+export async function exportToMQL(options: MqlExportOptions): Promise<void> {
+  const { collectionName, filename, rows } = options;
+
+  if (!(await confirmLargeExport(rows.length))) return;
+
+  const content = buildMqlContent(options);
   const fname = filename ?? buildExportFilename(collectionName, "js");
-  downloadText(content, fname);
+  await downloadText(content, fname);
 }

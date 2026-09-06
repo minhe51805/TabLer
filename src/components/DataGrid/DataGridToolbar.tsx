@@ -1,9 +1,10 @@
 import { FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { exportToCSV, exportToJSON } from "../../utils/export-utils";
+import { buildCsvContent, buildJsonContent, buildTsvContent, exportToCSV, exportToJSON } from "../../utils/export-utils";
 import { exportXLSX } from "../../utils/export-xlsx";
-import { exportToMQL } from "../../utils/export-mql";
+import { buildMqlContent, exportToMQL } from "../../utils/export-mql";
+import { serializePluginFormat } from "../../utils/plugin-format-runtime";
 import { emitAppToast } from "../../utils/app-toast";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import { usePluginStore } from "../../stores/pluginStore";
@@ -110,8 +111,10 @@ export function DataGridToolbar({
 }: DataGridToolbarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showCopyMenu, setShowCopyMenu] = useState(false);
   const settingsBtnRef = useRef<HTMLSpanElement>(null);
   const exportBtnRef = useRef<HTMLSpanElement>(null);
+  const copyBtnRef = useRef<HTMLSpanElement>(null);
   const { settings, updateSettings } = useDataGridSettings();
   const installedPlugins = usePluginStore((state) => state.plugins);
   const pluginsHaveLoaded = usePluginStore((state) => state.hasLoaded);
@@ -126,19 +129,21 @@ export function DataGridToolbar({
   }, [loadPlugins, pluginsHaveLoaded]);
 
   useEffect(() => {
-    if (!showExportMenu && !showSettings) return;
+    if (!showExportMenu && !showSettings && !showCopyMenu) return;
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (target && exportBtnRef.current?.contains(target)) return;
       if (target && settingsBtnRef.current?.contains(target)) return;
+      if (target && copyBtnRef.current?.contains(target)) return;
       const inPopover = target instanceof Element && target.closest(".datagrid-export-menu, .datagrid-settings-popover");
       if (inPopover) return;
       setShowExportMenu(false);
       setShowSettings(false);
+      setShowCopyMenu(false);
     };
     window.addEventListener("mousedown", handlePointerDown, true);
     return () => window.removeEventListener("mousedown", handlePointerDown, true);
-  }, [showExportMenu, showSettings]);
+  }, [showExportMenu, showSettings, showCopyMenu]);
 
   // Filter input: rendered on the left side of the grid toolbar.
   const showFilter = Boolean((tableName || externalResult) && onFilterChange);
@@ -233,6 +238,60 @@ export function DataGridToolbar({
       emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
     });
   }, [canExport, dataRows, exportFilenameBase, resolvedColumns]);
+
+  // Copy actions place the same bytes the export path would write onto the
+  // clipboard (TSV stands in for XLSX, which is a binary format). Clipboard
+  // writes work in the Tauri WebView, unlike anchor downloads.
+  const copyText = useCallback(async (content: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      emitAppToast({
+        title: `Copied as ${label}`,
+        description: `${dataRows.length.toLocaleString()} row${dataRows.length === 1 ? "" : "s"} on the clipboard.`,
+        tone: "success",
+      });
+    } catch (error) {
+      emitAppToast({ title: "Copy failed", description: String(error), tone: "error" });
+    }
+  }, [dataRows.length]);
+
+  const handleCopyCSV = useCallback(() => {
+    const cols = resolvedColumns.map((c) => c.name);
+    void copyText(buildCsvContent(cols, dataRows), "CSV");
+  }, [copyText, dataRows, resolvedColumns]);
+
+  const handleCopyTSV = useCallback(() => {
+    const cols = resolvedColumns.map((c) => c.name);
+    void copyText(buildTsvContent(cols, dataRows), "TSV");
+  }, [copyText, dataRows, resolvedColumns]);
+
+  const handleCopyJSON = useCallback(() => {
+    const cols = resolvedColumns.map((c) => c.name);
+    void copyText(buildJsonContent(cols, dataRows), "JSON");
+  }, [copyText, dataRows, resolvedColumns]);
+
+  const handleCopyMQL = useCallback(() => {
+    void copyText(
+      buildMqlContent({
+        collectionName: tableName,
+        databaseName: database,
+        columns: resolvedColumns.map((c) => c.name),
+        rows: dataRows,
+      }),
+      "MQL",
+    );
+  }, [copyText, dataRows, database, resolvedColumns, tableName]);
+
+  const handleCopyPlugin = useCallback((format: RuntimePluginFormat) => {
+    void copyText(
+      serializePluginFormat(
+        format,
+        resolvedColumns.map((column) => column.name),
+        dataRows,
+      ),
+      format.label,
+    );
+  }, [copyText, dataRows, resolvedColumns]);
 
   return (
     <div className="datagrid-topbar">
@@ -426,6 +485,19 @@ export function DataGridToolbar({
               <ChevronDown className="!w-3 !h-3" />
             </button>
           </span>
+          <span ref={copyBtnRef} className="popover-container" data-popover={canExport ? "Copy data to clipboard" : "No data to copy"}>
+            <button
+              type="button"
+              className={`datagrid-footer-action ${showCopyMenu ? "active" : ""}`}
+              onClick={() => setShowCopyMenu((v) => !v)}
+              disabled={!canExport}
+              title="Copy data to clipboard"
+            >
+              <Copy className="!w-3.5 !h-3.5" />
+              <span>Copy</span>
+              <ChevronDown className="!w-3 !h-3" />
+            </button>
+          </span>
           {onReloadData && (
             <button
               type="button"
@@ -501,6 +573,58 @@ export function DataGridToolbar({
             handlePluginExport,
             onExportFull,
             tableName,
+          ])}
+
+          {useMemo(() => {
+            if (!showCopyMenu || !copyBtnRef.current) return null;
+            const rect = copyBtnRef.current.getBoundingClientRect();
+            const top = rect.bottom + 6;
+            const right = window.innerWidth - rect.right;
+            const copyOptions: Array<{ label: string; hint: string; icon: typeof FileSpreadsheet; run: () => void }> = [
+              { label: "CSV", hint: "Comma-separated with header row", icon: FileSpreadsheet, run: handleCopyCSV },
+              { label: "TSV", hint: "Tab-separated — pastes straight into spreadsheets (stands in for XLSX)", icon: FileSpreadsheet, run: handleCopyTSV },
+              { label: "JSON", hint: "One object per row", icon: FileJson, run: handleCopyJSON },
+              { label: "MQL", hint: "MongoDB shell inserts", icon: FileCode, run: handleCopyMQL },
+              ...pluginFormats.map((format) => ({
+                label: format.label,
+                hint: format.description || `${format.pluginName} plugin`,
+                icon: FileCode,
+                run: () => handleCopyPlugin(format),
+              })),
+            ];
+            const copyMenu = (
+              <div className="datagrid-export-menu" style={{ position: "fixed", top, right, zIndex: 9999 }}>
+                {copyOptions.map((opt) => {
+                  const OptIcon = opt.icon;
+                  return (
+                    <button
+                      key={opt.label}
+                      type="button"
+                      className="datagrid-export-menu-item"
+                      onClick={() => {
+                        opt.run();
+                        setShowCopyMenu(false);
+                      }}
+                    >
+                      <OptIcon className="!w-4 !h-4" />
+                      <span className="datagrid-export-menu-copy">
+                        <strong>{opt.label}</strong>
+                        <span>{opt.hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+            return createPortal(copyMenu, document.body);
+          }, [
+            showCopyMenu,
+            pluginFormats,
+            handleCopyCSV,
+            handleCopyTSV,
+            handleCopyJSON,
+            handleCopyMQL,
+            handleCopyPlugin,
           ])}
 
           {selectedRowCount > 0 && tableName && (

@@ -68,6 +68,21 @@ function escapeCsvValue(value: string | number | boolean | null): string {
  * @param filename - Optional custom filename (defaults to table_name_YYYY-MM-DD.csv)
  */
 /**
+ * Builds RFC 4180 CSV content. Exported so the toolbar's Copy action can
+ * place the same bytes on the clipboard that the save path writes to disk.
+ */
+export function buildCsvContent(
+  columns: string[],
+  rows: (string | number | boolean | null)[][],
+): string {
+  const headerLine = columns.map(escapeCsvValue).join(",");
+  const dataLines = rows.map((row) =>
+    row.map((cell) => escapeCsvValue(cell)).join(","),
+  );
+  return [headerLine, ...dataLines].join("\r\n");
+}
+
+/**
  * Exports row data to a CSV file via the native save dialog.
  * @param columns - Column header names (in display order)
  * @param rows - 2D array of row values; each row aligns with columns
@@ -80,15 +95,9 @@ export async function exportToCSV(
 ): Promise<void> {
   if (rows.length === 0) return;
 
-  const headerLine = columns.map(escapeCsvValue).join(",");
-  const dataLines = rows.map((row) =>
-    row.map((cell) => escapeCsvValue(cell)).join(","),
-  );
-
-  const csvContent = [headerLine, ...dataLines].join("\r\n");
   await saveExportFile({
     fileName: filename ?? buildExportFilename(columns[0], "csv"),
-    content: csvContent,
+    content: buildCsvContent(columns, rows),
     filters: [{ name: "CSV", extensions: ["csv"] }],
   });
 }
@@ -100,13 +109,13 @@ export async function exportToCSV(
  * @param rows - 2D array of row values; each row aligns with columns
  * @param filename - Optional custom filename (defaults to table_name_YYYY-MM-DD.json)
  */
-export async function exportToJSON(
+/**
+ * Builds pretty-printed JSON content (one object per row, column keys).
+ */
+export function buildJsonContent(
   columns: string[],
   rows: (string | number | boolean | null)[][],
-  filename?: string,
-): Promise<void> {
-  if (rows.length === 0) return;
-
+): string {
   const data: Record<string, string | number | boolean | null>[] = rows.map((row) => {
     const obj: Record<string, string | number | boolean | null> = {};
     columns.forEach((col, idx) => {
@@ -114,11 +123,37 @@ export async function exportToJSON(
     });
     return obj;
   });
+  return JSON.stringify(data, null, 2);
+}
 
-  const jsonContent = JSON.stringify(data, null, 2);
+/**
+ * Builds tab-separated content — the flavor spreadsheets paste natively.
+ */
+export function buildTsvContent(
+  columns: string[],
+  rows: (string | number | boolean | null)[][],
+): string {
+  const escapeTsv = (value: string | number | boolean | null): string =>
+    value === null || value === undefined
+      ? ""
+      : String(value).replace(/\t/g, " ").replace(/\r?\n/g, " ");
+  const lines = [columns.map(escapeTsv).join("\t")];
+  for (const row of rows) {
+    lines.push(row.map(escapeTsv).join("\t"));
+  }
+  return lines.join("\n");
+}
+
+export async function exportToJSON(
+  columns: string[],
+  rows: (string | number | boolean | null)[][],
+  filename?: string,
+): Promise<void> {
+  if (rows.length === 0) return;
+
   await saveExportFile({
     fileName: filename ?? buildExportFilename(columns[0], "json"),
-    content: jsonContent,
+    content: buildJsonContent(columns, rows),
     filters: [{ name: "JSON", extensions: ["json"] }],
   });
 }

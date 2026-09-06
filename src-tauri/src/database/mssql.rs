@@ -83,8 +83,7 @@ impl MssqlDriver {
         let mut instance: Option<String> = config
             .additional_fields
             .get("instance_name")
-            .map(|value| sanitize_instance(value))
-            .flatten();
+            .and_then(|value| sanitize_instance(value));
         let mut host_port: Option<u16> = None;
 
         if let Some((server, rest)) = raw_host.split_once('\\') {
@@ -162,7 +161,7 @@ impl MssqlDriver {
             // E0599 before it even reaches the auth logic.
             #[cfg(windows)]
             (Some(user), "windows") => {
-                AuthMethod::windows(user.to_string(), password.to_string())
+                AuthMethod::windows(user, password.to_string())
             }
             #[cfg(not(windows))]
             (Some(_), "windows") => anyhow::bail!(

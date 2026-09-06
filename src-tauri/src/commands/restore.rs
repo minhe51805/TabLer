@@ -120,6 +120,10 @@ pub async fn restore_database_sql(
 /// statements the SQL parser cannot classify (or DROP/CREATE that read-only
 /// tiers block) — failing there would make rollback, the recovery path,
 /// impossible.
+// 8 parameters mirror the restore pipeline end-to-end (target, payload,
+// driver state, safety switches, and the pre-restore snapshot); collapsing
+// them into a struct would just relocate the call-site noise.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_sql_restore(
     connection_id: &str,
     sql: &str,

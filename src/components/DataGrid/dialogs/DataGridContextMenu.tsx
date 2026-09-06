@@ -156,10 +156,10 @@ export function DataGridContextMenu({
         className="datagrid-export-menu-item"
         onClick={() => copyRowAs("csv")}
       >
-        <FileSpreadsheet className="!w-4 !h-4" />
+        <FileSpreadsheet className="!w-3.5 !h-3.5" />
         <span className="datagrid-export-menu-copy">
           <strong>CSV</strong>
-          <span>Comma-separated with header row</span>
+          <span>Comma + header row</span>
         </span>
       </button>
       <button
@@ -167,10 +167,10 @@ export function DataGridContextMenu({
         className="datagrid-export-menu-item"
         onClick={() => copyRowAs("tsv")}
       >
-        <FileSpreadsheet className="!w-4 !h-4" />
+        <FileSpreadsheet className="!w-3.5 !h-3.5" />
         <span className="datagrid-export-menu-copy">
           <strong>TSV</strong>
-          <span>Tab-separated — pastes straight into spreadsheets</span>
+          <span>Tab-separated</span>
         </span>
       </button>
       <button
@@ -178,11 +178,11 @@ export function DataGridContextMenu({
         className="datagrid-export-menu-item"
         onClick={() => copyRowAs("json")}
       >
-        <FileJson className="!w-4 !h-4" />
+        <FileJson className="!w-3.5 !h-3.5" />
         <span className="datagrid-export-menu-copy">
           <strong>JSON</strong>
           <span>
-            {scope === "row" ? "One object per row" : "The right-clicked row as an object"}
+            {scope === "row" ? "One object per row" : "Row as an object"}
           </span>
         </span>
       </button>
@@ -192,10 +192,10 @@ export function DataGridContextMenu({
           className="datagrid-export-menu-item"
           onClick={() => copyRowAs("mql")}
         >
-          <FileCode className="!w-4 !h-4" />
+          <FileCode className="!w-3.5 !h-3.5" />
           <span className="datagrid-export-menu-copy">
             <strong>MQL</strong>
-            <span>MongoDB shell inserts</span>
+            <span>Mongo shell inserts</span>
           </span>
         </button>
       )}

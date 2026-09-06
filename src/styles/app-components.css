@@ -16084,7 +16084,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
+  /* Single row: a wrapping toolbar shifted the whole grid whenever selecting
+     rows revealed extra actions (SQL, Reload, Delete selected). */
+  flex-wrap: nowrap;
   gap: 8px 12px;
   padding: 0;
   border: 0;
@@ -16094,11 +16096,27 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   box-shadow: none;
 }
 
+.datagrid-topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.datagrid-topbar-actions::-webkit-scrollbar {
+  display: none;
+}
+
 .datagrid-topbar-side {
   display: flex;
   flex-direction: row;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 8px;
   flex: 1 1 460px;
@@ -16109,9 +16127,12 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
 }
 
 .datagrid-stat-pill {
@@ -26293,7 +26314,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .datagrid-topbar-actions {
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .datagrid-stat-pill,

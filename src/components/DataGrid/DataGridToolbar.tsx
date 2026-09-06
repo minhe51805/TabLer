@@ -489,12 +489,12 @@ export function DataGridToolbar({
           {onReloadData && (
             <button
               type="button"
-              className="datagrid-footer-action"
+              className="datagrid-footer-action datagrid-icon-action"
               onClick={onReloadData}
               title="Reload data"
+              aria-label="Reload data"
             >
               <RefreshCw className="!w-3.5 !h-3.5" />
-              <span>Reload</span>
             </button>
           )}
           {isExportingFull && onCancelExport && (

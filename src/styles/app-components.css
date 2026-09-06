@@ -16198,6 +16198,15 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   background: var(--mm-surface-2);
 }
 
+/* Icon-only toolbar button (e.g. Reload): square pill, label lives in the
+   hover tooltip (title) instead of taking toolbar width. */
+.datagrid-footer-action.datagrid-icon-action {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+
 /* ========== Change Tracking Modal ========== */
 .change-tracking-modal-backdrop {
   position: fixed;

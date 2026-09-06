@@ -1427,8 +1427,13 @@ mod mssql_parse_tests {
 
 #[cfg(test)]
 mod mssql_live_diagnostics {
+    // The tests here are Windows-only (live SQL Server + SSPI); gate the
+    // imports so non-Windows `--include-ignored` CI runs stay warning-free.
+    #[cfg(windows)]
     use super::MssqlDriver;
+    #[cfg(windows)]
     use crate::database::models::{ConnectionConfig, DatabaseType};
+    #[cfg(windows)]
     use std::collections::HashMap;
 
     /// Requires a live SQL Server instance on this machine. Run manually:

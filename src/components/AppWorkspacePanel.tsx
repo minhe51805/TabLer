@@ -1097,19 +1097,11 @@ export function AppWorkspacePanel({
                     <button
                       type="button"
                       onClick={onNewQuery}
-                      className="toolbar-btn primary"
+                      className="toolbar-btn primary icon-only"
                       title={t("toolbar.newQueryShortcut")}
+                      aria-label={t("toolbar.newQuery")}
                     >
-                      {workspaceQueryProfile.surface === "command" ? (
-                        <Terminal className="w-3.5 h-3.5" />
-                      ) : (
-                        <Plus className="w-3.5 h-3.5" />
-                      )}
-                      <span>
-                        {workspaceQueryProfile.surface === "command"
-                          ? t("workspace.ready.commandLink")
-                          : t("toolbar.newQuery")}
-                      </span>
+                      <Plus className="w-3.5 h-3.5" />
                     </button>
                   )}
 

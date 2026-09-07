@@ -39052,3 +39052,51 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   flex: 1 1 140px;
   min-width: 120px;
 }
+
+/* ===== Explorer table rows: definitive hover-action styling (wins cascade).
+   The row-level action is a 3-dot ghost icon button inside the row's hover
+   band — no pill, no floating chrome. ===== */
+.app-root .explorer-table-row {
+  border-radius: 8px;
+}
+
+.app-root .explorer-table-row:hover {
+  background: var(--mm-surface-1);
+}
+
+.app-root .explorer-table-main:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.app-root .explorer-structure-btn,
+.app-root .explorer-structure-btn--icon {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  margin-right: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  opacity: 0;
+}
+
+.app-root .explorer-table-row:hover .explorer-structure-btn,
+.app-root .explorer-structure-btn:focus-visible {
+  opacity: 1;
+}
+
+.app-root .explorer-structure-btn:hover {
+  border: 0;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.app-root .explorer-structure-btn svg {
+  width: 14px;
+  height: 14px;
+}

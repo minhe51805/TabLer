@@ -665,53 +665,43 @@ export function DataGridToolbar({
             const rect = sortBtnRef.current.getBoundingClientRect();
             const top = rect.bottom + 6;
             const right = window.innerWidth - rect.right;
-            const activeColumns = new Set<string>([
-              ...(sortColumn ? [sortColumn] : []),
-              ...multiSort.map((entry) => entry.column),
-            ]);
             const sortMenu = (
-              <div className="datagrid-export-menu" style={{ position: "fixed", top, right, zIndex: 9999 }}>
+              <div className="datagrid-export-menu datagrid-sort-menu" style={{ position: "fixed", top, right, zIndex: 9999 }}>
                 {resolvedColumns.map((col) => {
-                  const isActive = activeColumns.has(col.name);
+                  const entry = multiSort.find((item) => item.column === col.name);
+                  const isSingle = sortColumn === col.name;
+                  const label = entry
+                    ? `${col.name} ${entry.direction === "ASC" ? "↑" : "↓"}${entry.priority}`
+                    : isSingle
+                      ? `${col.name} ${sortDir === "ASC" ? "↑" : "↓"}`
+                      : col.name;
                   return (
                     <button
                       key={col.name}
                       type="button"
-                      className="datagrid-export-menu-item"
+                      className={`datagrid-sort-menu-item${entry || isSingle ? " active" : ""}`}
                       onClick={() => {
                         onSortColumn?.(col.name);
                         setShowSortMenu(false);
                       }}
                     >
-                      <ArrowUpDown className={`!w-4 !h-4 ${isActive ? "" : "opacity-40"}`} />
-                      <span className="datagrid-export-menu-copy">
-                        <strong>{col.name}</strong>
-                        <span>
-                          {multiSort.find((entry) => entry.column === col.name)
-                            ? `Priority ${(multiSort.find((entry) => entry.column === col.name) as { priority: number }).priority} — click to cycle`
-                            : sortColumn === col.name
-                              ? `Sorted ${sortDir} — click to flip`
-                              : "Sort by this column"}
-                        </span>
-                      </span>
+                      <ArrowUpDown className="!w-3.5 !h-3.5" />
+                      <span>{label}</span>
                     </button>
                   );
                 })}
                 {(sortColumn || multiSort.length > 0) && (
                   <button
                     type="button"
-                    className="datagrid-export-menu-item"
+                    className="datagrid-sort-menu-item danger"
                     onClick={() => {
                       onClearMultiSort?.();
                       onSortColumn?.("");
                       setShowSortMenu(false);
                     }}
                   >
-                    <X className="!w-4 !h-4" />
-                    <span className="datagrid-export-menu-copy">
-                      <strong>Clear sort</strong>
-                      <span>Back to natural order</span>
-                    </span>
+                    <X className="!w-3.5 !h-3.5" />
+                    <span>Clear sort</span>
                   </button>
                 )}
               </div>

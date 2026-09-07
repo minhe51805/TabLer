@@ -17178,6 +17178,53 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   padding: 5px;
 }
 
+/* Compact single-line Sort menu: icon + column name (+ direction/priority). */
+.datagrid-sort-menu {
+  max-height: 320px;
+  overflow-y: auto;
+  min-width: 180px;
+}
+
+.datagrid-sort-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #3f3f3f;
+  font-family: "DM Sans", sans-serif;
+  font-size: var(--mm-fs-caption);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.datagrid-sort-menu-item svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.datagrid-sort-menu-item:hover {
+  background: #f3f4f6;
+  color: var(--text-primary);
+}
+
+.datagrid-sort-menu-item.active {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.datagrid-sort-menu-item.danger {
+  color: #cf3d58;
+}
+
+.datagrid-sort-menu-item.danger svg {
+  color: #cf3d58;
+}
+
 /* Compact single-line items inside the flyout — the roomy two-line
    export-menu layout stays reserved for the toolbar Copy menu. */
 .datagrid-context-submenu .datagrid-export-menu-item {

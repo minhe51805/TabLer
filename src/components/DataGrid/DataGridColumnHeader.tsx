@@ -1,13 +1,13 @@
 import { memo } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Key } from "lucide-react";
+import { Key } from "lucide-react";
 
 /** Memoized column header: skips re-render unless sort state for this column changes. */
 export const ColumnHeader = memo(function ColumnHeader({
   columnName,
   isPrimaryKey,
-  isSorted,
-  dir,
-  priority,
+  isSorted: _isSorted,
+  dir: _dir,
+  priority: _priority,
   onSort,
 }: {
   columnName: string;
@@ -25,17 +25,6 @@ export const ColumnHeader = memo(function ColumnHeader({
     >
       {isPrimaryKey && <Key className="w-3 h-3 text-[var(--warning)] shrink-0" />}
       <span className="truncate">{columnName}</span>
-      {priority !== null ? (
-        <span className="datagrid-sort-priority">{priority}</span>
-      ) : isSorted ? (
-        dir === "ASC" ? (
-          <ArrowUp className="w-3 h-3 shrink-0 text-[var(--accent)]" />
-        ) : (
-          <ArrowDown className="w-3 h-3 shrink-0 text-[var(--accent)]" />
-        )
-      ) : (
-        <ArrowUpDown className="w-3 h-3 shrink-0 opacity-0 group-hover/header:opacity-50 transition-opacity" />
-      )}
     </button>
   );
 });

@@ -1,4 +1,4 @@
-import { FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search, RefreshCw } from "lucide-react";
+import { FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search, RefreshCw, ArrowUpDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { buildCsvContent, buildJsonContent, buildTsvContent, exportToCSV, exportToJSON } from "../../utils/export-utils";
@@ -44,6 +44,12 @@ interface DataGridToolbarProps {
   multiSort?: Array<{ column: string; direction: "ASC" | "DESC"; priority: number }>;
   /** Clear all multi-column sorts */
   onClearMultiSort?: () => void;
+  /** Currently sorted column (single sort) */
+  sortColumn?: string | null;
+  /** Current single-sort direction */
+  sortDir?: "ASC" | "DESC";
+  /** Set the single-sort column (toggles direction when already active) */
+  onSortColumn?: (colName: string) => void;
   /** Trigger paste rows from clipboard */
   onPasteRows?: () => void;
   onImportCsv?: () => void;
@@ -108,16 +114,40 @@ export function DataGridToolbar({
   isExportingFull = false,
   exportedRowCount = 0,
   onCancelExport,
+  sortColumn = null,
+  sortDir = "ASC",
+  multiSort = [],
+  onClearMultiSort,
+  onSortColumn,
 }: DataGridToolbarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
   const [showSqlMenu, setShowSqlMenu] = useState(false);
+  const [showSortMenu, setShowSortMenu] = useState(false);
   const settingsBtnRef = useRef<HTMLSpanElement>(null);
   const exportBtnRef = useRef<HTMLSpanElement>(null);
   const copyBtnRef = useRef<HTMLSpanElement>(null);
   const sqlBtnRef = useRef<HTMLSpanElement>(null);
+  const sortBtnRef = useRef<HTMLSpanElement>(null);
   const { settings, updateSettings } = useDataGridSettings();
+
+  /** "name ↑" style summary for the sort button label; null when unsorted. */
+  const sortSummary = useMemo(() => {
+    if (multiSort.length > 0) {
+      const first = multiSort[0];
+      const rest = multiSort.length - 1;
+      return `${first.column} ${first.direction === "ASC" ? "↑" : "↓"}${rest > 0 ? ` +${rest}` : ""}`;
+    }
+    if (sortColumn) return `${sortColumn} ${sortDir === "ASC" ? "↑" : "↓"}`;
+    return null;
+  }, [multiSort, sortColumn, sortDir]);
+
+  const sortMenuHint = multiSort.length > 0
+    ? "Multi-column sort active — pick a column to add, or clear sorts"
+    : sortColumn
+      ? `Sorted by ${sortColumn} (${sortDir})`
+      : "Sort rows by a column";
   const installedPlugins = usePluginStore((state) => state.plugins);
   const pluginsHaveLoaded = usePluginStore((state) => state.hasLoaded);
   const loadPlugins = usePluginStore((state) => state.loadPlugins);
@@ -131,23 +161,25 @@ export function DataGridToolbar({
   }, [loadPlugins, pluginsHaveLoaded]);
 
   useEffect(() => {
-    if (!showExportMenu && !showSettings && !showCopyMenu && !showSqlMenu) return;
+    if (!showExportMenu && !showSettings && !showCopyMenu && !showSqlMenu && !showSortMenu) return;
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node | null;
       if (target && exportBtnRef.current?.contains(target)) return;
       if (target && settingsBtnRef.current?.contains(target)) return;
       if (target && copyBtnRef.current?.contains(target)) return;
       if (target && sqlBtnRef.current?.contains(target)) return;
+      if (target && sortBtnRef.current?.contains(target)) return;
       const inPopover = target instanceof Element && target.closest(".datagrid-export-menu, .datagrid-settings-popover");
       if (inPopover) return;
       setShowExportMenu(false);
       setShowSettings(false);
       setShowCopyMenu(false);
       setShowSqlMenu(false);
+      setShowSortMenu(false);
     };
     window.addEventListener("mousedown", handlePointerDown, true);
     return () => window.removeEventListener("mousedown", handlePointerDown, true);
-  }, [showExportMenu, showSettings, showCopyMenu, showSqlMenu]);
+  }, [showExportMenu, showSettings, showCopyMenu, showSqlMenu, showSortMenu]);
 
   // Filter input: rendered on the left side of the grid toolbar.
   const showFilter = Boolean((tableName || externalResult) && onFilterChange);
@@ -476,13 +508,26 @@ export function DataGridToolbar({
           <span ref={copyBtnRef} className="popover-container" data-popover={canExport ? "Copy data to clipboard" : "No data to copy"}>
             <button
               type="button"
-              className={`datagrid-footer-action ${showCopyMenu ? "active" : ""}`}
+              className={`datagrid-footer-action datagrid-icon-action ${showCopyMenu ? "active" : ""}`}
               onClick={() => setShowCopyMenu((v) => !v)}
               disabled={!canExport}
               title="Copy data to clipboard"
+              aria-label="Copy data to clipboard"
             >
               <Copy className="!w-3.5 !h-3.5" />
-              <span>Copy</span>
+            </button>
+          </span>
+          <span ref={sortBtnRef} className="popover-container" data-popover={sortMenuHint}>
+            <button
+              type="button"
+              className={`datagrid-footer-action ${showSortMenu ? "active" : ""}`}
+              onClick={() => setShowSortMenu((v) => !v)}
+              title="Sort rows"
+              aria-haspopup="menu"
+              aria-expanded={showSortMenu}
+            >
+              <ArrowUpDown className="!w-3.5 !h-3.5" />
+              {sortSummary && <span>{sortSummary}</span>}
               <ChevronDown className="!w-3 !h-3" />
             </button>
           </span>
@@ -613,6 +658,73 @@ export function DataGridToolbar({
             handleCopyJSON,
             handleCopyMQL,
             handleCopyPlugin,
+          ])}
+
+          {useMemo(() => {
+            if (!showSortMenu || !sortBtnRef.current || resolvedColumns.length === 0) return null;
+            const rect = sortBtnRef.current.getBoundingClientRect();
+            const top = rect.bottom + 6;
+            const right = window.innerWidth - rect.right;
+            const activeColumns = new Set<string>([
+              ...(sortColumn ? [sortColumn] : []),
+              ...multiSort.map((entry) => entry.column),
+            ]);
+            const sortMenu = (
+              <div className="datagrid-export-menu" style={{ position: "fixed", top, right, zIndex: 9999 }}>
+                {resolvedColumns.map((col) => {
+                  const isActive = activeColumns.has(col.name);
+                  return (
+                    <button
+                      key={col.name}
+                      type="button"
+                      className="datagrid-export-menu-item"
+                      onClick={() => {
+                        onSortColumn?.(col.name);
+                        setShowSortMenu(false);
+                      }}
+                    >
+                      <ArrowUpDown className={`!w-4 !h-4 ${isActive ? "" : "opacity-40"}`} />
+                      <span className="datagrid-export-menu-copy">
+                        <strong>{col.name}</strong>
+                        <span>
+                          {multiSort.find((entry) => entry.column === col.name)
+                            ? `Priority ${(multiSort.find((entry) => entry.column === col.name) as { priority: number }).priority} — click to cycle`
+                            : sortColumn === col.name
+                              ? `Sorted ${sortDir} — click to flip`
+                              : "Sort by this column"}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+                {(sortColumn || multiSort.length > 0) && (
+                  <button
+                    type="button"
+                    className="datagrid-export-menu-item"
+                    onClick={() => {
+                      onClearMultiSort?.();
+                      onSortColumn?.("");
+                      setShowSortMenu(false);
+                    }}
+                  >
+                    <X className="!w-4 !h-4" />
+                    <span className="datagrid-export-menu-copy">
+                      <strong>Clear sort</strong>
+                      <span>Back to natural order</span>
+                    </span>
+                  </button>
+                )}
+              </div>
+            );
+            return createPortal(sortMenu, document.body);
+          }, [
+            showSortMenu,
+            resolvedColumns,
+            sortColumn,
+            sortDir,
+            multiSort,
+            onSortColumn,
+            onClearMultiSort,
           ])}
 
           {selectedRowCount > 0 && tableName && (

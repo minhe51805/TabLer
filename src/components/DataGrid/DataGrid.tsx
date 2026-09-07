@@ -1584,6 +1584,17 @@ export function DataGrid({
         stagedChangeCount={tableName ? getChangeCount(tableName) : 0}
         onApplyChanges={applyStagedChanges}
         onDiscardChanges={discardStagedChanges}
+        sortColumn={sortColumn}
+        sortDir={sortDir}
+        multiSort={multiSort}
+        onClearMultiSort={handleMultiSortClear}
+        onSortColumn={(colName) => {
+          if (!colName) {
+            setSortColumn(null);
+            return;
+          }
+          handleSort(colName);
+        }}
       />
 
       <div

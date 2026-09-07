@@ -27,6 +27,7 @@ import {
 import type { ColumnDetail, ConnectionConfig, QueryResult, TableRowFocus } from "../../types";
 import { devLogError } from "../../utils/logger";
 import { invokeMutation } from "../../utils/tauri-utils";
+import { emitAppToast } from "../../utils/app-toast";
 import { lazy, Suspense } from "react";
 import "./DataChart.css";
 
@@ -410,6 +411,30 @@ export function DataGrid({
       inlineStructureCacheRef,
     },
   });
+
+  /** Reload button feedback: spinner while refetching, toast when done. */
+  const [isReloadingData, setIsReloadingData] = useState(false);
+  const handleReloadData = useCallback(async () => {
+    if (isReloadingData) return;
+    setIsReloadingData(true);
+    const startedAt = Date.now();
+    let ok = false;
+    try {
+      ok = await refreshTableFromStart();
+    } finally {
+      // Keep the spinner on screen for at least 450ms so a fast DB still shows
+      // the rotation instead of flickering.
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 450) await new Promise((resolve) => setTimeout(resolve, 450 - elapsed));
+      setIsReloadingData(false);
+    }
+    emitAppToast(
+      ok
+        ? { title: "Reloaded successfully", tone: "success" }
+        : { title: "Reload failed", description: "Could not fetch fresh rows — check the connection.", tone: "error" },
+    );
+  }, [isReloadingData, refreshTableFromStart]);
+
   const undoableChanges = history.length;
   const redoableChanges = future.length;
 
@@ -1571,11 +1596,12 @@ export function DataGrid({
         handleCopyAsDeleteParam={handleCopyAsDeleteParam}
         isTableEditable={isTableEditable}
         canExportData={allowsDataExport}
-        onReloadData={tableName && !externalResult ? refreshTableFromStart : undefined}
+        onReloadData={tableName && !externalResult ? handleReloadData : undefined}
         onExportFull={tableName && !externalResult ? handleFullTableExport : undefined}
         isExportingFull={isExportingFull}
         exportedRowCount={exportedRowCount}
         onCancelExport={handleCancelFullTableExport}
+        isReloadingData={isReloadingData}
         canImportCsv={allowsCsvImport}
         structureStatus={structureStatus}
         resolvedColumns={resolvedColumns}
@@ -1584,6 +1610,17 @@ export function DataGrid({
         stagedChangeCount={tableName ? getChangeCount(tableName) : 0}
         onApplyChanges={applyStagedChanges}
         onDiscardChanges={discardStagedChanges}
+        sortColumn={sortColumn}
+        sortDir={sortDir}
+        multiSort={multiSort}
+        onClearMultiSort={handleMultiSortClear}
+        onSortColumn={(colName) => {
+          if (!colName) {
+            setSortColumn(null);
+            return;
+          }
+          handleSort(colName);
+        }}
       />
 
       <div
@@ -1666,13 +1703,15 @@ export function DataGrid({
                     >
                       <div className="datagrid-th-inner">
                         {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                        <div
-                          className="datagrid-col-resize-handle"
-                          onMouseDown={header.getResizeHandler()}
-                          onDoubleClick={() => handleColumnAutoFit(header.column.id)}
-                          title="Drag to resize, double-click to auto-fit"
-                        />
                       </div>
+                      {/* Direct child of the th so absolute right:0 lands on the
+                          real column boundary, not inside the header padding. */}
+                      <div
+                        className="datagrid-col-resize-handle"
+                        onMouseDown={header.getResizeHandler()}
+                        onDoubleClick={() => handleColumnAutoFit(header.column.id)}
+                        title="Drag to resize, double-click to auto-fit"
+                      />
                     </th>
                   );
                 })}

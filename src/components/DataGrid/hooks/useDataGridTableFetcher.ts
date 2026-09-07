@@ -7,6 +7,7 @@ import { devLogError } from "../../../utils/logger";
 import {
   buildTableCacheKey,
   buildTableScopeKey,
+  invalidateTableScopeCaches,
   isFreshCacheEntry,
   setBoundedMapEntry,
   tableCountCache,
@@ -335,12 +336,26 @@ export function useDataGridTableFetcher({
     ],
   );
 
-  const refreshTableFromStart = useCallback(async () => {
+  const refreshTableFromStart = useCallback(async (): Promise<boolean> => {
     loadedTablePagesRef.current.clear();
     setHasMoreTableRows(true);
     setCurrentPage(0);
-    await fetchData(0);
-  }, [fetchData]);
+    // Refresh ignores the page cache entirely — drop every entry scoped to
+    // this table (pages + row counts) so the reload actually hits the
+    // database instead of replaying cached chunks. Scope matching must go
+    // through the JSON-aware helper: page cache keys append page/sort fields
+    // after the scope object (which itself ends with "}"), so a string
+    // prefix check against the scope key never matches any entry.
+    if (tableName) {
+      invalidateTableScopeCaches(connectionId, database, tableName);
+    }
+    try {
+      await fetchData(0);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [fetchData, connectionId, tableName, database]);
 
   const ensureStructureLoaded = useCallback(async () => {
     if (!tableName || externalResult) {

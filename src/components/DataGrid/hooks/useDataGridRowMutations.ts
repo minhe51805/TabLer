@@ -89,7 +89,7 @@ interface DataGridRowMutationsParams {
   cancelCsvImport: (operationId: string) => Promise<boolean>;
 
   invalidateTableCaches: (connectionId: string, tableName: string, database?: string) => void;
-  refreshTableFromStart: () => Promise<void>;
+  refreshTableFromStart: () => Promise<unknown>;
 
   dataGridInstanceIdRef: RefObject<string>;
 }

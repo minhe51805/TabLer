@@ -17180,9 +17180,16 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 /* Compact single-line Sort menu: icon + column name (+ direction/priority). */
 .datagrid-sort-menu {
+  width: max-content;
+  min-width: 150px;
+  max-width: 240px;
   max-height: 320px;
   overflow-y: auto;
-  min-width: 180px;
+  scrollbar-width: none;
+}
+
+.datagrid-sort-menu::-webkit-scrollbar {
+  display: none;
 }
 
 .datagrid-sort-menu-item {

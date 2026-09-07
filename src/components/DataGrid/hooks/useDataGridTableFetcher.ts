@@ -7,6 +7,7 @@ import { devLogError } from "../../../utils/logger";
 import {
   buildTableCacheKey,
   buildTableScopeKey,
+  invalidateTableScopeCaches,
   isFreshCacheEntry,
   setBoundedMapEntry,
   tableCountCache,
@@ -339,14 +340,14 @@ export function useDataGridTableFetcher({
     loadedTablePagesRef.current.clear();
     setHasMoreTableRows(true);
     setCurrentPage(0);
-    // Refresh ignores the page cache entirely — clear it for this table so the
-    // reload actually hits the database instead of replaying cached chunks.
+    // Refresh ignores the page cache entirely — drop every entry scoped to
+    // this table (pages + row counts) so the reload actually hits the
+    // database instead of replaying cached chunks. Scope matching must go
+    // through the JSON-aware helper: page cache keys append page/sort fields
+    // after the scope object (which itself ends with "}"), so a string
+    // prefix check against the scope key never matches any entry.
     if (tableName) {
-      for (const key of Array.from(tablePageCache.keys())) {
-        if (key.startsWith(buildTableScopeKey(connectionId, tableName, database))) {
-          tablePageCache.delete(key);
-        }
-      }
+      invalidateTableScopeCaches(connectionId, database, tableName);
     }
     try {
       await fetchData(0);

@@ -157,4 +157,66 @@ describe("DataGrid table fetch path", () => {
       expect(container.textContent).not.toContain("row-15");
     });
   });
+
+  it("re-queries the database on reload instead of replaying the cached page", async () => {
+    // Regression: refreshTableFromStart used to clear the page cache with a
+    // string prefix check that never matched the JSON cache keys, so Reload
+    // silently replayed the 120s cached page (same rows, same Load time).
+    let dataVersion = 0;
+    let pageZeroFetches = 0;
+    invokeMock.mockImplementation(async (command: string, payload?: InvokePayload) => {
+      if (command === "get_table_data") {
+        const offset = Number(payload?.offset ?? 0);
+        if (offset >= PAGE_SIZE) return makePage(offset, 0);
+        pageZeroFetches += 1;
+        return {
+          columns: [
+            { name: "id", data_type: "INT", is_nullable: false, is_primary_key: true },
+            { name: "name", data_type: "TEXT", is_nullable: true, is_primary_key: false },
+          ],
+          rows: [
+            [1, `dept-v${dataVersion}`],
+            [2, `other-v${dataVersion}`],
+          ],
+          affected_rows: 0,
+          execution_time_ms: 1,
+          query: "SELECT fixture",
+          sandboxed: false,
+          truncated: false,
+        };
+      }
+      if (command === "count_table_rows") return { count: 2 };
+      if (command === "get_table_structure") {
+        return {
+          columns: [
+            { name: "id", data_type: "INT", is_nullable: false, is_primary_key: true },
+            { name: "name", data_type: "TEXT", is_nullable: true, is_primary_key: false },
+          ],
+          indexes: [],
+          foreign_keys: [],
+        };
+      }
+      return null;
+    });
+
+    const { container, getByRole } = render(
+      <DataGrid connectionId="conn-1" tableName="public.reloadcheck" database="appdb" isActive />,
+    );
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("dept-v0");
+    });
+    expect(pageZeroFetches).toBe(1);
+
+    // The database changes underneath, then the user hits Reload.
+    dataVersion = 1;
+    fireEvent.click(getByRole("button", { name: "Reload data" }));
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("dept-v1");
+    });
+    expect(container.textContent).not.toContain("dept-v0");
+    // The stale cached page must not satisfy the reload: a real query runs.
+    expect(pageZeroFetches).toBe(2);
+  });
 });

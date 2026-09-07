@@ -63,6 +63,19 @@ export function ContextMenu({
     setActiveContextSubmenu(found?.children ?? null);
   }, [activeContextSubmenuKey, tableContextMenuItems]);
 
+  // Close on any pointer press outside both the menu and its open flyout.
+  useEffect(() => {
+    if (!tableContextMenu) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (target && menuRef.current?.contains(target)) return;
+      if (target && submenuRef.current?.contains(target)) return;
+      onClose();
+    };
+    window.addEventListener("mousedown", handlePointerDown, true);
+    return () => window.removeEventListener("mousedown", handlePointerDown, true);
+  }, [tableContextMenu, onClose]);
+
   if (!tableContextMenu) return null;
 
   const menuLeft = Math.min(

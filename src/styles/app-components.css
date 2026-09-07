@@ -16834,7 +16834,6 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .datagrid-td {
   padding: 0;
   border-right: 1px solid var(--mm-border);
-  border-bottom: 1px solid var(--mm-border);
   max-width: 420px;
   position: relative;
 }
@@ -26450,7 +26449,6 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .datagrid-td {
   border-right: 1px solid var(--mm-border);
-  border-bottom: 1px solid var(--mm-border);
 }
 
 .datagrid-td-index {

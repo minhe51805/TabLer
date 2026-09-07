@@ -1,0 +1,81 @@
+name: Desktop E2E
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  smoke:
+    name: SQLite and PostgreSQL smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: tabler_test
+          POSTGRES_USER: tabler
+          POSTGRES_PASSWORD: tabler_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tabler -d tabler_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install desktop test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+      - name: Build desktop test binary
+        run: npm run build:e2e
+      - name: Run SQLite smoke
+        run: xvfb-run --auto-servernum npm run test:e2e
+      - name: Run binding frontend benchmarks
+        run: npm run test:performance
+      - name: Run PostgreSQL smoke
+        env:
+          TABLER_E2E_ENGINE: postgresql
+          TABLER_E2E_POSTGRES: "1"
+          TABLER_E2E_POSTGRES_HOST: 127.0.0.1
+          TABLER_E2E_POSTGRES_PORT: 5432
+          TABLER_E2E_POSTGRES_USER: tabler
+          TABLER_E2E_POSTGRES_PASSWORD: tabler_test
+          TABLER_E2E_POSTGRES_DATABASE: tabler_test
+        run: xvfb-run --auto-servernum npm run test:e2e
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-e2e-${{ github.run_id }}
+          path: .artifacts/e2e
+          if-no-files-found: warn
+          retention-days: 14

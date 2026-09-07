@@ -1,0 +1,142 @@
+import type { SqlRiskAnalysis } from "./AISlidePanelUtils";
+import type { AIRequestErrorCode } from "../../utils/ai-request-errors";
+
+export type AIWorkspaceBubbleKind = "assistant" | "result" | "error";
+
+export type AIWorkspaceBubbleStatus = "loading" | "ready" | "partial" | "cancelled" | "error";
+export type AIWorkspaceInteractionMode = "prompt" | "edit" | "agent";
+
+export interface AIWorkspacePointerState {
+  x: number;
+  y: number;
+  visible: boolean;
+}
+
+export function aiModeUsesSchemaContext(mode: AIWorkspaceInteractionMode) {
+  return mode !== "prompt";
+}
+
+export function aiModeAllowsInsert(mode: AIWorkspaceInteractionMode) {
+  return mode !== "prompt";
+}
+
+export function aiModeAllowsRun(mode: AIWorkspaceInteractionMode) {
+  return mode === "agent";
+}
+
+export function getDefaultAIWorkspaceInteractionMode(schemaContextAllowed?: boolean | null): AIWorkspaceInteractionMode {
+  return schemaContextAllowed ? "edit" : "prompt";
+}
+
+/**
+ * Controls how eagerly an autonomous agent starts generated SQL.
+ * - "review": always pause for approval before any execution.
+ * - "smart": auto-run safe read-only SQL, ask only for writes/high-risk SQL (default).
+ * - "full": auto-start every proposal, but writes and schema changes still require confirmation.
+ */
+export type AIWorkspaceAgentAutonomy = "review" | "smart" | "full";
+
+export const DEFAULT_AI_WORKSPACE_AGENT_AUTONOMY: AIWorkspaceAgentAutonomy = "smart";
+
+export function isAIWorkspaceAgentAutonomy(value: unknown): value is AIWorkspaceAgentAutonomy {
+  return value === "review" || value === "smart" || value === "full";
+}
+
+export type AIWorkspaceAgentActionName =
+  | "plan"
+  | "think"
+  | "ask_user"
+  | "update_plan"
+  | "skill"
+  | "list_tables"
+  | "search_schema"
+  | "list_schema_objects"
+  | "describe_table"
+  | "describe_tables"
+  | "sample_table_data"
+  | "run_readonly_sql"
+  | "run_parameterized_sql"
+  | "find_value"
+  | "check_sql"
+  | "run_preset"
+  | "preview_write"
+  | "remember_term"
+  | "read_memory"
+  | "save_memory"
+  | "edit_query_sql"
+  | "delete_memory"
+  | "create_checkpoint"
+  | "restore_checkpoint"
+  | "delegate"
+  | "read_page"
+  | "finish";
+
+export type AIWorkspaceAgentStepStatus = "running" | "done" | "error";
+
+export interface AIWorkspaceAgentStep {
+  /** 1-based ordinal of the step within the run. */
+  step: number;
+  action: AIWorkspaceAgentActionName;
+  /** The model's short rationale for taking this action. */
+  message: string;
+  /** Tool result; empty while the step is still running. */
+  observation?: string;
+  status: AIWorkspaceAgentStepStatus;
+}
+
+export interface AIWorkspaceBubbleData {
+  id: string;
+  threadId: string;
+  workspaceKey: string;
+  interactionMode: AIWorkspaceInteractionMode;
+  kind: AIWorkspaceBubbleKind;
+  status: AIWorkspaceBubbleStatus;
+  title: string;
+  subtitle: string;
+  prompt: string;
+  promptSummary?: string;
+  preview: string;
+  detail: string;
+  sql?: string;
+  risk?: SqlRiskAnalysis;
+  x: number;
+  y: number;
+  pointer: AIWorkspacePointerState;
+  createdAt: number;
+  autoDismissAt?: number;
+  /** Real model reasoning text; undefined when the model returns none. */
+  reasoning?: string;
+  /** Live trace of autonomous agent tool steps; undefined outside agent mode. */
+  agentSteps?: AIWorkspaceAgentStep[];
+  /** Stable request failure category used for retry and status presentation. */
+  requestErrorCode?: AIRequestErrorCode;
+  retryable?: boolean;
+  /** Set once this SQL has been pushed to a Query tab; further "Duyệt chạy"
+   *  clicks keep the button but must not spawn another tab. */
+  openedInWorkspace?: boolean;
+  /** Timestamp when /compact folded this bubble into the workspace digest.
+   *  Compacted bubbles stay persisted (archived in SQLite) but are hidden
+   *  from the conversation and excluded from request history. */
+  compactedAt?: number;
+  /** Timestamp captured when the run left "loading"; powers the thinking
+   *  duration shown on the collapsed agent step header. */
+  settledAt?: number;
+  /** Metadata of files/images attached by the user to this turn. Image bytes
+   *  live in the ai_attachments SQLite table and are fetched on demand. */
+  attachments?: AIWorkspaceAttachment[];
+  /** Options captured when the agent ended its turn with an ask_user
+   *  question; the conversation view renders them as one-click reply
+   *  buttons on the final bubble. */
+  askUserOptions?: string[];
+}
+
+/** Persisted metadata of a user attachment; bytes live in the backend table. */
+export interface AIWorkspaceAttachment {
+  id: string;
+  kind: "image" | "text";
+  name: string;
+  mimeType: string;
+  /** Approximate stored size in bytes (post-compression for images). */
+  size: number;
+  createdAt: number;
+}

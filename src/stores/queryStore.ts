@@ -1,0 +1,516 @@
+import { create } from "zustand";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
+import type { ColumnDetail, QueryParameter, QueryResult, TableCellUpdateRequest, TableRowDeleteRequest, TableStructure } from "../types";
+import { assertQueryAllowed } from "../utils/safe-mode-query-guard";
+import { splitSqlStatements } from "../utils/sqlStatements";
+import { getOrLoadTableColumns, getOrLoadTableStructure } from "../utils/schema-cache";
+import { useConnectionStore } from "./connectionStore";
+import {
+  invokeAIWorkspaceToolMutation,
+  invokeAIWorkspaceToolWithTimeout,
+} from "../utils/ai-tool-command-client";
+
+export interface QueryState {
+  isExecutingQuery: boolean;
+  activeQueryRequestId: string | null;
+  activeQueryConnectionId: string | null;
+  /** Roadmap Phase 3B: progressive row delivery for large read-only queries. */
+  progressiveDeliveryEnabled: boolean;
+  /** Live count of rows delivered by the progressive channel (null when idle). */
+  progressiveRowCount: number | null;
+  setProgressiveDeliveryEnabled: (enabled: boolean) => void;
+
+  executeQuery: (
+    connectionId: string,
+    sql: string,
+    options?: { preApproved?: boolean },
+  ) => Promise<QueryResult>;
+  cancelQuery: () => Promise<boolean>;
+  executeParameterizedQuery: (
+    connectionId: string,
+    sql: string,
+    parameters: QueryParameter[],
+    options?: { userInitiated?: boolean; preApproved?: boolean },
+  ) => Promise<QueryResult>;
+  executeSandboxQuery: (
+    connectionId: string,
+    statements: string[],
+    requireReadOnly?: boolean,
+    options?: { userInitiated?: boolean; preApproved?: boolean },
+  ) => Promise<QueryResult>;
+  executeAgentReadonlyQuery: (
+    connectionId: string,
+    statements: string[],
+  ) => Promise<QueryResult>;
+  executeAgentParameterizedQuery: (
+    connectionId: string,
+    sql: string,
+    parameters: QueryParameter[],
+  ) => Promise<QueryResult>;
+  previewWriteTransaction: (connectionId: string, statements: string[]) => Promise<{
+    results: QueryResult[];
+    rolledBack: boolean;
+  }>;
+  getTableData: (
+    connectionId: string,
+    table: string,
+    opts?: {
+      database?: string;
+      offset?: number;
+      limit?: number;
+      orderBy?: string;
+      orderDir?: string;
+      filter?: string;
+    }
+  ) => Promise<QueryResult>;
+  getTableStructure: (connectionId: string, table: string, database?: string) => Promise<TableStructure>;
+  getTableColumnsPreview: (connectionId: string, table: string, database?: string) => Promise<ColumnDetail[]>;
+  countRows: (connectionId: string, table: string, database?: string) => Promise<number>;
+  countTableNullValues: (connectionId: string, table: string, column: string, database?: string) => Promise<number>;
+  updateTableCell: (connectionId: string, request: TableCellUpdateRequest) => Promise<number>;
+  applyTableUpdatesAtomically: (connectionId: string, updates: TableCellUpdateRequest[]) => Promise<number>;
+  deleteTableRows: (connectionId: string, request: TableRowDeleteRequest) => Promise<number>;
+  insertTableRow: (
+    connectionId: string,
+    request: { table: string; database?: string; values: [string, unknown][] },
+  ) => Promise<number>;
+  insertTableRowsAtomically: (
+    connectionId: string,
+    requests: Array<{ table: string; database?: string; values: [string, unknown][] }>,
+    operationId: string,
+  ) => Promise<number>;
+  importCsvFileAtomically: (
+    connectionId: string,
+    request: {
+      filePath: string;
+      table: string;
+      database?: string;
+      delimiter: "csv" | "tsv";
+      hasHeaders: boolean;
+      mappings: Array<{ sourceIndex: number; targetColumn: string }>;
+    },
+    operationId: string,
+  ) => Promise<number>;
+  cancelCsvImport: (operationId: string) => Promise<boolean>;
+  exportTableData: (
+    connectionId: string,
+    request: {
+      table: string;
+      database?: string;
+      format: "csv" | "jsonl";
+      orderBy?: string;
+      orderDir?: "ASC" | "DESC";
+      filter?: string;
+    },
+    operationId: string,
+  ) => Promise<{ filePath: string; format: string; rowCount: number }>;
+  cancelTableExport: (operationId: string) => Promise<boolean>;
+  executeStructureStatements: (connectionId: string, statements: string[]) => Promise<number>;
+  getForeignKeyLookupValues: (
+    connectionId: string,
+    table: string,
+    column: string,
+    search?: string,
+  ) => Promise<Array<{ value: string | number; label: string }>>;
+}
+
+const PROGRESSIVE_DELIVERY_STORAGE_KEY = "tablerogrid.progressive-delivery";
+
+/**
+ * Roadmap Phase 3B: only single read-only row-returning statements go through
+ * the progressive channel; everything else keeps the legacy path.
+ */
+export function isProgressiveEligible(sql: string): boolean {
+  const statements = splitSqlStatements(sql);
+  if (statements.length !== 1) return false;
+  return /^(select|with|table|values)\b/i.test(statements[0]);
+}
+
+export const useQueryStore = create<QueryState>((set, get) => ({
+  isExecutingQuery: false,
+  activeQueryRequestId: null,
+  activeQueryConnectionId: null,
+  progressiveDeliveryEnabled: (() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(PROGRESSIVE_DELIVERY_STORAGE_KEY) !== "off";
+  })(),
+  progressiveRowCount: null,
+  setProgressiveDeliveryEnabled: (enabled: boolean) => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(PROGRESSIVE_DELIVERY_STORAGE_KEY, enabled ? "on" : "off");
+    }
+    set({ progressiveDeliveryEnabled: enabled });
+  },
+
+  executeQuery: async (connectionId: string, sql: string, options?: { preApproved?: boolean }) => {
+    // The editor's Run button is a human decision: a Safe Mode block becomes
+    // an interactive confirmation instead of a dead end — unless the AI tab
+    // carries the standing full-autonomy grant (`preApproved`). All other
+    // callers (agent tools, programmatic sandbox calls) keep the hard block.
+    const safety = await assertQueryAllowed(sql, connectionId, {
+      userInitiated: true,
+      preApproved: options?.preApproved,
+    });
+    const requestId = crypto.randomUUID();
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
+    try {
+      let result: QueryResult | null = null;
+      let unlisten: UnlistenFn | null = null;
+      if (get().progressiveDeliveryEnabled && isProgressiveEligible(sql)) {
+        // Phase 3B: stream row batches so the UI can show live delivery
+        // progress; the command still resolves with the complete result and
+        // any failure falls back to the legacy path transparently.
+        try {
+          unlisten = await listen<{ connectionId: string; rows: unknown[][]; totalRows: number }>("query-row-batch", (event) => {
+            if (event.payload.connectionId !== connectionId) return;
+            set({ progressiveRowCount: event.payload.totalRows });
+          });
+          result = await invokeMutation<QueryResult>("execute_query_progressive", {
+            connectionId,
+            sql,
+            chunkSize: null,
+            requestId,
+            safeModeApprovedByUser: safety.userConfirmed === true,
+          });
+        } catch {
+          result = null; // fall back below
+        } finally {
+          unlisten?.();
+        }
+      }
+      if (result === null) {
+        result = await invokeMutation<QueryResult>("execute_query", {
+          connectionId,
+          sql,
+          requestId,
+          safeModeApprovedByUser: safety.userConfirmed === true,
+        });
+      }
+      set({ progressiveRowCount: null });
+      if (safety.hasSchemaMutation) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      return result;
+    } catch (e) {
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null, progressiveRowCount: null }
+        : state);
+      throw e;
+    }
+  },
+
+  cancelQuery: async () => {
+    const requestId = get().activeQueryRequestId;
+    const connectionId = get().activeQueryConnectionId;
+    if (!requestId) return false;
+    return invokeMutation<boolean>("cancel_query", { requestId, connectionId });
+  },
+
+  executeSandboxQuery: async (
+    connectionId: string,
+    statements: string[],
+    requireReadOnly = false,
+    options?: { userInitiated?: boolean; preApproved?: boolean },
+  ) => {
+    const safety = await assertQueryAllowed(statements.join(";\n"), connectionId, options);
+    const requestId = crypto.randomUUID();
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
+    try {
+      const result = await invokeAIWorkspaceToolMutation(
+        "execute_sandboxed_query",
+        {
+          connectionId,
+          statements,
+          requireReadOnly,
+          requestId,
+          safeModeApprovedByUser: safety.userConfirmed === true,
+        },
+      );
+      if (safety.hasSchemaMutation) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      return result;
+    } catch (e) {
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      throw e;
+    }
+  },
+
+  executeAgentReadonlyQuery: async (
+    connectionId: string,
+    statements: string[],
+  ) => {
+    // Read-only is enforced by the backend `execute_agent_readonly_query`
+    // command, which pins the boundary server-side. We still run the local
+    // safe-mode guard first so blocked policies fail fast with a clear message.
+    const safety = await assertQueryAllowed(statements.join(";\n"), connectionId);
+    const requestId = crypto.randomUUID();
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
+    try {
+      const result = await invokeAIWorkspaceToolMutation(
+        "execute_agent_readonly_query",
+        { connectionId, statements, requestId },
+      );
+      if (safety.hasSchemaMutation) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      return result;
+    } catch (e) {
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      throw e;
+    }
+  },
+
+  executeAgentParameterizedQuery: async (
+    connectionId: string,
+    sql: string,
+    parameters: QueryParameter[],
+  ) => {
+    // Read-only AND prepared-parameters are both pinned server-side by the
+    // `execute_agent_parameterized_query` command; the local safe-mode guard
+    // only makes blocked policies fail fast with a clear message.
+    const safety = await assertQueryAllowed(sql, connectionId);
+    const requestId = crypto.randomUUID();
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
+    try {
+      const result = await invokeAIWorkspaceToolMutation(
+        "execute_agent_parameterized_query",
+        { connectionId, sql, parameters, requestId },
+      );
+      if (safety.hasSchemaMutation) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      return result;
+    } catch (e) {
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      throw e;
+    }
+  },
+
+  previewWriteTransaction: async (connectionId, statements) => {
+    set({ isExecutingQuery: true });
+    try {
+      return await invokeAIWorkspaceToolMutation(
+        "preview_write_transaction",
+        { connectionId, statements },
+      );
+    } finally {
+      set({ isExecutingQuery: false });
+    }
+  },
+
+  getTableData: async (connectionId, table, opts = {}) => {
+    return invokeWithTimeout<QueryResult>(
+      "get_table_data",
+      {
+        connectionId,
+        table,
+        database: opts.database || null,
+        offset: opts.offset || 0,
+        limit: opts.limit || 100,
+        orderBy: opts.orderBy || null,
+        orderDir: opts.orderDir || null,
+        filter: opts.filter || null,
+      },
+      30_000,
+      "Loading table data"
+    );
+  },
+
+  getTableStructure: async (connectionId, table, database) =>
+    getOrLoadTableStructure(
+      { connectionId, database },
+      table,
+      () => invokeAIWorkspaceToolWithTimeout(
+        "get_table_structure",
+        { connectionId, table, database: database || null },
+        15_000,
+        "Loading table structure",
+      ),
+    ),
+
+  getTableColumnsPreview: async (connectionId, table, database) =>
+    getOrLoadTableColumns(
+      { connectionId, database },
+      table,
+      () => invokeWithTimeout<ColumnDetail[]>(
+        "get_table_columns_preview",
+        { connectionId, table, database: database || null },
+        15_000,
+        "Loading table columns",
+      ),
+    ),
+
+  countRows: async (connectionId, table, database) =>
+    invokeWithTimeout<number>(
+      "count_table_rows",
+      { connectionId, table, database: database || null },
+      10_000,
+      "Counting table rows"
+    ),
+
+  countTableNullValues: async (connectionId, table, column, database) =>
+    invokeWithTimeout<number>(
+      "count_table_null_values",
+      { connectionId, table, column, database: database || null },
+      10_000,
+      "Counting NULL values"
+    ),
+
+  updateTableCell: async (connectionId, request) =>
+    invokeMutation<number>("update_table_cell", {
+      connectionId,
+      request: { ...request, database: request.database || null },
+    }),
+
+  deleteTableRows: async (connectionId, request) =>
+    invokeMutation<number>("delete_table_rows", {
+      connectionId,
+      request: { ...request, database: request.database || null },
+    }),
+
+  applyTableUpdatesAtomically: async (connectionId, updates) =>
+    invokeMutation<number>("apply_table_updates_atomically", {
+      connectionId,
+      updates: updates.map((request) => ({ ...request, database: request.database || null })),
+    }),
+
+  insertTableRow: async (connectionId, request) =>
+    invokeMutation<number>("insert_table_row", {
+      connectionId,
+      request: {
+        table: request.table,
+        database: request.database || null,
+        values: request.values,
+      },
+    }),
+
+  insertTableRowsAtomically: async (connectionId, requests, operationId) =>
+    invokeMutation<number>("insert_table_rows_atomically", {
+      connectionId,
+      operationId,
+      requests: requests.map((request) => ({
+        table: request.table,
+        database: request.database || null,
+        values: request.values,
+      })),
+    }),
+
+  importCsvFileAtomically: async (connectionId, request, operationId) =>
+    invokeMutation<number>("import_csv_file_atomically", {
+      connectionId,
+      operationId,
+      request: {
+        ...request,
+        database: request.database || null,
+      },
+    }),
+
+  cancelCsvImport: async (operationId) =>
+    invokeMutation<boolean>("cancel_csv_import", { operationId }),
+
+  exportTableData: async (connectionId, request, operationId) =>
+    invokeMutation<{ filePath: string; format: string; rowCount: number }>("export_table_data", {
+      connectionId,
+      operationId,
+      request: {
+        ...request,
+        database: request.database || null,
+        orderBy: request.orderBy || null,
+        orderDir: request.orderDir || null,
+        filter: request.filter || null,
+      },
+    }),
+
+  cancelTableExport: async (operationId) =>
+    invokeMutation<boolean>("cancel_table_export", { operationId }),
+
+  executeStructureStatements: async (connectionId, statements) => {
+    const affectedRows = await invokeMutation<number>("execute_structure_statements", { connectionId, statements });
+    useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+    return affectedRows;
+  },
+
+  executeParameterizedQuery: async (connectionId, sql, parameters, options) => {
+    // Same human-decision treatment as the plain execute path: an editor Run
+    // with named parameters must get the confirmation dialog (levels <= 3)
+    // instead of a dead end, and a full-autonomy AI tab passes pre-approved.
+    const safety = await assertQueryAllowed(sql, connectionId, options);
+    const requestId = crypto.randomUUID();
+    set({
+      isExecutingQuery: true,
+      activeQueryRequestId: requestId,
+      activeQueryConnectionId: connectionId,
+    });
+    try {
+      const result = await invokeMutation<QueryResult>("execute_parameterized_query", {
+        connectionId,
+        sql,
+        parameters,
+        requestId,
+        safeModeApprovedByUser: safety.userConfirmed === true,
+      });
+      if (safety.hasSchemaMutation) {
+        useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+      }
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      return result;
+    } catch (error) {
+      set((state) => state.activeQueryRequestId === requestId
+        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+        : state);
+      throw error;
+    }
+  },
+
+  getForeignKeyLookupValues: async (connectionId, table, column, search) =>
+    invokeWithTimeout<Array<{ value: string | number; label: string }>>(
+      "get_foreign_key_lookup_values",
+      {
+        connection_id: connectionId,
+        referenced_table: table,
+        referenced_column: column,
+        search: search || null,
+        limit: 1000,
+      },
+      30_000,
+      "Loading FK lookup values",
+    ),
+}));

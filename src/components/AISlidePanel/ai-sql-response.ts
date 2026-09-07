@@ -1,0 +1,128 @@
+import type { QueryResult } from "../../types";
+
+const SQL_START_KEYWORDS = ["SELECT", "SHOW", "EXPLAIN", "DESCRIBE", "PRAGMA", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "WITH"];
+
+export function isLikelySqlOnlyResponse(aiResponse: string) {
+  const extractedSql = extractSqlFromResponse(aiResponse);
+  if (!extractedSql) return false;
+
+  const normalizedResponse = aiResponse.replace(/```sql?/gi, "").replace(/```/g, "").trim();
+  if (!normalizedResponse) return false;
+
+  const remainder = normalizedResponse.replace(extractedSql, "").replace(/\s+/g, " ").trim();
+  return remainder.length < 40;
+}
+
+export function stripLeadingSqlComments(sql: string) {
+  let remaining = sql.trimStart();
+
+  while (remaining.length > 0) {
+    if (remaining.startsWith("--") || remaining.startsWith("#")) {
+      const nextNewline = remaining.indexOf("\n");
+      remaining = nextNewline >= 0 ? remaining.slice(nextNewline + 1).trimStart() : "";
+      continue;
+    }
+
+    if (remaining.startsWith("/*")) {
+      const commentEnd = remaining.indexOf("*/");
+      if (commentEnd < 0) return "";
+      remaining = remaining.slice(commentEnd + 2).trimStart();
+      continue;
+    }
+
+    break;
+  }
+
+  return remaining.trimStart();
+}
+
+export function hasSqlStartKeyword(sql: string) {
+  const normalized = stripLeadingSqlComments(sql).toUpperCase().trim();
+  return normalized.length > 0 && SQL_START_KEYWORDS.some((keyword) => normalized.startsWith(keyword));
+}
+
+/**
+ * Models often append prose after the statement ("…LIMIT 50;\nChạy query này
+ * để xem…"). If the SQL contains at least one ";"-terminated line, cut
+ * everything after the last terminator. SQL without any ";" is left intact.
+ */
+function trimTrailingProseAfterSql(sql: string) {
+  const lines = sql.split("\n");
+  let lastTerminator = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/;\s*$/.test(lines[i].trim())) lastTerminator = i;
+  }
+  if (lastTerminator < 0 || lastTerminator === lines.length - 1) {
+    return sql.trim();
+  }
+  return lines.slice(0, lastTerminator + 1).join("\n").trim();
+}
+
+export function extractSqlFromResponse(aiResponse: string) {
+  let sqlResult = aiResponse.trim();
+  const codeBlock = aiResponse.match(/```sql?([\s\S]*?)```/i);
+  if (codeBlock?.[1]) {
+    sqlResult = codeBlock[1].trim();
+  } else {
+    if (hasSqlStartKeyword(sqlResult)) return trimTrailingProseAfterSql(sqlResult);
+
+    const lines = aiResponse.split("\n").map((line) => line.trimEnd());
+    const sqlStartIndex = lines.findIndex((line) => hasSqlStartKeyword(line));
+    if (sqlStartIndex < 0) return "";
+
+    let startIndex = sqlStartIndex;
+    while (startIndex > 0) {
+      const previousLine = lines[startIndex - 1]?.trim() || "";
+      if (
+        previousLine === "" ||
+        previousLine.startsWith("--") ||
+        previousLine.startsWith("#") ||
+        previousLine.startsWith("/*") ||
+        previousLine.startsWith("*") ||
+        previousLine.startsWith("*/")
+      ) {
+        startIndex -= 1;
+        continue;
+      }
+      break;
+    }
+
+    sqlResult = lines.slice(startIndex).join("\n").trim();
+  }
+
+  return trimTrailingProseAfterSql(sqlResult);
+}
+
+export function stripSqlCodeBlocksFromResponse(aiResponse: string) {
+  return aiResponse.replace(/```sql[\s\S]*?```/gi, "").trim();
+}
+
+export function summarizeRunResult(result: QueryResult) {
+  if (result.rows.length > 0) {
+    return `Returned ${result.rows.length} row${result.rows.length === 1 ? "" : "s"} in ${result.execution_time_ms} ms${result.truncated ? " with a truncated preview." : "."}`;
+  }
+  if (result.affected_rows > 0) {
+    return `Applied changes to ${result.affected_rows} row${result.affected_rows === 1 ? "" : "s"} in ${result.execution_time_ms} ms.`;
+  }
+  return `Execution completed in ${result.execution_time_ms} ms.`;
+}
+
+function normalizeSqlForCompare(text: string) {
+  return text.replace(/\s+/g, " ").trim().replace(/;+\s*$/, "").toLowerCase();
+}
+
+/** Drops paragraphs (bare or fenced) whose SQL matches the exposed
+ *  args.sql — the model loves repeating the statement, and each repeat
+ *  rendered a duplicate SQL card beside the canonical one. */
+export function removeDuplicateSqlParagraphs(aiResponse: string, sql: string) {
+  const target = normalizeSqlForCompare(sql);
+  if (!target) return aiResponse.trim();
+  const kept = aiResponse
+    .split(/\n{2,}/)
+    .filter((block) => {
+      const withoutFences = block.replace(/```sql/gi, "").replace(/```/g, "").trim();
+      return normalizeSqlForCompare(withoutFences) !== target;
+    })
+    .join("\n\n");
+  return kept.trim();
+}

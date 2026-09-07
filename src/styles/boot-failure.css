@@ -1,0 +1,79 @@
+/**
+ * Boot failure screen styles — extracted from main.tsx inline styles.
+ */
+
+.boot-failure-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at top, rgba(0, 122, 255, 0.08), transparent 28%), var(--mm-surface-0);
+  color: var(--text-primary);
+  font-family: "Segoe UI", Inter, system-ui, sans-serif;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.boot-failure-card {
+  width: min(760px, 100%);
+  border-radius: 18px;
+  border: 1px solid rgba(0, 122, 255, 0.18);
+  background: var(--mm-surface-0);
+  box-shadow: var(--mm-shadow-3);
+  padding: 24px;
+}
+
+.boot-failure-kicker {
+  font-size: var(--mm-fs-caption);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #007AFF;
+}
+
+.boot-failure-title {
+  margin: 12px 0 8px;
+  font-size: var(--mm-fs-display);
+  line-height: 1.15;
+}
+
+.boot-failure-description {
+  margin: 0;
+  color: #9fb0c8;
+  line-height: 1.6;
+}
+
+.boot-failure-error-box {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--mm-surface-2);
+  border: 1px solid var(--mm-border);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-body);
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.boot-failure-meta {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: #8ea4c3;
+  font-size: var(--mm-fs-caption);
+}
+
+.boot-failure-stack {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--mm-surface-0);
+  border: 1px solid var(--mm-border);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  max-height: 42vh;
+}

@@ -1,0 +1,32 @@
+use anyhow::{Context, Result};
+use std::fs;
+use std::path::PathBuf;
+
+pub fn resolve_data_dir() -> Result<PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("TABLER_DATA_DIR") {
+        let path = PathBuf::from(path);
+        fs::create_dir_all(&path).with_context(|| {
+            format!("Failed to create debug data directory '{}'", path.display())
+        })?;
+        return Ok(path);
+    }
+
+    let base_dir = dirs::data_dir()
+        .context("Cannot find user data directory")?
+        .join("TableR");
+
+    fs::create_dir_all(&base_dir)?;
+
+    let override_file = base_dir.join(".sync_override");
+    if override_file.exists() {
+        if let Ok(override_path_str) = fs::read_to_string(&override_file) {
+            let override_path = PathBuf::from(override_path_str.trim());
+            if override_path.exists() && override_path.is_dir() {
+                return Ok(override_path);
+            }
+        }
+    }
+
+    Ok(base_dir)
+}

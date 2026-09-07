@@ -1,0 +1,8 @@
+﻿@import "tailwindcss";
+
+/* Token source-of-truth (must load before component styles) */
+@import "./styles/minimax-design-system.css";
+
+/* Merged component styles - imported after tailwindcss to override defaults.
+ * Cascade order preserved from the original individual files. */
+@import "./styles/app-components.css";

@@ -1,0 +1,861 @@
+import { useRef, useCallback, useEffect, useState, type RefObject } from "react";
+import type { OnMount } from "@monaco-editor/react";
+import { initVimMode, type VimAdapterInstance } from "monaco-vim";
+import { useConnectionStore } from "../../../stores/connectionStore";
+import { useUIStore } from "../../../stores/uiStore";
+import { useQueryStore } from "../../../stores/queryStore";
+import { useAIAutonomyStore } from "../../../stores/aiAutonomyStore";
+import { useEditorPreferencesStore } from "../../../stores/editorPreferencesStore";
+import { useQueryHistoryStore } from "../../../stores/queryHistoryStore";
+import type { QueryResult } from "../../../types";
+import { translateCurrent } from "../../../i18n";
+import { splitSqlStatements } from "../../../utils/sqlStatements";
+import { getQueryProfile } from "../../../utils/query-profile";
+import {
+  formatExecutionError,
+  normalizeStatementForGuard,
+  extractLeadingUseDirective,
+  isSessionSwitchStatement,
+  isMutatingStatement,
+} from "../SQLEditorUtils";
+import { registerInlineAICompletionProvider } from "../SQLEditorAICompletion";
+import { registerSchemaCompletionProvider, defineTableRTheme } from "../SQLEditorMonacoSetup";
+import { formatSql } from "../../../utils/sql-formatter";
+import { parseExplainOutput, buildExplainQuery, type ParsedExplainPlan } from "../../../utils/explain-parser";
+import { extractNamedSqlParameters, toQueryParameters, type SqlParameterDraft } from "../../../utils/sql-parameters";
+import { EventCenter } from "../../../stores/event-center";
+import { captureAgentEditedRunCheckpoint } from "../agent-edit-safety";
+
+export interface QueryChromeState {
+  isRunning: boolean;
+  executionTimeMs?: number;
+  rowCount?: number;
+  affectedRows?: number;
+  queryCount?: number;
+}
+
+export interface QueryEditorSessionState {
+  result: QueryResult | null;
+  error: string | null;
+  notice: string | null;
+  queryCount: number;
+  editorHeight: number;
+  showResultsPane: boolean;
+  resultViewMode?: "table" | "chart";
+  explainPlan?: ParsedExplainPlan;
+}
+
+export interface UseSQLEditorOptions {
+  connectionId: string;
+  tabId?: string;
+  /** Origin of the owning tab ("ai" tabs honor the full-autonomy grant). */
+  tabSource?: "ai" | "user";
+  initialContent: string;
+  initialCursor?: { lineNumber: number; column: number };
+  vimStatusRef?: RefObject<HTMLDivElement | null>;
+  initialState?: QueryEditorSessionState;
+  runRequestNonce: number;
+  onChromeChange?: (state: QueryChromeState) => void;
+  onStateChange?: (state: QueryEditorSessionState) => void;
+  parameterDrafts?: Record<string, SqlParameterDraft>;
+}
+
+export function useSQLEditor({
+  connectionId,
+  tabId,
+  tabSource,
+  initialContent,
+  initialCursor,
+  vimStatusRef,
+  initialState,
+  runRequestNonce,
+  onChromeChange,
+  onStateChange,
+  parameterDrafts = {},
+}: UseSQLEditorOptions) {
+  const connections = useConnectionStore((state) => state.connections);
+  const executeQuery = useQueryStore((state) => state.executeQuery);
+  const executeParameterizedQuery = useQueryStore((state) => state.executeParameterizedQuery);
+  const executeSandboxQuery = useQueryStore((state) => state.executeSandboxQuery);
+  const switchDatabase = useConnectionStore((state) => state.switchDatabase);
+  const updateTab = useUIStore((state) => state.updateTab);
+  const saveQueryEntry = useQueryHistoryStore((state) => state.saveEntry);
+  const isVimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
+  const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
+  const queryProfile = getQueryProfile(dbType);
+  const usesDirectExecution = queryProfile.executionPath === "direct";
+
+  const editorRef = useRef<any>(null);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const inlineCompletionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const structurePrefetchKeysRef = useRef<Set<string>>(new Set());
+  const selectionContextDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const contentPersistTimerRef = useRef<number | null>(null);
+  const cursorPersistTimerRef = useRef<number | null>(null);
+  // Agent proposal state: the model can only PROPOSE an edit to this tab's
+  // SQL — the user accepts or rejects it here. Nothing auto-applies.
+  const [aiProposal, setAiProposal] = useState<{
+    sql: string;
+    reason: string;
+    previousSql: string;
+  } | null>(null);
+  const agentEditedRef = useRef(false);
+  const applyingProposalRef = useRef(false);
+  const vimModeRef = useRef<VimAdapterInstance | null>(null);
+  const contentDraftRef = useRef(initialContent);
+  const onChromeChangeRef = useRef(onChromeChange);
+  const onStateChangeRef = useRef(onStateChange);
+  const inlineCompletionCacheRef = useRef<{ key: string; value: string; timestamp: number } | null>(null);
+  const inlineCompletionInFlightRef = useRef<{ key: string; promise: Promise<string> } | null>(null);
+  const lastInlineCompletionAtRef = useRef(0);
+  const dailyInlineCompletionRef = useRef({ count: 0, date: new Date().toDateString() });
+  const lastRunRequestNonceRef = useRef(0);
+  const pendingRunRequestNonceRef = useRef<number | null>(null);
+  const parameterDraftsRef = useRef(parameterDrafts);
+
+  const [result, setResult] = useState<QueryResult | null>(() => initialState?.result ?? null);
+  const [error, setError] = useState<string | null>(() => initialState?.error ?? null);
+  const [notice, setNotice] = useState<string | null>(() => initialState?.notice ?? null);
+  const [queryCount, setQueryCount] = useState(() => initialState?.queryCount ?? 0);
+  const [editorHeight, setEditorHeight] = useState(() => initialState?.editorHeight ?? 42);
+  const [showResultsPane, setShowResultsPane] = useState(() => {
+    if (typeof initialState?.showResultsPane === "boolean") {
+      return initialState.showResultsPane;
+    }
+    const initialRowCount = initialState?.result?.rows.length ?? 0;
+    return initialRowCount > 0;
+  });
+  const [resultViewMode, setResultViewMode] = useState<"table" | "chart">(
+    () => initialState?.resultViewMode ?? "table"
+  );
+  const [isBatchExecuting, setIsBatchExecuting] = useState(false);
+  const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
+  const [explainPlan, setExplainPlan] = useState<ParsedExplainPlan | undefined>(() => initialState?.explainPlan);
+  const [isRunningExplain, setIsRunningExplain] = useState(false);
+
+  // Surface execution errors: auto-expand the results pane so the user
+  // actually sees the error instead of it only landing in the app logs.
+  useEffect(() => {
+    if (error) setShowResultsPane(true);
+  }, [error]);
+
+  const flushPersistedContent = useCallback(() => {
+    if (!tabId) return;
+    if (contentPersistTimerRef.current !== null) {
+      window.clearTimeout(contentPersistTimerRef.current);
+      contentPersistTimerRef.current = null;
+    }
+    updateTab(tabId, { content: contentDraftRef.current });
+  }, [tabId, updateTab]);
+
+  const schedulePersistedContent = useCallback(
+    (value: string) => {
+      if (!tabId) return;
+    contentDraftRef.current = value;
+      try {
+        window.localStorage.setItem(
+          `tabler.editor-draft.${connectionId}.${tabId}`,
+          value.length <= 500_000 ? value : "",
+        );
+      } catch {
+        // Backend tab persistence remains the fallback when storage is unavailable.
+      }
+      if (contentPersistTimerRef.current !== null) {
+        window.clearTimeout(contentPersistTimerRef.current);
+      }
+      contentPersistTimerRef.current = window.setTimeout(() => {
+        contentPersistTimerRef.current = null;
+        updateTab(tabId, { content: value });
+      }, 180);
+    },
+    [connectionId, tabId, updateTab]
+  );
+
+  const acceptAiProposal = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor || !aiProposal) return;
+    applyingProposalRef.current = true;
+    try {
+      // Monaco keeps its own undo stack: Ctrl+Z reverts the proposal.
+      editor.setValue(aiProposal.sql);
+      schedulePersistedContent(aiProposal.sql);
+      agentEditedRef.current = true;
+    } finally {
+      // Monaco onChange is synchronous today, but a wrapper/version change
+      // could defer it to a microtask — keep the guard alive past the
+      // current task so a deferred onChange still observes applying = true.
+      queueMicrotask(() => {
+        applyingProposalRef.current = false;
+      });
+    }
+    setAiProposal(null);
+    editor.focus();
+  }, [aiProposal, schedulePersistedContent]);
+
+  const rejectAiProposal = useCallback(() => {
+    agentEditedRef.current = false;
+    setAiProposal(null);
+  }, []);
+
+  // Manual typing immediately invalidates the agent-edit flag: the
+  // auto-checkpoint only covers runs of the text the agent proposed. The
+  // accepted proposal text itself does NOT invalidate it — belt-and-
+  // suspenders against guard timing (value comparison, not just the flag).
+  const notifyManualEditorChange = useCallback(
+    (value?: string) => {
+      if (applyingProposalRef.current) return;
+      if (value !== undefined && aiProposal && value === aiProposal.sql) return;
+      agentEditedRef.current = false;
+    },
+    [aiProposal],
+  );
+
+  useEffect(() => {
+    onChromeChangeRef.current = onChromeChange;
+  }, [onChromeChange]);
+
+  useEffect(() => {
+    onStateChangeRef.current = onStateChange;
+  }, [onStateChange]);
+
+  useEffect(() => {
+    parameterDraftsRef.current = parameterDrafts;
+  }, [parameterDrafts]);
+
+  // Agent proposals target this tab by id; stale or foreign proposals are
+  // ignored at the listener level.
+  useEffect(() => {
+    if (!tabId) return undefined;
+    return EventCenter.on("ai-edit-query-sql", (event) => {
+      if (event.detail.tabId !== tabId) return;
+      const currentSql = editorRef.current?.getValue?.() ?? "";
+      setAiProposal({
+        sql: event.detail.sql,
+        reason: event.detail.reason,
+        previousSql: currentSql,
+      });
+    });
+  }, [tabId]);
+
+  const handleExecute = useCallback(async () => {
+    const editor = editorRef.current;
+    if (!editor || isBatchExecuting) return;
+
+    // AI-origin tabs honor the full-autonomy grant scoped to their own
+    // connection: the standing human approval lets Safe Mode-blocked
+    // statements (levels <= 3) run without the confirmation dialog. Regular
+    // tabs and other connections keep the confirmation.
+    const fullAutonomyPreApproved =
+      tabSource === "ai" &&
+      useAIAutonomyStore.getState().getAutonomy(connectionId) === "full";
+
+    const selection = editor.getSelection();
+    let sql = "";
+    if (selection && !selection.isEmpty()) {
+      sql = editor.getModel()?.getValueInRange(selection) || "";
+    } else {
+      sql = editor.getValue();
+    }
+    if (!sql.trim()) {
+      setError(null);
+      setResult(null);
+      setNotice(translateCurrent("tabs.noSqlToExecute"));
+      editor.focus();
+      return;
+    }
+
+    // Agent-edited content: the first real execution of an accepted proposal
+    // gets a rollback point (best effort, loud on failure). One-shot per
+    // accepted proposal; manual typing clears the flag.
+    if (agentEditedRef.current && isMutatingStatement(sql)) {
+      const storeState = useConnectionStore.getState();
+      const checkpoint = await captureAgentEditedRunCheckpoint({
+        connectionId,
+        database: storeState.currentDatabase || null,
+        dbType:
+          storeState.connections.find((c) => c.id === connectionId)?.db_type ?? "sqlite",
+      });
+      agentEditedRef.current = false;
+      setNotice(
+        checkpoint
+          ? "Safety checkpoint captured before running the agent-edited query."
+          : "Safety checkpoint failed — /rollback has no new point. Consider /backup first.",
+      );
+    }
+
+    const parameterNames = extractNamedSqlParameters(sql);
+    if (parameterNames.length > 0) {
+      const commandText = sql.trim();
+      setNotice(null);
+      setError(null);
+      setIsExecutingCurrent(true);
+      setIsBatchExecuting(true);
+      try {
+        const parameters = toQueryParameters(parameterNames, parameterDraftsRef.current);
+        const queryResult = await executeParameterizedQuery(
+          connectionId,
+          commandText,
+          parameters,
+          fullAutonomyPreApproved ? { preApproved: true } : { userInitiated: true },
+        );
+        setResult(queryResult);
+        if (queryResult.rows.length > 0) setShowResultsPane(true);
+        setQueryCount((count) => count + 1);
+        void saveQueryEntry(commandText, connectionId, Number(queryResult.execution_time_ms), queryResult.rows.length || undefined, undefined, useConnectionStore.getState().currentDatabase || undefined);
+      } catch (error) {
+        const errorMessage = formatExecutionError(error);
+        setError(errorMessage);
+        setResult(null);
+        void saveQueryEntry(commandText, connectionId, 0, undefined, errorMessage, useConnectionStore.getState().currentDatabase || undefined);
+      } finally {
+        setIsExecutingCurrent(false);
+        setIsBatchExecuting(false);
+      }
+      return;
+    }
+
+    if (usesDirectExecution) {
+      const commandText = sql.trim();
+      setNotice(null);
+      setError(null);
+      setIsExecutingCurrent(true);
+      setIsBatchExecuting(true);
+
+      try {
+        const queryResult = await executeQuery(
+          connectionId,
+          commandText,
+          fullAutonomyPreApproved ? { preApproved: true } : undefined,
+        );
+        setResult(queryResult);
+        if (queryResult.rows.length > 0) {
+          setShowResultsPane(true);
+        }
+        setQueryCount((c) => c + 1);
+
+        void saveQueryEntry(
+          commandText,
+          connectionId,
+          Number(queryResult.execution_time_ms),
+          queryResult.rows.length || undefined,
+          undefined,
+          useConnectionStore.getState().currentDatabase || undefined
+        );
+      } catch (e) {
+        const errorMessage = formatExecutionError(e);
+        setError(errorMessage);
+        setResult(null);
+        setNotice(null);
+
+        void saveQueryEntry(
+          commandText,
+          connectionId,
+          0,
+          undefined,
+          errorMessage,
+          useConnectionStore.getState().currentDatabase || undefined
+        );
+      } finally {
+        setIsExecutingCurrent(false);
+        setIsBatchExecuting(false);
+      }
+
+      return;
+    }
+
+    let sqlToExecute = sql;
+    let targetDatabaseFromUse: string | null = null;
+    const leadingUseDirective = extractLeadingUseDirective(sql);
+
+    if (leadingUseDirective) {
+      if ("error" in leadingUseDirective) {
+        setNotice(null);
+        setError(leadingUseDirective.error);
+        setResult(null);
+        return;
+      }
+      targetDatabaseFromUse = leadingUseDirective.database;
+      sqlToExecute = leadingUseDirective.remainingSql;
+    }
+
+    const statements = splitSqlStatements(sqlToExecute);
+    if (statements.length === 0) {
+      if (targetDatabaseFromUse) {
+        try {
+          const activeDatabase = useConnectionStore.getState().currentDatabase;
+          if (activeDatabase !== targetDatabaseFromUse) {
+            await switchDatabase(connectionId, targetDatabaseFromUse);
+          }
+          setError(`Active database is now ${targetDatabaseFromUse}. Run your SQL statement next.`);
+          setResult(null);
+        } catch (err) {
+          setError(formatExecutionError(err));
+        }
+      }
+      return;
+    }
+
+    let statementsToExecute = statements;
+
+    if (statementsToExecute.some(isSessionSwitchStatement)) {
+      setError(
+        "Sandbox gateway does not allow session-switch statements like USE, ATTACH, or SET search_path. Choose the active database from the app UI first, then run the query."
+      );
+      setResult(null);
+      return;
+    }
+
+    const hasMutatingStatements = statementsToExecute.some(isMutatingStatement);
+
+    setNotice(null);
+    setError(null);
+    setIsExecutingCurrent(true);
+    setIsBatchExecuting(true);
+    try {
+      const activeDatabase = useConnectionStore.getState().currentDatabase;
+      if (targetDatabaseFromUse && activeDatabase !== targetDatabaseFromUse) {
+        await switchDatabase(connectionId, targetDatabaseFromUse);
+      }
+
+      // The Run button is a human decision even on the sandbox gateway path:
+      // a Safe Mode block becomes an interactive confirmation (levels <= 3)
+      // instead of a dead end — unless full autonomy pre-approves the run.
+      const queryResult = await executeSandboxQuery(
+        connectionId,
+        statementsToExecute,
+        undefined,
+        fullAutonomyPreApproved ? { preApproved: true } : { userInitiated: true },
+      );
+      setResult(queryResult);
+      if (queryResult.rows.length > 0) {
+        setShowResultsPane(true);
+      }
+      setQueryCount((c) => c + 1);
+
+      // Auto-save to query history
+      void saveQueryEntry(
+        sqlToExecute,
+        connectionId,
+        Number(queryResult.execution_time_ms),
+        queryResult.rows.length || undefined,
+        undefined,
+        activeDatabase || undefined
+      );
+
+      if (hasMutatingStatements) {
+        const invalidateStructure = statementsToExecute.some((stmt) => {
+          const normalized = normalizeStatementForGuard(stmt);
+          return (
+            normalized.startsWith("CREATE ") ||
+            normalized.startsWith("ALTER ") ||
+            normalized.startsWith("DROP ") ||
+            normalized.startsWith("TRUNCATE ") ||
+            normalized.startsWith("RENAME ")
+          );
+        });
+        window.dispatchEvent(
+          new CustomEvent("table-data-updated", {
+            detail: { connectionId, database: useConnectionStore.getState().currentDatabase || undefined, invalidateStructure },
+          })
+        );
+      }
+    } catch (e) {
+      const errorMessage = formatExecutionError(e);
+      setError(errorMessage);
+      setResult(null);
+      setNotice(null);
+
+      // Auto-save failed query to history
+      void saveQueryEntry(
+        sqlToExecute,
+        connectionId,
+        0,
+        undefined,
+        errorMessage,
+        useConnectionStore.getState().currentDatabase || undefined
+      );
+    } finally {
+      setIsExecutingCurrent(false);
+      setIsBatchExecuting(false);
+    }
+  }, [connectionId, executeParameterizedQuery, executeQuery, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase, tabSource, usesDirectExecution]);
+
+  /** Formats the selected text (or entire editor content) using the connection's SQL dialect. */
+  const handleFormatSql = useCallback(() => {
+    if (!queryProfile.supportsFormatting) return;
+
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const selection = editor.getSelection();
+    let sql = "";
+    if (selection && !selection.isEmpty()) {
+      sql = editor.getModel()?.getValueInRange(selection) || "";
+    } else {
+      sql = editor.getValue();
+    }
+    if (!sql.trim()) return;
+
+    const dbType = useConnectionStore.getState().connections.find((c) => c.id === connectionId)?.db_type;
+    const formatted = formatSql(sql, dbType);
+
+    if (selection && !selection.isEmpty()) {
+      editor.executeEdits("format-sql", [{ range: selection, text: formatted, forceMoveMarkers: true }]);
+    } else {
+      editor.setValue(formatted);
+      schedulePersistedContent(formatted);
+    }
+  }, [connectionId, queryProfile.supportsFormatting, schedulePersistedContent]);
+
+  /** Executes EXPLAIN [ANALYZE] on the current editor content and parses the plan. */
+  const handleExplain = useCallback(async (analyze = false) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const selection = editor.getSelection();
+    let sql = "";
+    if (selection && !selection.isEmpty()) {
+      sql = editor.getModel()?.getValueInRange(selection) || "";
+    } else {
+      sql = editor.getValue();
+    }
+    if (!sql.trim()) {
+      setError("Nothing to explain. Write a SELECT or DML statement first.");
+      return;
+    }
+
+    const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
+    const dbType = conn?.db_type ?? "sqlite";
+
+    setIsRunningExplain(true);
+    setExplainPlan(undefined);
+
+    try {
+      const explainQuery = buildExplainQuery(sql.trim(), dbType, analyze);
+      const queryResult = await executeQuery(connectionId, explainQuery);
+
+      // Parse the result — EXPLAIN returns rows with columns
+      let rawOutput: unknown = null;
+      if (queryResult.rows.length === 1 && queryResult.columns.length === 1) {
+        // Common: single row, single text/JSON column
+        rawOutput = queryResult.rows[0][0];
+      } else if (queryResult.rows.length > 0) {
+        // Multiple rows or columns — reconstruct
+        rawOutput = queryResult.rows.map((row) => {
+          const obj: Record<string, unknown> = {};
+          queryResult.columns.forEach((col, i) => {
+            obj[col.name] = row[i];
+          });
+          return obj;
+        });
+        if (queryResult.rows.length === 1) {
+          rawOutput = (rawOutput as Record<string, unknown>[])[0];
+        }
+      }
+
+      // If raw output is a string (plain text format), try to parse as JSON
+      if (typeof rawOutput === "string") {
+        try {
+          rawOutput = JSON.parse(rawOutput);
+        } catch {
+          // Keep as-is (text format)
+        }
+      }
+
+      const plan = parseExplainOutput(dbType, rawOutput);
+      setExplainPlan(plan);
+    } catch (e) {
+      setError(`EXPLAIN failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsRunningExplain(false);
+    }
+  }, [connectionId, executeQuery]);
+
+  const handleEditorMount: OnMount = (editor, monaco) => {
+    editorRef.current = editor;
+    if (initialCursor) {
+      editor.setPosition(initialCursor);
+      editor.revealPositionInCenterIfOutsideViewport(initialCursor);
+    }
+
+    editor.addAction({
+      id: "execute-query",
+      label: "Execute Query",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
+      run: () => handleExecute(),
+    });
+
+    editor.addAction({
+      id: "ask-ai",
+      label: "Ask AI",
+      keybindings: [
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP,
+        monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP,
+      ],
+      run: () => {
+        window.dispatchEvent(new CustomEvent("open-ai-slide-panel"));
+      },
+    });
+
+    editor.addAction({
+      id: "format-sql",
+      label: "Format SQL",
+      keybindings: [
+        monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF,
+        monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF,
+      ],
+      run: () => handleFormatSql(),
+    });
+
+    inlineCompletionDisposableRef.current?.dispose();
+    inlineCompletionDisposableRef.current = registerInlineAICompletionProvider(
+      monaco,
+      connectionId,
+      inlineCompletionCacheRef,
+      inlineCompletionInFlightRef,
+      lastInlineCompletionAtRef,
+      dailyInlineCompletionRef
+    );
+
+    completionDisposableRef.current?.dispose();
+    completionDisposableRef.current = queryProfile.surface === "sql"
+      ? registerSchemaCompletionProvider(monaco, {
+          getTables: () => useConnectionStore.getState().tables,
+          getTableStructure: (tableName: string) =>
+            useQueryStore.getState().getTableStructure(
+              connectionId,
+              tableName,
+              useConnectionStore.getState().currentDatabase ?? undefined
+            ),
+          dbType,
+        })
+      : null;
+
+    // Warm the structure cache in the background: without this, the FIRST
+    // completion request fired one metadata query per table in parallel and
+    // stalled the editor (and the connection pool) for seconds.
+    const completionProvider = completionDisposableRef.current as
+      | { dispose: () => void; prefetchStructures?: () => Promise<void> }
+      | null;
+    const prefetchKey = `${connectionId ?? ""}|${dbType ?? ""}`;
+    if (completionProvider?.prefetchStructures && connectionId && !structurePrefetchKeysRef.current.has(prefetchKey)) {
+      structurePrefetchKeysRef.current.add(prefetchKey);
+      void completionProvider.prefetchStructures();
+    }
+
+    selectionContextDisposableRef.current?.dispose();
+    selectionContextDisposableRef.current = editor.onDidChangeCursorSelection(() => {
+      const currentSelection = editor.getSelection();
+      const position = editor.getPosition();
+      if (tabId && position) {
+        if (cursorPersistTimerRef.current !== null) {
+          window.clearTimeout(cursorPersistTimerRef.current);
+        }
+        cursorPersistTimerRef.current = window.setTimeout(() => {
+          cursorPersistTimerRef.current = null;
+          updateTab(tabId, {
+            editorCursor: { lineNumber: position.lineNumber, column: position.column },
+          });
+        }, 180);
+      }
+      const text = currentSelection && !currentSelection.isEmpty()
+        ? editor.getModel()?.getValueInRange(currentSelection) || ""
+        : "";
+      window.dispatchEvent(
+        new CustomEvent("ai-selection-context", {
+          detail: {
+            text,
+            source: "SQL editor selection",
+            tabId,
+          },
+        })
+      );
+    });
+
+    defineTableRTheme(monaco);
+    editor.updateOptions({ theme: "tabler-dark" });
+
+    if (pendingRunRequestNonceRef.current !== null) {
+      const pendingNonce = pendingRunRequestNonceRef.current;
+      pendingRunRequestNonceRef.current = null;
+      window.setTimeout(() => {
+        if (lastRunRequestNonceRef.current === pendingNonce) {
+          void handleExecute();
+        }
+      }, 0);
+    }
+  };
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    if (!isVimModeEnabled) {
+      vimModeRef.current?.dispose();
+      vimModeRef.current = null;
+      if (vimStatusRef?.current) {
+        vimStatusRef.current.textContent = "";
+      }
+      return;
+    }
+
+    vimModeRef.current?.dispose();
+    vimModeRef.current = initVimMode(editor, vimStatusRef?.current ?? null);
+
+    return () => {
+      vimModeRef.current?.dispose();
+      vimModeRef.current = null;
+      if (vimStatusRef?.current) {
+        vimStatusRef.current.textContent = "";
+      }
+    };
+  }, [isVimModeEnabled, vimStatusRef]);
+
+  useEffect(() => {
+    if (!onChromeChangeRef.current) return;
+    onChromeChangeRef.current({
+      isRunning: isExecutingCurrent || isBatchExecuting,
+      executionTimeMs: result?.execution_time_ms,
+      rowCount: result?.rows.length,
+      affectedRows: result?.affected_rows,
+      queryCount: queryCount || undefined,
+    });
+  }, [isBatchExecuting, isExecutingCurrent, queryCount, result]);
+
+  useEffect(() => {
+    if (!result || result.execution_time_ms < 0) return;
+    const activityLabel = result.rows.length > 0
+      ? usesDirectExecution ? "Command" : "Query"
+      : result.affected_rows > 0
+        ? result.sandboxed ? "Sandbox" : "Write"
+        : usesDirectExecution ? "Command" : "Run";
+    window.dispatchEvent(
+      new CustomEvent("workspace-activity", {
+        detail: { connectionId, label: activityLabel, durationMs: result.execution_time_ms },
+      })
+    );
+  }, [connectionId, result, usesDirectExecution]);
+
+  useEffect(() => {
+    if (!onStateChangeRef.current) return;
+    onStateChangeRef.current({ result, error, notice, queryCount, editorHeight, showResultsPane, resultViewMode, explainPlan });
+  }, [editorHeight, error, explainPlan, notice, queryCount, result, resultViewMode, showResultsPane]);
+
+  useEffect(() => {
+    const onInsertSQLFromAI = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail?.sql && editorRef.current) {
+        const sql = customEvent.detail.sql;
+        const editor = editorRef.current;
+        const selection = editor.getSelection();
+        if (selection && !selection.isEmpty()) {
+          editor.executeEdits("ai", [{ range: selection, text: sql, forceMoveMarkers: true }]);
+        } else {
+          const position = editor.getPosition();
+          if (position) {
+            editor.executeEdits("ai", [{
+              range: {
+                startLineNumber: position.lineNumber,
+                startColumn: position.column,
+                endLineNumber: position.lineNumber,
+                endColumn: position.column,
+              },
+              text: sql,
+              forceMoveMarkers: true,
+            }]);
+          }
+        }
+      }
+    };
+    window.addEventListener("insert-sql-from-ai", onInsertSQLFromAI);
+    return () => window.removeEventListener("insert-sql-from-ai", onInsertSQLFromAI);
+  }, []);
+
+  useEffect(() => {
+    if (runRequestNonce <= lastRunRequestNonceRef.current) return;
+    lastRunRequestNonceRef.current = runRequestNonce;
+    if (!editorRef.current) {
+      pendingRunRequestNonceRef.current = runRequestNonce;
+      return;
+    }
+    void handleExecute();
+  }, [handleExecute, runRequestNonce]);
+
+  useEffect(() => {
+    return () => {
+      flushPersistedContent();
+      if (cursorPersistTimerRef.current !== null) {
+        window.clearTimeout(cursorPersistTimerRef.current);
+        cursorPersistTimerRef.current = null;
+      }
+      vimModeRef.current?.dispose();
+      inlineCompletionDisposableRef.current?.dispose();
+      completionDisposableRef.current?.dispose();
+      selectionContextDisposableRef.current?.dispose();
+      editorRef.current = null;
+    };
+  }, [flushPersistedContent]);
+
+  useEffect(() => {
+    const handleToggleResultsPane = (event: Event) => {
+      const detail = (event as CustomEvent<{ tabId?: string }>).detail;
+      if (detail?.tabId && tabId && detail.tabId !== tabId) return;
+      setShowResultsPane((current) => !current);
+    };
+    window.addEventListener("toggle-query-results-pane", handleToggleResultsPane);
+    return () => window.removeEventListener("toggle-query-results-pane", handleToggleResultsPane);
+  }, [tabId]);
+
+  const handleSplitDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const container = splitRef.current?.parentElement;
+    if (!container) return;
+    const startY = e.clientY;
+    const startH = editorHeight;
+    const containerH = container.getBoundingClientRect().height;
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientY - startY;
+      const pct = startH + (delta / containerH) * 100;
+      setEditorHeight(Math.min(80, Math.max(18, pct)));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [editorHeight]);
+
+  return {
+    result,
+    error,
+    notice,
+    queryCount,
+    editorHeight,
+    setEditorHeight,
+    showResultsPane,
+    setShowResultsPane,
+    resultViewMode,
+    setResultViewMode,
+    editorRef,
+    splitRef,
+    handleEditorMount,
+    handleExecute,
+    handleFormatSql,
+    handleExplain,
+    handleSplitDrag,
+    schedulePersistedContent,
+    explainPlan,
+    isRunningExplain,
+    setExplainPlan,
+    aiProposal,
+    acceptAiProposal,
+    rejectAiProposal,
+    notifyManualEditorChange,
+  };
+}

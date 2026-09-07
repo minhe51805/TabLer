@@ -1,0 +1,204 @@
+import { useState } from "react";
+import { ChevronRight, LoaderCircle, Pencil, Trash2 } from "lucide-react";
+import type { ConnectionRowProps } from "./types";
+
+interface Props extends ConnectionRowProps {
+  tagName?: string;
+  tagColor?: string;
+  envBadge?: { label: string; color: string } | null;
+  onDelete: () => void;
+  deleteLabel: string;
+  onRename: (name: string) => void;
+  renameLabel: string;
+}
+
+export function ConnectionRow({
+  data,
+  onClick,
+  onDelete,
+  deleteLabel,
+  onRename,
+  renameLabel,
+  onMouseEnter,
+  onMouseLeave,
+  tagName,
+  tagColor,
+  envBadge,
+}: Props) {
+  const {
+    connection,
+    isSelected,
+    isConnected,
+    isActive,
+    isBusy,
+    isGridLayout,
+    statusLabel,
+    dbInfo,
+    endpointLabel,
+    databaseLabel,
+    secondaryBadgeLabel,
+  } = data;
+
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(connection.name);
+
+  const commitRename = () => {
+    const next = renameValue.trim();
+    setIsRenaming(false);
+    if (next && next !== connection.name) onRename(next);
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={isBusy ? -1 : 0}
+      aria-disabled={Boolean(isBusy)}
+      className={`startup-connection-row ${isSelected ? "active" : ""}`}
+      data-conn-id={connection.id}
+      data-testid={`connection-${connection.id}`}
+      onClick={() => {
+        if (isBusy) return;
+        onClick();
+      }}
+      onKeyDown={(event) => {
+        if (isBusy) return;
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onClick();
+      }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <div className="startup-connection-side">
+        <div
+          className="startup-connection-avatar"
+          style={{ backgroundColor: connection.color || dbInfo.color }}
+        >
+          {dbInfo.abbr}
+        </div>
+
+        {isGridLayout && secondaryBadgeLabel ? (
+          <div className="startup-connection-side-badges">
+            <span className="startup-connection-badge accent startup-connection-side-badge">
+              {secondaryBadgeLabel}
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="startup-connection-copy">
+        <div className="startup-connection-title-row">
+          {isRenaming ? (
+            <input
+              type="text"
+              className="startup-connection-rename-input"
+              autoFocus
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onBlur={commitRename}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                if (event.key === "Enter") commitRename();
+                if (event.key === "Escape") {
+                  setRenameValue(connection.name);
+                  setIsRenaming(false);
+                }
+              }}
+            />
+          ) : (
+          <strong className="startup-connection-title">
+            {connection.name || "Untitled"}
+          </strong>
+          )}
+
+          <div className="startup-connection-title-actions">
+            {envBadge ? (
+              <span
+                className="startup-connection-env-badge"
+                style={{ color: envBadge.color, borderColor: envBadge.color }}
+                title={`Environment: ${envBadge.label}`}
+              >
+                {envBadge.label}
+              </span>
+            ) : null}
+
+            {tagName ? (
+              <span
+                className="startup-connection-tag-pill"
+                style={{
+                  color: tagColor || "var(--text-secondary)",
+                  borderColor: tagColor || "var(--text-muted)",
+                }}
+                title={`Tag: ${tagName}`}
+              >
+                {tagName}
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        <span
+          className="startup-connection-meta"
+          title={
+            isGridLayout
+              ? `${endpointLabel}\n${databaseLabel}`
+              : `${endpointLabel} - ${databaseLabel}`
+          }
+        >
+          {isGridLayout ? endpointLabel : `${endpointLabel} - ${databaseLabel}`}
+        </span>
+
+        {isGridLayout ? (
+          <span className="startup-connection-meta secondary" title={databaseLabel}>
+            {databaseLabel}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="startup-connection-trailing">
+        {isBusy ? (
+          <LoaderCircle className="startup-connection-loading w-3.5 h-3.5" />
+        ) : isActive || isConnected ? (
+          <span
+            className={`startup-connection-status ${
+              isActive ? "active" : isConnected ? "connected" : ""
+            }`}
+          >
+            {statusLabel}
+          </span>
+        ) : null}
+
+        <button
+          type="button"
+          className="startup-connection-rename"
+          onClick={(event) => {
+            event.stopPropagation();
+            setRenameValue(connection.name);
+            setIsRenaming(true);
+          }}
+          onKeyDown={(event) => event.stopPropagation()}
+          title={renameLabel}
+          aria-label={renameLabel}
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          type="button"
+          className="startup-connection-delete"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          title={deleteLabel}
+          aria-label={deleteLabel}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+
+        <ChevronRight className="startup-connection-open-icon w-4 h-4" />
+      </div>
+    </div>
+  );
+}

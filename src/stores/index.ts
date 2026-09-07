@@ -1,0 +1,24 @@
+// Domain stores are the only writable state owners:
+// - import { useConnectionStore } from "./stores/connectionStore"
+// - import { useQueryStore } from "./stores/queryStore"
+// - import { useAIStore } from "./stores/aiStore"
+// - import { useUIStore } from "./stores/uiStore"
+
+export { useConnectionStore } from "./connectionStore";
+export { useQueryStore } from "./queryStore";
+export { useAIStore } from "./aiStore";
+export { useUIStore } from "./uiStore";
+export { useSafeModeStore } from "./safeModeStore";
+export { useGlobalErrorStore } from "./globalErrorStore";
+
+// Shared utilities
+export { deriveConnectionName } from "./connectionStore";
+
+// Theme engine (re-exported from theme-engine + useTheme.ts)
+export { ThemeEngine, registerMonacoTheme } from "./theme-engine";
+export { useTheme } from "./useTheme";
+export type { ThemeDefinition } from "./theme-engine";
+
+// Event center
+export { EventCenter, useEvent, useEmit } from "./event-center";
+export type { EventName } from "./event-center";

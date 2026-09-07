@@ -1,0 +1,57 @@
+[
+  {
+    "name": "empty_input",
+    "sql": "",
+    "expected": []
+  },
+  {
+    "name": "single_statement_without_semicolon",
+    "sql": "SELECT 1",
+    "expected": ["SELECT 1"]
+  },
+  {
+    "name": "two_simple_statements",
+    "sql": "SELECT 1; SELECT 2;",
+    "expected": ["SELECT 1", "SELECT 2"]
+  },
+  {
+    "name": "semicolon_inside_single_quotes",
+    "sql": "INSERT INTO demo VALUES ('a;b'); SELECT 2;",
+    "expected": ["INSERT INTO demo VALUES ('a;b')", "SELECT 2"]
+  },
+  {
+    "name": "escaped_single_quote_pair",
+    "sql": "SELECT 'it''s;fine'; UPDATE demo SET value = 1;",
+    "expected": ["SELECT 'it''s;fine'", "UPDATE demo SET value = 1"]
+  },
+  {
+    "name": "semicolon_inside_double_quotes",
+    "sql": "SELECT \"semi;colon\"; SELECT 2;",
+    "expected": ["SELECT \"semi;colon\"", "SELECT 2"]
+  },
+  {
+    "name": "semicolon_inside_backticks",
+    "sql": "SELECT `semi;colon`; SELECT 2;",
+    "expected": ["SELECT `semi;colon`", "SELECT 2"]
+  },
+  {
+    "name": "ignore_semicolon_in_line_comment",
+    "sql": "SELECT 1;\n-- comment ; should stay with the next statement\nSELECT 2;",
+    "expected": ["SELECT 1", "-- comment ; should stay with the next statement\nSELECT 2"]
+  },
+  {
+    "name": "ignore_semicolon_in_block_comment",
+    "sql": "/* intro ; comment */ SELECT 1; SELECT 2;",
+    "expected": ["/* intro ; comment */ SELECT 1", "SELECT 2"]
+  },
+  {
+    "name": "postgres_double_dollar_quote",
+    "sql": "SELECT $$a;b$$; SELECT 2;",
+    "expected": ["SELECT $$a;b$$", "SELECT 2"]
+  },
+  {
+    "name": "postgres_tagged_dollar_quote",
+    "sql": "SELECT $tag$body;still$tag$; SELECT 2;",
+    "expected": ["SELECT $tag$body;still$tag$", "SELECT 2"]
+  }
+]

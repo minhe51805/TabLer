@@ -560,10 +560,10 @@ export function DataGridToolbar({
             const top = rect.bottom + 6;
             const right = window.innerWidth - rect.right;
             const exportOptions: Array<{ label: string; hint: string; icon: typeof FileSpreadsheet; run: () => void }> = [
-              { label: tableName && onExportFull ? "Full CSV" : "CSV", hint: tableName && onExportFull ? "Every matching table row" : "Loaded rows as comma-separated values", icon: FileSpreadsheet, run: handleExportCSV },
-              { label: tableName && onExportFull ? "Full JSONL" : "JSON", hint: tableName && onExportFull ? "Every matching row as JSON Lines" : "Loaded rows as a JSON array", icon: FileJson, run: handleExportJSON },
+              { label: tableName && onExportFull ? "Full CSV" : "CSV", hint: "Comma-separated values", icon: FileSpreadsheet, run: handleExportCSV },
+              { label: tableName && onExportFull ? "Full JSONL" : "JSON", hint: "JSON Lines", icon: FileJson, run: handleExportJSON },
               { label: "XLSX", hint: "Excel workbook", icon: FileSpreadsheet, run: handleExportXLSX },
-              { label: "MQL", hint: "MongoDB shell script", icon: FileCode, run: () => void handleExportMQL() },
+              { label: "MQL", hint: "Mongo shell script", icon: FileCode, run: () => void handleExportMQL() },
               ...pluginFormats.map((format) => ({
                 label: format.label,
                 hint: format.description || `${format.pluginName} plugin`,
@@ -614,10 +614,10 @@ export function DataGridToolbar({
             const top = rect.bottom + 6;
             const right = window.innerWidth - rect.right;
             const copyOptions: Array<{ label: string; hint: string; icon: typeof FileSpreadsheet; run: () => void }> = [
-              { label: "CSV", hint: "Comma-separated with header row", icon: FileSpreadsheet, run: handleCopyCSV },
-              { label: "TSV", hint: "Tab-separated — pastes straight into spreadsheets (stands in for XLSX)", icon: FileSpreadsheet, run: handleCopyTSV },
+              { label: "CSV", hint: "Comma + header row", icon: FileSpreadsheet, run: handleCopyCSV },
+              { label: "TSV", hint: "Tab-separated", icon: FileSpreadsheet, run: handleCopyTSV },
               { label: "JSON", hint: "One object per row", icon: FileJson, run: handleCopyJSON },
-              { label: "MQL", hint: "MongoDB shell inserts", icon: FileCode, run: handleCopyMQL },
+              { label: "MQL", hint: "Mongo shell inserts", icon: FileCode, run: handleCopyMQL },
               ...pluginFormats.map((format) => ({
                 label: format.label,
                 hint: format.description || `${format.pluginName} plugin`,

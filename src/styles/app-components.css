@@ -17297,8 +17297,10 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .datagrid-export-menu {
-  min-width: 220px;
-  padding: 6px;
+  min-width: 180px;
+  width: max-content;
+  max-width: 280px;
+  padding: 5px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -17309,13 +17311,15 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   backdrop-filter: blur(10px);
 }
 
+/* Compact single-line items: the hint flows inline after the label and is
+   trimmed with an ellipsis instead of wrapping into a second line. */
 .datagrid-export-menu-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 8px 10px;
-  border-radius: 9px;
+  padding: 6px 9px;
+  border-radius: 7px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-primary);
@@ -17326,21 +17330,26 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
     border-color 0.14s ease;
 }
 
+.datagrid-export-menu-item svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+
 .datagrid-export-menu-item:hover {
   background: var(--mm-surface-1);
   border-color: color-mix(in srgb, var(--accent) 30%, var(--mm-border));
 }
 
-.datagrid-export-menu-item svg {
-  flex: 0 0 auto;
-  color: var(--accent);
-}
-
 .datagrid-export-menu-copy {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 7px;
   min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .datagrid-export-menu-copy strong {

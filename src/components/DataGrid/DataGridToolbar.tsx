@@ -386,7 +386,13 @@ export function DataGridToolbar({
               <button
                 type="button"
                 className={`datagrid-footer-action ${showSqlMenu ? "active" : ""}`}
-                onClick={() => setShowSqlMenu((v) => !v)}
+                onClick={() => {
+                  setShowSqlMenu((v) => !v);
+                  setShowExportMenu(false);
+                  setShowCopyMenu(false);
+                  setShowSortMenu(false);
+                  setShowSettings(false);
+                }}
                 title="Copy selected rows as SQL"
               >
                 <Braces className="!w-3.5 !h-3.5" />
@@ -496,7 +502,13 @@ export function DataGridToolbar({
             <button
               type="button"
               className={`datagrid-footer-action ${showExportMenu ? "active" : ""}`}
-              onClick={() => setShowExportMenu((v) => !v)}
+              onClick={() => {
+                setShowExportMenu((v) => !v);
+                setShowSqlMenu(false);
+                setShowCopyMenu(false);
+                setShowSortMenu(false);
+                setShowSettings(false);
+              }}
               disabled={!canExport || isExportingFull}
               title="Export data"
             >
@@ -509,7 +521,13 @@ export function DataGridToolbar({
             <button
               type="button"
               className={`datagrid-footer-action datagrid-icon-action ${showCopyMenu ? "active" : ""}`}
-              onClick={() => setShowCopyMenu((v) => !v)}
+              onClick={() => {
+                setShowCopyMenu((v) => !v);
+                setShowSqlMenu(false);
+                setShowExportMenu(false);
+                setShowSortMenu(false);
+                setShowSettings(false);
+              }}
               disabled={!canExport}
               title="Copy data to clipboard"
               aria-label="Copy data to clipboard"
@@ -521,7 +539,13 @@ export function DataGridToolbar({
             <button
               type="button"
               className={`datagrid-footer-action ${showSortMenu ? "active" : ""}`}
-              onClick={() => setShowSortMenu((v) => !v)}
+              onClick={() => {
+                setShowSortMenu((v) => !v);
+                setShowSqlMenu(false);
+                setShowExportMenu(false);
+                setShowCopyMenu(false);
+                setShowSettings(false);
+              }}
               title="Sort rows"
               aria-haspopup="menu"
               aria-expanded={showSortMenu}
@@ -747,7 +771,13 @@ export function DataGridToolbar({
             <button
               type="button"
               className={`datagrid-footer-action ${showSettings ? "active" : ""}`}
-              onClick={() => setShowSettings((v) => !v)}
+              onClick={() => {
+                setShowSettings((v) => !v);
+                setShowSqlMenu(false);
+                setShowExportMenu(false);
+                setShowCopyMenu(false);
+                setShowSortMenu(false);
+              }}
               title="Data grid settings"
             >
               <Settings2 className="!w-3.5 !h-3.5" />

@@ -533,9 +533,13 @@ impl MongoDbDriver {
 
     pub(super) fn parse_collection_call(input: &str) -> Result<(String, String, String)> {
         let trimmed = Self::strip_optional_semicolon(input);
-        let after_db = trimmed
-            .strip_prefix("db.")
-            .ok_or_else(|| anyhow!("MongoDB commands must start with db."))?;
+        let after_db = trimmed.strip_prefix("db.").ok_or_else(|| {
+            anyhow!(
+                "MongoDB commands must start with db. — for example db.users.find({{}}) or \
+                 db.users.aggregate([...]). SQL SELECT statements are supported too and are \
+                 translated automatically."
+            )
+        })?;
 
         let (collection, after_collection) =
             if let Some(after_get_collection) = after_db.strip_prefix("getCollection(") {
@@ -606,6 +610,15 @@ impl MongoDbDriver {
             ));
         }
 
+        // SQL-shaped input on a command surface: translate a practical SELECT
+        // subset, answer other SQL statements with an actionable error, and
+        // leave everything else to the Mongo shell parser below.
+        if !trimmed.starts_with("db.") {
+            if let Some(translated) = super::mongodb_sql::translate_sql_statement(trimmed) {
+                return translated;
+            }
+        }
+
         if let Some(after_run_command) = trimmed.strip_prefix("db.runCommand(") {
             let close_index = Self::find_matching_closer(after_run_command, '(', ')')?;
             let command = Self::parse_json_document_arg(after_run_command[..close_index].trim())?;
@@ -628,6 +641,10 @@ impl MongoDbDriver {
                     Some(value) => Self::parse_json_document_arg(value)?,
                     None => Document::new(),
                 },
+                projection: None,
+                sort: None,
+                limit: None,
+                skip: None,
             }),
             "findone" => Ok(MongoQueryCommand::FindOne {
                 collection,

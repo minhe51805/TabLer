@@ -15,11 +15,16 @@ pub struct MongoDbDriver {
     current_db: RwLock<String>,
 }
 
+#[derive(Debug)]
 pub(super) enum MongoQueryCommand {
     RunCommand(Document),
     Find {
         collection: String,
         filter: Document,
+        projection: Option<Document>,
+        sort: Option<Document>,
+        limit: Option<i64>,
+        skip: Option<u64>,
     },
     FindOne {
         collection: String,
@@ -61,6 +66,7 @@ pub(super) enum MongoQueryCommand {
     },
 }
 
+#[derive(Debug)]
 pub(super) enum MongoUpdatePayload {
     Document(Document),
     Pipeline(Vec<Document>),
@@ -393,13 +399,32 @@ impl DatabaseDriver for MongoDbDriver {
                     false,
                 )
             }
-            MongoQueryCommand::Find { collection, filter } => {
-                let cursor = self
-                    .client
-                    .database(&active_database)
-                    .collection::<Document>(&collection)
-                    .find(filter)
-                    .limit(MAX_QUERY_RESULT_ROWS as i64)
+            MongoQueryCommand::Find {
+                collection,
+                filter,
+                projection,
+                sort,
+                limit,
+                skip,
+            } => {
+                let collection_name = strip_database_prefix(&collection, &active_database);
+                let effective_limit = limit
+                    .unwrap_or(MAX_QUERY_RESULT_ROWS as i64)
+                    .clamp(0, MAX_QUERY_RESULT_ROWS as i64);
+                let database = self.client.database(&active_database);
+                let collection_handle = database.collection::<Document>(collection_name);
+                let mut find_action = collection_handle.find(filter);
+                if let Some(projection) = projection {
+                    find_action = find_action.projection(projection);
+                }
+                if let Some(sort) = sort {
+                    find_action = find_action.sort(sort);
+                }
+                if let Some(skip) = skip {
+                    find_action = find_action.skip(skip);
+                }
+                find_action = find_action.limit(effective_limit);
+                let cursor = find_action
                     .await
                     .with_context(|| format!("Failed to query MongoDB collection {collection}"))?;
                 let (documents, truncated) = Self::collect_cursor_limited(cursor).await?;
@@ -412,10 +437,11 @@ impl DatabaseDriver for MongoDbDriver {
                 )
             }
             MongoQueryCommand::FindOne { collection, filter } => {
+                let collection_name = strip_database_prefix(&collection, &active_database);
                 let document = self
                     .client
                     .database(&active_database)
-                    .collection::<Document>(&collection)
+                    .collection::<Document>(collection_name)
                     .find_one(filter)
                     .await
                     .with_context(|| format!("Failed to query MongoDB collection {collection}"))?;
@@ -793,7 +819,9 @@ mod tests {
             MongoDbDriver::parse_command("db.getCollection('users').find({ status: 'active' })")
                 .unwrap();
         match parsed {
-            MongoQueryCommand::Find { collection, filter } => {
+            MongoQueryCommand::Find {
+                collection, filter, ..
+            } => {
                 assert_eq!(collection, "users");
                 assert_eq!(filter.get_str("status").unwrap(), "active");
             }
@@ -817,6 +845,338 @@ mod tests {
             },
             _ => panic!("expected updateMany command"),
         }
+    }
+
+    #[test]
+    fn translates_select_star_from_collection() {
+        let parsed = MongoDbDriver::parse_command("Select * From users").unwrap();
+        match parsed {
+            MongoQueryCommand::Find {
+                collection,
+                filter,
+                projection,
+                sort,
+                limit,
+                skip,
+            } => {
+                assert_eq!(collection, "users");
+                assert!(filter.is_empty());
+                assert!(projection.is_none());
+                assert!(sort.is_none());
+                assert!(limit.is_none());
+                assert!(skip.is_none());
+            }
+            _ => panic!("expected find command"),
+        }
+    }
+
+    #[test]
+    fn translates_select_columns_where_order_limit() {
+        let parsed = MongoDbDriver::parse_command(
+            "select name, profile.email from users where age >= 18 and status = 'active' \
+             order by name desc limit 10 offset 5",
+        )
+        .unwrap();
+        match parsed {
+            MongoQueryCommand::Find {
+                collection,
+                filter,
+                projection,
+                sort,
+                limit,
+                skip,
+            } => {
+                assert_eq!(collection, "users");
+
+                let conditions = filter.get_array("$and").unwrap();
+                assert_eq!(conditions.len(), 2);
+                let age_condition = conditions[0].as_document().unwrap();
+                assert_eq!(
+                    age_condition
+                        .get_document("age")
+                        .unwrap()
+                        .get_i64("$gte")
+                        .unwrap(),
+                    18
+                );
+                let status_condition = conditions[1].as_document().unwrap();
+                assert_eq!(status_condition.get_str("status").unwrap(), "active");
+
+                let projection = projection.unwrap();
+                assert_eq!(projection.get_i32("name").unwrap(), 1);
+                assert_eq!(projection.get_i32("profile.email").unwrap(), 1);
+                assert_eq!(projection.get_i32("_id").unwrap(), 0);
+
+                assert_eq!(sort.unwrap().get_i32("name").unwrap(), -1);
+                assert_eq!(limit, Some(10));
+                assert_eq!(skip, Some(5));
+            }
+            _ => panic!("expected find command"),
+        }
+    }
+
+    #[test]
+    fn translates_select_count_star() {
+        let parsed = MongoDbDriver::parse_command("SELECT COUNT(*) FROM users").unwrap();
+        match parsed {
+            MongoQueryCommand::CountDocuments { collection, filter } => {
+                assert_eq!(collection, "users");
+                assert!(filter.is_empty());
+            }
+            _ => panic!("expected count command"),
+        }
+    }
+
+    #[test]
+    fn translates_where_operators() {
+        let parsed = MongoDbDriver::parse_command(
+            "select * from users where role in ('admin', 'editor') and deleted_at is null \
+             and name like 'jo%' and age not between 30 and 40",
+        )
+        .unwrap();
+        match parsed {
+            MongoQueryCommand::Find { filter, .. } => {
+                let conditions = filter.get_array("$and").unwrap();
+                assert_eq!(conditions.len(), 4);
+
+                let roles = conditions[0]
+                    .as_document()
+                    .unwrap()
+                    .get_document("role")
+                    .unwrap()
+                    .get_array("$in")
+                    .unwrap();
+                assert_eq!(roles.len(), 2);
+                assert_eq!(roles[0].as_str().unwrap(), "admin");
+
+                let deleted_at = conditions[1].as_document().unwrap();
+                assert_eq!(deleted_at.get("deleted_at").unwrap(), &Bson::Null);
+
+                let name = conditions[2]
+                    .as_document()
+                    .unwrap()
+                    .get_document("name")
+                    .unwrap();
+                assert_eq!(name.get_str("$regex").unwrap(), "^jo.*$");
+                assert_eq!(name.get_str("$options").unwrap(), "i");
+
+                let age = conditions[3]
+                    .as_document()
+                    .unwrap()
+                    .get_document("age")
+                    .unwrap();
+                assert!(age.get_document("$not").is_ok());
+            }
+            _ => panic!("expected find command"),
+        }
+    }
+
+    #[test]
+    fn translates_group_by_with_count() {
+        let parsed = MongoDbDriver::parse_command(
+            "select status, count(*) as total from users group by status order by total desc limit 5",
+        )
+        .unwrap();
+        match parsed {
+            MongoQueryCommand::Aggregate {
+                collection,
+                pipeline,
+            } => {
+                assert_eq!(collection, "users");
+                assert_eq!(pipeline.len(), 4);
+
+                let group = pipeline[0].get_document("$group").unwrap();
+                assert_eq!(
+                    group
+                        .get_document("_id")
+                        .unwrap()
+                        .get_str("status")
+                        .unwrap(),
+                    "$status"
+                );
+                assert_eq!(
+                    group
+                        .get_document("total")
+                        .unwrap()
+                        .get_i32("$sum")
+                        .unwrap(),
+                    1
+                );
+
+                let project = pipeline[1].get_document("$project").unwrap();
+                assert_eq!(project.get_str("status").unwrap(), "$_id.status");
+                assert_eq!(project.get_i32("total").unwrap(), 1);
+                assert_eq!(project.get_i32("_id").unwrap(), 0);
+
+                assert_eq!(
+                    pipeline[2]
+                        .get_document("$sort")
+                        .unwrap()
+                        .get_i32("total")
+                        .unwrap(),
+                    -1
+                );
+                assert_eq!(pipeline[3].get_i64("$limit").unwrap(), 5);
+            }
+            _ => panic!("expected aggregate command"),
+        }
+    }
+
+    #[test]
+    fn translates_sum_with_where() {
+        let parsed =
+            MongoDbDriver::parse_command("select sum(amount) from orders where user_id = 7")
+                .unwrap();
+        match parsed {
+            MongoQueryCommand::Aggregate { pipeline, .. } => {
+                assert_eq!(pipeline.len(), 2);
+                let match_stage = pipeline[0].get_document("$match").unwrap();
+                assert_eq!(match_stage.get_i64("user_id").unwrap(), 7);
+                let group = pipeline[1].get_document("$group").unwrap();
+                assert_eq!(group.get("_id"), Some(&Bson::Null));
+                assert_eq!(
+                    group
+                        .get_document("sum_amount")
+                        .unwrap()
+                        .get_str("$sum")
+                        .unwrap(),
+                    "$amount"
+                );
+            }
+            _ => panic!("expected aggregate command"),
+        }
+    }
+
+    #[test]
+    fn translates_alias_projection() {
+        let parsed =
+            MongoDbDriver::parse_command("select name as full_name from users limit 3").unwrap();
+        match parsed {
+            MongoQueryCommand::Aggregate { pipeline, .. } => {
+                assert_eq!(pipeline.len(), 2);
+                let project = pipeline[0].get_document("$project").unwrap();
+                assert_eq!(project.get_str("full_name").unwrap(), "$name");
+                assert_eq!(project.get_i32("_id").unwrap(), 0);
+                assert_eq!(pipeline[1].get_i64("$limit").unwrap(), 3);
+            }
+            _ => panic!("expected aggregate command"),
+        }
+    }
+
+    #[test]
+    fn translates_distinct_columns() {
+        let parsed = MongoDbDriver::parse_command("select distinct city from users").unwrap();
+        match parsed {
+            MongoQueryCommand::Aggregate { pipeline, .. } => {
+                assert_eq!(pipeline.len(), 2);
+                let group = pipeline[0].get_document("$group").unwrap();
+                assert_eq!(
+                    group.get_document("_id").unwrap().get_str("city").unwrap(),
+                    "$city"
+                );
+                let project = pipeline[1].get_document("$project").unwrap();
+                assert_eq!(project.get_str("city").unwrap(), "$_id.city");
+                assert_eq!(project.get_i32("_id").unwrap(), 0);
+            }
+            _ => panic!("expected aggregate command"),
+        }
+    }
+
+    #[test]
+    fn translates_object_id_equality() {
+        let parsed = MongoDbDriver::parse_command(
+            "select * from users where _id = '507f1f77bcf86cd799439011'",
+        )
+        .unwrap();
+        match parsed {
+            MongoQueryCommand::Find { filter, .. } => {
+                assert!(matches!(filter.get("_id"), Some(Bson::ObjectId(_))));
+            }
+            _ => panic!("expected find command"),
+        }
+    }
+
+    #[test]
+    fn translates_or_and_not() {
+        let parsed = MongoDbDriver::parse_command(
+            "select * from users where (role = 'admin' or role = 'editor') and not banned = true",
+        )
+        .unwrap();
+        match parsed {
+            MongoQueryCommand::Find { filter, .. } => {
+                let conditions = filter.get_array("$and").unwrap();
+                assert_eq!(conditions.len(), 2);
+                let or_clause = conditions[0].as_document().unwrap();
+                assert_eq!(or_clause.get_array("$or").unwrap().len(), 2);
+                let nor = conditions[1]
+                    .as_document()
+                    .unwrap()
+                    .get_array("$nor")
+                    .unwrap();
+                let banned = nor[0].as_document().unwrap();
+                assert_eq!(banned.get("banned").unwrap(), &Bson::Boolean(true));
+            }
+            _ => panic!("expected find command"),
+        }
+    }
+
+    #[test]
+    fn sql_writes_get_shell_hints() {
+        for (sql, hint) in [
+            ("insert into users (name) values ('x')", "insertOne"),
+            ("update users set name = 'x' where _id = 1", "updateOne"),
+            ("delete from users where _id = 1", "deleteOne"),
+            ("create table users (id int)", "createCollection"),
+        ] {
+            let error = MongoDbDriver::parse_command(sql).unwrap_err().to_string();
+            assert!(
+                error.contains(hint),
+                "error for '{sql}' should mention '{hint}': {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_find_keeps_default_options() {
+        let parsed = MongoDbDriver::parse_command("db.users.find({ age: { $gte: 18 } })").unwrap();
+        match parsed {
+            MongoQueryCommand::Find {
+                collection,
+                projection,
+                sort,
+                limit,
+                skip,
+                ..
+            } => {
+                assert_eq!(collection, "users");
+                assert!(projection.is_none());
+                assert!(sort.is_none());
+                assert!(limit.is_none());
+                assert!(skip.is_none());
+            }
+            _ => panic!("expected find command"),
+        }
+    }
+
+    #[test]
+    fn non_sql_non_shell_input_reports_shell_requirement() {
+        let error = MongoDbDriver::parse_command("show dbs")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("must start with db."));
+    }
+
+    #[test]
+    fn broken_select_reports_translation_error() {
+        let error = MongoDbDriver::parse_command("select from where")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("could not be translated"));
+    }
+
+    #[test]
+    fn multiple_sql_statements_are_rejected() {
+        assert!(MongoDbDriver::parse_command("select * from users; select * from teams").is_err());
     }
 
     fn config_with(

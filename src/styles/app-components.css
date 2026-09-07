@@ -34857,24 +34857,31 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   flex-basis: auto;
 }
 
-/* ===== Sidebar rail card-style buttons (expanded + collapsed alike) ===== */.workspace-sidebar-rail-btn,
+/* ===== Sidebar rail icon buttons — quiet ghost style, both expanded and
+   compact rails: the button recedes until hover, no heavy card chrome. ===== */
+.workspace-sidebar-rail-btn,
 .workspace-sidebar-rail--compact .workspace-sidebar-rail-btn {
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
-  min-height: 36px;
-  border: 1px solid var(--mm-border);
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  border: 1px solid transparent;
   border-radius: 9px;
-  background: var(--mm-surface-1);
-  color: var(--text-secondary);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
 }
 
 .workspace-sidebar-rail-btn:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent) 30%, var(--mm-border));
+  border-color: var(--mm-border);
   background: var(--mm-surface-1);
   color: var(--text-primary);
-  box-shadow: 0 2px 4px rgba(15, 23, 42, 0.08);
+  box-shadow: none;
+}
+
+.workspace-sidebar-rail-btn.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 
 /* ===== Metrics board topbar: compact widget dropdown ===== */

@@ -30269,7 +30269,6 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 .datagrid-cell,
 .datagrid-td {
   padding: 12px 16px !important;
-  border-bottom: 1px solid var(--mm-border) !important;
 }
 
 .schema-diff-modal {

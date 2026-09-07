@@ -122,7 +122,18 @@ export function ContextMenu({
         <div
           ref={submenuRef}
           className="explorer-context-menu explorer-context-menu-submenu"
-          style={{ left: submenuLeft, top: menuTop + submenuOffsetTop }}
+          style={{
+            left: submenuLeft,
+            // Keep the flyout on screen: anchor to the hovered item, but shift
+            // up when the flyout would spill past the bottom viewport edge.
+            top: Math.max(
+              8,
+              Math.min(
+                menuTop + submenuOffsetTop,
+                window.innerHeight - (submenuRef.current?.offsetHeight ?? 160) - 12,
+              ),
+            ),
+          }}
           onContextMenu={(event) => event.preventDefault()}
           onMouseLeave={() => onSubmenuChange(null)}
         >

@@ -6978,7 +6978,12 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   box-shadow: var(--mm-shadow-3);
   backdrop-filter: blur(18px);
   overflow-y: auto;
+  scrollbar-width: none;
   z-index: 1400;
+}
+
+.explorer-context-menu::-webkit-scrollbar {
+  display: none;
 }
 
 .explorer-context-menu-submenu {

@@ -52,6 +52,9 @@ export function ContextMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
   const [activeContextSubmenu, setActiveContextSubmenu] = useState<ExplorerContextMenuItem[] | null>(null);
+  /** Vertical offset of the hovered submenu trigger inside the menu, so the
+   *  flyout lines up with the item ("Import ▸") instead of the menu top. */
+  const [submenuOffsetTop, setSubmenuOffsetTop] = useState(28);
 
   useEffect(() => {
     const found = tableContextMenuItems.find(
@@ -90,7 +93,15 @@ export function ContextMenu({
               className={`explorer-context-menu-item ${item.danger ? "danger" : ""} ${
                 activeContextSubmenuKey === item.key ? "active" : ""
               }`}
-              onMouseEnter={() => onSubmenuChange(item.children ? item.key : null)}
+              onMouseEnter={(event) => {
+                onSubmenuChange(item.children ? item.key : null);
+                if (item.children) {
+                  const trigger = event.currentTarget.getBoundingClientRect();
+                  const host = menuRef.current?.getBoundingClientRect();
+                  const offset = host ? trigger.top - host.top : 28;
+                  setSubmenuOffsetTop(Math.max(0, offset));
+                }
+              }}
               onClick={() => {
                 if (item.children) {
                   onSubmenuChange(item.key);
@@ -111,7 +122,7 @@ export function ContextMenu({
         <div
           ref={submenuRef}
           className="explorer-context-menu explorer-context-menu-submenu"
-          style={{ left: submenuLeft, top: menuTop + 28 }}
+          style={{ left: submenuLeft, top: menuTop + submenuOffsetTop }}
           onContextMenu={(event) => event.preventDefault()}
           onMouseLeave={() => onSubmenuChange(null)}
         >

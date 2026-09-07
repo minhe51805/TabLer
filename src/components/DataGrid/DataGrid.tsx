@@ -1666,13 +1666,15 @@ export function DataGrid({
                     >
                       <div className="datagrid-th-inner">
                         {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                        <div
-                          className="datagrid-col-resize-handle"
-                          onMouseDown={header.getResizeHandler()}
-                          onDoubleClick={() => handleColumnAutoFit(header.column.id)}
-                          title="Drag to resize, double-click to auto-fit"
-                        />
                       </div>
+                      {/* Direct child of the th so absolute right:0 lands on the
+                          real column boundary, not inside the header padding. */}
+                      <div
+                        className="datagrid-col-resize-handle"
+                        onMouseDown={header.getResizeHandler()}
+                        onDoubleClick={() => handleColumnAutoFit(header.column.id)}
+                        title="Drag to resize, double-click to auto-fit"
+                      />
                     </th>
                   );
                 })}

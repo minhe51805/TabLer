@@ -16682,6 +16682,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .datagrid-th {
+  position: relative;
   padding: 8px 10px;
   text-align: left;
   background: var(--mm-surface-0);

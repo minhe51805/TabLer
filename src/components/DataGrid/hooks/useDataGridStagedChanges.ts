@@ -27,7 +27,7 @@ interface DataGridStagedChangesParams {
     }>,
   ) => Promise<unknown>;
   invalidateTableCaches: (connectionId: string, tableName: string, database?: string) => void;
-  refreshTableFromStart: () => Promise<void>;
+  refreshTableFromStart: () => Promise<unknown>;
 
   dataGridInstanceIdRef: RefObject<string>;
 }

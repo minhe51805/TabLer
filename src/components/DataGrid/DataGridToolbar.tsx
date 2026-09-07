@@ -63,7 +63,9 @@ interface DataGridToolbarProps {
   onFilterChange?: (value: string) => void;
   canExportData?: boolean;
   /** Refetch the current table from the database (manual reload button) */
-  onReloadData?: () => void;
+  onReloadData?: () => void | Promise<void>;
+  /** True while the reload refetch is in flight — swaps the icon for a spinner */
+  isReloadingData?: boolean;
   canImportCsv?: boolean;
   onExportFull?: (format: "csv" | "jsonl") => void;
   isExportingFull?: boolean;
@@ -109,6 +111,7 @@ export function DataGridToolbar({
   onFilterChange,
   canExportData = true,
   onReloadData,
+  isReloadingData = false,
   canImportCsv = true,
   onExportFull,
   isExportingFull = false,
@@ -559,11 +562,16 @@ export function DataGridToolbar({
             <button
               type="button"
               className="datagrid-footer-action datagrid-icon-action"
-              onClick={onReloadData}
+              onClick={() => void onReloadData()}
+              disabled={isReloadingData}
               title="Reload data"
               aria-label="Reload data"
             >
-              <RefreshCw className="!w-3.5 !h-3.5" />
+              {isReloadingData ? (
+                <Loader2 className="!w-3.5 !h-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="!w-3.5 !h-3.5" />
+              )}
             </button>
           )}
           {isExportingFull && onCancelExport && (

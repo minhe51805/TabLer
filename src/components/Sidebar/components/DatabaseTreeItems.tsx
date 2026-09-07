@@ -1,5 +1,5 @@
 import { memo, useCallback } from "react";
-import { Columns, Eye, FileCode, GitBranch, Table } from "lucide-react";
+import { Columns, Eye, FileCode, GitBranch, MoreHorizontal, Table } from "lucide-react";
 import type { SchemaObjectInfo, TableInfo } from "../../../types";
 import { formatCountLabel } from "../../../i18n";
 import type { AppLanguage, TranslationKey } from "../../../i18n";
@@ -87,7 +87,6 @@ export const TableRow = memo(function TableRow({
   isContextActive,
   onTableClick,
   onTableDoubleClick,
-  onStructureClick,
   onTableContextMenu,
   ...shared
 }: {
@@ -137,12 +136,13 @@ export const TableRow = memo(function TableRow({
         </div>
       </button>
       <button
-        onClick={(e) => onStructureClick(e, table)}
+        onClick={(e) => onTableContextMenu(e, table)}
         className="explorer-structure-btn explorer-structure-btn--icon"
-        title={t("explorer.viewStructure")}
-        aria-label={t("explorer.viewStructure")}
+        title={t("toolbar.moreActions")}
+        aria-label={t("toolbar.moreActions")}
+        aria-haspopup="menu"
       >
-        <Columns className="w-3.5 h-3.5" />
+        <MoreHorizontal className="w-3.5 h-3.5" />
       </button>
     </div>
   );

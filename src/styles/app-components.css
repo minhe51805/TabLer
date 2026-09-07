@@ -26474,7 +26474,6 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   padding: 12px 16px;
   color: #3f3f3f;
   font-family: "DM Sans", sans-serif;
-  border-bottom: 1px solid var(--mm-border);
 }
 
 .datagrid-cell.editable:hover::after {

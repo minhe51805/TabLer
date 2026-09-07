@@ -31924,9 +31924,6 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   flex: 0 0 auto;
   opacity: 0.62;
 }
-  flex: 0 0 auto;
-  opacity: 0.62;
-}
 
 .explorer-table-row:hover .mixed-checkbox,
 .explorer-schema-head:hover .mixed-checkbox,

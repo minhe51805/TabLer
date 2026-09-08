@@ -26,8 +26,13 @@ const DEFAULT_SQL_PROFILE: QueryProfile = {
 
 const COMMAND_PROFILES: Partial<Record<DatabaseType, QueryProfile>> = {
   mongodb: {
-    surface: "command",
-    editorLanguage: "javascript",
+    // Mongo tabs accept BOTH SQL (the driver translates SELECT/etc. to
+    // aggregation pipelines server-side) AND db.* shell commands through the
+    // direct execution path — so the tab must be a SQL-surface editor to get
+    // syntax highlighting and SQL/collection completions back. Flipping this
+    // to "command" (regression 05ca202f) silently removed every suggestion.
+    surface: "sql",
+    editorLanguage: "sql",
     executionPath: "direct",
     supportsFormatting: false,
     // Plain empty query tab like every other engine — no seeded shell noise.

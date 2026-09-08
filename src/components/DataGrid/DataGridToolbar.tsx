@@ -336,6 +336,15 @@ export function DataGridToolbar({
     <div className="datagrid-topbar">
       {filterControl}
 
+      {externalResult?.truncated && (
+        <span
+          className="datagrid-stat-pill"
+          title={`The database returned the first ${dataRows.length.toLocaleString()} rows only. Refine the query (add LIMIT, filters or pagination) to see the rest.`}
+        >
+          Results capped at {dataRows.length.toLocaleString()} rows
+        </span>
+      )}
+
       <div className="datagrid-topbar-side">
         {stagedChangeCount > 0 && (
           <span className="datagrid-stat-pill staged-change-badge" title="Staged changes pending">

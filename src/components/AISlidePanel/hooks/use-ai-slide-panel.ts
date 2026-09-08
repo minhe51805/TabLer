@@ -333,6 +333,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     options?: {
       interactionMode?: AIWorkspaceInteractionMode;
       requestDataReadConsent?: () => Promise<boolean>;
+      /** Per-call destructive confirmation — always dialogs, never standing. */
+      requestDataDestructiveConsent?: (detail: {
+        title: string;
+        message: string;
+        confirmText?: string;
+        cancelText?: string;
+      }) => Promise<boolean>;
       userPrompt?: string;
       onAgentProgress?: (steps: AIWorkspaceAgentStep[]) => void;
       /** Files/images attached by the user for this turn (composer pipeline). */
@@ -365,6 +372,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     const requestId = ++requestIdRef.current;
     lastReasoningRef.current = undefined;
     const requestDataReadConsent = options?.requestDataReadConsent;
+    const requestDataDestructiveConsent = options?.requestDataDestructiveConsent;
     const onAgentProgress = options?.onAgentProgress;
     const {
       assistIntent,
@@ -765,6 +773,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               .tabs.some((tab) => tab.type === "query" && !tabIdsBefore.has(tab.id));
           },
           requestDataReadConsent,
+          requestDataDestructiveConsent,
           publishAgentProgress,
           onAgentPlanUpdate: (plan) => {
             agentPlanLines = plan.map((step, index) =>

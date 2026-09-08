@@ -161,7 +161,8 @@ impl PluginStorage {
     /// update checks keep working when the registry host is unreachable
     /// (GitHub outage, renamed repo, no network).
     pub fn registry_cache_path(&self) -> PathBuf {
-        self.storage_path.with_file_name("plugin-registry-cache.json")
+        self.storage_path
+            .with_file_name("plugin-registry-cache.json")
     }
 
     pub fn load_plugins(&self) -> Result<Vec<InstalledPluginRecord>> {

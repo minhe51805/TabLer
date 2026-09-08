@@ -1018,15 +1018,21 @@ mod registry_cache_tests {
             generated_at: "2026-01-01T00:00:00Z".to_string(),
             packages: Vec::new(),
         };
-        let cache_path = std::env::temp_dir().join(format!(
-            "tabler-registry-cache-{}.json",
-            Uuid::new_v4()
-        ));
-        write_registry_cache(&cache_path, "https://registry-a.example.com/index.json", &index);
+        let cache_path =
+            std::env::temp_dir().join(format!("tabler-registry-cache-{}.json", Uuid::new_v4()));
+        write_registry_cache(
+            &cache_path,
+            "https://registry-a.example.com/index.json",
+            &index,
+        );
         // Same cache file, different registry URL: the entry must not be
         // served — custom registries never leak into each other.
-        assert!(read_registry_cache(&cache_path, "https://registry-b.example.com/index.json").is_none());
-        assert!(read_registry_cache(&cache_path, "https://registry-a.example.com/index.json").is_some());
+        assert!(
+            read_registry_cache(&cache_path, "https://registry-b.example.com/index.json").is_none()
+        );
+        assert!(
+            read_registry_cache(&cache_path, "https://registry-a.example.com/index.json").is_some()
+        );
         let _ = fs::remove_file(&cache_path);
     }
 
@@ -1040,10 +1046,8 @@ mod registry_cache_tests {
         let index: PluginRegistryIndex =
             serde_json::from_slice(&fs::read(registry_path).unwrap()).unwrap();
         let url = "https://registry-cache-test.invalid/plugin-registry.json";
-        let cache_path = std::env::temp_dir().join(format!(
-            "tabler-registry-cache-{}.json",
-            Uuid::new_v4()
-        ));
+        let cache_path =
+            std::env::temp_dir().join(format!("tabler-registry-cache-{}.json", Uuid::new_v4()));
         write_registry_cache(&cache_path, url, &index);
 
         // The .invalid host fails DNS resolution; the cached copy must step in.

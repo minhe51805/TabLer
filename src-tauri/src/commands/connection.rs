@@ -15,7 +15,16 @@ use tokio_util::sync::CancellationToken;
 pub(super) const CONNECTION_TIMEOUT: Duration = Duration::from_secs(45);
 pub(super) const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 pub(super) const USE_DATABASE_TIMEOUT: Duration = Duration::from_secs(15);
-pub(super) const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
+/// Bootstrap (preset schema creation) budget. 60s covers local instances and
+/// short presets; slow remote instances can raise it via
+/// TABLER_BOOTSTRAP_TIMEOUT_SECS (clamped to 15..600 seconds).
+pub(super) fn bootstrap_timeout() -> Duration {
+    let secs = std::env::var("TABLER_BOOTSTRAP_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(60);
+    Duration::from_secs(secs.clamp(15, 600))
+}
 
 #[derive(Default)]
 pub struct ConnectionAttemptCancellationState {
@@ -293,7 +302,7 @@ pub async fn create_local_database(
 
     if config.db_type == DatabaseType::SQLite {
         return timeout(
-            BOOTSTRAP_TIMEOUT,
+            bootstrap_timeout(),
             create_local_sqlite_database(&config, requested_database, &bootstrap_statements),
         )
         .await
@@ -313,19 +322,19 @@ pub async fn create_local_database(
 
     match config.db_type {
         DatabaseType::PostgreSQL => timeout(
-            BOOTSTRAP_TIMEOUT,
+            bootstrap_timeout(),
             create_local_postgres_database(&config, requested_database, &bootstrap_statements),
         )
         .await
         .map_err(|_| "Local PostgreSQL bootstrap timed out after 60 seconds.".to_string())?,
         DatabaseType::MySQL | DatabaseType::MariaDB => timeout(
-            BOOTSTRAP_TIMEOUT,
+            bootstrap_timeout(),
             create_local_mysql_database(&config, requested_database, &bootstrap_statements),
         )
         .await
         .map_err(|_| "Local MySQL bootstrap timed out after 60 seconds.".to_string())?,
         DatabaseType::MSSQL => timeout(
-            BOOTSTRAP_TIMEOUT,
+            bootstrap_timeout(),
             create_local_mssql_database(&config, requested_database, &bootstrap_statements),
         )
         .await

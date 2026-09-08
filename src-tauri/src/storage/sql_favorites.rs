@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, Write};
+use std::fs::{self, File};
+use std::io::BufReader;
 use std::path::PathBuf;
+
+use crate::storage::file_storage::write_json_atomically;
 
 /// A named SQL snippet saved by the user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,16 +63,8 @@ impl SqlFavoritesStorage {
         let json = serde_json::to_string_pretty(&items)
             .map_err(|e| format!("Failed to serialize favorites: {e}"))?;
 
-        let mut file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&self.file_path)
-            .map_err(|e| format!("Failed to open sql_favorites file for write: {e}"))?;
-
-        file.write_all(json.as_bytes())
-            .map_err(|e| format!("Failed to write sql_favorites: {e}"))?;
-
-        Ok(())
+        write_json_atomically(&self.file_path, &json)
+            .map_err(|e| format!("Failed to persist sql_favorites: {e}"))
     }
 
     pub fn get_all(&self) -> Vec<SqlFavorite> {

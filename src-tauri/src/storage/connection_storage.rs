@@ -280,9 +280,20 @@ impl ConnectionStorage {
         match entry.delete_credential() {
             Ok(()) | Err(KeyringError::NoEntry) => {}
             Err(error) => {
-                return Err(anyhow::Error::new(error).context(
-                    "Failed to delete the saved connection password from secure storage",
-                ));
+                // A locked or broken OS credential store (Windows Credential
+                // Manager lock, enterprise policy, ...) must not leave the
+                // user unable to delete a saved connection. The metadata row
+                // is already removed from `connections` above, so proceed and
+                // treat the secret cleanup as best-effort — the orphaned
+                // keyring entry is logged for manual removal instead of
+                // silently blocking the whole delete.
+                log::warn!(
+                    "Could not delete the keyring credential for connection {}: {}. \
+                     The saved connection was removed, but its secret may remain \
+                     in the OS secure store.",
+                    connection_id,
+                    error
+                );
             }
         }
 

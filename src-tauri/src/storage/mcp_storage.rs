@@ -11,6 +11,10 @@ use uuid::Uuid;
 const MCP_TOKEN_FILE: &str = "mcp_tokens.json";
 const MCP_AUDIT_FILE: &str = "mcp_audit.json";
 const AUDIT_RETENTION_DAYS: i64 = 90;
+/// Hard cap on retained audit events (in addition to the time-based retention
+/// window): bounds file size even when MCP traffic within the retention
+/// window would otherwise grow without limit.
+const MAX_AUDIT_EVENTS: usize = 10_000;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,6 +212,11 @@ impl McpStorage {
                 .unwrap_or(false)
         });
         events.push(event);
+        // Enforce the hard event-count cap, keeping the newest entries.
+        if events.len() > MAX_AUDIT_EVENTS {
+            let excess = events.len() - MAX_AUDIT_EVENTS;
+            events.drain(0..excess);
+        }
         write_json_atomically(&self.audit_path, &serde_json::to_string_pretty(&events)?)
     }
 

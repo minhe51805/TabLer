@@ -34,6 +34,7 @@ function mkDeps(overrides: Partial<AgentToolExecutorDeps> = {}) {
     requestId: 1,
     requestIdRef: { current: 1 },
     requestDataReadConsent: vi.fn().mockResolvedValue(true),
+    requestDataDestructiveConsent: vi.fn().mockResolvedValue(true),
     publishAgentProgress: vi.fn(),
     getTableColumnsPreview: vi.fn().mockResolvedValue([
       { name: "id", data_type: "INT", is_nullable: false, is_primary_key: true },
@@ -813,14 +814,44 @@ describe("edit_query_sql proposals", () => {
     );
   });
 
-  it("blocks delete_memory when the user withholds consent", async () => {
+  it("blocks delete_memory when the user withholds destructive consent", async () => {
     const { invokeMutation } = await import("@/utils/tauri-utils");
     const deps = mkDeps({
       memoryScope: { connectionId: CONNECTION_ID, database: DB },
-      requestDataReadConsent: vi.fn().mockResolvedValue(false),
+      requestDataDestructiveConsent: vi.fn().mockResolvedValue(false),
     });
     const obs = await run(deps, { action: "delete_memory", args: { name: "obsolete" } });
     expect(obs).toContain("did not approve");
+    expect(vi.mocked(invokeMutation)).not.toHaveBeenCalledWith(
+      "delete_agent_memory",
+      expect.anything(),
+    );
+  });
+
+  it("delete_memory never rides on the standing data-read grant", async () => {
+    // Regression: delete_memory used to gate on requestDataReadConsent, which
+    // is a standing per-database grant that auto-approves silently. The gate
+    // must be the always-asking destructive dialog instead.
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    const deps = mkDeps({
+      memoryScope: { connectionId: CONNECTION_ID, database: DB },
+      requestDataReadConsent: vi.fn().mockResolvedValue(true),
+      requestDataDestructiveConsent: vi.fn().mockResolvedValue(false),
+    });
+    const obs = await run(deps, { action: "delete_memory", args: { name: "obsolete" } });
+    expect(obs).toContain("did not approve");
+    expect(vi.mocked(invokeMutation)).not.toHaveBeenCalledWith(
+      "delete_agent_memory",
+      expect.anything(),
+    );
+  });
+
+  it("blocks delete_memory when no destructive dialog is available", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    const deps = mkDeps({ memoryScope: { connectionId: CONNECTION_ID, database: DB } });
+    delete deps.requestDataDestructiveConsent;
+    const obs = await run(deps, { action: "delete_memory", args: { name: "obsolete" } });
+    expect(obs).toContain("requires a destructive-action confirmation dialog");
     expect(vi.mocked(invokeMutation)).not.toHaveBeenCalledWith(
       "delete_agent_memory",
       expect.anything(),

@@ -166,6 +166,15 @@ export interface AgentToolExecutorDeps {
   requestId: number;
   requestIdRef: RefObject<number>;
   requestDataReadConsent?: () => Promise<boolean>;
+  /** Per-call destructive-action confirmation. Always shows a dialog and is
+   * never backed by a standing grant — required for irreversible tools such
+   * as delete_memory (fail-closed when absent). */
+  requestDataDestructiveConsent?: (detail: {
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+  }) => Promise<boolean>;
   publishAgentProgress: (pending?: { action: import("./ai-workspace-types").AIWorkspaceAgentActionName; message: string }) => void;
   /** Receives the normalized checklist after each update_plan call. */
   onAgentPlanUpdate?: (plan: import("./ai-agent-context").AgentPlanStep[]) => void;
@@ -353,6 +362,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     requestId,
     requestIdRef,
     requestDataReadConsent,
+    requestDataDestructiveConsent,
     publishAgentProgress,
     onAgentPlanUpdate,
     delegateSubAnalysis,
@@ -1450,13 +1460,22 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       if (!memoryScope?.connectionId) {
         return "Tool error: delete_memory requires an active connection scope.";
       }
-      // Destructive and irreversible: same standing-consent dialog preview_write
-      // uses — the prompt guidance alone is not a gate.
-      if (requestDataReadConsent) {
-        const approved = await requestDataReadConsent();
-        if (!approved) {
-          return "Tool blocked: The user did not approve deleting this memory.";
-        }
+      // Destructive and irreversible: this must be a per-call dialog that
+      // ALWAYS asks. It deliberately does NOT reuse requestDataReadConsent —
+      // that consent is a standing per-database grant which auto-approves
+      // silently, and would let deletes ride on a read permission. Fail
+      // closed when no destructive dialog is wired in this context.
+      if (!requestDataDestructiveConsent) {
+        return "Tool blocked: delete_memory requires a destructive-action confirmation dialog, which is unavailable in this context.";
+      }
+      const approved = await requestDataDestructiveConsent({
+        title: "Permanently delete this memory?",
+        message: `The agent wants to permanently delete the memory "${memoryName}" from this connection's memory store. This cannot be undone.`,
+        confirmText: "Delete memory",
+        cancelText: "Keep it",
+      });
+      if (!approved) {
+        return "Tool blocked: The user did not approve deleting this memory.";
       }
       try {
         await invokeMutation("delete_agent_memory", {

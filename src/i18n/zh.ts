@@ -391,6 +391,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "datagrid.copiedDescription": "{{count}} 行已复制到剪贴板。",
   "datagrid.copyFailed": "复制失败",
   "datagrid.exportFailed": "导出失败",
+  "datagrid.partialResultBanner": "数据库仅返回了部分结果。请优化查询或加载更多数据以继续。",
   "datagrid.stopExport": "停止导出",
   "datagrid.cancelExportTitle": "取消整表导出",
   "datagrid.exportHintCsv": "逗号分隔值",

@@ -402,6 +402,7 @@ export const tr: Record<keyof typeof en, string> = {
   "datagrid.copiedDescription": "{{count}} satır panoya kopyalandı.",
   "datagrid.copyFailed": "Kopyalama başarısız",
   "datagrid.exportFailed": "Dışa aktarma başarısız",
+  "datagrid.partialResultBanner": "Veritabanı kısmi bir sonuç döndürdü. Devam etmek için sorguyu daraltın veya daha fazla veri yükleyin.",
   "datagrid.stopExport": "Dışa aktarmayı durdur",
   "datagrid.cancelExportTitle": "Tüm tablo dışa aktarımını iptal et",
   "datagrid.exportHintCsv": "Virgülle ayrılmış değerler",

@@ -398,6 +398,7 @@ export const ko: Record<keyof typeof en, string> = {
   "datagrid.copiedDescription": "{{count}}행이 클립보드에 복사되었습니다.",
   "datagrid.copyFailed": "복사 실패",
   "datagrid.exportFailed": "내보내기 실패",
+  "datagrid.partialResultBanner": "데이터베이스가 부분 결과만 반환했습니다. 계속하려면 쿼리를 다듬거나 더 많은 데이터를 로드하세요.",
   "datagrid.stopExport": "내보내기 중지",
   "datagrid.cancelExportTitle": "전체 테이블 내보내기 취소",
   "datagrid.exportHintCsv": "쉼표로 구분된 값",

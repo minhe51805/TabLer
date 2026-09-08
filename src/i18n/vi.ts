@@ -398,6 +398,7 @@ export const vi: Record<keyof typeof en, string> = {
   "datagrid.copiedDescription": "{{count}} dòng đã nằm trên clipboard.",
   "datagrid.copyFailed": "Copy thất bại",
   "datagrid.exportFailed": "Xuất thất bại",
+  "datagrid.partialResultBanner": "CSDL trả về một phần kết quả. Tinh chỉnh truy vấn hoặc tải thêm dữ liệu để tiếp tục.",
   "datagrid.stopExport": "Dừng xuất",
   "datagrid.cancelExportTitle": "Hủy xuất toàn bộ bảng",
   "datagrid.exportHintCsv": "Giá trị phân cách bởi dấu phẩy",

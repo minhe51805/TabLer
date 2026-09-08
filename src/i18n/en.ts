@@ -397,6 +397,7 @@ export const en = {
   "datagrid.copiedDescription": "{{count}} rows on the clipboard.",
   "datagrid.copyFailed": "Copy failed",
   "datagrid.exportFailed": "Export failed",
+  "datagrid.partialResultBanner": "The database returned a partial result set. Refine the query or load more data to continue.",
   "datagrid.stopExport": "Stop export",
   "datagrid.cancelExportTitle": "Cancel full table export",
   "datagrid.exportHintCsv": "Comma-separated values",

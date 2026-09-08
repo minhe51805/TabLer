@@ -1,5 +1,6 @@
 import { ClipboardPaste, Loader2, X } from "lucide-react";
 import type { PastePreview } from "../../../utils/clipboard-parser";
+import { useI18n } from "../../../i18n";
 
 export interface CsvFileSelection {
   filePath: string;
@@ -38,6 +39,7 @@ export function PasteRowsDialog({
   onSubmit,
   onCancel,
 }: PasteRowsDialogProps) {
+  const { t } = useI18n();
   return (
     <div className="datagrid-insert-dialog-backdrop" onClick={onClose}>
       <div
@@ -52,20 +54,22 @@ export function PasteRowsDialog({
             <span className="datagrid-insert-dialog-kicker">{pasteSourceLabel}</span>
             <h3 id="datagrid-paste-dialog-title" className="datagrid-insert-dialog-title">
               {csvFileSelection
-                ? `Import full file into ${tableName?.split(".").pop() || tableName || "table"}`
-                : tableName ? `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""} into ${tableName.split(".").pop() || tableName}` : `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""}`}
+                ? t("datagrid.pasteImportInto", { table: tableName?.split(".").pop() || tableName || "table" })
+                : tableName
+                  ? t("datagrid.pasteInsertInto", { count: pastePreview.rowCount, table: tableName.split(".").pop() || tableName })
+                  : t("datagrid.pasteInsertCount", { count: pastePreview.rowCount })}
             </h3>
             <p className="datagrid-insert-dialog-description">
-              Column mappings from clipboard ({pastePreview.firstRowWasHeader ? "headers detected" : "positional mapping"}):
-              {pastePreview.nullColumns.length > 0 && ` Unmapped table columns are omitted so database defaults can apply: ${pastePreview.nullColumns.join(", ")}`}
-              {pastePreview.skippedColumns.length > 0 && ` Skipped clipboard columns: ${pastePreview.skippedColumns.map((c) => `"${c.header}"`).join(", ")}`}
+              {t("datagrid.pasteDescription")} ({pastePreview.firstRowWasHeader ? t("datagrid.pasteHeadersDetected") : t("datagrid.pastePositional")}):
+              {pastePreview.nullColumns.length > 0 && ` ${t("datagrid.pasteNullOmitted", { columns: pastePreview.nullColumns.join(", ") })}`}
+              {pastePreview.skippedColumns.length > 0 && ` ${t("datagrid.pasteSkippedInline", { columns: pastePreview.skippedColumns.map((c) => `"${c.header}"`).join(", ") })}`}
             </p>
           </div>
           <button
             type="button"
             className="datagrid-insert-dialog-close"
             onClick={onClose}
-            aria-label="Close paste dialog"
+            aria-label={t("datagrid.pasteCloseAria")}
             disabled={isSubmittingPaste}
           >
             <X className="w-4 h-4" />
@@ -75,13 +79,13 @@ export function PasteRowsDialog({
         <div className="datagrid-paste-preview">
           {pastePreview.mappings.length > 0 && (
             <div className="datagrid-paste-mappings">
-              <p className="datagrid-paste-section-label">Column mappings</p>
+              <p className="datagrid-paste-section-label">{t("datagrid.pasteMappingsTitle")}</p>
               <table className="datagrid-paste-mapping-table">
                 <thead>
                   <tr>
-                    <th>Clipboard column</th>
+                    <th>{t("datagrid.pasteClipboardColumn")}</th>
                     <th></th>
-                    <th>Table column</th>
+                    <th>{t("datagrid.pasteTableColumn")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -98,17 +102,17 @@ export function PasteRowsDialog({
           )}
           {pastePreview.skippedColumns.length > 0 && (
             <div className="datagrid-paste-section">
-              <p className="datagrid-paste-section-label">Skipped clipboard columns (no matching table column)</p>
+              <p className="datagrid-paste-section-label">{t("datagrid.pasteSkippedTitle")}</p>
               <div className="datagrid-paste-chip-list">
                 {pastePreview.skippedColumns.map((c) => (
-                  <span key={c.index} className="datagrid-paste-chip skipped">{c.header || `Column ${c.index + 1}`}</span>
+                  <span key={c.index} className="datagrid-paste-chip skipped">{c.header || t("datagrid.pasteColumnFallback", { index: c.index + 1 })}</span>
                 ))}
               </div>
             </div>
           )}
           <div className="datagrid-paste-summary">
-            <strong>{pastePreview.rowCount}</strong> {csvFileSelection?.isTruncated ? "preview rows checked; the full file will stream" : `row${pastePreview.rowCount !== 1 ? "s" : ""} to insert`}
-            {pastePreview.nullColumns.length > 0 && `, <strong>${pastePreview.nullColumns.length}</strong> column(s) use database defaults`}
+            <strong>{pastePreview.rowCount}</strong> {csvFileSelection?.isTruncated ? t("datagrid.pastePreviewStreaming") : t("datagrid.pasteRowsToInsert")}
+            {pastePreview.nullColumns.length > 0 && `, <strong>${pastePreview.nullColumns.length}</strong> ${t("datagrid.pasteNullDefaults", { count: pastePreview.nullColumns.length })}`}
           </div>
           {isSubmittingPaste && csvFileSelection && csvImportProgress && (
             <div className="datagrid-import-progress" aria-live="polite">
@@ -117,7 +121,7 @@ export function PasteRowsDialog({
                 value={csvImportProgress.processedBytes}
               />
               <span>
-                {csvImportProgress.processedRows.toLocaleString()} rows processed
+                {t("datagrid.pasteRowsProcessed", { count: csvImportProgress.processedRows.toLocaleString() })}
                 {csvImportProgress.totalBytes > 0
                   ? ` (${Math.min(100, Math.round((csvImportProgress.processedBytes / csvImportProgress.totalBytes) * 100))}%)`
                   : ""}
@@ -139,7 +143,7 @@ export function PasteRowsDialog({
             }}
             disabled={isCancellingPaste}
           >
-            {isSubmittingPaste ? (isCancellingPaste ? "Cancelling..." : "Cancel import") : "Cancel"}
+            {isSubmittingPaste ? (isCancellingPaste ? t("datagrid.pasteCancelling") : t("datagrid.pasteCancelImport")) : t("common.cancel")}
           </button>
           <button
             type="button"
@@ -150,12 +154,12 @@ export function PasteRowsDialog({
             {isSubmittingPaste ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                {csvFileSelection ? "Streaming file in one transaction..." : `Importing ${pastePreview.rowCount} rows atomically...`}
+                {csvFileSelection ? t("datagrid.pasteStreaming") : t("datagrid.pasteImportingAtomic", { count: pastePreview.rowCount })}
               </>
             ) : (
               <>
                 <ClipboardPaste className="w-4 h-4" />
-                {csvFileSelection ? "Import full file" : `Insert ${pastePreview.rowCount} row${pastePreview.rowCount !== 1 ? "s" : ""}`}
+                {csvFileSelection ? t("datagrid.pasteImportFull") : t("datagrid.pasteInsertCount", { count: pastePreview.rowCount })}
               </>
             )}
           </button>

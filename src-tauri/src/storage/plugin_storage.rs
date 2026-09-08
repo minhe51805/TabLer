@@ -156,6 +156,14 @@ impl PluginStorage {
         &self.staging_dir
     }
 
+    /// Offline fallback for the plugin marketplace: the last successfully
+    /// fetched registry index is cached next to plugins.json, so browsing and
+    /// update checks keep working when the registry host is unreachable
+    /// (GitHub outage, renamed repo, no network).
+    pub fn registry_cache_path(&self) -> PathBuf {
+        self.storage_path.with_file_name("plugin-registry-cache.json")
+    }
+
     pub fn load_plugins(&self) -> Result<Vec<InstalledPluginRecord>> {
         read_json_vec_with_backup(&self.storage_path, "Failed to parse installed plugins")
     }

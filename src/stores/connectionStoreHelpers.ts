@@ -3,10 +3,15 @@ import type { QueryResult, ConnectionConfig } from "../types";
 import { resolveEnvVars } from "../utils/env-resolve";
 import type { ConnectionState } from "./connectionStore";
 
-/** Frontend-side timeouts (ms) for backend metadata and connection calls. */
+/** Frontend-side timeouts (ms) for backend metadata and connection calls.
+ *  metadata deliberately matches the slowest realistic remote target: the
+ *  backend's own metadata timeout is 60s (table.rs TABLE_METADATA_TIMEOUT),
+ *  and Atlas/remote clusters regularly exceed 15s on cold schema listing —
+ *  aborting earlier only produced a premature error while the backend kept
+ *  working. */
 export const FRONTEND_TIMEOUTS = {
   connection: 45_000,
-  metadata: 15_000,
+  metadata: 45_000,
 } as const;
 
 const MISSING_CONNECTION_ERROR_PATTERNS = [/please connect first/i];

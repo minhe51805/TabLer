@@ -133,6 +133,11 @@ impl MongoDbDriver {
         // pasted into the host field or an official Atlas hostname. SRV is
         // required to discover the cluster (plain mongodb:// only reaches one
         // node and Atlas rejects it), and SRV connections are always TLS.
+        // `.mongodb.net` is reserved for Atlas so the bare-hostname heuristic
+        // cannot misfire on self-hosted servers. Escape hatch for the rare
+        // non-SRV Atlas target (e.g. PrivateLink endpoints, whose hostnames
+        // still end in .mongodb.net but have no SRV records): prefix the host
+        // with `mongodb://` to disable SRV discovery.
         let mut is_srv = false;
         let mut host = raw_host.to_string();
         if let Some(rest) = host.strip_prefix("mongodb+srv://") {

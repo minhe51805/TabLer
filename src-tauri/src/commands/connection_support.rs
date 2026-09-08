@@ -682,7 +682,8 @@ mod mssql_bootstrap_live {
     /// starter_core preset SQL from connection-form-utils.ts.
     // Live probe bound to the dev machine's SQL Server instance (SSPI auth):
     // compiled only on Windows targets so `--include-ignored` CI runs on
-    // Linux/macOS never reach it.
+    // Linux/macOS never reach it. Override the instance per machine with
+    // TABLER_MSSQL_LIVE_INSTANCE (e.g. "DESKTOP-AB12CD\\SQLEXPRESS").
     #[cfg(windows)]
     #[tokio::test]
     #[ignore]
@@ -690,7 +691,8 @@ mod mssql_bootstrap_live {
         let mut additional_fields = HashMap::new();
         additional_fields.insert(
             "instance_name".to_string(),
-            "LAPTOP-JFECRE1C\\MINH".to_string(),
+            std::env::var("TABLER_MSSQL_LIVE_INSTANCE")
+                .unwrap_or_else(|_| "LAPTOP-JFECRE1C\\MINH".to_string()),
         );
         let config = ConnectionConfig {
             id: "live-bootstrap".to_string(),

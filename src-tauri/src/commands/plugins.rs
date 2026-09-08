@@ -101,8 +101,10 @@ pub struct PluginUpdateCandidate {
 #[tauri::command]
 pub async fn get_plugin_registry(
     registry_url: Option<String>,
+    plugin_storage: State<'_, PluginStorage>,
 ) -> Result<PluginRegistryIndex, String> {
-    fetch_registry_index(registry_url).await
+    let cache_path = plugin_storage.registry_cache_path();
+    fetch_registry_index(registry_url, Some(&cache_path)).await
 }
 
 #[tauri::command]
@@ -110,7 +112,8 @@ pub async fn check_plugin_updates(
     registry_url: Option<String>,
     plugin_storage: State<'_, PluginStorage>,
 ) -> Result<Vec<PluginUpdateCandidate>, String> {
-    let index = fetch_registry_index(registry_url).await?;
+    let cache_path = plugin_storage.registry_cache_path();
+    let index = fetch_registry_index(registry_url, Some(&cache_path)).await?;
     let records = plugin_storage
         .load_plugins()
         .map_err(|e| format!("Failed to load installed plugins: {e}"))?;
@@ -145,7 +148,8 @@ pub async fn install_registry_plugin(
     plugin_storage: State<'_, PluginStorage>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<InstalledPluginRecord, String> {
-    let index = fetch_registry_index(registry_url).await?;
+    let cache_path = plugin_storage.registry_cache_path();
+    let index = fetch_registry_index(registry_url, Some(&cache_path)).await?;
     let package = latest_compatible_package(&index, &plugin_id)?.clone();
     let storage = plugin_storage.inner().clone();
     let source = materialize_registry_package(&storage, &package).await?;

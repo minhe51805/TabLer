@@ -10,6 +10,7 @@ import {
   type ColumnPinningState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useI18n } from "../../i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Copy, Loader2, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
@@ -1275,9 +1276,13 @@ export function DataGrid({
     [displayedRows, externalResult, filteredTableRows],
   );
 
-  const isQueryResultTruncated = Boolean(externalResult && data?.truncated);
+  // Table tabs are paginated — the banner only fires when a requested page
+  // was clamped above MAX_TABLE_PAGE_ROWS. Query tabs surface the cap via
+  // the toolbar badge instead: one indicator per surface, no duplicates.
+  const isPageClamped = Boolean(!externalResult && data?.truncated);
 
   // Derive dbType and date format for date cell formatting
+  const { t } = useI18n();
   const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
   const dbType = connection?.db_type;
   const dateFormat = useDateFormatStore((s) => s.getFormat(connectionId, dbType));
@@ -1630,9 +1635,9 @@ export function DataGrid({
         role="grid"
         aria-label={tableName ? `${tableName} data grid` : "Query result data grid"}
       >
-        {isQueryResultTruncated && (
+        {isPageClamped && (
           <div className="datagrid-query-result-notice">
-            The database returned a partial result set. Refine the query or load more data to continue.
+            {t("datagrid.partialResultBanner")}
           </div>
         )}
 

@@ -428,6 +428,77 @@ export function ConnectionForm({
     });
   }, [formData.db_type, formData.host]);
 
+  // --- Pasted connection URL support for MongoDB ---------------------------
+  // The backend builds the URI from the structured fields and deliberately
+  // strips any embedded credentials/path from a URL pasted into the Host
+  // field ("structured fields are authoritative") — a correctly pasted Atlas
+  // URL therefore connected ANONYMOUSLY: ping passed, real commands failed.
+  // Parse the paste here and fill the structured fields so what the user
+  // pasted is what actually connects.
+  const mongoPasteHandledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (formData.db_type !== "mongodb") return;
+    const pastedHost = (formData.host ?? "").trim();
+    if (!/^mongodb(\+srv)?:\/\//i.test(pastedHost)) return;
+    if (mongoPasteHandledRef.current === pastedHost) return; // manual edits win after the first fill
+    let parsed: {
+      host: string;
+      username?: string;
+      password?: string;
+      database?: string;
+      authSource?: string;
+      replicaSet?: string;
+    } | null = null;
+    try {
+      const url = new URL(pastedHost);
+      const decode = (value: string) => {
+        try {
+          return decodeURIComponent(value);
+        } catch {
+          return value;
+        }
+      };
+      parsed = {
+        host: `${url.hostname}${url.port ? `:${url.port}` : ""}`,
+        username: url.username ? decode(url.username) : undefined,
+        password: url.password ? decode(url.password) : undefined,
+        database: url.pathname.replace(/^\//, "") || undefined,
+        authSource: url.searchParams.get("authSource") || undefined,
+        replicaSet: url.searchParams.get("replicaSet") || undefined,
+      };
+    } catch {
+      return; // not a parseable URL — leave everything as typed
+    }
+    const paste = parsed;
+    if (!paste) return;
+    mongoPasteHandledRef.current = pastedHost;
+    const filledCredentials = Boolean(paste.username || paste.password);
+    setFormData((prev) => ({
+      ...prev,
+      host: paste.host,
+      ...(paste.username && !prev.username ? { username: paste.username } : {}),
+      ...(paste.database ? { database: paste.database } : {}),
+      additional_fields: {
+        ...(prev.additional_fields ?? {}),
+        ...(paste.authSource ? { auth_source: paste.authSource } : {}),
+        ...(paste.replicaSet ? { replica_set: paste.replicaSet } : {}),
+      },
+    }));
+    if (paste.password) {
+      passwordDraftRef.current = paste.password;
+    }
+    if (filledCredentials) {
+      emitAppToast({
+        tone: "info",
+        title: language === "vi" ? "Đã điền thông tin từ URL" : "Connection details filled from URL",
+        description:
+          language === "vi"
+            ? "Tên đăng nhập, database xác thực và các tùy chọn được lấy từ URL bạn dán."
+            : "Username, auth database and options were taken from the pasted URL.",
+      });
+    }
+  }, [formData.db_type, formData.host, language]);
+
   const handleSwitchIntent = (nextIntent: "connect" | "bootstrap") => {
     if (editConnection || nextIntent === intentMode) return;
     setIntentMode(nextIntent);

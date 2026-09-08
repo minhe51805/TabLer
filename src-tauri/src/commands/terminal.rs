@@ -84,12 +84,33 @@ fn get_shell_launch_config() -> ShellLaunchConfig {
         let shell = env::var("TABLER_TERMINAL_SHELL")
             .ok()
             .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                // Prefer PowerShell 7 (pwsh) when installed at the well-known
+                // location; fall back to the inbox Windows PowerShell. The
+                // env var above stays the explicit override.
+                env::var("ProgramFiles")
+                    .ok()
+                    .map(|program_files| {
+                        PathBuf::from(program_files)
+                            .join("PowerShell")
+                            .join("7")
+                            .join("pwsh.exe")
+                    })
+                    .filter(|path| path.is_file())
+                    .map(|path| path.to_string_lossy().to_string())
+            })
             .unwrap_or_else(|| "powershell.exe".to_string());
+
+        let label = PathBuf::from(&shell)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("PowerShell")
+            .to_string();
 
         ShellLaunchConfig {
             program: shell,
             args: vec!["-NoLogo".to_string()],
-            label: "PowerShell".to_string(),
+            label,
         }
     }
 

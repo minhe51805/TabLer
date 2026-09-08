@@ -85,6 +85,11 @@ pub fn generate_mcp_token() -> (String, String, String) {
     (token, salt, token_hash)
 }
 
+/// One-pass salted SHA-256 — acceptable HERE because MCP tokens are 32 bytes
+/// of CSPRNG entropy (`tr_` + base64), never user-chosen: brute-forcing the
+/// preimage is as hard as guessing the token itself, so PBKDF2/Argon2 would
+/// add nothing. If tokens ever become user-defined (low-entropy), switch
+/// hashing to PBKDF2 (already a dependency for export) BEFORE shipping that.
 pub fn hash_token(salt: &str, token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(salt.as_bytes());

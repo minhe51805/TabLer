@@ -34,7 +34,9 @@ pub struct PanelHeights {
 }
 
 /// Tab persistence storage keyed by connection_id, storing up to MAX_TABS_PER_CONNECTION tabs (LRU).
-const MAX_TABS_PER_CONNECTION: usize = 20;
+/// 50 keeps room for heavy sessions; evictions are logged so "my tabs
+/// disappeared" is never silent.
+const MAX_TABS_PER_CONNECTION: usize = 50;
 
 #[derive(Clone)]
 pub struct TabPersistence {
@@ -67,7 +69,18 @@ impl TabPersistence {
             b.created_at_ms.cmp(&a.created_at_ms)
         });
 
+        let evicted = sorted.len().saturating_sub(MAX_TABS_PER_CONNECTION);
         let trimmed: Vec<PersistedTab> = sorted.into_iter().take(MAX_TABS_PER_CONNECTION).collect();
+        if evicted > 0 {
+            // Eviction is deliberate (LRU), but it must never be silent: the
+            // dropped tabs are the OLDEST ones for this connection.
+            log::warn!(
+                "Tab persistence: dropped {} oldest tab(s) for connection {} (limit {})",
+                evicted,
+                connection_id,
+                MAX_TABS_PER_CONNECTION
+            );
+        }
 
         let mut cache = self
             .cache

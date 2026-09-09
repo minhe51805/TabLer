@@ -52,7 +52,7 @@ export function MetricsEditor({
 
   useEffect(() => {
     onQueryDraftChange(editingWidget?.query ?? "");
-  }, [editingWidget?.id, onQueryDraftChange]);
+  }, [editingWidget.id, editingWidget?.query, onQueryDraftChange]);
 
   const handleMetricsEditorMount: OnMount = (editor, monaco) => {
     metricsEditorCompletionRef.current?.dispose();

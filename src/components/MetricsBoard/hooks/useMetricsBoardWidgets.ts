@@ -98,7 +98,7 @@ export function useMetricsBoardWidgets({
     setActiveBoardId(nextBoard.id);
     setActiveWidgetId(null);
     setEditingWidgetId(null);
-  }, [boards, connectionId, database, persistBoards]);
+  }, [boards, connectionId, database, persistBoards, setActiveBoardId, setActiveWidgetId, setEditingWidgetId]);
 
   const addWidget = useCallback(
     (type: MetricsWidgetType, preferredPosition?: Partial<GridPosition>) => {
@@ -116,7 +116,7 @@ export function useMetricsBoardWidgets({
       setEditingWidgetId(nextWidget.id);
       setCanvasContextMenu(null);
     },
-    [activeBoard, updateActiveBoard],
+    [activeBoard, setActiveWidgetId, setCanvasContextMenu, setEditingWidgetId, updateActiveBoard],
   );
 
   const updateSelectedWidget = useCallback(
@@ -150,7 +150,7 @@ export function useMetricsBoardWidgets({
     }));
     setActiveWidgetId(null);
     setEditingWidgetId(null);
-  }, [editingWidget, updateActiveBoard]);
+  }, [editingWidget, setActiveWidgetId, setEditingWidgetId, updateActiveBoard]);
 
   return {
     updateActiveBoard,

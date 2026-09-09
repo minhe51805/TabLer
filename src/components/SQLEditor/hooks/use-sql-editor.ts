@@ -700,14 +700,15 @@ export function useSQLEditor({
       return;
     }
 
+    const vimStatusEl = vimStatusRef?.current ?? null;
     vimModeRef.current?.dispose();
-    vimModeRef.current = initVimMode(editor, vimStatusRef?.current ?? null);
+    vimModeRef.current = initVimMode(editor, vimStatusEl);
 
     return () => {
       vimModeRef.current?.dispose();
       vimModeRef.current = null;
-      if (vimStatusRef?.current) {
-        vimStatusRef.current.textContent = "";
+      if (vimStatusEl) {
+        vimStatusEl.textContent = "";
       }
     };
   }, [isVimModeEnabled, vimStatusRef]);

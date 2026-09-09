@@ -20,7 +20,7 @@ export function GeometryCellEditor({
   useEffect(() => {
     const input = (inputRef as React.MutableRefObject<HTMLTextAreaElement | null>)?.current;
     input?.focus();
-  }, []);
+  }, [inputRef]);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setLocalValue(e.target.value);

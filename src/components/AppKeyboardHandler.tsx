@@ -179,7 +179,7 @@ export function AppKeyboardHandler({
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [activeTab, onNewQuery, onOpenCommandPalette, onOpenQuickSwitcher, onRunActiveQuery, onToggleQueryHistory, onToggleSQLFavorites, onToggleSidebar, onToggleTerminalPanel, onToggleVimMode, setUiFontScale, setShowAISlidePanel]);
+  }, [activeTab, onNewQuery, onOpenCommandPalette, onOpenQuickSwitcher, onRunActiveQuery, onToggleQueryHistory, onToggleSQLFavorites, onToggleSidebar, onToggleTerminalPanel, onToggleVimMode, setUiFontScale, setShowAISlidePanel, onOpenGlobalSearch]);
 
   return null;
 }

@@ -51,12 +51,12 @@ export function useDataGridDragReorder({
 }: DataGridDragReorderParams) {
   const handleDragStart = useCallback((rowIndex: number) => {
     setDragSourceIndex(rowIndex);
-  }, []);
+  }, [setDragSourceIndex]);
 
   const handleDragOver = useCallback((e: React.DragEvent, rowIndex: number) => {
     e.preventDefault();
     setDropTargetIndex(rowIndex);
-  }, []);
+  }, [setDropTargetIndex]);
 
   const handleDrop = useCallback(async (e: React.DragEvent, targetIndex: number) => {
     e.preventDefault();
@@ -129,12 +129,12 @@ export function useDataGridDragReorder({
       setDragSourceIndex(null);
       setDropTargetIndex(null);
     }
-  }, [dragSourceIndex, tableName, data, primaryKeyColumns, orderColumn, connections, connectionId, resolvedColumns, executeQuery, setError, invalidateTableCaches, database, refreshTableFromStart]);
+  }, [dragSourceIndex, tableName, data, primaryKeyColumns, orderColumn, resolvedColumns, connections, setDragSourceIndex, setDropTargetIndex, setError, connectionId, executeQuery, invalidateTableCaches, database, dataGridInstanceIdRef, refreshTableFromStart]);
 
   const handleDragEnd = useCallback(() => {
     setDragSourceIndex(null);
     setDropTargetIndex(null);
-  }, []);
+  }, [setDragSourceIndex, setDropTargetIndex]);
 
   return {
     handleDragStart,

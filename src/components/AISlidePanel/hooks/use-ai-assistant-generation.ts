@@ -770,39 +770,7 @@ export function useAIAssistantGeneration({
       if (wasCancelled) setError(null);
       return { bubbleId: loadingBubble.id, success: false, cancelled: wasCancelled };
     }
-  }, [
-    activeAgentAutonomy,
-    activeConnectionDbType,
-    activeInteractionMode,
-    aiCopy,
-    attachedSelection,
-    buildLoadingBubble,
-    currentThread,
-    currentWorkspaceKey,
-    generateAssist,
-    language,
-    latestReadyAssistantBubble,
-    completeWorkspaceRedirect,
-    openMetricsBoardInWorkspace,
-    openSqlInWorkspace,
-    requestVisualizationReadConsent,
-    runSql,
-    setError,
-    updateBubbleForDashboardApplied,
-    updateBubbleForDashboardActionFailed,
-    updateBubbleForAttachedDashboardSummary,
-    updateBubbleForDashboardEditNeedsClarification,
-    updateBubbleForDashboardEdited,
-    updateBubbleForDashboardNoChange,
-    updateBubbleForDashboardRebuilt,
-    workspaceThreads,
-    activeGenerationBubbleIdRef,
-    cancelledGenerationBubbleIdsRef,
-    openSessionRef,
-    setActiveThreadIdsByWorkspace,
-    setBubbles,
-    setChatThreads,
-  ]);
+  }, [setError, currentWorkspaceKey, currentThread?.id, workspaceThreads, activeInteractionMode, openSessionRef, buildLoadingBubble, activeGenerationBubbleIdRef, setBubbles, setChatThreads, setActiveThreadIdsByWorkspace, latestReadyAssistantBubble?.detail, latestReadyAssistantBubble?.preview, attachedSelection, activeConnectionDbType, requestVisualizationReadConsent, openMetricsBoardInWorkspace, updateBubbleForDashboardActionFailed, language, updateBubbleForDashboardRebuilt, updateBubbleForDashboardNoChange, completeWorkspaceRedirect, updateBubbleForDashboardApplied, updateBubbleForDashboardEdited, updateBubbleForDashboardEditNeedsClarification, updateBubbleForAttachedDashboardSummary, generateAssist, aiCopy, activeAgentAutonomy, requestDestructiveConsent, openSqlInWorkspace, runSql, cancelledGenerationBubbleIdsRef]);
 
   return { createAssistantBubble };
 }

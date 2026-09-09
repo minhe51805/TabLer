@@ -25,7 +25,7 @@ export function JSONCellEditor({
   useEffect(() => {
     const textarea = (inputRef as React.MutableRefObject<HTMLTextAreaElement | null>)?.current;
     textarea?.focus();
-  }, []);
+  }, [inputRef]);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;

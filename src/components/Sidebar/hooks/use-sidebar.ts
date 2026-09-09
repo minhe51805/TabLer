@@ -510,7 +510,7 @@ export function useSidebar() {
       }
       return true;
     });
-  }, [search, tables, conditions, conditionLogic, tableOperator]);
+  }, [search, conditions, columnModeActive, tables, conditionLogic, tableOperator]);
 
   const filteredSchemaObjects = useMemo(() => {
     if (!search.trim() && conditions.length === 0) return schemaObjects;
@@ -805,7 +805,7 @@ export function useSidebar() {
         danger: true,
       },
     ];
-  }, [dbType, pinnedTableSet, t, tableContextMenu, handleOpenTableInNewTab, handleOpenStructureDraft, handleCopyTableName, openQueryDraft, togglePinnedTable, activeConnectionId, currentDatabase]);
+  }, [tableContextMenu, pinnedTableSet, t, dbType, handleOpenTableInNewTab, handleOpenStructureDraft, openQueryDraft, handleCopyTableName, togglePinnedTable, runMaintenanceCommand]);
 
   // --- Effects ---
   useEffect(() => {

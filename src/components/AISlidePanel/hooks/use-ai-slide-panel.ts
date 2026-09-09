@@ -1514,7 +1514,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         setIsGenerating(false);
       }
     }
-  }, [activeDbType, activeProvider, aiConfigs, askAI, cancelAIRequest, connectionId, currentDatabase, executeAgentParameterizedQuery, executeAgentReadonlyQuery, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, previewWriteTransaction, saveAIConfigs]);
+  }, [activeDbType, activeProvider, aiConfigs, askAI, cancelAIRequest, connectionId, currentDatabase, executeAgentParameterizedQuery, executeAgentReadonlyQuery, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, listCheckpoints, previewWriteTransaction, restoreCheckpoint, saveAIConfigs]);
 
   const copyText = useCallback(async (text: string) => {
     await navigator.clipboard.writeText(text);

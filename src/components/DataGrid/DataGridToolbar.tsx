@@ -278,7 +278,7 @@ export function DataGridToolbar({
     ).catch((error) => {
       emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     });
-  }, [canExport, dataRows, exportFilenameBase, resolvedColumns]);
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
 
   // Copy actions place the same bytes the export path would write onto the
   // clipboard (TSV stands in for XLSX, which is a binary format). Clipboard

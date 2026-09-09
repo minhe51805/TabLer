@@ -38,7 +38,6 @@ import {
   invalidateTableScopeCaches,
   invalidateTableCaches,
   inlineStructureCacheRef,
-  buildColumnSignature,
   buildResolvedColumns,
   isBooleanColumn,
   buildRowPrimaryKeys,
@@ -546,18 +545,13 @@ export function DataGrid({
 
   // Column resolution - must be declared before any callbacks that use resolvedColumns
   const dataColumns = data?.columns.length ? data.columns : structureColumns;
-  const dataColumnSignature = useMemo(() => buildColumnSignature(dataColumns), [dataColumns]);
-  const structureColumnSignature = useMemo(
-    () => buildColumnSignature(structureColumns),
-    [structureColumns],
-  );
 
   const resolvedColumns = useMemo<ResolvedColumn[]>(() => {
     if (dataColumns.length === 0) return [];
     const cols = buildResolvedColumns(dataColumns, structureColumns);
     columnNamesRef.current = cols.map((c) => c.name);
     return cols;
-  }, [dataColumnSignature, structureColumnSignature]);
+  }, [dataColumns, structureColumns]);
 
   const primaryKeyColumns = useMemo(
     () => resolvedColumns.filter((column) => column.is_primary_key),
@@ -700,6 +694,7 @@ export function DataGrid({
       }
       if (countTimeoutRef.current !== null) {
         window.clearTimeout(countTimeoutRef.current);
+        countTimeoutRef.current = null;
       }
     };
   }, []);
@@ -944,7 +939,7 @@ export function DataGrid({
     const newWidth = Math.max(40, Math.max(maxContentWidth + 22, headerSize));
     setColumnSizes((prev) => ({ ...prev, [colId]: newWidth }));
     if (tableName) saveColumnWidth(connectionId, tableName, colId, newWidth, database);
-  }, []);
+  }, [connectionId, database, tableName]);
 
   // Context menu handler
   const handleContextMenu = useCallback((
@@ -1346,47 +1341,7 @@ export function DataGrid({
       dbType,
       columnDisplayFormats,
     });
-  }, [
-    cancelEditingCell,
-    canSelectRows,
-    canAttemptInlineEdit,
-    commitEditingCell,
-    handleRowSelection,
-    handleToggleSelectAllRows,
-    handleEditorBlur,
-    copiedCell,
-    currentPage,
-    data,
-    editingCell,
-    editingSeedValue,
-    allVisibleRowsSelected,
-    resolvedColumns,
-    savingCell,
-    selectedCell,
-    setSelectedCell,
-    isCellSelected,
-    selectedRows,
-    sortColumn,
-    sortDir,
-    startEditingCell,
-    structureStatus,
-    handleCopyValue,
-    handleSort,
-    foreignKeys,
-    lookupValuesCache,
-    getForeignKeyLookupValues,
-    connectionId,
-    handleOpenRowInspector,
-    handleColumnAutoFit,
-    handleContextMenu,
-    columnSizes,
-    displayedRowIndices,
-    multiSort,
-    settings,
-    dateFormat,
-    dbType,
-    connections,
-  ]);
+  }, [data, resolvedColumns, canSelectRows, canAttemptInlineEdit, selectedRows, selectedCell, isCellSelected, editingCell, editingSeedValue, savingCell, sortColumn, sortDir, displayedRowIndices, copiedCell, handleSort, handleRowSelection, handleToggleSelectAllRows, handleEditorBlur, startEditingCell, commitEditingCell, cancelEditingCell, structureStatus, assignInputRef, allVisibleRowsSelected, handleCopyValue, setSelectedCell, foreignKeys, lookupValuesCache, connectionId, handleOpenRowInspector, handleColumnAutoFit, handleContextMenu, columnSizes, multiSort, settings.nullPlaceholder, dateFormat, dbType, columnDisplayFormats, getForeignKeyLookupValues]);
 
   const tableData = useMemo(() => displayedRows, [displayedRows]);
 

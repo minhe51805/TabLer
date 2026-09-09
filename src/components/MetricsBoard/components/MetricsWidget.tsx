@@ -61,7 +61,7 @@ export function MetricsWidgetCard({
   onDragStart,
   onResizeStart,
 }: MetricsWidgetCardProps) {
-  const { language, t } = useI18n();
+  const { t } = useI18n();
   const [state, setState] = useState<WidgetRunState>({
     result: null,
     loading: false,
@@ -150,7 +150,7 @@ export function MetricsWidgetCard({
   const metric = useMemo(() => getMetricValue(state.result), [state.result]);
   const validation = useMemo(
     () => validateMetricsQuery(widget.query),
-    [language, widget.query],
+    [widget.query],
   );
   const widgetLibraryItem = getWidgetLibraryItem(widget.type);
 

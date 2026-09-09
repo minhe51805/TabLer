@@ -125,7 +125,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
         console.error("[WindowProfile] failed to apply form profile:", e),
       );
     },
-    [applyDesktopWindowProfile],
+    [applyDesktopWindowProfile, setConnectionFormIntent, setShowStartupConnectionManager],
   );
 
   const handleCloseConnectionForm = useCallback(() => {
@@ -139,7 +139,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
         console.error("[WindowProfile] failed to apply launcher profile:", e),
       );
     }
-  }, [applyDesktopWindowProfile]);
+  }, [applyDesktopWindowProfile, setConnectionFormIntent, setShowStartupConnectionManager]);
 
   const handleGoToLauncher = useCallback(() => {
     const currentState = useConnectionStore.getState();
@@ -178,19 +178,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
     void applyDesktopWindowProfile("launcher").catch((e) =>
       console.error("[WindowProfile] failed to apply launcher profile:", e),
     );
-  }, [
-    applyDesktopWindowProfile,
-    clearError,
-    setConnectionFormIntent,
-    setForceLauncherVisible,
-    setRowInspectorData,
-    setShowAISlidePanel,
-    setShowQueryHistory,
-    setShowRowInspector,
-    setShowSQLFavorites,
-    setShowStartupConnectionManager,
-    setShowTerminalPanel,
-  ]);
+  }, [applyDesktopWindowProfile, clearError, setActiveWindowMenuItemPath, setActiveWindowMenuSection, setConnectionFormIntent, setForceLauncherVisible, setIsWindowMenuOpen, setRowInspectorData, setShowAISlidePanel, setShowQueryHistory, setShowRowInspector, setShowSQLFavorites, setShowStartupConnectionManager, setShowTerminalPanel]);
 
   const handleToggleWindowMenu = useCallback((event?: ReactMouseEvent<HTMLElement>) => {
     event?.stopPropagation();
@@ -202,7 +190,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
       }
       return next;
     });
-  }, []);
+  }, [setActiveWindowMenuSection, setIsWindowMenuOpen]);
 
   const handleRefreshWorkspace = useCallback(async () => {
     if (!activeConnectionId) return;
@@ -224,7 +212,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
     window.setTimeout(() => {
       window.dispatchEvent(new CustomEvent("focus-explorer-search"));
     }, 0);
-  }, [isConnected]);
+  }, [isConnected, setIsSidebarCollapsed, setLeftPanel]);
 
   const handleOpenMetricsBoard = useCallback(() => {
     if (!activeConnectionId) return;
@@ -250,7 +238,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
       connectionId: activeConnectionId,
       database: currentDatabase || undefined,
     });
-  }, [activeConnectionId, addTab, currentDatabase, setActiveTab, tabs]);
+  }, [activeConnectionId, addTab, currentDatabase, setActiveTab, setLeftPanel, tabs]);
 
   const {
     importSqlFile: handleImportSqlFile,
@@ -273,19 +261,19 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
       Math.max(UI_FONT_SCALE_MIN, Math.round(next / UI_FONT_SCALE_STEP) * UI_FONT_SCALE_STEP),
     );
     setUiFontScale(normalized);
-  }, []);
+  }, [setUiFontScale]);
 
   const handleIncreaseFontSizeInline = useCallback(() => {
     setUiFontScale((current) => Math.min(UI_FONT_SCALE_MAX, current + UI_FONT_SCALE_STEP));
-  }, []);
+  }, [setUiFontScale]);
 
   const handleDecreaseFontSizeInline = useCallback(() => {
     setUiFontScale((current) => Math.max(UI_FONT_SCALE_MIN, current - UI_FONT_SCALE_STEP));
-  }, []);
+  }, [setUiFontScale]);
 
   const handleToggleTerminalPanel = useCallback(() => {
     setShowTerminalPanel((current) => !current);
-  }, []);
+  }, [setShowTerminalPanel]);
 
   const handleShowDatabaseWorkspace = useCallback(() => {
     if (!isConnected) return;
@@ -317,7 +305,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
     }
 
     handleNewQuery();
-  }, [activeConnectionId, currentDatabase, handleNewQuery, isConnected, setActiveTab, tabs]);
+  }, [activeConnectionId, currentDatabase, handleNewQuery, isConnected, setActiveTab, setIsSidebarCollapsed, setLeftPanel, tabs]);
 
   const handleSearchInDatabaseFromMenu = useCallback(() => {
     handleShowDatabaseWorkspace();
@@ -332,21 +320,21 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
 
   const handleToggleQueryHistory = useCallback(() => {
     setShowQueryHistory((current) => !current);
-  }, []);
+  }, [setShowQueryHistory]);
 
   const handleToggleSQLFavorites = useCallback(() => {
     setShowSQLFavorites((current) => !current);
-  }, []);
+  }, [setShowSQLFavorites]);
 
   const handleRunQueryFromHistory = useCallback((sql: string) => {
     window.dispatchEvent(new CustomEvent("insert-sql-from-ai", { detail: { sql } }));
     setShowQueryHistory(false);
-  }, []);
+  }, [setShowQueryHistory]);
 
   const handleRunQueryFromFavorites = useCallback((sql: string) => {
     window.dispatchEvent(new CustomEvent("insert-sql-from-ai", { detail: { sql } }));
     setShowSQLFavorites(false);
-  }, []);
+  }, [setShowSQLFavorites]);
 
   const handleOpenAIMetricsBoard = useAIMetricsBoardActions(language);
 
@@ -404,7 +392,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
       });
     }
     setShowAISlidePanel(true);
-  }, []);
+  }, [setAiPanelAttachment, setAiPanelDraft, setShowAISlidePanel]);
 
   const handleActivateThemeFromMenu = useCallback(
     (themeId: string) => {
@@ -417,16 +405,16 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
 
   const handleToggleSidebar = useCallback(() => {
     setIsSidebarCollapsed((collapsed) => !collapsed);
-  }, []);
+  }, [setIsSidebarCollapsed]);
 
   const handleOpenThemeCustomizer = useCallback(() => {
     setShowThemeCustomizer(true);
-  }, []);
+  }, [setShowThemeCustomizer]);
 
   const handleWindowMenuClose = useCallback(() => {
     setIsWindowMenuOpen(false);
     setActiveWindowMenuItemPath(null);
-  }, []);
+  }, [setActiveWindowMenuItemPath, setIsWindowMenuOpen]);
   useWindowMenuDismiss(isWindowMenuOpen, windowMenuRef, handleWindowMenuClose);
 
   const menuActions = useAppMenuActions({

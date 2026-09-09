@@ -161,7 +161,7 @@ export function useDataGridRowMutations({
     setInsertDraft({});
     setInsertDialogError(null);
     setIsSubmittingInsert(false);
-  }, []);
+  }, [setInsertDialogBaseValues, setInsertDialogColumns, setInsertDialogError, setInsertDraft, setIsInsertDialogOpen, setIsSubmittingInsert]);
 
   const closePasteDialog = useCallback((force = false) => {
     if (isSubmittingPaste && !force) return;
@@ -174,7 +174,7 @@ export function useDataGridRowMutations({
     setIsCancellingPaste(false);
     setDragSourceIndex(null);
     setDropTargetIndex(null);
-  }, [isSubmittingPaste]);
+  }, [isSubmittingPaste, setCsvFileSelection, setCsvImportProgress, setDragSourceIndex, setDropTargetIndex, setIsCancellingPaste, setIsPasteDialogOpen, setIsSubmittingPaste, setPastePreview, setPasteSourceLabel]);
 
   const analyzeInsertPlan = useCallback(() => {
     return computeNewRowPlan(structureColumns);
@@ -201,7 +201,7 @@ export function useDataGridRowMutations({
       }),
     );
     await refreshTableFromStart();
-  }, [connectionId, database, insertTableRow, refreshTableFromStart, tableName]);
+  }, [connectionId, dataGridInstanceIdRef, database, insertTableRow, invalidateTableCaches, refreshTableFromStart, tableName]);
 
   const handleInsertRow = useCallback(async () => {
     if (!tableName || structureColumns.length === 0) {
@@ -227,20 +227,14 @@ export function useDataGridRowMutations({
       const message = error instanceof Error ? error.message : String(error);
       setError(`Insert row failed: ${message}`);
     }
-  }, [
-    analyzeInsertPlan,
-    performInsertRow,
-    setError,
-    structureColumns.length,
-    tableName,
-  ]);
+  }, [analyzeInsertPlan, performInsertRow, setError, setInsertDialogBaseValues, setInsertDialogColumns, setInsertDialogError, setInsertDraft, setIsInsertDialogOpen, structureColumns.length, tableName]);
 
   const handleInsertDraftChange = useCallback((columnName: string, value: string) => {
     setInsertDraft((previous) => ({
       ...previous,
       [columnName]: value,
     }));
-  }, []);
+  }, [setInsertDraft]);
 
   const handleSubmitInsertDialog = useCallback(async (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
@@ -287,7 +281,7 @@ export function useDataGridRowMutations({
     } finally {
       setIsSubmittingInsert(false);
     }
-  }, [closeInsertDialog, insertDialogBaseValues, insertDialogColumns, insertDraft, performInsertRow]);
+  }, [closeInsertDialog, insertDialogBaseValues, insertDialogColumns, insertDraft, performInsertRow, setInsertDialogError, setIsSubmittingInsert]);
 
   const handleSubmitPasteDialog = useCallback(async () => {
     if (!pastePreview || !tableName || !connectionId) return;
@@ -353,7 +347,7 @@ export function useDataGridRowMutations({
       setIsCancellingPaste(false);
       setCsvImportProgress(null);
     }
-  }, [csvFileSelection, pastePreview, tableName, connectionId, database, importCsvFileAtomically, insertTableRowsAtomically, setError, invalidateTableCaches, refreshTableFromStart, closePasteDialog, resolvedColumns]);
+  }, [pastePreview, tableName, connectionId, resolvedColumns, setIsSubmittingPaste, setIsCancellingPaste, setCsvImportProgress, csvImportOperationIdRef, setError, csvFileSelection, invalidateTableCaches, database, dataGridInstanceIdRef, refreshTableFromStart, closePasteDialog, importCsvFileAtomically, insertTableRowsAtomically]);
 
   const handleCancelPasteImport = useCallback(async () => {
     const operationId = csvImportOperationIdRef.current;
@@ -369,7 +363,7 @@ export function useDataGridRowMutations({
       setError(`Could not cancel CSV import: ${message}`);
       setIsCancellingPaste(false);
     }
-  }, [cancelCsvImport, isCancellingPaste, setError]);
+  }, [cancelCsvImport, csvImportOperationIdRef, isCancellingPaste, setError, setIsCancellingPaste]);
 
 
 // ---- Duplicate flows (insert dialog prefilled from an existing row)
@@ -394,7 +388,7 @@ export function useDataGridRowMutations({
     );
     setInsertDialogError(null);
     setIsInsertDialogOpen(true);
-  }, [tableName, structureColumns, data]);
+  }, [tableName, structureColumns, data?.rows, setInsertDialogColumns, setInsertDialogBaseValues, setInsertDraft, setInsertDialogError, setIsInsertDialogOpen]);
 
 /** Delete all selected rows after confirmation. */
   const handleDeleteSelectedRows = useCallback(async () => {
@@ -462,21 +456,7 @@ export function useDataGridRowMutations({
     } finally {
       setIsDeletingRows(false);
     }
-  }, [
-    cancelEditingCell,
-    connectionId,
-    data,
-    database,
-    deleteTableRows,
-    refreshTableFromStart,
-    primaryKeyColumns,
-    resolvedColumns,
-    selectedRows,
-    setSelectedCell,
-    setError,
-    setSelectedRows,
-    tableName,
-  ]);
+  }, [tableName, data, selectedRows, primaryKeyColumns, setIsDeletingRows, deleteTableRows, connectionId, database, setData, setTotalRows, setSelectedRows, rowSelectionAnchorRef, cancelEditingCell, setSelectedCell, invalidateTableCaches, dataGridInstanceIdRef, refreshTableFromStart, resolvedColumns, setError]);
 
   const handleDuplicateRow = useCallback(async () => {
     if (!tableName || structureColumns.length === 0 || selectedRows.size === 0) return;
@@ -500,7 +480,7 @@ export function useDataGridRowMutations({
     );
     setInsertDialogError(null);
     setIsInsertDialogOpen(true);
-  }, [tableName, structureColumns, selectedRows, data]);
+  }, [tableName, structureColumns, selectedRows, data?.rows, setInsertDialogColumns, setInsertDialogBaseValues, setInsertDraft, setInsertDialogError, setIsInsertDialogOpen]);
 
   return {
     closeInsertDialog,

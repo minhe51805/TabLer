@@ -68,7 +68,7 @@ export function useDataGridTableExport({
       tableExportOperationIdRef.current = null;
       setIsExportingFull(false);
     }
-  }, [connectionId, database, exportTableData, isExportingFull, rowFocusFilter, setError, sortColumn, sortDir, tableName]);
+  }, [connectionId, database, exportTableData, isExportingFull, rowFocusFilter, setError, setExportedRowCount, setIsExportingFull, sortColumn, sortDir, tableExportOperationIdRef, tableName]);
 
   const handleCancelFullTableExport = useCallback(async () => {
     const operationId = tableExportOperationIdRef.current;
@@ -78,7 +78,7 @@ export function useDataGridTableExport({
     } catch (error) {
       setError(`Could not cancel table export: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [cancelTableExport, setError]);
+  }, [cancelTableExport, setError, tableExportOperationIdRef]);
 
   return {
     handleFullTableExport,

@@ -89,7 +89,7 @@ export function useDataGridStagedChanges({
       return { ...previous, rows };
     });
     setStagedRowIndices(new Set(nextTableChanges.map((change) => change.rowIndex)));
-  }, [database, resolvedColumns, stagedChanges, tableName]);
+  }, [database, resolvedColumns, setData, setStagedRowIndices, stagedChanges, tableName]);
 
   const applyStagedChanges = useCallback(async () => {
     const tableChanges = stagedChanges.filter((c) => c.tableName === tableName && c.database === database);
@@ -138,7 +138,7 @@ export function useDataGridStagedChanges({
     } finally {
       setIsLoading(false);
     }
-  }, [applyTableUpdatesAtomically, stagedChanges, tableName, database, connectionId, unstageChange, invalidateTableCaches, refreshTableFromStart, setError]);
+  }, [stagedChanges, setIsLoading, tableName, database, setError, applyTableUpdatesAtomically, connectionId, setStagedRowIndices, invalidateTableCaches, dataGridInstanceIdRef, refreshTableFromStart, unstageChange]);
 
   const discardStagedChanges = useCallback(() => {
     const tableChanges = stagedChanges.filter((c) => c.tableName === tableName && c.database === database);
@@ -150,7 +150,7 @@ export function useDataGridStagedChanges({
     if (tableName) {
       void refreshTableFromStart();
     }
-  }, [stagedChanges, tableName, database, unstageChange, refreshTableFromStart]);
+  }, [stagedChanges, setStagedRowIndices, tableName, database, unstageChange, refreshTableFromStart]);
 
 
   return {

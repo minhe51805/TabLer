@@ -18,6 +18,7 @@ mod plugins_support;
 pub mod query;
 pub mod restore;
 pub mod safe_mode;
+pub mod schedule;
 pub mod schema_diff;
 pub mod search;
 pub mod table;

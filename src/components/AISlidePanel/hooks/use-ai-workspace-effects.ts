@@ -3,7 +3,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect } from "react";
 import { invokeMutation } from "../../../utils/tauri-utils";
-import { AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS, AI_WORKSPACE_HISTORY_VERSION, createChatThread, createEmptyPersistedAIWorkspaceState, hasPersistedAIWorkspaceStateData, loadLegacyPersistedAIWorkspaceState, prunePersistedAIWorkspaceState, type PersistedAIWorkspaceState } from "../ai-conversation-state";
+import { AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS, AI_WORKSPACE_HISTORY_VERSION, createChatThread, hasPersistedAIWorkspaceStateData, loadLegacyPersistedAIWorkspaceState, prunePersistedAIWorkspaceState, sanitizePersistedAIWorkspaceState, type PersistedAIWorkspaceState } from "../ai-conversation-state";
 
 /** Attachment rows were created up to moments before their chat bubble; allow
  *  small clock/serialization skew when matching them back together. */
@@ -76,19 +76,16 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
 
     const hydrateHistory = async () => {
       try {
-        let persistedState = await invokeMutation<PersistedAIWorkspaceState>("get_ai_workspace_history", {});
-        const normalizedPersistedState = createEmptyPersistedAIWorkspaceState();
-        normalizedPersistedState.version = typeof persistedState.version === "number"
-          ? persistedState.version
-          : AI_WORKSPACE_HISTORY_VERSION;
-        normalizedPersistedState.threads = Array.isArray(persistedState.threads) ? persistedState.threads : [];
-        normalizedPersistedState.bubbles = Array.isArray(persistedState.bubbles) ? persistedState.bubbles : [];
-        normalizedPersistedState.interactionModes = persistedState.interactionModes || {};
-        normalizedPersistedState.activeThreadIds = persistedState.activeThreadIds || {};
-        persistedState = normalizedPersistedState;
+        // The cache returns the transcript as raw JSON — null entries inside
+        // threads/bubbles/attachments previously crashed hydration with
+        // "Cannot read properties of null (reading 'id')" (ErrorBoundary).
+        const cacheState = sanitizePersistedAIWorkspaceState(
+          await invokeMutation<PersistedAIWorkspaceState>("get_ai_workspace_history", {}),
+        );
 
-        await recoverStrippedAttachmentMetadata(persistedState);
+        await recoverStrippedAttachmentMetadata(cacheState);
 
+        let persistedState = cacheState;
         if (!hasPersistedAIWorkspaceStateData(persistedState)) {
           const legacyState = prunePersistedAIWorkspaceState(loadLegacyPersistedAIWorkspaceState());
           if (hasPersistedAIWorkspaceStateData(legacyState)) {

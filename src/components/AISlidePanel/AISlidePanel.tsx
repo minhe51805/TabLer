@@ -48,7 +48,7 @@ import {
   prefersVietnameseSystemReply,
   supportsOverviewMetricsBoard,
 } from "./ai-visualization-intent";
-import { buildAIWorkspaceKey, estimateConversationFootprint, buildConversationHistoryMessages, createAIWorkspaceId, createChatThread, prunePersistedAIWorkspaceState, summarizePromptForDisplay, type AIChatThread, type PersistedAIWorkspaceState } from "./ai-conversation-state";
+import { buildAIWorkspaceKey, estimateConversationFootprint, buildConversationHistoryMessages, createAIWorkspaceId, createChatThread, prunePersistedAIWorkspaceState, sanitizePersistedAIWorkspaceState, summarizePromptForDisplay, type AIChatThread, type PersistedAIWorkspaceState } from "./ai-conversation-state";
 import { buildExecutionDetail, buildPromptWithSelection, isSingleSqlStatement, type SelectionContextState } from "./ai-panel-selection";
 import { processFilesIntoAttachmentDrafts, type AIAttachmentDraft } from "../../utils/ai-attachments";
 import type { AIAgentRecordLink } from "./ai-agent-record-links";
@@ -1699,14 +1699,15 @@ export function AISlidePanel({
   const handleReloadChat = useCallback(async () => {
     if (isGenerating || isRunning) return;
     try {
-      const persistedState = await invokeMutation<PersistedAIWorkspaceState>("get_ai_workspace_history", {});
-      const threads = Array.isArray(persistedState?.threads) ? persistedState.threads : [];
-      const loadedBubbles = (Array.isArray(persistedState?.bubbles) ? persistedState.bubbles : [])
-        .filter((bubble) => bubble.status !== "loading");
+      const persistedState = sanitizePersistedAIWorkspaceState(
+        await invokeMutation<PersistedAIWorkspaceState>("get_ai_workspace_history", {}),
+      );
+      const threads = persistedState.threads;
+      const loadedBubbles = persistedState.bubbles.filter((bubble) => bubble.status !== "loading");
       setChatThreads(threads);
       setBubbles(loadedBubbles);
-      setWorkspaceInteractionModes(persistedState?.interactionModes ?? {});
-      const activeMap = persistedState?.activeThreadIds ?? {};
+      setWorkspaceInteractionModes(persistedState.interactionModes);
+      const activeMap = persistedState.activeThreadIds;
       setActiveThreadIdsByWorkspace(activeMap);
       const workspaceThreadsForCurrentKey = threads.filter((thread) => thread.workspaceKey === currentWorkspaceKey);
       const preferredThreadId = activeMap[currentWorkspaceKey];

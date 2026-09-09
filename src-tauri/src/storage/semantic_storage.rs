@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::BufReader;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::storage::file_storage::write_json_atomically;
+use crate::storage::file_storage::{read_json_vec_with_backup, write_json_atomically};
 
 /// Quota: a runaway remember_term loop must not grow the glossary without
 /// bound — over the cap, the OLDEST entries are dropped (and logged).
@@ -73,16 +72,15 @@ impl SemanticStorage {
         Ok(Self { file_path, cache })
     }
 
-    fn load_from_file(path: &PathBuf) -> Result<HashMap<String, SemanticEntry>, String> {
-        let file =
-            File::open(path).map_err(|e| format!("Failed to open semantic glossary file: {e}"))?;
-        let reader = BufReader::new(file);
-        let items: Vec<SemanticEntry> = serde_json::from_reader(reader)
-            .map_err(|e| format!("Failed to parse semantic glossary: {e}"))?;
-        Ok(items
-            .into_iter()
-            .map(|entry| (entry.id.clone(), entry))
-            .collect())
+    fn load_from_file(path: &Path) -> Result<HashMap<String, SemanticEntry>, String> {
+        read_json_vec_with_backup::<SemanticEntry>(path, "semantic glossary")
+            .map(|items| {
+                items
+                    .into_iter()
+                    .map(|entry| (entry.id.clone(), entry))
+                    .collect()
+            })
+            .map_err(|e| e.to_string())
     }
 
     fn persist(&self) -> Result<(), String> {

@@ -13,10 +13,15 @@ import {
   getBubbleConversationText,
   loadLegacyPersistedAIWorkspaceState,
   prunePersistedAIWorkspaceState,
+  sanitizeAIWorkspaceAttachments,
+  sanitizePersistedAIWorkspaceState,
   type AIChatThread,
   type PersistedAIWorkspaceState,
 } from "@/components/AISlidePanel/ai-conversation-state";
-import type { AIWorkspaceBubbleData } from "@/components/AISlidePanel/ai-workspace-types";
+import type {
+  AIWorkspaceAttachment,
+  AIWorkspaceBubbleData,
+} from "@/components/AISlidePanel/ai-workspace-types";
 
 function thread(id: string, workspaceKey = "connection::database", updatedAt = 1): AIChatThread {
   return {
@@ -256,3 +261,75 @@ describe("stripAskUserTrailingOptions", () => {
     expect(stripAskUserTrailingOptions("Kết quả: 11 sinh viên.")).toBe("Kết quả: 11 sinh viên.");
   });
 });
+
+describe("sanitizePersistedAIWorkspaceState", () => {
+  it("drops null and malformed bubbles so hydration cannot crash on them", () => {
+    const state: PersistedAIWorkspaceState = createEmptyPersistedAIWorkspaceState();
+    state.threads = [thread("t1")];
+    const rawBubbles: unknown[] = [
+      null,
+      { id: "b1" }, // missing every required field
+      bubble("b2", "t1"),
+    ];
+    state.bubbles = rawBubbles as PersistedAIWorkspaceState["bubbles"];
+
+    const sanitized = sanitizePersistedAIWorkspaceState(state);
+
+    expect(sanitized.bubbles.map((b) => b.id)).toEqual(["b2"]);
+  });
+
+  it("keeps well-formed attachment metadata and strips malformed entries", () => {
+    const state: PersistedAIWorkspaceState = createEmptyPersistedAIWorkspaceState();
+    state.threads = [thread("t1")];
+    state.bubbles = [
+      bubble("b1", "t1", {
+        attachments: [
+          { id: "a1", kind: "image", name: "shot.png", mimeType: "image/png", size: 1024, createdAt: 5 },
+          // Malformed: missing mimeType and numeric size
+          { id: "a2", kind: "image", name: "broken.png" } as unknown as AIWorkspaceAttachment,
+          null,
+        ] as unknown as AIWorkspaceBubbleData["attachments"],
+      }),
+    ];
+
+    const sanitized = sanitizePersistedAIWorkspaceState(state);
+    const attachments = sanitized.bubbles[0]?.attachments;
+
+    expect(attachments).toHaveLength(1);
+    expect(attachments?.[0]?.id).toBe("a1");
+  });
+
+  it("returns undefined attachments when nothing valid survives", () => {
+    const state: PersistedAIWorkspaceState = createEmptyPersistedAIWorkspaceState();
+    state.threads = [thread("t1")];
+    state.bubbles = [
+      bubble("b1", "t1", {
+        attachments: [{ id: "bad" }] as unknown as AIWorkspaceBubbleData["attachments"],
+      }),
+    ];
+
+    const sanitized = sanitizePersistedAIWorkspaceState(state);
+
+    expect(sanitized.bubbles[0]?.attachments).toBeUndefined();
+  });
+
+  it("sanitizeAIWorkspaceAttachments passes through undefined and non-array inputs", () => {
+    expect(sanitizeAIWorkspaceAttachments(undefined)).toBeUndefined();
+    expect(sanitizeAIWorkspaceAttachments("nope")).toBeUndefined();
+    expect(sanitizeAIWorkspaceAttachments([])).toBeUndefined();
+  });
+
+  it("backfills missing updatedAt from createdAt and filters invalid maps", () => {
+    const state: PersistedAIWorkspaceState = createEmptyPersistedAIWorkspaceState();
+    state.threads = [{ ...thread("t1", "conn::db", 7), updatedAt: undefined as unknown as number }];
+    state.interactionModes = { t1: "agent", t2: "not-a-mode" } as unknown as PersistedAIWorkspaceState["interactionModes"];
+    state.activeThreadIds = { "conn::db": "t1", broken: null } as unknown as PersistedAIWorkspaceState["activeThreadIds"];
+
+    const sanitized = sanitizePersistedAIWorkspaceState(state);
+
+    expect(sanitized.threads[0]?.updatedAt).toBe(7);
+    expect(sanitized.interactionModes).toEqual({ t1: "agent" });
+    expect(sanitized.activeThreadIds).toEqual({ "conn::db": "t1" });
+  });
+});
+

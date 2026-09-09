@@ -97,7 +97,7 @@ export function MetricsSidebar({ connectionId, database }: Props) {
       window.clearTimeout(focusTimer);
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [renameDialog?.boardId]);
+  }, [renameDialog, renameDialog?.boardId]);
 
   const filteredBoards = useMemo(() => {
     const query = boardSearch.trim().toLowerCase();

@@ -226,7 +226,7 @@ export function DataGridToolbar({
     exportToCSV(cols, dataRows, buildExportFilename(exportFilenameBase, "csv")).catch((error) => {
       emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     });
-  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName]);
+  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName, t]);
 
   const handleExportJSON = useCallback(() => {
     if (!canExport) return;
@@ -238,7 +238,7 @@ export function DataGridToolbar({
     exportToJSON(cols, dataRows, buildExportFilename(exportFilenameBase, "json")).catch((error) => {
       emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     });
-  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName]);
+  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName, t]);
 
   const handleExportXLSX = useCallback(async () => {
     if (!canExport) return;
@@ -251,7 +251,7 @@ export function DataGridToolbar({
     } catch (error) {
       emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     }
-  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, tableName]);
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, tableName, t]);
 
   const handleExportMQL = useCallback(async () => {
     if (!canExport) return;
@@ -266,7 +266,7 @@ export function DataGridToolbar({
     } catch (error) {
       emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     }
-  }, [canExport, dataRows, database, resolvedColumns, tableName]);
+  }, [canExport, dataRows, database, resolvedColumns, tableName, t]);
 
   const handlePluginExport = useCallback((format: RuntimePluginFormat) => {
     if (!canExport) return;
@@ -278,7 +278,7 @@ export function DataGridToolbar({
     ).catch((error) => {
       emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     });
-  }, [canExport, dataRows, exportFilenameBase, resolvedColumns]);
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
 
   // Copy actions place the same bytes the export path would write onto the
   // clipboard (TSV stands in for XLSX, which is a binary format). Clipboard

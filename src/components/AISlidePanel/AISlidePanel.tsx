@@ -1045,18 +1045,7 @@ export function AISlidePanel({
     } finally {
       setIsCompacting(false);
     }
-  }, [
-    activeChatWorkspace,
-    activeInteractionMode,
-    activeThreadBubbles,
-    aiCopy,
-    currentThread?.id,
-    currentWorkspaceKey,
-    isCompacting,
-    saveChatContextDigest,
-    setActiveChatWorkspace,
-    setError,
-  ]);
+  }, [activeChatWorkspace, activeInteractionMode, activeThreadBubbles, aiCopy.workspace.compactDoneSubtitle, aiCopy.workspace.compactDoneTitle, aiCopy.workspace.compactEmpty, aiCopy.workspace.compactNeedsWorkspace, currentThread.id, currentThread.label, currentWorkspaceKey, isCompacting, saveChatContextDigest, setError]);
 
   // Image attachments require the active model to advertise image input
   // (per-model `input_types` in the settings modal); text files always work.
@@ -1300,7 +1289,7 @@ export function AISlidePanel({
         setAttachedSelection(null);
       }
     }
-  }, [activeChatWorkspace, activeInteractionMode, aiCopy.composer.selectionReady, attachedSelection, composerAttachments, contextWindowLimit, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleBackupCommand, handleCompactContext, handleRollbackCommand, isGenerating, promptDraft]);
+  }, [activeChatWorkspace, activeInteractionMode, activeThreadBubbles, aiCopy.composer.selectionReady, attachedSelection, composerAttachments, contextWindowLimit, createAssistantBubble, currentThread?.id, effectiveHistoryMessages, handleBackupCommand, handleCompactContext, handleRollbackCommand, isGenerating, promptDraft]);
 
   // ask_user quick replies: clicking an option sends it as the next message;
   // the custom button just focuses the composer for free-form input.
@@ -1557,7 +1546,7 @@ export function AISlidePanel({
         )
       );
     }
-  }, [activeAgentAutonomy, activeConnectionDbType, aiCopy, completeWorkspaceRedirect, language, openMetricsBoardInWorkspace, openSqlInWorkspace, requestVisualizationReadConsent, runSql, setError, updateBubbleForDashboardApplied, updateBubbleForDashboardNoChange]);
+  }, [activeAgentAutonomy, activeConnectionDbType, aiCopy.bubbleStates.runFailedSubtitle, aiCopy.bubbleStates.runFailedTitle, aiCopy.bubbleStates.runSuccessDirectSubtitle, aiCopy.bubbleStates.runSuccessSandboxSubtitle, aiCopy.bubbleStates.runSuccessTitle, completeWorkspaceRedirect, language, openMetricsBoardInWorkspace, openSqlInWorkspace, requestVisualizationReadConsent, runSql, setError, updateBubbleForDashboardActionFailed, updateBubbleForDashboardApplied, updateBubbleForDashboardNoChange]);
 
   const handleSelectThread = useCallback((threadId: string) => {
     setActiveThreadId(threadId);

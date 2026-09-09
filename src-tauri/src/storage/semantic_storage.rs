@@ -1,9 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, Write};
+use std::fs::{self, File};
+use std::io::BufReader;
 use std::path::PathBuf;
 use uuid::Uuid;
+
+use crate::storage::file_storage::write_json_atomically;
+
+/// Quota: a runaway remember_term loop must not grow the glossary without
+/// bound — over the cap, the OLDEST entries are dropped (and logged).
+const MAX_SEMANTIC_ENTRIES: usize = 5_000;
 
 /// A curated business- semantics entry the agent reads before analyzing data:
 /// what a term means, how a metric is computed, or what an alias maps to.
@@ -84,16 +90,8 @@ impl SemanticStorage {
         let json = serde_json::to_string_pretty(&items)
             .map_err(|e| format!("Failed to serialize semantic glossary: {e}"))?;
 
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&self.file_path)
-            .map_err(|e| format!("Failed to open semantic glossary file for write: {e}"))?;
-
-        file.write_all(json.as_bytes())
-            .map_err(|e| format!("Failed to write semantic glossary: {e}"))?;
-        Ok(())
+        write_json_atomically(&self.file_path, &json)
+            .map_err(|e| format!("Failed to persist semantic glossary: {e}"))
     }
 
     /// Entries visible in a scope: exact connection+database matches first,
@@ -136,6 +134,26 @@ impl SemanticStorage {
         }
         entry.updated_at = timestamp;
         self.cache.insert(entry.id.clone(), entry.clone());
+        // Enforce the glossary quota: keep the NEWEST entries when over cap.
+        if self.cache.len() > MAX_SEMANTIC_ENTRIES {
+            let mut by_age: Vec<&SemanticEntry> = self.cache.values().collect();
+            by_age.sort_by(|left, right| left.created_at.cmp(&right.created_at));
+            let excess = self.cache.len() - MAX_SEMANTIC_ENTRIES;
+            let dropped: Vec<String> = by_age
+                .iter()
+                .take(excess)
+                .map(|entry| entry.id.clone())
+                .collect();
+            for id in &dropped {
+                self.cache.remove(id);
+            }
+            log::warn!(
+                "Semantic glossary cap reached ({}): dropped {} oldest entr{}",
+                MAX_SEMANTIC_ENTRIES,
+                dropped.len(),
+                if dropped.len() == 1 { "y" } else { "ies" }
+            );
+        }
         self.persist()?;
         Ok(entry)
     }

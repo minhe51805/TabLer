@@ -125,16 +125,7 @@ export function useDataGridInlineEditing({
       editingOpenedAtRef.current = Date.now();
       setEditingCell({ row: rowIndex, col: colIndex });
     },
-    [
-      canAttemptInlineEdit,
-      data,
-      ensureStructureLoaded,
-      resolvedColumns,
-      setSelectedCell,
-      setError,
-      structureStatus,
-      tableName,
-    ],
+    [canAttemptInlineEdit, data, tableName, setSelectedCell, resolvedColumns, structureStatus, setEditingSeedValue, editingDraftRef, setEditingCell, ensureStructureLoaded, setError],
   );
 
   const cancelEditingCell = useCallback(() => {
@@ -142,7 +133,7 @@ export function useDataGridInlineEditing({
     setEditingSeedValue("");
     editingDraftRef.current = "";
     editingOpenedAtRef.current = 0;
-  }, []);
+  }, [editingDraftRef, setEditingCell, setEditingSeedValue]);
 
   const commitEditingCell = useCallback(async () => {
     if (!editingCell || !data || !tableName) return;
@@ -210,18 +201,7 @@ export function useDataGridInlineEditing({
     } finally {
       setSavingCell(null);
     }
-  }, [
-    cancelEditingCell,
-    data,
-    database,
-    editingCell,
-    patchLoadedTableCell,
-    primaryKeyColumns,
-    resolvedColumns,
-    setError,
-    stageChange,
-    tableName,
-  ]);
+  }, [cancelEditingCell, data, database, editingCell, editingDraftRef, patchLoadedTableCell, primaryKeyColumns, resolvedColumns, setData, setError, setSavingCell, setStagedRowIndices, stageChange, tableName]);
 
   const handleEditorBlur = useCallback(() => {
     if (Date.now() - editingOpenedAtRef.current < 160) {

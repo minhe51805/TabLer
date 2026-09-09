@@ -12,6 +12,7 @@ import { clearColumnWidths } from "../../../stores/column-width-store";
 import { buildCsvContent, buildTsvContent } from "../../../utils/export-utils";
 import { buildMqlContent } from "../../../utils/export-mql";
 import { emitAppToast } from "../../../utils/app-toast";
+import { translateCurrent } from "../../../i18n";
 
 /** Normalizes a raw cell value for text formats: objects become JSON text so
  *  row/column copies never render "[object Object]". */
@@ -28,9 +29,9 @@ function normalizeCellValue(value: unknown): string | number | boolean | null {
 async function copyWithToast(content: string, label: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(content);
-    emitAppToast({ title: `Copied ${label}`, tone: "success" });
+    emitAppToast({ title: translateCurrent("datagrid.ctxCopied", { target: label }), tone: "success" });
   } catch (error) {
-    emitAppToast({ title: "Copy failed", description: String(error), tone: "error" });
+    emitAppToast({ title: translateCurrent("datagrid.copyFailed"), description: String(error), tone: "error" });
   }
 }
 
@@ -140,9 +141,9 @@ export function DataGridContextMenu({
     const value = normalizeCellValue(row.getValue(columnId));
     void navigator.clipboard
       .writeText(value === null ? "NULL" : String(value))
-      .then(() => emitAppToast({ title: "Cell value copied", tone: "success" }))
+      .then(() => emitAppToast({ title: translateCurrent("datagrid.ctxCellValueCopied"), tone: "success" }))
       .catch((error) => {
-        emitAppToast({ title: "Copy failed", description: String(error), tone: "error" });
+        emitAppToast({ title: translateCurrent("datagrid.copyFailed"), description: String(error), tone: "error" });
       });
     onClose();
   };
@@ -159,7 +160,7 @@ export function DataGridContextMenu({
         <FileSpreadsheet className="!w-3.5 !h-3.5" />
         <span className="datagrid-export-menu-copy">
           <strong>CSV</strong>
-          <span>Comma + header row</span>
+          <span>{translateCurrent("datagrid.copyHintCsv")}</span>
         </span>
       </button>
       <button
@@ -170,7 +171,7 @@ export function DataGridContextMenu({
         <FileSpreadsheet className="!w-3.5 !h-3.5" />
         <span className="datagrid-export-menu-copy">
           <strong>TSV</strong>
-          <span>Tab-separated</span>
+          <span>{translateCurrent("datagrid.copyHintTsv")}</span>
         </span>
       </button>
       <button
@@ -182,7 +183,7 @@ export function DataGridContextMenu({
         <span className="datagrid-export-menu-copy">
           <strong>JSON</strong>
           <span>
-            {scope === "row" ? "One object per row" : "Row as an object"}
+            {translateCurrent(scope === "row" ? "datagrid.copyHintJson" : "datagrid.ctxHintJsonRowObject")}
           </span>
         </span>
       </button>
@@ -195,7 +196,7 @@ export function DataGridContextMenu({
           <FileCode className="!w-3.5 !h-3.5" />
           <span className="datagrid-export-menu-copy">
             <strong>MQL</strong>
-            <span>Mongo shell inserts</span>
+            <span>{translateCurrent("datagrid.copyHintMql")}</span>
           </span>
         </button>
       )}
@@ -242,7 +243,7 @@ export function DataGridContextMenu({
                   onClose();
                 }}
               >
-                Sort ascending
+                {translateCurrent("datagrid.ctxSortAsc")}
               </button>
               <button
                 className="datagrid-context-menu-item"
@@ -251,7 +252,7 @@ export function DataGridContextMenu({
                   onClose();
                 }}
               >
-                Sort descending
+                {translateCurrent("datagrid.ctxSortDesc")}
               </button>
               <div className="datagrid-context-menu-separator" />
               <button
@@ -261,7 +262,7 @@ export function DataGridContextMenu({
                   onClose();
                 }}
               >
-                Copy column name
+                {translateCurrent("datagrid.ctxCopyColumnName")}
               </button>
               <button
                 className="datagrid-context-menu-item"
@@ -273,25 +274,25 @@ export function DataGridContextMenu({
                   onClose();
                 }}
               >
-                Copy as SELECT
+                {translateCurrent("datagrid.ctxCopyAsSelect")}
               </button>
               <button
                 className="datagrid-context-menu-item"
                 onClick={() => copyColumnAs("csv")}
               >
-                Copy column as CSV
+                {translateCurrent("datagrid.ctxCopyColumnCsv")}
               </button>
               <button
                 className="datagrid-context-menu-item"
                 onClick={() => copyColumnAs("tsv")}
               >
-                Copy column as TSV
+                {translateCurrent("datagrid.ctxCopyColumnTsv")}
               </button>
               <button
                 className="datagrid-context-menu-item"
                 onClick={() => copyColumnAs("json")}
               >
-                Copy column as JSON
+                {translateCurrent("datagrid.ctxCopyColumnJson")}
               </button>
               <div className="datagrid-context-menu-separator" />
               <button
@@ -301,7 +302,7 @@ export function DataGridContextMenu({
                   onClose();
                 }}
               >
-                Auto-fit column
+                {translateCurrent("datagrid.ctxAutoFit")}
               </button>
               {contextMenu.colName !== "_row_num" && (
                 <>
@@ -312,7 +313,7 @@ export function DataGridContextMenu({
                       onClose();
                     }}
                   >
-                    Pin left
+                    {translateCurrent("datagrid.ctxPinLeft")}
                   </button>
                   <button
                     className="datagrid-context-menu-item"
@@ -321,7 +322,7 @@ export function DataGridContextMenu({
                       onClose();
                     }}
                   >
-                    Pin right
+                    {translateCurrent("datagrid.ctxPinRight")}
                   </button>
                   <button
                     className="datagrid-context-menu-item"
@@ -330,7 +331,7 @@ export function DataGridContextMenu({
                       onClose();
                     }}
                   >
-                    Unpin
+                    {translateCurrent("datagrid.ctxUnpin")}
                   </button>
                   <button
                     className="datagrid-context-menu-item"
@@ -349,7 +350,7 @@ export function DataGridContextMenu({
                       onClose();
                     }}
                   >
-                    Move left
+                    {translateCurrent("datagrid.ctxMoveLeft")}
                   </button>
                   <button
                     className="datagrid-context-menu-item"
@@ -368,7 +369,7 @@ export function DataGridContextMenu({
                       onClose();
                     }}
                   >
-                    Move right
+                    {translateCurrent("datagrid.ctxMoveRight")}
                   </button>
                   <button
                     className="datagrid-context-menu-item"
@@ -377,7 +378,7 @@ export function DataGridContextMenu({
                       onClose();
                     }}
                   >
-                    Hide column
+                    {translateCurrent("datagrid.ctxHideColumn")}
                   </button>
                 </>
               )}
@@ -389,7 +390,7 @@ export function DataGridContextMenu({
                     onClose();
                   }}
                 >
-                  Show all columns
+                  {translateCurrent("datagrid.ctxShowAllColumns")}
                 </button>
               )}
               <button
@@ -410,10 +411,10 @@ export function DataGridContextMenu({
                   onClose();
                 }}
               >
-                Reset table layout
+                {translateCurrent("datagrid.ctxResetLayout")}
               </button>
               <div className="datagrid-context-menu-separator" />
-              <div className="datagrid-context-menu-label" style={{ padding: "4px 12px", fontSize: "11px", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>Display As</div>
+              <div className="datagrid-context-menu-label" style={{ padding: "4px 12px", fontSize: "11px", color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase" }}>{translateCurrent("datagrid.ctxDisplayAs")}</div>
               {(["default", "uuid", "hex", "text", "json"] as ColumnDisplayFormat[]).map((fmt) => (
                 <button
                   key={fmt}
@@ -441,7 +442,7 @@ export function DataGridContextMenu({
                   onClose();
                 }}
               >
-                Inspect row
+                {translateCurrent("datagrid.ctxInspectRow")}
               </button>
               <button
                 className="datagrid-context-menu-item"
@@ -450,11 +451,11 @@ export function DataGridContextMenu({
                   onClose();
                 }}
               >
-                Duplicate row
+                {translateCurrent("datagrid.ctxDuplicateRow")}
               </button>
               <div className="datagrid-context-menu-separator" />
               <div className="datagrid-context-menu-item has-submenu" tabIndex={0}>
-                <span>Copy As</span>
+                <span>{translateCurrent("datagrid.ctxCopyAs")}</span>
                 <ChevronRight className="w-3 h-3 submenu-chevron" />
                 {copyAsSubmenu("row")}
               </div>
@@ -469,17 +470,17 @@ export function DataGridContextMenu({
                   onClose();
                 }}
               >
-                Add row
+                {translateCurrent("datagrid.ctxAddRow")}
               </button>
               <div className="datagrid-context-menu-separator" />
               <button
                 className="datagrid-context-menu-item"
                 onClick={copyCellValue}
               >
-                Copy Cell Value
+                {translateCurrent("datagrid.ctxCopyCellValue")}
               </button>
               <div className="datagrid-context-menu-item has-submenu" tabIndex={0}>
-                <span>Copy Row As</span>
+                <span>{translateCurrent("datagrid.ctxCopyRowAs")}</span>
                 <ChevronRight className="w-3 h-3 submenu-chevron" />
                 {copyAsSubmenu("cell")}
               </div>

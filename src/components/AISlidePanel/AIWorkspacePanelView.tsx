@@ -80,17 +80,17 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
       }
       m.selectAgentAutonomy(autonomy);
     },
-    [m.activeAgentAutonomy, m.selectAgentAutonomy],
+    [m],
   );
   // Stable callbacks so the memoized AIConversationView skips re-renders
   // triggered by unrelated panel state (composer keystrokes, health ticks...).
   const handleOpenDetail = useCallback(
     (bubble: { id: string }) => m.setDetailBubbleId(bubble.id),
-    [m.setDetailBubbleId],
+    [m],
   );
   const handleUseSuggestion = useCallback(
     (prompt: string) => m.setPromptDraft(prompt),
-    [m.setPromptDraft],
+    [m],
   );
   const panelWidth = useAppLayoutStore((state) => state.aiPanelWidth);
   const setPanelWidth = useAppLayoutStore((state) => state.setAIPanelWidth);

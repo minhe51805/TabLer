@@ -265,6 +265,19 @@ export const ENGINE_EXTRA_FIELDS = {
   ] satisfies EngineExtraField[],
   mongodb: [
     {
+      key: "srv_mode",
+      type: "select",
+      label: "Connection discovery",
+      labelVi: "Kieu ket noi",
+      hint: "SRV discovers the whole Atlas cluster via DNS. Direct connects to one host:port — use it for PrivateLink endpoints (pl-*.mongodb.net) or self-hosted servers.",
+      hintVi: "SRV tim toan bo cluster Atlas qua DNS. Direct ket noi thang mot host:port — dung cho Private Endpoint (pl-*.mongodb.net) hoac MongoDB tu cai dat.",
+      options: [
+        { value: "", label: "Auto-detect (hostname)", labelVi: "Tu dong nhan dien (hostname)" },
+        { value: "force", label: "SRV (Atlas)", labelVi: "SRV (Atlas)" },
+        { value: "direct", label: "Direct (host:port)", labelVi: "Truc tiep (host:port)" },
+      ],
+    },
+    {
       key: "auth_source",
       label: "Auth source",
       labelVi: "Auth source",

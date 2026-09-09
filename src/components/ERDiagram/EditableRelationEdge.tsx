@@ -59,7 +59,7 @@ export const EditableRelationEdge = memo(function EditableRelationEdge({
       columns: nodeData.columns,
       isExpanded: Boolean(nodeData.isExpanded),
     } satisfies DiagramNodeFrame;
-  }, [getNode, source, sourceX, sourceY]);
+  }, [getNode, source]);
 
   const targetFrame = useMemo(() => {
     const node = getNode(target);
@@ -75,7 +75,7 @@ export const EditableRelationEdge = memo(function EditableRelationEdge({
       columns: nodeData.columns,
       isExpanded: Boolean(nodeData.isExpanded),
     } satisfies DiagramNodeFrame;
-  }, [getNode, target, targetX, targetY]);
+  }, [getNode, target]);
 
   const midpoint = useMemo(
     () =>

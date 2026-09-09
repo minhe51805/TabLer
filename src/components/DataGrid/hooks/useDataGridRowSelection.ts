@@ -63,7 +63,7 @@ export function useDataGridRowSelection({
         return next;
       });
     },
-    [canSelectRows, data, rowIdentities, setSelectedRows],
+    [canSelectRows, data?.rows, rowIdentities, rowSelectionAnchorRef, setSelectedRows],
   );
 
   const handleToggleSelectAllRows = useCallback(() => {
@@ -82,7 +82,7 @@ export function useDataGridRowSelection({
       rowSelectionAnchorRef.current = rowIdentities[filteredTableRowIndices[0] ?? -1] ?? null;
       return next;
     });
-  }, [canSelectRows, filteredTableRowIndices, rowIdentities, setSelectedRows]);
+  }, [canSelectRows, filteredTableRowIndices, rowIdentities, rowSelectionAnchorRef, setSelectedRows]);
 
   return {
     handleRowSelection,

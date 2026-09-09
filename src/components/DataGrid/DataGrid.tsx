@@ -10,7 +10,7 @@ import {
   type ColumnPinningState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useI18n } from "../../i18n";
+import { useI18n, translateCurrent } from "../../i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Copy, Loader2, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
@@ -38,7 +38,6 @@ import {
   invalidateTableScopeCaches,
   invalidateTableCaches,
   inlineStructureCacheRef,
-  buildColumnSignature,
   buildResolvedColumns,
   isBooleanColumn,
   buildRowPrimaryKeys,
@@ -431,8 +430,8 @@ export function DataGrid({
     }
     emitAppToast(
       ok
-        ? { title: "Reloaded successfully", tone: "success" }
-        : { title: "Reload failed", description: "Could not fetch fresh rows — check the connection.", tone: "error" },
+        ? { title: translateCurrent("datagrid.reloadSuccess"), tone: "success" }
+        : { title: translateCurrent("datagrid.reloadFailed"), description: translateCurrent("datagrid.reloadFailedDesc"), tone: "error" },
     );
   }, [isReloadingData, refreshTableFromStart]);
 
@@ -546,18 +545,13 @@ export function DataGrid({
 
   // Column resolution - must be declared before any callbacks that use resolvedColumns
   const dataColumns = data?.columns.length ? data.columns : structureColumns;
-  const dataColumnSignature = useMemo(() => buildColumnSignature(dataColumns), [dataColumns]);
-  const structureColumnSignature = useMemo(
-    () => buildColumnSignature(structureColumns),
-    [structureColumns],
-  );
 
   const resolvedColumns = useMemo<ResolvedColumn[]>(() => {
     if (dataColumns.length === 0) return [];
     const cols = buildResolvedColumns(dataColumns, structureColumns);
     columnNamesRef.current = cols.map((c) => c.name);
     return cols;
-  }, [dataColumnSignature, structureColumnSignature]);
+  }, [dataColumns, structureColumns]);
 
   const primaryKeyColumns = useMemo(
     () => resolvedColumns.filter((column) => column.is_primary_key),
@@ -700,6 +694,7 @@ export function DataGrid({
       }
       if (countTimeoutRef.current !== null) {
         window.clearTimeout(countTimeoutRef.current);
+        countTimeoutRef.current = null;
       }
     };
   }, []);
@@ -944,7 +939,7 @@ export function DataGrid({
     const newWidth = Math.max(40, Math.max(maxContentWidth + 22, headerSize));
     setColumnSizes((prev) => ({ ...prev, [colId]: newWidth }));
     if (tableName) saveColumnWidth(connectionId, tableName, colId, newWidth, database);
-  }, []);
+  }, [connectionId, database, tableName]);
 
   // Context menu handler
   const handleContextMenu = useCallback((
@@ -1346,47 +1341,7 @@ export function DataGrid({
       dbType,
       columnDisplayFormats,
     });
-  }, [
-    cancelEditingCell,
-    canSelectRows,
-    canAttemptInlineEdit,
-    commitEditingCell,
-    handleRowSelection,
-    handleToggleSelectAllRows,
-    handleEditorBlur,
-    copiedCell,
-    currentPage,
-    data,
-    editingCell,
-    editingSeedValue,
-    allVisibleRowsSelected,
-    resolvedColumns,
-    savingCell,
-    selectedCell,
-    setSelectedCell,
-    isCellSelected,
-    selectedRows,
-    sortColumn,
-    sortDir,
-    startEditingCell,
-    structureStatus,
-    handleCopyValue,
-    handleSort,
-    foreignKeys,
-    lookupValuesCache,
-    getForeignKeyLookupValues,
-    connectionId,
-    handleOpenRowInspector,
-    handleColumnAutoFit,
-    handleContextMenu,
-    columnSizes,
-    displayedRowIndices,
-    multiSort,
-    settings,
-    dateFormat,
-    dbType,
-    connections,
-  ]);
+  }, [data, resolvedColumns, canSelectRows, canAttemptInlineEdit, selectedRows, selectedCell, isCellSelected, editingCell, editingSeedValue, savingCell, sortColumn, sortDir, displayedRowIndices, copiedCell, handleSort, handleRowSelection, handleToggleSelectAllRows, handleEditorBlur, startEditingCell, commitEditingCell, cancelEditingCell, structureStatus, assignInputRef, allVisibleRowsSelected, handleCopyValue, setSelectedCell, foreignKeys, lookupValuesCache, connectionId, handleOpenRowInspector, handleColumnAutoFit, handleContextMenu, columnSizes, multiSort, settings.nullPlaceholder, dateFormat, dbType, columnDisplayFormats, getForeignKeyLookupValues]);
 
   const tableData = useMemo(() => displayedRows, [displayedRows]);
 
@@ -1517,7 +1472,7 @@ export function DataGrid({
     return (
       <div className="datagrid-blank-state">
         <Copy className="w-10 h-10 mb-3 opacity-20" />
-        <p className="datagrid-blank-state-copy">Select a table or run a query</p>
+        <p className="datagrid-blank-state-copy">{t("datagrid.blankState")}</p>
       </div>
     );
   }
@@ -1535,7 +1490,7 @@ export function DataGrid({
             )}
             <span
               className={`datagrid-footer-pill${sortColumn || multiSort.length > 0 ? " info" : ""}`}
-              title="Row sort order"
+              title={t("datagrid.rowSortOrderTitle")}
             >
               {sortColumn
                 ? `${sortColumn} ${sortDir}`
@@ -1550,7 +1505,7 @@ export function DataGrid({
                 type="button"
                 className="datagrid-sort-clear-btn"
                 onClick={handleMultiSortClear}
-                title="Clear all sorts"
+                title={t("datagrid.clearAllSorts")}
               >
                 <X className="w-3! h-3!" />
               </button>
@@ -1560,7 +1515,7 @@ export function DataGrid({
                 {isTableEditable
                   ? "Inline edit ready"
                   : structureStatus === "loading"
-                    ? "Loading edit metadata..."
+                    ? t("datagrid.loadingEditMeta")
                     : structureStatus === "idle"
                       ? "Edit on demand"
                       : "Retry edit load"}
@@ -1645,7 +1600,7 @@ export function DataGrid({
           <div className="datagrid-loading-overlay">
             <div className="datagrid-loading-card">
               <Loader2 className="!w-4 !h-4 animate-spin text-[var(--accent)]" />
-              <span className="text-xs text-[var(--text-secondary)]">Loading data...</span>
+              <span className="text-xs text-[var(--text-secondary)]">{t("datagrid.loadingData")}</span>
             </div>
           </div>
         )}
@@ -1715,7 +1670,7 @@ export function DataGrid({
                         className="datagrid-col-resize-handle"
                         onMouseDown={header.getResizeHandler()}
                         onDoubleClick={() => handleColumnAutoFit(header.column.id)}
-                        title="Drag to resize, double-click to auto-fit"
+                        title={t("datagrid.resizeHint")}
                       />
                     </th>
                   );

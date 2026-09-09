@@ -24,7 +24,7 @@ export function HexCellEditor({
   useEffect(() => {
     const textarea = (inputRef as React.MutableRefObject<HTMLTextAreaElement | null>)?.current;
     textarea?.focus();
-  }, []);
+  }, [inputRef]);
 
   useEffect(() => {
     const validateHex = (hex: string) => {

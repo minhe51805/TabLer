@@ -89,10 +89,13 @@ export function GlobalSearchPanel() {
 
   // Effective tables for Data mode: cross-db list when the user picked a
   // different SQL Server database, otherwise the current catalog.
-  const effectiveTableOptions =
-    isCrossDbSupported && searchDb && searchDb !== currentDatabase
-      ? crossDbTables ?? []
-      : tableOptions;
+  const effectiveTableOptions = useMemo(
+    () =>
+      isCrossDbSupported && searchDb && searchDb !== currentDatabase
+        ? crossDbTables ?? []
+        : tableOptions,
+    [isCrossDbSupported, searchDb, currentDatabase, crossDbTables, tableOptions],
+  );
 
   // Default the target table so Data mode works the moment a keyword is typed.
   useEffect(() => {

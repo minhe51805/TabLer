@@ -258,15 +258,7 @@ export function TableStructure({
         }
       }
     },
-    [
-      connectionId,
-      database,
-      displayTableName,
-      getTableColumnsPreview,
-      setFromColumns,
-      structureKey,
-      tableName,
-    ]
+    [connectionId, database, displayTableName, getTableColumnsPreview, setFromColumns, setFromFullStructure, structureKey, tableName]
   );
 
   const withTimeout = useCallback(

@@ -100,11 +100,7 @@ export function useTableFilterActions({
     });
     setSavePresetDialogOpen(false);
     setPresetNameInput("");
-  }, [
-    presetNameInput, search, activeSchemaFilter, columnModeActive,
-    columnPattern, columnOperator, conditions, conditionLogic,
-    tableOperator, schemaOperator, presetsStore,
-  ]);
+  }, [presetNameInput, presetsStore, search, activeSchemaFilter, columnModeActive, columnPattern, columnOperator, conditions, conditionLogic, tableOperator, schemaOperator, setSavePresetDialogOpen, setPresetNameInput]);
 
   const handleLoadPreset = useCallback((presetId: string) => {
     const preset = presetsStore.getPreset(presetId);
@@ -122,7 +118,7 @@ export function useTableFilterActions({
     setConditionLogic(preset.conditionLogic ?? "AND");
     presetsStore.setActivePreset(presetId);
     setFilterPresetMenuOpen(false);
-  }, [presetsStore]);
+  }, [presetsStore, setActiveSchemaFilter, setColumnModeActive, setColumnOperator, setColumnPattern, setConditionLogic, setConditions, setFilterPresetMenuOpen, setSchemaOperator, setSearch, setTableOperator]);
 
   const handleDeletePreset = useCallback((presetId: string) => {
     if (!window.confirm("Delete this filter preset?")) return;
@@ -141,7 +137,7 @@ export function useTableFilterActions({
     setMixedStateFilter(EMPTY_MIXED_FILTER);
     mixedFilterRef.current = EMPTY_MIXED_FILTER;
     tableFilterStateRef.current = {};
-  }, []);
+  }, [mixedFilterRef, setActiveSchemaFilter, setColumnModeActive, setColumnPattern, setConditionLogic, setConditions, setMixedStateFilter, setSchemaOperator, setSearch, setTableOperator, tableFilterStateRef]);
 
   const handleMixedStateToggle = useCallback((
     schemaName: string,
@@ -187,12 +183,12 @@ export function useTableFilterActions({
       ...mixedStateFilter,
       isActive: true,
     };
-  }, [mixedStateFilter]);
+  }, [mixedFilterRef, mixedStateFilter, setMixedStateFilter]);
 
   const getMixedStateFilterForTable = useCallback((tableName: string, schemaName: string) => {
     const key = `${schemaName}|${tableName}`;
     return tableFilterStateRef.current[key] ?? mixedFilterRef.current;
-  }, []);
+  }, [mixedFilterRef, tableFilterStateRef]);
 
   const persistMixedStateForTable = useCallback((
     tableName: string,
@@ -201,7 +197,7 @@ export function useTableFilterActions({
   ) => {
     const key = `${schemaName}|${tableName}`;
     tableFilterStateRef.current[key] = filter;
-  }, []);
+  }, [tableFilterStateRef]);
 
   return {
     handleSavePreset,

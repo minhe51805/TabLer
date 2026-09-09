@@ -13,7 +13,7 @@ export function NumericCellEditor({
     const input = (inputRef as React.MutableRefObject<HTMLInputElement | null>)?.current;
     input?.focus();
     input?.select();
-  }, []);
+  }, [inputRef]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {

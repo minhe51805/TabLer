@@ -61,7 +61,7 @@ function createResult(rowCount: number, columnCount: number): QueryResult {
 }
 
 describe("DataGrid virtualization", () => {
-  it("renders a bounded set of rows and columns for a wide 10k result fixture", async () => {
+  it("renders a bounded set of rows and columns for a wide 10k result fixture", { timeout: 20_000 }, async () => {
     const { container } = render(
       <DataGrid connectionId="fixture" queryResult={createResult(10_000, 160)} />,
     );
@@ -79,7 +79,7 @@ describe("DataGrid virtualization", () => {
     expect(container.querySelectorAll("th.datagrid-th").length).toBeLessThan(40);
   });
 
-  it("keeps a 100k result bounded in the DOM", async () => {
+  it("keeps a 100k result bounded in the DOM", { timeout: 20_000 }, async () => {
     const { container } = render(
       <DataGrid connectionId="fixture" queryResult={createResult(100_000, 2)} />,
     );

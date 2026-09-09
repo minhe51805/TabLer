@@ -158,7 +158,7 @@ export function useDataGridTableFetcher({
       rows,
     }));
     setHasMoreTableRows(result.rows.length === PAGE_SIZE);
-  }, []);
+  }, [loadedTablePagesRef, setData, setHasMoreTableRows]);
 
   const patchLoadedTableCell = useCallback((rowIndex: number, columnIndex: number, value: GridCellValue) => {
     const page = Math.floor(rowIndex / PAGE_SIZE);
@@ -173,7 +173,7 @@ export function useDataGridTableFetcher({
       return nextRow;
     });
     loadedTablePagesRef.current.set(page, { ...pageResult, rows });
-  }, []);
+  }, [loadedTablePagesRef]);
 
   const fetchData = useCallback(
     async (page: number) => {
@@ -320,20 +320,7 @@ export function useDataGridTableFetcher({
         setIsLoading(false);
       }
     },
-    [
-      connectionId,
-      tableName,
-      database,
-      sortColumn,
-      sortDir,
-      tableFilter,
-      rowFocusFilter,
-      getTableData,
-      countRows,
-      isActive,
-      setError,
-      setLoadedTablePage,
-    ],
+    [tableName, isActive, connectionId, database, sortColumn, sortDir, rowFocusFilter, dataScopeRef, requestIdRef, tableFilter, setIsLoading, setLoadedTablePage, setTotalRows, getTableData, isMountedRef, isActiveRef, countRequestIdRef, countTimeoutRef, countRows, setError],
   );
 
   const refreshTableFromStart = useCallback(async (): Promise<boolean> => {
@@ -355,7 +342,7 @@ export function useDataGridTableFetcher({
     } catch {
       return false;
     }
-  }, [fetchData, connectionId, tableName, database]);
+  }, [loadedTablePagesRef, setHasMoreTableRows, setCurrentPage, tableName, connectionId, database, fetchData]);
 
   const ensureStructureLoaded = useCallback(async () => {
     if (!tableName || externalResult) {
@@ -448,15 +435,7 @@ export function useDataGridTableFetcher({
 
     structurePromiseRef.current = structurePromise;
     return structurePromise;
-  }, [
-    connectionId,
-    database,
-    externalResult,
-    getTableStructure,
-    structureColumns,
-    structureStatus,
-    tableName,
-  ]);
+  }, [connectionId, connections, database, externalResult, getTableStructure, inlineStructureCacheRef.inlineStructureCache, isMountedRef, setColumnNameMap, setDbType, setForeignKeys, setStructureColumns, setStructureStatus, structureColumns, structurePromiseRef, structureRequestIdRef, structureRetryAttemptRef, structureRetryTimeoutRef, structureStatus, tableName]);
 
   return {
     setLoadedTablePage,

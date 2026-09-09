@@ -24,6 +24,7 @@ import {
   buildUpdateTemplate,
 } from "./sidebar-filter-scripts";
 import { emitAppToast } from "../../../utils/app-toast";
+import { saveDatabaseDocs } from "../../../utils/schema-doc-collector";
 import {
   usePinnedTables,
   useSchemaSections,
@@ -363,6 +364,33 @@ export function useSidebar() {
     await copyToClipboard(getQualifiedTableName(table));
   }, []);
 
+  /** Generate a Markdown schema book for this table through the save dialog. */
+  const handleGenerateTableDocs = useCallback(async (table: Pick<TableInfo, "name" | "schema">) => {
+    if (!activeConnectionId) return;
+    try {
+      const saved = await saveDatabaseDocs(
+        activeConnectionId,
+        currentDatabase || table.name,
+        "markdown",
+        [table.name],
+      );
+      if (saved !== null) {
+        emitAppToast({
+          title: t("explorer.context.docsSaved"),
+          description: saved,
+          tone: "success",
+        });
+      }
+    } catch (error) {
+      emitAppToast({
+        title: t("explorer.context.docsFailed"),
+        description: error instanceof Error ? error.message : String(error),
+        tone: "error",
+      });
+    }
+  }, [activeConnectionId, currentDatabase, t]);
+
+
   const handleRefresh = useCallback(async () => {
     if (!activeConnectionId) return;
     await fetchDatabases(activeConnectionId);
@@ -657,6 +685,11 @@ export function useSidebar() {
         action: () => void handleCopyTableName(table),
       },
       {
+        key: "generate-docs",
+        label: t("explorer.context.generateDocs"),
+        action: () => void handleGenerateTableDocs(table),
+      },
+      {
         key: "pin-to-top",
         label: isPinned ? t("explorer.context.unpin") : t("explorer.context.pinToTop"),
         action: () => togglePinnedTable(table),
@@ -805,7 +838,7 @@ export function useSidebar() {
         danger: true,
       },
     ];
-  }, [tableContextMenu, pinnedTableSet, t, dbType, handleOpenTableInNewTab, handleOpenStructureDraft, openQueryDraft, handleCopyTableName, togglePinnedTable, runMaintenanceCommand]);
+  }, [tableContextMenu, pinnedTableSet, t, dbType, handleOpenTableInNewTab, handleOpenStructureDraft, openQueryDraft, handleCopyTableName, handleGenerateTableDocs, togglePinnedTable, runMaintenanceCommand]);
 
   // --- Effects ---
   useEffect(() => {

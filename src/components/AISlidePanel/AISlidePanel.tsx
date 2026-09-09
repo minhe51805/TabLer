@@ -1045,7 +1045,7 @@ export function AISlidePanel({
     } finally {
       setIsCompacting(false);
     }
-  }, [activeChatWorkspace, activeInteractionMode, activeThreadBubbles, aiCopy.workspace.compactDoneSubtitle, aiCopy.workspace.compactDoneTitle, aiCopy.workspace.compactEmpty, aiCopy.workspace.compactNeedsWorkspace, currentThread.id, currentThread.label, currentWorkspaceKey, isCompacting, saveChatContextDigest, setError]);
+  }, [activeChatWorkspace, activeInteractionMode, activeThreadBubbles, aiCopy.workspace.compactDoneSubtitle, aiCopy.workspace.compactDoneTitle, aiCopy.workspace.compactEmpty, aiCopy.workspace.compactNeedsWorkspace, currentThread?.id, currentThread?.label, currentWorkspaceKey, isCompacting, saveChatContextDigest, setError]);
 
   // Image attachments require the active model to advertise image input
   // (per-model `input_types` in the settings modal); text files always work.

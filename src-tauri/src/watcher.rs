@@ -54,12 +54,9 @@ pub fn start_watcher(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         let app_for_event = app.clone();
         let debounce = Duration::from_millis(EVENT_DEBOUNCE_MS);
         let max_window = Duration::from_millis(EVENT_MAX_BATCH_WINDOW_MS);
-        loop {
-            // Block until the first event of a potential batch arrives.
-            let first = match rx.recv() {
-                Ok(res) => res,
-                Err(_) => break, // watcher channel closed; exit the thread
-            };
+        // Block until the first event of a potential batch arrives; the
+        // thread exits when the watcher channel closes (recv returns Err).
+        while let Ok(first) = rx.recv() {
             let mut batch = vec![first];
             let started = Instant::now();
             // Coalesce follow-up events while the batch is hot: flush as soon

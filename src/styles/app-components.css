@@ -20522,35 +20522,55 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .ai-workspace-markdown-table-wrap {
   overflow-x: auto;
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid var(--mm-border);
-  background: var(--mm-surface-1);
+  background: var(--mm-surface-0);
+  -webkit-overflow-scrolling: touch;
 }
 
 .ai-workspace-markdown-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 320px;
+  font-size: var(--mm-fs-small);
+  line-height: 1.5;
 }
 
 .ai-workspace-markdown-table th,
 .ai-workspace-markdown-table td {
-  padding: 9px 11px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--mm-border);
   text-align: left;
   vertical-align: top;
+  /* Wrap at word boundaries only — never split "COLLECTION" into "COLLE CTIO N".
+     A single overlong token still breaks so it can't force horizontal overflow. */
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
-.ai-workspace-markdown-table th {
-  color: var(--text-primary);
-  font-size: var(--mm-fs-caption);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+/* Compact, quiet header: no uppercase/letter-spacing (that inflated the title and
+   forced ugly per-character wrapping in the narrow panel) — smaller, secondary,
+   with a subtle fill so it still reads as a header row. */
+.ai-workspace-markdown-table thead th {
+  background: var(--mm-surface-2);
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  border-bottom: 1px solid var(--mm-border-strong);
 }
 
-.ai-workspace-markdown-table td {
+.ai-workspace-markdown-table tbody td {
   color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-workspace-markdown-table tbody tr:nth-child(even) {
+  background: var(--mm-surface-1);
+}
+
+.ai-workspace-markdown-table tbody tr:hover {
+  background: var(--mm-surface-2);
 }
 
 .ai-workspace-markdown-table tbody tr:last-child td {

@@ -444,6 +444,69 @@ impl MongoDbDriver {
         value.trim().trim_end_matches(';').trim()
     }
 
+    /// Removes `//` line comments and `/* ... */` block comments from Mongo
+    /// shell input while preserving any comment-like sequence inside a string
+    /// literal (so a value such as "https://host/a//b" survives untouched).
+    ///
+    /// Mongo shell scripts — including the AI `propose_seed_data` output that
+    /// opens in a query tab with a `// Seed data proposal …` header — carry
+    /// review comments. Without this the leading comment made `parse_command`
+    /// fall through to "MongoDB commands must start with db.", so pressing Run
+    /// on a generated insert/seed script always failed.
+    pub(super) fn strip_mongo_comments(input: &str) -> String {
+        let mut output = String::with_capacity(input.len());
+        let mut chars = input.chars().peekable();
+        let mut active_quote: Option<char> = None;
+        let mut escaped = false;
+
+        while let Some(ch) = chars.next() {
+            if let Some(quote) = active_quote {
+                output.push(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == quote {
+                    active_quote = None;
+                }
+                continue;
+            }
+
+            match ch {
+                '\'' | '"' => {
+                    active_quote = Some(ch);
+                    output.push(ch);
+                }
+                // Line comment: drop everything up to (but not including) the
+                // newline so statement lines below still line up.
+                '/' if chars.peek() == Some(&'/') => {
+                    chars.next();
+                    while let Some(&next) = chars.peek() {
+                        if next == '\n' {
+                            break;
+                        }
+                        chars.next();
+                    }
+                }
+                // Block comment: drop through the terminating */ and leave a
+                // single space so the tokens around it never glue together.
+                '/' if chars.peek() == Some(&'*') => {
+                    chars.next();
+                    while let Some(inner) = chars.next() {
+                        if inner == '*' && chars.peek() == Some(&'/') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                    output.push(' ');
+                }
+                _ => output.push(ch),
+            }
+        }
+
+        output
+    }
+
     pub(super) fn find_matching_closer(input: &str, open: char, close: char) -> Result<usize> {
         let mut depth = 1usize;
         let mut active_quote = None::<char>;
@@ -599,7 +662,11 @@ impl MongoDbDriver {
     }
 
     pub(super) fn parse_command(input: &str) -> Result<MongoQueryCommand> {
-        let trimmed = Self::strip_optional_semicolon(input);
+        // Strip shell comments first so a leading `// Seed data proposal …`
+        // header (or any inline comment) never trips the "must start with db."
+        // guard below. Comments inside string literals are preserved.
+        let without_comments = Self::strip_mongo_comments(input);
+        let trimmed = Self::strip_optional_semicolon(&without_comments);
         if trimmed.is_empty() {
             return Err(anyhow!("MongoDB command cannot be empty"));
         }

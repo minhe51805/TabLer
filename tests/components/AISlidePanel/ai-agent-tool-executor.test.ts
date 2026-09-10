@@ -949,7 +949,9 @@ describe("propose_seed_data (SQL + document engines)", () => {
     expect(call.autoRun).toBe(false);
     expect(call.sql).toContain("db.users.insertMany([");
     expect(call.sql).toContain('"name":"Nguyen Van A"');
-    expect(call.title).toBe("demo users seed");
+    expect(call.sql).not.toContain("Seed data proposal");
+    expect(call.sql.startsWith("db.users.insertMany([")).toBe(true);
+    expect(call.title).toBe("Query users");
     const flat = observation.replace(/\s+/g, "");
     expect(flat).toContain('"collection":"users"');
     expect(flat).toContain('"documentCount":2');
@@ -974,7 +976,77 @@ describe("propose_seed_data (SQL + document engines)", () => {
     expect(call.sql).toContain('INSERT INTO "users" ("name", "email", "status") VALUES');
     expect(call.sql).toContain("'Nguyen Van A'");
     expect(call.sql).not.toContain("insertMany");
+    expect(call.sql).not.toContain("Seed data proposal");
     expect(observation).toContain("INSERT INTO users");
+  });
+
+  it("prepends USE [db] on SQL Server so the INSERT targets the right database", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const deps = mkDeps({
+      openQueryTab,
+      toolAvailability: agentToolAvailability("mssql"),
+      dbType: "mssql",
+      currentDatabase: "AppDb",
+    });
+    await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS },
+    } as unknown as AIAgentToolAction);
+    const sql = openQueryTab.mock.calls[0]?.[0]?.sql ?? "";
+    expect(sql.startsWith("USE [AppDb];")).toBe(true);
+    expect(sql).toContain("INSERT INTO [users]");
+    expect(sql).toContain("N'Nguyen Van A'");
+    expect(sql).not.toContain("Seed data proposal");
+  });
+
+  it("escapes a bracket in the SQL Server database name for the USE prefix", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const deps = mkDeps({
+      openQueryTab,
+      toolAvailability: agentToolAvailability("mssql"),
+      dbType: "mssql",
+      currentDatabase: "we[i]rd",
+    });
+    await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS },
+    } as unknown as AIAgentToolAction);
+    const sql = openQueryTab.mock.calls[0]?.[0]?.sql ?? "";
+    expect(sql.startsWith("USE [we[i]]rd];")).toBe(true);
+  });
+
+  it("omits the USE prefix on SQL Server when the current database is unknown", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const deps = mkDeps({
+      openQueryTab,
+      toolAvailability: agentToolAvailability("mssql"),
+      dbType: "mssql",
+      currentDatabase: null,
+    });
+    await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS },
+    } as unknown as AIAgentToolAction);
+    const sql = openQueryTab.mock.calls[0]?.[0]?.sql ?? "";
+    expect(sql).not.toContain("USE [");
+    expect(sql.startsWith("INSERT INTO [users]")).toBe(true);
+  });
+
+  it("does not add a USE prefix on non-SQL-Server engines", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const deps = mkDeps({
+      openQueryTab,
+      toolAvailability: agentToolAvailability("postgresql"),
+      dbType: "postgresql",
+      currentDatabase: "AppDb",
+    });
+    await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS },
+    } as unknown as AIAgentToolAction);
+    const sql = openQueryTab.mock.calls[0]?.[0]?.sql ?? "";
+    expect(sql).not.toContain("USE ");
+    expect(sql.startsWith('INSERT INTO "users"')).toBe(true);
   });
 
   it("fills NULL for fields a row omits and keeps the column union order", async () => {

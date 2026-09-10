@@ -50,8 +50,9 @@ export function useAIPanelPreferences(options: UseAIPanelPreferencesOptions) {
   const activateProvider = useCallback((providerId: string, model?: string) => {
     // Record the user's intent immediately (even if the save queues behind an
     // in-flight switch/failover): an explicit pick must win over any
-    // automatic provider rotation for the current run.
-    markManualProviderOverride();
+    // automatic provider rotation for the current run. Pass the id so failover
+    // can pin by identity, not just by pick time.
+    markManualProviderOverride(providerId);
     const run = switchChainRef.current
       .catch(() => undefined)
       .then(async () => {

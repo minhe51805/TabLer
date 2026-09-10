@@ -121,11 +121,21 @@ function providerPenaltyRank(providerId: string): number {
  * auto-promotion when the user chose a provider during the current run.
  */
 let manualProviderOverrideAt = 0;
-export function markManualProviderOverride() {
+// The id of the provider the user last picked explicitly. Automatic failover
+// never writes this, so while the active provider still equals this id we know
+// the user is deliberately on it and auto-rotation must stand down — even for a
+// pick made just before hitting send, or carried across an ask_user resume,
+// where a plain timestamp-vs-runStart check would miss it.
+let manuallyPickedProviderId: string | null = null;
+export function markManualProviderOverride(providerId?: string) {
   manualProviderOverrideAt = Date.now();
+  if (providerId) manuallyPickedProviderId = providerId;
 }
 export function getManualProviderOverrideAt() {
   return manualProviderOverrideAt;
+}
+export function getManuallyPickedProviderId() {
+  return manuallyPickedProviderId;
 }
 
 /**

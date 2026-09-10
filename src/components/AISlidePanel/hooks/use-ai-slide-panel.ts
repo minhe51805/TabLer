@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { getCurrentAppLanguage } from "../../../i18n";
-import { getManualProviderOverrideAt, useAIStore } from "../../../stores/aiStore";
+import { getManualProviderOverrideAt, getManuallyPickedProviderId, useAIStore } from "../../../stores/aiStore";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useAIChatWorkspaceStore } from "../../../stores/aiChatWorkspaceStore";
 import { useQueryStore } from "../../../stores/queryStore";
@@ -1220,8 +1220,21 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               const canPromoteFurther =
                 providerRetryCount < Math.max(0, enabledProviderCount - 1);
 
+              // Respect an explicit provider pick by IDENTITY, not just by
+              // pick time. The old `> runStartedAt` check only caught mid-run
+              // switches and silently failed the common "pick model → send"
+              // flow (and ask_user resumes), where the pick predates this run's
+              // clock — letting a transient error rotate providers and, from
+              // the last one, wrap back to the first. While the user's pinned
+              // provider is still the active one, auto-failover stands down.
+              const activeProviderForOverride = getActiveAIProvider(
+                useAIStore.getState().aiConfigs,
+              );
+              const pinnedProviderId = getManuallyPickedProviderId();
               const userPickedProviderDuringRun =
-                getManualProviderOverrideAt() > runStartedAt;
+                getManualProviderOverrideAt() > runStartedAt
+                || (pinnedProviderId !== null
+                  && activeProviderForOverride?.id === pinnedProviderId);
 
               if (failoverEligible && canPromoteFurther && !userPickedProviderDuringRun) {
                 // The very first failure asks for permission before the agent

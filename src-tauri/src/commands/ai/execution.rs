@@ -1,4 +1,6 @@
-use crate::database::ai_models::{AIProviderType, AIRequest, AIRequestMode, AIResponse};
+use crate::database::ai_models::{
+    AIProviderConfig, AIProviderType, AIRequest, AIRequestMode, AIResponse,
+};
 use crate::storage::ai_storage::AIStorage;
 use crate::utils::rate_limiter::AIRequestLimiter;
 use futures_util::StreamExt;
@@ -7,8 +9,8 @@ use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 
 use super::endpoints::{
-    is_nvidia_integrate_endpoint, provider_requires_api_key, resolve_provider_endpoint,
-    should_retry_openai_like_status, validate_ai_endpoint,
+    is_nvidia_integrate_endpoint, provider_requires_api_key, resolve_models_list_endpoint,
+    resolve_provider_endpoint, should_retry_openai_like_status, validate_ai_endpoint,
 };
 use super::errors::{
     ai_provider_api_error, ai_provider_config_error, ai_provider_http_status_error,
@@ -23,9 +25,73 @@ use super::extraction::{
 use super::prompt::build_ai_prompt;
 use super::providers::{
     apply_attachments, apply_native_tools, build_provider_request_body, effective_wire_provider,
-    resolve_provider_body_shape, streaming_endpoint, streaming_request_body,
+    parse_models_list_response, resolve_provider_body_shape, streaming_endpoint,
+    streaming_request_body,
 };
-use super::{ai_http_client, run_blocking_storage_task, AI_REQUEST_CANCELLED_ERROR};
+use super::{ai_http_client, run_blocking_storage_task, FetchedModel, AI_REQUEST_CANCELLED_ERROR};
+
+/// Calls a provider's "list models" API and returns the model IDs it exposes,
+/// powering the "Fetch models" button in AI settings so users don't have to
+/// type each model by hand. Auth mirrors the chat path (Anthropic `x-api-key`,
+/// Gemini `x-goog-api-key`, everything else Bearer).
+pub(crate) async fn fetch_provider_models(
+    config: &AIProviderConfig,
+    api_key: Option<&str>,
+) -> Result<Vec<FetchedModel>, String> {
+    let (endpoint, shape) = resolve_models_list_endpoint(config)?;
+    validate_ai_endpoint(config, &endpoint)?;
+
+    let mut request_builder = ai_http_client().get(&endpoint);
+    match effective_wire_provider(config, &endpoint) {
+        AIProviderType::Anthropic => {
+            request_builder = request_builder
+                .header("x-api-key", api_key.unwrap_or_default())
+                .header("anthropic-version", "2023-06-01");
+        }
+        AIProviderType::Gemini => {
+            request_builder =
+                request_builder.header("x-goog-api-key", api_key.unwrap_or_default());
+        }
+        _ => {
+            if let Some(api_key) = api_key {
+                request_builder = request_builder.bearer_auth(api_key);
+            }
+        }
+    }
+
+    let response = request_builder
+        .send()
+        .await
+        .map_err(|error| ai_provider_request_error(config, &endpoint, &error))?;
+    let status = response.status();
+    let retry_after = response_retry_after_seconds(&response);
+    if !status.is_success() {
+        let raw_body = response
+            .text()
+            .await
+            .map_err(|_| ai_provider_response_error())?;
+        return Err(ai_provider_http_status_error(
+            config,
+            &endpoint,
+            status,
+            &raw_body,
+            api_key,
+            retry_after,
+        ));
+    }
+
+    let resp_json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| ai_provider_response_error())?;
+    let models = parse_models_list_response(shape, &resp_json);
+    if models.is_empty() {
+        return Err(
+            "The provider responded, but no models were found. Add model IDs manually.".to_string(),
+        );
+    }
+    Ok(models)
+}
 
 pub(crate) async fn execute_ai_stream_request(
     request: AIRequest,
@@ -541,7 +607,7 @@ pub(crate) async fn execute_ai_request(
                 api_key.as_deref(),
             ))
         }
-        AIProviderType::Gemini => {
+        AIProviderType::Gemini | AIProviderType::Vertex => {
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
             let mut body = build_provider_request_body(
@@ -564,9 +630,19 @@ pub(crate) async fn execute_ai_request(
                 &request.attachments,
             );
 
-            let response = client
-                .post(&endpoint)
-                .header("x-goog-api-key", api_key.as_deref().unwrap_or_default())
+            let mut request_builder = client.post(&endpoint);
+            if matches!(config.provider_type, AIProviderType::Vertex) {
+                // Vertex AI authenticates with an OAuth2 Bearer access token
+                // rather than Gemini's x-goog-api-key header. The generateContent
+                // body/response wire format is otherwise identical.
+                if let Some(ref token) = api_key {
+                    request_builder = request_builder.bearer_auth(token);
+                }
+            } else {
+                request_builder = request_builder
+                    .header("x-goog-api-key", api_key.as_deref().unwrap_or_default());
+            }
+            let response = request_builder
                 .json(&body)
                 .send()
                 .await

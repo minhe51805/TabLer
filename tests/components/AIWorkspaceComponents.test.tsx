@@ -324,4 +324,56 @@ describe("AI workspace components", () => {
       label: "Open public.users record (id: 42)",
     });
   });
+
+  it("reveals an inline field for a custom ask_user reply and sends the typed answer", async () => {
+    const user = userEvent.setup();
+    const onAskUserOptionSelect = vi.fn();
+    const bubble: AIWorkspaceBubbleData = {
+      id: "ask-1",
+      threadId: "thread-1",
+      workspaceKey: "connection::database",
+      interactionMode: "agent",
+      kind: "assistant",
+      status: "ready",
+      title: "Which collection?",
+      subtitle: "Pick a target",
+      prompt: "seed data",
+      preview: "Which collection should I seed?",
+      detail: "Which collection should I seed?",
+      askUserOptions: ["comments", "users"],
+      x: 0,
+      y: 0,
+      pointer: { x: 0, y: 0, visible: false },
+      createdAt: 1,
+    };
+    render(
+      <AIConversationView
+        bubbles={[bubble]}
+        copy={copy}
+        threadRef={createRef<HTMLDivElement>()}
+        onOpenDetail={vi.fn()}
+        onInsert={vi.fn()}
+        onRun={vi.fn()}
+        onRetry={vi.fn()}
+        onOpenRecord={vi.fn()}
+        onUseSuggestion={vi.fn()}
+        onAskUserOptionSelect={onAskUserOptionSelect}
+      />,
+    );
+
+    // A preset option is sent as-is on click.
+    await user.click(screen.getByRole("button", { name: "comments" }));
+    expect(onAskUserOptionSelect).toHaveBeenCalledWith("comments");
+
+    // "Type your own answer…" must reveal an inline text field (previously a
+    // no-op that only focused the far-away composer), then send the typed text.
+    expect(screen.queryByPlaceholderText(copy.bubbleStates.askUserCustomPlaceholder)).toBeNull();
+    await user.click(screen.getByRole("button", { name: copy.bubbleStates.askUserCustomAnswer }));
+    const input = screen.getByPlaceholderText(copy.bubbleStates.askUserCustomPlaceholder);
+    expect(input).toBeInTheDocument();
+
+    await user.type(input, "notifications table");
+    await user.click(screen.getByRole("button", { name: copy.bubbleStates.askUserCustomSend }));
+    expect(onAskUserOptionSelect).toHaveBeenLastCalledWith("notifications table");
+  });
 });

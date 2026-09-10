@@ -7,8 +7,9 @@ use std::collections::HashMap;
 
 use super::endpoints::{
     is_nvidia_integrate_endpoint, is_ollama_native_chat_endpoint,
-    is_ollama_native_generate_endpoint,
+    is_ollama_native_generate_endpoint, ModelsListShape,
 };
+use super::FetchedModel;
 
 pub(crate) fn streaming_request_body(
     config: &AIProviderConfig,
@@ -19,7 +20,10 @@ pub(crate) fn streaming_request_body(
 ) -> serde_json::Value {
     let mut body = build_provider_request_body(config, endpoint, system_prompt, prompt, mode);
     if let Some(object) = body.as_object_mut() {
-        if config.provider_type != AIProviderType::Gemini {
+        if !matches!(
+            config.provider_type,
+            AIProviderType::Gemini | AIProviderType::Vertex
+        ) {
             object.insert("stream".to_string(), serde_json::Value::Bool(true));
         }
         if matches!(
@@ -58,7 +62,10 @@ pub(crate) fn effective_wire_provider(config: &AIProviderConfig, endpoint: &str)
 }
 
 pub(crate) fn streaming_endpoint(config: &AIProviderConfig, endpoint: &str) -> String {
-    if config.provider_type == AIProviderType::Gemini {
+    if matches!(
+        config.provider_type,
+        AIProviderType::Gemini | AIProviderType::Vertex
+    ) {
         let Ok(mut url) = reqwest::Url::parse(endpoint) else {
             return endpoint.replace(":generateContent", ":streamGenerateContent");
         };
@@ -177,8 +184,139 @@ pub(crate) fn resolve_provider_body_shape(
             }
         }
         AIProviderType::Anthropic => ProviderBodyShape::Anthropic,
-        AIProviderType::Gemini => ProviderBodyShape::Gemini,
+        AIProviderType::Gemini | AIProviderType::Vertex => ProviderBodyShape::Gemini,
         AIProviderType::OpenAI | AIProviderType::OpenRouter => ProviderBodyShape::OpenAiLike,
+    }
+}
+
+/// Extracts the models from a provider's "list models" response, along with any
+/// capability metadata (context window, output budget, input modalities) the
+/// API advertised so the settings modal can auto-fill them instead of forcing
+/// manual entry. The envelope differs per dialect (`shape`), so the caller
+/// resolves that first via `resolve_models_list_endpoint`. Duplicate ids and
+/// blanks are dropped while preserving the provider's own ordering.
+pub(crate) fn parse_models_list_response(
+    shape: ModelsListShape,
+    value: &serde_json::Value,
+) -> Vec<FetchedModel> {
+    let raw: Vec<FetchedModel> = match shape {
+        ModelsListShape::OpenAiData => value
+            .get("data")
+            .and_then(|data| data.as_array())
+            .map(|entries| entries.iter().filter_map(parse_openai_model_entry).collect())
+            .unwrap_or_default(),
+        ModelsListShape::OllamaTags => value
+            .get("models")
+            .and_then(|models| models.as_array())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| entry.get("name").and_then(|name| name.as_str()))
+                    .map(|name| FetchedModel {
+                        id: name.to_string(),
+                        context_window: None,
+                        max_output_tokens: None,
+                        input_types: Vec::new(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        ModelsListShape::GeminiModels => value
+            .get("models")
+            .and_then(|models| models.as_array())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|entry| supports_generate_content(entry))
+                    .filter_map(parse_gemini_model_entry)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    raw.into_iter()
+        .map(|mut model| {
+            model.id = model.id.trim().to_string();
+            model
+        })
+        .filter(|model| !model.id.is_empty())
+        .filter(|model| seen.insert(model.id.clone()))
+        .collect()
+}
+
+/// Reads a token-count field a provider may send as an integer or a stringified
+/// number, checking each candidate key in order. Non-positive or unparseable
+/// values are treated as absent so a bogus `0` never overrides a real default.
+fn model_capacity(value: &serde_json::Value, keys: &[&str]) -> Option<u64> {
+    keys.iter().find_map(|key| {
+        let field = value.get(*key)?;
+        let count = field
+            .as_u64()
+            .or_else(|| field.as_str().and_then(|raw| raw.trim().parse::<u64>().ok()))?;
+        (count > 0).then_some(count)
+    })
+}
+
+/// Builds a `FetchedModel` from an OpenAI-style `/v1/models` entry. Plain OpenAI
+/// only exposes `id`, but OpenRouter enriches each entry with a `context_length`,
+/// a `top_provider` budget, and `architecture.input_modalities`, so those are
+/// harvested when present to pre-fill the model's capabilities.
+fn parse_openai_model_entry(entry: &serde_json::Value) -> Option<FetchedModel> {
+    let id = entry.get("id").and_then(|id| id.as_str())?.to_string();
+    let top_provider = entry.get("top_provider");
+    let context_window = model_capacity(entry, &["context_length", "context_window"])
+        .or_else(|| top_provider.and_then(|tp| model_capacity(tp, &["context_length", "context_window"])));
+    let max_output_tokens = top_provider
+        .and_then(|tp| model_capacity(tp, &["max_completion_tokens", "max_output_tokens"]))
+        .or_else(|| model_capacity(entry, &["max_completion_tokens", "max_output_tokens"]));
+    let input_types = entry
+        .get("architecture")
+        .and_then(|arch| arch.get("input_modalities"))
+        .and_then(|modalities| modalities.as_array())
+        .map(|modalities| {
+            modalities
+                .iter()
+                .filter_map(|modality| modality.as_str())
+                .map(|modality| modality.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(FetchedModel {
+        id,
+        context_window,
+        max_output_tokens,
+        input_types,
+    })
+}
+
+/// Builds a `FetchedModel` from a Gemini `/v1beta/models` entry, stripping the
+/// `models/` name prefix and reading the `inputTokenLimit` / `outputTokenLimit`
+/// budgets Gemini advertises per model.
+fn parse_gemini_model_entry(entry: &serde_json::Value) -> Option<FetchedModel> {
+    let name = entry.get("name").and_then(|name| name.as_str())?;
+    let id = name.strip_prefix("models/").unwrap_or(name).to_string();
+    Some(FetchedModel {
+        id,
+        context_window: model_capacity(entry, &["inputTokenLimit"]),
+        max_output_tokens: model_capacity(entry, &["outputTokenLimit"]),
+        input_types: Vec::new(),
+    })
+}
+
+/// Gemini lists embeddings and legacy models alongside chat models; keep only
+/// those advertising `generateContent` (the dialect TableR speaks). Missing
+/// metadata is treated as capable so a schema change never silently drops
+/// every model.
+fn supports_generate_content(entry: &serde_json::Value) -> bool {
+    match entry
+        .get("supportedGenerationMethods")
+        .and_then(|methods| methods.as_array())
+    {
+        Some(methods) => methods
+            .iter()
+            .any(|method| method.as_str() == Some("generateContent")),
+        None => true,
     }
 }
 
@@ -353,7 +491,7 @@ pub(crate) fn apply_native_tools(
     };
 
     match provider_type {
-        AIProviderType::Gemini => {
+        AIProviderType::Gemini | AIProviderType::Vertex => {
             object.insert(
                 "tools".to_string(),
                 json!([{ "functionDeclarations": tools }]),
@@ -704,6 +842,58 @@ mod tests {
     }
 
     #[test]
+    fn vertex_reuses_gemini_body_shape_stream_and_tool_nesting() {
+        let mut vertex = sample_provider(AIProviderType::Vertex);
+        // Vertex resolves the pasted endpoint verbatim; give it a full URL.
+        vertex.endpoint =
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
+                .to_string();
+        let endpoint = super::super::endpoints::resolve_provider_endpoint(&vertex);
+        assert_eq!(
+            resolve_provider_body_shape(&vertex, &endpoint),
+            ProviderBodyShape::Gemini
+        );
+
+        let body = build_provider_request_body(
+            &vertex,
+            &endpoint,
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(body["systemInstruction"]["parts"][0]["text"], "system prompt");
+        assert_eq!(body["contents"][0]["role"], "user");
+        assert_eq!(body["contents"][0]["parts"][0]["text"], "user prompt");
+
+        // Streaming must not carry the OpenAI-style stream flag and must switch
+        // to streamGenerateContent + alt=sse (same as Gemini).
+        let stream_body = streaming_request_body(
+            &vertex,
+            &endpoint,
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert!(stream_body.get("stream").is_none());
+        let streaming = streaming_endpoint(&vertex, &endpoint);
+        assert!(streaming.contains(":streamGenerateContent"));
+        assert!(streaming.contains("alt=sse"));
+
+        let mut tool_body = json!({ "contents": [] });
+        let tools = json!([{ "name": "finish", "parameters": {} }]);
+        let choice = json!({ "function_calling_config": { "mode": "AUTO" } });
+        apply_native_tools(
+            &mut tool_body,
+            &AIProviderType::Vertex,
+            Some(&tools),
+            Some(&choice),
+        );
+        assert_eq!(tool_body["tools"], json!([{ "functionDeclarations": tools }]));
+        assert_eq!(tool_body["tool_config"], choice);
+        assert!(tool_body.get("tool_choice").is_none());
+    }
+
+    #[test]
     fn streaming_body_is_enabled_and_think_chunks_stay_private() {
         let provider = sample_provider(AIProviderType::OpenAI);
         let endpoint = super::super::endpoints::resolve_provider_endpoint(&provider);
@@ -813,5 +1003,83 @@ mod tests {
         assert_eq!(ollama_body["prompt"], "user prompt");
         assert_eq!(ollama_body["stream"], false);
         assert!(ollama_body.get("messages").is_none());
+    }
+
+    #[test]
+    fn parses_models_list_responses_per_shape() {
+        fn ids(models: &[FetchedModel]) -> Vec<String> {
+            models.iter().map(|model| model.id.clone()).collect()
+        }
+
+        // OpenAI / OpenRouter / Anthropic all use { data: [ { id } ] }, and a
+        // repeated id is collapsed while original order is kept. OpenRouter also
+        // enriches entries with a context budget, output cap, and input
+        // modalities, which are surfaced for auto-fill.
+        let openai = json!({
+            "data": [
+                {
+                    "id": "gpt-4o",
+                    "context_length": 128000,
+                    "top_provider": { "max_completion_tokens": 16384 },
+                    "architecture": { "input_modalities": ["text", "image"] }
+                },
+                { "id": "gpt-4o-mini" },
+                { "id": "gpt-4o" }
+            ]
+        });
+        let parsed = parse_models_list_response(ModelsListShape::OpenAiData, &openai);
+        assert_eq!(ids(&parsed), vec!["gpt-4o".to_string(), "gpt-4o-mini".to_string()]);
+        assert_eq!(parsed[0].context_window, Some(128_000));
+        assert_eq!(parsed[0].max_output_tokens, Some(16_384));
+        assert_eq!(
+            parsed[0].input_types,
+            vec!["text".to_string(), "image".to_string()]
+        );
+        // An entry without metadata leaves every capability unset so the
+        // frontend keeps its defaults.
+        assert_eq!(parsed[1].context_window, None);
+        assert_eq!(parsed[1].max_output_tokens, None);
+        assert!(parsed[1].input_types.is_empty());
+
+        let ollama = json!({
+            "models": [
+                { "name": "llama3:latest" },
+                { "name": "qwen2.5-coder:7b" }
+            ]
+        });
+        let parsed_ollama = parse_models_list_response(ModelsListShape::OllamaTags, &ollama);
+        assert_eq!(
+            ids(&parsed_ollama),
+            vec!["llama3:latest".to_string(), "qwen2.5-coder:7b".to_string()]
+        );
+        // The Ollama tag list exposes no capacity metadata.
+        assert!(parsed_ollama.iter().all(|model| model.context_window.is_none()));
+
+        // Gemini strips the `models/` prefix and drops entries that cannot
+        // generate content, but keeps entries missing the capability metadata.
+        // Token limits map to the context window + output budget.
+        let gemini = json!({
+            "models": [
+                {
+                    "name": "models/gemini-2.0-flash",
+                    "supportedGenerationMethods": ["generateContent"],
+                    "inputTokenLimit": 1048576,
+                    "outputTokenLimit": 8192
+                },
+                { "name": "models/embedding-001", "supportedGenerationMethods": ["embedContent"] },
+                { "name": "models/gemini-1.5-pro" }
+            ]
+        });
+        let parsed_gemini = parse_models_list_response(ModelsListShape::GeminiModels, &gemini);
+        assert_eq!(
+            ids(&parsed_gemini),
+            vec!["gemini-2.0-flash".to_string(), "gemini-1.5-pro".to_string()]
+        );
+        assert_eq!(parsed_gemini[0].context_window, Some(1_048_576));
+        assert_eq!(parsed_gemini[0].max_output_tokens, Some(8_192));
+        assert_eq!(parsed_gemini[1].context_window, None);
+
+        // A malformed / empty envelope yields no models rather than panicking.
+        assert!(parse_models_list_response(ModelsListShape::OpenAiData, &json!({})).is_empty());
     }
 }

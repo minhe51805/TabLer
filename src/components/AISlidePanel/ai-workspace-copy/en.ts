@@ -193,6 +193,8 @@ export const EN_COPY: AIWorkspaceCopy = {
       runFailedTitle: "Run failed",
       runFailedSubtitle: "Sandbox execution stopped",
       askUserCustomAnswer: "Type your own answer…",
+      askUserCustomPlaceholder: "Type your answer…",
+      askUserCustomSend: "Send",
       openedInWorkspaceTitle: "Opened in workspace",
       openedInWorkspaceSubtitle: "Sent to a workspace tab",
       openedInWorkspacePreview: "I opened this in a workspace tab so you can explore the result there. This conversation stays here for follow-up questions.",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCompactTranscript, buildCompactUserPrompt, buildPostCompactHistory, buildWorkspaceContextMessages, deriveMemoryTitle, extractDigestFromReply, extractMemoryKeywords, isCompactCommand, estimateTokensFromChars, formatTokensCompact } from "../../src/utils/ai-context-compact";
+import { buildCompactTranscript, buildCompactUserPrompt, buildPostCompactHistory, buildWorkspaceContextMessages, COMPACT_DIGEST_CHAR_BUDGET, deriveMemoryTitle, extractDigestFromReply, extractMemoryKeywords, isCompactCommand, estimateTokensFromChars, formatTokensCompact } from "../../src/utils/ai-context-compact";
 import { buildAIWorkspaceKey } from "../../src/components/AISlidePanel/ai-conversation-state";
 import type { AIWorkspaceBubbleData } from "../../src/components/AISlidePanel/ai-workspace-types";
 
@@ -114,6 +114,36 @@ describe("buildWorkspaceContextMessages", () => {
     expect(messages[0]).toMatchObject({ role: "user" });
     expect(messages[0].content).toContain("Goal: x");
     expect(messages[1]).toMatchObject({ role: "assistant" });
+  });
+
+  it("bounds an oversized digest so the always-on injection can't blow the backend history cap", () => {
+    // A runaway summarizer could return a digest far larger than the budget.
+    // Injecting it verbatim on every send (plus recent turns) would exceed the
+    // backend's 24,000-char history cap and hard-fail the whole request, so the
+    // digest must be trimmed here just like the post-compact path.
+    const messages = buildWorkspaceContextMessages("d".repeat(9_000), 500);
+    expect(messages).toHaveLength(2);
+    expect(messages[0].content.length).toBeLessThan(700);
+    expect(messages[0].content.endsWith("…")).toBe(true);
+  });
+
+  it("defaults the bound to the compact digest budget", () => {
+    const messages = buildWorkspaceContextMessages("d".repeat(COMPACT_DIGEST_CHAR_BUDGET + 5_000));
+    // Prefix line + budget + ellipsis, never the full runaway digest.
+    expect(messages[0].content.length).toBeLessThan(COMPACT_DIGEST_CHAR_BUDGET + 100);
+    expect(messages[0].content.endsWith("…")).toBe(true);
+  });
+
+  it("stays byte-identical to the post-compact history path (single source of truth)", () => {
+    // Both digest-injection paths must produce the exact same messages so the
+    // model sees identical durable context on the compact turn and every later
+    // send. If these ever diverge, context would subtly shift after a compact.
+    const digest = "## Objective\n- Keep the migration on track\n\n## Work State\n- Active";
+    expect(buildPostCompactHistory(digest)).toEqual(buildWorkspaceContextMessages(digest));
+    const big = "x".repeat(9_000);
+    expect(buildPostCompactHistory(big, [], 1_200)).toEqual(
+      buildWorkspaceContextMessages(big, 1_200),
+    );
   });
 });
 

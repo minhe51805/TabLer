@@ -1111,6 +1111,9 @@ export function nativeToolPayloadForProvider(
     case "anthropic":
       return { tools: toAnthropicTools(specs), tool_choice: { type: "auto" } };
     case "gemini":
+    case "vertex":
+      // Vertex AI speaks the same generateContent wire format as Gemini:
+      // functionDeclarations + tool_config.function_calling_config.
       return {
         tools: toGeminiFunctionDeclarations(specs),
         tool_choice: { function_calling_config: { mode: "AUTO" } },

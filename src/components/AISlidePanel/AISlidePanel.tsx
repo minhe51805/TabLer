@@ -48,7 +48,7 @@ import {
   prefersVietnameseSystemReply,
   supportsOverviewMetricsBoard,
 } from "./ai-visualization-intent";
-import { buildAIWorkspaceKey, estimateConversationFootprint, buildConversationHistoryMessages, createAIWorkspaceId, createChatThread, prunePersistedAIWorkspaceState, sanitizePersistedAIWorkspaceState, summarizePromptForDisplay, type AIChatThread, type PersistedAIWorkspaceState } from "./ai-conversation-state";
+import { buildAIWorkspaceKey, estimateConversationFootprint, buildConversationHistoryMessages, createAIWorkspaceId, createChatThread, prunePersistedAIWorkspaceState, resolveHistoryBudget, sanitizePersistedAIWorkspaceState, summarizePromptForDisplay, type AIChatThread, type PersistedAIWorkspaceState } from "./ai-conversation-state";
 import { buildExecutionDetail, buildPromptWithSelection, isSingleSqlStatement, type SelectionContextState } from "./ai-panel-selection";
 import { processFilesIntoAttachmentDrafts, type AIAttachmentDraft } from "../../utils/ai-attachments";
 import type { AIAgentRecordLink } from "./ai-agent-record-links";
@@ -330,9 +330,16 @@ export function AISlidePanel({
     ),
     [bubbles, currentThread, currentWorkspaceKey]
   );
+  // Verbatim replay window scaled to the active model's context window (tokens),
+  // clamped to the backend caps. Larger-context models keep more turns / fuller
+  // text so long chats remember more; small/unknown models stay conservative.
+  const historyBudget = useMemo(
+    () => resolveHistoryBudget(activeProvider?.model_settings?.[activeProvider.model ?? ""]?.context_window ?? null),
+    [activeProvider]
+  );
   const historyMessages = useMemo(
-    () => buildConversationHistoryMessages(activeThreadBubbles),
-    [activeThreadBubbles]
+    () => buildConversationHistoryMessages(activeThreadBubbles, historyBudget),
+    [activeThreadBubbles, historyBudget]
   );
   const workspaceContextMessages = useMemo(
     () => buildWorkspaceContextMessages(activeChatWorkspace?.contextDigest),
@@ -1315,6 +1322,7 @@ export function AISlidePanel({
       bubbles.filter((currentBubble) => (
         currentBubble.threadId === bubble.threadId && currentBubble.id !== bubble.id && !currentBubble.compactedAt
       )),
+      historyBudget,
     );
     setActiveThreadId(bubble.threadId);
     await createAssistantBubble(bubble.prompt, {
@@ -1326,7 +1334,7 @@ export function AISlidePanel({
       workspaceKey: bubble.workspaceKey,
       interactionMode: bubble.interactionMode,
     });
-  }, [bubbles, createAssistantBubble, isGenerating, workspaceContextMessages]);
+  }, [bubbles, createAssistantBubble, historyBudget, isGenerating, workspaceContextMessages]);
 
   const handleComposerKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // The "/" command menu owns the keyboard while it is open: arrows move the
@@ -1641,7 +1649,8 @@ export function AISlidePanel({
     if (!normalizedNote) return;
     const rewritePrompt = `${bubble.prompt}\n\nRewrite or adjust it with these instructions:\n${normalizedNote}`;
     const rewriteHistory = buildConversationHistoryMessages(
-      bubbles.filter((currentBubble) => currentBubble.threadId === bubble.threadId && !currentBubble.compactedAt)
+      bubbles.filter((currentBubble) => currentBubble.threadId === bubble.threadId && !currentBubble.compactedAt),
+      historyBudget,
     );
     const result = await createAssistantBubble(rewritePrompt, {
       history: [...workspaceContextMessages, ...rewriteHistory],
@@ -1654,7 +1663,7 @@ export function AISlidePanel({
       setActiveThreadId(bubble.threadId);
       setDetailBubbleId(null);
     }
-  }, [bubbles, createAssistantBubble, workspaceContextMessages]);
+  }, [bubbles, createAssistantBubble, historyBudget, workspaceContextMessages]);
 
   const handleCreateChatThread = useCallback(() => {
     const nextThread = createChatThread(workspaceThreads.length + 1, currentWorkspaceKey);

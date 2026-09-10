@@ -1,5 +1,5 @@
 import { CornerDownLeft, ExternalLink, Eye, FileText, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
-import { memo, useEffect, useState, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
   aiModeAllowsInsert,
@@ -29,9 +29,11 @@ interface AIConversationViewProps {
   onRetry: (bubble: AIWorkspaceBubbleData) => void;
   onOpenRecord: (link: AIAgentRecordLink) => void;
   onUseSuggestion: (prompt: string) => void;
-  /** One-click reply: sends the chosen ask_user option as a new message. */
+  /** One-click reply: sends the chosen ask_user option (or an inline
+   *  free-form answer) as a new message. */
   onAskUserOptionSelect?: (option: string) => void;
-  /** Focuses the composer so the user can type a custom reply instead. */
+  /** Legacy composer-focus fallback. Retained for backward compatibility; the
+   *  custom reply now opens an inline text field via {@link AIAskUserReply}. */
   onAskUserCustomInput?: () => void;
 }
 
@@ -126,6 +128,94 @@ function AIAttachmentFileChips({ attachments }: { attachments: AIWorkspaceAttach
   );
 }
 
+/** ask_user reply block: renders the model's options as one-click buttons and,
+ *  when the user picks "type your own", reveals an inline text field right
+ *  under the options so they can send a free-form answer without hunting for
+ *  the composer at the bottom of the panel. Submitting routes through the same
+ *  path as an option click (sends the text as the next message). */
+function AIAskUserReply({
+  options,
+  copy,
+  onSelectOption,
+}: {
+  options: string[];
+  copy: AIWorkspaceCopy;
+  onSelectOption: (value: string) => void;
+}) {
+  const [isCustomOpen, setIsCustomOpen] = useState(false);
+  const [customValue, setCustomValue] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isCustomOpen) inputRef.current?.focus();
+  }, [isCustomOpen]);
+
+  const submitCustom = () => {
+    const trimmed = customValue.trim();
+    if (!trimmed) return;
+    onSelectOption(trimmed);
+    setCustomValue("");
+    setIsCustomOpen(false);
+  };
+
+  return (
+    <div className="ai-workspace-ask-user">
+      {options.map((option) => (
+        <button
+          key={option}
+          type="button"
+          className="ai-workspace-ask-user-option"
+          onClick={() => onSelectOption(option)}
+        >
+          {option}
+        </button>
+      ))}
+      {isCustomOpen ? (
+        <form
+          className="ai-workspace-ask-user-custom"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitCustom();
+          }}
+        >
+          <input
+            ref={inputRef}
+            type="text"
+            className="ai-workspace-ask-user-custom-input"
+            value={customValue}
+            placeholder={copy.bubbleStates.askUserCustomPlaceholder}
+            onChange={(event) => setCustomValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setCustomValue("");
+                setIsCustomOpen(false);
+              }
+            }}
+          />
+          <button
+            type="submit"
+            className="ai-workspace-ask-user-custom-send"
+            disabled={!customValue.trim()}
+            title={copy.bubbleStates.askUserCustomSend}
+            aria-label={copy.bubbleStates.askUserCustomSend}
+          >
+            <CornerDownLeft className="w-3.5 h-3.5" />
+          </button>
+        </form>
+      ) : (
+        <button
+          type="button"
+          className="ai-workspace-ask-user-option is-custom"
+          onClick={() => setIsCustomOpen(true)}
+        >
+          {copy.bubbleStates.askUserCustomAnswer}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export const AIConversationView = memo(function AIConversationView({
   bubbles,
   copy,
@@ -137,7 +227,6 @@ export const AIConversationView = memo(function AIConversationView({
   onOpenRecord,
   onUseSuggestion,
   onAskUserOptionSelect,
-  onAskUserCustomInput,
 }: AIConversationViewProps) {
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
   const [viewerImage, setViewerImage] = useState<{ url: string; name: string } | null>(null);
@@ -261,16 +350,11 @@ export const AIConversationView = memo(function AIConversationView({
                         && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={displayConversationText} />
                     ) : null}
                     {askUserOptions && (
-                      <div className="ai-workspace-ask-user">
-                        {askUserOptions.map((option) => (
-                          <button key={option} type="button" className="ai-workspace-ask-user-option" onClick={() => onAskUserOptionSelect?.(option)}>
-                            {option}
-                          </button>
-                        ))}
-                        <button type="button" className="ai-workspace-ask-user-option is-custom" onClick={() => onAskUserCustomInput?.()}>
-                          {copy.bubbleStates.askUserCustomAnswer}
-                        </button>
-                      </div>
+                      <AIAskUserReply
+                        options={askUserOptions}
+                        copy={copy}
+                        onSelectOption={(value) => onAskUserOptionSelect?.(value)}
+                      />
                     )}
                     {recordLinks.length > 0 && (
                       <div className="ai-workspace-agent-record-links">

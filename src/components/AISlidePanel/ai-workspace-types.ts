@@ -66,6 +66,7 @@ export type AIWorkspaceAgentActionName =
   | "edit_query_sql"
   | "delete_memory"
   | "create_checkpoint"
+  | "propose_seed_data"
   | "restore_checkpoint"
   | "delegate"
   | "read_page"

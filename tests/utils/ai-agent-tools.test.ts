@@ -23,6 +23,7 @@ describe("AI agent tool contract", () => {
       "check_sql",
       "run_preset",
       "preview_write",
+      "propose_seed_data",
       "remember_term",
       "read_memory",
       "save_memory",

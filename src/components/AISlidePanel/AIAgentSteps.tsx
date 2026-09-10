@@ -74,6 +74,7 @@ function getActionIcon(action: AIWorkspaceAgentActionName): ReactNode {
     case "read_page":
       return <Eye className="w-3.5 h-3.5" />;
     case "preview_write":
+    case "propose_seed_data":
       return <PenLine className="w-3.5 h-3.5" />;
     case "finish":
     default:
@@ -117,6 +118,8 @@ function getActionLabel(
       return copy.modal.agentActionThink;
     case "preview_write":
       return copy.modal.agentActionPreviewWrite;
+    case "propose_seed_data":
+      return copy.modal.agentActionProposeSeedData;
     case "finish":
     default:
       return copy.modal.agentActionFinish;

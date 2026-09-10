@@ -46,6 +46,7 @@ export const EN_COPY: AIWorkspaceCopy = {
       agentActionCreateCheckpoint: "Creating checkpoint",
       agentActionRestoreCheckpoint: "Restoring checkpoint",
       agentActionPreviewWrite: "Previewing changes",
+      agentActionProposeSeedData: "Proposing seed data",
       agentActionListTables: "Listing tables",
       agentActionDescribeTable: "Inspecting schema",
       agentActionRunSql: "Reading data",

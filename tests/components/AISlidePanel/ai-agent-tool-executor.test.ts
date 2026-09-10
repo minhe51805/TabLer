@@ -926,3 +926,82 @@ describe("edit_query_sql createIfMissing", () => {
     expect(observation).toContain("could not open a new AI Query tab");
   });
 });
+
+describe("propose_seed_data (document engines)", () => {
+  const SEED_DOCS = [
+    { name: "Nguyen Van A", email: "a@example.com", status: "active" },
+    { name: "Tran Thi B", email: "b@example.com", status: "active" },
+  ];
+
+  it("opens a NEW query tab with the insertMany script, never auto-run", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const { runAgentTool } = createAgentToolExecutor(mkDeps({ openQueryTab }));
+    const observation = await runAgentTool({
+      action: "propose_seed_data",
+      message: "fill users",
+      args: { collection: "users", documents: SEED_DOCS, rationale: "demo users seed" },
+    } as unknown as AIAgentToolAction);
+    expect(openQueryTab).toHaveBeenCalledTimes(1);
+    const call = openQueryTab.mock.calls[0]?.[0];
+    if (!call) throw new Error("openQueryTab was not called with the seed proposal");
+    expect(call.autoRun).toBe(false);
+    expect(call.sql).toContain("db.users.insertMany([");
+    expect(call.sql).toContain('"name":"Nguyen Van A"');
+    expect(call.title).toBe("demo users seed");
+    const flat = observation.replace(/\s+/g, "");
+    expect(flat).toContain('"collection":"users"');
+    expect(flat).toContain('"documentCount":2');
+    expect(observation).toContain("NOT auto-run");
+  });
+
+  it("is blocked on SQL engines", async () => {
+    const deps = mkDeps({ toolAvailability: agentToolAvailability("postgresql") });
+    const openQueryTab = vi.fn(() => true);
+    deps.openQueryTab = openQueryTab;
+    const observation = await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS },
+    } as unknown as AIAgentToolAction);
+    expect(observation).toContain("Tool blocked: propose_seed_data is only available on document engines");
+    expect(openQueryTab).not.toHaveBeenCalled();
+  });
+
+  it("refuses collection names that cannot ride db.<name> shell syntax", async () => {
+    const deps = mkDeps({ toolAvailability: agentToolAvailability("mongodb") });
+    for (const bad of ["db.users", "user data", "system.users", "a.b"]) {
+      const observation = await run(deps, {
+        action: "propose_seed_data",
+        args: { collection: bad, documents: SEED_DOCS },
+      } as unknown as AIAgentToolAction);
+      expect(observation).toContain("Tool error: args.collection");
+    }
+  });
+
+  it("refuses non-object or empty documents", async () => {
+    const deps = mkDeps();
+    const openQueryTab = vi.fn(() => true);
+    deps.openQueryTab = openQueryTab;
+    const observation = await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: ["just a string"] },
+    } as unknown as AIAgentToolAction);
+    expect(observation).toContain("must be an object");
+    expect(openQueryTab).not.toHaveBeenCalled();
+
+    const emptyObservation = await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: [{}] },
+    } as unknown as AIAgentToolAction);
+    expect(emptyObservation).toContain("at least one field");
+  });
+
+  it("enforces the document cap", async () => {
+    const deps = mkDeps();
+    const many = Array.from({ length: 201 }, () => ({ name: "x" }));
+    const observation = await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: many },
+    } as unknown as AIAgentToolAction);
+    expect(observation).toContain("200-document cap");
+  });
+});

@@ -417,19 +417,19 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   propose_seed_data: {
     name: "propose_seed_data",
     description:
-      "Document engines only (MongoDB). Fill an empty or sparse collection with realistic sample data: pass documents grounded in the fields you verified with describe_table or sample_table_data. The insertMany script opens in a NEW query tab for the user to review and run — you cannot insert data directly and must never claim data was written.",
+      "Fill an empty or sparse table or collection with realistic sample data grounded in the fields you verified with describe_table or sample_table_data. On SQL engines this emits INSERT statements; on MongoDB it emits an insertMany script. The script opens in a NEW query tab for the user to review and run — you cannot insert data directly and must never claim data was written.",
     parameters: objectSchema(
       {
         collection: {
           type: "string",
-          description: "Exact collection name to fill (no db. prefix, no whitespace or dots).",
+          description: "Exact table or collection name to fill (no schema/db prefix, no whitespace or dots).",
         },
         documents: {
           type: "array",
           items: { type: "object", additionalProperties: true },
           minItems: 1,
           maxItems: AI_AGENT_SEED_DOCUMENT_LIMIT,
-          description: `Realistic documents (1-${AI_AGENT_SEED_DOCUMENT_LIMIT}), each an object whose fields match the collection's verified schema. Never fabricate fields you have not seen.`,
+          description: `Realistic rows (1-${AI_AGENT_SEED_DOCUMENT_LIMIT}), each an object whose fields match the table or collection's verified schema. Never fabricate fields you have not seen.`,
         },
         rationale: {
           type: "string",

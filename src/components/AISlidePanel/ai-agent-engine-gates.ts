@@ -97,7 +97,7 @@ export function isAgentToolEnabled(
   if (name === "find_value" || name === "check_sql") return availability.sqlRead;
   if (name === "list_schema_objects" || name === "run_preset") return availability.sqlRead;
   if (name === "preview_write") return availability.sqlWritePreview;
-  if (name === "propose_seed_data") return availability.documentPropose;
+  if (name === "propose_seed_data") return availability.sqlWritePreview || availability.documentPropose;
   return true;
 }
 

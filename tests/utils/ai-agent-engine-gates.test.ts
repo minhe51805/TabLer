@@ -89,14 +89,21 @@ describe("agent engine tool gates", () => {
     expect(agentSqlToolBlockedMessage("preview_write", redis)).toContain("Redis");
   });
 
-  it("gates propose_seed_data to document engines only", () => {
+  it("enables propose_seed_data on SQL and document engines, not on cql/kv/search", () => {
     const mongo = agentToolAvailability("mongodb");
     expect(mongo.documentPropose).toBe(true);
     expect(isAgentToolEnabled("propose_seed_data", mongo)).toBe(true);
 
-    for (const engine of ["postgresql", "mysql", "cassandra", "redis", "opensearch"] as const) {
+    for (const engine of ["postgresql", "mysql", "sqlite", "mssql"] as const) {
+      const availability = agentToolAvailability(engine);
+      expect(availability.sqlWritePreview).toBe(true);
+      expect(isAgentToolEnabled("propose_seed_data", availability)).toBe(true);
+    }
+
+    for (const engine of ["cassandra", "redis", "opensearch"] as const) {
       const availability = agentToolAvailability(engine);
       expect(availability.documentPropose).toBe(false);
+      expect(availability.sqlWritePreview).toBe(false);
       expect(isAgentToolEnabled("propose_seed_data", availability)).toBe(false);
     }
   });

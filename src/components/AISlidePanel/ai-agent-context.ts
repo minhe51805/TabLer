@@ -541,8 +541,8 @@ export function buildAgentControllerPrompt(params: {
     workspaceToolsEnabled && sqlWritePreview
       ? "- To propose data or schema changes, run preview_write with the mutating statements: it executes them inside one transaction and always rolls back, showing real affected rows. NEVER claim a change was persisted; the human applies the final SQL through the approval flow."
       : "",
-    workspaceToolsEnabled && toolAvailability?.documentPropose
-      ? "- To fill an empty or sparse collection: verify its fields with describe_table or sample_table_data first, then call propose_seed_data with realistic documents matching those fields. The insertMany script opens in a NEW query tab that the user reviews and runs — you cannot insert data directly and must never claim data was written."
+    workspaceToolsEnabled && (toolAvailability?.documentPropose || toolAvailability?.sqlWritePreview)
+      ? "- To fill an empty or sparse table or collection with sample data: verify its fields with describe_table or sample_table_data first, then call propose_seed_data with realistic rows matching those fields. It opens the INSERT (or MongoDB insertMany) script in a NEW query tab that the user reviews and runs — you cannot insert data directly and must never claim data was written."
       : "",
     workspaceToolsEnabled
       ? "- When you discover a durable, non-obvious semantic fact (what a metric means, what an alias maps to, a hidden relationship), call remember_term once so every future run for this database inherits it."

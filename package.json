@@ -1,8 +1,8 @@
 {
   "name": "tabler",
   "private": true,
-  "version": "0.1.5",
-  "releaseLabel": "0.1.5d",
+  "version": "0.1.6",
+  "releaseLabel": "0.1.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -24,7 +24,7 @@
     "test:integration:drivers": "node scripts/run-driver-integration.mjs",
     "test:integration:heavy": "node scripts/run-driver-integration.mjs --heavy",
     "dev:debug": "node scripts/dev-with-debug-port.mjs",
-    "test:performance": "vitest run tests/performance/v015-performance.test.ts",
+    "test:performance": "vitest run tests/performance/v016-performance.test.ts",
     "check:secrets": "node scripts/check-secret-leaks.mjs"
   },
   "dependencies": {

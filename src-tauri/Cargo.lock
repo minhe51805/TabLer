@@ -7055,7 +7055,7 @@ dependencies = [
 
 [[package]]
 name = "tabler"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -7109,7 +7109,7 @@ dependencies = [
 
 [[package]]
 name = "tabler-mcp"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "tabler",
  "tokio",

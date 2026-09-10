@@ -1,6 +1,6 @@
 [package]
 name = "tabler-mcp"
-version = "0.1.5"
+version = "0.1.6"
 description = "TableR local stdio MCP server"
 authors = ["TableR Team"]
 edition = "2021"

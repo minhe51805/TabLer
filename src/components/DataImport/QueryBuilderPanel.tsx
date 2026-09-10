@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import { Plus, Play, Trash2, X, Table2 } from "lucide-react";
 import { useI18n } from "../../i18n";
+import {
+  deleteBuilderDefinition,
+  listBuilderDefinitions,
+  saveBuilderDefinition,
+  type BuilderDefinition,
+} from "../../utils/builder-definitions-store";
+import type { BuilderAggregateFn } from "../../utils/query-builder";
 import { emitAppToast } from "../../utils/app-toast";
 import {
   buildSelectSql,
@@ -38,6 +45,13 @@ export function QueryBuilderPanel({ tables, dbType, loadColumns, onOpenInQueryTa
   const [filterDraft, setFilterDraft] = useState<{ tableId: string; column: string; operator: "=" | "LIKE"; value: string }>({
     tableId: "", column: "", operator: "=", value: "",
   });
+  const [aggregateDraft, setAggregateDraft] = useState<{ fn: BuilderAggregateFn; tableId: string; column: string; alias: string }>({
+    fn: "COUNT", tableId: "", column: "*", alias: "",
+  });
+  const [groupByDraft, setGroupByDraft] = useState<{ tableId: string; column: string }>({ tableId: "", column: "" });
+  const [havingDraft, setHavingDraft] = useState<{ aggregateId: string; operator: ">"; value: string }>({ aggregateId: "", operator: ">", value: "" });
+  const [definitions, setDefinitions] = useState<BuilderDefinition[]>(() => listBuilderDefinitions());
+  const [definitionName, setDefinitionName] = useState("");
 
   const ensureColumns = async (tableName: string) => {
     if (columnsByTable[tableName]) return;
@@ -100,6 +114,56 @@ export function QueryBuilderPanel({ tables, dbType, loadColumns, onOpenInQueryTa
         },
       ],
     }));
+  };
+
+  const addAggregate = () => {
+    if (!aggregateDraft.tableId) return;
+    setModel((current) => ({
+      ...current,
+      aggregates: [
+        ...current.aggregates,
+        {
+          id: `a${current.aggregates.length + 1}`,
+          fn: aggregateDraft.fn,
+          tableId: aggregateDraft.tableId,
+          column: aggregateDraft.column,
+          alias: aggregateDraft.alias.trim() || undefined,
+        },
+      ],
+    }));
+  };
+
+  const addGroupBy = () => {
+    if (!groupByDraft.tableId || !groupByDraft.column) return;
+    setModel((current) => ({
+      ...current,
+      groupBy: [...current.groupBy, { tableId: groupByDraft.tableId, column: groupByDraft.column }],
+    }));
+  };
+
+  const addHaving = () => {
+    if (!havingDraft.aggregateId || !havingDraft.value.trim()) return;
+    setModel((current) => ({
+      ...current,
+      having: [...current.having, { id: `h${current.having.length + 1}`, aggregateId: havingDraft.aggregateId, operator: havingDraft.operator, value: havingDraft.value.trim() }],
+    }));
+  };
+
+  const handleSaveDefinition = () => {
+    if (!definitionName.trim()) return;
+    saveBuilderDefinition(definitionName.trim(), model);
+    setDefinitions(listBuilderDefinitions());
+    setDefinitionName("");
+    emitAppToast({ title: t("querybuilder.definitionSaved"), tone: "success" });
+  };
+
+  const handleLoadDefinition = (id: string) => {
+    const definition = definitions.find((entry) => entry.id === id);
+    if (!definition) return;
+    setModel(definition.model);
+    for (const table of definition.model.tables) {
+      void ensureColumns(table.name);
+    }
   };
 
   const handleOpen = () => {
@@ -340,7 +404,250 @@ export function QueryBuilderPanel({ tables, dbType, loadColumns, onOpenInQueryTa
           </div>
         )}
 
+        {/* Aggregates + GROUP BY + HAVING */}
+        {model.tables.length > 0 && (
+          <div className="qs-list schema-diff-results">
+            <div className="qs-item static global-search-match-kind">{t("querybuilder.aggregates")}</div>
+            {model.aggregates.map((aggregate) => {
+              const table = model.tables.find((entry) => entry.id === aggregate.tableId);
+              return (
+                <div key={aggregate.id} className="qs-item static">
+                  <span className="global-search-match-label">
+                    {aggregate.fn}({aggregate.column === "*" ? "*" : `${table?.alias}.${aggregate.column}`})
+                    {aggregate.alias ? ` AS ${aggregate.alias}` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className="qs-clear-btn"
+                    aria-label="Remove aggregate"
+                    onClick={() =>
+                      setModel((current) => ({
+                        ...current,
+                        aggregates: current.aggregates.filter((entry) => entry.id !== aggregate.id),
+                        having: current.having.filter((condition) => condition.aggregateId !== aggregate.id),
+                      }))
+                    }
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              );
+            })}
+            {model.groupBy.map((group) => {
+              const table = model.tables.find((entry) => entry.id === group.tableId);
+              return (
+                <div key={`g-${group.tableId}-${group.column}`} className="qs-item static">
+                  <span className="global-search-match-label">GROUP BY {table?.alias}.{group.column}</span>
+                  <button
+                    type="button"
+                    className="qs-clear-btn"
+                    aria-label="Remove group by"
+                    onClick={() =>
+                      setModel((current) => ({
+                        ...current,
+                        groupBy: current.groupBy.filter((entry) => !(entry.tableId === group.tableId && entry.column === group.column)),
+                      }))
+                    }
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              );
+            })}
+            {model.having.map((condition) => {
+              const aggregate = model.aggregates.find((entry) => entry.id === condition.aggregateId);
+              return (
+                <div key={condition.id} className="qs-item static">
+                  <span className="global-search-match-label">
+                    HAVING {aggregate?.fn ?? "?"} {condition.operator} {condition.value}
+                  </span>
+                  <button
+                    type="button"
+                    className="qs-clear-btn"
+                    aria-label="Remove having"
+                    onClick={() =>
+                      setModel((current) => ({
+                        ...current,
+                        having: current.having.filter((entry) => entry.id !== condition.id),
+                      }))
+                    }
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              );
+            })}
+            <div className="qs-item static" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+              <select
+                value={aggregateDraft.fn}
+                aria-label="Aggregate function"
+                onChange={(event) => setAggregateDraft((current) => ({ ...current, fn: event.target.value as BuilderAggregateFn, column: event.target.value === "COUNT" || event.target.value === "COUNT_DISTINCT" ? "*" : current.column }))}
+              >
+                {(["COUNT", "COUNT_DISTINCT", "SUM", "AVG", "MIN", "MAX"] as BuilderAggregateFn[]).map((fn) => (
+                  <option key={fn} value={fn}>{fn === "COUNT_DISTINCT" ? "COUNT DISTINCT" : fn}</option>
+                ))}
+              </select>
+              <select
+                value={aggregateDraft.tableId}
+                aria-label="Aggregate table"
+                onChange={(event) => {
+                  const tableId = event.target.value;
+                  setAggregateDraft((current) => ({ ...current, tableId, column: "" }));
+                  const table = model.tables.find((entry) => entry.id === tableId);
+                  if (table) void ensureColumns(table.name);
+                }}
+              >
+                <option value="">{t("querybuilder.leftTable")}</option>
+                {model.tables.map((table) => (
+                  <option key={table.id} value={table.id}>{table.alias}</option>
+                ))}
+              </select>
+              <select
+                value={aggregateDraft.column}
+                aria-label="Aggregate column"
+                onChange={(event) => setAggregateDraft((current) => ({ ...current, column: event.target.value }))}
+              >
+                {(aggregateDraft.fn === "COUNT" || aggregateDraft.fn === "COUNT_DISTINCT") && (
+                  <option value="*">* ({t("querybuilder.allRows")})</option>
+                )}
+                {(columnsByTable[model.tables.find((entry) => entry.id === aggregateDraft.tableId)?.name ?? ""] ?? []).map((column) => (
+                  <option key={column} value={column}>{column}</option>
+                ))}
+              </select>
+              <input
+                value={aggregateDraft.alias}
+                placeholder={t("querybuilder.alias")}
+                aria-label="Aggregate alias"
+                onChange={(event) => setAggregateDraft((current) => ({ ...current, alias: event.target.value }))}
+              />
+              <button type="button" className="global-search-mode" onClick={addAggregate}>
+                <Plus size={12} /> {t("querybuilder.addAggregate")}
+              </button>
+            </div>
+            <div className="qs-item static" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+              <select
+                value={groupByDraft.tableId}
+                aria-label="Group by table"
+                onChange={(event) => {
+                  const tableId = event.target.value;
+                  setGroupByDraft((current) => ({ ...current, tableId, column: "" }));
+                  const table = model.tables.find((entry) => entry.id === tableId);
+                  if (table) void ensureColumns(table.name);
+                }}
+              >
+                <option value="">{t("querybuilder.groupBy")}</option>
+                {model.tables.map((table) => (
+                  <option key={table.id} value={table.id}>{table.alias}</option>
+                ))}
+              </select>
+              <select
+                value={groupByDraft.column}
+                aria-label="Group by column"
+                onChange={(event) => setGroupByDraft((current) => ({ ...current, column: event.target.value }))}
+              >
+                <option value="">{t("querybuilder.column")}</option>
+                {(columnsByTable[model.tables.find((entry) => entry.id === groupByDraft.tableId)?.name ?? ""] ?? []).map((column) => (
+                  <option key={column} value={column}>{column}</option>
+                ))}
+              </select>
+              <select
+                value={groupByDraft.tableId ? groupByDraft.column : ""}
+                disabled={!groupByDraft.tableId || !groupByDraft.column}
+                aria-label="Add group by"
+                onChange={addGroupBy}
+              >
+                <option value="">+ {t("querybuilder.addGroupBy")}</option>
+              </select>
+              <button
+                type="button"
+                className="global-search-mode"
+                disabled={!groupByDraft.tableId || !groupByDraft.column}
+                onClick={addGroupBy}
+              >
+                <Plus size={12} /> {t("querybuilder.addGroupBy")}
+              </button>
+            </div>
+            {model.aggregates.length > 0 && (
+              <div className="qs-item static" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                <select
+                  value={havingDraft.aggregateId}
+                  aria-label="Having aggregate"
+                  onChange={(event) => setHavingDraft((current) => ({ ...current, aggregateId: event.target.value }))}
+                >
+                  <option value="">{t("querybuilder.having")}</option>
+                  {model.aggregates.map((aggregate) => (
+                    <option key={aggregate.id} value={aggregate.id}>{aggregate.alias || aggregate.fn}</option>
+                  ))}
+                </select>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <select
+                    value={havingDraft.operator}
+                    aria-label="Having operator"
+                    onChange={(event) => setHavingDraft((current) => ({ ...current, operator: event.target.value as ">" }))}
+                  >
+                    {[">", ">=", "<", "<=", "=", "!="].map((operator) => (
+                      <option key={operator} value={operator}>{operator}</option>
+                    ))}
+                  </select>
+                  <input
+                    value={havingDraft.value}
+                    placeholder="100"
+                    aria-label="Having value"
+                    onChange={(event) => setHavingDraft((current) => ({ ...current, value: event.target.value }))}
+                  />
+                  <button type="button" className="global-search-mode" onClick={addHaving}>
+                    <Plus size={12} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Saved definitions */}
+        <div className="qs-list schema-diff-results">
+          <div className="qs-item static global-search-match-kind">{t("querybuilder.definitions")}</div>
+          <div className="qs-item static" style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 4 }}>
+            <input
+              value={definitionName}
+              placeholder={t("querybuilder.definitionName")}
+              aria-label="Definition name"
+              onChange={(event) => setDefinitionName(event.target.value)}
+            />
+            <button
+              type="button"
+              className="global-search-mode"
+              disabled={!definitionName.trim() || model.tables.length === 0}
+              onClick={handleSaveDefinition}
+            >
+              {t("querybuilder.saveDefinition")}
+            </button>
+          </div>
+          {definitions.map((definition) => (
+            <div key={definition.id} className="qs-item static">
+              <span className="global-search-match-label">{definition.name}</span>
+              <span style={{ display: "flex", gap: 4 }}>
+                <button type="button" className="fav-action-btn" title={t("querybuilder.loadDefinition")} onClick={() => handleLoadDefinition(definition.id)}>
+                  <Play size={12} />
+                </button>
+                <button
+                  type="button"
+                  className="fav-action-btn danger"
+                  title={t("querybuilder.deleteDefinition")}
+                  onClick={() => {
+                    deleteBuilderDefinition(definition.id);
+                    setDefinitions(listBuilderDefinitions());
+                  }}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+
         {/* Live SQL preview + action */}
+
         <pre
           className="explain-raw-output"
           style={{ margin: "8px 0", maxHeight: 160, overflow: "auto", fontSize: 11 }}

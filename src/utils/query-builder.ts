@@ -47,18 +47,50 @@ export interface BuilderSelect {
   column: string;
 }
 
+export type BuilderAggregateFn = "COUNT" | "COUNT_DISTINCT" | "SUM" | "AVG" | "MIN" | "MAX";
+
+export interface BuilderAggregate {
+  id: string;
+  fn: BuilderAggregateFn;
+  tableId: string;
+  /** "*" is only valid for COUNT / COUNT_DISTINCT. */
+  column: string;
+  alias?: string;
+}
+
+export interface BuilderGroupByItem {
+  tableId: string;
+  column: string;
+}
+
+export interface BuilderHaving {
+  id: string;
+  /** References a BuilderAggregate.id. */
+  aggregateId: string;
+  operator: "=" | "!=" | "<" | ">" | "<=" | ">=";
+  /** Numeric literal text. */
+  value: string;
+}
+
 export interface QueryBuilderModel {
   tables: BuilderTable[];
   joins: BuilderJoin[];
   filters: BuilderFilter[];
   orders: BuilderOrder[];
   selects: BuilderSelect[];
+  aggregates: BuilderAggregate[];
+  groupBy: BuilderGroupByItem[];
+  having: BuilderHaving[];
   distinct: boolean;
   limit: number | null;
 }
 
 export function createEmptyBuilderModel(): QueryBuilderModel {
-  return { tables: [], joins: [], filters: [], orders: [], selects: [], distinct: false, limit: null };
+  return {
+    tables: [], joins: [], filters: [], orders: [], selects: [],
+    aggregates: [], groupBy: [], having: [],
+    distinct: false, limit: null,
+  };
 }
 
 type QuoteFn = (name: string) => string;
@@ -108,11 +140,41 @@ export function buildSelectSql(model: QueryBuilderModel, dbType: DatabaseType | 
   };
 
   const lines: string[] = [];
-  const projection = model.selects.length > 0
-    ? model.selects.map((select) => qualified(select.tableId, select.column))
-    : model.tables.map((table) => `${quote(aliasFor(table))}.*`);
+  const isAggregateMode = model.aggregates.length > 0 || model.groupBy.length > 0;
 
-  lines.push(`SELECT ${model.distinct ? "DISTINCT " : ""}${projection.join(", ")}`);
+  const aggregateSql = (aggregate: BuilderAggregate): string => {
+    if (!aliasById.has(aggregate.tableId)) {
+      throw new Error(`Unknown table reference in aggregate: ${aggregate.tableId}`);
+    }
+    if (aggregate.column === "*" && aggregate.fn !== "COUNT" && aggregate.fn !== "COUNT_DISTINCT") {
+      throw new Error(`* is only valid with COUNT (got ${aggregate.fn}).`);
+    }
+    const fnName = aggregate.fn === "COUNT_DISTINCT" ? "COUNT" : aggregate.fn;
+    const argument = aggregate.column === "*" ? "*" : qualified(aggregate.tableId, aggregate.column);
+    const expression = aggregate.fn === "COUNT_DISTINCT"
+      ? `COUNT(DISTINCT ${argument})`
+      : `${fnName}(${argument})`;
+    return aggregate.alias ? `${expression} AS ${quote(aggregate.alias)}` : expression;
+  };
+
+  let projection: string[];
+  if (isAggregateMode) {
+    // Aggregate mode: grouped columns + aggregates are the only valid output
+    // columns — plain per-row selects would be invalid SQL on every engine.
+    projection = [
+      ...model.groupBy.map((group) => qualified(group.tableId, group.column)),
+      ...model.aggregates.map(aggregateSql),
+    ];
+    if (projection.length === 0) {
+      throw new Error("Aggregate queries need a GROUP BY column or at least one aggregate.");
+    }
+  } else {
+    projection = model.selects.length > 0
+      ? model.selects.map((select) => qualified(select.tableId, select.column))
+      : model.tables.map((table) => `${quote(aliasFor(table))}.*`);
+  }
+
+  lines.push(`SELECT ${model.distinct && !isAggregateMode ? "DISTINCT " : ""}${projection.join(", ")}`);
 
   const primary = model.tables[0];
   lines.push(`FROM ${quote(primary.name)} AS ${quote(aliasFor(primary))}`);
@@ -146,6 +208,27 @@ export function buildSelectSql(model: QueryBuilderModel, dbType: DatabaseType | 
   }).filter(Boolean);
   if (whereParts.length > 0) {
     lines.push(`WHERE ${whereParts.join("\n  AND ")}`);
+  }
+
+  if (isAggregateMode && model.groupBy.length > 0) {
+    lines.push(`GROUP BY ${model.groupBy.map((group) => qualified(group.tableId, group.column)).join(", ")}`);
+  }
+
+  if (model.having.length > 0) {
+    if (!isAggregateMode) {
+      throw new Error("HAVING requires GROUP BY or at least one aggregate.");
+    }
+    const aggregateById = new Map(model.aggregates.map((aggregate) => [aggregate.id, aggregate]));
+    const havingParts = model.having.map((condition) => {
+      const aggregate = aggregateById.get(condition.aggregateId);
+      if (!aggregate) throw new Error(`HAVING references an unknown aggregate: ${condition.aggregateId}`);
+      const numeric = Number(condition.value);
+      if (!Number.isFinite(numeric)) {
+        throw new Error(`HAVING values must be numeric (got "${condition.value}").`);
+      }
+      return `${aggregateSql(aggregate).split(" AS ")[0]} ${condition.operator} ${numeric}`;
+    });
+    lines.push(`HAVING ${havingParts.join("\n  AND ")}`);
   }
 
   if (model.orders.length > 0) {

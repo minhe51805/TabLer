@@ -29,7 +29,7 @@ interface DataChartProps {
 }
 
 export function DataChart({ resolvedColumns, queryResult }: DataChartProps) {
-  const rows = queryResult?.rows ?? [];
+  const rows = useMemo(() => queryResult?.rows ?? [], [queryResult]);
 
   const numericColumns = useMemo(() => {
     const candidates = resolvedColumns.filter((column, index) => isNumericColumn(column, rows, index));

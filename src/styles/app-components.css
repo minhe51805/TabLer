@@ -37385,7 +37385,9 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
 .ai-image-viewer-overlay {
   position: fixed;
   inset: 0;
-  z-index: 200000;
+  /* In scale with the app's z-index distribution (1800 → 10020): topmost,
+     but not a magic 200000 outlier. */
+  z-index: 10050;
   display: flex;
   align-items: center;
   justify-content: center;

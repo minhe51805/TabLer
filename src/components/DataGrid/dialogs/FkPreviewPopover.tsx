@@ -1,3 +1,4 @@
+import { useI18n } from "../../../i18n";
 import type { QueryResult } from "../../../types";
 
 export interface FkPreviewTarget {
@@ -22,11 +23,12 @@ export function FkPreviewPopover({
   fkPreviewData,
   onClose,
 }: FkPreviewPopoverProps) {
+  const { t } = useI18n();
   return (
     <div className="datagrid-fk-preview">
       <div className="datagrid-fk-preview-header">
         <span className="datagrid-fk-preview-title">
-          FK Preview: {fkPreview.table}.{fkPreview.column}
+          {t("datagrid.fkPreviewTitle", { target: `${fkPreview.table}.${fkPreview.column}` })}
         </span>
         <span className="datagrid-fk-preview-value">
           = {String(fkPreview.value)}
@@ -41,7 +43,7 @@ export function FkPreviewPopover({
       </div>
       <div className="datagrid-fk-preview-body">
         {isLoadingFkPreview ? (
-          <div className="datagrid-fk-preview-loading">Loading...</div>
+          <div className="datagrid-fk-preview-loading">{t("datagrid.fkLoading")}</div>
         ) : fkPreviewData ? (
           fkPreviewData.rows.length > 0 ? (
             <table className="datagrid-fk-preview-table">
@@ -63,10 +65,10 @@ export function FkPreviewPopover({
               </tbody>
             </table>
           ) : (
-            <div className="datagrid-fk-preview-empty">No matching row found</div>
+            <div className="datagrid-fk-preview-empty">{t("datagrid.fkNoMatch")}</div>
           )
         ) : (
-          <div className="datagrid-fk-preview-empty">Press Ctrl+Enter on an FK cell to preview</div>
+          <div className="datagrid-fk-preview-empty">{t("datagrid.fkHint")}</div>
         )}
       </div>
     </div>

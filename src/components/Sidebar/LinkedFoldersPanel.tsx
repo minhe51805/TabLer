@@ -51,10 +51,22 @@ export function LinkedFoldersPanel({
     }
   }, [isVietnamese]);
 
+  // Initial load + reload when the folder set changes.
   useEffect(() => {
     folders.forEach((folder) => {
       void loadContents(folder);
     });
+  }, [folders, loadContents]);
+
+  // File-change events: rescan ONLY the folder that contains the changed
+  // file. The backend already debounces event bursts (400ms settle / 2s max
+  // window) and dedupes per path — rescanning every linked folder per event
+  // would turn a sync-client burst into N full directory scans per batch.
+  useEffect(() => {
+    if (!lastEvent) return;
+    const lowered = lastEvent.path.toLowerCase();
+    const owner = folders.find((folder) => lowered.startsWith(folder.toLowerCase()));
+    if (owner) void loadContents(owner);
   }, [folders, lastEvent, loadContents]);
 
   const handleAddFolder = useCallback(async () => {

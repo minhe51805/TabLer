@@ -1,4 +1,5 @@
 import type {
+  AIWorkspaceAttachment,
   AIWorkspaceBubbleData,
   AIWorkspaceInteractionMode,
 } from "./ai-workspace-types";
@@ -214,16 +215,97 @@ export function loadLegacyPersistedAIWorkspaceState(
       ),
     );
 
-    return {
+    return sanitizePersistedAIWorkspaceState({
       version: AI_WORKSPACE_HISTORY_VERSION,
       threads,
       bubbles,
       interactionModes,
       activeThreadIds,
-    };
+    });
   } catch {
     return createEmptyPersistedAIWorkspaceState();
   }
+}
+
+/** Normalizes a bubble's `attachments` metadata array from untrusted persisted
+ *  JSON: keeps only well-formed entries and returns `undefined` when nothing
+ *  valid remains, matching the shape of bubbles created in-session. */
+export function sanitizeAIWorkspaceAttachments(
+  value: unknown,
+): AIWorkspaceAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const attachments = value.filter((entry): entry is AIWorkspaceAttachment => {
+    if (!entry || typeof entry !== "object") return false;
+    const candidate = entry as Partial<AIWorkspaceAttachment>;
+    return (
+      typeof candidate.id === "string"
+      && (candidate.kind === "image" || candidate.kind === "text")
+      && typeof candidate.name === "string"
+      && typeof candidate.mimeType === "string"
+      && typeof candidate.size === "number"
+      && typeof candidate.createdAt === "number"
+    );
+  });
+  return attachments.length > 0 ? attachments : undefined;
+}
+
+/**
+ * Hardens a state object loaded from the SQLite workspace cache
+ * (`get_ai_workspace_history` returns the persisted payload as raw JSON, so
+ * corrupted or hand-edited rows can carry null threads/bubbles/attachments).
+ * Dereferencing any of those nulls throws "Cannot read properties of null
+ * (reading 'id')" during hydration or render, which the ErrorBoundary turns
+ * into a full-workspace crash. Drops invalid entries instead of trusting the
+ * persisted shape — mirrors what `isPersistedBubble` already enforces for the
+ * legacy localStorage path and extends it to attachment metadata.
+ */
+export function sanitizePersistedAIWorkspaceState(
+  state: PersistedAIWorkspaceState | null | undefined,
+): PersistedAIWorkspaceState {
+  const sanitized = createEmptyPersistedAIWorkspaceState();
+  if (!state || typeof state !== "object") return sanitized;
+
+  sanitized.version = typeof state.version === "number"
+    ? state.version
+    : AI_WORKSPACE_HISTORY_VERSION;
+  sanitized.threads = (Array.isArray(state.threads) ? state.threads : [])
+    .filter((thread): thread is AIChatThread =>
+      !!thread
+      && typeof thread.id === "string"
+      && typeof thread.workspaceKey === "string"
+      && typeof thread.label === "string"
+      && typeof thread.createdAt === "number")
+    .map((thread) => ({
+      ...thread,
+      updatedAt: typeof thread.updatedAt === "number" ? thread.updatedAt : thread.createdAt,
+      isAutoLabel: Boolean(thread.isAutoLabel),
+    }));
+  sanitized.bubbles = (Array.isArray(state.bubbles) ? state.bubbles : [])
+    .filter(isPersistedBubble)
+    .map((bubble) => ({
+      ...bubble,
+      attachments: sanitizeAIWorkspaceAttachments(bubble.attachments),
+    }));
+  sanitized.interactionModes = state.interactionModes && typeof state.interactionModes === "object"
+    ? Object.fromEntries(
+        Object.entries(state.interactionModes).filter(
+          (entry): entry is [string, AIWorkspaceInteractionMode] => (
+            typeof entry[0] === "string" && isAIWorkspaceInteractionMode(entry[1])
+          ),
+        ),
+      )
+    : {};
+  sanitized.activeThreadIds = state.activeThreadIds && typeof state.activeThreadIds === "object"
+    ? Object.fromEntries(
+        Object.entries(state.activeThreadIds).filter(
+          (entry): entry is [string, string] => (
+            typeof entry[0] === "string" && typeof entry[1] === "string"
+          ),
+        ),
+      )
+    : {};
+
+  return sanitized;
 }
 
 function isPersistedBubble(bubble: unknown): bubble is AIWorkspaceBubbleData {

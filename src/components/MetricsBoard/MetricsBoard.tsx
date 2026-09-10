@@ -207,7 +207,7 @@ export function MetricsBoard({
     () => boards.find((board) => board.id === activeBoardId) || null,
     [activeBoardId, boards],
   );
-  const widgetLibrary = useMemo(() => _getWidgetLibrary(), [language]);
+  const widgetLibrary = useMemo(() => _getWidgetLibrary(), []);
 
   const editingWidget = useMemo(
     () =>
@@ -506,7 +506,7 @@ export function MetricsBoard({
       occupiedRows * METRICS_GRID_ROW_HEIGHT +
       Math.max(occupiedRows - 1, 0) * METRICS_GRID_GAP
     );
-  }, [activeBoard, dragState, resizeState]);
+  }, [activeBoard, dragState, resizeState, rowUnit]);
 
   const {
     updateWidgetLayout,

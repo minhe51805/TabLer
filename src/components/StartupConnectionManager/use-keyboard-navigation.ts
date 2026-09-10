@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import type { ConnectionConfig } from "./types";
 
 interface FlatItem {
@@ -26,7 +26,21 @@ export function useKeyboardNavigation({
   onToggleGroup,
   onSearchChange,
 }: Props) {
-  const handleKeyDown = (e: KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    const findGroupOfConnection = (connId: string): string | null => {
+      const item = flatItems.find(
+        (item) => item.type === "connection" && item.connection?.id === connId,
+      );
+      return item?.groupId ?? null;
+    };
+
+    const scrollToConnection = (connId: string) => {
+      const el = document.querySelector(
+        `.startup-connection-row[data-conn-id="${connId}"]`,
+      ) as HTMLElement | null;
+      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
+
     const target = e.target as HTMLElement;
     const isInputFocused =
       target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
@@ -104,24 +118,10 @@ export function useKeyboardNavigation({
       if (groupId) onToggleGroup(groupId);
       return;
     }
-  };
-
-  const findGroupOfConnection = (connId: string): string | null => {
-    const item = flatItems.find(
-      (item) => item.type === "connection" && item.connection?.id === connId,
-    );
-    return item?.groupId ?? null;
-  };
-
-  const scrollToConnection = (connId: string) => {
-    const el = document.querySelector(
-      `.startup-connection-row[data-conn-id="${connId}"]`,
-    ) as HTMLElement | null;
-    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  };
+    }, [flatItems, selectedConnectionId, onSearchChange, onSelectConnection, onConnect, onNewConnection, onToggleGroup]);
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [flatItems, selectedConnectionId]);
+  }, [flatItems, handleKeyDown, selectedConnectionId]);
 }

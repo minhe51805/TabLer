@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, Write};
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::storage::file_storage::{read_json_vec_with_backup, write_json_atomically};
 
 /// A named SQL snippet saved by the user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,13 +48,10 @@ impl SqlFavoritesStorage {
         Ok(Self { file_path, cache })
     }
 
-    fn load_from_file(path: &PathBuf) -> Result<HashMap<String, SqlFavorite>, String> {
-        let file =
-            File::open(path).map_err(|e| format!("Failed to open sql_favorites file: {e}"))?;
-        let reader = BufReader::new(file);
-        let items: Vec<SqlFavorite> = serde_json::from_reader(reader)
-            .map_err(|e| format!("Failed to parse sql_favorites: {e}"))?;
-        Ok(items.into_iter().map(|f| (f.id.clone(), f)).collect())
+    fn load_from_file(path: &Path) -> Result<HashMap<String, SqlFavorite>, String> {
+        read_json_vec_with_backup::<SqlFavorite>(path, "sql_favorites")
+            .map(|items| items.into_iter().map(|f| (f.id.clone(), f)).collect())
+            .map_err(|e| e.to_string())
     }
 
     fn persist(&self) -> Result<(), String> {
@@ -61,16 +59,8 @@ impl SqlFavoritesStorage {
         let json = serde_json::to_string_pretty(&items)
             .map_err(|e| format!("Failed to serialize favorites: {e}"))?;
 
-        let mut file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&self.file_path)
-            .map_err(|e| format!("Failed to open sql_favorites file for write: {e}"))?;
-
-        file.write_all(json.as_bytes())
-            .map_err(|e| format!("Failed to write sql_favorites: {e}"))?;
-
-        Ok(())
+        write_json_atomically(&self.file_path, &json)
+            .map_err(|e| format!("Failed to persist sql_favorites: {e}"))
     }
 
     pub fn get_all(&self) -> Vec<SqlFavorite> {

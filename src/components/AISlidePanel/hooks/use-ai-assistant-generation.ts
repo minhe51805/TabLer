@@ -100,6 +100,12 @@ interface UseAIAssistantGenerationOptions {
     focusWorkspace?: boolean;
   }) => boolean;
   requestVisualizationReadConsent: (prompt: string) => Promise<boolean>;
+  requestDestructiveConsent: (detail: {
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+  }) => Promise<boolean>;
   runSql: AISlidePanelActions["runSql"];
   setActiveThreadIdsByWorkspace: Dispatch<SetStateAction<Record<string, string>>>;
   setBubbles: Dispatch<SetStateAction<AIWorkspaceBubbleData[]>>;
@@ -242,6 +248,7 @@ export function useAIAssistantGeneration({
   openMetricsBoardInWorkspace,
   openSqlInWorkspace,
   requestVisualizationReadConsent,
+  requestDestructiveConsent,
   runSql,
   setActiveThreadIdsByWorkspace,
   setBubbles,
@@ -499,6 +506,7 @@ export function useAIAssistantGeneration({
       const result = await generateAssist(normalizedPrompt, options?.history, {
         interactionMode,
         requestDataReadConsent: () => requestVisualizationReadConsent(requestPrompt),
+        requestDataDestructiveConsent: (detail) => requestDestructiveConsent(detail),
         userPrompt: requestPrompt,
         attachments: attachmentDrafts.length > 0 ? attachmentDrafts : undefined,
         onAgentProgress: (steps) => {
@@ -762,39 +770,7 @@ export function useAIAssistantGeneration({
       if (wasCancelled) setError(null);
       return { bubbleId: loadingBubble.id, success: false, cancelled: wasCancelled };
     }
-  }, [
-    activeAgentAutonomy,
-    activeConnectionDbType,
-    activeInteractionMode,
-    aiCopy,
-    attachedSelection,
-    buildLoadingBubble,
-    currentThread,
-    currentWorkspaceKey,
-    generateAssist,
-    language,
-    latestReadyAssistantBubble,
-    completeWorkspaceRedirect,
-    openMetricsBoardInWorkspace,
-    openSqlInWorkspace,
-    requestVisualizationReadConsent,
-    runSql,
-    setError,
-    updateBubbleForDashboardApplied,
-    updateBubbleForDashboardActionFailed,
-    updateBubbleForAttachedDashboardSummary,
-    updateBubbleForDashboardEditNeedsClarification,
-    updateBubbleForDashboardEdited,
-    updateBubbleForDashboardNoChange,
-    updateBubbleForDashboardRebuilt,
-    workspaceThreads,
-    activeGenerationBubbleIdRef,
-    cancelledGenerationBubbleIdsRef,
-    openSessionRef,
-    setActiveThreadIdsByWorkspace,
-    setBubbles,
-    setChatThreads,
-  ]);
+  }, [setError, currentWorkspaceKey, currentThread?.id, workspaceThreads, activeInteractionMode, openSessionRef, buildLoadingBubble, activeGenerationBubbleIdRef, setBubbles, setChatThreads, setActiveThreadIdsByWorkspace, latestReadyAssistantBubble?.detail, latestReadyAssistantBubble?.preview, attachedSelection, activeConnectionDbType, requestVisualizationReadConsent, openMetricsBoardInWorkspace, updateBubbleForDashboardActionFailed, language, updateBubbleForDashboardRebuilt, updateBubbleForDashboardNoChange, completeWorkspaceRedirect, updateBubbleForDashboardApplied, updateBubbleForDashboardEdited, updateBubbleForDashboardEditNeedsClarification, updateBubbleForAttachedDashboardSummary, generateAssist, aiCopy, activeAgentAutonomy, requestDestructiveConsent, openSqlInWorkspace, runSql, cancelledGenerationBubbleIdsRef]);
 
   return { createAssistantBubble };
 }

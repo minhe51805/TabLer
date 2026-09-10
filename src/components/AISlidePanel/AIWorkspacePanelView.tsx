@@ -38,7 +38,7 @@ export interface AIWorkspacePanelViewModel {
   restoreCheckpoint: (connectionId: string, fileName: string, dbType: string) => Promise<unknown>;
   language: string; promptDraft: string; recentWorkspaceThreads: AIChatThread[]; renameThread: (threadId: string, label: string) => void; sessionDataReadButtonLabel: string;
   sessionDataReadButtonTitle: string; showThinking: boolean; switchableProviders: AIProviderConfig[]; tableContextCount: number; visibleError: string | null;
-  visualizationConsentPending: ConfirmState | null; failoverConsentPending: ConfirmState | null; chatThreadRef: RefObject<HTMLDivElement | null>;
+  visualizationConsentPending: ConfirmState | null; destructiveConsentPending: ConfirmState | null; failoverConsentPending: ConfirmState | null; chatThreadRef: RefObject<HTMLDivElement | null>;
   contextUsage: { used: number; limit: number };
   activeChatWorkspaceId: string | null; activeChatWorkspaceName: string | null; activeChatWorkspaceContextUpdatedAt: number | null;
   chatWorkspaces: { id: string; name: string; contextUpdatedAt: number | null }[]; importableChatThreads: AIChatThread[]; threadMemories: Record<string, { title: string; keywords: string[]; summary: string }>; isCompacting: boolean;
@@ -61,7 +61,7 @@ export interface AIWorkspacePanelViewModel {
   slashMenu?: { commands: { name: string; description: string }[]; activeIndex: number } | null;
   onSelectSlashCommand?: (name: string) => void;
   selectAgentAutonomy: (value: AIWorkspaceAgentAutonomy) => void; selectInteractionMode: (value: AIWorkspaceInteractionMode) => void; activateProvider: (id: string, model?: string) => void; toggleModelVisibility: (id: string, model: string) => void;
-  confirmVisualizationConsent: (value: boolean) => void; resolveFailoverConsent: (approved: boolean) => void; cancelDeleteThread: () => void; composerKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  confirmVisualizationConsent: (value: boolean) => void; confirmDestructiveConsent: (value: boolean) => void; resolveFailoverConsent: (approved: boolean) => void; cancelDeleteThread: () => void; composerKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
 }
 
 export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelViewModel }) {
@@ -80,17 +80,17 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
       }
       m.selectAgentAutonomy(autonomy);
     },
-    [m.activeAgentAutonomy, m.selectAgentAutonomy],
+    [m],
   );
   // Stable callbacks so the memoized AIConversationView skips re-renders
   // triggered by unrelated panel state (composer keystrokes, health ticks...).
   const handleOpenDetail = useCallback(
     (bubble: { id: string }) => m.setDetailBubbleId(bubble.id),
-    [m.setDetailBubbleId],
+    [m],
   );
   const handleUseSuggestion = useCallback(
     (prompt: string) => m.setPromptDraft(prompt),
-    [m.setPromptDraft],
+    [m],
   );
   const panelWidth = useAppLayoutStore((state) => state.aiPanelWidth);
   const setPanelWidth = useAppLayoutStore((state) => state.setAIPanelWidth);
@@ -181,6 +181,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
     </div>
     {m.detailBubble && <AIBubbleDetailModal bubble={m.detailBubble} isGenerating={m.isGenerating} isRunning={m.isRunning} onClose={() => m.setDetailBubbleId(null)} onCopy={m.copyBubble} onInsert={m.insertBubble} onRun={m.runBubble} onRewrite={m.rewriteBubble} />}
     <ConfirmDialog isOpen={m.visualizationConsentPending !== null} title={m.visualizationConsentPending?.title || "Allow AI data read?"} message={m.visualizationConsentPending?.message || ""} confirmText={m.visualizationConsentPending?.confirmText || "Allow"} cancelText={m.visualizationConsentPending?.cancelText || "Deny"} onConfirm={() => m.confirmVisualizationConsent(true)} onCancel={() => m.confirmVisualizationConsent(false)} />
+    <ConfirmDialog isOpen={m.destructiveConsentPending !== null} title={m.destructiveConsentPending?.title || "Confirm destructive action"} message={m.destructiveConsentPending?.message || ""} confirmText={m.destructiveConsentPending?.confirmText || "Confirm"} cancelText={m.destructiveConsentPending?.cancelText || "Cancel"} onConfirm={() => m.confirmDestructiveConsent(true)} onCancel={() => m.confirmDestructiveConsent(false)} />
     <ConfirmDialog isOpen={m.failoverConsentPending !== null} title={m.failoverConsentPending?.title || "Provider failed"} message={m.failoverConsentPending?.message || ""} confirmText={m.failoverConsentPending?.confirmText || "Allow auto-switch"} cancelText={m.failoverConsentPending?.cancelText || "Not now"} onConfirm={() => m.resolveFailoverConsent(true)} onCancel={() => m.resolveFailoverConsent(false)} />
     <ConfirmDialog isOpen={m.deleteThreadPending !== null} title={m.aiCopy.composer.historyDeleteTitle ?? "Delete conversation"} message={m.aiCopy.composer.historyDeleteConfirm ?? "Delete this conversation thread?"} confirmText="Delete" cancelText="Cancel" onConfirm={m.confirmDeleteThread} onCancel={m.cancelDeleteThread} />
     <AISqlConfirmDialog copy={m.aiCopy.composer} />

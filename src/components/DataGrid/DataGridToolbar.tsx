@@ -1,4 +1,5 @@
-import { FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search, RefreshCw, ArrowUpDown } from "lucide-react";
+import { FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search, RefreshCw, ArrowUpDown, ShieldCheck } from "lucide-react";
+import { DataGridAnonymizerModal } from "./dialogs/DataGridAnonymizerModal";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { buildCsvContent, buildJsonContent, buildTsvContent, exportToCSV, exportToJSON } from "../../utils/export-utils";
@@ -7,6 +8,7 @@ import { buildMqlContent, exportToMQL } from "../../utils/export-mql";
 import { serializePluginFormat } from "../../utils/plugin-format-runtime";
 import { emitAppToast } from "../../utils/app-toast";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
+import { useI18n } from "../../i18n";
 import { usePluginStore } from "../../stores/pluginStore";
 import {
   downloadPluginFormat,
@@ -126,6 +128,7 @@ export function DataGridToolbar({
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
+  const [showAnonymizer, setShowAnonymizer] = useState(false);
   const [showSqlMenu, setShowSqlMenu] = useState(false);
   const [showSortMenu, setShowSortMenu] = useState(false);
   const settingsBtnRef = useRef<HTMLSpanElement>(null);
@@ -146,11 +149,12 @@ export function DataGridToolbar({
     return null;
   }, [multiSort, sortColumn, sortDir]);
 
+  const { t } = useI18n();
   const sortMenuHint = multiSort.length > 0
-    ? "Multi-column sort active — pick a column to add, or clear sorts"
+    ? t("datagrid.sortHintMulti")
     : sortColumn
-      ? `Sorted by ${sortColumn} (${sortDir})`
-      : "Sort rows by a column";
+      ? t("datagrid.sortHintBy", { column: sortColumn, direction: sortDir })
+      : t("datagrid.sortHintNone");
   const installedPlugins = usePluginStore((state) => state.plugins);
   const pluginsHaveLoaded = usePluginStore((state) => state.hasLoaded);
   const loadPlugins = usePluginStore((state) => state.loadPlugins);
@@ -193,15 +197,15 @@ export function DataGridToolbar({
       <input
         value={filterValue}
         onChange={(event) => onFilterChange?.(event.target.value)}
-        placeholder="Filter rows"
-        aria-label="Filter loaded rows"
+        placeholder={t("datagrid.filterRows")}
+        aria-label={t("datagrid.filterRowsAria")}
       />
       {filterValue && (
         <button
           type="button"
           onClick={() => onFilterChange?.("")}
-          aria-label="Clear table filter"
-          title="Clear filter"
+          aria-label={t("datagrid.clearFilterTitle")}
+          title={t("datagrid.clearFilterTitle")}
         >
           <X className="w-3.5 h-3.5" />
         </button>
@@ -222,9 +226,9 @@ export function DataGridToolbar({
     }
     const cols = resolvedColumns.map((c) => c.name);
     exportToCSV(cols, dataRows, buildExportFilename(exportFilenameBase, "csv")).catch((error) => {
-      emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
+      emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     });
-  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName]);
+  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName, t]);
 
   const handleExportJSON = useCallback(() => {
     if (!canExport) return;
@@ -234,9 +238,9 @@ export function DataGridToolbar({
     }
     const cols = resolvedColumns.map((c) => c.name);
     exportToJSON(cols, dataRows, buildExportFilename(exportFilenameBase, "json")).catch((error) => {
-      emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
+      emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     });
-  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName]);
+  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName, t]);
 
   const handleExportXLSX = useCallback(async () => {
     if (!canExport) return;
@@ -247,9 +251,9 @@ export function DataGridToolbar({
         buildExportFilename(exportFilenameBase, "xlsx"),
       );
     } catch (error) {
-      emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
+      emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     }
-  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, tableName]);
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, tableName, t]);
 
   const handleExportMQL = useCallback(async () => {
     if (!canExport) return;
@@ -262,9 +266,9 @@ export function DataGridToolbar({
         rows: dataRows,
       });
     } catch (error) {
-      emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
+      emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     }
-  }, [canExport, dataRows, database, resolvedColumns, tableName]);
+  }, [canExport, dataRows, database, resolvedColumns, tableName, t]);
 
   const handlePluginExport = useCallback((format: RuntimePluginFormat) => {
     if (!canExport) return;
@@ -274,9 +278,9 @@ export function DataGridToolbar({
       dataRows,
       buildExportFilename(exportFilenameBase, format.extension),
     ).catch((error) => {
-      emitAppToast({ title: "Export failed", description: String(error), tone: "error" });
+      emitAppToast({ title: t("datagrid.exportFailed"), description: String(error), tone: "error" });
     });
-  }, [canExport, dataRows, exportFilenameBase, resolvedColumns]);
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
 
   // Copy actions place the same bytes the export path would write onto the
   // clipboard (TSV stands in for XLSX, which is a binary format). Clipboard
@@ -285,14 +289,14 @@ export function DataGridToolbar({
     try {
       await navigator.clipboard.writeText(content);
       emitAppToast({
-        title: `Copied as ${label}`,
-        description: `${dataRows.length.toLocaleString()} row${dataRows.length === 1 ? "" : "s"} on the clipboard.`,
+        title: t("datagrid.copiedTitle", { format: label }),
+        description: t("datagrid.copiedDescription", { count: dataRows.length }),
         tone: "success",
       });
     } catch (error) {
-      emitAppToast({ title: "Copy failed", description: String(error), tone: "error" });
+      emitAppToast({ title: t("datagrid.copyFailed"), description: String(error), tone: "error" });
     }
-  }, [dataRows.length]);
+  }, [dataRows.length, t]);
 
   const handleCopyCSV = useCallback(() => {
     const cols = resolvedColumns.map((c) => c.name);
@@ -336,10 +340,19 @@ export function DataGridToolbar({
     <div className="datagrid-topbar">
       {filterControl}
 
+      {externalResult?.truncated && (
+        <span
+          className="datagrid-stat-pill"
+          title={t("datagrid.resultsCappedTitle", { count: dataRows.length })}
+        >
+          {t("datagrid.resultsCapped", { count: dataRows.length })}
+        </span>
+      )}
+
       <div className="datagrid-topbar-side">
         {stagedChangeCount > 0 && (
-          <span className="datagrid-stat-pill staged-change-badge" title="Staged changes pending">
-            {stagedChangeCount} staged
+          <span className="datagrid-stat-pill staged-change-badge" title={t("datagrid.stagedChangesPending")}>
+            {t("datagrid.stagedCount", { count: stagedChangeCount })}
           </span>
         )}
 
@@ -347,16 +360,16 @@ export function DataGridToolbar({
           {isTableEditable && structureStatus === "ready" && (
             <span
               className="popover-container"
-              data-popover="Insert new row"
+              data-popover={t("datagrid.insertRowTitle")}
             >
               <button
                 type="button"
                 className="datagrid-footer-action"
                 onClick={() => void handleInsertRow()}
-                title="Insert new row"
+                title={t("datagrid.insertRowTitle")}
               >
                 <Plus className="!w-3.5 !h-3.5" />
-                <span>Insert Row</span>
+                <span>{t("datagrid.insertRow")}</span>
               </button>
             </span>
           )}
@@ -364,28 +377,28 @@ export function DataGridToolbar({
           {isTableEditable && canImportCsv && tableName && (
             <span
               className="popover-container"
-              data-popover="Paste rows from clipboard (TSV/CSV)"
+              data-popover={t("datagrid.pasteRowsPopover")}
             >
               <button
                 type="button"
                 className="datagrid-footer-action"
                 onClick={() => void onPasteRows?.()}
-                title="Paste rows from clipboard (Ctrl+Shift+V)"
+                title={t("datagrid.pasteRowsTitle")}
               >
                 <ClipboardPaste className="!w-3.5 !h-3.5" />
-                <span>Paste Rows</span>
+                <span>{t("datagrid.pasteRows")}</span>
               </button>
             </span>
           )}
           {isTableEditable && canImportCsv && tableName && (
-            <button type="button" className="datagrid-footer-action" onClick={() => void onImportCsv?.()} title="Import CSV file">
+            <button type="button" className="datagrid-footer-action" onClick={() => void onImportCsv?.()} title={t("datagrid.importCsvTitle")}>
               <FileUp className="!w-3.5 !h-3.5" />
-              <span>Import CSV</span>
+              <span>{t("datagrid.importCsv")}</span>
             </button>
           )}
 
           {selectedRowCount > 0 && tableName && (
-            <span ref={sqlBtnRef} className="popover-container" data-popover={`Copy ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""} as SQL`}>
+            <span ref={sqlBtnRef} className="popover-container" data-popover={t("datagrid.copySelectedSqlPopover", { count: selectedRowCount })}>
               <button
                 type="button"
                 className={`datagrid-footer-action ${showSqlMenu ? "active" : ""}`}
@@ -396,7 +409,7 @@ export function DataGridToolbar({
                   setShowSortMenu(false);
                   setShowSettings(false);
                 }}
-                title="Copy selected rows as SQL"
+                title={t("datagrid.copySelectedSqlTitle")}
               >
                 <Braces className="!w-3.5 !h-3.5" />
                 <span>SQL</span>
@@ -411,42 +424,42 @@ export function DataGridToolbar({
                 type="button"
                 className="datagrid-footer-action"
                 onClick={() => window.dispatchEvent(new CustomEvent("datagrid-undo"))}
-                title="Undo (Ctrl+Z)"
+                title={t("datagrid.undoTitle")}
               >
                 <Undo2 className="!w-3.5 !h-3.5" />
-                <span>Undo</span>
+                <span>{t("datagrid.undo")}</span>
               </button>
               <button
                 type="button"
                 className="datagrid-footer-action"
                 onClick={() => window.dispatchEvent(new CustomEvent("datagrid-redo"))}
-                title="Redo (Ctrl+Y)"
+                title={t("datagrid.redoTitle")}
               >
                 <Redo2 className="!w-3.5 !h-3.5" />
-                <span>Redo</span>
+                <span>{t("datagrid.redo")}</span>
               </button>
             </>
           )}
 
           {stagedChangeCount > 0 && (
-            <span className="popover-container" data-popover={`${stagedChangeCount} change${stagedChangeCount > 1 ? "s" : ""} staged — preview before applying`}>
+            <span className="popover-container" data-popover={t("datagrid.stagedPreviewPopover", { count: stagedChangeCount })}>
               <button
                 type="button"
                 className="datagrid-footer-action active"
                 onClick={() => void onApplyChanges?.()}
-                title="Apply all staged changes"
+                title={t("datagrid.applyTitle")}
               >
                 <Settings2 className="!w-3.5 !h-3.5" />
-                <span>Apply {stagedChangeCount}</span>
+                <span>{t("datagrid.applyCount", { count: stagedChangeCount })}</span>
               </button>
               <button
                 type="button"
                 className="datagrid-footer-action danger"
                 onClick={() => void onDiscardChanges?.()}
-                title="Discard all staged changes"
+                title={t("datagrid.discardTitle")}
               >
                 <X className="!w-3.5 !h-3.5" />
-                <span>Discard</span>
+                <span>{t("datagrid.discard")}</span>
               </button>
             </span>
           )}
@@ -458,12 +471,12 @@ export function DataGridToolbar({
             const right = window.innerWidth - rect.right;
             const hasPk = (primaryKeyColumns?.length ?? 0) > 0;
             const sqlOptions: Array<{ label: string; hint: string; icon: typeof Braces; run: () => void }> = [
-              { label: "INSERT", hint: "For the selected rows", icon: Copy, run: () => void handleCopyAsInsert() },
-              { label: "UPDATE", hint: "For the selected rows", icon: FilePen, run: () => void handleCopyAsUpdate() },
-              { label: "INSERT $.", hint: "Parameterized placeholders", icon: Braces, run: () => void handleCopyAsInsertParam() },
-              { label: "UPDATE $.", hint: "Parameterized placeholders", icon: Braces, run: () => void handleCopyAsUpdateParam() },
+              { label: "INSERT", hint: t("datagrid.sqlInsertHint"), icon: Copy, run: () => void handleCopyAsInsert() },
+              { label: "UPDATE", hint: t("datagrid.sqlInsertHint"), icon: FilePen, run: () => void handleCopyAsUpdate() },
+              { label: "INSERT $.", hint: t("datagrid.sqlParamHint"), icon: Braces, run: () => void handleCopyAsInsertParam() },
+              { label: "UPDATE $.", hint: t("datagrid.sqlParamHint"), icon: Braces, run: () => void handleCopyAsUpdateParam() },
               ...(hasPk
-                ? [{ label: "DELETE $.", hint: "By primary key placeholders", icon: Braces, run: () => void handleCopyAsDeleteParam() }]
+                ? [{ label: "DELETE $.", hint: t("datagrid.sqlDeleteHint"), icon: Braces, run: () => void handleCopyAsDeleteParam() }]
                 : []),
             ];
             const sqlMenu = (
@@ -499,9 +512,10 @@ export function DataGridToolbar({
             handleCopyAsInsertParam,
             handleCopyAsUpdateParam,
             handleCopyAsDeleteParam,
+            t,
           ])}
 
-          <span ref={exportBtnRef} className="popover-container" data-popover={canExport ? "Export data" : "No data to export"}>
+          <span ref={exportBtnRef} className="popover-container" data-popover={canExport ? t("datagrid.exportPopover") : t("datagrid.noDataExport")}>
             <button
               type="button"
               className={`datagrid-footer-action ${showExportMenu ? "active" : ""}`}
@@ -513,14 +527,14 @@ export function DataGridToolbar({
                 setShowSettings(false);
               }}
               disabled={!canExport || isExportingFull}
-              title="Export data"
+              title={t("datagrid.exportTitle")}
             >
               {isExportingFull ? <Loader2 className="!w-3.5 !h-3.5 animate-spin" /> : <Download className="!w-3.5 !h-3.5" />}
-              <span>{isExportingFull ? `${exportedRowCount.toLocaleString()} rows` : "Export"}</span>
+              <span>{isExportingFull ? t("datagrid.exportingRows", { count: exportedRowCount }) : t("datagrid.export")}</span>
               <ChevronDown className="!w-3 !h-3" />
             </button>
           </span>
-          <span ref={copyBtnRef} className="popover-container" data-popover={canExport ? "Copy data to clipboard" : "No data to copy"}>
+          <span ref={copyBtnRef} className="popover-container" data-popover={canExport ? t("datagrid.copyDataPopover") : t("datagrid.noDataCopy")}>
             <button
               type="button"
               className={`datagrid-footer-action datagrid-icon-action ${showCopyMenu ? "active" : ""}`}
@@ -532,8 +546,8 @@ export function DataGridToolbar({
                 setShowSettings(false);
               }}
               disabled={!canExport}
-              title="Copy data to clipboard"
-              aria-label="Copy data to clipboard"
+              title={t("datagrid.copyDataPopover")}
+              aria-label={t("datagrid.copyDataPopover")}
             >
               <Copy className="!w-3.5 !h-3.5" />
             </button>
@@ -549,7 +563,7 @@ export function DataGridToolbar({
                 setShowCopyMenu(false);
                 setShowSettings(false);
               }}
-              title="Sort rows"
+              title={t("datagrid.sortRows")}
               aria-haspopup="menu"
               aria-expanded={showSortMenu}
             >
@@ -564,8 +578,8 @@ export function DataGridToolbar({
               className="datagrid-footer-action datagrid-icon-action"
               onClick={() => void onReloadData()}
               disabled={isReloadingData}
-              title="Reload data"
-              aria-label="Reload data"
+              title={t("datagrid.reloadData")}
+              aria-label={t("datagrid.reloadData")}
             >
               {isReloadingData ? (
                 <Loader2 className="!w-3.5 !h-3.5 animate-spin" />
@@ -579,10 +593,10 @@ export function DataGridToolbar({
               type="button"
               className="datagrid-footer-action danger"
               onClick={onCancelExport}
-              title="Cancel full table export"
+              title={t("datagrid.cancelExportTitle")}
             >
               <X className="!w-3.5 !h-3.5" />
-              <span>Stop export</span>
+              <span>{t("datagrid.stopExport")}</span>
             </button>
           )}
 
@@ -592,13 +606,13 @@ export function DataGridToolbar({
             const top = rect.bottom + 6;
             const right = window.innerWidth - rect.right;
             const exportOptions: Array<{ label: string; hint: string; icon: typeof FileSpreadsheet; run: () => void }> = [
-              { label: tableName && onExportFull ? "Full CSV" : "CSV", hint: "Comma-separated values", icon: FileSpreadsheet, run: handleExportCSV },
-              { label: tableName && onExportFull ? "Full JSONL" : "JSON", hint: "JSON Lines", icon: FileJson, run: handleExportJSON },
-              { label: "XLSX", hint: "Excel workbook", icon: FileSpreadsheet, run: handleExportXLSX },
-              { label: "MQL", hint: "Mongo shell script", icon: FileCode, run: () => void handleExportMQL() },
+              { label: tableName && onExportFull ? t("datagrid.exportFullCsv") : "CSV", hint: t("datagrid.exportHintCsv"), icon: FileSpreadsheet, run: handleExportCSV },
+              { label: tableName && onExportFull ? t("datagrid.exportFullJsonl") : "JSON", hint: t("datagrid.exportHintJson"), icon: FileJson, run: handleExportJSON },
+              { label: "XLSX", hint: t("datagrid.exportHintXlsx"), icon: FileSpreadsheet, run: handleExportXLSX },
+              { label: "MQL", hint: t("datagrid.exportHintMql"), icon: FileCode, run: () => void handleExportMQL() },
               ...pluginFormats.map((format) => ({
                 label: format.label,
-                hint: format.description || `${format.pluginName} plugin`,
+                hint: format.description || t("datagrid.exportHintPlugin", { plugin: format.pluginName }),
                 icon: FileCode,
                 run: () => handlePluginExport(format),
               })),
@@ -638,6 +652,7 @@ export function DataGridToolbar({
             handlePluginExport,
             onExportFull,
             tableName,
+            t,
           ])}
 
           {useMemo(() => {
@@ -646,13 +661,19 @@ export function DataGridToolbar({
             const top = rect.bottom + 6;
             const right = window.innerWidth - rect.right;
             const copyOptions: Array<{ label: string; hint: string; icon: typeof FileSpreadsheet; run: () => void }> = [
-              { label: "CSV", hint: "Comma + header row", icon: FileSpreadsheet, run: handleCopyCSV },
-              { label: "TSV", hint: "Tab-separated", icon: FileSpreadsheet, run: handleCopyTSV },
-              { label: "JSON", hint: "One object per row", icon: FileJson, run: handleCopyJSON },
-              { label: "MQL", hint: "Mongo shell inserts", icon: FileCode, run: handleCopyMQL },
+              { label: "CSV", hint: t("datagrid.copyHintCsv"), icon: FileSpreadsheet, run: handleCopyCSV },
+              { label: "TSV", hint: t("datagrid.copyHintTsv"), icon: FileSpreadsheet, run: handleCopyTSV },
+              { label: "JSON", hint: t("datagrid.copyHintJson"), icon: FileJson, run: handleCopyJSON },
+              { label: "MQL", hint: t("datagrid.copyHintMql"), icon: FileCode, run: handleCopyMQL },
+              {
+                label: t("datagrid.anonymizer.title"),
+                hint: t("datagrid.anonymizer.saltHint"),
+                icon: ShieldCheck,
+                run: () => setShowAnonymizer(true),
+              },
               ...pluginFormats.map((format) => ({
                 label: format.label,
-                hint: format.description || `${format.pluginName} plugin`,
+                hint: format.description || t("datagrid.exportHintPlugin", { plugin: format.pluginName }),
                 icon: FileCode,
                 run: () => handleCopyPlugin(format),
               })),
@@ -690,6 +711,7 @@ export function DataGridToolbar({
             handleCopyJSON,
             handleCopyMQL,
             handleCopyPlugin,
+            t,
           ])}
 
           {useMemo(() => {
@@ -733,7 +755,7 @@ export function DataGridToolbar({
                     }}
                   >
                     <X className="!w-3.5 !h-3.5" />
-                    <span>Clear sort</span>
+                    <span>{t("datagrid.clearSort")}</span>
                   </button>
                 )}
               </div>
@@ -747,20 +769,21 @@ export function DataGridToolbar({
             multiSort,
             onSortColumn,
             onClearMultiSort,
+            t,
           ])}
 
           {selectedRowCount > 0 && tableName && (
             <span
               className="popover-container"
-              data-popover={`Delete ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""}`}
+              data-popover={t("datagrid.deleteSelectedPopover", { count: selectedRowCount })}
             >
               <button
                 type="button"
                 className="datagrid-footer-action danger datagrid-icon-action"
                 onClick={() => void handleDeleteSelectedRows()}
                 disabled={isDeletingRows}
-                title={`Delete ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""}`}
-                aria-label={`Delete ${selectedRowCount} selected row${selectedRowCount > 1 ? "s" : ""}`}
+                title={t("datagrid.deleteSelectedTitle", { count: selectedRowCount })}
+                aria-label={t("datagrid.deleteSelectedTitle", { count: selectedRowCount })}
               >
                 {isDeletingRows ? (
                   <Loader2 className="!w-3.5 !h-3.5 animate-spin" />
@@ -774,7 +797,7 @@ export function DataGridToolbar({
           <span
             ref={settingsBtnRef}
             className="popover-container"
-            data-popover="Data grid settings"
+            data-popover={t("datagrid.settingsPopover")}
           >
             <button
               type="button"
@@ -786,7 +809,7 @@ export function DataGridToolbar({
                 setShowCopyMenu(false);
                 setShowSortMenu(false);
               }}
-              title="Data grid settings"
+              title={t("datagrid.settingsTitle")}
             >
               <Settings2 className="!w-3.5 !h-3.5" />
             </button>
@@ -803,7 +826,7 @@ export function DataGridToolbar({
                 style={{ position: "fixed", top, right, zIndex: 9999 }}
               >
                 <div className="datagrid-settings-popover-header">
-                  <span className="datagrid-settings-popover-title">Grid Settings</span>
+                  <span className="datagrid-settings-popover-title">{t("datagrid.gridSettings")}</span>
                   <button
                     type="button"
                     className="datagrid-settings-popover-close"
@@ -813,7 +836,7 @@ export function DataGridToolbar({
                   </button>
                 </div>
                 <div className="datagrid-settings-section">
-                  <label className="datagrid-settings-label">NULL display</label>
+                  <label className="datagrid-settings-label">{t("datagrid.nullDisplay")}</label>
                   <input
                     type="text"
                     className="datagrid-settings-input"
@@ -824,7 +847,7 @@ export function DataGridToolbar({
                   />
                 </div>
                 <div className="datagrid-settings-section">
-                  <label className="datagrid-settings-label">Row height</label>
+                  <label className="datagrid-settings-label">{t("datagrid.rowHeight")}</label>
                   <div className="datagrid-settings-row">
                     {(["small", "medium", "large"] as const).map((size) => (
                       <button
@@ -833,25 +856,25 @@ export function DataGridToolbar({
                         className={`datagrid-settings-toggle ${settings.rowHeight === size ? "active" : ""}`}
                         onClick={() => updateSettings({ rowHeight: size })}
                       >
-                        {size.charAt(0).toUpperCase() + size.slice(1)}
+                        {t(size === "small" ? "datagrid.sizeSmall" : size === "medium" ? "datagrid.sizeMedium" : "datagrid.sizeLarge")}
                       </button>
                     ))}
                   </div>
                 </div>
                 <div className="datagrid-settings-section">
-                  <label className="datagrid-settings-label">Alternating rows</label>
+                  <label className="datagrid-settings-label">{t("datagrid.alternatingRows")}</label>
                   <button
                     type="button"
                     className={`datagrid-settings-toggle ${settings.alternatingRows ? "active" : ""}`}
                     onClick={() => updateSettings({ alternatingRows: !settings.alternatingRows })}
                   >
-                    {settings.alternatingRows ? "On" : "Off"}
+                    {t(settings.alternatingRows ? "datagrid.on" : "datagrid.off")}
                   </button>
                 </div>
               </div>
             );
             return createPortal(popoverContent, document.body);
-          }, [showSettings, settings, updateSettings])}
+          }, [showSettings, settings, updateSettings, t])}
         </div>
 
         {/* View mode toggle: Table / Chart (after the action buttons) */}
@@ -860,22 +883,30 @@ export function DataGridToolbar({
             type="button"
             className={`datachart-toggle-btn${viewMode === "table" ? " active" : ""}`}
             onClick={() => onViewModeChange?.("table")}
-            title="Table view"
+            title={t("datagrid.tableView")}
           >
             <List className="!w-3.5 !h-3.5" />
-            <span>Table</span>
+            <span>{t("datagrid.table")}</span>
           </button>
           <button
             type="button"
             className={`datachart-toggle-btn${viewMode === "chart" ? " active" : ""}`}
             onClick={() => onViewModeChange?.("chart")}
-            title="Chart view"
+            title={t("datagrid.chartView")}
           >
             <BarChart3 className="!w-3.5 !h-3.5" />
-            <span>Chart</span>
+            <span>{t("datagrid.chart")}</span>
           </button>
         </div>
       </div>
+
+      {showAnonymizer && (
+        <DataGridAnonymizerModal
+          columns={resolvedColumns}
+          dataRows={dataRows}
+          onClose={() => setShowAnonymizer(false)}
+        />
+      )}
     </div>
   );
 }

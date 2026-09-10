@@ -1,9 +1,13 @@
-//! CSV data import (roadmap Phase 2B).
+//! CSV data import (roadmap Phase 2B + WF-07 streaming).
 //!
-//! `preview_import_csv` sniffs the delimiter, reads the header and a sample of
-//! rows. `import_csv` inserts rows in bounded batches using prepared
-//! parameters — cell values are never spliced into the SQL text.
+//! `preview_import_csv` sniffs the delimiter from a small file prefix,
+//! streams a bounded sample and counts rows without holding the file in
+//! memory. `import_csv` streams records straight from disk into bounded
+//! INSERT batches — memory stays flat for 1 GB+ files — while emitting
+//! `csv-import-progress` events and honouring the shared
+//! `CsvImportCancellationState` so a running import can be cancelled.
 
+use crate::commands::table::CsvImportCancellationState;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{DatabaseType, QueryParameter, QueryParameterType};
 use crate::database::parameterized_query::{
@@ -12,11 +16,23 @@ use crate::database::parameterized_query::{
 use csv::StringRecord;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
-use tauri::State;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, State};
 
-const MAX_IMPORT_FILE_BYTES: u64 = 100 * 1024 * 1024;
+/// Preview must stream-count its rows; files beyond this are refused so a
+/// stray 100 GB file cannot spin the preview dialog for minutes.
+const MAX_PREVIEW_FILE_BYTES: u64 = 1024 * 1024 * 1024;
+/// Import streams from disk, so the old 100 MB gate becomes a sanity cap.
+const MAX_IMPORT_FILE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+/// Row-count ceiling for previews; beyond it the count is reported truncated.
+const MAX_PREVIEW_COUNT_ROWS: usize = 2_000_000;
+/// Bytes sniffed from the file head for delimiter detection.
+const DELIMITER_SNIFF_BYTES: u64 = 8_192;
 const DEFAULT_BATCH_SIZE: usize = 200;
 const DEFAULT_SAMPLE_ROWS: usize = 20;
+/// Progress events are emitted at this row stride (matches the atomic path).
+const PROGRESS_ROW_STRIDE: u64 = 250;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +43,8 @@ pub struct CsvPreview {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<String>>,
     pub total_rows: usize,
+    /// True when row counting stopped at MAX_PREVIEW_COUNT_ROWS.
+    pub total_rows_truncated: bool,
     pub delimiter: char,
 }
 
@@ -61,29 +79,71 @@ pub fn detect_delimiter(prefix: &str) -> u8 {
     b",;\t"[best_index]
 }
 
-fn read_records(path: &std::path::Path, delimiter: u8) -> Result<Vec<StringRecord>, String> {
-    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
-    if metadata.len() > MAX_IMPORT_FILE_BYTES {
-        return Err(format!(
-            "File is larger than the {} MB import limit.",
-            MAX_IMPORT_FILE_BYTES / (1024 * 1024)
-        ));
-    }
-    let mut file = std::fs::File::open(path).map_err(|error| error.to_string())?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)
+/// Reads only the first bytes of the file for delimiter sniffing — a 10 GB
+/// file costs the same 8 KB read as a 10 KB one.
+fn sniff_delimiter_from_file(path: &std::path::Path) -> Result<u8, String> {
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut prefix = String::new();
+    file.take(DELIMITER_SNIFF_BYTES)
+        .read_to_string(&mut prefix)
         .map_err(|error| error.to_string())?;
+    Ok(detect_delimiter(&prefix))
+}
 
+/// Streams the CSV once, collecting at most `sample_cap` data rows and
+/// counting data rows up to `count_cap`. Returns
+/// `(sample_rows, total_rows, truncated)`. Bounded memory regardless of size.
+fn sample_and_count<R: std::io::Read>(
+    mut reader: csv::Reader<R>,
+    mut has_header: bool,
+    sample_cap: usize,
+    count_cap: usize,
+) -> Result<(Vec<Vec<String>>, usize, bool), String> {
+    let mut sample_rows: Vec<Vec<String>> = Vec::new();
+    let mut total_rows = 0usize;
+    let mut truncated = false;
+    for record in reader.records() {
+        let record = record.map_err(|error| format!("CSV parse error: {error}"))?;
+        if has_header {
+            // The header line is reported separately by the caller.
+            has_header = false;
+            continue;
+        }
+        if total_rows < count_cap {
+            total_rows += 1;
+        } else {
+            truncated = true;
+        }
+        if sample_rows.len() < sample_cap {
+            sample_rows.push(record.iter().map(str::to_string).collect());
+        }
+    }
+    Ok((sample_rows, total_rows, truncated))
+}
+
+fn header_columns_from_path(path: &std::path::Path, delimiter: u8) -> Result<Vec<String>, String> {
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(delimiter)
         .has_headers(false)
         .flexible(true)
-        .from_reader(text.as_bytes());
-    let mut records = Vec::new();
-    for record in reader.records() {
-        records.push(record.map_err(|error| format!("CSV parse error: {error}"))?);
+        .from_path(path)
+        .map_err(|error| format!("Failed to open CSV file: {error}"))?;
+    let first = reader
+        .records()
+        .next()
+        .ok_or_else(|| "The selected CSV file is empty.".to_string())
+        .and_then(|record| record.map_err(|error| format!("CSV parse error: {error}")))?;
+    if first.is_empty() {
+        return Err("The selected CSV file is empty.".to_string());
     }
-    Ok(records)
+    let mut header_row: Vec<String> = first.into_iter().map(|cell| cell.to_string()).collect();
+    // Empty header cells fall back to positional names column_1..n.
+    for (index, cell) in header_row.iter_mut().enumerate() {
+        if cell.trim().is_empty() {
+            *cell = format!("column_{}", index + 1);
+        }
+    }
+    Ok(header_row)
 }
 
 #[tauri::command]
@@ -94,32 +154,28 @@ pub async fn preview_import_csv(sample_rows: Option<usize>) -> Result<CsvPreview
         .pick_file()
         .ok_or_else(|| "No file selected.".to_string())?;
 
-    let mut prefix = String::new();
-    std::fs::File::open(&path)
-        .and_then(|mut file| file.read_to_string(&mut prefix))
-        .map_err(|error| error.to_string())?;
-    let prefix_head: String = prefix.chars().take(8_192).collect();
-    let delimiter = detect_delimiter(&prefix_head);
-
-    let records = read_records(&path, delimiter)?;
-    if records.is_empty() {
-        return Err("The selected CSV file is empty.".to_string());
+    let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_PREVIEW_FILE_BYTES {
+        return Err(format!(
+            "File is larger than the {} MB preview limit.",
+            MAX_PREVIEW_FILE_BYTES / (1024 * 1024)
+        ));
     }
 
+    let delimiter = sniff_delimiter_from_file(&path)?;
+    let header_row = header_columns_from_path(&path, delimiter)?;
+
+    // The sample and the row count come from ONE bounded-memory streaming
+    // pass — no read-to-end, no Vec of every record.
     let sample_cap = sample_rows.unwrap_or(DEFAULT_SAMPLE_ROWS).max(1);
-    let mut header_row: Vec<String> = records[0].iter().map(str::to_string).collect();
-    // Empty header cells fall back to positional names column_1..n.
-    for (index, cell) in header_row.iter_mut().enumerate() {
-        if cell.trim().is_empty() {
-            *cell = format!("column_{}", index + 1);
-        }
-    }
-    let data_rows: Vec<Vec<String>> = records
-        .iter()
-        .skip(1)
-        .take(sample_cap)
-        .map(|record| record.iter().map(|cell| cell.to_string()).collect())
-        .collect();
+    let reader = csv::ReaderBuilder::new()
+        .delimiter(delimiter)
+        .has_headers(false)
+        .flexible(true)
+        .from_path(&path)
+        .map_err(|error| format!("Failed to open CSV file: {error}"))?;
+    let (data_rows, total_rows, total_rows_truncated) =
+        sample_and_count(reader, true, sample_cap, MAX_PREVIEW_COUNT_ROWS)?;
 
     Ok(CsvPreview {
         file_name: path
@@ -130,7 +186,8 @@ pub async fn preview_import_csv(sample_rows: Option<usize>) -> Result<CsvPreview
         file_path: path.to_string_lossy().to_string(),
         columns: header_row,
         rows: data_rows,
-        total_rows: records.len().saturating_sub(1),
+        total_rows,
+        total_rows_truncated,
         delimiter: delimiter as char,
     })
 }
@@ -150,6 +207,8 @@ pub struct ImportSummary {
     pub inserted_rows: usize,
     pub batches: usize,
     pub table_created: bool,
+    /// True when the run stopped early because cancel_csv_import was called.
+    pub cancelled: bool,
 }
 
 fn quote_qualified_for(database_type: DatabaseType, qualified: &str) -> Result<String, String> {
@@ -215,6 +274,9 @@ pub async fn import_csv(
     has_header: bool,
     create_table: bool,
     batch_size: Option<usize>,
+    operation_id: Option<String>,
+    app: AppHandle,
+    cancellation_state: State<'_, CsvImportCancellationState>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<ImportSummary, String> {
     if mappings.is_empty() {
@@ -240,15 +302,22 @@ pub async fn import_csv(
     if !file_path.exists() {
         return Err(format!("File not found: {path}"));
     }
-    let mut prefix = String::new();
-    std::fs::File::open(&file_path)
-        .and_then(|mut file| file.read_to_string(&mut prefix))
-        .map_err(|error| error.to_string())?;
-    let delimiter = detect_delimiter(&prefix.chars().take(8_192).collect::<String>());
-    let mut records = read_records(&file_path, delimiter)?;
-    if has_header && !records.is_empty() {
-        records.remove(0);
+    let metadata = std::fs::metadata(&file_path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_IMPORT_FILE_BYTES {
+        return Err(format!(
+            "File is larger than the {} MB import limit.",
+            MAX_IMPORT_FILE_BYTES / (1024 * 1024)
+        ));
     }
+    let delimiter = sniff_delimiter_from_file(&file_path)?;
+    let total_bytes = metadata.len();
+
+    // Register with the shared cancellation state so cancel_csv_import can
+    // stop this import; callers without an operation id get a local flag.
+    let (cancelled, registered_operation_id) = match operation_id.as_deref() {
+        Some(id) if !id.trim().is_empty() => (cancellation_state.start(id)?, Some(id.to_string())),
+        _ => (Arc::new(AtomicBool::new(false)), None),
+    };
 
     let table_sql = quote_qualified_for(database_type, &table)?;
 
@@ -271,35 +340,118 @@ pub async fn import_csv(
 
     let batch = batch_size.unwrap_or(DEFAULT_BATCH_SIZE).clamp(1, 1_000);
     let style = placeholder_style_for_database(database_type);
-    let mut inserted_rows = 0usize;
-    let mut batches = 0usize;
-    for (batch_index, chunk_start) in (0..records.len()).step_by(batch).enumerate() {
-        let chunk_end = (chunk_start + batch).min(records.len());
-        let rows = &records[chunk_start..chunk_end];
-        let (sql, parameters) =
-            build_insert_batch(database_type, &table_sql, &mappings, rows, batch_index)?;
-        let compiled = compile_parameterized_query(&sql, &parameters, style)
-            .map_err(|error| error.to_string())?;
-        driver
-            .execute_parameterized_query(&compiled.sql, &compiled.parameters)
-            .await
-            .map_err(|error| format!("Import batch {batch_index} failed: {error}"))?;
-        inserted_rows += rows.len();
-        batches += 1;
-    }
+    // Stream records from disk: memory holds one batch at a time, so file
+    // size no longer decides memory use. The loop runs inside one async
+    // block so the cancellation slot is ALWAYS released afterwards.
+    let import_outcome = async {
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(delimiter)
+            .has_headers(has_header)
+            .flexible(true)
+            .from_path(&file_path)
+            .map_err(|error| format!("Failed to open CSV file: {error}"))?;
 
-    Ok(ImportSummary {
-        inserted_rows,
-        batches,
-        table_created,
-    })
+        let mut pending: Vec<StringRecord> = Vec::with_capacity(batch);
+        let mut inserted_rows = 0usize;
+        let mut batches = 0usize;
+        let mut batch_index = 0usize;
+        let mut next_progress_at = PROGRESS_ROW_STRIDE;
+        let mut was_cancelled = false;
+        #[allow(unused_assignments)]
+        let mut last_byte = 0u64;
+
+        for record in reader.records() {
+            if cancelled.load(Ordering::Relaxed) {
+                was_cancelled = true;
+                break;
+            }
+            let record = record.map_err(|error| format!("CSV parse error: {error}"))?;
+            last_byte = record.position().map(|p| p.byte()).unwrap_or(0);
+            pending.push(record);
+            if pending.len() < batch {
+                continue;
+            }
+            let (sql, parameters) =
+                build_insert_batch(database_type, &table_sql, &mappings, &pending, batch_index)?;
+            let compiled = compile_parameterized_query(&sql, &parameters, style)
+                .map_err(|error| error.to_string())?;
+            driver
+                .execute_parameterized_query(&compiled.sql, &compiled.parameters)
+                .await
+                .map_err(|error| format!("Import batch {batch_index} failed: {error}"))?;
+            inserted_rows += pending.len();
+            batches += 1;
+            batch_index += 1;
+            pending.clear();
+
+            if (inserted_rows as u64) >= next_progress_at {
+                next_progress_at = inserted_rows as u64 + PROGRESS_ROW_STRIDE;
+                let _ = app.emit(
+                    "csv-import-progress",
+                    serde_json::json!({
+                        "operationId": registered_operation_id,
+                        "processedRows": inserted_rows as u64,
+                        "processedBytes": last_byte,
+                        "totalBytes": total_bytes,
+                    }),
+                );
+            }
+        }
+
+        if was_cancelled {
+            return Ok(ImportSummary {
+                inserted_rows,
+                batches,
+                table_created,
+                cancelled: true,
+            });
+        }
+
+        // Final partial batch.
+        if !pending.is_empty() {
+            let (sql, parameters) =
+                build_insert_batch(database_type, &table_sql, &mappings, &pending, batch_index)?;
+            let compiled = compile_parameterized_query(&sql, &parameters, style)
+                .map_err(|error| error.to_string())?;
+            driver
+                .execute_parameterized_query(&compiled.sql, &compiled.parameters)
+                .await
+                .map_err(|error| format!("Import batch {batch_index} failed: {error}"))?;
+            inserted_rows += pending.len();
+            batches += 1;
+        }
+
+        let _ = app.emit(
+            "csv-import-progress",
+            serde_json::json!({
+                "operationId": registered_operation_id,
+                "processedRows": inserted_rows as u64,
+                "processedBytes": total_bytes,
+                "totalBytes": total_bytes,
+            }),
+        );
+
+        Ok(ImportSummary {
+            inserted_rows,
+            batches,
+            table_created,
+            cancelled: false,
+        })
+    }
+    .await;
+
+    if let Some(id) = registered_operation_id.as_deref() {
+        cancellation_state.finish(id);
+    }
+    import_outcome
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_insert_batch, detect_delimiter, ImportColumnMapping};
+    use super::{build_insert_batch, detect_delimiter, sample_and_count, ImportColumnMapping};
     use crate::database::models::DatabaseType;
     use csv::StringRecord;
+    use std::io::Cursor;
 
     #[test]
     fn detects_common_delimiters() {
@@ -363,5 +515,48 @@ mod tests {
         assert!(sql.contains("(\"name\", \"age\")"));
         assert_eq!(parameters[0].value, serde_json::json!("alice"));
         assert_eq!(parameters[1].value, serde_json::json!("42"));
+    }
+
+    fn reader_from(text: &str) -> csv::Reader<Cursor<&str>> {
+        csv::ReaderBuilder::new()
+            .delimiter(b',')
+            .has_headers(false)
+            .flexible(true)
+            .from_reader(Cursor::new(text))
+    }
+
+    #[test]
+    fn sample_and_count_streams_without_loading_every_row() {
+        let mut text = String::from("id,name\n");
+        for index in 0..50 {
+            text.push_str(&format!("{index},row{index}\n"));
+        }
+        let (rows, total, truncated) =
+            sample_and_count(reader_from(&text), true, 5, 1_000_000).unwrap();
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows[0], vec!["0", "row0"]);
+        assert_eq!(total, 50);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn sample_and_count_reports_truncation_at_the_cap() {
+        let mut text = String::from("id\n");
+        for index in 0..10 {
+            text.push_str(&format!("{index}\n"));
+        }
+        let (rows, total, truncated) = sample_and_count(reader_from(&text), true, 3, 5).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(total, 5, "count stops at the cap");
+        assert!(truncated);
+    }
+
+    #[test]
+    fn sample_and_count_without_header_counts_every_line() {
+        let (rows, total, truncated) =
+            sample_and_count(reader_from("a,b\nc,d\n"), false, 10, 1_000_000).unwrap();
+        assert_eq!(total, 2);
+        assert_eq!(rows.len(), 2);
+        assert!(!truncated);
     }
 }

@@ -132,6 +132,8 @@ export function useSQLEditor({
   const [isBatchExecuting, setIsBatchExecuting] = useState(false);
   const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
   const [explainPlan, setExplainPlan] = useState<ParsedExplainPlan | undefined>(() => initialState?.explainPlan);
+  /** SQL text the current explainPlan was generated from (for index proposals). */
+  const [explainSourceSql, setExplainSourceSql] = useState<string | undefined>(undefined);
   const [isRunningExplain, setIsRunningExplain] = useState(false);
 
   // Surface execution errors: auto-expand the results pane so the user
@@ -565,6 +567,7 @@ export function useSQLEditor({
 
       const plan = parseExplainOutput(dbType, rawOutput);
       setExplainPlan(plan);
+      setExplainSourceSql(sql.trim());
     } catch (e) {
       setError(`EXPLAIN failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -700,14 +703,15 @@ export function useSQLEditor({
       return;
     }
 
+    const vimStatusEl = vimStatusRef?.current ?? null;
     vimModeRef.current?.dispose();
-    vimModeRef.current = initVimMode(editor, vimStatusRef?.current ?? null);
+    vimModeRef.current = initVimMode(editor, vimStatusEl);
 
     return () => {
       vimModeRef.current?.dispose();
       vimModeRef.current = null;
-      if (vimStatusRef?.current) {
-        vimStatusRef.current.textContent = "";
+      if (vimStatusEl) {
+        vimStatusEl.textContent = "";
       }
     };
   }, [isVimModeEnabled, vimStatusRef]);
@@ -851,6 +855,7 @@ export function useSQLEditor({
     handleSplitDrag,
     schedulePersistedContent,
     explainPlan,
+    explainSourceSql,
     isRunningExplain,
     setExplainPlan,
     aiProposal,

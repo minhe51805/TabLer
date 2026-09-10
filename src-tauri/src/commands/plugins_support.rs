@@ -1,3 +1,4 @@
+use crate::storage::file_storage::write_json_atomically;
 use crate::storage::plugin_storage::{InstalledPluginRecord, PluginManifest, PluginStorage};
 use futures_util::StreamExt;
 use reqwest::{Client, Url};
@@ -843,19 +844,82 @@ pub(super) fn validate_registry(index: &PluginRegistryIndex) -> Result<(), Strin
     Ok(())
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct CachedPluginRegistry {
+    /// The registry URL this copy came from — a cached index is only served
+    /// back for the exact same URL so a custom registry never leaks entries
+    /// into the default one.
+    url: String,
+    body: PluginRegistryIndex,
+}
+
+fn parse_registry_bytes(bytes: &[u8]) -> Result<PluginRegistryIndex, String> {
+    let index = serde_json::from_slice::<PluginRegistryIndex>(bytes)
+        .map_err(|e| format!("Plugin registry JSON is invalid: {e}"))?;
+    validate_registry(&index)?;
+    Ok(index)
+}
+
+fn write_registry_cache(path: &std::path::Path, url: &str, index: &PluginRegistryIndex) {
+    let cache = CachedPluginRegistry {
+        url: url.to_string(),
+        body: index.clone(),
+    };
+    match serde_json::to_string_pretty(&cache) {
+        Ok(json) => {
+            if let Err(error) = write_json_atomically(path, &json) {
+                log::warn!("Failed to cache the plugin registry: {error}");
+            }
+        }
+        Err(error) => log::warn!("Failed to serialize the plugin registry cache: {error}"),
+    }
+}
+
+fn read_registry_cache(path: &std::path::Path, url: &str) -> Option<PluginRegistryIndex> {
+    let raw = fs::read(path).ok()?;
+    let cache: CachedPluginRegistry = serde_json::from_slice(&raw).ok()?;
+    if cache.url != url {
+        return None;
+    }
+    parse_registry_bytes(&serde_json::to_vec(&cache.body).ok()?).ok()
+}
+
 pub(super) async fn fetch_registry_index(
     registry_url: Option<String>,
+    cache_path: Option<&std::path::Path>,
 ) -> Result<PluginRegistryIndex, String> {
     let raw_url = registry_url
         .as_deref()
         .unwrap_or(DEFAULT_PLUGIN_REGISTRY_URL);
     let url = validate_https_url(raw_url, "Plugin registry URL")?;
     let client = registry_client()?;
-    let bytes = download_limited(&client, url, MAX_REGISTRY_BYTES, "plugin registry").await?;
-    let index = serde_json::from_slice::<PluginRegistryIndex>(&bytes)
-        .map_err(|e| format!("Plugin registry JSON is invalid: {e}"))?;
-    validate_registry(&index)?;
-    Ok(index)
+    let fetch_result = download_limited(&client, url, MAX_REGISTRY_BYTES, "plugin registry")
+        .await
+        .and_then(|bytes| parse_registry_bytes(&bytes));
+    match fetch_result {
+        Ok(index) => {
+            // Persist the last good copy so the marketplace survives outages.
+            if let Some(path) = cache_path {
+                write_registry_cache(path, raw_url, &index);
+            }
+            Ok(index)
+        }
+        Err(fetch_error) => {
+            // Offline fallback: a GitHub outage or a renamed repository must
+            // not brick plugin browsing and update checks — degrade to the
+            // stale-but-validated cached catalog for this exact URL.
+            if let Some(path) = cache_path {
+                if let Some(index) = read_registry_cache(path, raw_url) {
+                    log::warn!(
+                        "Plugin registry fetch failed ({fetch_error}); using the cached copy from {}",
+                        path.display()
+                    );
+                    return Ok(index);
+                }
+            }
+            Err(fetch_error)
+        }
+    }
 }
 
 pub(super) fn latest_compatible_package<'a>(
@@ -935,4 +999,62 @@ pub(super) async fn materialize_registry_package(
             .map_err(|e| format!("Failed to write plugin asset '{}': {e}", asset.path))?;
     }
     Ok(source)
+}
+
+#[cfg(test)]
+mod registry_cache_tests {
+    use std::fs;
+    use std::path::Path;
+    use uuid::Uuid;
+
+    use super::{
+        fetch_registry_index, read_registry_cache, write_registry_cache, PluginRegistryIndex,
+    };
+
+    #[test]
+    fn registry_cache_ignores_entries_from_a_different_url() {
+        let index = PluginRegistryIndex {
+            schema_version: 1,
+            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            packages: Vec::new(),
+        };
+        let cache_path =
+            std::env::temp_dir().join(format!("tabler-registry-cache-{}.json", Uuid::new_v4()));
+        write_registry_cache(
+            &cache_path,
+            "https://registry-a.example.com/index.json",
+            &index,
+        );
+        // Same cache file, different registry URL: the entry must not be
+        // served — custom registries never leak into each other.
+        assert!(
+            read_registry_cache(&cache_path, "https://registry-b.example.com/index.json").is_none()
+        );
+        assert!(
+            read_registry_cache(&cache_path, "https://registry-a.example.com/index.json").is_some()
+        );
+        let _ = fs::remove_file(&cache_path);
+    }
+
+    #[tokio::test]
+    async fn registry_fetch_falls_back_to_the_cached_copy_when_offline() {
+        // Reuse the repository's real registry so the cached body passes
+        // validate_registry without hand-rolling a fixture.
+        let registry_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("plugin-registry.json");
+        let index: PluginRegistryIndex =
+            serde_json::from_slice(&fs::read(registry_path).unwrap()).unwrap();
+        let url = "https://registry-cache-test.invalid/plugin-registry.json";
+        let cache_path =
+            std::env::temp_dir().join(format!("tabler-registry-cache-{}.json", Uuid::new_v4()));
+        write_registry_cache(&cache_path, url, &index);
+
+        // The .invalid host fails DNS resolution; the cached copy must step in.
+        let result = fetch_registry_index(Some(url.to_string()), Some(&cache_path)).await;
+
+        let _ = fs::remove_file(&cache_path);
+        let served = result.expect("offline fallback must serve the cached registry");
+        assert_eq!(served.packages.len(), index.packages.len());
+    }
 }

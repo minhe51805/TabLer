@@ -1,10 +1,20 @@
 use log::error;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+/// Quiet period that must pass with no further filesystem events before a
+/// batch is flushed. Coalesces save-storms (editor autosave, OneDrive/Dropbox
+/// sync churn) into a single frontend notification per file.
+const EVENT_DEBOUNCE_MS: u64 = 400;
+/// Upper bound for one batch: continuous event streams (sync clients) still
+/// flush at least every 2s instead of never settling.
+const EVENT_MAX_BATCH_WINDOW_MS: u64 = 2_000;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct FileEventPayload {
@@ -42,39 +52,65 @@ pub fn start_watcher(app: AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     std::thread::spawn(move || {
         let app_for_event = app.clone();
-        for res in rx {
-            match res {
-                Ok(event) => {
-                    handle_event(&app_for_event, event);
-                }
-                Err(e) => {
-                    error!("watch error: {:?}", e);
+        let debounce = Duration::from_millis(EVENT_DEBOUNCE_MS);
+        let max_window = Duration::from_millis(EVENT_MAX_BATCH_WINDOW_MS);
+        // Block until the first event of a potential batch arrives; the
+        // thread exits when the watcher channel closes (recv returns Err).
+        while let Ok(first) = rx.recv() {
+            let mut batch = vec![first];
+            let started = Instant::now();
+            // Coalesce follow-up events while the batch is hot: flush as soon
+            // as the stream goes quiet for the debounce window, or when the
+            // max batch window elapses (continuous event storms).
+            while started.elapsed() < max_window {
+                match rx.recv_timeout(debounce) {
+                    Ok(event) => batch.push(event),
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => {
+                        handle_event_batch(&app_for_event, batch);
+                        return;
+                    }
                 }
             }
+            handle_event_batch(&app_for_event, batch);
         }
     });
 
     Ok(())
 }
 
-fn handle_event(app: &AppHandle, event: Event) {
-    let kind = match event.kind {
-        notify::EventKind::Create(_) => "created",
-        notify::EventKind::Modify(_) => "modified",
-        notify::EventKind::Remove(_) => "removed",
-        _ => return,
-    };
-
-    for path in event.paths {
-        if let Some(ext) = path.extension() {
-            if ext == "sql" || ext == "json" {
-                let payload = FileEventPayload {
-                    path: path.to_string_lossy().to_string(),
-                    kind: kind.to_string(),
-                };
-                let _ = app.emit("linked-folder-change", payload);
+fn handle_event_batch(app: &AppHandle, events: Vec<notify::Result<Event>>) {
+    // Deduplicate by path, keeping the latest kind seen for each file so a
+    // create+modify burst emits one notification per file.
+    let mut latest: HashMap<std::path::PathBuf, &'static str> = HashMap::new();
+    for event in events {
+        let event = match event {
+            Ok(event) => event,
+            Err(e) => {
+                error!("watch error: {:?}", e);
+                continue;
+            }
+        };
+        let kind = match event.kind {
+            notify::EventKind::Create(_) => "created",
+            notify::EventKind::Modify(_) => "modified",
+            notify::EventKind::Remove(_) => "removed",
+            _ => continue,
+        };
+        for path in event.paths {
+            if let Some(ext) = path.extension() {
+                if ext == "sql" || ext == "json" {
+                    latest.insert(path, kind);
+                }
             }
         }
+    }
+    for (path, kind) in latest {
+        let payload = FileEventPayload {
+            path: path.to_string_lossy().to_string(),
+            kind: kind.to_string(),
+        };
+        let _ = app.emit("linked-folder-change", payload);
     }
 }
 

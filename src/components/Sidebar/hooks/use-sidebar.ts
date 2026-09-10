@@ -24,6 +24,8 @@ import {
   buildUpdateTemplate,
 } from "./sidebar-filter-scripts";
 import { emitAppToast } from "../../../utils/app-toast";
+import { saveDatabaseDocs } from "../../../utils/schema-doc-collector";
+import { useQueryStore } from "../../../stores/queryStore";
 import {
   usePinnedTables,
   useSchemaSections,
@@ -363,6 +365,44 @@ export function useSidebar() {
     await copyToClipboard(getQualifiedTableName(table));
   }, []);
 
+  /** Generate a Markdown schema book for this table through the save dialog. */
+  const [queryBuilderTable, setQueryBuilderTable] = useState<string | null>(null);
+  const queryStore = useQueryStore.getState();
+  const handleOpenQueryBuilder = useCallback(async (tableName: string) => {
+    try {
+      await queryStore.getTableColumnsPreview(activeConnectionId ?? "", tableName, currentDatabase || undefined);
+    } catch {
+      // Column loading is best-effort; the panel shows an empty list.
+    }
+    setQueryBuilderTable(tableName);
+  }, [activeConnectionId, currentDatabase, queryStore]);
+
+  const handleGenerateTableDocs = useCallback(async (table: Pick<TableInfo, "name" | "schema">) => {
+    if (!activeConnectionId) return;
+    try {
+      const saved = await saveDatabaseDocs(
+        activeConnectionId,
+        currentDatabase || table.name,
+        "markdown",
+        [table.name],
+      );
+      if (saved !== null) {
+        emitAppToast({
+          title: t("explorer.context.docsSaved"),
+          description: saved,
+          tone: "success",
+        });
+      }
+    } catch (error) {
+      emitAppToast({
+        title: t("explorer.context.docsFailed"),
+        description: error instanceof Error ? error.message : String(error),
+        tone: "error",
+      });
+    }
+  }, [activeConnectionId, currentDatabase, t]);
+
+
   const handleRefresh = useCallback(async () => {
     if (!activeConnectionId) return;
     await fetchDatabases(activeConnectionId);
@@ -510,7 +550,7 @@ export function useSidebar() {
       }
       return true;
     });
-  }, [search, tables, conditions, conditionLogic, tableOperator]);
+  }, [search, conditions, columnModeActive, tables, conditionLogic, tableOperator]);
 
   const filteredSchemaObjects = useMemo(() => {
     if (!search.trim() && conditions.length === 0) return schemaObjects;
@@ -655,6 +695,16 @@ export function useSidebar() {
         key: "copy-name",
         label: t("explorer.context.copyName"),
         action: () => void handleCopyTableName(table),
+      },
+      {
+        key: "generate-docs",
+        label: t("explorer.context.generateDocs"),
+        action: () => void handleGenerateTableDocs(table),
+      },
+      {
+        key: "visual-query-builder",
+        label: t("querybuilder.title"),
+        action: () => void handleOpenQueryBuilder(table.name),
       },
       {
         key: "pin-to-top",
@@ -805,7 +855,7 @@ export function useSidebar() {
         danger: true,
       },
     ];
-  }, [dbType, pinnedTableSet, t, tableContextMenu, handleOpenTableInNewTab, handleOpenStructureDraft, handleCopyTableName, openQueryDraft, togglePinnedTable, activeConnectionId, currentDatabase]);
+  }, [tableContextMenu, pinnedTableSet, t, dbType, handleOpenTableInNewTab, handleOpenStructureDraft, openQueryDraft, handleCopyTableName, handleGenerateTableDocs, handleOpenQueryBuilder, togglePinnedTable, runMaintenanceCommand]);
 
   // --- Effects ---
   useEffect(() => {
@@ -900,6 +950,9 @@ export function useSidebar() {
     tables,
     schemaObjects,
     isLoadingTables,
+    // Query builder
+    queryBuilderTable,
+    setQueryBuilderTable,
     // Local state
     expandedDbs,
     search,

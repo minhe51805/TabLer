@@ -133,9 +133,12 @@ function getExtras(detail: Record<string, unknown>): Record<string, string | num
   const extras: Record<string, string | number | boolean | null> = {};
   const aliases: [string, string][] = [
     ["Relation_Name", "table"],
+    ["Relation Name", "table"],
     ["relation name", "table"],
     ["Table", "table"],
+    ["table_name", "table"],
     ["Index_Name", "index"],
+    ["Index Name", "index"],
     ["index name", "index"],
     ["Index", "index"],
     ["Parent Relationship", "join"],

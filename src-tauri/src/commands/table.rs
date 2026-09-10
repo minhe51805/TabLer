@@ -38,7 +38,7 @@ pub struct CsvImportCancellationState {
 }
 
 impl CsvImportCancellationState {
-    fn start(&self, operation_id: &str) -> Result<Arc<AtomicBool>, String> {
+    pub fn start(&self, operation_id: &str) -> Result<Arc<AtomicBool>, String> {
         if operation_id.trim().is_empty() {
             return Err("CSV import operation identifier is required.".to_string());
         }
@@ -50,13 +50,13 @@ impl CsvImportCancellationState {
         Ok(cancelled)
     }
 
-    fn finish(&self, operation_id: &str) {
+    pub fn finish(&self, operation_id: &str) {
         if let Ok(mut imports) = self.imports.lock() {
             imports.remove(operation_id);
         }
     }
 
-    fn cancel(&self, operation_id: &str) -> bool {
+    pub fn cancel(&self, operation_id: &str) -> bool {
         let Ok(imports) = self.imports.lock() else {
             return false;
         };

@@ -34,11 +34,11 @@ export function useDataGridSortFilter({
       setSortDir("ASC");
     }
     setCurrentPage(0);
-  }, [sortColumn]);
+  }, [setCurrentPage, setMultiSort, setSortColumn, setSortDir, sortColumn]);
 
   const handleFilterChange = useCallback((value: string) => {
     setFilterDraft(value);
-  }, []);
+  }, [setFilterDraft]);
 
   /** Add column to multi-sort at specific priority position */
   const handleMultiSortAdd = useCallback((colName: string, direction: "ASC" | "DESC") => {
@@ -47,7 +47,7 @@ export function useDataGridSortFilter({
       return [...prev, { column: colName, direction, priority: prev.length + 1 }];
     });
     setCurrentPage(0);
-  }, []);
+  }, [setCurrentPage, setMultiSort]);
 
   /** Clear all multi-sort columns */
   const handleMultiSortClear = useCallback(() => {
@@ -55,7 +55,7 @@ export function useDataGridSortFilter({
     setSortColumn(null);
     setSortDir("ASC");
     setCurrentPage(0);
-  }, []);
+  }, [setCurrentPage, setMultiSort, setSortColumn, setSortDir]);
 
   const handleSortAsc = useCallback((colName: string) => {
     if (multiSort.length > 0) {
@@ -65,7 +65,7 @@ export function useDataGridSortFilter({
       setSortDir("ASC");
       setCurrentPage(0);
     }
-  }, [handleMultiSortAdd, multiSort.length]);
+  }, [handleMultiSortAdd, multiSort.length, setCurrentPage, setSortColumn, setSortDir]);
 
   const handleSortDesc = useCallback((colName: string) => {
     if (multiSort.length > 0) {
@@ -75,7 +75,7 @@ export function useDataGridSortFilter({
       setSortDir("DESC");
       setCurrentPage(0);
     }
-  }, [handleMultiSortAdd, multiSort.length]);
+  }, [handleMultiSortAdd, multiSort.length, setCurrentPage, setSortColumn, setSortDir]);
 
   return {
     handleSort,

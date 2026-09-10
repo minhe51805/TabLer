@@ -63,6 +63,7 @@ function App() {
     },
     layout: {
       setShowTerminalPanel, showQueryHistory, setShowQueryHistory, showSQLFavorites, setShowSQLFavorites,
+      showQuerySchedules, setShowQuerySchedules,
       showRowInspector, rowInspectorData, isSidebarCollapsed, sidebarWidth, setSidebarWidth,
       isWindowMaximized, forceLauncherVisible,
     },
@@ -330,6 +331,8 @@ function App() {
         setShowQueryHistory={setShowQueryHistory}
         showSQLFavorites={showSQLFavorites}
         setShowSQLFavorites={setShowSQLFavorites}
+        showQuerySchedules={showQuerySchedules}
+        setShowQuerySchedules={setShowQuerySchedules}
         handleRunQueryFromHistory={handleRunQueryFromHistory}
         handleRunQueryFromFavorites={handleRunQueryFromFavorites}
         showRowInspector={showRowInspector}

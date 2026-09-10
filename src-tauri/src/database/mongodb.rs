@@ -133,10 +133,18 @@ impl MongoDbDriver {
         // pasted into the host field or an official Atlas hostname. SRV is
         // required to discover the cluster (plain mongodb:// only reaches one
         // node and Atlas rejects it), and SRV connections are always TLS.
+        // `.mongodb.net` is reserved for Atlas so the bare-hostname heuristic
+        // cannot misfire on self-hosted servers. Escape hatch for the rare
+        // non-SRV Atlas target (e.g. PrivateLink endpoints, whose hostnames
+        // still end in .mongodb.net but have no SRV records): prefix the host
+        // with `mongodb://` to disable SRV discovery, or pick "Direct" in the
+        // form's Connection discovery field (`srv_mode`).
         let mut is_srv = false;
+        let mut explicit_srv_scheme = false;
         let mut host = raw_host.to_string();
         if let Some(rest) = host.strip_prefix("mongodb+srv://") {
             is_srv = true;
+            explicit_srv_scheme = true;
             host = rest.to_string();
         } else if let Some(rest) = host.strip_prefix("mongodb://") {
             host = rest.to_string();
@@ -146,6 +154,19 @@ impl MongoDbDriver {
             .is_some_and(|host_part| host_part.trim_end_matches('.').ends_with(".mongodb.net"))
         {
             is_srv = true;
+        }
+        // UI override (Connection form "Connection discovery" field):
+        // "force" always uses SRV, "direct" never does — except when the user
+        // explicitly pasted a mongodb+srv:// scheme, which IS the request.
+        match config
+            .additional_fields
+            .get("srv_mode")
+            .map(String::as_str)
+            .map(str::trim)
+        {
+            Some("force") => is_srv = true,
+            Some("direct") if !explicit_srv_scheme => is_srv = false,
+            _ => {}
         }
         // A full connection URL pasted into the host field: keep only the
         // host portion, dropping any embedded `user:pass@` credentials (the
@@ -1210,6 +1231,43 @@ mod tests {
         assert!(
             uri.contains("/avtech_operations?"),
             "target db must be the URI path: {uri}"
+        );
+    }
+
+    #[test]
+    fn srv_mode_field_overrides_the_hostname_heuristic() {
+        // PrivateLink endpoints end in .mongodb.net but have no SRV records:
+        // the form's "Direct" choice must beat the hostname heuristic.
+        let mut config = config_with(
+            "pl-0-us-east1-abc123.mongodb.net:1024",
+            Some("u"),
+            Some("p"),
+            Some("db"),
+        );
+        config
+            .additional_fields
+            .insert("srv_mode".to_string(), "direct".to_string());
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        // The port-carrying host gets bracketed by the URI builder.
+        assert!(
+            uri.starts_with("mongodb://u:p@[pl-0-us-east1-abc123.mongodb.net:1024]/db"),
+            "{uri}"
+        );
+        assert!(
+            !uri.contains("tls=true"),
+            "direct mode keeps use_ssl in charge: {uri}"
+        );
+
+        // "Force" flips a plain host into SRV.
+        config
+            .additional_fields
+            .insert("srv_mode".to_string(), "force".to_string());
+        config.host = Some("mongobox.internal".to_string());
+        config.port = None;
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(
+            uri.starts_with("mongodb+srv://") && uri.contains("mongobox.internal"),
+            "{uri}"
         );
     }
 

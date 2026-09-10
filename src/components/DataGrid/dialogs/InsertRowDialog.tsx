@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import type { ColumnDetail } from "../../../types";
 import { isBooleanColumn } from "../editors";
 import type { ResolvedColumn } from "../hooks/useDataGrid";
+import { useI18n } from "../../../i18n";
 
 interface InsertRowDialogProps {
   tableName?: string;
@@ -26,6 +27,7 @@ export function InsertRowDialog({
   onSubmit,
   onDraftChange,
 }: InsertRowDialogProps) {
+  const { t } = useI18n();
   return (
     <div className="datagrid-insert-dialog-backdrop" onClick={onClose}>
       <div
@@ -37,19 +39,19 @@ export function InsertRowDialog({
       >
         <div className="datagrid-insert-dialog-header">
           <div className="datagrid-insert-dialog-copy">
-            <span className="datagrid-insert-dialog-kicker">Insert row</span>
+            <span className="datagrid-insert-dialog-kicker">{t("datagrid.insKicker")}</span>
             <h3 id="datagrid-insert-dialog-title" className="datagrid-insert-dialog-title">
-              {tableName ? `Add row to ${tableName.split(".").pop() || tableName}` : "Add row"}
+              {tableName ? t("datagrid.insAddTo", { table: tableName.split(".").pop() || tableName }) : t("datagrid.insAdd")}
             </h3>
             <p className="datagrid-insert-dialog-description">
-              Enter the required values below. Columns with database defaults are handled automatically.
+              {t("datagrid.insDescription")}
             </p>
           </div>
           <button
             type="button"
             className="datagrid-insert-dialog-close"
             onClick={onClose}
-            aria-label="Close insert dialog"
+            aria-label={t("datagrid.insCloseAria")}
           >
             <X className="w-4 h-4" />
           </button>
@@ -67,19 +69,19 @@ export function InsertRowDialog({
               const placeholder = isBooleanInput
                 ? "true / false"
                 : normalizedType.includes("uuid")
-                  ? "UUID value"
+                  ? t("datagrid.insPlaceholderUuid")
                   : normalizedType.includes("int") || normalizedType.includes("numeric")
-                    ? "Numeric value"
+                    ? t("datagrid.insPlaceholderNumeric")
                     : column.is_nullable
-                      ? "Leave blank for NULL"
-                      : "Required value";
+                      ? t("datagrid.insPlaceholderNull")
+                      : t("datagrid.insPlaceholderRequired");
 
               return (
                 <label key={column.name} className="datagrid-insert-field">
                   <span className="datagrid-insert-field-head">
                     <span className="datagrid-insert-field-name">{column.name}</span>
                     {!column.is_nullable && (
-                      <span className="datagrid-insert-field-required">Required</span>
+                      <span className="datagrid-insert-field-required">{t("datagrid.insRequiredBadge")}</span>
                     )}
                   </span>
                   <span className="datagrid-insert-field-meta">
@@ -137,7 +139,7 @@ export function InsertRowDialog({
               onClick={onClose}
               disabled={isSubmitting}
             >
-              Cancel
+              {t("common.cancel")}
             </button>
             <button
               type="submit"
@@ -147,7 +149,7 @@ export function InsertRowDialog({
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Inserting...
+                  {t("datagrid.insSubmitting")}
                 </>
               ) : (
                 <>

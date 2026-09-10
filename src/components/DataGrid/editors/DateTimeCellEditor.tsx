@@ -26,7 +26,7 @@ export function DateTimeCellEditor({
     const input = (inputRef as React.MutableRefObject<HTMLInputElement | null>)?.current;
     input?.focus();
     input?.select();
-  }, []);
+  }, [inputRef]);
 
   const parseSeedValue = (seed: string): string => {
     if (/^null$/i.test(seed)) return "";

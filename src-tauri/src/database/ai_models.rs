@@ -7,6 +7,7 @@ pub enum AIProviderType {
     OpenAI,
     Anthropic,
     Gemini,
+    Vertex,
     OpenRouter,
     Ollama,
     Custom,

@@ -3,6 +3,7 @@ import {
   AI_AGENT_TOOL_NAMES,
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
   AI_AGENT_PREVIEW_STATEMENT_LIMIT,
+  AI_AGENT_SEED_DOCUMENT_LIMIT,
   AI_AGENT_SAMPLE_MAX_ROWS,
 } from "@/components/AISlidePanel/ai-agent-tools";
 import { nativeCatalogOptionsForEngine } from "@/components/AISlidePanel/ai-agent-engine-gates";
@@ -43,6 +44,10 @@ describe("AI agent tool schema", () => {
     expect(AI_AGENT_TOOL_SPECS.sample_table_data.parameters.required).toEqual(["table"]);
     expect(AI_AGENT_TOOL_SPECS.run_readonly_sql.parameters.required).toEqual(["sql"]);
     expect(AI_AGENT_TOOL_SPECS.preview_write.parameters.required).toEqual(["statements"]);
+    expect(AI_AGENT_TOOL_SPECS.propose_seed_data.parameters.required).toEqual(["collection", "documents"]);
+    expect(
+      AI_AGENT_TOOL_SPECS.propose_seed_data.parameters.properties?.documents?.maxItems,
+    ).toBe(AI_AGENT_SEED_DOCUMENT_LIMIT);
     expect(AI_AGENT_TOOL_SPECS.remember_term.parameters.required).toEqual(["term", "definition"]);
 
     expect(AI_AGENT_TOOL_SPECS.list_tables.parameters.properties?.limit?.maximum).toBe(200);
@@ -129,6 +134,10 @@ describe("AI agent tool schema", () => {
     const gemini = nativeToolPayloadForProvider("gemini");
     expect(gemini.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
     expect(gemini.tool_choice).toEqual({ function_calling_config: { mode: "AUTO" } });
+
+    // Vertex AI reuses the exact Gemini generateContent tool shape.
+    const vertex = nativeToolPayloadForProvider("vertex");
+    expect(vertex).toEqual(gemini);
   });
 
   it("normalizes Gemini schemas to the Gemini proto (audit fix)", () => {
@@ -224,6 +233,7 @@ describe("native tool calling wire parity", () => {
     "openai",
     "anthropic",
     "gemini",
+    "vertex",
     "openrouter",
     "ollama",
     "custom",

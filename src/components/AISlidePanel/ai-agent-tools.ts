@@ -24,6 +24,7 @@ export {
   AI_AGENT_SAMPLE_MAX_ROWS,
   AI_AGENT_SCHEMA_OBJECTS_LIMIT,
   AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS,
+  AI_AGENT_SEED_DOCUMENT_LIMIT,
   AI_AGENT_TOOL_NAMES,
 } from "./ai-agent-tool-schema";
 export type { AIAgentToolName } from "./ai-agent-tool-schema";
@@ -275,6 +276,17 @@ export type AIAgentDelegateAction = AIAgentToolActionBase<
   AIAgentDelegateArgs
 >;
 
+export interface AIAgentProposeSeedDataArgs extends Record<string, unknown> {
+  collection: string;
+  documents: unknown[];
+  rationale?: string;
+}
+
+export type AIAgentProposeSeedDataAction = AIAgentToolActionBase<
+  "propose_seed_data",
+  AIAgentProposeSeedDataArgs
+>;
+
 export type AIAgentToolAction =
   | AIAgentAskUserAction
   | AIAgentUpdatePlanAction
@@ -290,6 +302,7 @@ export type AIAgentToolAction =
   | AIAgentCheckSqlAction
   | AIAgentRunPresetAction
   | AIAgentPreviewWriteAction
+  | AIAgentProposeSeedDataAction
   | AIAgentRememberTermAction
   | AIAgentReadMemoryAction
   | AIAgentSaveMemoryAction

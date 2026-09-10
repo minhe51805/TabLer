@@ -48,6 +48,8 @@ export interface AIWorkspaceCopy {
     agentActionCreateCheckpoint: string;
     agentActionRestoreCheckpoint: string;
     agentActionPreviewWrite: string;
+    agentActionProposeSeedData: string;
+    agentActionSkill: string;
     agentActionAskUser: string;
     agentActionListTables: string;
     agentActionDescribeTable: string;
@@ -172,6 +174,8 @@ export interface AIWorkspaceCopy {
     runFailedTitle: string;
     runFailedSubtitle: string;
     askUserCustomAnswer: string;
+    askUserCustomPlaceholder: string;
+    askUserCustomSend: string;
     openedInWorkspaceTitle: string;
     openedInWorkspaceSubtitle: string;
     openedInWorkspacePreview: string;

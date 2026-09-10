@@ -56,6 +56,9 @@ export interface AgentToolAvailability {
   engineLabel: string;
   sqlRead: boolean;
   sqlWritePreview: boolean;
+  /** Document engines (MongoDB): the agent may propose insertMany seed data
+   *  through a query tab proposal — never executes writes itself. */
+  documentPropose: boolean;
 }
 
 export function agentQueryModelForEngine(engineKey: string | null | undefined): QueryModel {
@@ -79,17 +82,22 @@ export function agentToolAvailability(
     engineLabel: known,
     sqlRead: queryModel === "sql" || queryModel === "cql",
     sqlWritePreview: queryModel === "sql",
+    documentPropose: queryModel === "document",
   };
 }
 
 export function isAgentToolEnabled(
   name: AIAgentToolName,
-  availability: Pick<AgentToolAvailability, "sqlRead" | "sqlWritePreview">,
+  availability: Pick<
+    AgentToolAvailability,
+    "sqlRead" | "sqlWritePreview" | "documentPropose"
+  >,
 ): boolean {
   if (name === "run_readonly_sql" || name === "run_parameterized_sql") return availability.sqlRead;
   if (name === "find_value" || name === "check_sql") return availability.sqlRead;
   if (name === "list_schema_objects" || name === "run_preset") return availability.sqlRead;
   if (name === "preview_write") return availability.sqlWritePreview;
+  if (name === "propose_seed_data") return availability.sqlWritePreview || availability.documentPropose;
   return true;
 }
 
@@ -127,7 +135,7 @@ export function engineAwareDataPlaneHints(availability: AgentToolAvailability) {
     };
   }
   return {
-    gather: `You are an autonomous agent on ${availability.engineLabel}, which does not speak SQL. Decide your own steps: locate unknown fields with search_schema, inspect the exact table with describe_table, then ACTUALLY gather data with sample_table_data. Never call run_readonly_sql or preview_write.`,
+    gather: `You are an autonomous agent on ${availability.engineLabel}, which does not speak SQL. Decide your own steps: locate unknown fields with search_schema, inspect the exact table with describe_table, then ACTUALLY gather data with sample_table_data. Never call run_readonly_sql or preview_write.${availability.documentPropose ? " To fill an empty collection, call propose_seed_data — the seed script opens in a query tab for the user to run." : ""}`,
     mustRead:
       "When the user asks to see data, charts, counts, samples, distributions, or 'show me' anything, you MUST run sample_table_data before finishing. Finishing with only suggestions and no executed query is a failure.",
     finishSql: "When you finish, omit finish.args.sql. Put the answer in finish.args.response.",

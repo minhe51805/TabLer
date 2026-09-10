@@ -4,7 +4,7 @@ import { Plus, Trash2, Brain, Loader2, Check, Download, Pencil, Lock, X } from "
 import { useAIStore } from "../../stores/aiStore";
 import { invokeWithTimeout } from "../../utils/tauri-utils";
 import { getCurrentAppLanguage } from "../../i18n";
-import type { AIProviderConfig, LocalOllamaSetupProgressEvent, LocalOllamaStatus } from "../../types";
+import type { AIProviderConfig, FetchedModel, LocalOllamaSetupProgressEvent, LocalOllamaStatus } from "../../types";
 import {
     AI_PROVIDER_TYPES,
     formatAIProviderTypeLabel,
@@ -13,6 +13,17 @@ import {
 } from "../../utils/ai-provider-registry";
 
 const LOCAL_OLLAMA_EVENT = "ollama-setup-progress";
+
+// Input modalities the model dialog + picker expose as chips. Capability
+// metadata fetched from a provider is clamped to this set before auto-fill.
+const MODEL_INPUT_TYPES = ["text", "image", "video"] as const;
+
+/** Compact token count for the picker badges, e.g. 1048576 -> "1M ctx". */
+function formatContextTokens(tokens: number): string {
+    if (tokens >= 1_000_000) return `${Math.round(tokens / 100_000) / 10}M ctx`;
+    if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k ctx`;
+    return `${tokens} ctx`;
+}
 
 interface Props {
     onClose: () => void;
@@ -23,6 +34,7 @@ export function AISettingsModal({ onClose }: Props) {
     const loadAIConfigs = useAIStore((state) => state.loadAIConfigs);
     const getLocalOllamaStatus = useAIStore((state) => state.getLocalOllamaStatus);
     const setupLocalOllama = useAIStore((state) => state.setupLocalOllama);
+    const listProviderModels = useAIStore((state) => state.listProviderModels);
 
     const [configs, setConfigs] = useState<AIProviderConfig[]>([]);
     const [storedKeyStatus, setStoredKeyStatus] = useState<Record<string, boolean>>({});
@@ -39,6 +51,18 @@ export function AISettingsModal({ onClose }: Props) {
         outputTypes: string[];
     } | null>(null);
     const [modelDialogError, setModelDialogError] = useState<string | null>(null);
+    const [isFetchingModels, setIsFetchingModels] = useState(false);
+    const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
+    const [fetchModelsNotice, setFetchModelsNotice] = useState<string | null>(null);
+    // Holds the fetched catalog while the user picks which models to add and
+    // which one to make active — we never import the whole list automatically.
+    // `models` keeps each model's capability metadata so adding one can
+    // auto-fill its context window / output budget / input types.
+    const [modelPicker, setModelPicker] = useState<{
+        models: FetchedModel[];
+        selected: string[];
+        active: string;
+    } | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [connectionCheckStatus, setConnectionCheckStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
     const [connectionCheckMessage, setConnectionCheckMessage] = useState<string | null>(null);
@@ -328,6 +352,129 @@ export function AISettingsModal({ onClose }: Props) {
             setConnectionCheckMessage(message);
             setSaveError(message);
         }
+    };
+
+    const handleFetchModels = async () => {
+        if (!activeConfig) return;
+        const targetId = activeConfig.id;
+        const configuredModel = activeConfig.model;
+        const apiKeyUpdates = Object.fromEntries(
+            Object.entries(keyDrafts).filter(([, value]) => value.trim().length > 0)
+        );
+        setIsFetchingModels(true);
+        setFetchModelsError(null);
+        setFetchModelsNotice(null);
+        setSaveError(null);
+        try {
+            // Persist first so the backend reads the latest endpoint + API key,
+            // mirroring the "Check connection" flow.
+            const { aiConfigs, aiKeyStatus } = await saveAIConfigs(configs, apiKeyUpdates, clearedKeyIds);
+            setConfigs(normalizeAIProviderConfigs(aiConfigs));
+            setStoredKeyStatus(aiKeyStatus);
+            const fetched = await listProviderModels(targetId);
+            // Don't dump the whole list into the catalog — open a picker so the
+            // user chooses which models to add and which one becomes active.
+            // Nothing is preselected except the model that's already active.
+            const defaultActive = configuredModel?.trim()
+                ? (fetched.find((entry) => entry.id === configuredModel)?.id ?? "")
+                : "";
+            setModelPicker({
+                models: fetched,
+                selected: defaultActive ? [defaultActive] : [],
+                active: defaultActive,
+            });
+        } catch (error) {
+            setFetchModelsError(error instanceof Error ? error.message : String(error));
+        } finally {
+            setIsFetchingModels(false);
+        }
+    };
+
+    const toggleModelPickerSelection = (model: string) => {
+        setModelPicker((current) => {
+            if (!current) return current;
+            const isSelected = current.selected.includes(model);
+            return {
+                ...current,
+                selected: isSelected
+                    ? current.selected.filter((entry) => entry !== model)
+                    : [...current.selected, model],
+                // Unticking the active choice clears it so we don't set a model
+                // the user just removed.
+                active: isSelected && current.active === model ? "" : current.active,
+            };
+        });
+    };
+
+    const setModelPickerActive = (model: string) => {
+        setModelPicker((current) => {
+            if (!current) return current;
+            return {
+                ...current,
+                active: model,
+                // Choosing an active model implicitly adds it to the catalog.
+                selected: current.selected.includes(model)
+                    ? current.selected
+                    : [...current.selected, model],
+            };
+        });
+    };
+
+    const handleConfirmModelPicker = () => {
+        if (!activeConfig || !modelPicker) return;
+        const targetId = activeConfig.id;
+        const existing = activeConfigModels;
+        const existingLower = new Set(existing.map((entry) => entry.toLowerCase()));
+        // Add only the ticked models that aren't already present, in fetched order.
+        const toAdd = modelPicker.models
+            .filter((entry) => modelPicker.selected.includes(entry.id) && !existingLower.has(entry.id.toLowerCase()))
+            .map((entry) => entry.id);
+        const mergedModels = [...existing, ...toAdd];
+        let nextModel = activeConfig.model;
+        const chosenActive = modelPicker.active.trim();
+        if (chosenActive) {
+            if (!mergedModels.some((entry) => entry.toLowerCase() === chosenActive.toLowerCase())) {
+                mergedModels.push(chosenActive);
+            }
+            nextModel = chosenActive;
+        } else if (!nextModel?.trim() && mergedModels.length > 0) {
+            nextModel = mergedModels[0];
+        }
+        // Auto-fill per-model settings from any capability metadata the provider
+        // returned (context window, output budget, input modalities) so the token
+        // meter + composer reflect real limits without manual entry. Only touch
+        // models being newly added, and never clobber settings the user already
+        // tuned. Input modalities are clamped to the types the UI supports.
+        const modelSettings = { ...(activeConfig.model_settings ?? {}) };
+        const toAddLower = new Set(toAdd.map((id) => id.toLowerCase()));
+        let autoFilledCount = 0;
+        for (const entry of modelPicker.models) {
+            if (!toAddLower.has(entry.id.toLowerCase()) || modelSettings[entry.id]) continue;
+            const detectedInputs = (entry.input_types ?? []).filter((type) =>
+                MODEL_INPUT_TYPES.includes(type as (typeof MODEL_INPUT_TYPES)[number]),
+            );
+            const hasMetadata =
+                entry.context_window != null || entry.max_output_tokens != null || detectedInputs.length > 0;
+            if (!hasMetadata) continue;
+            modelSettings[entry.id] = {
+                context_window: entry.context_window ?? null,
+                max_output_tokens: entry.max_output_tokens ?? null,
+                input_types: Array.from(new Set(["text", ...detectedInputs])),
+                output_types: ["text"],
+            };
+            autoFilledCount += 1;
+        }
+        updateConfig(targetId, { models: mergedModels, model: nextModel, model_settings: modelSettings });
+        const addedCount = mergedModels.length - existing.length;
+        const autoFillNote = autoFilledCount > 0 ? ` (auto-filled limits for ${autoFilledCount})` : "";
+        setFetchModelsNotice(
+            addedCount > 0
+                ? `Added ${addedCount} model${addedCount === 1 ? "" : "s"}${autoFillNote}${chosenActive ? `; active set to ${chosenActive}` : ""}.`
+                : chosenActive
+                    ? `Active model set to ${chosenActive}.`
+                    : "No changes made.",
+        );
+        setModelPicker(null);
     };
 
     const updateConfig = (id: string, updates: Partial<AIProviderConfig>) => {
@@ -800,7 +947,27 @@ export function AISettingsModal({ onClose }: Props) {
                                                 >
                                                     + Add model
                                                 </button>
+                                                {activeConfig.provider_type !== "vertex" ? (
+                                                    <button
+                                                        type="button"
+                                                        className="ai-settings-btn-toggle"
+                                                        title="Fetch the model list from this provider's API"
+                                                        disabled={isSettingUpLocalOllama || isFetchingModels}
+                                                        onClick={handleFetchModels}
+                                                    >
+                                                        {isFetchingModels
+                                                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                            : <Download className="w-3.5 h-3.5" />}
+                                                        {isFetchingModels ? "Fetching…" : "Fetch models"}
+                                                    </button>
+                                                ) : null}
                                             </div>
+                                            {fetchModelsError ? (
+                                                <div className="ai-settings-error">{fetchModelsError}</div>
+                                            ) : null}
+                                            {fetchModelsNotice ? (
+                                                <p className="ai-settings-model-empty">{fetchModelsNotice}</p>
+                                            ) : null}
                                         </div>
                                         {activeConfig.provider_type === "custom" ? (
                                             <div className="ai-settings-field">
@@ -918,6 +1085,68 @@ export function AISettingsModal({ onClose }: Props) {
                                                     <div className="ai-settings-model-dialog-actions">
                                                         <button type="button" className="ai-settings-btn-cancel" onClick={() => setModelDialog(null)}>Cancel</button>
                                                         <button type="button" className="ai-settings-btn-save" onClick={handleSaveModelDialog}>Save</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                        {modelPicker ? (
+                                            <div className="ai-settings-model-dialog-backdrop" role="dialog" aria-label="Select models to add">
+                                                <div className="ai-settings-model-dialog">
+                                                    <div className="ai-settings-model-dialog-head">
+                                                        <span className="ai-settings-model-dialog-title">
+                                                            Select models ({modelPicker.selected.length}/{modelPicker.models.length})
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            className="ai-settings-icon-btn"
+                                                            title="Close"
+                                                            onClick={() => setModelPicker(null)}
+                                                        >
+                                                            <X className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                    <p className="ai-settings-model-empty">
+                                                        Tick the models to add, then choose one to set as active.
+                                                    </p>
+                                                    <div className="ai-settings-model-list">
+                                                        {modelPicker.models.map((model) => {
+                                                            const isSelected = modelPicker.selected.includes(model.id);
+                                                            const inCatalog = activeConfigModels.some((entry) => entry.toLowerCase() === model.id.toLowerCase());
+                                                            const isActive = modelPicker.active === model.id;
+                                                            return (
+                                                                <div key={model.id} className="ai-settings-model-row">
+                                                                    <button
+                                                                        type="button"
+                                                                        className={`ai-settings-type-chip ${isSelected ? "is-on" : ""}`}
+                                                                        title={isSelected ? "Unselect" : "Select"}
+                                                                        onClick={() => toggleModelPickerSelection(model.id)}
+                                                                    >
+                                                                        <span className="ai-settings-type-check">{isSelected ? <Check className="w-3 h-3" /> : null}</span>
+                                                                    </button>
+                                                                    <span className={`ai-settings-model-name ${isActive ? "is-active" : ""}`}>{model.id}</span>
+                                                                    {model.context_window != null ? (
+                                                                        <span className="ai-settings-model-inactive" title="Detected context window (auto-filled on add)">
+                                                                            {formatContextTokens(model.context_window)}
+                                                                        </span>
+                                                                    ) : null}
+                                                                    {inCatalog ? <span className="ai-settings-model-inactive">In catalog</span> : null}
+                                                                    {isActive ? <span className="ai-settings-model-active">Active</span> : null}
+                                                                    <button
+                                                                        type="button"
+                                                                        className="ai-settings-model-state-btn"
+                                                                        title="Set as the active model"
+                                                                        disabled={isActive}
+                                                                        onClick={() => setModelPickerActive(model.id)}
+                                                                    >
+                                                                        {isActive ? "Active" : "Set active"}
+                                                                    </button>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                    <div className="ai-settings-model-dialog-actions">
+                                                        <button type="button" className="ai-settings-btn-cancel" onClick={() => setModelPicker(null)}>Cancel</button>
+                                                        <button type="button" className="ai-settings-btn-save" onClick={handleConfirmModelPicker}>Add selected</button>
                                                     </div>
                                                 </div>
                                             </div>

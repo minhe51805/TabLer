@@ -20522,35 +20522,55 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 
 .ai-workspace-markdown-table-wrap {
   overflow-x: auto;
-  border-radius: 14px;
+  border-radius: 12px;
   border: 1px solid var(--mm-border);
-  background: var(--mm-surface-1);
+  background: var(--mm-surface-0);
+  -webkit-overflow-scrolling: touch;
 }
 
 .ai-workspace-markdown-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 320px;
+  font-size: var(--mm-fs-small);
+  line-height: 1.5;
 }
 
 .ai-workspace-markdown-table th,
 .ai-workspace-markdown-table td {
-  padding: 9px 11px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--mm-border);
   text-align: left;
   vertical-align: top;
+  /* Wrap at word boundaries only — never split "COLLECTION" into "COLLE CTIO N".
+     A single overlong token still breaks so it can't force horizontal overflow. */
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
-.ai-workspace-markdown-table th {
-  color: var(--text-primary);
-  font-size: var(--mm-fs-caption);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+/* Compact, quiet header: no uppercase/letter-spacing (that inflated the title and
+   forced ugly per-character wrapping in the narrow panel) — smaller, secondary,
+   with a subtle fill so it still reads as a header row. */
+.ai-workspace-markdown-table thead th {
+  background: var(--mm-surface-2);
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  border-bottom: 1px solid var(--mm-border-strong);
 }
 
-.ai-workspace-markdown-table td {
+.ai-workspace-markdown-table tbody td {
   color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-workspace-markdown-table tbody tr:nth-child(even) {
+  background: var(--mm-surface-1);
+}
+
+.ai-workspace-markdown-table tbody tr:hover {
+  background: var(--mm-surface-2);
 }
 
 .ai-workspace-markdown-table tbody tr:last-child td {
@@ -20650,6 +20670,61 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   border-color: color-mix(in srgb, var(--mm-accent, #007AFF) 60%, var(--mm-border, #D8D8DC));
   background: color-mix(in srgb, var(--mm-accent, #007AFF) 5%, transparent);
   color: var(--text-primary);
+}
+
+/* Inline free-form reply: clicking the dashed "type your own answer" chip
+   swaps it for this text field + send button so the user can type a custom
+   answer right under the options instead of scrolling to the composer. */
+.ai-workspace-ask-user-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 200px;
+  min-width: 180px;
+}
+
+.ai-workspace-ask-user-custom-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--mm-accent, #007AFF) 45%, var(--mm-border, #D8D8DC));
+  border-radius: 8px;
+  background: var(--mm-surface, #FFFFFF);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption, 12px);
+  line-height: 1.3;
+  outline: none;
+}
+
+.ai-workspace-ask-user-custom-input:focus,
+.ai-workspace-ask-user-custom-input:focus-visible {
+  border-color: var(--mm-accent, #007AFF);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mm-accent, #007AFF) 25%, transparent);
+}
+
+.ai-workspace-ask-user-custom-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--mm-accent, #007AFF) 40%, var(--mm-border, #D8D8DC));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mm-accent, #007AFF) 12%, var(--mm-surface, #FFFFFF));
+  color: var(--mm-accent, #007AFF);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.ai-workspace-ask-user-custom-send:hover:not(:disabled) {
+  border-color: var(--mm-accent, #007AFF);
+  background: color-mix(in srgb, var(--mm-accent, #007AFF) 20%, var(--mm-surface, #FFFFFF));
+}
+
+.ai-workspace-ask-user-custom-send:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .ai-workspace-chat-code {

@@ -239,7 +239,7 @@ pub(crate) fn extract_stream_deltas(
                 .map(ToString::to_string);
             (text, reasoning)
         }
-        AIProviderType::Gemini => {
+        AIProviderType::Gemini | AIProviderType::Vertex => {
             let text = [
                 "/candidates/0/content/parts",
                 "/candidates/0/output",
@@ -360,7 +360,7 @@ pub(crate) fn extract_tool_call_as_action_json(
                 .unwrap_or_else(|| serde_json::json!({}));
             (name, arguments)
         }
-        AIProviderType::Gemini => {
+        AIProviderType::Gemini | AIProviderType::Vertex => {
             let call = payload
                 .pointer("/candidates/0/content/parts")?
                 .as_array()?
@@ -475,6 +475,35 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
         assert_eq!(parsed["action"], "search_schema");
         assert_eq!(parsed["args"]["query"], "email");
+    }
+
+    #[test]
+    fn vertex_reuses_gemini_tool_call_and_stream_extraction() {
+        // Vertex AI returns the same generateContent shape as Gemini, so both
+        // the non-streaming tool-call and streaming-delta extractors must treat
+        // it identically.
+        let call_payload = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{ "functionCall": { "name": "list_tables", "args": { "limit": 3 } } }]
+                }
+            }]
+        });
+        let action =
+            extract_tool_call_as_action_json(&AIProviderType::Vertex, &call_payload).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
+        assert_eq!(parsed["action"], "list_tables");
+        assert_eq!(parsed["args"]["limit"], 3);
+
+        let stream_payload = json!({
+            "candidates": [{
+                "content": { "parts": [{ "text": "\n- next row" }] }
+            }]
+        });
+        assert_eq!(
+            extract_stream_deltas(&AIProviderType::Vertex, &stream_payload).0,
+            Some("\n- next row".to_string())
+        );
     }
 
     #[test]

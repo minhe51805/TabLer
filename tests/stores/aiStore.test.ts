@@ -16,7 +16,7 @@ vi.mock("@/utils/tauri-utils", () => ({
 
 import { useAIStore } from "@/stores/aiStore";
 import { useGlobalErrorStore } from "@/stores/globalErrorStore";
-import type { AIProviderConfig } from "@/types";
+import type { AIConversationMessage, AIProviderConfig } from "@/types";
 
 const provider: AIProviderConfig = {
   id: "provider-1",
@@ -59,6 +59,25 @@ describe("aiStore", () => {
       aiKeyStatus: { "provider-1": true },
     });
     expect(useAIStore.getState().aiConfigs).toEqual([provider]);
+  });
+
+  it("fetches provider models (with capability metadata) via list_provider_models", async () => {
+    const fetched = [
+      { id: "gpt-4o", context_window: 128000, max_output_tokens: 16384, input_types: ["text", "image"] },
+      { id: "gpt-4o-mini" },
+    ];
+    invokeWithTimeoutMock.mockResolvedValue(fetched);
+
+    await expect(
+      useAIStore.getState().listProviderModels("provider-1"),
+    ).resolves.toEqual(fetched);
+
+    expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
+      "list_provider_models",
+      { providerId: "provider-1" },
+      expect.any(Number),
+      expect.any(String),
+    );
   });
 
   it("collects non-streaming agent responses using the agent timeout policy (native tool calling)", async () => {
@@ -328,5 +347,60 @@ describe("aiStore", () => {
       { providerId: "provider-3", model: "gem-a" },
       { providerId: "provider-4", model: "llama-test" },
     ]);
+  });
+
+  it("forwards the full conversation history unchanged to every provider in the failover chain (context survives a provider switch)", async () => {
+    const second: AIProviderConfig = {
+      ...provider,
+      id: "provider-2",
+      name: "Claude",
+      provider_type: "anthropic",
+      model: "claude-test",
+      is_primary: false,
+    };
+    useAIStore.setState({ aiConfigs: [provider, second] });
+
+    // A running conversation: the workspace digest pair + earlier turns the
+    // model must keep in mind. The panel builds this shape; here we assert the
+    // transport layer forwards it INTACT to whichever provider handles the turn,
+    // so switching model/provider mid-run never loses context.
+    const history: AIConversationMessage[] = [
+      { role: "user", content: "[Workspace context — keep this in mind for the task]\nMigrating dbo.taikhoan to the new schema." },
+      { role: "assistant", content: "Understood. I'll keep this workspace context in mind." },
+      { role: "user", content: "What tables exist?" },
+      { role: "assistant", content: "There are three: users, orders, items." },
+      { role: "user", content: "How are orders and users related?" },
+    ];
+
+    invokeMutationMock.mockImplementation(async (command: string) =>
+      command === "cancel_ai_request" ? true : null,
+    );
+    const seenHistories: unknown[] = [];
+    const seenProviderIds: Array<string | null> = [];
+    invokeWithTimeoutMock.mockImplementation(async (command: string, args?: {
+      request?: { provider_id?: string | null; history?: unknown };
+    }) => {
+      if (command === "ask_ai_stream") {
+        seenHistories.push(args?.request?.history);
+        seenProviderIds.push(args?.request?.provider_id ?? null);
+        throw new Error("HTTP 503 Service Unavailable");
+      }
+      return null;
+    });
+
+    await expect(
+      useAIStore
+        .getState()
+        .askAI("orders.user_id references users.id, right?", "context", "panel", "sql", history),
+    ).rejects.toThrow();
+
+    // The run switched from the primary to the fallback provider...
+    expect(seenProviderIds).toEqual(["provider-1", "provider-2"]);
+    // ...and BOTH attempts received the identical, complete history — nothing
+    // dropped or mutated on the switch.
+    expect(seenHistories).toHaveLength(2);
+    for (const seen of seenHistories) {
+      expect(seen).toEqual(history);
+    }
   });
 });

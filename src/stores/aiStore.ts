@@ -8,6 +8,7 @@ import {
   type AIRequestAttachment,
   type AIRequestIntent,
   type AIRequestMode,
+  type FetchedModel,
   type LocalOllamaSetupResult,
   type LocalOllamaStatus,
 } from "../types";
@@ -189,6 +190,15 @@ export interface AIState {
     aiConfigs: AIProviderConfig[];
     aiKeyStatus: Record<string, boolean>;
   }>;
+  /**
+   * Calls the provider's own "list models" API (via the `list_provider_models`
+   * command) and returns the models it exposes, each with any capability
+   * metadata (context window, output budget, input modalities) the provider
+   * advertised, so AI settings can populate the catalog and auto-fill those
+   * fields without manual typing. Callers should persist the config first so
+   * the backend reads the latest endpoint + API key.
+   */
+  listProviderModels: (providerId: string) => Promise<FetchedModel[]>;
   getLocalOllamaStatus: () => Promise<LocalOllamaStatus>;
   setupLocalOllama: () => Promise<LocalOllamaSetupResult>;
   cancelAIRequest: () => Promise<boolean>;
@@ -294,6 +304,14 @@ export const useAIStore = create<AIState>((set, get) => ({
       throw e;
     }
   },
+
+  listProviderModels: async (providerId) =>
+    invokeWithTimeout<FetchedModel[]>(
+      "list_provider_models",
+      { providerId },
+      30_000,
+      "Fetching provider models",
+    ),
 
   promoteNextEnabledProvider: () => {
     const configs = get().aiConfigs;

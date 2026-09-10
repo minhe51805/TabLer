@@ -27,6 +27,7 @@ export const AI_AGENT_TOOL_NAMES = [
   "check_sql",
   "run_preset",
   "preview_write",
+  "propose_seed_data",
   "remember_term",
   "read_memory",
   "save_memory",
@@ -54,6 +55,8 @@ export const AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS = 200_000;
 export const AI_AGENT_BATCH_DESCRIBE_LIMIT = 8;
 /** Max statements accepted in one preview_write call. */
 export const AI_AGENT_PREVIEW_STATEMENT_LIMIT = 10;
+/** Max documents accepted in one propose_seed_data call. */
+export const AI_AGENT_SEED_DOCUMENT_LIMIT = 200;
 /** Max selectable answers on ask_user. */
 export const AI_AGENT_ASK_USER_OPTIONS_LIMIT = 6;
 /** Max schema objects (views/triggers/routines) returned per list call. */
@@ -86,6 +89,7 @@ const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "check_sql",
   "run_preset",
   "preview_write",
+  "propose_seed_data",
   "remember_term",
   "read_memory",
   "save_memory",
@@ -407,6 +411,32 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
         },
       },
       ["statements"],
+    ),
+  },
+
+  propose_seed_data: {
+    name: "propose_seed_data",
+    description:
+      "Fill an empty or sparse table or collection with realistic sample data grounded in the fields you verified with describe_table or sample_table_data. On SQL engines this emits INSERT statements; on MongoDB it emits an insertMany script. The script opens in a NEW query tab for the user to review and run — you cannot insert data directly and must never claim data was written.",
+    parameters: objectSchema(
+      {
+        collection: {
+          type: "string",
+          description: "Exact table or collection name to fill (no schema/db prefix, no whitespace or dots).",
+        },
+        documents: {
+          type: "array",
+          items: { type: "object", additionalProperties: true },
+          minItems: 1,
+          maxItems: AI_AGENT_SEED_DOCUMENT_LIMIT,
+          description: `Realistic rows (1-${AI_AGENT_SEED_DOCUMENT_LIMIT}), each an object whose fields match the table or collection's verified schema. Never fabricate fields you have not seen.`,
+        },
+        rationale: {
+          type: "string",
+          description: "One line explaining the seed shape, shown as the tab title.",
+        },
+      },
+      ["collection", "documents"],
     ),
   },
 
@@ -847,6 +877,7 @@ function exampleLiteral(key: string, schema: JsonSchema): string {
       if (key === "tables") return '["table_a","table_b"]';
       if (key === "parameters") return '[{"name":"status","value":"active"}]';
       if (key === "statements") return `["UPDATE orders SET status = 'cancelled' WHERE id = 42"]`;
+      if (key === "documents") return '[{"name":"Nguyen Van A","email":"a@example.com","status":"active"}]';
       if (key === "steps") return '[{"title":"Locate the orders table","status":"pending|in_progress|done"}]';
       if (key === "focusTables") return '["table_a"]';
       if (key === "metricsWidgets") {
@@ -872,23 +903,35 @@ function formatControllerArgsExample(spec: AIAgentToolSpec, workspaceToolsEnable
 
 export interface AgentToolCatalogOptions {
   workspaceToolsEnabled: boolean;
-  availability?: Pick<AgentToolAvailability, "sqlRead" | "sqlWritePreview">;
+  availability?: Pick<
+    AgentToolAvailability,
+    "sqlRead" | "sqlWritePreview" | "documentPropose"
+  >;
 }
 
 function resolveCatalogOptions(
   options: boolean | AgentToolCatalogOptions,
 ): Required<Pick<AgentToolCatalogOptions, "workspaceToolsEnabled">> & {
-  availability: Pick<AgentToolAvailability, "sqlRead" | "sqlWritePreview">;
+  availability: Pick<
+    AgentToolAvailability,
+    "sqlRead" | "sqlWritePreview" | "documentPropose"
+  >;
 } {
   if (typeof options === "boolean") {
     return {
       workspaceToolsEnabled: options,
-      availability: { sqlRead: true, sqlWritePreview: true },
+      // Permissive "unknown engine" defaults, matching sqlRead/sqlWritePreview:
+      // real engine gating always rides nativeCatalogOptionsForEngine.
+      availability: { sqlRead: true, sqlWritePreview: true, documentPropose: true },
     };
   }
   return {
     workspaceToolsEnabled: options.workspaceToolsEnabled,
-    availability: options.availability ?? { sqlRead: true, sqlWritePreview: true },
+    availability: options.availability ?? {
+      sqlRead: true,
+      sqlWritePreview: true,
+      documentPropose: true,
+    },
   };
 }
 
@@ -1068,6 +1111,9 @@ export function nativeToolPayloadForProvider(
     case "anthropic":
       return { tools: toAnthropicTools(specs), tool_choice: { type: "auto" } };
     case "gemini":
+    case "vertex":
+      // Vertex AI speaks the same generateContent wire format as Gemini:
+      // functionDeclarations + tool_config.function_calling_config.
       return {
         tools: toGeminiFunctionDeclarations(specs),
         tool_choice: { function_calling_config: { mode: "AUTO" } },

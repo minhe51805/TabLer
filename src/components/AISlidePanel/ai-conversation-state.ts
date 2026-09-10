@@ -14,6 +14,67 @@ const MAX_STORED_BUBBLES_PER_THREAD = 24;
 const MAX_HISTORY_BUBBLES = 4;
 const MAX_HISTORY_MESSAGE_CHARS = 1000;
 
+/**
+ * How much verbatim conversation to replay on each send: the `maxBubbles` most
+ * recent ready turns, each user/assistant message trimmed to `maxMessageChars`.
+ * Tuned per model by `resolveHistoryBudget`.
+ */
+export interface HistoryBudget {
+  maxBubbles: number;
+  maxMessageChars: number;
+}
+
+/** Conservative window used when the model's context window is unknown. */
+export const DEFAULT_HISTORY_BUDGET: HistoryBudget = {
+  maxBubbles: MAX_HISTORY_BUBBLES,
+  maxMessageChars: MAX_HISTORY_MESSAGE_CHARS,
+};
+
+// Mirror of the backend AIRequest::validate() caps (src-tauri/.../ai_models.rs):
+// exceed EITHER and the whole request is rejected, so every budget is clamped
+// to stay under them — a generous window can never break a send.
+export const BACKEND_MAX_HISTORY_MESSAGES = 12;
+export const BACKEND_MAX_HISTORY_CHARS = 24_000;
+// The workspace digest rides along as a user/assistant pair on every send;
+// reserve its two slots + char budget so history windowing never crowds it out.
+const DIGEST_RESERVE_MESSAGES = 2;
+const DIGEST_RESERVE_CHARS = 2_600;
+
+/**
+ * Clamps a desired history budget to the backend's hard caps, accounting for
+ * the always-prepended workspace-digest pair. Guarantees that
+ * `digest + maxBubbles * (user + assistant)` can never exceed the message or
+ * character caps, whatever tier values `resolveHistoryBudget` proposes.
+ */
+export function clampHistoryBudget(budget: HistoryBudget): HistoryBudget {
+  const bubbleSlots = Math.floor((BACKEND_MAX_HISTORY_MESSAGES - DIGEST_RESERVE_MESSAGES) / 2);
+  const maxBubbles = Math.max(1, Math.min(Math.floor(budget.maxBubbles), bubbleSlots));
+  const charsForHistory = BACKEND_MAX_HISTORY_CHARS - DIGEST_RESERVE_CHARS;
+  const charCeiling = Math.floor(charsForHistory / (maxBubbles * 2));
+  const maxMessageChars = Math.max(200, Math.min(Math.floor(budget.maxMessageChars), charCeiling));
+  return { maxBubbles, maxMessageChars };
+}
+
+/**
+ * Picks how much verbatim conversation to replay from the active model's
+ * context window (in tokens), then clamps to the backend caps. Small/unknown
+ * models stay at the conservative default; large-context models keep more turns
+ * and fuller text so long chats "remember" more — without ever risking a
+ * rejected request or overflowing a small model's window.
+ */
+export function resolveHistoryBudget(contextWindowTokens?: number | null): HistoryBudget {
+  const tokens = typeof contextWindowTokens === "number" && contextWindowTokens > 0
+    ? contextWindowTokens
+    : 0;
+  let budget = DEFAULT_HISTORY_BUDGET;
+  if (tokens >= 200_000) {
+    budget = { maxBubbles: 5, maxMessageChars: 2_000 };
+  } else if (tokens >= 32_000) {
+    budget = { maxBubbles: 4, maxMessageChars: 2_000 };
+  }
+  return clampHistoryBudget(budget);
+}
+
 export interface AIChatThread {
   id: string;
   workspaceKey: string;
@@ -46,7 +107,7 @@ function trimHistoryText(text: string, maxChars = MAX_HISTORY_MESSAGE_CHARS) {
   return `${compact.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 
-function extractHistoryPrompt(prompt: string) {
+function extractHistoryPrompt(prompt: string, maxChars = MAX_HISTORY_MESSAGE_CHARS) {
   const normalized = prompt.trim();
   if (!normalized) return "";
 
@@ -55,11 +116,11 @@ function extractHistoryPrompt(prompt: string) {
   if (normalized.includes(userRequestMarker)) {
     const requestPart = normalized.split(userRequestMarker)[1] ?? "";
     const userOnly = requestPart.split(selectedContentMarker)[0] ?? requestPart;
-    return trimHistoryText(userOnly);
+    return trimHistoryText(userOnly, maxChars);
   }
 
   const [firstBlock] = normalized.split(/\n\s*\n/);
-  return trimHistoryText(firstBlock || normalized);
+  return trimHistoryText(firstBlock || normalized, maxChars);
 }
 
 export function getBubbleConversationText(bubble: AIWorkspaceBubbleData) {
@@ -94,15 +155,17 @@ export function estimateConversationFootprint(bubbles: AIWorkspaceBubbleData[]):
 
 export function buildConversationHistoryMessages(
   bubbles: AIWorkspaceBubbleData[],
+  budget: HistoryBudget = DEFAULT_HISTORY_BUDGET,
 ): AIConversationMessage[] {
   return [...bubbles]
     .filter((bubble) => bubble.kind === "assistant" && bubble.status === "ready")
     .sort((left, right) => left.createdAt - right.createdAt)
-    .slice(-MAX_HISTORY_BUBBLES)
+    .slice(-budget.maxBubbles)
     .flatMap((bubble) => {
-      const userPrompt = extractHistoryPrompt(bubble.prompt);
+      const userPrompt = extractHistoryPrompt(bubble.prompt, budget.maxMessageChars);
       const assistantReply = trimHistoryText(
         getBubbleConversationText(bubble) || bubble.preview || bubble.detail || "",
+        budget.maxMessageChars,
       );
       const messages: AIConversationMessage[] = [];
 

@@ -141,7 +141,7 @@ describe("AI agent context builder", () => {
     const nativePayload = JSON.stringify(
       nativeToolPayloadForProvider("openai", {
         workspaceToolsEnabled: true,
-        availability: { sqlRead: true, sqlWritePreview: true },
+        availability: { sqlRead: true, sqlWritePreview: true, documentPropose: false },
       }),
     );
     expect(nativePayload).toContain('"run_readonly_sql"');

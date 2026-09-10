@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   AI_WORKSPACE_HISTORY_LEGACY_STORAGE_KEY,
   AI_WORKSPACE_HISTORY_VERSION,
+  BACKEND_MAX_HISTORY_CHARS,
+  BACKEND_MAX_HISTORY_MESSAGES,
   buildAIWorkspaceKey,
   buildConversationHistoryMessages,
+  clampHistoryBudget,
+  DEFAULT_HISTORY_BUDGET,
+  resolveHistoryBudget,
   extractAskUserOptionsFromQuestion,
   stripAskUserTrailingOptions,
   buildThreadLabel,
@@ -175,6 +180,77 @@ describe("AI conversation state", () => {
       { role: "user", content: "First" },
       { role: "assistant", content: "Complete" },
     ]);
+  });
+
+  it("honors a larger budget: keeps more recent turns and trims to the budget's char cap", () => {
+    const bubbles = Array.from({ length: 6 }, (_, index) =>
+      bubble(`b${index}`, "thread", {
+        createdAt: index,
+        prompt: `Q${index}`,
+        detail: "d".repeat(3_000),
+        sql: undefined,
+        status: "ready",
+      }),
+    );
+
+    // Big-context models get a wider window: keep the last 5 turns (10 messages)
+    // and allow up to 1,500 chars per message instead of the default 4 × 1,000.
+    const messages = buildConversationHistoryMessages(bubbles, { maxBubbles: 5, maxMessageChars: 1_500 });
+
+    expect(messages).toHaveLength(10);
+    // The oldest of the six turns (b0) is dropped by the 5-turn window.
+    expect(messages.some((message) => message.content === "Q0")).toBe(false);
+    expect(messages.some((message) => message.content === "Q1")).toBe(true);
+    const assistant = messages.find((message) => message.role === "assistant");
+    expect(assistant).toBeDefined();
+    expect(assistant!.content.length).toBeLessThanOrEqual(1_500);
+    expect(assistant!.content.length).toBeGreaterThan(1_000);
+    expect(assistant!.content.endsWith("...")).toBe(true);
+  });
+});
+
+describe("resolveHistoryBudget", () => {
+  it("uses the conservative default for unknown or small context windows", () => {
+    expect(resolveHistoryBudget(null)).toEqual(DEFAULT_HISTORY_BUDGET);
+    expect(resolveHistoryBudget(undefined)).toEqual(DEFAULT_HISTORY_BUDGET);
+    expect(resolveHistoryBudget(0)).toEqual(DEFAULT_HISTORY_BUDGET);
+    expect(resolveHistoryBudget(8_000)).toEqual(DEFAULT_HISTORY_BUDGET);
+  });
+
+  it("keeps fuller turns for medium-context models", () => {
+    const budget = resolveHistoryBudget(32_000);
+    expect(budget.maxBubbles).toBe(4);
+    expect(budget.maxMessageChars).toBe(2_000);
+  });
+
+  it("keeps more, fuller turns for very large context models", () => {
+    const budget = resolveHistoryBudget(1_000_000);
+    expect(budget.maxBubbles).toBe(5);
+    expect(budget.maxMessageChars).toBeGreaterThanOrEqual(2_000);
+  });
+
+  it("never proposes a window that could exceed the backend caps", () => {
+    for (const tokens of [null, 0, 8_000, 32_000, 128_000, 1_000_000, 10_000_000]) {
+      const budget = resolveHistoryBudget(tokens);
+      // digest pair (2 messages) + this window's user/assistant messages
+      expect(2 + budget.maxBubbles * 2).toBeLessThanOrEqual(BACKEND_MAX_HISTORY_MESSAGES);
+      // full history characters must leave room under the char cap
+      expect(budget.maxBubbles * 2 * budget.maxMessageChars).toBeLessThan(BACKEND_MAX_HISTORY_CHARS);
+    }
+  });
+});
+
+describe("clampHistoryBudget", () => {
+  it("clamps an over-generous request down to the backend caps", () => {
+    const clamped = clampHistoryBudget({ maxBubbles: 50, maxMessageChars: 100_000 });
+    expect(2 + clamped.maxBubbles * 2).toBeLessThanOrEqual(BACKEND_MAX_HISTORY_MESSAGES);
+    expect(clamped.maxBubbles * 2 * clamped.maxMessageChars).toBeLessThan(BACKEND_MAX_HISTORY_CHARS);
+  });
+
+  it("keeps at least one usable turn for degenerate inputs", () => {
+    const clamped = clampHistoryBudget({ maxBubbles: 0, maxMessageChars: 0 });
+    expect(clamped.maxBubbles).toBeGreaterThanOrEqual(1);
+    expect(clamped.maxMessageChars).toBeGreaterThanOrEqual(200);
   });
 });
 

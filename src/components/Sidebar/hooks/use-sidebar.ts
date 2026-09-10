@@ -25,6 +25,7 @@ import {
 } from "./sidebar-filter-scripts";
 import { emitAppToast } from "../../../utils/app-toast";
 import { saveDatabaseDocs } from "../../../utils/schema-doc-collector";
+import { useQueryStore } from "../../../stores/queryStore";
 import {
   usePinnedTables,
   useSchemaSections,
@@ -365,6 +366,17 @@ export function useSidebar() {
   }, []);
 
   /** Generate a Markdown schema book for this table through the save dialog. */
+  const [queryBuilderTable, setQueryBuilderTable] = useState<string | null>(null);
+  const queryStore = useQueryStore.getState();
+  const handleOpenQueryBuilder = useCallback(async (tableName: string) => {
+    try {
+      await queryStore.getTableColumnsPreview(activeConnectionId ?? "", tableName, currentDatabase || undefined);
+    } catch {
+      // Column loading is best-effort; the panel shows an empty list.
+    }
+    setQueryBuilderTable(tableName);
+  }, [activeConnectionId, currentDatabase, queryStore]);
+
   const handleGenerateTableDocs = useCallback(async (table: Pick<TableInfo, "name" | "schema">) => {
     if (!activeConnectionId) return;
     try {
@@ -690,6 +702,11 @@ export function useSidebar() {
         action: () => void handleGenerateTableDocs(table),
       },
       {
+        key: "visual-query-builder",
+        label: t("querybuilder.title"),
+        action: () => void handleOpenQueryBuilder(table.name),
+      },
+      {
         key: "pin-to-top",
         label: isPinned ? t("explorer.context.unpin") : t("explorer.context.pinToTop"),
         action: () => togglePinnedTable(table),
@@ -838,7 +855,7 @@ export function useSidebar() {
         danger: true,
       },
     ];
-  }, [tableContextMenu, pinnedTableSet, t, dbType, handleOpenTableInNewTab, handleOpenStructureDraft, openQueryDraft, handleCopyTableName, handleGenerateTableDocs, togglePinnedTable, runMaintenanceCommand]);
+  }, [tableContextMenu, pinnedTableSet, t, dbType, handleOpenTableInNewTab, handleOpenStructureDraft, openQueryDraft, handleCopyTableName, handleGenerateTableDocs, handleOpenQueryBuilder, togglePinnedTable, runMaintenanceCommand]);
 
   // --- Effects ---
   useEffect(() => {
@@ -933,6 +950,9 @@ export function useSidebar() {
     tables,
     schemaObjects,
     isLoadingTables,
+    // Query builder
+    queryBuilderTable,
+    setQueryBuilderTable,
     // Local state
     expandedDbs,
     search,

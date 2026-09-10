@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { getCurrentAppLanguage } from "../../../i18n";
-import { getManualProviderOverrideAt, getManuallyPickedProviderId, useAIStore } from "../../../stores/aiStore";
+import { getManualProviderOverrideAt, useAIStore } from "../../../stores/aiStore";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useAIChatWorkspaceStore } from "../../../stores/aiChatWorkspaceStore";
 import { useQueryStore } from "../../../stores/queryStore";
@@ -1202,12 +1202,20 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                   failureReason = formatActionFailureReason(switchRetryError);
                 }
               }
-              // Anything except a user-initiated cancel is worth a promoted
-              // re-run: rate limits surface as "provider", garbage bodies as
-              // "invalid-response", and odd transport failures as "unknown" -
-              // refusing to retry on those was exactly the silent-stop bug.
+              // Only a GENUINE provider-level failure may rotate providers: the
+              // endpoint hung ("timeout") or the provider itself rejected the
+              // call ("provider": rate limit, auth, network, HTTP status). A
+              // merely malformed model reply ("invalid-response") or an
+              // unclassified blip ("unknown") is NOT the provider being down, so
+              // it must never switch providers — it still falls through to the
+              // same-provider retry + finish-recovery path below, so there is no
+              // silent stop. This is what keeps a healthy provider from jumping
+              // on any user interaction: answering an ask_user prompt, clicking a
+              // confirm/consent button, or typing more never rotates the
+              // provider unless that provider actually failed.
               // (A deliberate mid-run switch cancel is fully handled above.)
-              const failoverEligible = true;
+              const failoverEligible =
+                requestError.code === "timeout" || requestError.code === "provider";
 
               // A dead or rate-limited provider must not end the run: exactly
               // once per run, promote the next configured provider, tell the
@@ -1220,21 +1228,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               const canPromoteFurther =
                 providerRetryCount < Math.max(0, enabledProviderCount - 1);
 
-              // Respect an explicit provider pick by IDENTITY, not just by
-              // pick time. The old `> runStartedAt` check only caught mid-run
-              // switches and silently failed the common "pick model → send"
-              // flow (and ask_user resumes), where the pick predates this run's
-              // clock — letting a transient error rotate providers and, from
-              // the last one, wrap back to the first. While the user's pinned
-              // provider is still the active one, auto-failover stands down.
-              const activeProviderForOverride = getActiveAIProvider(
-                useAIStore.getState().aiConfigs,
-              );
-              const pinnedProviderId = getManuallyPickedProviderId();
               const userPickedProviderDuringRun =
-                getManualProviderOverrideAt() > runStartedAt
-                || (pinnedProviderId !== null
-                  && activeProviderForOverride?.id === pinnedProviderId);
+                getManualProviderOverrideAt() > runStartedAt;
 
               if (failoverEligible && canPromoteFurther && !userPickedProviderDuringRun) {
                 // The very first failure asks for permission before the agent

@@ -67,6 +67,7 @@ export function useAppCoreStores() {
     setShowTerminalPanel,
     showQueryHistory, setShowQueryHistory,
     showSQLFavorites, setShowSQLFavorites,
+    showQuerySchedules, setShowQuerySchedules,
     showRowInspector,
     rowInspectorData,
     isSidebarCollapsed,
@@ -79,6 +80,6 @@ export function useAppCoreStores() {
     errors: { error, clearError, setError },
     ui: { tabs, activeTabId, addTab, setActiveTab },
     modals: { connectionFormIntent, showStartupConnectionManager, showAISettings, setShowAISettings, showAboutModal, setShowAboutModal, showPluginManager, setShowPluginManager, showMcpIntegrations, setShowMcpIntegrations, showUserRoleManagement, setShowUserRoleManagement, showKeyboardShortcutsModal, setShowKeyboardShortcutsModal, showThemeCustomizer, setShowThemeCustomizer, showConnectionExporter, setShowConnectionExporter, showConnectionImporter, setShowConnectionImporter },
-    layout: { setShowTerminalPanel, showQueryHistory, setShowQueryHistory, showSQLFavorites, setShowSQLFavorites, showRowInspector, rowInspectorData, isSidebarCollapsed, sidebarWidth, setSidebarWidth, isWindowMaximized, forceLauncherVisible },
+    layout: { setShowTerminalPanel, showQueryHistory, setShowQueryHistory, showSQLFavorites, setShowSQLFavorites, showQuerySchedules, setShowQuerySchedules, showRowInspector, rowInspectorData, isSidebarCollapsed, sidebarWidth, setSidebarWidth, isWindowMaximized, forceLauncherVisible },
   };
 }

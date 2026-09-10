@@ -16,12 +16,16 @@ import {
 } from "lucide-react";
 import type { ParsedExplainPlan, ExplainNode } from "../../utils/explain-parser";
 import { getExplainHotspots, getNodeCategory } from "../../utils/explain-parser";
+import { getIndexProposals, type IndexProposal } from "../../utils/index-advisor";
+import { Check, Copy, Lightbulb } from "lucide-react";
 import { ExplainDiagram } from "./ExplainDiagram";
 
 type ExplainViewMode = "tree" | "diagram" | "raw";
 
 interface ExplainVisualizerProps {
   plan: ParsedExplainPlan;
+  /** The SQL statement the plan was generated from (enables index proposals). */
+  sourceSql?: string;
   onClose?: () => void;
 }
 
@@ -196,7 +200,7 @@ function buildTooltip(node: ExplainNode): string {
   return parts.join(" | ");
 }
 
-export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
+export function ExplainVisualizer({ plan, sourceSql, onClose }: ExplainVisualizerProps) {
   const nodeMap = useMemo(() => {
     const map = new Map<string, ExplainNode>();
     for (const node of plan.nodes) {
@@ -224,6 +228,20 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
 
   const [viewMode, setViewMode] = useState<ExplainViewMode>("tree");
   const hotspots = useMemo(() => getExplainHotspots(plan), [plan]);
+  const indexProposals = useMemo(
+    () => (sourceSql ? getIndexProposals(plan, sourceSql) : []),
+    [plan, sourceSql],
+  );
+  const [copiedProposalId, setCopiedProposalId] = useState<string | null>(null);
+
+  const handleCopyProposal = useCallback((proposalId: string, statement: string) => {
+    navigator.clipboard.writeText(statement).then(() => {
+      setCopiedProposalId(proposalId);
+      window.setTimeout(() => setCopiedProposalId((current) => (current === proposalId ? null : current)), 1500);
+    }).catch(() => {
+      // Clipboard can be unavailable; the statement stays visible to copy by hand.
+    });
+  }, []);
 
   const handleToggle = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -368,6 +386,22 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
         </div>
       )}
 
+      {indexProposals.length > 0 && (
+        <div className="explain-hotspots" aria-label="Index proposals">
+          <span className="explain-hotspots-label">
+            <Lightbulb size={12} style={{ verticalAlign: "-2px" }} /> Index suggestions
+          </span>
+          {indexProposals.map((proposal) => (
+            <IndexProposalChip
+              key={proposal.id}
+              proposal={proposal}
+              copied={copiedProposalId === proposal.id}
+              onCopy={() => handleCopyProposal(proposal.id, proposal.sql)}
+            />
+          ))}
+        </div>
+      )}
+
       <div className="explain-plan-body">
         {viewMode === "raw" ? (
           <pre className="explain-raw-output">{plan.rawText}</pre>
@@ -400,5 +434,43 @@ export function ExplainVisualizer({ plan, onClose }: ExplainVisualizerProps) {
       </div>
 
     </div>
+  );
+}
+
+/** One index proposal: the statement plus a copy affordance. Never auto-runs. */
+function IndexProposalChip({
+  proposal,
+  copied,
+  onCopy,
+}: {
+  proposal: IndexProposal;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <span
+      className="explain-hotspot-item"
+      title={proposal.reasons.join("\n")}
+      style={{ gap: 6 }}
+    >
+      <Lightbulb size={11} style={{ flexShrink: 0 }} />
+      <code style={{ fontSize: 11 }}>{proposal.sql}</code>
+      <button
+        type="button"
+        onClick={onCopy}
+        aria-label={copied ? "Copied" : "Copy index statement"}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          background: "transparent",
+          border: "none",
+          cursor: "pointer",
+          padding: 2,
+          color: "inherit",
+        }}
+      >
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+    </span>
   );
 }

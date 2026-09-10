@@ -100,6 +100,7 @@ export function SQLEditor({
     handleFormatSql,
     schedulePersistedContent,
     explainPlan,
+    explainSourceSql,
     isRunningExplain,
     handleExplain,
     setExplainPlan,
@@ -284,6 +285,7 @@ export function SQLEditor({
         {explainPlan && (
           <ExplainVisualizer
             plan={explainPlan}
+            sourceSql={explainSourceSql}
             onClose={() => setExplainPlan(undefined)}
           />
         )}

@@ -40,7 +40,7 @@ function section(overrides: Partial<ExplorerSchemaSection> = {}): ExplorerSchema
   };
 }
 
-describe("v0.1.5 binding microbenchmarks", () => {
+describe("v0.1.6 binding microbenchmarks", () => {
   it("updates 10,000 virtualized-grid selections within the local budget", () => {
     const bounds = { rowCount: 1_000_000, columnCount: 200 };
     let selection = selectGridCell(createEmptyGridSelection(), { row: 0, col: 0 }, bounds);

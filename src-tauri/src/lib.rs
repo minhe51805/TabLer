@@ -59,6 +59,7 @@ use commands::plugins::{
 use commands::query::*;
 use commands::restore::{preview_database_restore, restore_database_sql};
 use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
+use commands::schedule::spawn_scheduler;
 use commands::schema_diff::{compare_schemas, generate_migration_script};
 use commands::search::{list_tables_in, search_schema, search_table_data, search_table_data_multi};
 use commands::table::*;
@@ -242,6 +243,9 @@ pub fn run() {
                 error!("[TableR] Failed to start watcher: {}", e);
             }
 
+            // Query scheduler: minute-tick loop over persisted schedules.
+            spawn_scheduler(app.handle().clone());
+
             #[cfg(target_os = "windows")]
             {
                 if let Err(error) = app.hide_menu() {
@@ -395,6 +399,9 @@ pub fn run() {
             get_sql_favorites,
             save_sql_favorite,
             delete_sql_favorite,
+            commands::schedule::list_query_schedules,
+            commands::schedule::save_query_schedule,
+            commands::schedule::delete_query_schedule,
             // Semantic glossary commands
             get_semantic_entries,
             save_semantic_entry,

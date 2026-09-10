@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { pushSafeModePolicyToBackend } from "../stores/safeModeStore";
 import { useConnectionStore } from "../stores/connectionStore";
+import { useQuerySchedulesStore } from "../stores/query-schedules-store";
 import { useConnectionHealthMonitor } from "./useConnectionHealthMonitor";
 import { useTabPersistence } from "./useTabPersistence";
 import { useDeepLink } from "./useDeepLink";
@@ -12,6 +13,7 @@ import { useDeepLink } from "./useDeepLink";
 export function useAppBoot(activeConnectionId: string | null, connectedIds: Set<string>, isDesktopWindow: boolean) {
   useConnectionHealthMonitor();
   const loadSavedConnections = useConnectionStore((state) => state.loadSavedConnections);
+  const attachScheduleEvents = useQuerySchedulesStore((state) => state.attachScheduleEvents);
 
   useEffect(() => {
     void loadSavedConnections();
@@ -20,6 +22,9 @@ export function useAppBoot(activeConnectionId: string | null, connectedIds: Set<
   useEffect(() => {
     pushSafeModePolicyToBackend();
   }, []);
+
+  // Scheduled-query run notifications + cached run history sync.
+  useEffect(() => attachScheduleEvents(), [attachScheduleEvents]);
 
   useTabPersistence(activeConnectionId, connectedIds);
 

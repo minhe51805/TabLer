@@ -67,6 +67,7 @@ import { ChangeTrackingPreviewModal } from "./components/ChangeTrackingPreviewMo
 import { buildDataGridColumns, editingDraftRef } from "./DataGridColumns";
 import { useDataGridCopySqlActions } from "./hooks/useDataGridCopySqlActions";
 import { useDataGridInlineEditing } from "./hooks/useDataGridInlineEditing";
+import { useDataGridRangeOperations } from "./hooks/useDataGridRangeOperations";
 import { useDataGridStagedChanges } from "./hooks/useDataGridStagedChanges";
 import { useDataGridSortFilter } from "./hooks/useDataGridSortFilter";
 import { useDataGridRowSelection } from "./hooks/useDataGridRowSelection";
@@ -148,6 +149,7 @@ export function DataGrid({
   const {
     stagedChanges,
     stageChange,
+    stageChanges,
     unstageChange,
     undoLast,
     redoLast,
@@ -1044,6 +1046,60 @@ export function DataGrid({
     editingDraftRef,
     editorRef,
   });
+
+  const {
+    handleRangeCopy,
+    handleRangePaste,
+    handleRangeDelete,
+    handleRangeFillDown,
+  } = useDataGridRangeOperations({
+    gridSelection,
+    data,
+    resolvedColumns,
+    primaryKeyColumns,
+    tableName,
+    database: database || undefined,
+    enabled: canAttemptInlineEdit,
+    stageChanges,
+    setData,
+    setStagedRowIndices,
+    patchLoadedTableCell,
+    setError,
+  });
+
+  // Range editing keys (copy / paste / fill / clear). Kept separate from the
+  // early selection-key effect because these depend on the staged-edit gate,
+  // which is only known after the fetcher and capability wiring above.
+  useEffect(() => {
+    const element = tableWrapRef.current;
+    if (!element || viewMode !== "table") return;
+
+    const handleRangeEditingKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+
+      const key = event.key.toLowerCase();
+      const primary = event.ctrlKey || event.metaKey;
+
+      if (primary && !event.shiftKey && !event.altKey && (key === "c" || key === "v")) {
+        const handled = key === "c" ? handleRangeCopy() : handleRangePaste();
+        if (handled) event.preventDefault();
+        return;
+      }
+      if (primary && !event.shiftKey && !event.altKey && key === "d") {
+        // Fill down only owns Ctrl+D for a multi-cell range; a plain active
+        // cell keeps the global duplicate-row shortcut untouched.
+        if (handleRangeFillDown()) event.preventDefault();
+        return;
+      }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        if (handleRangeDelete()) event.preventDefault();
+      }
+    };
+
+    element.addEventListener("keydown", handleRangeEditingKeyDown);
+    return () => element.removeEventListener("keydown", handleRangeEditingKeyDown);
+  }, [handleRangeCopy, handleRangeDelete, handleRangeFillDown, handleRangePaste, viewMode]);
   const {
     closeInsertDialog,
     closePasteDialog,

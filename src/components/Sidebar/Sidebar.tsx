@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useSidebar } from "./hooks/use-sidebar";
+import { QueryBuilderPanel } from "../DataImport/QueryBuilderPanel";
+import { useQueryStore } from "../../stores/queryStore";
 import { DatabaseTree } from "./components/DatabaseTree";
 import { ContextMenu } from "./components/ContextMenu";
 import { CreateSchemaObjectModal } from "../CreateSchemaObjectModal/CreateSchemaObjectModal";
@@ -489,6 +491,9 @@ export function Sidebar() {
     handleLoadPreset,
     handleDeletePreset,
     handleClearFilters,
+    openQueryDraft,
+    queryBuilderTable,
+    setQueryBuilderTable,
   } = useSidebar();
   const capabilityProfile = useConnectionCapabilities(activeConnectionId);
   const canEditSchema = isCapabilitySupported(capabilityProfile?.capabilities.schemaEdit);
@@ -747,6 +752,18 @@ export function Sidebar() {
             currentDatabase={currentDatabase}
             addTab={addTab}
             language={language}
+          />
+        )}
+
+        {queryBuilderTable && activeConnectionId && (
+          <QueryBuilderPanel
+            tables={tables}
+            dbType={activeConnection?.db_type}
+            loadColumns={(tableName) =>
+              useQueryStore.getState().getTableColumnsPreview(activeConnectionId, tableName, currentDatabase || undefined)
+            }
+            onOpenInQueryTab={(sql) => openQueryDraft(`${queryBuilderTable} builder`, sql)}
+            onClose={() => setQueryBuilderTable(null)}
           />
         )}
       </div>

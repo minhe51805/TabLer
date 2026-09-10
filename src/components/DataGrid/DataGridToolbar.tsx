@@ -1,4 +1,5 @@
-import { FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search, RefreshCw, ArrowUpDown } from "lucide-react";
+import { FileJson, FileSpreadsheet, Loader2, Trash2, Undo2, Redo2, Plus, Copy, FilePen, Braces, Settings2, X, FileCode, ClipboardPaste, FileUp, List, BarChart3, Download, ChevronDown, Search, RefreshCw, ArrowUpDown, ShieldCheck } from "lucide-react";
+import { DataGridAnonymizerModal } from "./dialogs/DataGridAnonymizerModal";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { buildCsvContent, buildJsonContent, buildTsvContent, exportToCSV, exportToJSON } from "../../utils/export-utils";
@@ -127,6 +128,7 @@ export function DataGridToolbar({
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
+  const [showAnonymizer, setShowAnonymizer] = useState(false);
   const [showSqlMenu, setShowSqlMenu] = useState(false);
   const [showSortMenu, setShowSortMenu] = useState(false);
   const settingsBtnRef = useRef<HTMLSpanElement>(null);
@@ -663,6 +665,12 @@ export function DataGridToolbar({
               { label: "TSV", hint: t("datagrid.copyHintTsv"), icon: FileSpreadsheet, run: handleCopyTSV },
               { label: "JSON", hint: t("datagrid.copyHintJson"), icon: FileJson, run: handleCopyJSON },
               { label: "MQL", hint: t("datagrid.copyHintMql"), icon: FileCode, run: handleCopyMQL },
+              {
+                label: t("datagrid.anonymizer.title"),
+                hint: t("datagrid.anonymizer.saltHint"),
+                icon: ShieldCheck,
+                run: () => setShowAnonymizer(true),
+              },
               ...pluginFormats.map((format) => ({
                 label: format.label,
                 hint: format.description || t("datagrid.exportHintPlugin", { plugin: format.pluginName }),
@@ -891,6 +899,14 @@ export function DataGridToolbar({
           </button>
         </div>
       </div>
+
+      {showAnonymizer && (
+        <DataGridAnonymizerModal
+          columns={resolvedColumns}
+          dataRows={dataRows}
+          onClose={() => setShowAnonymizer(false)}
+        />
+      )}
     </div>
   );
 }

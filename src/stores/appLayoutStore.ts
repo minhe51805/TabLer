@@ -9,6 +9,10 @@ interface AppLayoutState {
   setShowQueryHistory: (show: boolean | ((current: boolean) => boolean)) => void;
   showSQLFavorites: boolean;
   setShowSQLFavorites: (show: boolean | ((current: boolean) => boolean)) => void;
+  showQuerySchedules: boolean;
+  setShowQuerySchedules: (show: boolean | ((current: boolean) => boolean)) => void;
+  querySchedulesDraftSql: string | null;
+  setQuerySchedulesDraftSql: (sql: string | null) => void;
   showRowInspector: boolean;
   setShowRowInspector: (show: boolean | ((current: boolean) => boolean)) => void;
   rowInspectorData: RowInspectorData | null;
@@ -36,6 +40,11 @@ export const useAppLayoutStore = create<AppLayoutState>((set) => ({
   setShowQueryHistory: (show) => set((state) => ({ showQueryHistory: typeof show === 'function' ? show(state.showQueryHistory) : show })),
   showSQLFavorites: false,
   setShowSQLFavorites: (show) => set((state) => ({ showSQLFavorites: typeof show === 'function' ? show(state.showSQLFavorites) : show })),
+  showQuerySchedules: false,
+  setShowQuerySchedules: (show) => set((state) => ({ showQuerySchedules: typeof show === 'function' ? show(state.showQuerySchedules) : show })),
+  /** SQL pre-filled into the schedules editor (set by the favorites panel). */
+  querySchedulesDraftSql: null,
+  setQuerySchedulesDraftSql: (sql) => set(() => ({ querySchedulesDraftSql: sql })),
   showRowInspector: false,
   setShowRowInspector: (show) => set((state) => ({ showRowInspector: typeof show === 'function' ? show(state.showRowInspector) : show })),
   rowInspectorData: null,

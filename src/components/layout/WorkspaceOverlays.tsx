@@ -13,6 +13,7 @@ const ConnectionForm = lazy(() => import("../ConnectionForm").then((m) => ({ def
 const AppGlobalModals = lazy(() => import("./AppGlobalModals").then((m) => ({ default: m.AppGlobalModals })));
 const QueryHistoryPanel = lazy(() => import("../QueryHistory/QueryHistoryPanel").then((m) => ({ default: m.QueryHistoryPanel })));
 const SQLFavoritesPanel = lazy(() => import("../SQLFavorites/SQLFavoritesPanel").then((m) => ({ default: m.SQLFavoritesPanel })));
+const QuerySchedulesPanel = lazy(() => import("../QuerySchedules/QuerySchedulesPanel").then((m) => ({ default: m.QuerySchedulesPanel })));
 const RowInspector = lazy(() => import("../RowInspector/RowInspector").then((m) => ({ default: m.RowInspector })));
 
 interface WorkspaceOverlaysProps {
@@ -71,6 +72,8 @@ interface WorkspaceOverlaysProps {
   setShowQueryHistory: (value: boolean | ((current: boolean) => boolean)) => void;
   showSQLFavorites: boolean;
   setShowSQLFavorites: (value: boolean | ((current: boolean) => boolean)) => void;
+  showQuerySchedules: boolean;
+  setShowQuerySchedules: (value: boolean | ((current: boolean) => boolean)) => void;
   handleRunQueryFromHistory: (sql: string) => void;
   handleRunQueryFromFavorites: (sql: string) => void;
   showRowInspector: boolean;
@@ -140,6 +143,8 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
     setShowQueryHistory,
     showSQLFavorites,
     setShowSQLFavorites,
+    showQuerySchedules,
+    setShowQuerySchedules,
     handleRunQueryFromHistory,
     handleRunQueryFromFavorites,
     showRowInspector,
@@ -258,6 +263,14 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
             onClose={() => setShowSQLFavorites(false)}
             onRunQuery={handleRunQueryFromFavorites}
             currentEditorSql={activeTab?.type === "query" ? activeTab.content : ""}
+          />
+        </Suspense>
+      )}
+      {showQuerySchedules && (
+        <Suspense fallback={null}>
+          <QuerySchedulesPanel
+            isOpen={showQuerySchedules}
+            onClose={() => setShowQuerySchedules(false)}
           />
         </Suspense>
       )}

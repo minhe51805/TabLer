@@ -1,4 +1,4 @@
-import { BookOpen, PenLine, Brain, CheckCircle2, ChevronDown, ChevronRight, Database, Eye, HelpCircle, ListTree, Loader2, Search, Sparkles, AlertCircle } from "lucide-react";
+import { BookOpen, PenLine, Brain, CheckCircle2, ChevronDown, ChevronRight, Database, Eye, HelpCircle, ListTree, Loader2, RotateCcw, Save, Search, Sparkles, Wand2, AlertCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
@@ -67,15 +67,28 @@ function getActionIcon(action: AIWorkspaceAgentActionName): ReactNode {
       return <Search className="w-3.5 h-3.5" />;
     case "sample_table_data":
     case "run_readonly_sql":
+    case "run_parameterized_sql":
+    case "find_value":
+    case "check_sql":
     case "run_preset":
       return <Database className="w-3.5 h-3.5" />;
     case "remember_term":
+    case "read_memory":
+    case "save_memory":
+    case "delete_memory":
       return <BookOpen className="w-3.5 h-3.5" />;
     case "read_page":
       return <Eye className="w-3.5 h-3.5" />;
     case "preview_write":
     case "propose_seed_data":
+    case "edit_query_sql":
       return <PenLine className="w-3.5 h-3.5" />;
+    case "create_checkpoint":
+      return <Save className="w-3.5 h-3.5" />;
+    case "restore_checkpoint":
+      return <RotateCcw className="w-3.5 h-3.5" />;
+    case "skill":
+      return <Wand2 className="w-3.5 h-3.5" />;
     case "finish":
     default:
       return <Sparkles className="w-3.5 h-3.5" />;
@@ -106,9 +119,15 @@ function getActionLabel(
       return copy.modal.agentActionDescribeTable;
     case "sample_table_data":
     case "run_readonly_sql":
+    case "run_parameterized_sql":
+    case "find_value":
+    case "check_sql":
     case "run_preset":
       return copy.modal.agentActionRunSql;
     case "remember_term":
+    case "read_memory":
+    case "save_memory":
+    case "delete_memory":
       return copy.modal.agentActionRememberTerm;
     case "create_checkpoint":
       return copy.modal.agentActionCreateCheckpoint;
@@ -117,9 +136,12 @@ function getActionLabel(
     case "read_page":
       return copy.modal.agentActionThink;
     case "preview_write":
+    case "edit_query_sql":
       return copy.modal.agentActionPreviewWrite;
     case "propose_seed_data":
       return copy.modal.agentActionProposeSeedData;
+    case "skill":
+      return copy.modal.agentActionSkill;
     case "finish":
     default:
       return copy.modal.agentActionFinish;

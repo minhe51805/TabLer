@@ -47,6 +47,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
       agentActionRestoreCheckpoint: "正在恢复检查点",
       agentActionPreviewWrite: "预览变更",
       agentActionProposeSeedData: "建议示例数据",
+      agentActionSkill: "运行技能",
       agentActionListTables: "列出表",
       agentActionDescribeTable: "查看结构",
       agentActionRunSql: "读取数据",

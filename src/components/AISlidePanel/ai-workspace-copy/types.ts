@@ -49,6 +49,7 @@ export interface AIWorkspaceCopy {
     agentActionRestoreCheckpoint: string;
     agentActionPreviewWrite: string;
     agentActionProposeSeedData: string;
+    agentActionSkill: string;
     agentActionAskUser: string;
     agentActionListTables: string;
     agentActionDescribeTable: string;

@@ -25,6 +25,14 @@ export interface SqlSafetyDecision {
    * full-autonomy grant. Lets the backend relax its level 1-3 block.
    */
   userConfirmed?: boolean;
+  /**
+   * True when the SQL reaches the local filesystem, the network, or an OS
+   * command through a dialect capability (e.g. `pg_read_file`, DuckDB
+   * `read_csv`, MySQL `INTO OUTFILE`, Postgres `COPY ... TO PROGRAM`). The
+   * sandbox boundary always rejects these regardless of read/write kind; the
+   * UI can warn before sending.
+   */
+  filesystemAccess?: boolean;
 }
 
 export function classifySqlSafety(sql: string, databaseType?: string | null): Promise<SqlSafetyDecision> {

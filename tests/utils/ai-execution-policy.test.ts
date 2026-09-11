@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyAgentRun,
+  describeSandboxPolicy,
   getAISqlConfirmationRequirement,
   isSqlBlockedBySafeMode,
+  resolveSandboxPolicy,
   shouldAgentAutoRunSql,
+  type SandboxPolicy,
 } from "@/components/AISlidePanel/ai-execution-policy";
+import type { SafeModeLevel } from "@/types/safe-mode";
 
 describe("AI SQL execution policy", () => {
   it("controls only whether an agent starts the run automatically", () => {
@@ -178,6 +182,52 @@ describe("isSqlBlockedBySafeMode — level × statement matrix", () => {
       expect(isSqlBlockedBySafeMode("CREATE TABLE t (id int)", level)).toBe(true);
       expect(isSqlBlockedBySafeMode("UPDATE t SET x = 1", level)).toBe(false);
       expect(isSqlBlockedBySafeMode("DELETE FROM t", level)).toBe(false);
+    }
+  });
+});
+
+describe("sandbox policy (Codex-style posture summary)", () => {
+  it("reports full-access only when Safe Mode is off", () => {
+    for (const autonomy of ["review", "smart", "full"] as const) {
+      expect(resolveSandboxPolicy(0, autonomy)).toBe("full-access");
+    }
+  });
+
+  it("reports workspace-write only for a full grant at levels 1-3", () => {
+    for (const level of [1, 2, 3] as const) {
+      expect(resolveSandboxPolicy(level, "full")).toBe("workspace-write");
+    }
+    // Strict tiers never hand the agent standing write approval.
+    expect(resolveSandboxPolicy(4, "full")).toBe("read-only");
+    expect(resolveSandboxPolicy(5, "full")).toBe("read-only");
+  });
+
+  it("reports read-only for smart/review whenever Safe Mode is active", () => {
+    for (const level of [1, 2, 3, 4, 5] as const) {
+      expect(resolveSandboxPolicy(level, "smart")).toBe("read-only");
+      expect(resolveSandboxPolicy(level, "review")).toBe("read-only");
+    }
+  });
+
+  it("mirrors the fullAutonomyPreApproved invariant exactly", () => {
+    // resolveSandboxPolicy === "workspace-write" iff (full && level <= 3).
+    const levels: SafeModeLevel[] = [0, 1, 2, 3, 4, 5];
+    for (const level of levels) {
+      const preApproved = level > 0 && level <= 3; // "full" branch
+      const expected: SandboxPolicy =
+        level <= 0 ? "full-access" : preApproved ? "workspace-write" : "read-only";
+      expect(resolveSandboxPolicy(level, "full")).toBe(expected);
+    }
+  });
+
+  it("gives every policy a distinct label + description", () => {
+    const policies: SandboxPolicy[] = ["read-only", "workspace-write", "full-access"];
+    const labels = policies.map((policy) => describeSandboxPolicy(policy).label);
+    expect(new Set(labels).size).toBe(policies.length);
+    for (const policy of policies) {
+      const described = describeSandboxPolicy(policy);
+      expect(described.label.length).toBeGreaterThan(0);
+      expect(described.description.length).toBeGreaterThan(0);
     }
   });
 });

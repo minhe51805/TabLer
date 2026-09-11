@@ -38824,6 +38824,27 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   white-space: nowrap;
   font-weight: 600;
 }
+.app-root .ai-workspace-command-sandbox-policy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 8px 6px;
+  padding: 4px 10px;
+  color: var(--text-secondary, inherit);
+  font-size: 11px;
+}
+.app-root .ai-workspace-command-sandbox-policy > svg {
+  color: var(--accent, #0a84ff);
+  flex-shrink: 0;
+}
+.app-root .ai-workspace-command-sandbox-policy > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
 .app-root .ai-ws-safemode-switch {
   position: relative;
   width: 34px;

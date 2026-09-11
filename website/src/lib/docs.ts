@@ -65,6 +65,13 @@ export const docsSlugs = [
   "connections",
   "postgresql",
   "mysql",
+  "mariadb",
+  "cockroachdb",
+  "greenplum",
+  "amazon-redshift",
+  "sql-server",
+  "vertica",
+  "clickhouse",
   "sql-workspace",
   "exploring-data",
   "visualize",
@@ -229,6 +236,735 @@ const COMMANDS = [
   "npm run tauri -- build",
   "cd website && npm run dev",
 ];
+
+/* ------------------------------------------------------------------ */
+/* Shared engine-page builder                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Localized, engine-independent labels for a dedicated engine page. One set
+ * exists per language and is shared across every engine, so section headings,
+ * table headers, and the fixed "Next steps" cards stay perfectly consistent.
+ */
+type EnginePageLabels = {
+  overview: string;
+  beforeYouStart: string;
+  connectionFields: string;
+  connectWithForm: string;
+  useConnectionString: string;
+  localBootstrap: string;
+  sslTls: string;
+  verifyConnection: string;
+  troubleshooting: string;
+  nextSteps: string;
+  noServerTitle: string;
+  secretsTitle: string;
+  secretsText: string;
+  verifyLead: string;
+  verifyTrail: string;
+  fieldHead: string[];
+  troubleHead: string[];
+  nextStepsCards: { title: string; text: string; href: string }[];
+};
+
+/**
+ * Per-engine, per-language content for a dedicated engine page. Everything an
+ * engine page needs beyond the shared labels above. `connString` and
+ * `bootstrap` are optional so engines that do not support them simply omit the
+ * corresponding sections.
+ */
+type EngineSpec = {
+  slug: string;
+  icon: string;
+  title: string;
+  description: string;
+  intro: string;
+  overviewText: string;
+  overviewBullets: string[];
+  beforeYouStart: string[];
+  connFieldsIntro: string;
+  fieldRows: string[][];
+  formSteps: { title: string; text: string }[];
+  connString?: { intro: string; code: string; bullets: string[] };
+  bootstrap?: {
+    noServerText: string;
+    intro: string;
+    steps: { title: string; text: string }[];
+  };
+  sslIntro: string;
+  sslBullets: string[];
+  verifyCode: string;
+  troubleshootRows: string[][];
+};
+
+/**
+ * Assemble a full DocPage for a database engine from its localized spec and the
+ * shared labels for that language. This keeps every engine page structurally
+ * identical (same sections, in the same order) while letting the wording differ
+ * per engine and per language.
+ */
+function buildEnginePage(labels: EnginePageLabels, spec: EngineSpec): DocPage {
+  const blocks: DocBlock[] = [{ type: "p", text: spec.intro }];
+
+  if (spec.bootstrap) {
+    blocks.push({
+      type: "callout",
+      tone: "tip",
+      title: labels.noServerTitle,
+      text: spec.bootstrap.noServerText,
+    });
+  }
+
+  blocks.push(
+    { type: "h2", text: labels.overview },
+    { type: "p", text: spec.overviewText },
+    { type: "ul", items: spec.overviewBullets },
+    { type: "h2", text: labels.beforeYouStart },
+    { type: "ul", items: spec.beforeYouStart },
+    { type: "h2", text: labels.connectionFields },
+    { type: "p", text: spec.connFieldsIntro },
+    { type: "table", head: labels.fieldHead, rows: spec.fieldRows },
+    { type: "h2", text: labels.connectWithForm },
+    { type: "steps", items: spec.formSteps },
+  );
+
+  if (spec.connString) {
+    blocks.push(
+      { type: "h2", text: labels.useConnectionString },
+      { type: "p", text: spec.connString.intro },
+      { type: "code", lang: "text", code: spec.connString.code },
+      { type: "ul", items: spec.connString.bullets },
+    );
+  }
+
+  if (spec.bootstrap) {
+    blocks.push(
+      { type: "h2", text: labels.localBootstrap },
+      { type: "p", text: spec.bootstrap.intro },
+      { type: "steps", items: spec.bootstrap.steps },
+      {
+        type: "callout",
+        tone: "info",
+        title: labels.secretsTitle,
+        text: labels.secretsText,
+      },
+    );
+  }
+
+  blocks.push(
+    { type: "h2", text: labels.sslTls },
+    { type: "p", text: spec.sslIntro },
+    { type: "ul", items: spec.sslBullets },
+    { type: "h2", text: labels.verifyConnection },
+    { type: "p", text: labels.verifyLead },
+    { type: "code", lang: "sql", code: spec.verifyCode },
+    { type: "p", text: labels.verifyTrail },
+    { type: "h2", text: labels.troubleshooting },
+    { type: "table", head: labels.troubleHead, rows: spec.troubleshootRows },
+    { type: "h2", text: labels.nextSteps },
+    { type: "cards", items: labels.nextStepsCards },
+  );
+
+  return {
+    slug: spec.slug,
+    icon: spec.icon,
+    title: spec.title,
+    description: spec.description,
+    blocks,
+  };
+}
+
+const EN_ENGINE_LABELS: EnginePageLabels = {
+  overview: "Overview",
+  beforeYouStart: "Before you start",
+  connectionFields: "Connection fields",
+  connectWithForm: "Connect with the form",
+  useConnectionString: "Use a connection string",
+  localBootstrap: "Local bootstrap",
+  sslTls: "SSL/TLS",
+  verifyConnection: "Verify the connection",
+  troubleshooting: "Troubleshooting",
+  nextSteps: "Next steps",
+  noServerTitle: "No server? Start here",
+  secretsTitle: "Secrets stay local",
+  secretsText: "Bootstrapped credentials, like all connection secrets, are kept in the OS keyring rather than in the interface or configuration files.",
+  verifyLead: "Once connected, open a SQL tab and run a quick check:",
+  verifyTrail: "If both statements return rows, the connection and credentials are working.",
+  fieldHead: ["Field", "Required", "Default", "Notes"],
+  troubleHead: ["Symptom", "Likely cause", "Fix"],
+  nextStepsCards: [
+    { title: "SQL workspace", text: "Write and run queries, manage tabs, and read results.", href: "/docs/sql-workspace" },
+    { title: "Exploring data", text: "Browse schemas, tables, and columns, and search across databases.", href: "/docs/exploring-data" },
+    { title: "All engines", text: "Back to the connections overview and the full engine list.", href: "/docs/connections" },
+  ],
+};
+
+const VI_ENGINE_LABELS: EnginePageLabels = {
+  overview: "Tổng quan",
+  beforeYouStart: "Trước khi bắt đầu",
+  connectionFields: "Các trường kết nối",
+  connectWithForm: "Kết nối bằng form",
+  useConnectionString: "Dùng connection string",
+  localBootstrap: "Bootstrap local",
+  sslTls: "SSL/TLS",
+  verifyConnection: "Kiểm tra kết nối",
+  troubleshooting: "Khắc phục sự cố",
+  nextSteps: "Bước tiếp theo",
+  noServerTitle: "Chưa có server? Bắt đầu ở đây",
+  secretsTitle: "Bí mật nằm ở máy bạn",
+  secretsText: "Credential đã bootstrap, cũng như mọi bí mật kết nối, được giữ trong keyring của hệ điều hành thay vì trên giao diện hay tệp cấu hình.",
+  verifyLead: "Sau khi kết nối, mở tab SQL và chạy nhanh một truy vấn kiểm tra:",
+  verifyTrail: "Nếu cả hai câu lệnh trả về dòng, kết nối và credential đang hoạt động tốt.",
+  fieldHead: ["Trường", "Bắt buộc", "Mặc định", "Ghi chú"],
+  troubleHead: ["Triệu chứng", "Nguyên nhân thường gặp", "Cách xử lý"],
+  nextStepsCards: [
+    { title: "Không gian SQL", text: "Viết và chạy truy vấn, quản lý tab và đọc kết quả.", href: "/docs/sql-workspace" },
+    { title: "Khám phá dữ liệu", text: "Duyệt schema, bảng, cột và tìm kiếm across database.", href: "/docs/exploring-data" },
+    { title: "Tất cả engine", text: "Quay lại tổng quan kết nối và danh sách engine đầy đủ.", href: "/docs/connections" },
+  ],
+};
+
+const EN_POSTGRESQL: EngineSpec = {
+  slug: "postgresql",
+  icon: "PlugZap",
+  title: "PostgreSQL",
+  description: "Connect TableR to any PostgreSQL server — or bootstrap one locally — with connection fields, connection strings, SSL/TLS, and troubleshooting.",
+  intro: "PostgreSQL is a network SQL engine. Point TableR at an existing server by filling the connection form, or let TableR start a local PostgreSQL for you with the built-in bootstrap when you do not have a server yet.",
+  overviewText: "TableR speaks the native PostgreSQL wire protocol, so it works with a local install, a container, a managed service (RDS, Cloud SQL, Azure Database, Supabase, Neon, and similar), or a bootstrapped local server. Because these are all PostgreSQL, the same connection fields below apply everywhere; only the values change.",
+  overviewBullets: [
+    "Local development — connect to 127.0.0.1:5432, or bootstrap a local server.",
+    "Remote / managed — use the provider endpoint and enable SSL/TLS.",
+    "PostgreSQL-compatible engines — CockroachDB, Greenplum, and Amazon Redshift use the same protocol and similar fields.",
+  ],
+  beforeYouStart: [
+    "A reachable PostgreSQL server (host and port), or use Local bootstrap instead.",
+    "A database user (role) name — this is required.",
+    "The user's password, if the server requires one.",
+    "Optionally, the specific database to open on connect.",
+    "For remote servers: network access to the port and, usually, SSL/TLS enabled.",
+  ],
+  connFieldsIntro: "These defaults match TableR's PostgreSQL connection form. Secrets are written to the operating system keyring, never to plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "127.0.0.1", "Hostname or IP of the server. Use the provider endpoint for managed databases."],
+    ["Port", "Yes", "5432", "PostgreSQL's default port. Change it only if your server listens elsewhere."],
+    ["Username", "Yes", "—", "The role used to authenticate."],
+    ["Password", "No", "—", "Optional; stored in the OS keyring. Leave empty for trust/peer auth."],
+    ["Database", "No", "—", "Optional. When empty, PostgreSQL uses the default database for the role."],
+    ["SSL/TLS", "No", "Off", "Enable for remote servers; many managed providers require it."],
+  ],
+  formSteps: [
+    { title: "Choose PostgreSQL", text: "Open the launcher and pick the PostgreSQL card." },
+    { title: "Enter host and port", text: "Use 127.0.0.1 and 5432 for a local server, or your provider's endpoint for a remote one." },
+    { title: "Add credentials", text: "Type the username, and the password if required. The password is saved to the OS keyring." },
+    { title: "Pick a database (optional)", text: "Set a database to open it directly, or leave it blank to use the role's default." },
+    { title: "Enable SSL/TLS for remote", text: "Turn on SSL/TLS when connecting to a remote or managed server." },
+    { title: "Save and connect", text: "Save the profile so it reappears in the launcher, then connect." },
+  ],
+  connString: {
+    intro: "Instead of filling every field, you can paste a PostgreSQL connection URI. Both postgres:// and postgresql:// schemes are accepted.",
+    code: "postgresql://username:password@host:5432/database?sslmode=require",
+    bullets: [
+      "Omit the password from the URI and let TableR store it in the keyring instead.",
+      "Append sslmode=require (or verify-full) for remote servers.",
+      "URL-encode special characters in the password (for example @ becomes %40).",
+    ],
+  },
+  bootstrap: {
+    noServerText: "You do not need to install PostgreSQL to try it. Choose PostgreSQL in the launcher and use Local bootstrap — TableR creates and starts a local server, and keeps its secrets in the OS keyring.",
+    intro: "If you do not have a server, TableR can start a local PostgreSQL for you — no separate install required.",
+    steps: [
+      { title: "Select PostgreSQL", text: "Pick PostgreSQL in the launcher." },
+      { title: "Choose Local bootstrap", text: "TableR provisions and starts a local server on your machine." },
+      { title: "Start querying", text: "A connection is created for you; open a SQL tab and run a query." },
+    ],
+  },
+  sslIntro: "Local servers on 127.0.0.1 usually need no encryption. For anything over a network, enable SSL/TLS. If you connect with a URI, control the behaviour with the sslmode parameter.",
+  sslBullets: [
+    "disable — no encryption (local only).",
+    "require — encrypt, but do not verify the server certificate.",
+    "verify-ca / verify-full — encrypt and verify the certificate (most secure).",
+  ],
+  verifyCode: "SELECT version();\nSELECT current_database(), current_user;",
+  troubleshootRows: [
+    ["Connection refused", "Server not running, wrong host/port, or a firewall.", "Confirm the server is up and the port is reachable; re-check host and port."],
+    ["password authentication failed", "Wrong username or password.", "Re-check the credentials and update the saved password (it lives in the keyring)."],
+    ["SSL / encryption required", "The server requires TLS.", "Enable SSL/TLS, or add sslmode=require to the connection string."],
+    ["database 'name' does not exist", "The Database field names a database that is missing.", "Leave Database empty, or enter one that exists."],
+    ["too many clients already", "The server hit its connection limit.", "Close idle connections, or raise max_connections on the server."],
+  ],
+};
+
+const EN_MYSQL: EngineSpec = {
+  slug: "mysql",
+  icon: "PlugZap",
+  title: "MySQL",
+  description: "Connect TableR to any MySQL server — or bootstrap one locally — with connection fields, connection strings, SSL/TLS, and troubleshooting.",
+  intro: "MySQL is a network SQL engine and the engine TableR selects by default for a new connection. Point TableR at an existing server by filling the connection form, or let TableR start a local MySQL for you with the built-in bootstrap when you do not have a server yet.",
+  overviewText: "TableR speaks the native MySQL wire protocol, so it works with a local install, a container, a managed service (RDS, Cloud SQL, Azure Database for MySQL, PlanetScale, and similar), or a bootstrapped local server. Because these are all MySQL, the same connection fields below apply everywhere; only the values change.",
+  overviewBullets: [
+    "Local development — connect to 127.0.0.1:3306, or bootstrap a local server.",
+    "Remote / managed — use the provider endpoint and enable SSL/TLS.",
+    "MySQL-compatible engines — MariaDB uses the same wire protocol and identical fields.",
+  ],
+  beforeYouStart: [
+    "A reachable MySQL server (host and port), or use Local bootstrap instead.",
+    "A database user name — this is required.",
+    "The user's password, if the server requires one.",
+    "Optionally, the specific database (schema) to open on connect.",
+    "For remote servers: network access to the port and, usually, SSL/TLS enabled.",
+  ],
+  connFieldsIntro: "These defaults match TableR's MySQL connection form. Secrets are written to the operating system keyring, never to plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "127.0.0.1", "Hostname or IP of the server. Use the provider endpoint for managed databases."],
+    ["Port", "Yes", "3306", "MySQL's default port. Change it only if your server listens elsewhere."],
+    ["Username", "Yes", "—", "The user used to authenticate."],
+    ["Password", "No", "—", "Optional; stored in the OS keyring. Leave empty for socket/no-password auth."],
+    ["Database", "No", "—", "Optional. When empty, no schema is selected until you choose one."],
+    ["SSL/TLS", "No", "Off", "Enable for remote servers; many managed providers require it."],
+  ],
+  formSteps: [
+    { title: "Choose MySQL", text: "Open the launcher and pick the MySQL card — it is the default selection." },
+    { title: "Enter host and port", text: "Use 127.0.0.1 and 3306 for a local server, or your provider's endpoint for a remote one." },
+    { title: "Add credentials", text: "Type the username, and the password if required. The password is saved to the OS keyring." },
+    { title: "Pick a database (optional)", text: "Set a database to open it directly, or leave it blank and choose one after connecting." },
+    { title: "Enable SSL/TLS for remote", text: "Turn on SSL/TLS when connecting to a remote or managed server." },
+    { title: "Save and connect", text: "Save the profile so it reappears in the launcher, then connect." },
+  ],
+  connString: {
+    intro: "Instead of filling every field, you can paste a MySQL connection URI.",
+    code: "mysql://username:password@host:3306/database?ssl-mode=REQUIRED",
+    bullets: [
+      "Omit the password from the URI and let TableR store it in the keyring instead.",
+      "Append ssl-mode=REQUIRED (or VERIFY_IDENTITY) for remote servers.",
+      "URL-encode special characters in the password (for example @ becomes %40).",
+    ],
+  },
+  bootstrap: {
+    noServerText: "You do not need to install MySQL to try it. Choose MySQL in the launcher and use Local bootstrap — TableR creates and starts a local server, and keeps its secrets in the OS keyring.",
+    intro: "If you do not have a server, TableR can start a local MySQL for you — no separate install required.",
+    steps: [
+      { title: "Select MySQL", text: "Pick MySQL in the launcher." },
+      { title: "Choose Local bootstrap", text: "TableR provisions and starts a local server on your machine." },
+      { title: "Start querying", text: "A connection is created for you; open a SQL tab and run a query." },
+    ],
+  },
+  sslIntro: "Local servers on 127.0.0.1 usually need no encryption. For anything over a network, enable SSL/TLS. If you connect with a URI, control the behaviour with the ssl-mode parameter.",
+  sslBullets: [
+    "DISABLED — no encryption (local only).",
+    "REQUIRED — encrypt, but do not verify the server certificate.",
+    "VERIFY_CA / VERIFY_IDENTITY — encrypt and verify the certificate (most secure).",
+  ],
+  verifyCode: "SELECT VERSION();\nSELECT DATABASE(), CURRENT_USER();",
+  troubleshootRows: [
+    ["Can't connect to MySQL server", "Server not running, wrong host/port, or a firewall.", "Confirm the server is up and the port is reachable; re-check host and port."],
+    ["Access denied for user", "Wrong username or password, or the user lacks host access.", "Re-check the credentials and update the saved password (it lives in the keyring)."],
+    ["SSL connection error", "The server requires TLS, or the certificate is not trusted.", "Enable SSL/TLS, or add ssl-mode=REQUIRED to the connection string."],
+    ["Unknown database 'name'", "The Database field names a schema that is missing.", "Leave Database empty, or enter one that exists."],
+    ["Too many connections", "The server hit its connection limit.", "Close idle connections, or raise max_connections on the server."],
+  ],
+};
+
+const EN_MARIADB: EngineSpec = {
+  slug: "mariadb",
+  icon: "PlugZap",
+  title: "MariaDB",
+  description: "Connect TableR to any MariaDB server — or bootstrap one locally. MariaDB speaks the MySQL wire protocol, so the fields, connection strings, and behaviour match MySQL.",
+  intro: "MariaDB is a network SQL engine that speaks the MySQL wire protocol, so TableR connects to it exactly like MySQL. Point TableR at an existing server by filling the connection form, or let TableR start a local MariaDB for you with the built-in bootstrap when you do not have a server yet.",
+  overviewText: "Because MariaDB uses the MySQL wire protocol, the same connection fields and connection strings as MySQL apply. It works with a local install, a container, a managed service (SkySQL, Amazon RDS, and similar), or a bootstrapped local server.",
+  overviewBullets: [
+    "Local development — connect to 127.0.0.1:3306, or bootstrap a local server.",
+    "Remote / managed — use the provider endpoint and enable SSL/TLS.",
+    "MySQL-compatible — fields, connection strings, and behaviour match MySQL; see the MySQL guide for anything not covered here.",
+  ],
+  beforeYouStart: [
+    "A reachable MariaDB server (host and port), or use Local bootstrap instead.",
+    "A database user name — this is required.",
+    "The user's password, if the server requires one.",
+    "Optionally, the specific database (schema) to open on connect.",
+    "For remote servers: network access to the port and, usually, SSL/TLS enabled.",
+  ],
+  connFieldsIntro: "These defaults match TableR's MariaDB connection form, which is identical to MySQL. Secrets are written to the operating system keyring, never to plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "127.0.0.1", "Hostname or IP of the server. Use the provider endpoint for managed databases."],
+    ["Port", "Yes", "3306", "MariaDB and MySQL share port 3306. Change it only if your server listens elsewhere."],
+    ["Username", "Yes", "—", "The user used to authenticate."],
+    ["Password", "No", "—", "Optional; stored in the OS keyring. Leave empty for socket/no-password auth."],
+    ["Database", "No", "—", "Optional. When empty, no schema is selected until you choose one."],
+    ["SSL/TLS", "No", "Off", "Enable for remote servers; many managed providers require it."],
+  ],
+  formSteps: [
+    { title: "Choose MariaDB", text: "Open the launcher and pick the MariaDB card." },
+    { title: "Enter host and port", text: "Use 127.0.0.1 and 3306 for a local server, or your provider's endpoint for a remote one." },
+    { title: "Add credentials", text: "Type the username, and the password if required. The password is saved to the OS keyring." },
+    { title: "Pick a database (optional)", text: "Set a database to open it directly, or leave it blank and choose one after connecting." },
+    { title: "Enable SSL/TLS for remote", text: "Turn on SSL/TLS when connecting to a remote or managed server." },
+    { title: "Save and connect", text: "Save the profile so it reappears in the launcher, then connect." },
+  ],
+  connString: {
+    intro: "MariaDB uses MySQL's connection URI format, so you can paste a MySQL-style connection string.",
+    code: "mysql://username:password@host:3306/database?ssl-mode=REQUIRED",
+    bullets: [
+      "Omit the password from the URI and let TableR store it in the keyring instead.",
+      "Append ssl-mode=REQUIRED (or VERIFY_IDENTITY) for remote servers.",
+      "URL-encode special characters in the password (for example @ becomes %40).",
+    ],
+  },
+  bootstrap: {
+    noServerText: "You do not need to install MariaDB to try it. Choose MariaDB in the launcher and use Local bootstrap — TableR creates and starts a local server, and keeps its secrets in the OS keyring.",
+    intro: "If you do not have a server, TableR can start a local MariaDB for you — no separate install required.",
+    steps: [
+      { title: "Select MariaDB", text: "Pick MariaDB in the launcher." },
+      { title: "Choose Local bootstrap", text: "TableR provisions and starts a local server on your machine." },
+      { title: "Start querying", text: "A connection is created for you; open a SQL tab and run a query." },
+    ],
+  },
+  sslIntro: "Local servers on 127.0.0.1 usually need no encryption. For anything over a network, enable SSL/TLS. If you connect with a URI, control the behaviour with the ssl-mode parameter.",
+  sslBullets: [
+    "DISABLED — no encryption (local only).",
+    "REQUIRED — encrypt, but do not verify the server certificate.",
+    "VERIFY_CA / VERIFY_IDENTITY — encrypt and verify the certificate (most secure).",
+  ],
+  verifyCode: "SELECT VERSION();\nSELECT DATABASE(), CURRENT_USER();",
+  troubleshootRows: [
+    ["Can't connect to server", "Server not running, wrong host/port, or a firewall.", "Confirm the server is up and the port is reachable; re-check host and port."],
+    ["Access denied for user", "Wrong username or password, or the user lacks host access.", "Re-check the credentials and update the saved password (it lives in the keyring)."],
+    ["SSL connection error", "The server requires TLS, or the certificate is not trusted.", "Enable SSL/TLS, or add ssl-mode=REQUIRED to the connection string."],
+    ["Unknown database 'name'", "The Database field names a schema that is missing.", "Leave Database empty, or enter one that exists."],
+    ["Too many connections", "The server hit its connection limit.", "Close idle connections, or raise max_connections on the server."],
+  ],
+};
+
+const EN_SQL_SERVER: EngineSpec = {
+  slug: "sql-server",
+  icon: "PlugZap",
+  title: "SQL Server",
+  description: "Connect TableR to Microsoft SQL Server with Windows or SQL authentication — or bootstrap one locally — with connection fields, encryption, and troubleshooting.",
+  intro: "SQL Server is Microsoft's network SQL engine. TableR connects with Windows or SQL Server authentication, auto-detected from the host. Point TableR at an existing server by filling the connection form, or let TableR start a local SQL Server for you with the built-in bootstrap when you do not have a server yet.",
+  overviewText: "TableR speaks the native SQL Server protocol (TDS), so it works with a local install, a container, a managed service (Azure SQL Database, Amazon RDS for SQL Server, and similar), or a bootstrapped local server. The authentication mode — Windows or SQL Server — is detected from the host you enter.",
+  overviewBullets: [
+    "Local development — connect to localhost,1433, or bootstrap a local server.",
+    "Named instances — use SERVER\\INSTANCE, or set the instance name field.",
+    "Remote / managed — use the provider endpoint and set Encrypt appropriately.",
+  ],
+  beforeYouStart: [
+    "A reachable SQL Server (host and port), or use Local bootstrap instead.",
+    "For SQL authentication: a login name and password.",
+    "For Windows authentication: leave the username empty to use the current Windows account.",
+    "Optionally, the specific database to open on connect.",
+    "For remote servers: network access to the port and appropriate Encrypt settings.",
+  ],
+  connFieldsIntro: "These defaults match TableR's SQL Server connection form. Secrets are written to the operating system keyring, never to plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "127.0.0.1", "Use localhost,1433 or SERVER\\INSTANCE. The authentication mode is auto-detected from the host."],
+    ["Port", "Yes", "1433", "SQL Server's default port. Change it only if your server listens elsewhere."],
+    ["Username", "No", "—", "Used for SQL Server authentication. Leave empty to use Windows authentication."],
+    ["Password", "No", "—", "Optional; stored in the OS keyring."],
+    ["Database", "No", "—", "Optional. When empty, the login's default database is used."],
+    ["Instance name", "No", "—", "Optional, or embed SERVER\\INSTANCE in the Host field."],
+    ["Encrypt", "No", "Optional", "Optional or Mandatory. Trust server certificate is on by default for local self-signed certificates."],
+  ],
+  formSteps: [
+    { title: "Choose SQL Server", text: "Open the launcher and pick the SQL Server card." },
+    { title: "Enter host and port", text: "Use localhost,1433 for a local server, SERVER\\INSTANCE for a named instance, or your provider's endpoint for a remote one." },
+    { title: "Pick an authentication mode", text: "Leave the username empty for Windows authentication, or enter a login and password for SQL Server authentication." },
+    { title: "Pick a database (optional)", text: "Set a database to open it directly, or leave it blank to use the login's default." },
+    { title: "Set encryption for remote", text: "Set Encrypt to Mandatory for remote servers; keep Trust server certificate on for local self-signed certificates." },
+    { title: "Save and connect", text: "Save the profile so it reappears in the launcher, then connect." },
+  ],
+  bootstrap: {
+    noServerText: "You do not need to install SQL Server to try it. Choose SQL Server in the launcher and use Local bootstrap — TableR creates and starts a local server, and keeps its secrets in the OS keyring.",
+    intro: "If you do not have a server, TableR can start a local SQL Server for you — no separate install required.",
+    steps: [
+      { title: "Select SQL Server", text: "Pick SQL Server in the launcher." },
+      { title: "Choose Local bootstrap", text: "TableR provisions and starts a local server on your machine." },
+      { title: "Start querying", text: "A connection is created for you; open a SQL tab and run a query." },
+    ],
+  },
+  sslIntro: "SQL Server controls encryption with the Encrypt setting rather than a URI parameter. Local servers usually need no encryption; for anything over a network, set Encrypt to Mandatory.",
+  sslBullets: [
+    "Encrypt: Optional — encrypt only if the server negotiates it (typical for local development).",
+    "Encrypt: Mandatory — always encrypt the connection (use for remote and managed servers).",
+    "Trust server certificate — on by default for local self-signed certificates; turn it off to validate the server's certificate chain.",
+  ],
+  verifyCode: "SELECT @@VERSION;\nSELECT DB_NAME(), SYSTEM_USER;",
+  troubleshootRows: [
+    ["Login failed for user", "Wrong username/password, or the login lacks access.", "Re-check the credentials, or leave the username empty to use Windows authentication."],
+    ["Encryption / certificate error", "Encrypt or Trust server certificate does not match the server.", "Set Encrypt to Optional, or keep Trust server certificate on for local self-signed certificates."],
+    ["Cannot open database 'name'", "The Database field names a database that is missing.", "Leave Database empty, or enter one that exists."],
+    ["Server was not found or was not accessible", "Wrong host/instance/port, server stopped, or a firewall.", "Confirm the server is up, and check the host (localhost,1433 or SERVER\\INSTANCE) and port."],
+  ],
+};
+
+const VI_POSTGRESQL: EngineSpec = {
+  slug: "postgresql",
+  icon: "PlugZap",
+  title: "PostgreSQL",
+  description: "Kết nối TableR tới bất kỳ server PostgreSQL nào — hoặc bootstrap ngay tại máy — kèm các trường kết nối, connection string, SSL/TLS và khắc phục sự cố.",
+  intro: "PostgreSQL là engine SQL qua mạng. Trỏ TableR tới một server sẵn có bằng cách điền form kết nối, hoặc để TableR tự khởi tạo một PostgreSQL local qua bootstrap tích hợp khi bạn chưa có server.",
+  overviewText: "TableR dùng giao thức wire gốc của PostgreSQL, nên hoạt động với bản cài local, container, dịch vụ quản lý (RDS, Cloud SQL, Azure Database, Supabase, Neon và tương tự), hay một server local đã bootstrap. Vì tất cả đều là PostgreSQL nên các trường kết nối bên dưới áp dụng cho mọi trường hợp; chỉ giá trị thay đổi.",
+  overviewBullets: [
+    "Phát triển local — kết nối tới 127.0.0.1:5432, hoặc bootstrap một server local.",
+    "Remote / managed — dùng endpoint của nhà cung cấp và bật SSL/TLS.",
+    "Engine tương thích PostgreSQL — CockroachDB, Greenplum và Amazon Redshift dùng cùng giao thức và các trường tương tự.",
+  ],
+  beforeYouStart: [
+    "Một server PostgreSQL truy cập được (host và port), hoặc dùng Bootstrap local thay thế.",
+    "Tên user (role) của database — bắt buộc.",
+    "Mật khẩu của user, nếu server yêu cầu.",
+    "Tùy chọn: database cụ thể muốn mở khi kết nối.",
+    "Với server từ xa: cần truy cập mạng tới port và thường phải bật SSL/TLS.",
+  ],
+  connFieldsIntro: "Các mặc định dưới đây khớp với form kết nối PostgreSQL của TableR. Bí mật được ghi vào keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "127.0.0.1", "Hostname hoặc IP của server. Dùng endpoint nhà cung cấp cho database quản lý."],
+    ["Port", "Có", "5432", "Port mặc định của PostgreSQL. Chỉ đổi nếu server lắng nghe ở cổng khác."],
+    ["Username", "Có", "—", "Role dùng để xác thực."],
+    ["Password", "Không", "—", "Tùy chọn; lưu trong keyring. Để trống nếu dùng trust/peer auth."],
+    ["Database", "Không", "—", "Tùy chọn. Để trống thì PostgreSQL dùng database mặc định của role."],
+    ["SSL/TLS", "Không", "Tắt", "Bật cho server từ xa; nhiều nhà cung cấp quản lý bắt buộc."],
+  ],
+  formSteps: [
+    { title: "Chọn PostgreSQL", text: "Mở trình khởi chạy và chọn thẻ PostgreSQL." },
+    { title: "Nhập host và port", text: "Dùng 127.0.0.1 và 5432 cho server local, hoặc endpoint của nhà cung cấp cho server từ xa." },
+    { title: "Thêm credential", text: "Nhập username, và password nếu cần. Password được lưu vào keyring." },
+    { title: "Chọn database (tùy chọn)", text: "Đặt một database để mở trực tiếp, hoặc để trống để dùng mặc định của role." },
+    { title: "Bật SSL/TLS cho remote", text: "Bật SSL/TLS khi kết nối tới server từ xa hoặc quản lý." },
+    { title: "Lưu và kết nối", text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối." },
+  ],
+  connString: {
+    intro: "Thay vì điền từng trường, bạn có thể dán một URI kết nối PostgreSQL. Chấp nhận cả scheme postgres:// và postgresql://.",
+    code: "postgresql://username:password@host:5432/database?sslmode=require",
+    bullets: [
+      "Bỏ password khỏi URI và để TableR lưu vào keyring.",
+      "Thêm sslmode=require (hoặc verify-full) cho server từ xa.",
+      "URL-encode ký tự đặc biệt trong password (ví dụ @ thành %40).",
+    ],
+  },
+  bootstrap: {
+    noServerText: "Bạn không cần cài PostgreSQL để dùng thử. Chọn PostgreSQL trong trình khởi chạy và dùng Bootstrap local — TableR tạo và khởi động một server local, giữ bí mật trong keyring của hệ điều hành.",
+    intro: "Nếu chưa có server, TableR có thể khởi tạo một PostgreSQL local cho bạn — không cần cài riêng.",
+    steps: [
+      { title: "Chọn PostgreSQL", text: "Chọn PostgreSQL trong trình khởi chạy." },
+      { title: "Chọn Bootstrap local", text: "TableR cấp phát và khởi động một server local trên máy bạn." },
+      { title: "Bắt đầu truy vấn", text: "Một kết nối được tạo sẵn; mở tab SQL và chạy truy vấn." },
+    ],
+  },
+  sslIntro: "Server local trên 127.0.0.1 thường không cần mã hóa. Với bất cứ kết nối qua mạng nào, hãy bật SSL/TLS. Nếu dùng URI, điều khiển hành vi bằng tham số sslmode.",
+  sslBullets: [
+    "disable — không mã hóa (chỉ dùng local).",
+    "require — mã hóa nhưng không xác minh chứng chỉ server.",
+    "verify-ca / verify-full — mã hóa và xác minh chứng chỉ (an toàn nhất).",
+  ],
+  verifyCode: "SELECT version();\nSELECT current_database(), current_user;",
+  troubleshootRows: [
+    ["Connection refused", "Server chưa chạy, sai host/port, hoặc firewall.", "Xác nhận server đang chạy và port truy cập được; kiểm tra lại host và port."],
+    ["password authentication failed", "Sai username hoặc password.", "Kiểm tra lại credential và cập nhật password đã lưu (nằm trong keyring)."],
+    ["Yêu cầu SSL / mã hóa", "Server bắt buộc TLS.", "Bật SSL/TLS, hoặc thêm sslmode=require vào connection string."],
+    ["database 'name' does not exist", "Trường Database trỏ tới database không tồn tại.", "Để trống Database, hoặc nhập một database có thật."],
+    ["too many clients already", "Server đã đạt giới hạn kết nối.", "Đóng các kết nối rảnh, hoặc tăng max_connections trên server."],
+  ],
+};
+
+const VI_MYSQL: EngineSpec = {
+  slug: "mysql",
+  icon: "PlugZap",
+  title: "MySQL",
+  description: "Kết nối TableR tới bất kỳ server MySQL nào — hoặc bootstrap ngay tại máy — kèm các trường kết nối, connection string, SSL/TLS và khắc phục sự cố.",
+  intro: "MySQL là engine SQL qua mạng và là engine TableR chọn mặc định khi tạo kết nối mới. Trỏ TableR tới một server sẵn có bằng cách điền form kết nối, hoặc để TableR tự khởi tạo một MySQL local qua bootstrap tích hợp khi bạn chưa có server.",
+  overviewText: "TableR dùng giao thức wire gốc của MySQL, nên hoạt động với bản cài local, container, dịch vụ quản lý (RDS, Cloud SQL, Azure Database for MySQL, PlanetScale và tương tự), hay một server local đã bootstrap. Vì tất cả đều là MySQL nên các trường kết nối bên dưới áp dụng cho mọi trường hợp; chỉ giá trị thay đổi.",
+  overviewBullets: [
+    "Phát triển local — kết nối tới 127.0.0.1:3306, hoặc bootstrap một server local.",
+    "Remote / managed — dùng endpoint của nhà cung cấp và bật SSL/TLS.",
+    "Engine tương thích MySQL — MariaDB dùng cùng giao thức wire và các trường giống hệt.",
+  ],
+  beforeYouStart: [
+    "Một server MySQL truy cập được (host và port), hoặc dùng Bootstrap local thay thế.",
+    "Tên user của database — bắt buộc.",
+    "Mật khẩu của user, nếu server yêu cầu.",
+    "Tùy chọn: database (schema) cụ thể muốn mở khi kết nối.",
+    "Với server từ xa: cần truy cập mạng tới port và thường phải bật SSL/TLS.",
+  ],
+  connFieldsIntro: "Các mặc định dưới đây khớp với form kết nối MySQL của TableR. Bí mật được ghi vào keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "127.0.0.1", "Hostname hoặc IP của server. Dùng endpoint nhà cung cấp cho database quản lý."],
+    ["Port", "Có", "3306", "Port mặc định của MySQL. Chỉ đổi nếu server lắng nghe ở cổng khác."],
+    ["Username", "Có", "—", "User dùng để xác thực."],
+    ["Password", "Không", "—", "Tùy chọn; lưu trong keyring. Để trống nếu dùng socket/không mật khẩu."],
+    ["Database", "Không", "—", "Tùy chọn. Để trống thì chưa chọn schema nào cho tới khi bạn chọn."],
+    ["SSL/TLS", "Không", "Tắt", "Bật cho server từ xa; nhiều nhà cung cấp quản lý bắt buộc."],
+  ],
+  formSteps: [
+    { title: "Chọn MySQL", text: "Mở trình khởi chạy và chọn thẻ MySQL — đây là lựa chọn mặc định." },
+    { title: "Nhập host và port", text: "Dùng 127.0.0.1 và 3306 cho server local, hoặc endpoint của nhà cung cấp cho server từ xa." },
+    { title: "Thêm credential", text: "Nhập username, và password nếu cần. Password được lưu vào keyring." },
+    { title: "Chọn database (tùy chọn)", text: "Đặt một database để mở trực tiếp, hoặc để trống rồi chọn sau khi kết nối." },
+    { title: "Bật SSL/TLS cho remote", text: "Bật SSL/TLS khi kết nối tới server từ xa hoặc quản lý." },
+    { title: "Lưu và kết nối", text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối." },
+  ],
+  connString: {
+    intro: "Thay vì điền từng trường, bạn có thể dán một URI kết nối MySQL.",
+    code: "mysql://username:password@host:3306/database?ssl-mode=REQUIRED",
+    bullets: [
+      "Bỏ password khỏi URI và để TableR lưu vào keyring.",
+      "Thêm ssl-mode=REQUIRED (hoặc VERIFY_IDENTITY) cho server từ xa.",
+      "URL-encode ký tự đặc biệt trong password (ví dụ @ thành %40).",
+    ],
+  },
+  bootstrap: {
+    noServerText: "Bạn không cần cài MySQL để dùng thử. Chọn MySQL trong trình khởi chạy và dùng Bootstrap local — TableR tạo và khởi động một server local, giữ bí mật trong keyring của hệ điều hành.",
+    intro: "Nếu chưa có server, TableR có thể khởi tạo một MySQL local cho bạn — không cần cài riêng.",
+    steps: [
+      { title: "Chọn MySQL", text: "Chọn MySQL trong trình khởi chạy." },
+      { title: "Chọn Bootstrap local", text: "TableR cấp phát và khởi động một server local trên máy bạn." },
+      { title: "Bắt đầu truy vấn", text: "Một kết nối được tạo sẵn; mở tab SQL và chạy truy vấn." },
+    ],
+  },
+  sslIntro: "Server local trên 127.0.0.1 thường không cần mã hóa. Với bất cứ kết nối qua mạng nào, hãy bật SSL/TLS. Nếu dùng URI, điều khiển hành vi bằng tham số ssl-mode.",
+  sslBullets: [
+    "DISABLED — không mã hóa (chỉ dùng local).",
+    "REQUIRED — mã hóa nhưng không xác minh chứng chỉ server.",
+    "VERIFY_CA / VERIFY_IDENTITY — mã hóa và xác minh chứng chỉ (an toàn nhất).",
+  ],
+  verifyCode: "SELECT VERSION();\nSELECT DATABASE(), CURRENT_USER();",
+  troubleshootRows: [
+    ["Can't connect to MySQL server", "Server chưa chạy, sai host/port, hoặc firewall.", "Xác nhận server đang chạy và port truy cập được; kiểm tra lại host và port."],
+    ["Access denied for user", "Sai username hoặc password, hoặc user không có quyền theo host.", "Kiểm tra lại credential và cập nhật password đã lưu (nằm trong keyring)."],
+    ["SSL connection error", "Server bắt buộc TLS, hoặc chứng chỉ không được tin cậy.", "Bật SSL/TLS, hoặc thêm ssl-mode=REQUIRED vào connection string."],
+    ["Unknown database 'name'", "Trường Database trỏ tới schema không tồn tại.", "Để trống Database, hoặc nhập một database có thật."],
+    ["Too many connections", "Server đã đạt giới hạn kết nối.", "Đóng các kết nối rảnh, hoặc tăng max_connections trên server."],
+  ],
+};
+
+const VI_MARIADB: EngineSpec = {
+  slug: "mariadb",
+  icon: "PlugZap",
+  title: "MariaDB",
+  description: "Kết nối TableR tới bất kỳ server MariaDB nào — hoặc bootstrap ngay tại máy. MariaDB dùng giao thức wire của MySQL nên các trường, connection string và cách hoạt động đều giống MySQL.",
+  intro: "MariaDB là engine SQL qua mạng dùng giao thức wire của MySQL, nên TableR kết nối y hệt MySQL. Trỏ TableR tới một server sẵn có bằng cách điền form kết nối, hoặc để TableR tự khởi tạo một MariaDB local qua bootstrap tích hợp khi bạn chưa có server.",
+  overviewText: "Vì MariaDB dùng giao thức wire của MySQL nên áp dụng cùng các trường kết nối và connection string như MySQL. Nó hoạt động với bản cài local, container, dịch vụ quản lý (SkySQL, Amazon RDS và tương tự), hay một server local đã bootstrap.",
+  overviewBullets: [
+    "Phát triển local — kết nối tới 127.0.0.1:3306, hoặc bootstrap một server local.",
+    "Remote / managed — dùng endpoint của nhà cung cấp và bật SSL/TLS.",
+    "Tương thích MySQL — các trường, connection string và cách hoạt động giống MySQL; xem hướng dẫn MySQL cho phần chưa đề cập ở đây.",
+  ],
+  beforeYouStart: [
+    "Một server MariaDB truy cập được (host và port), hoặc dùng Bootstrap local thay thế.",
+    "Tên user của database — bắt buộc.",
+    "Mật khẩu của user, nếu server yêu cầu.",
+    "Tùy chọn: database (schema) cụ thể muốn mở khi kết nối.",
+    "Với server từ xa: cần truy cập mạng tới port và thường phải bật SSL/TLS.",
+  ],
+  connFieldsIntro: "Các mặc định dưới đây khớp với form kết nối MariaDB của TableR, vốn giống hệt MySQL. Bí mật được ghi vào keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "127.0.0.1", "Hostname hoặc IP của server. Dùng endpoint nhà cung cấp cho database quản lý."],
+    ["Port", "Có", "3306", "MariaDB và MySQL dùng chung port 3306. Chỉ đổi nếu server lắng nghe ở cổng khác."],
+    ["Username", "Có", "—", "User dùng để xác thực."],
+    ["Password", "Không", "—", "Tùy chọn; lưu trong keyring. Để trống nếu dùng socket/không mật khẩu."],
+    ["Database", "Không", "—", "Tùy chọn. Để trống thì chưa chọn schema nào cho tới khi bạn chọn."],
+    ["SSL/TLS", "Không", "Tắt", "Bật cho server từ xa; nhiều nhà cung cấp quản lý bắt buộc."],
+  ],
+  formSteps: [
+    { title: "Chọn MariaDB", text: "Mở trình khởi chạy và chọn thẻ MariaDB." },
+    { title: "Nhập host và port", text: "Dùng 127.0.0.1 và 3306 cho server local, hoặc endpoint của nhà cung cấp cho server từ xa." },
+    { title: "Thêm credential", text: "Nhập username, và password nếu cần. Password được lưu vào keyring." },
+    { title: "Chọn database (tùy chọn)", text: "Đặt một database để mở trực tiếp, hoặc để trống rồi chọn sau khi kết nối." },
+    { title: "Bật SSL/TLS cho remote", text: "Bật SSL/TLS khi kết nối tới server từ xa hoặc quản lý." },
+    { title: "Lưu và kết nối", text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối." },
+  ],
+  connString: {
+    intro: "MariaDB dùng định dạng URI kết nối của MySQL, nên bạn có thể dán một connection string kiểu MySQL.",
+    code: "mysql://username:password@host:3306/database?ssl-mode=REQUIRED",
+    bullets: [
+      "Bỏ password khỏi URI và để TableR lưu vào keyring.",
+      "Thêm ssl-mode=REQUIRED (hoặc VERIFY_IDENTITY) cho server từ xa.",
+      "URL-encode ký tự đặc biệt trong password (ví dụ @ thành %40).",
+    ],
+  },
+  bootstrap: {
+    noServerText: "Bạn không cần cài MariaDB để dùng thử. Chọn MariaDB trong trình khởi chạy và dùng Bootstrap local — TableR tạo và khởi động một server local, giữ bí mật trong keyring của hệ điều hành.",
+    intro: "Nếu chưa có server, TableR có thể khởi tạo một MariaDB local cho bạn — không cần cài riêng.",
+    steps: [
+      { title: "Chọn MariaDB", text: "Chọn MariaDB trong trình khởi chạy." },
+      { title: "Chọn Bootstrap local", text: "TableR cấp phát và khởi động một server local trên máy bạn." },
+      { title: "Bắt đầu truy vấn", text: "Một kết nối được tạo sẵn; mở tab SQL và chạy truy vấn." },
+    ],
+  },
+  sslIntro: "Server local trên 127.0.0.1 thường không cần mã hóa. Với bất cứ kết nối qua mạng nào, hãy bật SSL/TLS. Nếu dùng URI, điều khiển hành vi bằng tham số ssl-mode.",
+  sslBullets: [
+    "DISABLED — không mã hóa (chỉ dùng local).",
+    "REQUIRED — mã hóa nhưng không xác minh chứng chỉ server.",
+    "VERIFY_CA / VERIFY_IDENTITY — mã hóa và xác minh chứng chỉ (an toàn nhất).",
+  ],
+  verifyCode: "SELECT VERSION();\nSELECT DATABASE(), CURRENT_USER();",
+  troubleshootRows: [
+    ["Can't connect to server", "Server chưa chạy, sai host/port, hoặc firewall.", "Xác nhận server đang chạy và port truy cập được; kiểm tra lại host và port."],
+    ["Access denied for user", "Sai username hoặc password, hoặc user không có quyền theo host.", "Kiểm tra lại credential và cập nhật password đã lưu (nằm trong keyring)."],
+    ["SSL connection error", "Server bắt buộc TLS, hoặc chứng chỉ không được tin cậy.", "Bật SSL/TLS, hoặc thêm ssl-mode=REQUIRED vào connection string."],
+    ["Unknown database 'name'", "Trường Database trỏ tới schema không tồn tại.", "Để trống Database, hoặc nhập một database có thật."],
+    ["Too many connections", "Server đã đạt giới hạn kết nối.", "Đóng các kết nối rảnh, hoặc tăng max_connections trên server."],
+  ],
+};
+
+const VI_SQL_SERVER: EngineSpec = {
+  slug: "sql-server",
+  icon: "PlugZap",
+  title: "SQL Server",
+  description: "Kết nối TableR tới Microsoft SQL Server bằng xác thực Windows hoặc SQL — hoặc bootstrap ngay tại máy — kèm các trường kết nối, mã hóa và khắc phục sự cố.",
+  intro: "SQL Server là engine SQL qua mạng của Microsoft. TableR kết nối bằng xác thực Windows hoặc SQL Server, tự nhận theo host. Trỏ TableR tới một server sẵn có bằng cách điền form kết nối, hoặc để TableR tự khởi tạo một SQL Server local qua bootstrap tích hợp khi bạn chưa có server.",
+  overviewText: "TableR dùng giao thức gốc của SQL Server (TDS), nên hoạt động với bản cài local, container, dịch vụ quản lý (Azure SQL Database, Amazon RDS for SQL Server và tương tự), hay một server local đã bootstrap. Chế độ xác thực — Windows hay SQL Server — được nhận từ host bạn nhập.",
+  overviewBullets: [
+    "Phát triển local — kết nối tới localhost,1433, hoặc bootstrap một server local.",
+    "Named instance — dùng SERVER\\INSTANCE, hoặc đặt trường instance name.",
+    "Remote / managed — dùng endpoint của nhà cung cấp và đặt Encrypt phù hợp.",
+  ],
+  beforeYouStart: [
+    "Một SQL Server truy cập được (host và port), hoặc dùng Bootstrap local thay thế.",
+    "Với xác thực SQL: tên login và mật khẩu.",
+    "Với xác thực Windows: để trống username để dùng tài khoản Windows hiện tại.",
+    "Tùy chọn: database cụ thể muốn mở khi kết nối.",
+    "Với server từ xa: cần truy cập mạng tới port và thiết lập Encrypt phù hợp.",
+  ],
+  connFieldsIntro: "Các mặc định dưới đây khớp với form kết nối SQL Server của TableR. Bí mật được ghi vào keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "127.0.0.1", "Dùng localhost,1433 hoặc SERVER\\INSTANCE. Chế độ xác thực tự nhận theo host."],
+    ["Port", "Có", "1433", "Port mặc định của SQL Server. Chỉ đổi nếu server lắng nghe ở cổng khác."],
+    ["Username", "Không", "—", "Dùng cho xác thực SQL Server. Để trống để dùng xác thực Windows."],
+    ["Password", "Không", "—", "Tùy chọn; lưu trong keyring."],
+    ["Database", "Không", "—", "Tùy chọn. Để trống thì dùng database mặc định của login."],
+    ["Instance name", "Không", "—", "Tùy chọn, hoặc điền SERVER\\INSTANCE vào ô Host."],
+    ["Encrypt", "Không", "Optional", "Optional hoặc Mandatory. Trust server certificate bật sẵn cho cert tự ký ở local."],
+  ],
+  formSteps: [
+    { title: "Chọn SQL Server", text: "Mở trình khởi chạy và chọn thẻ SQL Server." },
+    { title: "Nhập host và port", text: "Dùng localhost,1433 cho server local, SERVER\\INSTANCE cho named instance, hoặc endpoint của nhà cung cấp cho server từ xa." },
+    { title: "Chọn chế độ xác thực", text: "Để trống username cho xác thực Windows, hoặc nhập login và password cho xác thực SQL Server." },
+    { title: "Chọn database (tùy chọn)", text: "Đặt một database để mở trực tiếp, hoặc để trống để dùng mặc định của login." },
+    { title: "Đặt mã hóa cho remote", text: "Đặt Encrypt thành Mandatory cho server từ xa; giữ Trust server certificate bật cho cert tự ký ở local." },
+    { title: "Lưu và kết nối", text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối." },
+  ],
+  bootstrap: {
+    noServerText: "Bạn không cần cài SQL Server để dùng thử. Chọn SQL Server trong trình khởi chạy và dùng Bootstrap local — TableR tạo và khởi động một server local, giữ bí mật trong keyring của hệ điều hành.",
+    intro: "Nếu chưa có server, TableR có thể khởi tạo một SQL Server local cho bạn — không cần cài riêng.",
+    steps: [
+      { title: "Chọn SQL Server", text: "Chọn SQL Server trong trình khởi chạy." },
+      { title: "Chọn Bootstrap local", text: "TableR cấp phát và khởi động một server local trên máy bạn." },
+      { title: "Bắt đầu truy vấn", text: "Một kết nối được tạo sẵn; mở tab SQL và chạy truy vấn." },
+    ],
+  },
+  sslIntro: "SQL Server điều khiển mã hóa bằng thiết lập Encrypt thay vì tham số URI. Server local thường không cần mã hóa; với kết nối qua mạng, đặt Encrypt thành Mandatory.",
+  sslBullets: [
+    "Encrypt: Optional — chỉ mã hóa nếu server thương lượng (thường dùng khi phát triển local).",
+    "Encrypt: Mandatory — luôn mã hóa kết nối (dùng cho server từ xa và quản lý).",
+    "Trust server certificate — bật sẵn cho cert tự ký ở local; tắt để xác minh chuỗi chứng chỉ của server.",
+  ],
+  verifyCode: "SELECT @@VERSION;\nSELECT DB_NAME(), SYSTEM_USER;",
+  troubleshootRows: [
+    ["Login failed for user", "Sai username/password, hoặc login không có quyền truy cập.", "Kiểm tra lại credential, hoặc để trống username để dùng xác thực Windows."],
+    ["Lỗi mã hóa / chứng chỉ", "Thiết lập Encrypt hoặc Trust server certificate không khớp với server.", "Đặt Encrypt thành Optional, hoặc giữ Trust server certificate bật cho cert tự ký ở local."],
+    ["Cannot open database 'name'", "Trường Database trỏ tới database không tồn tại.", "Để trống Database, hoặc nhập một database có thật."],
+    ["Không tìm thấy server hoặc không truy cập được", "Sai host/instance/port, server dừng, hoặc firewall.", "Xác nhận server đang chạy và kiểm tra host (localhost,1433 hoặc SERVER\\INSTANCE) và port."],
+  ],
+};
 
 /* ------------------------------------------------------------------ */
 /* English content                                                     */
@@ -413,17 +1149,8 @@ const en: DocsBundle = {
         { type: "cards", items: [
           { title: "PostgreSQL — in-depth guide", text: "Connection fields, connection strings, SSL/TLS, local bootstrap, verifying the connection, and troubleshooting — on its own page.", href: "/docs/postgresql" },
           { title: "MySQL — in-depth guide", text: "Connection fields, connection strings, SSL/TLS, local bootstrap, verifying the connection, and troubleshooting — on its own page.", href: "/docs/mysql" },
-        ] },
-        { type: "h3", text: "MariaDB" },
-        { type: "p", text: "Uses the MySQL wire protocol, so the fields match MySQL." },
-        { type: "ul", items: [
-          "Host — default 127.0.0.1.",
-          "Port — 3306.",
-          "Username — required.",
-          "Password — optional.",
-          "Database — optional.",
-          "SSL/TLS — supported.",
-          "Local bootstrap — ready.",
+          { title: "MariaDB — in-depth guide", text: "MySQL-compatible connection fields, connection strings, SSL/TLS, local bootstrap, and troubleshooting — on its own page.", href: "/docs/mariadb" },
+          { title: "SQL Server — in-depth guide", text: "Windows or SQL authentication, connection fields, encryption, local bootstrap, and troubleshooting — on its own page.", href: "/docs/sql-server" },
         ] },
         { type: "h3", text: "CockroachDB" },
         { type: "p", text: "Speaks the PostgreSQL wire protocol." },
@@ -454,18 +1181,6 @@ const en: DocsBundle = {
           "Password — optional.",
           "Database — optional.",
           "SSL/TLS — supported.",
-        ] },
-        { type: "h3", text: "SQL Server" },
-        { type: "p", text: "Microsoft SQL Server, with Windows or SQL authentication." },
-        { type: "ul", items: [
-          "Host — localhost,1433 or SERVER\\INSTANCE.",
-          "Port — 1433.",
-          "Authentication — Windows or SQL Server, auto-detected from the host (Microsoft Entra not supported yet).",
-          "Username / Password — optional, used for SQL authentication.",
-          "Database — optional.",
-          "Instance name — optional, or embed SERVER\\INSTANCE in the host.",
-          "Encrypt — Optional or Mandatory; Trust server certificate is on by default for local self-signed certs.",
-          "Local bootstrap — ready.",
         ] },
         { type: "h3", text: "Vertica" },
         { type: "p", text: "A columnar analytics database." },
@@ -568,176 +1283,10 @@ const en: DocsBundle = {
         ] },
       ],
     },
-    {
-      slug: "postgresql",
-      icon: "PlugZap",
-      title: "PostgreSQL",
-      description: "Connect TableR to any PostgreSQL server — or bootstrap one locally — with connection fields, connection strings, SSL/TLS, and troubleshooting.",
-      blocks: [
-        { type: "p", text: "PostgreSQL is a network SQL engine. Point TableR at an existing server by filling the connection form, or let TableR start a local PostgreSQL for you with the built-in bootstrap when you do not have a server yet." },
-        { type: "callout", tone: "tip", title: "No server? Start here", text: "You do not need to install PostgreSQL to try it. Choose PostgreSQL in the launcher and use Local bootstrap — TableR creates and starts a local server, and keeps its secrets in the OS keyring." },
-        { type: "h2", text: "Overview" },
-        { type: "p", text: "TableR speaks the native PostgreSQL wire protocol, so it works with a local install, a container, a managed service (RDS, Cloud SQL, Azure Database, Supabase, Neon, and similar), or a bootstrapped local server. Because these are all PostgreSQL, the same connection fields below apply everywhere; only the values change." },
-        { type: "ul", items: [
-          "Local development — connect to 127.0.0.1:5432, or bootstrap a local server.",
-          "Remote / managed — use the provider endpoint and enable SSL/TLS.",
-          "PostgreSQL-compatible engines — CockroachDB, Greenplum, and Amazon Redshift use the same protocol and similar fields.",
-        ] },
-        { type: "h2", text: "Before you start" },
-        { type: "ul", items: [
-          "A reachable PostgreSQL server (host and port), or use Local bootstrap instead.",
-          "A database user (role) name — this is required.",
-          "The user's password, if the server requires one.",
-          "Optionally, the specific database to open on connect.",
-          "For remote servers: network access to the port and, usually, SSL/TLS enabled.",
-        ] },
-        { type: "h2", text: "Connection fields" },
-        { type: "p", text: "These defaults match TableR's PostgreSQL connection form. Secrets are written to the operating system keyring, never to plain configuration files." },
-        { type: "table", head: ["Field", "Required", "Default", "Notes"], rows: [
-          ["Host", "Yes", "127.0.0.1", "Hostname or IP of the server. Use the provider endpoint for managed databases."],
-          ["Port", "Yes", "5432", "PostgreSQL's default port. Change it only if your server listens elsewhere."],
-          ["Username", "Yes", "—", "The role used to authenticate."],
-          ["Password", "No", "—", "Optional; stored in the OS keyring. Leave empty for trust/peer auth."],
-          ["Database", "No", "—", "Optional. When empty, PostgreSQL uses the default database for the role."],
-          ["SSL/TLS", "No", "Off", "Enable for remote servers; many managed providers require it."],
-        ] },
-        { type: "h2", text: "Connect with the form" },
-        { type: "steps", items: [
-          { title: "Choose PostgreSQL", text: "Open the launcher and pick the PostgreSQL card." },
-          { title: "Enter host and port", text: "Use 127.0.0.1 and 5432 for a local server, or your provider's endpoint for a remote one." },
-          { title: "Add credentials", text: "Type the username, and the password if required. The password is saved to the OS keyring." },
-          { title: "Pick a database (optional)", text: "Set a database to open it directly, or leave it blank to use the role's default." },
-          { title: "Enable SSL/TLS for remote", text: "Turn on SSL/TLS when connecting to a remote or managed server." },
-          { title: "Save and connect", text: "Save the profile so it reappears in the launcher, then connect." },
-        ] },
-        { type: "h2", text: "Use a connection string" },
-        { type: "p", text: "Instead of filling every field, you can paste a PostgreSQL connection URI. Both postgres:// and postgresql:// schemes are accepted." },
-        { type: "code", lang: "text", code: "postgresql://username:password@host:5432/database?sslmode=require" },
-        { type: "ul", items: [
-          "Omit the password from the URI and let TableR store it in the keyring instead.",
-          "Append sslmode=require (or verify-full) for remote servers.",
-          "URL-encode special characters in the password (for example @ becomes %40).",
-        ] },
-        { type: "h2", text: "Local bootstrap" },
-        { type: "p", text: "If you do not have a server, TableR can start a local PostgreSQL for you — no separate install required." },
-        { type: "steps", items: [
-          { title: "Select PostgreSQL", text: "Pick PostgreSQL in the launcher." },
-          { title: "Choose Local bootstrap", text: "TableR provisions and starts a local server on your machine." },
-          { title: "Start querying", text: "A connection is created for you; open a SQL tab and run a query." },
-        ] },
-        { type: "callout", tone: "info", title: "Secrets stay local", text: "Bootstrapped credentials, like all connection secrets, are kept in the OS keyring rather than in the interface or configuration files." },
-        { type: "h2", text: "SSL/TLS" },
-        { type: "p", text: "Local servers on 127.0.0.1 usually need no encryption. For anything over a network, enable SSL/TLS. If you connect with a URI, control the behaviour with the sslmode parameter." },
-        { type: "ul", items: [
-          "disable — no encryption (local only).",
-          "require — encrypt, but do not verify the server certificate.",
-          "verify-ca / verify-full — encrypt and verify the certificate (most secure).",
-        ] },
-        { type: "h2", text: "Verify the connection" },
-        { type: "p", text: "Once connected, open a SQL tab and run a quick check:" },
-        { type: "code", lang: "sql", code: "SELECT version();\nSELECT current_database(), current_user;" },
-        { type: "p", text: "If both statements return rows, the connection and credentials are working." },
-        { type: "h2", text: "Troubleshooting" },
-        { type: "table", head: ["Symptom", "Likely cause", "Fix"], rows: [
-          ["Connection refused", "Server not running, wrong host/port, or a firewall.", "Confirm the server is up and the port is reachable; re-check host and port."],
-          ["password authentication failed", "Wrong username or password.", "Re-check the credentials and update the saved password (it lives in the keyring)."],
-          ["SSL / encryption required", "The server requires TLS.", "Enable SSL/TLS, or add sslmode=require to the connection string."],
-          ["database 'name' does not exist", "The Database field names a database that is missing.", "Leave Database empty, or enter one that exists."],
-          ["too many clients already", "The server hit its connection limit.", "Close idle connections, or raise max_connections on the server."],
-        ] },
-        { type: "h2", text: "Next steps" },
-        { type: "cards", items: [
-          { title: "SQL workspace", text: "Write and run queries, manage tabs, and read results.", href: "/docs/sql-workspace" },
-          { title: "Exploring data", text: "Browse schemas, tables, and columns, and search across databases.", href: "/docs/exploring-data" },
-          { title: "All engines", text: "Back to the connections overview and the full engine list.", href: "/docs/connections" },
-        ] },
-      ],
-    },
-    {
-      slug: "mysql",
-      icon: "PlugZap",
-      title: "MySQL",
-      description: "Connect TableR to any MySQL server — or bootstrap one locally — with connection fields, connection strings, SSL/TLS, and troubleshooting.",
-      blocks: [
-        { type: "p", text: "MySQL is a network SQL engine and the engine TableR selects by default for a new connection. Point TableR at an existing server by filling the connection form, or let TableR start a local MySQL for you with the built-in bootstrap when you do not have a server yet." },
-        { type: "callout", tone: "tip", title: "No server? Start here", text: "You do not need to install MySQL to try it. Choose MySQL in the launcher and use Local bootstrap — TableR creates and starts a local server, and keeps its secrets in the OS keyring." },
-        { type: "h2", text: "Overview" },
-        { type: "p", text: "TableR speaks the native MySQL wire protocol, so it works with a local install, a container, a managed service (RDS, Cloud SQL, Azure Database for MySQL, PlanetScale, and similar), or a bootstrapped local server. Because these are all MySQL, the same connection fields below apply everywhere; only the values change." },
-        { type: "ul", items: [
-          "Local development — connect to 127.0.0.1:3306, or bootstrap a local server.",
-          "Remote / managed — use the provider endpoint and enable SSL/TLS.",
-          "MySQL-compatible engines — MariaDB uses the same wire protocol and identical fields.",
-        ] },
-        { type: "h2", text: "Before you start" },
-        { type: "ul", items: [
-          "A reachable MySQL server (host and port), or use Local bootstrap instead.",
-          "A database user name — this is required.",
-          "The user's password, if the server requires one.",
-          "Optionally, the specific database (schema) to open on connect.",
-          "For remote servers: network access to the port and, usually, SSL/TLS enabled.",
-        ] },
-        { type: "h2", text: "Connection fields" },
-        { type: "p", text: "These defaults match TableR's MySQL connection form. Secrets are written to the operating system keyring, never to plain configuration files." },
-        { type: "table", head: ["Field", "Required", "Default", "Notes"], rows: [
-          ["Host", "Yes", "127.0.0.1", "Hostname or IP of the server. Use the provider endpoint for managed databases."],
-          ["Port", "Yes", "3306", "MySQL's default port. Change it only if your server listens elsewhere."],
-          ["Username", "Yes", "—", "The user used to authenticate."],
-          ["Password", "No", "—", "Optional; stored in the OS keyring. Leave empty for socket/no-password auth."],
-          ["Database", "No", "—", "Optional. When empty, no schema is selected until you choose one."],
-          ["SSL/TLS", "No", "Off", "Enable for remote servers; many managed providers require it."],
-        ] },
-        { type: "h2", text: "Connect with the form" },
-        { type: "steps", items: [
-          { title: "Choose MySQL", text: "Open the launcher and pick the MySQL card — it is the default selection." },
-          { title: "Enter host and port", text: "Use 127.0.0.1 and 3306 for a local server, or your provider's endpoint for a remote one." },
-          { title: "Add credentials", text: "Type the username, and the password if required. The password is saved to the OS keyring." },
-          { title: "Pick a database (optional)", text: "Set a database to open it directly, or leave it blank and choose one after connecting." },
-          { title: "Enable SSL/TLS for remote", text: "Turn on SSL/TLS when connecting to a remote or managed server." },
-          { title: "Save and connect", text: "Save the profile so it reappears in the launcher, then connect." },
-        ] },
-        { type: "h2", text: "Use a connection string" },
-        { type: "p", text: "Instead of filling every field, you can paste a MySQL connection URI." },
-        { type: "code", lang: "text", code: "mysql://username:password@host:3306/database?ssl-mode=REQUIRED" },
-        { type: "ul", items: [
-          "Omit the password from the URI and let TableR store it in the keyring instead.",
-          "Append ssl-mode=REQUIRED (or VERIFY_IDENTITY) for remote servers.",
-          "URL-encode special characters in the password (for example @ becomes %40).",
-        ] },
-        { type: "h2", text: "Local bootstrap" },
-        { type: "p", text: "If you do not have a server, TableR can start a local MySQL for you — no separate install required." },
-        { type: "steps", items: [
-          { title: "Select MySQL", text: "Pick MySQL in the launcher." },
-          { title: "Choose Local bootstrap", text: "TableR provisions and starts a local server on your machine." },
-          { title: "Start querying", text: "A connection is created for you; open a SQL tab and run a query." },
-        ] },
-        { type: "callout", tone: "info", title: "Secrets stay local", text: "Bootstrapped credentials, like all connection secrets, are kept in the OS keyring rather than in the interface or configuration files." },
-        { type: "h2", text: "SSL/TLS" },
-        { type: "p", text: "Local servers on 127.0.0.1 usually need no encryption. For anything over a network, enable SSL/TLS. If you connect with a URI, control the behaviour with the ssl-mode parameter." },
-        { type: "ul", items: [
-          "DISABLED — no encryption (local only).",
-          "REQUIRED — encrypt, but do not verify the server certificate.",
-          "VERIFY_CA / VERIFY_IDENTITY — encrypt and verify the certificate (most secure).",
-        ] },
-        { type: "h2", text: "Verify the connection" },
-        { type: "p", text: "Once connected, open a SQL tab and run a quick check:" },
-        { type: "code", lang: "sql", code: "SELECT VERSION();\nSELECT DATABASE(), CURRENT_USER();" },
-        { type: "p", text: "If both statements return rows, the connection and credentials are working." },
-        { type: "h2", text: "Troubleshooting" },
-        { type: "table", head: ["Symptom", "Likely cause", "Fix"], rows: [
-          ["Can't connect to MySQL server", "Server not running, wrong host/port, or a firewall.", "Confirm the server is up and the port is reachable; re-check host and port."],
-          ["Access denied for user", "Wrong username or password, or the user lacks host access.", "Re-check the credentials and update the saved password (it lives in the keyring)."],
-          ["SSL connection error", "The server requires TLS, or the certificate is not trusted.", "Enable SSL/TLS, or add ssl-mode=REQUIRED to the connection string."],
-          ["Unknown database 'name'", "The Database field names a schema that is missing.", "Leave Database empty, or enter one that exists."],
-          ["Too many connections", "The server hit its connection limit.", "Close idle connections, or raise max_connections on the server."],
-        ] },
-        { type: "h2", text: "Next steps" },
-        { type: "cards", items: [
-          { title: "SQL workspace", text: "Write and run queries, manage tabs, and read results.", href: "/docs/sql-workspace" },
-          { title: "Exploring data", text: "Browse schemas, tables, and columns, and search across databases.", href: "/docs/exploring-data" },
-          { title: "All engines", text: "Back to the connections overview and the full engine list.", href: "/docs/connections" },
-        ] },
-      ],
-    },
+    buildEnginePage(EN_ENGINE_LABELS, EN_POSTGRESQL),
+    buildEnginePage(EN_ENGINE_LABELS, EN_MYSQL),
+    buildEnginePage(EN_ENGINE_LABELS, EN_MARIADB),
+    buildEnginePage(EN_ENGINE_LABELS, EN_SQL_SERVER),
     {
       slug: "sql-workspace",
       icon: "Code2",
@@ -1089,17 +1638,8 @@ const vi: DocsBundle = {
         { type: "cards", items: [
           { title: "PostgreSQL — hướng dẫn chuyên sâu", text: "Các trường kết nối, connection string, SSL/TLS, bootstrap local, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.", href: "/docs/postgresql" },
           { title: "MySQL — hướng dẫn chuyên sâu", text: "Các trường kết nối, connection string, SSL/TLS, bootstrap local, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.", href: "/docs/mysql" },
-        ] },
-        { type: "h3", text: "MariaDB" },
-        { type: "p", text: "Dùng giao thức wire của MySQL nên các trường giống MySQL." },
-        { type: "ul", items: [
-          "Host — mặc định 127.0.0.1.",
-          "Port — 3306.",
-          "Username — bắt buộc.",
-          "Password — tùy chọn.",
-          "Database — tùy chọn.",
-          "SSL/TLS — hỗ trợ.",
-          "Bootstrap local — sẵn sàng.",
+          { title: "MariaDB — hướng dẫn chuyên sâu", text: "Các trường kết nối tương thích MySQL, connection string, SSL/TLS, bootstrap local và khắc phục sự cố — trên một trang riêng.", href: "/docs/mariadb" },
+          { title: "SQL Server — hướng dẫn chuyên sâu", text: "Xác thực Windows hoặc SQL, các trường kết nối, mã hóa, bootstrap local và khắc phục sự cố — trên một trang riêng.", href: "/docs/sql-server" },
         ] },
         { type: "h3", text: "CockroachDB" },
         { type: "p", text: "Dùng giao thức wire của PostgreSQL." },
@@ -1130,18 +1670,6 @@ const vi: DocsBundle = {
           "Password — tùy chọn.",
           "Database — tùy chọn.",
           "SSL/TLS — hỗ trợ.",
-        ] },
-        { type: "h3", text: "SQL Server" },
-        { type: "p", text: "Microsoft SQL Server, với xác thực Windows hoặc SQL." },
-        { type: "ul", items: [
-          "Host — localhost,1433 hoặc SERVER\\INSTANCE.",
-          "Port — 1433.",
-          "Xác thực — Windows hoặc SQL Server, tự nhận theo host (Microsoft Entra chưa hỗ trợ).",
-          "Username / Password — tùy chọn, dùng cho xác thực SQL.",
-          "Database — tùy chọn.",
-          "Instance name — tùy chọn, hoặc điền SERVER\\INSTANCE vào Host.",
-          "Encrypt — Optional hoặc Mandatory; Trust server certificate bật sẵn cho cert tự ký ở local.",
-          "Bootstrap local — sẵn sàng.",
         ] },
         { type: "h3", text: "Vertica" },
         { type: "p", text: "Cơ sở dữ liệu phân tích dạng cột." },
@@ -1244,176 +1772,10 @@ const vi: DocsBundle = {
         ] },
       ],
     },
-    {
-      slug: "postgresql",
-      icon: "PlugZap",
-      title: "PostgreSQL",
-      description: "Kết nối TableR tới bất kỳ server PostgreSQL nào — hoặc bootstrap ngay tại máy — kèm các trường kết nối, connection string, SSL/TLS và khắc phục sự cố.",
-      blocks: [
-        { type: "p", text: "PostgreSQL là engine SQL qua mạng. Trỏ TableR tới một server sẵn có bằng cách điền form kết nối, hoặc để TableR tự khởi tạo một PostgreSQL local qua bootstrap tích hợp khi bạn chưa có server." },
-        { type: "callout", tone: "tip", title: "Chưa có server? Bắt đầu ở đây", text: "Bạn không cần cài PostgreSQL để dùng thử. Chọn PostgreSQL trong trình khởi chạy và dùng Bootstrap local — TableR tạo và khởi động một server local, giữ bí mật trong keyring của hệ điều hành." },
-        { type: "h2", text: "Tổng quan" },
-        { type: "p", text: "TableR dùng giao thức wire gốc của PostgreSQL, nên hoạt động với bản cài local, container, dịch vụ quản lý (RDS, Cloud SQL, Azure Database, Supabase, Neon và tương tự), hay một server local đã bootstrap. Vì tất cả đều là PostgreSQL nên các trường kết nối bên dưới áp dụng cho mọi trường hợp; chỉ giá trị thay đổi." },
-        { type: "ul", items: [
-          "Phát triển local — kết nối tới 127.0.0.1:5432, hoặc bootstrap một server local.",
-          "Remote / managed — dùng endpoint của nhà cung cấp và bật SSL/TLS.",
-          "Engine tương thích PostgreSQL — CockroachDB, Greenplum và Amazon Redshift dùng cùng giao thức và các trường tương tự.",
-        ] },
-        { type: "h2", text: "Trước khi bắt đầu" },
-        { type: "ul", items: [
-          "Một server PostgreSQL truy cập được (host và port), hoặc dùng Bootstrap local thay thế.",
-          "Tên user (role) của database — bắt buộc.",
-          "Mật khẩu của user, nếu server yêu cầu.",
-          "Tùy chọn: database cụ thể muốn mở khi kết nối.",
-          "Với server từ xa: cần truy cập mạng tới port và thường phải bật SSL/TLS.",
-        ] },
-        { type: "h2", text: "Các trường kết nối" },
-        { type: "p", text: "Các mặc định dưới đây khớp với form kết nối PostgreSQL của TableR. Bí mật được ghi vào keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản." },
-        { type: "table", head: ["Trường", "Bắt buộc", "Mặc định", "Ghi chú"], rows: [
-          ["Host", "Có", "127.0.0.1", "Hostname hoặc IP của server. Dùng endpoint nhà cung cấp cho database quản lý."],
-          ["Port", "Có", "5432", "Port mặc định của PostgreSQL. Chỉ đổi nếu server lắng nghe ở cổng khác."],
-          ["Username", "Có", "—", "Role dùng để xác thực."],
-          ["Password", "Không", "—", "Tùy chọn; lưu trong keyring. Để trống nếu dùng trust/peer auth."],
-          ["Database", "Không", "—", "Tùy chọn. Để trống thì PostgreSQL dùng database mặc định của role."],
-          ["SSL/TLS", "Không", "Tắt", "Bật cho server từ xa; nhiều nhà cung cấp quản lý bắt buộc."],
-        ] },
-        { type: "h2", text: "Kết nối bằng form" },
-        { type: "steps", items: [
-          { title: "Chọn PostgreSQL", text: "Mở trình khởi chạy và chọn thẻ PostgreSQL." },
-          { title: "Nhập host và port", text: "Dùng 127.0.0.1 và 5432 cho server local, hoặc endpoint của nhà cung cấp cho server từ xa." },
-          { title: "Thêm credential", text: "Nhập username, và password nếu cần. Password được lưu vào keyring." },
-          { title: "Chọn database (tùy chọn)", text: "Đặt một database để mở trực tiếp, hoặc để trống để dùng mặc định của role." },
-          { title: "Bật SSL/TLS cho remote", text: "Bật SSL/TLS khi kết nối tới server từ xa hoặc quản lý." },
-          { title: "Lưu và kết nối", text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối." },
-        ] },
-        { type: "h2", text: "Dùng connection string" },
-        { type: "p", text: "Thay vì điền từng trường, bạn có thể dán một URI kết nối PostgreSQL. Chấp nhận cả scheme postgres:// và postgresql://." },
-        { type: "code", lang: "text", code: "postgresql://username:password@host:5432/database?sslmode=require" },
-        { type: "ul", items: [
-          "Bỏ password khỏi URI và để TableR lưu vào keyring.",
-          "Thêm sslmode=require (hoặc verify-full) cho server từ xa.",
-          "URL-encode ký tự đặc biệt trong password (ví dụ @ thành %40).",
-        ] },
-        { type: "h2", text: "Bootstrap local" },
-        { type: "p", text: "Nếu chưa có server, TableR có thể khởi tạo một PostgreSQL local cho bạn — không cần cài riêng." },
-        { type: "steps", items: [
-          { title: "Chọn PostgreSQL", text: "Chọn PostgreSQL trong trình khởi chạy." },
-          { title: "Chọn Bootstrap local", text: "TableR cấp phát và khởi động một server local trên máy bạn." },
-          { title: "Bắt đầu truy vấn", text: "Một kết nối được tạo sẵn; mở tab SQL và chạy truy vấn." },
-        ] },
-        { type: "callout", tone: "info", title: "Bí mật nằm ở máy bạn", text: "Credential đã bootstrap, cũng như mọi bí mật kết nối, được giữ trong keyring của hệ điều hành thay vì trên giao diện hay tệp cấu hình." },
-        { type: "h2", text: "SSL/TLS" },
-        { type: "p", text: "Server local trên 127.0.0.1 thường không cần mã hóa. Với bất cứ kết nối qua mạng nào, hãy bật SSL/TLS. Nếu dùng URI, điều khiển hành vi bằng tham số sslmode." },
-        { type: "ul", items: [
-          "disable — không mã hóa (chỉ dùng local).",
-          "require — mã hóa nhưng không xác minh chứng chỉ server.",
-          "verify-ca / verify-full — mã hóa và xác minh chứng chỉ (an toàn nhất).",
-        ] },
-        { type: "h2", text: "Kiểm tra kết nối" },
-        { type: "p", text: "Sau khi kết nối, mở tab SQL và chạy nhanh một truy vấn kiểm tra:" },
-        { type: "code", lang: "sql", code: "SELECT version();\nSELECT current_database(), current_user;" },
-        { type: "p", text: "Nếu cả hai câu lệnh trả về dòng, kết nối và credential đang hoạt động tốt." },
-        { type: "h2", text: "Khắc phục sự cố" },
-        { type: "table", head: ["Triệu chứng", "Nguyên nhân thường gặp", "Cách xử lý"], rows: [
-          ["Connection refused", "Server chưa chạy, sai host/port, hoặc firewall.", "Xác nhận server đang chạy và port truy cập được; kiểm tra lại host và port."],
-          ["password authentication failed", "Sai username hoặc password.", "Kiểm tra lại credential và cập nhật password đã lưu (nằm trong keyring)."],
-          ["Yêu cầu SSL / mã hóa", "Server bắt buộc TLS.", "Bật SSL/TLS, hoặc thêm sslmode=require vào connection string."],
-          ["database 'name' does not exist", "Trường Database trỏ tới database không tồn tại.", "Để trống Database, hoặc nhập một database có thật."],
-          ["too many clients already", "Server đã đạt giới hạn kết nối.", "Đóng các kết nối rảnh, hoặc tăng max_connections trên server."],
-        ] },
-        { type: "h2", text: "Bước tiếp theo" },
-        { type: "cards", items: [
-          { title: "Không gian SQL", text: "Viết và chạy truy vấn, quản lý tab và đọc kết quả.", href: "/docs/sql-workspace" },
-          { title: "Khám phá dữ liệu", text: "Duyệt schema, bảng, cột và tìm kiếm across database.", href: "/docs/exploring-data" },
-          { title: "Tất cả engine", text: "Quay lại tổng quan kết nối và danh sách engine đầy đủ.", href: "/docs/connections" },
-        ] },
-      ],
-    },
-    {
-      slug: "mysql",
-      icon: "PlugZap",
-      title: "MySQL",
-      description: "Kết nối TableR tới bất kỳ server MySQL nào — hoặc bootstrap ngay tại máy — kèm các trường kết nối, connection string, SSL/TLS và khắc phục sự cố.",
-      blocks: [
-        { type: "p", text: "MySQL là engine SQL qua mạng và là engine TableR chọn mặc định khi tạo kết nối mới. Trỏ TableR tới một server sẵn có bằng cách điền form kết nối, hoặc để TableR tự khởi tạo một MySQL local qua bootstrap tích hợp khi bạn chưa có server." },
-        { type: "callout", tone: "tip", title: "Chưa có server? Bắt đầu ở đây", text: "Bạn không cần cài MySQL để dùng thử. Chọn MySQL trong trình khởi chạy và dùng Bootstrap local — TableR tạo và khởi động một server local, giữ bí mật trong keyring của hệ điều hành." },
-        { type: "h2", text: "Tổng quan" },
-        { type: "p", text: "TableR dùng giao thức wire gốc của MySQL, nên hoạt động với bản cài local, container, dịch vụ quản lý (RDS, Cloud SQL, Azure Database for MySQL, PlanetScale và tương tự), hay một server local đã bootstrap. Vì tất cả đều là MySQL nên các trường kết nối bên dưới áp dụng cho mọi trường hợp; chỉ giá trị thay đổi." },
-        { type: "ul", items: [
-          "Phát triển local — kết nối tới 127.0.0.1:3306, hoặc bootstrap một server local.",
-          "Remote / managed — dùng endpoint của nhà cung cấp và bật SSL/TLS.",
-          "Engine tương thích MySQL — MariaDB dùng cùng giao thức wire và các trường giống hệt.",
-        ] },
-        { type: "h2", text: "Trước khi bắt đầu" },
-        { type: "ul", items: [
-          "Một server MySQL truy cập được (host và port), hoặc dùng Bootstrap local thay thế.",
-          "Tên user của database — bắt buộc.",
-          "Mật khẩu của user, nếu server yêu cầu.",
-          "Tùy chọn: database (schema) cụ thể muốn mở khi kết nối.",
-          "Với server từ xa: cần truy cập mạng tới port và thường phải bật SSL/TLS.",
-        ] },
-        { type: "h2", text: "Các trường kết nối" },
-        { type: "p", text: "Các mặc định dưới đây khớp với form kết nối MySQL của TableR. Bí mật được ghi vào keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản." },
-        { type: "table", head: ["Trường", "Bắt buộc", "Mặc định", "Ghi chú"], rows: [
-          ["Host", "Có", "127.0.0.1", "Hostname hoặc IP của server. Dùng endpoint nhà cung cấp cho database quản lý."],
-          ["Port", "Có", "3306", "Port mặc định của MySQL. Chỉ đổi nếu server lắng nghe ở cổng khác."],
-          ["Username", "Có", "—", "User dùng để xác thực."],
-          ["Password", "Không", "—", "Tùy chọn; lưu trong keyring. Để trống nếu dùng socket/không mật khẩu."],
-          ["Database", "Không", "—", "Tùy chọn. Để trống thì chưa chọn schema nào cho tới khi bạn chọn."],
-          ["SSL/TLS", "Không", "Tắt", "Bật cho server từ xa; nhiều nhà cung cấp quản lý bắt buộc."],
-        ] },
-        { type: "h2", text: "Kết nối bằng form" },
-        { type: "steps", items: [
-          { title: "Chọn MySQL", text: "Mở trình khởi chạy và chọn thẻ MySQL — đây là lựa chọn mặc định." },
-          { title: "Nhập host và port", text: "Dùng 127.0.0.1 và 3306 cho server local, hoặc endpoint của nhà cung cấp cho server từ xa." },
-          { title: "Thêm credential", text: "Nhập username, và password nếu cần. Password được lưu vào keyring." },
-          { title: "Chọn database (tùy chọn)", text: "Đặt một database để mở trực tiếp, hoặc để trống rồi chọn sau khi kết nối." },
-          { title: "Bật SSL/TLS cho remote", text: "Bật SSL/TLS khi kết nối tới server từ xa hoặc quản lý." },
-          { title: "Lưu và kết nối", text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối." },
-        ] },
-        { type: "h2", text: "Dùng connection string" },
-        { type: "p", text: "Thay vì điền từng trường, bạn có thể dán một URI kết nối MySQL." },
-        { type: "code", lang: "text", code: "mysql://username:password@host:3306/database?ssl-mode=REQUIRED" },
-        { type: "ul", items: [
-          "Bỏ password khỏi URI và để TableR lưu vào keyring.",
-          "Thêm ssl-mode=REQUIRED (hoặc VERIFY_IDENTITY) cho server từ xa.",
-          "URL-encode ký tự đặc biệt trong password (ví dụ @ thành %40).",
-        ] },
-        { type: "h2", text: "Bootstrap local" },
-        { type: "p", text: "Nếu chưa có server, TableR có thể khởi tạo một MySQL local cho bạn — không cần cài riêng." },
-        { type: "steps", items: [
-          { title: "Chọn MySQL", text: "Chọn MySQL trong trình khởi chạy." },
-          { title: "Chọn Bootstrap local", text: "TableR cấp phát và khởi động một server local trên máy bạn." },
-          { title: "Bắt đầu truy vấn", text: "Một kết nối được tạo sẵn; mở tab SQL và chạy truy vấn." },
-        ] },
-        { type: "callout", tone: "info", title: "Bí mật nằm ở máy bạn", text: "Credential đã bootstrap, cũng như mọi bí mật kết nối, được giữ trong keyring của hệ điều hành thay vì trên giao diện hay tệp cấu hình." },
-        { type: "h2", text: "SSL/TLS" },
-        { type: "p", text: "Server local trên 127.0.0.1 thường không cần mã hóa. Với bất cứ kết nối qua mạng nào, hãy bật SSL/TLS. Nếu dùng URI, điều khiển hành vi bằng tham số ssl-mode." },
-        { type: "ul", items: [
-          "DISABLED — không mã hóa (chỉ dùng local).",
-          "REQUIRED — mã hóa nhưng không xác minh chứng chỉ server.",
-          "VERIFY_CA / VERIFY_IDENTITY — mã hóa và xác minh chứng chỉ (an toàn nhất).",
-        ] },
-        { type: "h2", text: "Kiểm tra kết nối" },
-        { type: "p", text: "Sau khi kết nối, mở tab SQL và chạy nhanh một truy vấn kiểm tra:" },
-        { type: "code", lang: "sql", code: "SELECT VERSION();\nSELECT DATABASE(), CURRENT_USER();" },
-        { type: "p", text: "Nếu cả hai câu lệnh trả về dòng, kết nối và credential đang hoạt động tốt." },
-        { type: "h2", text: "Khắc phục sự cố" },
-        { type: "table", head: ["Triệu chứng", "Nguyên nhân thường gặp", "Cách xử lý"], rows: [
-          ["Can't connect to MySQL server", "Server chưa chạy, sai host/port, hoặc firewall.", "Xác nhận server đang chạy và port truy cập được; kiểm tra lại host và port."],
-          ["Access denied for user", "Sai username hoặc password, hoặc user không có quyền theo host.", "Kiểm tra lại credential và cập nhật password đã lưu (nằm trong keyring)."],
-          ["SSL connection error", "Server bắt buộc TLS, hoặc chứng chỉ không được tin cậy.", "Bật SSL/TLS, hoặc thêm ssl-mode=REQUIRED vào connection string."],
-          ["Unknown database 'name'", "Trường Database trỏ tới schema không tồn tại.", "Để trống Database, hoặc nhập một database có thật."],
-          ["Too many connections", "Server đã đạt giới hạn kết nối.", "Đóng các kết nối rảnh, hoặc tăng max_connections trên server."],
-        ] },
-        { type: "h2", text: "Bước tiếp theo" },
-        { type: "cards", items: [
-          { title: "Không gian SQL", text: "Viết và chạy truy vấn, quản lý tab và đọc kết quả.", href: "/docs/sql-workspace" },
-          { title: "Khám phá dữ liệu", text: "Duyệt schema, bảng, cột và tìm kiếm across database.", href: "/docs/exploring-data" },
-          { title: "Tất cả engine", text: "Quay lại tổng quan kết nối và danh sách engine đầy đủ.", href: "/docs/connections" },
-        ] },
-      ],
-    },
+    buildEnginePage(VI_ENGINE_LABELS, VI_POSTGRESQL),
+    buildEnginePage(VI_ENGINE_LABELS, VI_MYSQL),
+    buildEnginePage(VI_ENGINE_LABELS, VI_MARIADB),
+    buildEnginePage(VI_ENGINE_LABELS, VI_SQL_SERVER),
     {
       slug: "sql-workspace",
       icon: "Code2",

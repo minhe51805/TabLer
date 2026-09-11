@@ -85,3 +85,60 @@ export function classifyAgentRun(
   const preApproved = autonomy === "full" || needsDialog;
   return { requirement, needsDialog, willMutate, preApproved };
 }
+
+/**
+ * The effective sandbox posture for the AI agent, expressed in Codex's
+ * read-only / workspace-write / danger-full-access vocabulary. This is a
+ * DISPLAY/diagnostic summary of the two controls the app already enforces
+ * (Safe Mode level + agent autonomy) — it changes no behavior. Regardless of
+ * the tier, the backend sandbox always blocks filesystem/network/OS-command SQL
+ * (`pg_read_file`, `read_csv`, `INTO OUTFILE`, `COPY ... TO PROGRAM`, …).
+ */
+export type SandboxPolicy = "read-only" | "workspace-write" | "full-access";
+
+/**
+ * Derives the sandbox posture from Safe Mode + autonomy. Mirrors the existing
+ * `fullAutonomyPreApproved = autonomy === "full" && safeModeLevel <= 3`
+ * invariant so the badge can never disagree with what actually executes.
+ */
+export function resolveSandboxPolicy(
+  safeModeLevel: SafeModeLevel,
+  autonomy: AIWorkspaceAgentAutonomy,
+): SandboxPolicy {
+  // Safe Mode disabled: the statement-kind guard is off (the filesystem/network
+  // capability guard at the sandbox boundary still applies).
+  if (safeModeLevel <= 0) return "full-access";
+  // Only a standing "full" grant at levels 1-3 lets the agent run writes with
+  // no per-statement dialog. "smart"/"review" (and "full" at strict tiers 4-5)
+  // execute reads while every write still needs explicit human approval.
+  if (autonomy === "full" && safeModeLevel <= 3) return "workspace-write";
+  return "read-only";
+}
+
+/** Short label + one-line description for the sandbox-policy badge. */
+export function describeSandboxPolicy(policy: SandboxPolicy): {
+  label: string;
+  description: string;
+} {
+  switch (policy) {
+    case "full-access":
+      return {
+        label: "Full access",
+        description:
+          "Safe Mode is off — the agent can run any statement. Filesystem/network SQL is still blocked at the sandbox.",
+      };
+    case "workspace-write":
+      return {
+        label: "Workspace write",
+        description:
+          "Standing full-autonomy grant: reads and writes run without a per-statement dialog. Strict DDL stays blocked.",
+      };
+    case "read-only":
+    default:
+      return {
+        label: "Read-only",
+        description:
+          "The agent executes reads only; every write it proposes needs explicit human approval before it runs.",
+      };
+  }
+}

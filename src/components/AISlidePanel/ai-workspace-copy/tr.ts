@@ -10,9 +10,6 @@ export const TR_COPY: AIWorkspaceCopy = {
       ready: "Hazır",
     },
     bubbleActions: {
-      dragBubble: "Balonu sürükle",
-      dragPointer: "Bu oku AI'nın açıklama yapmasını istediğiniz yere sürükleyin. Sıfırlamak için çift tıklayın.",
-      dismissBubble: "Balonu kapat",
       detail: "Detay",
       copy: "Kopyala",
       insert: "Ekle",

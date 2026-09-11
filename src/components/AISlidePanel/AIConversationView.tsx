@@ -390,6 +390,13 @@ export const AIConversationView = memo(function AIConversationView({
                         copy={copy}
                       />
                     )}
+                    {bubble.status === "loading" && hasVisibleAgentProgress && conversationText && (
+                      // Agent turns stream a JSON tool action, so the finish answer
+                      // is pulled from the partial JSON (aiStore) and rendered live
+                      // here under the step log — the reply fills in token by token
+                      // instead of appearing all at once when the run settles.
+                      <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={displayConversationText} />
+                    )}
                     {bubble.status === "loading" && !hasVisibleAgentProgress ? (
                       // The live thinking trace above already carries the "model
                       // is working" feedback while it streams reasoning, so only

@@ -13,9 +13,6 @@ export interface AIWorkspaceCopy {
     ready: string;
   };
   bubbleActions: {
-    dragBubble: string;
-    dragPointer: string;
-    dismissBubble: string;
     detail: string;
     copy: string;
     insert: string;

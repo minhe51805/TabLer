@@ -10,9 +10,6 @@ export const KO_COPY: AIWorkspaceCopy = {
       ready: "준비됨",
     },
     bubbleActions: {
-      dragBubble: "버블 드래그",
-      dragPointer: "이 화살표를 AI가 설명할 위치로 드래그하세요. 초기화하려면 더블 클릭하세요.",
-      dismissBubble: "버블 닫기",
       detail: "상세",
       copy: "복사",
       insert: "삽입",

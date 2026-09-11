@@ -10,9 +10,6 @@ export const ZH_COPY: AIWorkspaceCopy = {
       ready: "就绪",
     },
     bubbleActions: {
-      dragBubble: "拖动气泡",
-      dragPointer: "把这条箭头拖到你希望 AI 解释的位置。双击可重置。",
-      dismissBubble: "关闭气泡",
       detail: "详情",
       copy: "复制",
       insert: "插入",

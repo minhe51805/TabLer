@@ -20020,8 +20020,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   fill: var(--ai-pointer-fill);
 }
 
-.ai-workspace-composer,
-.ai-workspace-bubble {
+.ai-workspace-composer {
   position: absolute;
   will-change: transform;
 }
@@ -20469,7 +20468,6 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 }
 
 .ai-workspace-chat-text,
-.ai-workspace-bubble-preview,
 .ai-workspace-modal-textblock {
   min-width: 0;
 }
@@ -21063,155 +21061,6 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   box-shadow: none;
 }
 
-.ai-workspace-bubble {
-  width: min(360px, calc(100vw - 64px));
-  padding: 16px;
-  border-radius: 26px;
-  border: 1px solid var(--mm-border);
-  background:
-    linear-gradient(180deg, var(--mm-surface-0), var(--mm-surface-0)),
-    var(--mm-surface-0);
-  box-shadow:
-    0 24px 56px rgba(15, 23, 42, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  --ai-bubble-accent: var(--accent);
-  --ai-bubble-border: rgba(125, 163, 255, 0.26);
-}
-
-.ai-workspace-bubble--success {
-  --ai-bubble-accent: var(--success);
-  --ai-bubble-border: rgba(67, 217, 174, 0.28);
-}
-
-.ai-workspace-bubble--warning {
-  --ai-bubble-accent: var(--warning);
-  --ai-bubble-border: rgba(255, 180, 85, 0.26);
-}
-
-.ai-workspace-bubble--danger {
-  --ai-bubble-accent: var(--error);
-  --ai-bubble-border: rgba(255, 112, 144, 0.26);
-}
-
-.ai-workspace-bubble::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, var(--ai-bubble-border), transparent 55%);
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-
-.ai-workspace-bubble.is-loading {
-  animation: ai-workspace-pulse 1.9s ease-in-out infinite;
-}
-
-.ai-workspace-bubble-header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 12px;
-  cursor: grab;
-}
-
-.ai-workspace-bubble-head-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.ai-workspace-bubble-grab,
-.ai-workspace-pointer-handle,
-.ai-workspace-bubble-dismiss {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--mm-border);
-  border-radius: 12px;
-  background: var(--mm-surface-2);
-  color: var(--text-primary);
-}
-
-.ai-workspace-pointer-handle {
-  color: var(--ai-bubble-accent);
-}
-
-.ai-workspace-bubble-dismiss {
-  color: var(--text-secondary);
-}
-
-.ai-workspace-bubble-dismiss:hover {
-  color: var(--text-primary);
-  border-color: var(--mm-border);
-  background: var(--mm-surface-3);
-}
-
-.ai-workspace-bubble-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.ai-workspace-bubble-kicker {
-  font-size: var(--mm-fs-micro);
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: rgba(153, 169, 207, 0.68);
-}
-
-.ai-workspace-bubble-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  color: var(--text-primary);
-  font-size: var(--mm-fs-subheading);
-  line-height: 1.26;
-}
-
-.ai-workspace-bubble-title svg {
-  color: var(--ai-bubble-accent);
-}
-
-.ai-workspace-bubble-subtitle {
-  color: var(--text-secondary);
-  font-size: var(--mm-fs-small);
-  line-height: 1.45;
-}
-
-.ai-workspace-bubble-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.ai-workspace-bubble-preview {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: var(--mm-fs-body);
-  line-height: 1.6;
-  max-height: 7.2rem;
-  overflow: hidden;
-  mask-image: linear-gradient(180deg, #000 72%, transparent);
-}
-
-.ai-workspace-bubble-preview.is-compact {
-  gap: 0.38rem;
-  max-height: 6.2rem;
-}
-
-.ai-workspace-bubble-code,
 .ai-workspace-modal-code {
   margin: 0;
   padding: 14px 15px;
@@ -21227,59 +21076,12 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 }
 
 /* Real model reasoning ("thinking") ? collapsible, themed to match glass surfaces */
-.ai-workspace-bubble-reasoning,
 .ai-workspace-modal-reasoning {
   margin-top: 10px;
   border: 1px solid color-mix(in srgb, var(--mm-accent) 26%, var(--mm-border));
   border-radius: 14px;
   background: color-mix(in srgb, var(--mm-accent) 7%, var(--mm-surface-0));
   overflow: hidden;
-}
-
-.ai-workspace-bubble-reasoning {
-  padding: 0;
-}
-
-.ai-workspace-bubble-reasoning-summary {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 12px;
-  cursor: pointer;
-  list-style: none;
-  font-size: var(--mm-fs-caption);
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--mm-accent);
-  user-select: none;
-}
-
-.ai-workspace-bubble-reasoning-summary::-webkit-details-marker {
-  display: none;
-}
-
-.ai-workspace-bubble-reasoning-summary::after {
-  content: "";
-  margin-left: auto;
-  width: 7px;
-  height: 7px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(45deg);
-  transition: transform 0.18s ease;
-  opacity: 0.75;
-}
-
-.ai-workspace-bubble-reasoning[open]
-  .ai-workspace-bubble-reasoning-summary::after {
-  transform: rotate(-135deg);
-}
-
-.ai-workspace-bubble-reasoning-body {
-  padding: 0 12px 11px;
-  font-size: var(--mm-fs-caption);
-  line-height: 1.6;
-  color: var(--text-secondary);
 }
 
 .ai-workspace-modal-reasoning {
@@ -21583,36 +21385,6 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   text-overflow: ellipsis;
 }
 
-.ai-workspace-bubble-risk {
-  padding: 11px 12px;
-  border-radius: 16px;
-  font-size: var(--mm-fs-caption);
-  line-height: 1.55;
-}
-
-.ai-workspace-bubble-risk--safe {
-  background: var(--mm-surface-2);
-  color: var(--text-primary);
-}
-
-.ai-workspace-bubble-risk--review {
-  background: var(--mm-surface-2);
-  color: var(--text-primary);
-}
-
-.ai-workspace-bubble-risk--dangerous {
-  background: var(--mm-surface-2);
-  color: var(--text-primary);
-}
-
-.ai-workspace-bubble-footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.ai-workspace-bubble-action,
 .ai-workspace-modal-btn {
   display: inline-flex;
   align-items: center;
@@ -21628,18 +21400,12 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   font-weight: 700;
 }
 
-.ai-workspace-bubble-action.primary,
 .ai-workspace-modal-btn.primary {
   border-color: var(--mm-border);
   background: linear-gradient(135deg, var(--mm-surface-2), var(--mm-surface-0));
   color: var(--text-primary);
 }
 
-.ai-workspace-bubble-action.subtle {
-  color: var(--text-primary);
-}
-
-.ai-workspace-bubble-action:disabled,
 .ai-workspace-modal-btn:disabled {
   opacity: 0.54;
 }
@@ -21799,22 +21565,6 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   flex-wrap: wrap;
 }
 
-@keyframes ai-workspace-pulse {
-  0%,
-  100% {
-    box-shadow:
-      0 24px 56px rgba(0, 0, 0, 0.28),
-      0 0 0 0 rgba(92, 132, 228, 0.18),
-      inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  }
-  50% {
-    box-shadow:
-      0 26px 60px rgba(0, 0, 0, 0.32),
-      0 0 0 10px rgba(92, 132, 228, 0.06),
-      inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  }
-}
-
 @media (max-width: 1180px) {
   .ai-workspace-topbar {
     grid-template-columns: 1fr;
@@ -21844,8 +21594,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
     border-radius: 22px;
   }
 
-  .ai-workspace-composer,
-  .ai-workspace-bubble {
+  .ai-workspace-composer {
     width: min(calc(100vw - 44px), 360px);
   }
 
@@ -21913,7 +21662,6 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 
 .ai-workspace-alert,
 .ai-workspace-composer,
-.ai-workspace-bubble,
 .ai-workspace-modal {
   pointer-events: auto;
 }
@@ -22884,96 +22632,6 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   color: rgba(164, 181, 218, 0.7);
 }
 
-.ai-workspace-bubble {
-  width: min(304px, calc(100vw - 28px));
-  padding: 14px;
-  border-radius: 22px;
-  backdrop-filter: none;
-  background:
-    linear-gradient(180deg, var(--mm-surface-0), var(--mm-surface-0)),
-    var(--mm-surface-0);
-}
-
-.ai-workspace-bubble-header {
-  gap: 10px;
-}
-
-.ai-workspace-bubble-grab,
-.ai-workspace-pointer-handle,
-.ai-workspace-bubble-dismiss {
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
-}
-
-.ai-workspace-bubble-title {
-  font-size: var(--mm-fs-body);
-}
-
-.ai-workspace-bubble-subtitle {
-  font-size: var(--mm-fs-caption);
-}
-
-.ai-workspace-bubble-body {
-  gap: 10px;
-  margin-top: 12px;
-}
-
-.ai-workspace-bubble-preview {
-  font-size: var(--mm-fs-small);
-  line-height: 1.52;
-}
-
-.ai-workspace-bubble-code {
-  padding: 12px 13px;
-  border-radius: 15px;
-  font-size: var(--mm-fs-caption);
-}
-
-.ai-workspace-bubble-risk {
-  padding: 9px 10px;
-  font-size: var(--mm-fs-caption);
-}
-
-.ai-workspace-bubble-footer {
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.ai-workspace-bubble-action {
-  min-height: 34px;
-  padding: 0 11px;
-  border-radius: 11px;
-  font-size: var(--mm-fs-caption);
-}
-
-.ai-workspace-bubble.is-compact {
-  width: min(272px, calc(100vw - 28px));
-  padding: 12px;
-  border-radius: 20px;
-}
-
-.ai-workspace-bubble.is-compact .ai-workspace-bubble-header {
-  gap: 8px;
-}
-
-.ai-workspace-bubble.is-compact .ai-workspace-bubble-title {
-  font-size: var(--mm-fs-body);
-}
-
-.ai-workspace-bubble.is-compact .ai-workspace-bubble-subtitle {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-size: var(--mm-fs-caption);
-  line-height: 1.4;
-}
-
-.ai-workspace-bubble.is-compact .ai-workspace-bubble-footer {
-  margin-top: 10px;
-}
-
 .ai-workspace-modal-agentic-note {
   margin-top: 10px;
   padding: 10px 12px;
@@ -23038,8 +22696,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 }
 
 .ai-workspace-stage--sidebar::before,
-.ai-workspace-stage--sidebar .ai-workspace-pointer-layer,
-.ai-workspace-stage--sidebar .ai-workspace-bubble {
+.ai-workspace-stage--sidebar .ai-workspace-pointer-layer {
   display: none;
 }
 
@@ -30590,7 +30247,6 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 /* Monospace / Code font rules */
 .ai-workspace-markdown-code,
 .ai-workspace-chat-code,
-.ai-workspace-bubble-code,
 .ai-workspace-modal-code {
   font-size: 13px !important;
   font-weight: 400 !important;

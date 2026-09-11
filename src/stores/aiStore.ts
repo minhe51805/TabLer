@@ -16,6 +16,7 @@ import { buildNativeToolPayload } from "../components/AISlidePanel/ai-agent-tool
 import { useConnectionStore } from "./connectionStore";
 import { getActiveAIProvider, normalizeAIProviderConfigs } from "../utils/ai-provider-registry";
 import { AIRequestError, normalizeAIRequestError } from "../utils/ai-request-errors";
+import { extractStreamingAgentAnswer } from "../utils/ai-stream-answer";
 import { emitAppToast } from "../utils/app-toast";
 import { useGlobalErrorStore } from "./globalErrorStore";
 
@@ -472,7 +473,16 @@ export const useAIStore = create<AIState>((set, get) => ({
             if (payload.requestId !== requestId || get().activeAIRequestId !== requestId) return;
             if (payload.kind === "text_delta" && payload.text) {
               streamedText += payload.text;
-              if (intent !== "agent") set({ streamingText: streamedText });
+              if (intent === "agent") {
+                // Agent calls stream a JSON tool action, so the raw text is not
+                // user-facing. Pull the finish action's answer out of the partial
+                // JSON as it lands so the final reply streams token-by-token like a
+                // normal chat turn instead of stalling and then dumping all at once.
+                const partialAnswer = extractStreamingAgentAnswer(streamedText);
+                if (partialAnswer) set({ streamingText: partialAnswer });
+              } else {
+                set({ streamingText: streamedText });
+              }
             } else if (payload.kind === "reasoning_delta") {
               // Accumulate the model's chain-of-thought so the UI can stream it
               // live into the "Thinking…" block instead of dumping one block.

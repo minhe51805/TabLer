@@ -10,9 +10,6 @@ export const VI_COPY: AIWorkspaceCopy = {
       ready: "Sẵn sàng",
     },
     bubbleActions: {
-      dragBubble: "Kéo bong bóng",
-      dragPointer: "Kéo mũi tên này tới chỗ bạn muốn AI giải thích. Double click để đặt lại.",
-      dismissBubble: "Ẩn bong bóng",
       detail: "Chi tiết",
       copy: "Sao chép",
       insert: "Chèn",

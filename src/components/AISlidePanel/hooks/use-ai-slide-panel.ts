@@ -719,6 +719,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           requestId,
           requestIdRef,
           requestHistory,
+          // Multimodal images ride every model call of the run (handled inside
+          // the requestor) so the step that composes the final answer still
+          // sees them — vision agent runs used to lose the image after call #1.
+          imageAttachments,
           // Stamps every model call of this run so chain-failover events from
           // parallel non-agent requests never leak into this trace.
           correlationId: `agent-run-${requestId}`,
@@ -1083,13 +1087,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               lastReflectedToolErrorStreak = trailingToolErrors;
             }
             try {
-              // Images ride only the first controller call of the run; later
-              // steps see the tools' observations instead (token cost once).
+              // Images ride every controller call of the run (the requestor
+              // attaches the run's images) so whichever step composes the final
+              // answer can still see them. Sending only on call #1 made vision
+              // agent runs answer "I don't see any image."
               const action = await requestAgentAction(
                 controllerPrompt,
                 includeHistory,
-                undefined,
-                iteration === 1 && imageAttachments.length > 0 ? imageAttachments : undefined,
               );
               consecutiveActionFailures = 0;
               // Advance the repeat-call chain for tracked (tool-argument)

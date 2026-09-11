@@ -10,9 +10,6 @@ export const EN_COPY: AIWorkspaceCopy = {
       ready: "Ready",
     },
     bubbleActions: {
-      dragBubble: "Drag bubble",
-      dragPointer: "Drag this arrow toward the place you want the AI to explain. Double click to reset.",
-      dismissBubble: "Dismiss bubble",
       detail: "Detail",
       copy: "Copy",
       insert: "Insert",

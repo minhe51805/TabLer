@@ -72,6 +72,47 @@ describe("createAgentActionRequestor", () => {
     expect((askAI.mock.calls[1][4] as unknown[]).length).toBe(0);
   });
 
+  it("attaches the run's images to every model call, not just the first", async () => {
+    askAI.mockResolvedValue('{"action":"finish"}');
+    const images = [
+      { kind: "image" as const, name: "a.png", mime_type: "image/png", data: "AAAA" },
+    ];
+    const req = createAgentActionRequestor({
+      askAI: askAI as never,
+      context: "CTX",
+      strictRecoveryContext: null,
+      requestId,
+      requestIdRef: { current: requestId },
+      requestHistory: [],
+      imageAttachments: images,
+    });
+    await req.requestAgentAction("P1", false);
+    await req.requestAgentAction("P2", false);
+    expect(askAI.mock.calls[0][5]).toEqual(images);
+    expect(askAI.mock.calls[1][5]).toEqual(images);
+  });
+
+  it("lets an explicit attachments override replace the run's images", async () => {
+    askAI.mockResolvedValue('{"action":"finish"}');
+    const runImages = [
+      { kind: "image" as const, name: "run.png", mime_type: "image/png", data: "AAAA" },
+    ];
+    const override = [
+      { kind: "image" as const, name: "override.png", mime_type: "image/png", data: "BBBB" },
+    ];
+    const req = createAgentActionRequestor({
+      askAI: askAI as never,
+      context: "CTX",
+      strictRecoveryContext: null,
+      requestId,
+      requestIdRef: { current: requestId },
+      requestHistory: [],
+      imageAttachments: runImages,
+    });
+    await req.requestAgentAction("P", false, undefined, override);
+    expect(askAI.mock.calls[0][5]).toEqual(override);
+  });
+
   it("repairs invalid JSON by showing the model its own output", async () => {
     askAI
       .mockResolvedValueOnce("NOT VALID JSON {{")

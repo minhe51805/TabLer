@@ -196,6 +196,7 @@ export const VI_COPY: AIWorkspaceCopy = {
       openedInWorkspaceTitle: "Đã mở trong workspace",
       openedInWorkspaceSubtitle: "Đã gửi sang tab workspace",
       openedInWorkspacePreview: "Mình đã mở cái này trong một tab workspace để bạn xem kết quả ở đó. Đoạn chat này vẫn ở đây để bạn hỏi tiếp.",
+      failoverErrorDetails: "Xem lỗi provider",
     },
     attachments: {
       attachButton: "Đính kèm tệp hoặc ảnh",

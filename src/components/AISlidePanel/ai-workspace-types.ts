@@ -129,6 +129,18 @@ export interface AIWorkspaceBubbleData {
    *  question; the conversation view renders them as one-click reply
    *  buttons on the final bubble. */
   askUserOptions?: string[];
+  /** Provider-failover notes surfaced as a compact footer under the final
+   *  answer: each shows a terse summary ("Provider X bị lỗi") with the full raw
+   *  provider error revealed on demand via an info popover, so the long payload
+   *  never floods the answer body. */
+  failoverNotes?: AIWorkspaceFailoverNote[];
+}
+
+/** One provider-failover footer note: a short localized summary plus the full
+ *  raw provider error, revealed on click behind an info icon. */
+export interface AIWorkspaceFailoverNote {
+  summary: string;
+  detail?: string;
 }
 
 /** Persisted metadata of a user attachment; bytes live in the backend table. */

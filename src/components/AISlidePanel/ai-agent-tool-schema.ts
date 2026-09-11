@@ -1023,18 +1023,22 @@ const GEMINI_TYPE_NAMES: Record<JsonSchema["type"], string> = {
 
 /**
  * Gemini's Schema proto differs from JSON Schema in ways that hard-fail the
- * REST call when left as-is (audit fix): `type` must be the UPPERCASE enum
- * name ("OBJECT" not "object"), number bounds are `minValue`/`maxValue` (not
- * `minimum`/`maximum`), and unknown keys like `additionalProperties` /
+ * REST call when left as-is: `type` must be the UPPERCASE enum name
+ * ("OBJECT" not "object"), and unknown keys like `additionalProperties` /
  * `uniqueItems` / `$schema` are rejected by the API's strict proto parsing.
+ * Number bounds KEEP their JSON Schema names `minimum`/`maximum` — the Gemini
+ * Schema proto uses those exact fields. An earlier "audit fix" renamed them to
+ * `minValue`/`maxValue`, which the API rejects with
+ * `Invalid JSON payload received. Unknown name "minValue" ... Cannot find field`,
+ * hard-failing every request and forcing the provider failover chain.
  */
 function toGeminiSchema(schema: JsonSchema): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (schema.type) out.type = GEMINI_TYPE_NAMES[schema.type] ?? String(schema.type).toUpperCase();
   if (schema.description) out.description = schema.description;
   if (schema.enum) out.enum = [...schema.enum];
-  if (typeof schema.minimum === "number") out.minValue = schema.minimum;
-  if (typeof schema.maximum === "number") out.maxValue = schema.maximum;
+  if (typeof schema.minimum === "number") out.minimum = schema.minimum;
+  if (typeof schema.maximum === "number") out.maximum = schema.maximum;
   if (typeof schema.minItems === "number") out.minItems = schema.minItems;
   if (typeof schema.maxItems === "number") out.maxItems = schema.maxItems;
   if (schema.items) out.items = toGeminiSchema(schema.items);

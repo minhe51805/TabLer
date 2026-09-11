@@ -20703,6 +20703,73 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--mm-accent, #007AFF) 25%, transparent);
 }
 
+/* Provider-failover footer: a compact "Provider X bị lỗi" line under the
+   answer with a round info button that toggles the raw provider error, keeping
+   the long payload out of the answer body. */
+.ai-workspace-failover-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.ai-workspace-failover-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-workspace-failover-note-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-workspace-failover-note-summary {
+  font-size: var(--mm-fs-caption, 12px);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.ai-workspace-failover-note-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--mm-accent, #007AFF) 40%, var(--mm-border, #D8D8DC));
+  border-radius: 50%;
+  background: transparent;
+  color: var(--mm-accent, #007AFF);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.ai-workspace-failover-note-info:hover {
+  border-color: var(--mm-accent, #007AFF);
+  background: color-mix(in srgb, var(--mm-accent, #007AFF) 12%, transparent);
+}
+
+.ai-workspace-failover-note-info:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mm-accent, #007AFF) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.ai-workspace-failover-note-detail {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--mm-border, #D8D8DC);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mm-accent, #007AFF) 5%, var(--mm-surface, #FFFFFF));
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption, 12px);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .ai-workspace-ask-user-custom-send {
   display: inline-flex;
   align-items: center;

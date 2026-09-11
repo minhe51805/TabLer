@@ -179,6 +179,7 @@ export interface AIWorkspaceCopy {
     openedInWorkspaceTitle: string;
     openedInWorkspaceSubtitle: string;
     openedInWorkspacePreview: string;
+    failoverErrorDetails: string;
   };
   attachments: {
     attachButton: string;

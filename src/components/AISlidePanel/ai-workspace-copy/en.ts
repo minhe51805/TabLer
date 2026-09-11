@@ -198,6 +198,7 @@ export const EN_COPY: AIWorkspaceCopy = {
       openedInWorkspaceTitle: "Opened in workspace",
       openedInWorkspaceSubtitle: "Sent to a workspace tab",
       openedInWorkspacePreview: "I opened this in a workspace tab so you can explore the result there. This conversation stays here for follow-up questions.",
+      failoverErrorDetails: "View provider error",
     },
     attachments: {
       attachButton: "Attach files or images",

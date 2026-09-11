@@ -1,4 +1,4 @@
-import { CornerDownLeft, ExternalLink, Eye, FileText, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
+import { CornerDownLeft, ExternalLink, Eye, FileText, Info, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
 import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
@@ -6,6 +6,7 @@ import {
   aiModeAllowsRun,
   type AIWorkspaceAttachment,
   type AIWorkspaceBubbleData,
+  type AIWorkspaceFailoverNote,
 } from "./ai-workspace-types";
 import {
   getBubbleConversationText,
@@ -123,6 +124,45 @@ function AIAttachmentFileChips({ attachments }: { attachments: AIWorkspaceAttach
           <FileText className="w-3 h-3" />
           {attachment.name}
         </span>
+      ))}
+    </div>
+  );
+}
+
+/** Provider-failover footer: a terse "Provider X bị lỗi" summary per failover
+ *  event with an info button that toggles the raw provider error inline, so the
+ *  long payload stays out of the answer body but one click away. */
+function AIFailoverNotes({
+  notes,
+  copy,
+}: {
+  notes: AIWorkspaceFailoverNote[];
+  copy: AIWorkspaceCopy;
+}) {
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  return (
+    <div className="ai-workspace-failover-notes">
+      {notes.map((note, index) => (
+        <div key={`${note.summary}-${index}`} className="ai-workspace-failover-note">
+          <div className="ai-workspace-failover-note-head">
+            <span className="ai-workspace-failover-note-summary">{note.summary}</span>
+            {note.detail && (
+              <button
+                type="button"
+                className="ai-workspace-failover-note-info"
+                aria-label={copy.bubbleStates.failoverErrorDetails}
+                aria-expanded={openIndex === index}
+                title={copy.bubbleStates.failoverErrorDetails}
+                onClick={() => setOpenIndex((current) => (current === index ? null : index))}
+              >
+                <Info className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          {note.detail && openIndex === index && (
+            <pre className="ai-workspace-failover-note-detail">{note.detail}</pre>
+          )}
+        </div>
       ))}
     </div>
   );
@@ -349,6 +389,9 @@ export const AIConversationView = memo(function AIConversationView({
                       conversationText
                         && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={displayConversationText} />
                     ) : null}
+                    {bubble.failoverNotes && bubble.failoverNotes.length > 0 && (
+                      <AIFailoverNotes notes={bubble.failoverNotes} copy={copy} />
+                    )}
                     {askUserOptions && (
                       <AIAskUserReply
                         options={askUserOptions}

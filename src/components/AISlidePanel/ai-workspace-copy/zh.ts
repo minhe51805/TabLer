@@ -196,6 +196,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
       openedInWorkspaceTitle: "已在工作区打开",
       openedInWorkspaceSubtitle: "已发送到工作区标签页",
       openedInWorkspacePreview: "我已在工作区标签页中打开它，你可以在那里查看结果。此对话会保留以便继续提问。",
+      failoverErrorDetails: "查看提供者错误",
     },
     attachments: {
       attachButton: "附加文件或图片",

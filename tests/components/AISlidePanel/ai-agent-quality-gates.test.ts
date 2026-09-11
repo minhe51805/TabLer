@@ -3,6 +3,7 @@ import { appendAgentFacts, parseAgentFacts } from "@/components/AISlidePanel/ai-
 import {
   buildAgentRecoveryInstruction,
   buildRunnerInstructionForReason,
+  buildUnsupportedEvidenceInstruction,
   evaluateEvidenceGate,
   finishHasSql,
   formatActionFailureReason,
@@ -164,10 +165,11 @@ describe("buildAgentRecoveryInstruction", () => {
   type Verification = ReturnType<
     typeof import("@/components/AISlidePanel/ai-agent-verification")["verifyAgentResponseAgainstEvidence"]
   >;
-  const okVerification = { ok: true, unsupported: [] } as Verification;
+  const okVerification = { ok: true, unsupported: [], unsupportedIdentifiers: [] } as Verification;
   const badVerification = {
     ok: false,
     unsupported: [3, 7, 12],
+    unsupportedIdentifiers: [],
   } as Verification;
 
   it("compose-only branch instructs building the table from gathered evidence", () => {
@@ -204,6 +206,35 @@ describe("buildAgentRecoveryInstruction", () => {
       verification: okVerification,
     });
     expect(instruction).toContain("sample_table_data");
+  });
+
+  it("identifier branch names the fabricated tables/columns with a did-you-mean hint", () => {
+    const instruction = buildAgentRecoveryInstruction({
+      lastChance: false,
+      composeOnly: false,
+      verification: {
+        ok: false,
+        unsupported: [],
+        unsupportedIdentifiers: [
+          { cited: "custmers", suggestion: "customers" },
+          { cited: "ghost_col" },
+        ],
+      } as Verification,
+    });
+    expect(instruction).toContain("custmers (did you mean customers?)");
+    expect(instruction).toContain("ghost_col");
+    // A pure-identifier failure must not emit the empty "(e.g. )" figures hint.
+    expect(instruction).not.toContain("(e.g. )");
+  });
+
+  it("buildUnsupportedEvidenceInstruction surfaces both fabricated figures and names", () => {
+    const instruction = buildUnsupportedEvidenceInstruction({
+      ok: false,
+      unsupported: [45000],
+      unsupportedIdentifiers: [{ cited: "phantom_table" }],
+    } as Verification);
+    expect(instruction).toContain("45000");
+    expect(instruction).toContain("phantom_table");
   });
 });
 
@@ -262,7 +293,7 @@ describe("false-success gate", () => {
       lastChance: false,
       composeOnly: false,
       falseSuccessClaim: true,
-      verification: { ok: true, unsupported: [] },
+      verification: { ok: true, unsupported: [], unsupportedIdentifiers: [] },
     });
     expect(instruction).toContain("FAILED");
     expect(instruction).toContain("list_tables rowCount");

@@ -181,6 +181,7 @@ export const TR_COPY: AIWorkspaceCopy = {
       openedInWorkspaceTitle: "Çalışma alanında açıldı",
       openedInWorkspaceSubtitle: "Bir çalışma alanı sekmesine gönderildi",
       openedInWorkspacePreview: "Bunu bir çalışma alanı sekmesinde açtım, sonucu orada inceleyebilirsin. Bu sohbet, takip soruları için burada kalıyor.",
+      failoverErrorDetails: "Sağlayıcı hatasını gör",
     },
     attachments: {
       attachButton: "Dosya veya resim ekle",

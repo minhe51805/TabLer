@@ -18,6 +18,7 @@ import { AI_AGENT_ASK_USER_OPTIONS_LIMIT } from "../ai-agent-tool-schema";
 import {
   type AIWorkspaceAgentActionName,
   type AIWorkspaceAgentStep,
+  type AIWorkspaceFailoverNote,
   type AIWorkspaceInteractionMode,
 } from "../ai-workspace-types";
 import {
@@ -28,11 +29,14 @@ import {
   buildAgentPlanPrompt,
   joinAgentInstructions,
   canonicalizeAgentArgs,
+  countTrailingToolErrors,
   isRepeatTrackedAction,
   mergeRunNotes,
   previewAgentArgs,
   REPEAT_CALL_GENTLE_REMINDER,
   repeatCallDetailedReminder,
+  toolErrorReflectionNudge,
+  TOOL_ERROR_REFLECTION_THRESHOLD,
   type AgentTraceStep,
   type AssistIntent,
 } from "../ai-agent-context";
@@ -80,6 +84,7 @@ export { AI_REQUEST_REPLACED_MESSAGE, isSupersededAIRequestError };
 import {
   buildRunnerInstructionForReason,
   formatActionFailureReason,
+  resolveEvidenceRounds,
 } from "../ai-agent-quality-gates";
 import {
   extractSqlFromResponse,
@@ -110,6 +115,9 @@ export interface AIGeneratedAssistResult {
   agentWidgets?: AIMetricsWidgetSpec[];
   /** Structured options from an ask_user finish; rendered as quick-reply buttons. */
   askUserOptions?: string[];
+  /** Provider-failover footer notes (short summary + full raw provider error)
+   *  surfaced under the final answer with an info popover. */
+  failoverNotes?: AIWorkspaceFailoverNote[];
 }
 
 const MAX_AGENT_STEPS = 10;
@@ -141,22 +149,26 @@ function formatProviderFailoverNote(
 }
 
 /**
- * Second line of the failover note: what happened when the promoted provider
- * was actually tried, with the REAL underlying reason (HTTP status, bad key,
- * connection refused...) so the user can go fix that provider's config.
+ * A provider-failure footer note: a terse localized summary ("Provider X bị
+ * lỗi") plus the FULL raw provider error kept as `detail`. The conversation
+ * footer shows the summary and reveals the detail behind an info popover, so
+ * the long provider payload (e.g. Gemini's multi-sentence "Invalid JSON payload
+ * received..." dump) never floods the answer while staying one click away.
  */
 function formatProviderFollowUpNote(
   language: string,
   provider: AIProviderConfig | null | undefined,
   rawReason: string,
-) {
+): AIWorkspaceFailoverNote {
   const label = provider?.name?.trim()
     || provider?.model
     || (language === "vi" ? "provider hiện tại" : "the current provider");
-  const shortReason = rawReason.length > 180 ? `${rawReason.slice(0, 180)}…` : rawReason;
-  return language === "vi"
-    ? `Provider "${label}" cũng trả lời lỗi: ${shortReason}`
-    : `Provider "${label}" also failed: ${shortReason}`;
+  const detail = rawReason.replace(/\s+/g, " ").trim()
+    || (language === "vi" ? "lỗi không xác định" : "unknown error");
+  return {
+    summary: language === "vi" ? `Provider "${label}" bị lỗi` : `Provider "${label}" failed`,
+    detail,
+  };
 }
 /** Upper bound for tables scanned per search_schema call; large catalogs are prioritized, not fully scanned. */
 /** Pause before retrying a transient provider failure inside the agent loop. */
@@ -945,12 +957,21 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         // controller prompt — gentle at 3 repeats, detailed at 5.
         let repeatChain: { key: string; count: number } | null = null;
         let pendingRepeatReminder: string | null = null;
+        // Reflection guard: a streak of FAILING tool observations (different
+        // tools/args, which the repeat-call chain misses) injects a one-time
+        // step-back instruction. Tracks the deepest streak already nudged so a
+        // transparent meta step never re-fires the same reflection.
+        let lastReflectedToolErrorStreak = 0;
         // Provider failover: each failure promotes the NEXT enabled provider
         // (selector follows, note line recorded) and re-runs the step, until
         // every enabled provider has had a turn as primary. Only then does the
         // run fall back to the canned recovery answer.
         const failedProviderIds = new Set<string>();
         const failoverNoteLines: string[] = [];
+        // Provider-FAILURE notes (with the raw error payload) are surfaced as a
+        // compact footer under the answer instead of dumped into the markdown;
+        // switch/info lines stay in failoverNoteLines (the short italic suffix).
+        const failoverNotes: AIWorkspaceFailoverNote[] = [];
         let providerRetryCount = 0;
         // A provider the user picked manually during this run must not be
         // silently rotated away by automatic failover.
@@ -1046,6 +1067,20 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             if (pendingRepeatReminder) {
               controllerPrompt = `${controllerPrompt}\n\n${pendingRepeatReminder}`;
               pendingRepeatReminder = null;
+            }
+            // Mid-run reflection: after a streak of failing tool calls, nudge
+            // the model to re-strategize (or finish honestly) once per new,
+            // deeper streak. Never fired on a forced-finish turn — that turn
+            // must return finish, not another tool attempt.
+            const trailingToolErrors = forceFinish ? 0 : countTrailingToolErrors(steps);
+            if (trailingToolErrors === 0) {
+              lastReflectedToolErrorStreak = 0;
+            } else if (
+              trailingToolErrors >= TOOL_ERROR_REFLECTION_THRESHOLD
+              && trailingToolErrors > lastReflectedToolErrorStreak
+            ) {
+              controllerPrompt = `${controllerPrompt}\n\n${toolErrorReflectionNudge(trailingToolErrors)}`;
+              lastReflectedToolErrorStreak = trailingToolErrors;
             }
             try {
               // Images ride only the first controller call of the run; later
@@ -1265,7 +1300,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                     );
                     // The promoted provider also failed - keep its REAL reason so
                     // the recovery note can tell the user what to go fix.
-                    failoverNoteLines.push(
+                    failoverNotes.push(
                       formatProviderFollowUpNote(
                         appLanguage,
                         promotedFailedProvider,
@@ -1294,7 +1329,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 return retriedAction;
               } catch (retryError) {
                 if (isSupersededAIRequestError(retryError)) throw retryError;
-                failoverNoteLines.push(
+                failoverNotes.push(
                   formatProviderFollowUpNote(
                     appLanguage,
                     getActiveAIProvider(useAIStore.getState().aiConfigs),
@@ -1373,6 +1408,12 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           endedWithAskUser,
           assistIntent,
           wantsReportTable,
+          // Complex, synthesis-heavy asks (reports/overviews) earn one extra
+          // self-correction round; simple asks keep the conservative default.
+          maxRounds: resolveEvidenceRounds({ assistIntent, wantsReportTable }),
+          // Allow-list the live schema names so claim verification never flags a
+          // real table the run simply never touched as a fabrication.
+          knownIdentifiers: availableSchemaTables,
           sharedAgentInstruction,
           initialAction: finalAction,
           initialSteps: finalSteps,
@@ -1472,6 +1513,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           agentSteps: mergeRunNotes(finalization.agentSteps ?? [], manualSwitchNotes),
           agentWidgets: finalization.agentWidgets,
           askUserOptions,
+          failoverNotes: failoverNotes.length > 0 ? failoverNotes : undefined,
         };
 
       }

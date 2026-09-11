@@ -376,4 +376,52 @@ describe("AI workspace components", () => {
     await user.click(screen.getByRole("button", { name: copy.bubbleStates.askUserCustomSend }));
     expect(onAskUserOptionSelect).toHaveBeenLastCalledWith("notifications table");
   });
+
+  it("shows a compact provider-failover footer and reveals the raw error only on click", async () => {
+    const user = userEvent.setup();
+    const bubble: AIWorkspaceBubbleData = {
+      id: "failover-1",
+      threadId: "thread-1",
+      workspaceKey: "connection::database",
+      interactionMode: "agent",
+      kind: "assistant",
+      status: "ready",
+      title: "Answer",
+      subtitle: "",
+      prompt: "list users",
+      preview: "Here is the answer.",
+      detail: "Here is the answer.",
+      failoverNotes: [
+        {
+          summary: 'Provider "Google Gemini" failed',
+          detail: 'AI API error: Invalid JSON payload received. Unknown name "minValue" at \'tools[0]...\': Cannot find field.',
+        },
+      ],
+      x: 0,
+      y: 0,
+      pointer: { x: 0, y: 0, visible: false },
+      createdAt: 1,
+    };
+    render(
+      <AIConversationView
+        bubbles={[bubble]}
+        copy={copy}
+        threadRef={createRef<HTMLDivElement>()}
+        onOpenDetail={vi.fn()}
+        onInsert={vi.fn()}
+        onRun={vi.fn()}
+        onRetry={vi.fn()}
+        onOpenRecord={vi.fn()}
+        onUseSuggestion={vi.fn()}
+      />,
+    );
+
+    // The terse summary shows; the long provider payload stays hidden until asked.
+    expect(screen.getByText('Provider "Google Gemini" failed')).toBeInTheDocument();
+    expect(screen.queryByText(/Invalid JSON payload received/)).toBeNull();
+
+    // Clicking the info button reveals the full raw provider error inline.
+    await user.click(screen.getByRole("button", { name: copy.bubbleStates.failoverErrorDetails }));
+    expect(screen.getByText(/Invalid JSON payload received/)).toBeInTheDocument();
+  });
 });

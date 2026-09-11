@@ -168,6 +168,32 @@ function getAIRequestTimeout(config: AIProviderConfig, mode: AIRequestMode, inte
   return AI_TIMEOUTS.default;
 }
 
+/**
+ * The panel "Thinking" toggle is a single source of truth in this store so the
+ * request builder can gate reasoning per call. Persisted under the legacy key so
+ * a user's existing preference migrates seamlessly from the old component state.
+ */
+const AI_THINKING_STORAGE_KEY = "tabler.ai.workspace.showThinking.v1";
+
+function loadThinkingPreference(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = window.localStorage.getItem(AI_THINKING_STORAGE_KEY);
+    return raw === null ? true : raw === "true";
+  } catch {
+    return true;
+  }
+}
+
+function persistThinkingPreference(enabled: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(AI_THINKING_STORAGE_KEY, String(enabled));
+  } catch {
+    // Ignore storage write failures (private mode, quota, etc.).
+  }
+}
+
 export interface AIState {
   aiConfigs: AIProviderConfig[];
   activeAIRequestId: string | null;
@@ -180,6 +206,10 @@ export interface AIState {
   streamingUsage: Record<string, unknown> | null;
   /** True while an automatic provider failover is switching the active provider. */
   isProviderFailingOver: boolean;
+  /** Panel "Thinking" toggle. When false, requests omit the reasoning opt-in so
+   *  the model spends no thinking tokens and the live trace stays hidden. */
+  thinkingEnabled: boolean;
+  setThinkingEnabled: (enabled: boolean) => void;
 
   loadAIConfigs: () => Promise<{
     aiConfigs: AIProviderConfig[];
@@ -280,6 +310,12 @@ export const useAIStore = create<AIState>((set, get) => ({
   streamingReasoningText: "",
   streamingUsage: null,
   isProviderFailingOver: false,
+  thinkingEnabled: loadThinkingPreference(),
+
+  setThinkingEnabled: (enabled) => {
+    persistThinkingPreference(enabled);
+    set({ thinkingEnabled: enabled });
+  },
 
   loadAIConfigs: async () => {
     try {
@@ -464,6 +500,7 @@ export const useAIStore = create<AIState>((set, get) => ({
                 language: getCurrentAppLanguage(),
                 history,
                 attachments: attachments && attachments.length > 0 ? attachments : undefined,
+                enable_thinking: get().thinkingEnabled,
               },
             },
             timeoutMs,
@@ -490,6 +527,7 @@ export const useAIStore = create<AIState>((set, get) => ({
               language: getCurrentAppLanguage(),
               history,
               attachments: attachments && attachments.length > 0 ? attachments : undefined,
+              enable_thinking: get().thinkingEnabled,
               ...(nativeToolPayload
                 ? {
                     tools: nativeToolPayload.tools,

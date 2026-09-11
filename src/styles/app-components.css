@@ -8161,13 +8161,34 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-connecting-orbit-ring {
-    animation: none;
+  /* Keep the connecting screen alive even for reduced-motion users: the orbit
+     rings and skeleton shimmer are essential "still working" feedback. We keep
+     the motion smooth and slow. The :root[data-theme-preset="tabler.minimax"]
+     prefix + !important out-specify both the global `*` clamp and the MiniMax
+     `*` clamp on animation-duration / animation-iteration-count that would
+     otherwise freeze these. Longhands are used (not the `animation` shorthand)
+     so the inner ring keeps its own duration / reverse direction and the
+     skeleton bars keep their staggered nth-child delays. */
+  :root .workspace-connecting-orbit-ring,
+  :root[data-theme-preset="tabler.minimax"] .workspace-connecting-orbit-ring {
+    animation-name: workspace-connecting-orbit !important;
+    animation-duration: 16s !important;
+    animation-timing-function: linear !important;
+    animation-iteration-count: infinite !important;
   }
 
-  .workspace-connecting-skeleton-bar {
-    animation: none;
-    opacity: 0.6;
+  :root .workspace-connecting-orbit-ring--inner,
+  :root[data-theme-preset="tabler.minimax"] .workspace-connecting-orbit-ring--inner {
+    animation-duration: 9s !important;
+    animation-direction: reverse !important;
+  }
+
+  :root .workspace-connecting-skeleton-bar,
+  :root[data-theme-preset="tabler.minimax"] .workspace-connecting-skeleton-bar {
+    animation-name: skeleton-shimmer !important;
+    animation-duration: 1.5s !important;
+    animation-iteration-count: infinite !important;
+    opacity: 1 !important;
   }
 }
 
@@ -20330,14 +20351,41 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ai-workspace-thinking-dots span,
   .ai-workspace-thinking-orb,
-  .ai-workspace-thinking-shimmer,
-  .ai-agent-step-live-dots span {
+  .ai-workspace-thinking-shimmer {
     animation: none;
   }
   .ai-workspace-thinking-shimmer {
     -webkit-text-fill-color: var(--text-secondary);
+  }
+
+  /* Keep the loading / "typing" dots gently animated even for reduced-motion
+     users so the working state still reads as live. We drop the vertical
+     bounce and use a soft opacity-only pulse (no positional movement, which is
+     what reduced-motion actually guards against). The
+     :root[data-theme-preset="tabler.minimax"] prefix + !important are required
+     to out-specify both the global `*` clamp (app-components.css) and the
+     MiniMax `*` clamp (minimax-design-system.css) on animation-duration /
+     animation-iteration-count that would otherwise freeze these dots. */
+  :root .ai-workspace-thinking-dots span,
+  :root .ai-agent-step-live-dots span,
+  :root[data-theme-preset="tabler.minimax"] .ai-workspace-thinking-dots span,
+  :root[data-theme-preset="tabler.minimax"] .ai-agent-step-live-dots span {
+    animation: ai-dot-soft-pulse 1.4s ease-in-out infinite !important;
+    animation-duration: 1.4s !important;
+    animation-iteration-count: infinite !important;
+    transform: none !important;
+  }
+}
+
+/* Reduced-motion-safe pulse for the loading dots: opacity only, no movement. */
+@keyframes ai-dot-soft-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
   }
 }
 

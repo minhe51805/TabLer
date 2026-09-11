@@ -113,6 +113,12 @@ export interface AIWorkspaceCopy {
     thinkingOn: string;
     thinkingOff: string;
     autoProviderSwitchLabel: string;
+    dataReadToggleLabel: string;
+    toggleConfirmTitle: string;
+    toggleConfirmMessageEnable: string;
+    toggleConfirmMessageDisable: string;
+    toggleConfirmConfirm: string;
+    toggleConfirmCancel: string;
     newChatTitle: string;
     reloadChatTitle: string;
     modeNeedsSchemaHint: string;

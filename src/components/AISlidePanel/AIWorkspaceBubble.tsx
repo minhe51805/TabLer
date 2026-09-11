@@ -1,10 +1,11 @@
-import { AlertTriangle, BrainCircuit, Copy, GripHorizontal, Play, Send, Sparkles, Target, Wand2, X } from "lucide-react";
+import { AlertTriangle, Copy, GripHorizontal, Play, Send, Sparkles, Target, Wand2, X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, Ref } from "react";
 import { useI18n } from "../../i18n";
 import { aiModeAllowsInsert, aiModeAllowsRun, type AIWorkspaceBubbleData } from "./ai-workspace-types";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 import { AIAgentSteps } from "./AIAgentSteps";
+import { AIThinkingTrace } from "./AIThinkingTrace";
 
 interface AIWorkspaceBubbleProps {
   bubble: AIWorkspaceBubbleData;
@@ -73,7 +74,9 @@ export function AIWorkspaceBubble({
   const showInsert = showMutationActions && Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
   const showRun = showMutationActions && Boolean(bubble.sql) && aiModeAllowsRun(bubble.interactionMode);
   const reasoningText = bubble.reasoning?.trim();
-  const showReasoning = bubble.status === "ready" && Boolean(reasoningText);
+  // Stream the live chain-of-thought while loading, keep it as a toggle once ready.
+  const isStreamingReasoning = bubble.status === "loading";
+  const showReasoning = (bubble.status === "ready" || isStreamingReasoning) && Boolean(reasoningText);
   const agentSteps = bubble.agentSteps ?? [];
   const showAgentSteps = bubble.interactionMode === "agent" && agentSteps.length > 0;
 
@@ -136,13 +139,11 @@ export function AIWorkspaceBubble({
           <AIWorkspaceMarkdown className="ai-workspace-bubble-preview" compact text={bubble.preview} />
           {codePreview && <pre className="ai-workspace-bubble-code">{codePreview}</pre>}
           {showReasoning && (
-            <details className="ai-workspace-bubble-reasoning">
-              <summary className="ai-workspace-bubble-reasoning-summary">
-                <BrainCircuit className="w-3.5 h-3.5" />
-                <span>{copy.modal.reasoningLabel}</span>
-              </summary>
-              <AIWorkspaceMarkdown className="ai-workspace-bubble-reasoning-body" compact text={reasoningText ?? ""} />
-            </details>
+            <AIThinkingTrace
+              text={reasoningText ?? ""}
+              streaming={isStreamingReasoning}
+              copy={copy}
+            />
           )}
           {bubble.risk?.reason && bubble.status !== "loading" && (
             <div className={`ai-workspace-bubble-risk ai-workspace-bubble-risk--${bubble.risk.level}`}>

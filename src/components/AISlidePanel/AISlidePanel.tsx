@@ -83,7 +83,6 @@ interface VisualizationReadConsentState {
 }
 
 const AI_WORKSPACE_AGENT_AUTONOMY_STORAGE_KEY = "tabler.ai.workspace.agentAutonomy.v1";
-const AI_WORKSPACE_THINKING_STORAGE_KEY = "tabler.ai.workspace.showThinking.v1";
 
 export function AISlidePanel({
   isOpen,
@@ -237,15 +236,11 @@ export function AISlidePanel({
       return {};
     }
   });
-  const [showThinking, setShowThinking] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    try {
-      const raw = window.localStorage.getItem(AI_WORKSPACE_THINKING_STORAGE_KEY);
-      return raw === null ? true : raw === "true";
-    } catch {
-      return true;
-    }
-  });
+  // The "Thinking" toggle now lives in the AI store so the request builder can
+  // gate reasoning per call (off = no thinking tokens). Persistence + migration
+  // from the old localStorage key happen inside the store.
+  const showThinking = useAIStore((state) => state.thinkingEnabled);
+  const setShowThinking = useAIStore((state) => state.setThinkingEnabled);
   const [activeThreadIdsByWorkspace, setActiveThreadIdsByWorkspace] = useState<Record<string, string>>(
     {}
   );
@@ -461,15 +456,6 @@ export function AISlidePanel({
       // Ignore storage write failures (private mode, quota, etc.).
     }
   }, [workspaceAgentAutonomy]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(AI_WORKSPACE_THINKING_STORAGE_KEY, String(showThinking));
-    } catch {
-      // Ignore storage write failures.
-    }
-  }, [showThinking]);
 
   const scrollChatToLatest = useCallback(() => {
     const jump = () => {

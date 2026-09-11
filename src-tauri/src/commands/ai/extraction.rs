@@ -228,12 +228,55 @@ pub(crate) fn extract_anthropic_response_text(payload: &serde_json::Value) -> Op
     payload.get("completion").and_then(extract_text_from_json)
 }
 
+/// Pulls Claude's extended-thinking blocks (`{"type":"thinking","thinking":...}`)
+/// out of a non-streaming Anthropic response, concatenated in order. `None` when
+/// the model returned no thinking blocks (thinking off or an older model).
+pub(crate) fn extract_anthropic_reasoning(payload: &serde_json::Value) -> Option<String> {
+    let blocks = payload.get("content")?.as_array()?;
+    let mut reasoning = String::new();
+    for block in blocks {
+        if block.get("type").and_then(|value| value.as_str()) == Some("thinking") {
+            if let Some(text) = block.get("thinking").and_then(|value| value.as_str()) {
+                reasoning.push_str(text);
+            }
+        }
+    }
+    let reasoning = reasoning.trim();
+    if reasoning.is_empty() {
+        None
+    } else {
+        Some(reasoning.to_string())
+    }
+}
+
+/// Walks Gemini `candidates[0].content.parts`, concatenating the visible answer
+/// text and the "thought summary" parts (`"thought": true`) separately. Returns
+/// `(reasoning, answer)` as raw, untrimmed strings so streaming callers keep the
+/// spacing between tokens; blocking callers trim afterwards.
+fn collect_gemini_parts(parts: &serde_json::Value) -> (String, String) {
+    let mut reasoning = String::new();
+    let mut answer = String::new();
+    if let Some(items) = parts.as_array() {
+        for part in items {
+            if let Some(text) = part.get("text").and_then(|value| value.as_str()) {
+                if part.get("thought").and_then(|value| value.as_bool()) == Some(true) {
+                    reasoning.push_str(text);
+                } else {
+                    answer.push_str(text);
+                }
+            }
+        }
+    }
+    (reasoning, answer)
+}
+
 pub(crate) fn extract_gemini_response_text(payload: &serde_json::Value) -> Option<String> {
-    if let Some(text) = payload
-        .pointer("/candidates/0/content/parts")
-        .and_then(extract_text_from_json)
-    {
-        return Some(text);
+    if let Some(parts) = payload.pointer("/candidates/0/content/parts") {
+        let (_reasoning, answer) = collect_gemini_parts(parts);
+        let answer = answer.trim();
+        if !answer.is_empty() {
+            return Some(answer.to_string());
+        }
     }
 
     if let Some(text) = payload
@@ -244,6 +287,19 @@ pub(crate) fn extract_gemini_response_text(payload: &serde_json::Value) -> Optio
     }
 
     payload.get("text").and_then(extract_text_from_json)
+}
+
+/// The Gemini "thought summary" reasoning, when `thinkingConfig.includeThoughts`
+/// asked for it. `None` when the model returned no thought parts.
+pub(crate) fn extract_gemini_reasoning(payload: &serde_json::Value) -> Option<String> {
+    let parts = payload.pointer("/candidates/0/content/parts")?;
+    let (reasoning, _answer) = collect_gemini_parts(parts);
+    let reasoning = reasoning.trim();
+    if reasoning.is_empty() {
+        None
+    } else {
+        Some(reasoning.to_string())
+    }
 }
 
 pub(crate) fn extract_stream_deltas(
@@ -263,18 +319,30 @@ pub(crate) fn extract_stream_deltas(
             (text, reasoning)
         }
         AIProviderType::Gemini | AIProviderType::Vertex => {
-            let text = [
-                "/candidates/0/content/parts",
-                "/candidates/0/output",
-                "/text",
-            ]
-            .into_iter()
-            .find_map(|pointer| {
-                payload
-                    .pointer(pointer)
-                    .and_then(extract_stream_text_from_json)
-            });
-            (text, None)
+            // Gemini 2.5 interleaves "thought summary" parts (`"thought": true`)
+            // with the answer parts. Route the thoughts to the reasoning delta so
+            // the "Thinking…" trace streams live and never leaks into the answer.
+            let (reasoning_raw, answer_raw) = payload
+                .pointer("/candidates/0/content/parts")
+                .map(collect_gemini_parts)
+                .unwrap_or_default();
+            let text = if !answer_raw.is_empty() {
+                Some(answer_raw)
+            } else {
+                ["/candidates/0/output", "/text"]
+                    .into_iter()
+                    .find_map(|pointer| {
+                        payload
+                            .pointer(pointer)
+                            .and_then(extract_stream_text_from_json)
+                    })
+            };
+            let reasoning = if reasoning_raw.is_empty() {
+                None
+            } else {
+                Some(reasoning_raw)
+            };
+            (text, reasoning)
         }
         _ => (
             [
@@ -714,6 +782,60 @@ mod tests {
         assert_eq!(
             extract_gemini_response_text(&gemini).as_deref(),
             Some("gemini answer")
+        );
+    }
+
+    #[test]
+    fn gemini_splits_thought_summary_from_answer() {
+        let payload = json!({
+            "candidates": [{
+                "content": { "parts": [
+                    { "text": "let me plan", "thought": true },
+                    { "text": "SELECT 1;" }
+                ]}
+            }]
+        });
+        assert_eq!(
+            extract_gemini_response_text(&payload).as_deref(),
+            Some("SELECT 1;")
+        );
+        assert_eq!(
+            extract_gemini_reasoning(&payload).as_deref(),
+            Some("let me plan")
+        );
+    }
+
+    #[test]
+    fn gemini_stream_deltas_route_thoughts_to_reasoning() {
+        let payload = json!({
+            "candidates": [{
+                "content": { "parts": [
+                    { "text": "reasoning chunk", "thought": true },
+                    { "text": " answer chunk" }
+                ]}
+            }]
+        });
+        let (text, reasoning) = extract_stream_deltas(&AIProviderType::Gemini, &payload);
+        assert_eq!(text.as_deref(), Some(" answer chunk"));
+        assert_eq!(reasoning.as_deref(), Some("reasoning chunk"));
+    }
+
+    #[test]
+    fn extracts_anthropic_extended_thinking_blocks() {
+        let payload = json!({
+            "content": [
+                { "type": "thinking", "thinking": "step through it" },
+                { "type": "text", "text": "final answer" }
+            ]
+        });
+        assert_eq!(
+            extract_anthropic_reasoning(&payload).as_deref(),
+            Some("step through it")
+        );
+        // The answer text must not carry the thinking block.
+        assert_eq!(
+            extract_anthropic_response_text(&payload).as_deref(),
+            Some("final answer")
         );
     }
 }

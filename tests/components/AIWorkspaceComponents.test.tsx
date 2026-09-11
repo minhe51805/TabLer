@@ -134,6 +134,33 @@ describe("AI workspace components", () => {
     expect(props.onSelectAgentAutonomy).toHaveBeenCalledWith("full");
   });
 
+  it("asks for confirmation before flipping a utility toggle and applies it on confirm", async () => {
+    const user = userEvent.setup();
+    const props = renderComposer();
+
+    await user.click(screen.getByRole("button", { name: "Chat tools" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: new RegExp(props.sessionDataReadLabel) }));
+
+    // Gated: nothing flips until the confirmation dialog is accepted.
+    expect(props.onSetSessionDataReadEnabled).not.toHaveBeenCalled();
+    expect(screen.getByText(copy.composer.toggleConfirmTitle)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: copy.composer.toggleConfirmConfirm }));
+    expect(props.onSetSessionDataReadEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it("leaves a utility toggle unchanged when the confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    const props = renderComposer();
+
+    await user.click(screen.getByRole("button", { name: "Chat tools" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: new RegExp(props.sessionDataReadLabel) }));
+    await user.click(screen.getByRole("button", { name: copy.composer.toggleConfirmCancel }));
+
+    expect(props.onSetSessionDataReadEnabled).not.toHaveBeenCalled();
+    expect(screen.queryByText(copy.composer.toggleConfirmTitle)).not.toBeInTheDocument();
+  });
+
   it("turns the generate command into a stop command while AI is running", async () => {
     const user = userEvent.setup();
     const props = renderComposer({ isGenerating: true, prompt: "Long request" });

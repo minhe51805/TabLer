@@ -15,6 +15,7 @@ const en = {
     engines: "Engines",
     openSource: "Open source",
     changelog: "Changelog",
+    docs: "Docs",
     download: "Download",
   },
   hero: {
@@ -142,6 +143,7 @@ const en = {
     download: "Download",
     support: "Support",
     changelog: "Changelog",
+    docs: "Docs",
   },
   download: {
     back: "Back to home",
@@ -199,6 +201,7 @@ const vi: typeof en = {
     engines: "Hệ CSDL",
     openSource: "Mã nguồn mở",
     changelog: "Lịch sử bản phát hành",
+    docs: "Tài liệu",
     download: "Tải xuống",
   },
   hero: {
@@ -326,6 +329,7 @@ const vi: typeof en = {
     download: "Tải xuống",
     support: "Ủng hộ",
     changelog: "Lịch sử bản phát hành",
+    docs: "Tài liệu",
   },
   download: {
     back: "Về trang chủ",

@@ -80,7 +80,6 @@ import {
 } from "../ai-agent-action-requestor";
 import { runAgentEvidenceLoop } from "../ai-agent-evidence-loop";
 
-export { AI_REQUEST_REPLACED_MESSAGE, isSupersededAIRequestError };
 import {
   buildRunnerInstructionForReason,
   formatActionFailureReason,
@@ -1570,8 +1569,36 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     }
   }, [activeDbType, activeProvider, aiConfigs, askAI, cancelAIRequest, connectionId, currentDatabase, executeAgentParameterizedQuery, executeAgentReadonlyQuery, executeSandboxQuery, fetchTables, getTableColumnsPreview, getTableData, getTableStructure, isLocalProvider, listCheckpoints, previewWriteTransaction, restoreCheckpoint, saveAIConfigs]);
 
-  const copyText = useCallback(async (text: string) => {
-    await navigator.clipboard.writeText(text);
+  const copyText = useCallback(async (text: string): Promise<boolean> => {
+    if (!text) return false;
+    // Primary path: async Clipboard API (works inside the Tauri WebView).
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // Fall through to the legacy execCommand path below.
+    }
+    // Fallback: hidden textarea + execCommand("copy") for contexts where the
+    // async Clipboard API is unavailable or rejects (e.g. missing permission,
+    // window not focused).
+    try {
+      if (typeof document === "undefined") return false;
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.top = "-9999px";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      return ok;
+    } catch {
+      return false;
+    }
   }, []);
 
   const insertSql = useCallback((sql: string, risk?: SqlRiskAnalysis) => {

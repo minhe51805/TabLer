@@ -10,7 +10,6 @@ import {
 import { useAppLayoutStore } from "../../stores/appLayoutStore";
 import type { AIProviderConfig } from "../../types";
 import { ConfirmDialog } from "../ConfirmDialog";
-import { AIBubbleDetailModal } from "./AIBubbleDetailModal";
 import { AISqlConfirmDialog } from "./AISqlConfirmDialog";
 import { AICheckpointPickerModal } from "./AICheckpointPickerModal";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
@@ -31,7 +30,7 @@ export interface AIWorkspacePanelViewModel {
   aiCopy: AIWorkspaceCopy; attachedSelection: SelectionContextState | null; bubbleCountByThread: Map<string, number>; composerFooterNote: string;
   composerRef: RefObject<HTMLDivElement | null>; composerTextareaRef: RefObject<HTMLTextAreaElement | null>; connectionId: string | null;
   conversationBubbles: AIWorkspaceBubbleData[]; currentDatabase: string | null; currentThread: AIChatThread | null; deleteThreadPending: string | null;
-  detailBubble: AIWorkspaceBubbleData | null; historyPanelRef: RefObject<HTMLDivElement | null>; isCancelling: boolean; isGenerating: boolean;
+  historyPanelRef: RefObject<HTMLDivElement | null>; isCancelling: boolean; isGenerating: boolean;
   isAttachmentManagerOpen: boolean; canAttachImages: boolean; composerAttachments: AIAttachmentDraft[];
   isHistoryOpen: boolean; isLongformComposer: boolean; isRunning: boolean; isSessionDataReadEnabled: boolean; isSwitchingProvider: boolean; safeModeEnabled: boolean; onToggleSafeMode: (next: boolean) => void;
   listCheckpoints: (connectionId: string) => Promise<Array<{ fileName: string; label: string; createdAt: number; engine: string; database: string | null; tableCount: number; rowCount: number }>>;
@@ -52,10 +51,10 @@ export interface AIWorkspacePanelViewModel {
   /** Focuses the composer textarea for a custom reply. */
   focusComposerInput: () => void;
   openAttachmentManager: () => void; closeAttachmentManager: () => void; addAttachmentFiles: (files: File[]) => void; removeAttachment: (id: string) => void;
-  retryBubble: (bubble: AIWorkspaceBubbleData) => void; rewriteBubble: (bubble: AIWorkspaceBubbleData, note: string) => void; runBubble: (bubble: AIWorkspaceBubbleData) => void;
+  retryBubble: (bubble: AIWorkspaceBubbleData) => void; runBubble: (bubble: AIWorkspaceBubbleData) => void;
   openAgentRecord: (link: AIAgentRecordLink) => void;
-  copyBubble: (bubble: AIWorkspaceBubbleData) => void; insertBubble: (bubble: AIWorkspaceBubbleData) => void; reset: () => void; selectThread: (id: string) => void;
-  setDetailBubbleId: (id: string | null) => void; setHistoryOpen: (value: boolean | ((value: boolean) => boolean)) => void;
+  copyBubble: (bubble: AIWorkspaceBubbleData) => Promise<boolean>; insertBubble: (bubble: AIWorkspaceBubbleData) => void; reset: () => void; selectThread: (id: string) => void;
+  setHistoryOpen: (value: boolean | ((value: boolean) => boolean)) => void;
   setPromptDraft: (value: string) => void; setSessionDataReadEnabled: (value: boolean) => void; setShowThinking: (value: boolean) => void;
   /** Open "/" command menu (null = hidden); selection runs the command. */
   slashMenu?: { commands: { name: string; description: string }[]; activeIndex: number } | null;
@@ -84,10 +83,6 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
   );
   // Stable callbacks so the memoized AIConversationView skips re-renders
   // triggered by unrelated panel state (composer keystrokes, health ticks...).
-  const handleOpenDetail = useCallback(
-    (bubble: { id: string }) => m.setDetailBubbleId(bubble.id),
-    [m],
-  );
   const handleUseSuggestion = useCallback(
     (prompt: string) => m.setPromptDraft(prompt),
     [m],
@@ -175,11 +170,10 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                   </div>
                 )}
               </div><button type="button" className="ai-workspace-chat-tab-add" onClick={m.reloadChat} disabled={m.isGenerating || m.isRunning} title={m.aiCopy.composer.reloadChatTitle}><RotateCcw className="w-3.5 h-3.5" /></button></div></div>
-        <AIConversationView bubbles={m.conversationBubbles} copy={m.aiCopy} threadRef={m.chatThreadRef} onOpenDetail={handleOpenDetail} onInsert={m.insertBubble} onRun={m.runBubble} onRetry={m.retryBubble} onOpenRecord={m.openAgentRecord} onUseSuggestion={handleUseSuggestion} onAskUserOptionSelect={m.sendAskUserReply} onAskUserCustomInput={m.focusComposerInput} />
+        <AIConversationView bubbles={m.conversationBubbles} copy={m.aiCopy} threadRef={m.chatThreadRef} onInsert={m.insertBubble} onRun={m.runBubble} onRetry={m.retryBubble} onCopy={m.copyBubble} onOpenRecord={m.openAgentRecord} onUseSuggestion={handleUseSuggestion} onAskUserOptionSelect={m.sendAskUserReply} onAskUserCustomInput={m.focusComposerInput} />
         <AIComposerDock copy={m.aiCopy} prompt={m.promptDraft} textareaRef={m.composerTextareaRef} footerNote={m.composerFooterNote} contextUsage={m.contextUsage} attachedSelectionSource={m.attachedSelection?.source} hasAttachedSelectionText={Boolean(m.attachedSelection?.text.trim())} attachments={m.composerAttachments} canAttachImages={m.canAttachImages} onAddAttachmentFiles={m.addAttachmentFiles} onRemoveAttachment={m.removeAttachment} onOpenAttachmentManager={m.openAttachmentManager} interactionMode={m.activeInteractionMode} agentAutonomy={m.activeAgentAutonomy} activeProvider={m.activeProvider} providers={m.switchableProviders} isSwitchingProvider={m.isSwitchingProvider} isGenerating={m.isGenerating} isCancelling={m.isCancelling} isConnectionAvailable={Boolean(m.connectionId)} isSessionDataReadEnabled={m.isSessionDataReadEnabled} sessionDataReadLabel={m.sessionDataReadButtonLabel} sessionDataReadTitle={m.sessionDataReadButtonTitle} showThinking={m.showThinking} onPromptChange={m.setPromptDraft} onKeyDown={m.composerKeyDown} slashMenu={m.slashMenu} onSelectSlashCommand={m.onSelectSlashCommand} onDismissSelection={m.dismissSelection} onSelectInteractionMode={m.selectInteractionMode} onSelectAgentAutonomy={handleSelectAgentAutonomy} onActivateProvider={m.activateProvider} onToggleModelVisibility={m.toggleModelVisibility} onSetSessionDataReadEnabled={m.setSessionDataReadEnabled} onSetShowThinking={m.setShowThinking} onOpenSettings={m.openSettings} safeModeEnabled={m.safeModeEnabled} onToggleSafeMode={m.onToggleSafeMode} onCloseHistory={() => m.setHistoryOpen(false)} onGenerate={m.generate} onCancelGeneration={m.cancelGeneration} />
       </div></div></aside>
     </div>
-    {m.detailBubble && <AIBubbleDetailModal bubble={m.detailBubble} isGenerating={m.isGenerating} isRunning={m.isRunning} onClose={() => m.setDetailBubbleId(null)} onCopy={m.copyBubble} onInsert={m.insertBubble} onRun={m.runBubble} onRewrite={m.rewriteBubble} />}
     <ConfirmDialog isOpen={m.visualizationConsentPending !== null} title={m.visualizationConsentPending?.title || "Allow AI data read?"} message={m.visualizationConsentPending?.message || ""} confirmText={m.visualizationConsentPending?.confirmText || "Allow"} cancelText={m.visualizationConsentPending?.cancelText || "Deny"} onConfirm={() => m.confirmVisualizationConsent(true)} onCancel={() => m.confirmVisualizationConsent(false)} />
     <ConfirmDialog isOpen={m.destructiveConsentPending !== null} title={m.destructiveConsentPending?.title || "Confirm destructive action"} message={m.destructiveConsentPending?.message || ""} confirmText={m.destructiveConsentPending?.confirmText || "Confirm"} cancelText={m.destructiveConsentPending?.cancelText || "Cancel"} onConfirm={() => m.confirmDestructiveConsent(true)} onCancel={() => m.confirmDestructiveConsent(false)} />
     <ConfirmDialog isOpen={m.failoverConsentPending !== null} title={m.failoverConsentPending?.title || "Provider failed"} message={m.failoverConsentPending?.message || ""} confirmText={m.failoverConsentPending?.confirmText || "Allow auto-switch"} cancelText={m.failoverConsentPending?.cancelText || "Not now"} onConfirm={() => m.resolveFailoverConsent(true)} onCancel={() => m.resolveFailoverConsent(false)} />

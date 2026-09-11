@@ -1,5 +1,6 @@
 use crate::database::ai_models::{
-    AIProviderConfig, AIProviderType, AIRequestAttachment, AIRequestMode,
+    AIConversationMessage, AIConversationRole, AIProviderConfig, AIProviderType, AIRequestAttachment,
+    AIRequestMode,
 };
 use serde_json::json;
 #[cfg(test)]
@@ -593,6 +594,151 @@ pub(crate) fn apply_attachments(
     }
 }
 
+/// Wire role name for the OpenAI/Anthropic chat message shape.
+fn chat_role(role: &AIConversationRole) -> &'static str {
+    match role {
+        AIConversationRole::User => "user",
+        AIConversationRole::Assistant => "assistant",
+    }
+}
+
+/// Wire role name for Gemini `contents` (assistant turns are `model`).
+fn gemini_role(role: &AIConversationRole) -> &'static str {
+    match role {
+        AIConversationRole::User => "user",
+        AIConversationRole::Assistant => "model",
+    }
+}
+
+/// Label for the flattened `/generate` transcript fallback.
+fn transcript_role(role: &AIConversationRole) -> &'static str {
+    match role {
+        AIConversationRole::User => "User",
+        AIConversationRole::Assistant => "Assistant",
+    }
+}
+
+/// Inserts `turns` into `array` right before `index`, clamped to the length.
+fn splice_before(array: &mut Vec<serde_json::Value>, index: usize, turns: Vec<serde_json::Value>) {
+    let index = index.min(array.len());
+    array.splice(index..index, turns);
+}
+
+/// Position of the current (last) turn with `role`, before which prior history
+/// is spliced. Falls back to the end when no such turn exists.
+fn last_role_index(array: &[serde_json::Value], role: &str) -> usize {
+    array
+        .iter()
+        .rposition(|message| message.get("role").and_then(|value| value.as_str()) == Some(role))
+        .unwrap_or(array.len())
+}
+
+/// Replays prior conversation turns as REAL multi-turn messages in an
+/// already-built request body — mirroring the `apply_attachments` /
+/// `apply_native_tools` post-processor pattern so body builders and their tests
+/// stay untouched.
+///
+/// Two wins over the old "flatten history into one string" approach:
+/// 1. The model sees clean user/assistant role structure instead of a blob.
+/// 2. It creates a STABLE prompt prefix (system + prior turns) that providers
+///    can prompt-cache across turns. For Anthropic we tag the final history turn
+///    with an ephemeral `cache_control` breakpoint, so the whole system+history
+///    prefix is cached and re-read cheaply next turn (Claude Code-style prompt
+///    caching). OpenAI and Gemini cache such stable prefixes implicitly.
+///
+/// Strict no-op when there is no history, so first turns and the classic path
+/// keep a byte-identical body. History is inserted BEFORE the current user turn,
+/// which stays last — so `apply_attachments` still targets the right message.
+pub(crate) fn apply_conversation_history(
+    body: &mut serde_json::Value,
+    shape: ProviderBodyShape,
+    history: &[AIConversationMessage],
+) {
+    if history.is_empty() {
+        return;
+    }
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+
+    match shape {
+        ProviderBodyShape::OpenAiLike | ProviderBodyShape::OllamaChat => {
+            let Some(messages) = object.get_mut("messages").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            let insert_at = last_role_index(messages, "user");
+            let turns: Vec<serde_json::Value> = history
+                .iter()
+                .map(|message| {
+                    json!({ "role": chat_role(&message.role), "content": message.content })
+                })
+                .collect();
+            splice_before(messages, insert_at, turns);
+        }
+        ProviderBodyShape::Anthropic => {
+            let Some(messages) = object.get_mut("messages").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            let insert_at = last_role_index(messages, "user");
+            let last = history.len() - 1;
+            let turns: Vec<serde_json::Value> = history
+                .iter()
+                .enumerate()
+                .map(|(index, message)| {
+                    if index == last {
+                        // Cache breakpoint: Anthropic caches everything from the
+                        // start of the prompt up to and INCLUDING this block, so
+                        // the system + full history prefix is reused next turn.
+                        json!({
+                            "role": chat_role(&message.role),
+                            "content": [{
+                                "type": "text",
+                                "text": message.content,
+                                "cache_control": { "type": "ephemeral" }
+                            }]
+                        })
+                    } else {
+                        json!({ "role": chat_role(&message.role), "content": message.content })
+                    }
+                })
+                .collect();
+            splice_before(messages, insert_at, turns);
+        }
+        ProviderBodyShape::Gemini => {
+            let Some(contents) = object.get_mut("contents").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            let insert_at = last_role_index(contents, "user");
+            let turns: Vec<serde_json::Value> = history
+                .iter()
+                .map(|message| {
+                    json!({
+                        "role": gemini_role(&message.role),
+                        "parts": [{ "text": message.content }]
+                    })
+                })
+                .collect();
+            splice_before(contents, insert_at, turns);
+        }
+        ProviderBodyShape::OllamaGenerate => {
+            // The /generate shape has no messages array — fall back to a compact
+            // transcript prepended to the prompt so history still reaches the model.
+            let Some(prompt) = object.get("prompt").and_then(|value| value.as_str()) else {
+                return;
+            };
+            let transcript = history
+                .iter()
+                .map(|message| {
+                    format!("{}: {}", transcript_role(&message.role), message.content.trim())
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let merged = format!("Recent conversation:\n{}\n\n{}", transcript, prompt);
+            object.insert("prompt".to_string(), serde_json::Value::String(merged));
+        }
+    }
+}
+
 /// Injects native function-calling fields into an already-built request body.
 ///
 /// This is a strict no-op when `tools` is `None`, so the classic text path
@@ -778,6 +924,113 @@ mod tests {
             &[sample_image()],
         );
         assert_eq!(generate["images"], json!(["AAAA"]));
+    }
+
+    fn sample_history() -> Vec<AIConversationMessage> {
+        vec![
+            AIConversationMessage {
+                role: AIConversationRole::User,
+                content: "first question".to_string(),
+            },
+            AIConversationMessage {
+                role: AIConversationRole::Assistant,
+                content: "first answer".to_string(),
+            },
+        ]
+    }
+
+    #[test]
+    fn apply_conversation_history_is_a_noop_without_history() {
+        let mut body = json!({
+            "model": "m",
+            "messages": [
+                { "role": "system", "content": "sys" },
+                { "role": "user", "content": "now" }
+            ]
+        });
+        let before = body.clone();
+        apply_conversation_history(&mut body, ProviderBodyShape::OpenAiLike, &[]);
+        assert_eq!(before, body);
+    }
+
+    #[test]
+    fn apply_conversation_history_inserts_openai_turns_before_current_user() {
+        let mut body = json!({
+            "model": "m",
+            "messages": [
+                { "role": "system", "content": "sys" },
+                { "role": "user", "content": "now" }
+            ]
+        });
+        apply_conversation_history(&mut body, ProviderBodyShape::OpenAiLike, &sample_history());
+        let messages = body["messages"].as_array().expect("messages array");
+        // system, first question, first answer, current user — in order.
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "first question");
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "first answer");
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(messages[3]["content"], "now");
+    }
+
+    #[test]
+    fn apply_conversation_history_marks_only_last_anthropic_turn_for_caching() {
+        let mut body = json!({
+            "model": "m",
+            "max_tokens": 1024,
+            "messages": [{ "role": "user", "content": "now" }]
+        });
+        apply_conversation_history(&mut body, ProviderBodyShape::Anthropic, &sample_history());
+        let messages = body["messages"].as_array().expect("messages array");
+        assert_eq!(messages.len(), 3);
+        // First history turn: plain string content, no cache breakpoint.
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "first question");
+        // Last history turn carries the ephemeral cache_control breakpoint.
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"][0]["type"], "text");
+        assert_eq!(messages[1]["content"][0]["text"], "first answer");
+        assert_eq!(
+            messages[1]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        // Current turn stays last and stays a plain string (the changing tail).
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"], "now");
+    }
+
+    #[test]
+    fn apply_conversation_history_maps_gemini_roles_before_current_turn() {
+        let mut body = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": "now" }] }]
+        });
+        apply_conversation_history(&mut body, ProviderBodyShape::Gemini, &sample_history());
+        let contents = body["contents"].as_array().expect("contents array");
+        assert_eq!(contents.len(), 3);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "first question");
+        // Assistant turns map to Gemini's "model" role.
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[1]["parts"][0]["text"], "first answer");
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(contents[2]["parts"][0]["text"], "now");
+    }
+
+    #[test]
+    fn apply_conversation_history_flattens_into_ollama_generate_prompt() {
+        let mut body = json!({
+            "model": "m",
+            "system": "sys",
+            "prompt": "Current user request:\nnow"
+        });
+        apply_conversation_history(&mut body, ProviderBodyShape::OllamaGenerate, &sample_history());
+        let prompt = body["prompt"].as_str().expect("prompt string");
+        assert!(prompt.starts_with("Recent conversation:\n"));
+        assert!(prompt.contains("User: first question"));
+        assert!(prompt.contains("Assistant: first answer"));
+        assert!(prompt.ends_with("Current user request:\nnow"));
     }
 
     #[test]

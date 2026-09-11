@@ -24,9 +24,9 @@ use super::extraction::{
 };
 use super::prompt::build_ai_prompt;
 use super::providers::{
-    apply_attachments, apply_native_tools, build_provider_request_body_with_thinking,
-    effective_wire_provider, parse_models_list_response, resolve_provider_body_shape,
-    streaming_endpoint, streaming_request_body_with_thinking,
+    apply_attachments, apply_conversation_history, apply_native_tools,
+    build_provider_request_body_with_thinking, effective_wire_provider, parse_models_list_response,
+    resolve_provider_body_shape, streaming_endpoint, streaming_request_body_with_thinking,
 };
 use super::{ai_http_client, run_blocking_storage_task, FetchedModel, AI_REQUEST_CANCELLED_ERROR};
 
@@ -167,6 +167,11 @@ pub(crate) async fn execute_ai_stream_request(
         &prompt,
         &request.mode,
         request.enable_thinking,
+    );
+    apply_conversation_history(
+        &mut body,
+        resolve_provider_body_shape(&config, &base_endpoint),
+        &request.history,
     );
     apply_attachments(
         &mut body,
@@ -364,6 +369,11 @@ pub(crate) async fn execute_ai_request(
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
             );
+            apply_conversation_history(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &request.history,
+            );
             apply_attachments(
                 &mut body,
                 resolve_provider_body_shape(&config, &endpoint),
@@ -512,6 +522,11 @@ pub(crate) async fn execute_ai_request(
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
             );
+            apply_conversation_history(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &request.history,
+            );
             apply_attachments(
                 &mut body,
                 resolve_provider_body_shape(&config, &endpoint),
@@ -628,6 +643,11 @@ pub(crate) async fn execute_ai_request(
                 &config.provider_type,
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
+            );
+            apply_conversation_history(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &request.history,
             );
             apply_attachments(
                 &mut body,

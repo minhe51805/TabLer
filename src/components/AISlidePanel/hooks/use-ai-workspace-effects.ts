@@ -68,7 +68,7 @@ async function recoverStrippedAttachmentMetadata(state: PersistedAIWorkspaceStat
 }
 
 export function useAIWorkspaceEffects(options: Record<string, any>) {
-  const { historyHydrated, isOpen, setChatThreads, setBubbles, setWorkspaceInteractionModes, setActiveThreadIdsByWorkspace, currentWorkspaceKey, initialThreadRef, activeThreadId, setActiveThreadId, setHistoryHydrated, hasConversation, scrollChatToLatest, currentThread, isGenerating, latestConversationBubbleId, latestConversationBubbleSnapshot, chatThreadRef, setIsHistoryOpen, isOpenRef, openSessionRef, visualizationApprovalScopeRef, setIsSessionDataReadEnabled, visualizationConsentResolverRef, setVisualizationConsentPending, destructiveConsentResolverRef, setDestructiveConsentPending, isHistoryOpen, historyPanelRef, aiConfigs, loadAIConfigs, workspaceThreads, recentWorkspaceThreads, activeThreadIdsByWorkspace, lastWorkspaceKeyRef, setAttachedSelection, setDetailBubbleId, setPromptDraft, setError, initialPromptNonce, initialPrompt, composerTextareaRef, initialAttachmentNonce, initialAttachment, detailBubbleId, onClose, historySaveTimerRef, bubbleDismissTimersRef, bubbles, chatThreads, workspaceInteractionModes, persistHistoryState } = options;
+  const { historyHydrated, isOpen, setChatThreads, setBubbles, setWorkspaceInteractionModes, setActiveThreadIdsByWorkspace, currentWorkspaceKey, initialThreadRef, activeThreadId, setActiveThreadId, setHistoryHydrated, hasConversation, scrollChatToLatest, currentThread, isGenerating, latestConversationBubbleId, latestConversationBubbleSnapshot, chatThreadRef, setIsHistoryOpen, isOpenRef, openSessionRef, visualizationApprovalScopeRef, setIsSessionDataReadEnabled, visualizationConsentResolverRef, setVisualizationConsentPending, destructiveConsentResolverRef, setDestructiveConsentPending, isHistoryOpen, historyPanelRef, aiConfigs, loadAIConfigs, workspaceThreads, recentWorkspaceThreads, activeThreadIdsByWorkspace, lastWorkspaceKeyRef, setAttachedSelection, setPromptDraft, setError, initialPromptNonce, initialPrompt, composerTextareaRef, initialAttachmentNonce, initialAttachment, onClose, historySaveTimerRef, bubbleDismissTimersRef, bubbles, chatThreads, workspaceInteractionModes, persistHistoryState } = options;
   useEffect(() => {
     if (historyHydrated || !isOpen) return;
 
@@ -283,7 +283,6 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
     }
     lastWorkspaceKeyRef.current = currentWorkspaceKey;
     setAttachedSelection(null);
-    setDetailBubbleId(null);
     setPromptDraft("");
     visualizationApprovalScopeRef.current = null;
     setIsSessionDataReadEnabled(false);
@@ -323,15 +322,11 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (detailBubbleId) {
-        setDetailBubbleId(null);
-        return;
-      }
       onClose();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [detailBubbleId, isOpen, onClose]);
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     return () => {
@@ -369,7 +364,6 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
       const timerId = window.setTimeout(() => {
         bubbleDismissTimersRef.current.delete(bubble.id);
         setBubbles((current: any) => current.filter((currentBubble: any) => currentBubble.id !== bubble.id));
-        setDetailBubbleId((current: any) => (current === bubble.id ? null : current));
       }, remainingMs);
 
       bubbleDismissTimersRef.current.set(bubble.id, timerId);

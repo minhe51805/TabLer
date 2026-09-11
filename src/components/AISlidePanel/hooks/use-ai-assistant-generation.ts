@@ -40,7 +40,7 @@ import {
   type VisualizationSelectionContext,
 } from "../ai-visualization-intent";
 import type { useAIDashboardBubbleUpdates } from "./use-ai-dashboard-bubble-updates";
-import { isSupersededAIRequestError } from "./use-ai-slide-panel";
+import { isSupersededAIRequestError } from "../ai-agent-action-requestor";
 import type { useAISlidePanel } from "./use-ai-slide-panel";
 
 type AISlidePanelActions = ReturnType<typeof useAISlidePanel>;
@@ -264,10 +264,16 @@ export function useAIAssistantGeneration({
 
   useEffect(() => {
     const bubbleId = activeGenerationBubbleIdRef.current;
-    if (!bubbleId || !streamingText) return;
+    if (!bubbleId) return;
+    // Mirror the live stream into the loading bubble's body. This intentionally
+    // also runs when streamingText resets to "" at the start of each askAI turn,
+    // which CLEARS a stale body between agent phases: the opening acknowledgement
+    // is streamed here first, then recorded as the "plan" step — without clearing
+    // it would linger and render a second time as duplicate body text under the
+    // step log. Only the genuine finish answer streams back into the body later.
     setBubbles((current) =>
       current.map((bubble) =>
-        bubble.id === bubbleId && bubble.status === "loading"
+        bubble.id === bubbleId && bubble.status === "loading" && bubble.detail !== streamingText
           ? { ...bubble, detail: streamingText }
           : bubble,
       ),

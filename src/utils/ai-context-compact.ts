@@ -13,6 +13,13 @@ import { getBubbleConversationText } from "../components/AISlidePanel/ai-convers
 export const COMPACT_COMMAND = "/compact";
 /** Approximate character budget of the summarized digest. */
 export const COMPACT_DIGEST_CHAR_BUDGET = 2400;
+/**
+ * Header that tags the workspace-context (digest) message. Exported as the
+ * single source of truth so downstream history trimming can always recognize
+ * and preserve the digest — that is what keeps cross-turn memory alive.
+ */
+export const WORKSPACE_CONTEXT_MESSAGE_PREFIX =
+  "[Workspace context — keep this in mind for the task]";
 /** Total request-history characters after which sending auto-compacts first. */
 export const AUTO_COMPACT_TRIGGER_CHARS = 24_000;
 
@@ -168,7 +175,7 @@ export function buildWorkspaceContextMessages(
   return [
     {
       role: "user",
-      content: `[Workspace context — keep this in mind for the task]\n${bounded}`,
+      content: `${WORKSPACE_CONTEXT_MESSAGE_PREFIX}\n${bounded}`,
     },
     {
       role: "assistant",

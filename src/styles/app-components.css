@@ -33983,6 +33983,26 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   color: var(--text-primary);
 }
 
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-action-icon {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--mm-border);
+  border-radius: 7px;
+  background: var(--mm-surface-1);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-action-icon:hover {
+  border-color: color-mix(in srgb, var(--mm-accent) 35%, var(--mm-border));
+  background: var(--mm-surface-2);
+  color: var(--text-primary);
+}
+
 .app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock {
   display: grid;
   grid-template-columns: minmax(68px, auto) minmax(72px, 1fr) 28px;

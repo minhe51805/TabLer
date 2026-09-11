@@ -179,10 +179,10 @@ describe("AI workspace components", () => {
         bubbles={[]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={vi.fn()}
+        onCopy={vi.fn()}
         onOpenRecord={vi.fn()}
         onUseSuggestion={onUseSuggestion}
       />,
@@ -193,10 +193,9 @@ describe("AI workspace components", () => {
     expect(onUseSuggestion).toHaveBeenCalledWith(firstIdea.prompt);
   });
 
-  it("exposes run, detail, and insert actions for an agent SQL response", async () => {
+  it("exposes run and insert actions for an agent SQL response", async () => {
     const user = userEvent.setup();
     const onRun = vi.fn();
-    const onOpenDetail = vi.fn();
     const onInsert = vi.fn();
     const bubble: AIWorkspaceBubbleData = {
       id: "bubble-1",
@@ -221,10 +220,10 @@ describe("AI workspace components", () => {
         bubbles={[bubble]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={onOpenDetail}
         onInsert={onInsert}
         onRun={onRun}
         onRetry={vi.fn()}
+        onCopy={vi.fn()}
         onOpenRecord={vi.fn()}
         onUseSuggestion={vi.fn()}
       />,
@@ -233,12 +232,9 @@ describe("AI workspace components", () => {
     await user.click(screen.getByRole("button", { name: copy.bubbleActions.approveRun }));
     expect(onRun).toHaveBeenCalledWith(bubble);
 
-    await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: copy.bubbleActions.detail }));
-    expect(onOpenDetail).toHaveBeenCalledWith(bubble);
-
-    await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: copy.bubbleActions.insert }));
+    // Insert is now an inline icon button (the "More actions" popover was
+    // replaced by a flat action row).
+    await user.click(screen.getByRole("button", { name: copy.bubbleActions.insert }));
     expect(onInsert).toHaveBeenCalledWith(bubble);
   });
 
@@ -277,10 +273,10 @@ describe("AI workspace components", () => {
         bubbles={[bubble]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={onRetry}
+        onCopy={vi.fn()}
         onOpenRecord={vi.fn()}
         onUseSuggestion={vi.fn()}
       />,
@@ -328,10 +324,10 @@ describe("AI workspace components", () => {
         bubbles={[bubble]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={vi.fn()}
+        onCopy={vi.fn()}
         onOpenRecord={onOpenRecord}
         onUseSuggestion={vi.fn()}
       />,
@@ -378,10 +374,10 @@ describe("AI workspace components", () => {
         bubbles={[bubble]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={vi.fn()}
+        onCopy={vi.fn()}
         onOpenRecord={vi.fn()}
         onUseSuggestion={vi.fn()}
         onAskUserOptionSelect={onAskUserOptionSelect}
@@ -434,10 +430,10 @@ describe("AI workspace components", () => {
         bubbles={[bubble]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={vi.fn()}
+        onCopy={vi.fn()}
         onOpenRecord={vi.fn()}
         onUseSuggestion={vi.fn()}
       />,

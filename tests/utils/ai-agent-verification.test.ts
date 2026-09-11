@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   collectObservedNumbers,
   extractClaimedNumbers,
+  nearestKnownIdentifier,
   normalizeClaimedNumber,
   verifyAgentResponseAgainstEvidence,
 } from "@/components/AISlidePanel/ai-agent-verification";
@@ -52,7 +53,7 @@ describe("verifyAgentResponseAgainstEvidence", () => {
   });
 
   it("passes through empty responses", () => {
-    expect(verifyAgentResponseAgainstEvidence(undefined, [])).toEqual({ ok: true, unsupported: [] });
+    expect(verifyAgentResponseAgainstEvidence(undefined, [])).toEqual({ ok: true, unsupported: [], unsupportedIdentifiers: [] });
   });
 
   it("collects numbers from structured observation keys", () => {
@@ -62,5 +63,69 @@ describe("verifyAgentResponseAgainstEvidence", () => {
     ]);
     expect(observed.has(42)).toBe(true);
     expect(observed.has(1337)).toBe(true);
+  });
+});
+
+describe("identifier verification", () => {
+  it("flags two or more table/column names no schema or observation witnessed", () => {
+    const verification = verifyAgentResponseAgainstEvidence(
+      "Kết quả lấy từ bảng `phantom_users` và cột `ghost_total`.",
+      [step('{ "rowCount": 10 }')],
+    );
+    expect(verification.ok).toBe(false);
+    const cited = verification.unsupportedIdentifiers.map((item) => item.cited);
+    expect(cited).toContain("phantom_users");
+    expect(cited).toContain("ghost_total");
+  });
+
+  it("accepts names present in the live schema even when no tool touched them", () => {
+    const verification = verifyAgentResponseAgainstEvidence(
+      "Bảng `customers` và `orders` đều có dữ liệu.",
+      [step('{ "rowCount": 10 }')],
+      ["public.customers", "public.orders"],
+    );
+    expect(verification.ok).toBe(true);
+    expect(verification.unsupportedIdentifiers).toEqual([]);
+  });
+
+  it("accepts names the trace actually observed", () => {
+    const verification = verifyAgentResponseAgainstEvidence(
+      "Bảng `invoices` và cột `amount` có sẵn.",
+      [step('[{ "name": "invoices" }, { "column": "amount" }]')],
+    );
+    expect(verification.ok).toBe(true);
+  });
+
+  it("attaches a did-you-mean suggestion for a near-miss identifier", () => {
+    const verification = verifyAgentResponseAgainstEvidence(
+      "Bảng `custmers` và `ordrs` cần kiểm tra lại.",
+      [step('{ "rowCount": 5 }')],
+      ["customers", "orders"],
+    );
+    expect(verification.ok).toBe(false);
+    const suggestions = Object.fromEntries(
+      verification.unsupportedIdentifiers.map((item) => [item.cited, item.suggestion]),
+    );
+    expect(suggestions.custmers).toBe("customers");
+    expect(suggestions.ordrs).toBe("orders");
+  });
+
+  it("tolerates a single stray identifier below the limit", () => {
+    const verification = verifyAgentResponseAgainstEvidence(
+      "Chỉ mỗi bảng `ghosttable` là lạ.",
+      [step('{ "rowCount": 5 }')],
+    );
+    expect(verification.ok).toBe(true);
+    expect(verification.unsupportedIdentifiers).toHaveLength(1);
+  });
+});
+
+describe("nearestKnownIdentifier", () => {
+  it("suggests the closest known name within the edit-distance budget", () => {
+    expect(nearestKnownIdentifier("custmer", ["customer", "orders", "products"])).toBe("customer");
+  });
+
+  it("returns undefined when nothing is close enough", () => {
+    expect(nearestKnownIdentifier("xyzzy", ["customer", "orders"])).toBeUndefined();
   });
 });

@@ -151,11 +151,12 @@ describe("AI agent tool schema", () => {
     // JSON-Schema-only keys must not leak into the wire format.
     expect(JSON.stringify(parameters)).not.toContain("additionalProperties");
     expect(JSON.stringify(parameters)).not.toContain("uniqueItems");
-    // Number bounds rename to minValue/maxValue.
+    // Number bounds keep their JSON Schema names (minimum/maximum) — the Gemini
+    // Schema proto uses those exact fields, NOT minValue/maxValue.
     const limit = (parameters.properties as Record<string, Record<string, unknown>>).limit;
     expect(limit.type).toBe("INTEGER");
-    expect(limit.maximum).toBeUndefined();
-    expect(limit.maxValue).toBe(AI_AGENT_SAMPLE_MAX_ROWS);
+    expect(limit.maxValue).toBeUndefined();
+    expect(limit.maximum).toBe(AI_AGENT_SAMPLE_MAX_ROWS);
   });
 
   it("lists every registry tool in the controller catalog, and only non-SQL tools when tools are off", () => {

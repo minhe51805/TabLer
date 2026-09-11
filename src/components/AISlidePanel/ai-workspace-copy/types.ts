@@ -13,9 +13,6 @@ export interface AIWorkspaceCopy {
     ready: string;
   };
   bubbleActions: {
-    dragBubble: string;
-    dragPointer: string;
-    dismissBubble: string;
     detail: string;
     copy: string;
     insert: string;
@@ -113,6 +110,12 @@ export interface AIWorkspaceCopy {
     thinkingOn: string;
     thinkingOff: string;
     autoProviderSwitchLabel: string;
+    dataReadToggleLabel: string;
+    toggleConfirmTitle: string;
+    toggleConfirmMessageEnable: string;
+    toggleConfirmMessageDisable: string;
+    toggleConfirmConfirm: string;
+    toggleConfirmCancel: string;
     newChatTitle: string;
     reloadChatTitle: string;
     modeNeedsSchemaHint: string;
@@ -179,6 +182,7 @@ export interface AIWorkspaceCopy {
     openedInWorkspaceTitle: string;
     openedInWorkspaceSubtitle: string;
     openedInWorkspacePreview: string;
+    failoverErrorDetails: string;
   };
   attachments: {
     attachButton: string;

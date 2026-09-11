@@ -1,4 +1,4 @@
-import { CornerDownLeft, ExternalLink, Eye, FileText, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
+import { Check, Copy, CornerDownLeft, ExternalLink, FileText, Info, Play, RotateCcw, Sparkles } from "lucide-react";
 import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
@@ -6,6 +6,7 @@ import {
   aiModeAllowsRun,
   type AIWorkspaceAttachment,
   type AIWorkspaceBubbleData,
+  type AIWorkspaceFailoverNote,
 } from "./ai-workspace-types";
 import {
   getBubbleConversationText,
@@ -18,15 +19,16 @@ import { AIImageViewer } from "./AIImageViewer";
 import { AIAgentSteps } from "./AIAgentSteps";
 import { extractAgentRecordLinks, type AIAgentRecordLink } from "./ai-agent-record-links";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
+import { AIThinkingTrace } from "./AIThinkingTrace";
 
 interface AIConversationViewProps {
   bubbles: AIWorkspaceBubbleData[];
   copy: AIWorkspaceCopy;
   threadRef: RefObject<HTMLDivElement | null>;
-  onOpenDetail: (bubble: AIWorkspaceBubbleData) => void;
   onInsert: (bubble: AIWorkspaceBubbleData) => void;
   onRun: (bubble: AIWorkspaceBubbleData) => void;
   onRetry: (bubble: AIWorkspaceBubbleData) => void;
+  onCopy: (bubble: AIWorkspaceBubbleData) => Promise<boolean> | void;
   onOpenRecord: (link: AIAgentRecordLink) => void;
   onUseSuggestion: (prompt: string) => void;
   /** One-click reply: sends the chosen ask_user option (or an inline
@@ -128,6 +130,45 @@ function AIAttachmentFileChips({ attachments }: { attachments: AIWorkspaceAttach
   );
 }
 
+/** Provider-failover footer: a terse "Provider X bị lỗi" summary per failover
+ *  event with an info button that toggles the raw provider error inline, so the
+ *  long payload stays out of the answer body but one click away. */
+function AIFailoverNotes({
+  notes,
+  copy,
+}: {
+  notes: AIWorkspaceFailoverNote[];
+  copy: AIWorkspaceCopy;
+}) {
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  return (
+    <div className="ai-workspace-failover-notes">
+      {notes.map((note, index) => (
+        <div key={`${note.summary}-${index}`} className="ai-workspace-failover-note">
+          <div className="ai-workspace-failover-note-head">
+            <span className="ai-workspace-failover-note-summary">{note.summary}</span>
+            {note.detail && (
+              <button
+                type="button"
+                className="ai-workspace-failover-note-info"
+                aria-label={copy.bubbleStates.failoverErrorDetails}
+                aria-expanded={openIndex === index}
+                title={copy.bubbleStates.failoverErrorDetails}
+                onClick={() => setOpenIndex((current) => (current === index ? null : index))}
+              >
+                <Info className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+          {note.detail && openIndex === index && (
+            <pre className="ai-workspace-failover-note-detail">{note.detail}</pre>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** ask_user reply block: renders the model's options as one-click buttons and,
  *  when the user picks "type your own", reveals an inline text field right
  *  under the options so they can send a free-form answer without hunting for
@@ -220,39 +261,29 @@ export const AIConversationView = memo(function AIConversationView({
   bubbles,
   copy,
   threadRef,
-  onOpenDetail,
   onInsert,
   onRun,
   onRetry,
+  onCopy,
   onOpenRecord,
   onUseSuggestion,
   onAskUserOptionSelect,
 }: AIConversationViewProps) {
-  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
   const [viewerImage, setViewerImage] = useState<{ url: string; name: string } | null>(null);
+  const [copiedBubbleId, setCopiedBubbleId] = useState<string | null>(null);
   const hasConversation = bubbles.length > 0;
 
-  useEffect(() => {
-    if (!openActionMenuId) return;
-
-    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
-      const target = event.target as Element | null;
-      if (target?.closest(".ai-workspace-chat-action-menu")) return;
-      setOpenActionMenuId(null);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpenActionMenuId(null);
-    };
-
-    window.addEventListener("mousedown", handlePointerDown, true);
-    window.addEventListener("touchstart", handlePointerDown, true);
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown, true);
-      window.removeEventListener("touchstart", handlePointerDown, true);
-      window.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [openActionMenuId]);
+  const handleCopyClick = (bubble: AIWorkspaceBubbleData) => {
+    void Promise.resolve(onCopy(bubble)).then((copied) => {
+      // `onCopy` returns false only when the clipboard write failed; a void
+      // return (legacy callers) is treated as success.
+      if (copied === false) return;
+      setCopiedBubbleId(bubble.id);
+      window.setTimeout(() => {
+        setCopiedBubbleId((current) => (current === bubble.id ? null : current));
+      }, 1600);
+    });
+  };
 
   return (
     <div className="ai-workspace-chat-shell">
@@ -261,6 +292,10 @@ export const AIConversationView = memo(function AIConversationView({
           <div ref={threadRef} className="ai-workspace-chat-thread">
             {bubbles.map((bubble, bubbleIndex) => {
               const conversationText = getBubbleConversationText(bubble);
+              // The model's live chain-of-thought: streamed token by token from
+              // `reasoning_delta` while loading, retained afterwards. Powers the
+              // collapsible "Thinking" trace panel below.
+              const reasoningText = bubble.reasoning?.trim();
               // ask_user bubbles at the tail of the thread render their
               // options as one-click reply buttons instead of plain text.
               const askUserOptions = bubble.askUserOptions?.length
@@ -283,9 +318,6 @@ export const AIConversationView = memo(function AIConversationView({
                     (step.action === "run_readonly_sql" || step.action === "sample_table_data")
                     && step.status === "done",
                 ) === true;
-              const canShowDetail = !agentReadLiveData
-                && bubble.status !== "loading"
-                && Boolean(bubble.detail || bubble.preview || bubble.sql);
               const canInsert = !agentReadLiveData && Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
               const canRun = Boolean(bubble.sql)
                 && bubble.kind !== "result"
@@ -293,6 +325,8 @@ export const AIConversationView = memo(function AIConversationView({
                 && aiModeAllowsRun(bubble.interactionMode);
               const canRetry = bubble.retryable !== false
                 && (bubble.status === "error" || bubble.status === "partial" || bubble.status === "cancelled");
+              const canCopy = bubble.status !== "loading"
+                && Boolean(bubble.sql || bubble.detail || bubble.preview);
 
               return (
                 <article key={`chat-${bubble.id}`} className="ai-workspace-chat-turn">
@@ -338,17 +372,44 @@ export const AIConversationView = memo(function AIConversationView({
                     )}
                     {hasVisibleAgentProgress
                       && <AIAgentSteps steps={bubble.agentSteps ?? []} compact durationMs={bubble.settledAt ? Math.max(0, bubble.settledAt - bubble.createdAt) : undefined} />}
+                    {reasoningText && !hasVisibleAgentProgress && (
+                      <AIThinkingTrace
+                        text={reasoningText}
+                        streaming={bubble.status === "loading"}
+                        copy={copy}
+                      />
+                    )}
+                    {bubble.status === "loading" && hasVisibleAgentProgress && bubble.detail?.trim() && conversationText && (
+                      // Agent turns stream a JSON tool action, so the finish answer
+                      // is pulled from the partial JSON (aiStore) and rendered live
+                      // here under the step log — the reply fills in token by token
+                      // instead of appearing all at once when the run settles.
+                      // Gate on the streamed `detail` (not the preview fallback) so
+                      // the body stays empty between phases: the opening
+                      // acknowledgement already shows as the "plan" step, so it must
+                      // not also duplicate here once the tool loop starts.
+                      <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={displayConversationText} />
+                    )}
                     {bubble.status === "loading" && !hasVisibleAgentProgress ? (
-                      <div className="ai-workspace-thinking-line">
-                        <span className="ai-workspace-thinking-orb" aria-hidden="true" />
-                        <span className="ai-workspace-thinking-shimmer">
-                          {conversationText || copy.bubbleMeta.thinking}
-                        </span>
-                      </div>
+                      // The live thinking trace above already carries the "model
+                      // is working" feedback while it streams reasoning, so only
+                      // fall back to the plain shimmer once real answer text lands
+                      // or when the model streams no reasoning at all.
+                      (conversationText || !reasoningText) ? (
+                        <div className="ai-workspace-thinking-line">
+                          <span className="ai-workspace-thinking-orb" aria-hidden="true" />
+                          <span className="ai-workspace-thinking-shimmer">
+                            {conversationText || copy.bubbleMeta.thinking}
+                          </span>
+                        </div>
+                      ) : null
                     ) : bubble.status !== "loading" ? (
                       conversationText
                         && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={displayConversationText} />
                     ) : null}
+                    {bubble.failoverNotes && bubble.failoverNotes.length > 0 && (
+                      <AIFailoverNotes notes={bubble.failoverNotes} copy={copy} />
+                    )}
                     {askUserOptions && (
                       <AIAskUserReply
                         options={askUserOptions}
@@ -374,7 +435,7 @@ export const AIConversationView = memo(function AIConversationView({
                     {bubble.sql && bubble.status !== "error" && (
                       <AIWorkspaceSqlBlock code={bubble.sql} />
                     )}
-                    {(canShowDetail || canInsert || canRun || canRetry) && (
+                    {(canInsert || canRun || canRetry || canCopy) && (
                       <div className="ai-workspace-chat-actions">
                         {canRetry && (
                           <button
@@ -396,52 +457,27 @@ export const AIConversationView = memo(function AIConversationView({
                             <span>{copy.bubbleActions.approveRun}</span>
                           </button>
                         )}
-                        {(canShowDetail || canInsert) && (
-                          <div className={`ai-workspace-chat-action-menu ${openActionMenuId === bubble.id ? "is-open" : ""}`}>
-                            <button
-                              type="button"
-                              className="ai-workspace-chat-action-menu-trigger"
-                              aria-expanded={openActionMenuId === bubble.id}
-                              aria-haspopup="menu"
-                              title="More actions"
-                              aria-label="More actions"
-                              onClick={() => setOpenActionMenuId((current) => current === bubble.id ? null : bubble.id)}
-                            >
-                              <MoreHorizontal className="w-3.5 h-3.5" />
-                            </button>
-                            {openActionMenuId === bubble.id && (
-                              <div className="ai-workspace-chat-action-popover" role="menu">
-                                {canShowDetail && (
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="ai-workspace-chat-action-item"
-                                    onClick={() => {
-                                      setOpenActionMenuId(null);
-                                      onOpenDetail(bubble);
-                                    }}
-                                  >
-                                    <Eye className="w-3.5 h-3.5" />
-                                    <span>{copy.bubbleActions.detail}</span>
-                                  </button>
-                                )}
-                                {canInsert && (
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="ai-workspace-chat-action-item"
-                                    onClick={() => {
-                                      setOpenActionMenuId(null);
-                                      onInsert(bubble);
-                                    }}
-                                  >
-                                    <CornerDownLeft className="w-3.5 h-3.5" />
-                                    <span>{copy.bubbleActions.insert}</span>
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                        {canCopy && (
+                          <button
+                            type="button"
+                            className="ai-workspace-chat-action-icon"
+                            onClick={() => handleCopyClick(bubble)}
+                            title={copy.bubbleActions.copy}
+                            aria-label={copy.bubbleActions.copy}
+                          >
+                            {copiedBubbleId === bubble.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                        {canInsert && (
+                          <button
+                            type="button"
+                            className="ai-workspace-chat-action-icon"
+                            onClick={() => onInsert(bubble)}
+                            title={copy.bubbleActions.insert}
+                            aria-label={copy.bubbleActions.insert}
+                          >
+                            <CornerDownLeft className="w-3.5 h-3.5" />
+                          </button>
                         )}
                       </div>
                     )}

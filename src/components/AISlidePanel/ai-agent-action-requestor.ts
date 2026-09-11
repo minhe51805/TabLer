@@ -46,6 +46,11 @@ interface AgentActionRequestorDeps {
   requestId: number;
   requestIdRef: RefObject<number>;
   requestHistory: AIConversationMessage[];
+  /** Image attachments for this run. They ride EVERY model call so whichever
+   *  step ends up composing the final answer can still see the image. Sending
+   *  them only on the first controller call made multi-step (agent) runs reply
+   *  "I don't see any image", because the finish step landed on a later call. */
+  imageAttachments?: AIRequestAttachment[];
   /** Notified before each in-line retry wait so the UI can show the wait. */
   onRetryWait?: (info: AgentRetryWaitInfo) => void;
   /** Correlation id stamped onto every model call of this run (event scoping). */
@@ -70,6 +75,7 @@ export function createAgentActionRequestor(deps: AgentActionRequestorDeps) {
     requestId,
     requestIdRef,
     requestHistory,
+    imageAttachments,
     onRetryWait,
     correlationId,
     retryPolicy = DEFAULT_AGENT_RETRY_POLICY,
@@ -130,7 +136,9 @@ export function createAgentActionRequestor(deps: AgentActionRequestorDeps) {
         ? `${controllerPrompt}\n\nRepair note:\n${extraInstruction}`
         : controllerPrompt,
       includeHistory ? requestHistory : [],
-      attachments,
+      // The run's images ride every model call (unless a caller overrides) so
+      // the composing/finish step still sees them, not just the first call.
+      attachments ?? imageAttachments,
     );
     if (requestId !== requestIdRef.current) {
       throw new Error(AI_REQUEST_REPLACED_MESSAGE);

@@ -6,6 +6,7 @@ import {
 } from "./AISlidePanelUtils";
 import type { AgentToolAvailability } from "./ai-agent-engine-gates";
 import { formatAgentToolCatalog, NATIVE_TOOL_CALLING_ENABLED } from "./ai-agent-tool-schema";
+import { rankAgentMemoriesByRelevance } from "./ai-agent-memory-recall";
 import type { AIWorkspaceAgentActionName, AIWorkspaceAgentStep } from "./ai-workspace-types";
 
 export type AssistIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error" | "general";
@@ -82,6 +83,61 @@ export function repeatCallDetailedReminder(
     + "these exact arguments again. Inspect the latest result and choose a "
     + "different action, different arguments, or finish the task if enough "
     + "evidence has been gathered.";
+}
+
+/**
+ * A tool observation is a FAILURE when the executor returned a "Tool error"
+ * or "Tool blocked" string instead of real evidence (same convention
+ * hasExecutedReadStep uses in ai-agent-quality-gates).
+ */
+export function isFailedToolObservation(observation: string): boolean {
+  const trimmed = observation.trimStart();
+  return trimmed.startsWith("Tool error") || trimmed.startsWith("Tool blocked");
+}
+
+/** Consecutive failed tool observations that trigger a mid-run reflection. */
+export const TOOL_ERROR_REFLECTION_THRESHOLD = 3;
+
+/**
+ * Counts how many of the most recent EXECUTED tool steps failed in an
+ * unbroken streak. Meta steps (plan/think/update_plan/checkpoints — they carry
+ * no real tool observation) are transparent: they neither count as a failure
+ * nor reset the streak, matching the repeat-call chain's meta transparency. Any
+ * successful tool observation ends the streak.
+ *
+ * Unlike the repeat-call guard (which only fires when the SAME call repeats),
+ * this catches a run grinding through DIFFERENT calls that all fail, so the
+ * controller can be nudged to step back and re-strategize.
+ */
+export function countTrailingToolErrors(steps: AgentTraceStep[]): number {
+  let count = 0;
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const step = steps[index];
+    if (!isRepeatTrackedAction(step.action)) continue;
+    if (isFailedToolObservation(step.observation)) {
+      count += 1;
+    } else {
+      break;
+    }
+  }
+  return count;
+}
+
+/**
+ * A "step back and re-strategize" instruction appended to the next controller
+ * prompt after a streak of failing tool calls. It asks the model to state what
+ * it has learned, name the shared blocker, and switch approach (different tool,
+ * corrected args, narrower query, ask_user) — or finish honestly when the
+ * data/capability is genuinely unavailable.
+ */
+export function toolErrorReflectionNudge(consecutiveErrors: number): string {
+  return `Reflection checkpoint: your last ${consecutiveErrors} tool calls in a row all failed `
+    + "(Tool error / Tool blocked). Stop repeating the same approach and re-strategize before the next call: "
+    + "(1) briefly state what you have actually confirmed so far from the observations above; "
+    + "(2) name the specific blocker these errors share; "
+    + "(3) choose a DIFFERENT approach that avoids it — a different tool, corrected arguments, a narrower query, "
+    + "or ask_user if the request is ambiguous. "
+    + "If the errors mean the data or capability is genuinely unavailable, finish now with an honest explanation instead of retrying.";
 }
 
 /**
@@ -494,13 +550,22 @@ export function buildAgentControllerPrompt(params: {
         ].join("\n")
       : "",
     (agentMemoryIndex ?? []).length > 0
-      ? [
-          "<agent_memory>",
-          ...(agentMemoryIndex ?? []).map((entry) =>
-            `<memory><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`),
-          "</agent_memory>",
-          "These are saved observations for THIS connection/database (freshness = <updated>). Load one of them with read_memory when it looks relevant; persist new durable facts with save_memory (never credentials; they are rejected).",
-        ].join("\n")
+      ? (() => {
+          // Recall: rank the saved memories by relevance to THIS request so the
+          // one that answers it is surfaced first and explicitly flagged,
+          // instead of relying on the model to notice it in storage order.
+          const ranked = rankAgentMemoriesByRelevance(agentMemoryIndex ?? [], userPrompt);
+          const anyRelevant = ranked.some((item) => item.relevant);
+          return [
+            "<agent_memory>",
+            ...ranked.map(({ entry, relevant }) =>
+              `<memory relevant="${relevant}"><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`),
+            "</agent_memory>",
+            anyRelevant
+              ? "These are saved observations for THIS connection/database (freshness = <updated>), ordered by relevance to the current request. Entries with relevant=\"true\" closely match what the user is asking — load them with read_memory FIRST, before other tools, and use them to answer. Persist new durable facts with save_memory (never credentials; they are rejected)."
+              : "These are saved observations for THIS connection/database (freshness = <updated>). Load one of them with read_memory when it looks relevant; persist new durable facts with save_memory (never credentials; they are rejected).",
+          ].join("\n");
+        })()
       : "",
     (queryTabs ?? []).length > 0
       ? [

@@ -1,5 +1,6 @@
 use crate::database::ai_models::{
-    AIProviderConfig, AIProviderType, AIRequestAttachment, AIRequestMode,
+    AIConversationMessage, AIConversationRole, AIProviderConfig, AIProviderType, AIRequestAttachment,
+    AIRequestMode,
 };
 use serde_json::json;
 #[cfg(test)]
@@ -11,14 +12,22 @@ use super::endpoints::{
 };
 use super::FetchedModel;
 
-pub(crate) fn streaming_request_body(
+pub(crate) fn streaming_request_body_with_thinking(
     config: &AIProviderConfig,
     endpoint: &str,
     system_prompt: &str,
     prompt: &str,
     mode: &AIRequestMode,
+    enable_thinking: Option<bool>,
 ) -> serde_json::Value {
-    let mut body = build_provider_request_body(config, endpoint, system_prompt, prompt, mode);
+    let mut body = build_provider_request_body_with_thinking(
+        config,
+        endpoint,
+        system_prompt,
+        prompt,
+        mode,
+        enable_thinking,
+    );
     if let Some(object) = body.as_object_mut() {
         if !matches!(
             config.provider_type,
@@ -40,6 +49,19 @@ pub(crate) fn streaming_request_body(
         }
     }
     body
+}
+
+/// Test-only 5-arg shim: preserves the default (capability-gated) thinking
+/// behaviour so the streaming body-shape tests stay concise.
+#[cfg(test)]
+pub(crate) fn streaming_request_body(
+    config: &AIProviderConfig,
+    endpoint: &str,
+    system_prompt: &str,
+    prompt: &str,
+    mode: &AIRequestMode,
+) -> serde_json::Value {
+    streaming_request_body_with_thinking(config, endpoint, system_prompt, prompt, mode, None)
 }
 
 /// The provider identity a config behaves as on the wire. Custom/Ollama
@@ -92,12 +114,45 @@ fn default_max_output_tokens(mode: &AIRequestMode) -> u32 {
     }
 }
 
+/// Extended-thinking token budget for Anthropic panel turns. Rides on TOP of the
+/// answer budget because Anthropic counts thinking tokens against `max_tokens`.
+const ANTHROPIC_THINKING_BUDGET_TOKENS: u32 = 2048;
+
+/// OpenAI-compatible models that emit chain-of-thought via the chat-template
+/// `enable_thinking` switch (DeepSeek-R1, Qwen "thinking"/QwQ builds). NVIDIA's
+/// integrate gateway hides reasoning behind that flag, so we only flip it on for
+/// models that actually understand it and leave every other model byte-identical.
+fn model_supports_openai_thinking_switch(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.contains("deepseek-r1")
+        || model.contains("qwq")
+        || model.contains("qwen3")
+        || model.contains("thinking")
+}
+
+/// Claude models with the extended-thinking API (`thinking` block). Older 3.5/3
+/// models reject the field with 400, so only positively-known families opt in.
+fn anthropic_model_supports_thinking(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.contains("claude-3-7")
+        || model.contains("claude-sonnet-4")
+        || model.contains("claude-opus-4")
+        || model.contains("claude-haiku-4")
+}
+
+/// Gemini models that return "thought summary" parts when asked
+/// (`thinkingConfig.includeThoughts`). The 2.5 family; older models 400 on it.
+fn gemini_model_supports_thinking(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("2.5")
+}
+
 fn build_openai_like_body(
     model: &str,
     system_prompt: &str,
     prompt: &str,
     mode: &AIRequestMode,
     endpoint: &str,
+    enable_thinking: Option<bool>,
 ) -> serde_json::Value {
     let mut body = json!({
         "model": model,
@@ -110,7 +165,18 @@ fn build_openai_like_body(
     });
 
     if is_nvidia_integrate_endpoint(endpoint) {
-        body["chat_template_kwargs"] = json!({ "enable_thinking": false });
+        // NVIDIA's integrate gateway hides reasoning behind the chat-template
+        // `enable_thinking` switch. Turn it on for reasoning models in the panel
+        // (where the "Thinking…" trace lives) so DeepSeek-R1 & co. emit their
+        // `reasoning_content`; keep it off for non-reasoning models and the terse
+        // inline path so those bodies stay byte-identical and never 400 on a kwarg
+        // the model's chat template does not understand.
+        // The user's panel toggle can force it off (save tokens); otherwise it
+        // stays capability-gated so unknown models never get a kwarg they'd 400 on.
+        let thinking_on = enable_thinking.unwrap_or(true)
+            && matches!(mode, AIRequestMode::Panel)
+            && model_supports_openai_thinking_switch(model);
+        body["chat_template_kwargs"] = json!({ "enable_thinking": thinking_on });
     }
 
     body
@@ -121,26 +187,63 @@ fn build_anthropic_body(
     system_prompt: &str,
     prompt: &str,
     mode: &AIRequestMode,
+    enable_thinking: Option<bool>,
 ) -> serde_json::Value {
-    json!({
+    let mut body = json!({
         "system": system_prompt,
         "model": model,
         "max_tokens": default_max_output_tokens(mode),
         "messages": [
             { "role": "user", "content": prompt }
         ]
-    })
+    });
+
+    // Extended thinking: only for panel turns on models that support it, so the
+    // collapsible "Thinking…" trace gets Claude's real reasoning. The budget rides
+    // on TOP of the answer budget (Anthropic counts thinking tokens against
+    // `max_tokens`), temperature stays unset, and `tool_choice` is "auto" app-wide,
+    // so this never trips the forced-tool / temperature incompatibilities.
+    if enable_thinking.unwrap_or(true)
+        && matches!(mode, AIRequestMode::Panel)
+        && anthropic_model_supports_thinking(model)
+    {
+        let budget_tokens = ANTHROPIC_THINKING_BUDGET_TOKENS;
+        body["max_tokens"] = json!(default_max_output_tokens(mode) + budget_tokens);
+        body["thinking"] = json!({ "type": "enabled", "budget_tokens": budget_tokens });
+    }
+
+    body
 }
 
-fn build_gemini_body(system_prompt: &str, prompt: &str) -> serde_json::Value {
-    json!({
+fn build_gemini_body(
+    model: &str,
+    system_prompt: &str,
+    prompt: &str,
+    mode: &AIRequestMode,
+    enable_thinking: Option<bool>,
+) -> serde_json::Value {
+    let mut body = json!({
         "systemInstruction": {
             "parts": [{ "text": system_prompt }]
         },
         "contents": [
             { "role": "user", "parts": [{ "text": prompt }] }
         ]
-    })
+    });
+
+    // Gemini 2.5 only returns "thought summary" parts when asked. Request them for
+    // panel turns so the "Thinking…" trace fills in; older models don't know the
+    // field and would 400, so gate on the 2.5 family.
+    if enable_thinking.unwrap_or(true)
+        && matches!(mode, AIRequestMode::Panel)
+        && gemini_model_supports_thinking(model)
+    {
+        body["generationConfig"] = json!({
+            "thinkingConfig": { "includeThoughts": true }
+        });
+    }
+
+    body
 }
 
 /// Wire shape a provider request body uses. Resolved once so body building and
@@ -320,12 +423,13 @@ fn supports_generate_content(entry: &serde_json::Value) -> bool {
     }
 }
 
-pub(crate) fn build_provider_request_body(
+pub(crate) fn build_provider_request_body_with_thinking(
     config: &AIProviderConfig,
     endpoint: &str,
     system_prompt: &str,
     prompt: &str,
     mode: &AIRequestMode,
+    enable_thinking: Option<bool>,
 ) -> serde_json::Value {
     match resolve_provider_body_shape(config, endpoint) {
         ProviderBodyShape::OllamaChat => {
@@ -347,13 +451,33 @@ pub(crate) fn build_provider_request_body(
             })
         }
         ProviderBodyShape::Anthropic => {
-            build_anthropic_body(&config.model, system_prompt, prompt, mode)
+            build_anthropic_body(&config.model, system_prompt, prompt, mode, enable_thinking)
         }
-        ProviderBodyShape::Gemini => build_gemini_body(system_prompt, prompt),
-        ProviderBodyShape::OpenAiLike => {
-            build_openai_like_body(&config.model, system_prompt, prompt, mode, endpoint)
+        ProviderBodyShape::Gemini => {
+            build_gemini_body(&config.model, system_prompt, prompt, mode, enable_thinking)
         }
+        ProviderBodyShape::OpenAiLike => build_openai_like_body(
+            &config.model,
+            system_prompt,
+            prompt,
+            mode,
+            endpoint,
+            enable_thinking,
+        ),
     }
+}
+
+/// Test-only 5-arg shim: preserves the default (capability-gated) thinking
+/// behaviour so the body-shape tests stay concise.
+#[cfg(test)]
+pub(crate) fn build_provider_request_body(
+    config: &AIProviderConfig,
+    endpoint: &str,
+    system_prompt: &str,
+    prompt: &str,
+    mode: &AIRequestMode,
+) -> serde_json::Value {
+    build_provider_request_body_with_thinking(config, endpoint, system_prompt, prompt, mode, None)
 }
 
 /// Injects user image attachments into an already-built request body for the
@@ -466,6 +590,151 @@ pub(crate) fn apply_attachments(
                 .collect();
             parts.push(json!({ "text": prompt }));
             last_content["parts"] = serde_json::Value::Array(parts);
+        }
+    }
+}
+
+/// Wire role name for the OpenAI/Anthropic chat message shape.
+fn chat_role(role: &AIConversationRole) -> &'static str {
+    match role {
+        AIConversationRole::User => "user",
+        AIConversationRole::Assistant => "assistant",
+    }
+}
+
+/// Wire role name for Gemini `contents` (assistant turns are `model`).
+fn gemini_role(role: &AIConversationRole) -> &'static str {
+    match role {
+        AIConversationRole::User => "user",
+        AIConversationRole::Assistant => "model",
+    }
+}
+
+/// Label for the flattened `/generate` transcript fallback.
+fn transcript_role(role: &AIConversationRole) -> &'static str {
+    match role {
+        AIConversationRole::User => "User",
+        AIConversationRole::Assistant => "Assistant",
+    }
+}
+
+/// Inserts `turns` into `array` right before `index`, clamped to the length.
+fn splice_before(array: &mut Vec<serde_json::Value>, index: usize, turns: Vec<serde_json::Value>) {
+    let index = index.min(array.len());
+    array.splice(index..index, turns);
+}
+
+/// Position of the current (last) turn with `role`, before which prior history
+/// is spliced. Falls back to the end when no such turn exists.
+fn last_role_index(array: &[serde_json::Value], role: &str) -> usize {
+    array
+        .iter()
+        .rposition(|message| message.get("role").and_then(|value| value.as_str()) == Some(role))
+        .unwrap_or(array.len())
+}
+
+/// Replays prior conversation turns as REAL multi-turn messages in an
+/// already-built request body — mirroring the `apply_attachments` /
+/// `apply_native_tools` post-processor pattern so body builders and their tests
+/// stay untouched.
+///
+/// Two wins over the old "flatten history into one string" approach:
+/// 1. The model sees clean user/assistant role structure instead of a blob.
+/// 2. It creates a STABLE prompt prefix (system + prior turns) that providers
+///    can prompt-cache across turns. For Anthropic we tag the final history turn
+///    with an ephemeral `cache_control` breakpoint, so the whole system+history
+///    prefix is cached and re-read cheaply next turn (Claude Code-style prompt
+///    caching). OpenAI and Gemini cache such stable prefixes implicitly.
+///
+/// Strict no-op when there is no history, so first turns and the classic path
+/// keep a byte-identical body. History is inserted BEFORE the current user turn,
+/// which stays last — so `apply_attachments` still targets the right message.
+pub(crate) fn apply_conversation_history(
+    body: &mut serde_json::Value,
+    shape: ProviderBodyShape,
+    history: &[AIConversationMessage],
+) {
+    if history.is_empty() {
+        return;
+    }
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+
+    match shape {
+        ProviderBodyShape::OpenAiLike | ProviderBodyShape::OllamaChat => {
+            let Some(messages) = object.get_mut("messages").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            let insert_at = last_role_index(messages, "user");
+            let turns: Vec<serde_json::Value> = history
+                .iter()
+                .map(|message| {
+                    json!({ "role": chat_role(&message.role), "content": message.content })
+                })
+                .collect();
+            splice_before(messages, insert_at, turns);
+        }
+        ProviderBodyShape::Anthropic => {
+            let Some(messages) = object.get_mut("messages").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            let insert_at = last_role_index(messages, "user");
+            let last = history.len() - 1;
+            let turns: Vec<serde_json::Value> = history
+                .iter()
+                .enumerate()
+                .map(|(index, message)| {
+                    if index == last {
+                        // Cache breakpoint: Anthropic caches everything from the
+                        // start of the prompt up to and INCLUDING this block, so
+                        // the system + full history prefix is reused next turn.
+                        json!({
+                            "role": chat_role(&message.role),
+                            "content": [{
+                                "type": "text",
+                                "text": message.content,
+                                "cache_control": { "type": "ephemeral" }
+                            }]
+                        })
+                    } else {
+                        json!({ "role": chat_role(&message.role), "content": message.content })
+                    }
+                })
+                .collect();
+            splice_before(messages, insert_at, turns);
+        }
+        ProviderBodyShape::Gemini => {
+            let Some(contents) = object.get_mut("contents").and_then(|v| v.as_array_mut()) else {
+                return;
+            };
+            let insert_at = last_role_index(contents, "user");
+            let turns: Vec<serde_json::Value> = history
+                .iter()
+                .map(|message| {
+                    json!({
+                        "role": gemini_role(&message.role),
+                        "parts": [{ "text": message.content }]
+                    })
+                })
+                .collect();
+            splice_before(contents, insert_at, turns);
+        }
+        ProviderBodyShape::OllamaGenerate => {
+            // The /generate shape has no messages array — fall back to a compact
+            // transcript prepended to the prompt so history still reaches the model.
+            let Some(prompt) = object.get("prompt").and_then(|value| value.as_str()) else {
+                return;
+            };
+            let transcript = history
+                .iter()
+                .map(|message| {
+                    format!("{}: {}", transcript_role(&message.role), message.content.trim())
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let merged = format!("Recent conversation:\n{}\n\n{}", transcript, prompt);
+            object.insert("prompt".to_string(), serde_json::Value::String(merged));
         }
     }
 }
@@ -655,6 +924,113 @@ mod tests {
             &[sample_image()],
         );
         assert_eq!(generate["images"], json!(["AAAA"]));
+    }
+
+    fn sample_history() -> Vec<AIConversationMessage> {
+        vec![
+            AIConversationMessage {
+                role: AIConversationRole::User,
+                content: "first question".to_string(),
+            },
+            AIConversationMessage {
+                role: AIConversationRole::Assistant,
+                content: "first answer".to_string(),
+            },
+        ]
+    }
+
+    #[test]
+    fn apply_conversation_history_is_a_noop_without_history() {
+        let mut body = json!({
+            "model": "m",
+            "messages": [
+                { "role": "system", "content": "sys" },
+                { "role": "user", "content": "now" }
+            ]
+        });
+        let before = body.clone();
+        apply_conversation_history(&mut body, ProviderBodyShape::OpenAiLike, &[]);
+        assert_eq!(before, body);
+    }
+
+    #[test]
+    fn apply_conversation_history_inserts_openai_turns_before_current_user() {
+        let mut body = json!({
+            "model": "m",
+            "messages": [
+                { "role": "system", "content": "sys" },
+                { "role": "user", "content": "now" }
+            ]
+        });
+        apply_conversation_history(&mut body, ProviderBodyShape::OpenAiLike, &sample_history());
+        let messages = body["messages"].as_array().expect("messages array");
+        // system, first question, first answer, current user — in order.
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[1]["role"], "user");
+        assert_eq!(messages[1]["content"], "first question");
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "first answer");
+        assert_eq!(messages[3]["role"], "user");
+        assert_eq!(messages[3]["content"], "now");
+    }
+
+    #[test]
+    fn apply_conversation_history_marks_only_last_anthropic_turn_for_caching() {
+        let mut body = json!({
+            "model": "m",
+            "max_tokens": 1024,
+            "messages": [{ "role": "user", "content": "now" }]
+        });
+        apply_conversation_history(&mut body, ProviderBodyShape::Anthropic, &sample_history());
+        let messages = body["messages"].as_array().expect("messages array");
+        assert_eq!(messages.len(), 3);
+        // First history turn: plain string content, no cache breakpoint.
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "first question");
+        // Last history turn carries the ephemeral cache_control breakpoint.
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"][0]["type"], "text");
+        assert_eq!(messages[1]["content"][0]["text"], "first answer");
+        assert_eq!(
+            messages[1]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        // Current turn stays last and stays a plain string (the changing tail).
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"], "now");
+    }
+
+    #[test]
+    fn apply_conversation_history_maps_gemini_roles_before_current_turn() {
+        let mut body = json!({
+            "contents": [{ "role": "user", "parts": [{ "text": "now" }] }]
+        });
+        apply_conversation_history(&mut body, ProviderBodyShape::Gemini, &sample_history());
+        let contents = body["contents"].as_array().expect("contents array");
+        assert_eq!(contents.len(), 3);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "first question");
+        // Assistant turns map to Gemini's "model" role.
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[1]["parts"][0]["text"], "first answer");
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(contents[2]["parts"][0]["text"], "now");
+    }
+
+    #[test]
+    fn apply_conversation_history_flattens_into_ollama_generate_prompt() {
+        let mut body = json!({
+            "model": "m",
+            "system": "sys",
+            "prompt": "Current user request:\nnow"
+        });
+        apply_conversation_history(&mut body, ProviderBodyShape::OllamaGenerate, &sample_history());
+        let prompt = body["prompt"].as_str().expect("prompt string");
+        assert!(prompt.starts_with("Recent conversation:\n"));
+        assert!(prompt.contains("User: first question"));
+        assert!(prompt.contains("Assistant: first answer"));
+        assert!(prompt.ends_with("Current user request:\nnow"));
     }
 
     #[test]
@@ -928,6 +1304,188 @@ mod tests {
             " world"
         );
         assert!(!pending.contains("Hello"));
+    }
+
+    #[test]
+    fn nvidia_enables_thinking_for_reasoning_models_in_panel() {
+        let mut provider = sample_provider(AIProviderType::OpenAI);
+        provider.model = "deepseek-ai/deepseek-r1".to_string();
+        let body = build_provider_request_body(
+            &provider,
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(
+            body.pointer("/chat_template_kwargs/enable_thinking")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn nvidia_keeps_thinking_off_inline_and_for_plain_models() {
+        // Terse inline completion never wants a reasoning preamble...
+        let mut reasoning = sample_provider(AIProviderType::OpenAI);
+        reasoning.model = "deepseek-ai/deepseek-r1".to_string();
+        let inline = build_provider_request_body(
+            &reasoning,
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Inline,
+        );
+        assert_eq!(
+            inline
+                .pointer("/chat_template_kwargs/enable_thinking")
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+
+        // ...and a non-reasoning model stays off even in the panel.
+        let plain = sample_provider(AIProviderType::OpenAI);
+        let body = build_provider_request_body(
+            &plain,
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(
+            body.pointer("/chat_template_kwargs/enable_thinking")
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn anthropic_enables_extended_thinking_for_capable_models_in_panel() {
+        let mut provider = sample_provider(AIProviderType::Anthropic);
+        provider.model = "claude-3-7-sonnet-20250219".to_string();
+        let body = build_provider_request_body(
+            &provider,
+            &super::super::endpoints::resolve_provider_endpoint(&provider),
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(
+            body.pointer("/thinking/type").and_then(|value| value.as_str()),
+            Some("enabled")
+        );
+        let budget = body
+            .pointer("/thinking/budget_tokens")
+            .and_then(|value| value.as_u64())
+            .expect("budget_tokens must be set");
+        let max_tokens = body
+            .get("max_tokens")
+            .and_then(|value| value.as_u64())
+            .expect("max_tokens must be set");
+        // Anthropic requires budget >= 1024 and max_tokens strictly greater.
+        assert!(budget >= 1024);
+        assert!(max_tokens > budget);
+    }
+
+    #[test]
+    fn anthropic_omits_thinking_for_legacy_models() {
+        let mut provider = sample_provider(AIProviderType::Anthropic);
+        provider.model = "claude-3-5-sonnet-20241022".to_string();
+        let body = build_provider_request_body(
+            &provider,
+            &super::super::endpoints::resolve_provider_endpoint(&provider),
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert!(body.get("thinking").is_none());
+        assert_eq!(
+            body.get("max_tokens").and_then(|value| value.as_u64()),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn gemini_requests_thought_summaries_for_2_5_models_in_panel() {
+        let mut provider = sample_provider(AIProviderType::Gemini);
+        provider.model = "gemini-2.5-pro".to_string();
+        let body = build_provider_request_body(
+            &provider,
+            &super::super::endpoints::resolve_provider_endpoint(&provider),
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert_eq!(
+            body.pointer("/generationConfig/thinkingConfig/includeThoughts")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn gemini_omits_thinking_config_for_legacy_models() {
+        let mut provider = sample_provider(AIProviderType::Gemini);
+        provider.model = "gemini-1.5-pro".to_string();
+        let body = build_provider_request_body(
+            &provider,
+            &super::super::endpoints::resolve_provider_endpoint(&provider),
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+        );
+        assert!(body.get("generationConfig").is_none());
+    }
+
+    #[test]
+    fn user_thinking_toggle_off_forces_thinking_off_everywhere() {
+        // NVIDIA reasoning model: the user's OFF flag beats capability gating.
+        let mut nvidia = sample_provider(AIProviderType::OpenAI);
+        nvidia.model = "deepseek-ai/deepseek-r1".to_string();
+        let nvidia_body = build_provider_request_body_with_thinking(
+            &nvidia,
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+            Some(false),
+        );
+        assert_eq!(
+            nvidia_body
+                .pointer("/chat_template_kwargs/enable_thinking")
+                .and_then(|value| value.as_bool()),
+            Some(false)
+        );
+
+        // Anthropic capable model: no `thinking` block and max_tokens untouched.
+        let mut anthropic = sample_provider(AIProviderType::Anthropic);
+        anthropic.model = "claude-3-7-sonnet-20250219".to_string();
+        let anthropic_body = build_provider_request_body_with_thinking(
+            &anthropic,
+            &super::super::endpoints::resolve_provider_endpoint(&anthropic),
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+            Some(false),
+        );
+        assert!(anthropic_body.get("thinking").is_none());
+        assert_eq!(
+            anthropic_body.get("max_tokens").and_then(|value| value.as_u64()),
+            Some(4096)
+        );
+
+        // Gemini 2.5: no thinkingConfig requested.
+        let mut gemini = sample_provider(AIProviderType::Gemini);
+        gemini.model = "gemini-2.5-pro".to_string();
+        let gemini_body = build_provider_request_body_with_thinking(
+            &gemini,
+            &super::super::endpoints::resolve_provider_endpoint(&gemini),
+            "system prompt",
+            "user prompt",
+            &AIRequestMode::Panel,
+            Some(false),
+        );
+        assert!(gemini_body.get("generationConfig").is_none());
     }
 
     #[test]

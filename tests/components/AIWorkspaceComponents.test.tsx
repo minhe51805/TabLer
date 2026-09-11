@@ -134,6 +134,33 @@ describe("AI workspace components", () => {
     expect(props.onSelectAgentAutonomy).toHaveBeenCalledWith("full");
   });
 
+  it("asks for confirmation before flipping a utility toggle and applies it on confirm", async () => {
+    const user = userEvent.setup();
+    const props = renderComposer();
+
+    await user.click(screen.getByRole("button", { name: "Chat tools" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: new RegExp(props.sessionDataReadLabel) }));
+
+    // Gated: nothing flips until the confirmation dialog is accepted.
+    expect(props.onSetSessionDataReadEnabled).not.toHaveBeenCalled();
+    expect(screen.getByText(copy.composer.toggleConfirmTitle)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: copy.composer.toggleConfirmConfirm }));
+    expect(props.onSetSessionDataReadEnabled).toHaveBeenCalledWith(true);
+  });
+
+  it("leaves a utility toggle unchanged when the confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    const props = renderComposer();
+
+    await user.click(screen.getByRole("button", { name: "Chat tools" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: new RegExp(props.sessionDataReadLabel) }));
+    await user.click(screen.getByRole("button", { name: copy.composer.toggleConfirmCancel }));
+
+    expect(props.onSetSessionDataReadEnabled).not.toHaveBeenCalled();
+    expect(screen.queryByText(copy.composer.toggleConfirmTitle)).not.toBeInTheDocument();
+  });
+
   it("turns the generate command into a stop command while AI is running", async () => {
     const user = userEvent.setup();
     const props = renderComposer({ isGenerating: true, prompt: "Long request" });
@@ -152,10 +179,10 @@ describe("AI workspace components", () => {
         bubbles={[]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={vi.fn()}
+        onCopy={vi.fn()}
         onOpenRecord={vi.fn()}
         onUseSuggestion={onUseSuggestion}
       />,
@@ -166,10 +193,9 @@ describe("AI workspace components", () => {
     expect(onUseSuggestion).toHaveBeenCalledWith(firstIdea.prompt);
   });
 
-  it("exposes run, detail, and insert actions for an agent SQL response", async () => {
+  it("exposes run and insert actions for an agent SQL response", async () => {
     const user = userEvent.setup();
     const onRun = vi.fn();
-    const onOpenDetail = vi.fn();
     const onInsert = vi.fn();
     const bubble: AIWorkspaceBubbleData = {
       id: "bubble-1",
@@ -194,10 +220,10 @@ describe("AI workspace components", () => {
         bubbles={[bubble]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={onOpenDetail}
         onInsert={onInsert}
         onRun={onRun}
         onRetry={vi.fn()}
+        onCopy={vi.fn()}
         onOpenRecord={vi.fn()}
         onUseSuggestion={vi.fn()}
       />,
@@ -206,12 +232,9 @@ describe("AI workspace components", () => {
     await user.click(screen.getByRole("button", { name: copy.bubbleActions.approveRun }));
     expect(onRun).toHaveBeenCalledWith(bubble);
 
-    await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: copy.bubbleActions.detail }));
-    expect(onOpenDetail).toHaveBeenCalledWith(bubble);
-
-    await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: copy.bubbleActions.insert }));
+    // Insert is now an inline icon button (the "More actions" popover was
+    // replaced by a flat action row).
+    await user.click(screen.getByRole("button", { name: copy.bubbleActions.insert }));
     expect(onInsert).toHaveBeenCalledWith(bubble);
   });
 
@@ -250,10 +273,10 @@ describe("AI workspace components", () => {
         bubbles={[bubble]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={onRetry}
+        onCopy={vi.fn()}
         onOpenRecord={vi.fn()}
         onUseSuggestion={vi.fn()}
       />,
@@ -301,10 +324,10 @@ describe("AI workspace components", () => {
         bubbles={[bubble]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={vi.fn()}
+        onCopy={vi.fn()}
         onOpenRecord={onOpenRecord}
         onUseSuggestion={vi.fn()}
       />,
@@ -351,10 +374,10 @@ describe("AI workspace components", () => {
         bubbles={[bubble]}
         copy={copy}
         threadRef={createRef<HTMLDivElement>()}
-        onOpenDetail={vi.fn()}
         onInsert={vi.fn()}
         onRun={vi.fn()}
         onRetry={vi.fn()}
+        onCopy={vi.fn()}
         onOpenRecord={vi.fn()}
         onUseSuggestion={vi.fn()}
         onAskUserOptionSelect={onAskUserOptionSelect}
@@ -375,5 +398,53 @@ describe("AI workspace components", () => {
     await user.type(input, "notifications table");
     await user.click(screen.getByRole("button", { name: copy.bubbleStates.askUserCustomSend }));
     expect(onAskUserOptionSelect).toHaveBeenLastCalledWith("notifications table");
+  });
+
+  it("shows a compact provider-failover footer and reveals the raw error only on click", async () => {
+    const user = userEvent.setup();
+    const bubble: AIWorkspaceBubbleData = {
+      id: "failover-1",
+      threadId: "thread-1",
+      workspaceKey: "connection::database",
+      interactionMode: "agent",
+      kind: "assistant",
+      status: "ready",
+      title: "Answer",
+      subtitle: "",
+      prompt: "list users",
+      preview: "Here is the answer.",
+      detail: "Here is the answer.",
+      failoverNotes: [
+        {
+          summary: 'Provider "Google Gemini" failed',
+          detail: 'AI API error: Invalid JSON payload received. Unknown name "minValue" at \'tools[0]...\': Cannot find field.',
+        },
+      ],
+      x: 0,
+      y: 0,
+      pointer: { x: 0, y: 0, visible: false },
+      createdAt: 1,
+    };
+    render(
+      <AIConversationView
+        bubbles={[bubble]}
+        copy={copy}
+        threadRef={createRef<HTMLDivElement>()}
+        onInsert={vi.fn()}
+        onRun={vi.fn()}
+        onRetry={vi.fn()}
+        onCopy={vi.fn()}
+        onOpenRecord={vi.fn()}
+        onUseSuggestion={vi.fn()}
+      />,
+    );
+
+    // The terse summary shows; the long provider payload stays hidden until asked.
+    expect(screen.getByText('Provider "Google Gemini" failed')).toBeInTheDocument();
+    expect(screen.queryByText(/Invalid JSON payload received/)).toBeNull();
+
+    // Clicking the info button reveals the full raw provider error inline.
+    await user.click(screen.getByRole("button", { name: copy.bubbleStates.failoverErrorDetails }));
+    expect(screen.getByText(/Invalid JSON payload received/)).toBeInTheDocument();
   });
 });

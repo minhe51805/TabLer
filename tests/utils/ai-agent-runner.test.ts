@@ -111,7 +111,9 @@ describe("AI agent tool runner", () => {
       iteration: request.iteration,
     }))).toEqual([
       { reason: "iterate", forceFinish: false, includeHistory: true, iteration: 1 },
-      { reason: "iterate", forceFinish: true, includeHistory: false, iteration: 2 },
+      // A finishing/composing call (forceFinish) now always replays history so
+      // the final answer can reference the earlier conversation, not just tools.
+      { reason: "iterate", forceFinish: true, includeHistory: true, iteration: 2 },
       { reason: "iterate", forceFinish: false, includeHistory: false, iteration: 3 },
     ]);
   });
@@ -167,8 +169,10 @@ describe("AI agent tool runner", () => {
       iteration: request.iteration,
     }))).toEqual([
       { reason: "iterate", forceFinish: false, includeHistory: true, iteration: 1 },
-      { reason: "iterate", forceFinish: true, includeHistory: false, iteration: 2 },
-      { reason: "budget", forceFinish: true, includeHistory: false, iteration: 3 },
+      // Every forced-finish turn (the near-budget close and the budget close-out)
+      // now replays history so the final answer stays grounded in the chat.
+      { reason: "iterate", forceFinish: true, includeHistory: true, iteration: 2 },
+      { reason: "budget", forceFinish: true, includeHistory: true, iteration: 3 },
     ]);
   });
 

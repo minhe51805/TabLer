@@ -99,6 +99,10 @@ export interface AIRequest {
     history?: AIConversationMessage[];
     /** Current-turn image attachments; text files are inlined into `prompt`. */
     attachments?: AIRequestAttachment[];
+    /** Panel "Thinking" toggle. `false` forces reasoning off across every
+     *  provider (no thinking tokens); `true`/omitted keeps the capability-gated
+     *  default so only models that support reasoning actually emit it. */
+    enable_thinking?: boolean;
 }
 
 export interface AIResponse {

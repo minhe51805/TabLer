@@ -23,6 +23,10 @@ export async function runAgentEvidenceLoop(params: {
   endedWithAskUser: boolean;
   assistIntent: AssistIntent;
   wantsReportTable: boolean;
+  /** Adaptive round budget (from resolveEvidenceRounds); defaults to MAX_EVIDENCE_ROUNDS. */
+  maxRounds?: number;
+  /** Verified live-schema names, allow-listed during claim verification so a real (untouched) table is never flagged as fabricated. */
+  knownIdentifiers?: Iterable<string>;
   sharedAgentInstruction: string;
   initialAction: AIAgentFinishAction;
   initialSteps: AgentTraceStep[];
@@ -38,6 +42,8 @@ export async function runAgentEvidenceLoop(params: {
     endedWithAskUser,
     assistIntent,
     wantsReportTable,
+    maxRounds,
+    knownIdentifiers,
     sharedAgentInstruction,
     initialAction,
     initialSteps,
@@ -53,9 +59,9 @@ export async function runAgentEvidenceLoop(params: {
   let finalSteps = initialSteps;
 
   const needsMoreEvidence = () =>
-    evaluateEvidenceGate({ finalAction, steps: finalSteps, wantsReportTable }).needsMoreEvidence;
+    evaluateEvidenceGate({ finalAction, steps: finalSteps, wantsReportTable, knownIdentifiers }).needsMoreEvidence;
 
-  let evidenceRoundsLeft = MAX_EVIDENCE_ROUNDS;
+  let evidenceRoundsLeft = maxRounds ?? MAX_EVIDENCE_ROUNDS;
 
   while (
     workspaceToolsEnabled
@@ -66,7 +72,7 @@ export async function runAgentEvidenceLoop(params: {
   ) {
     evidenceRoundsLeft -= 1;
     const lastChance = evidenceRoundsLeft === 0;
-    const gateNow = evaluateEvidenceGate({ finalAction, steps: finalSteps, wantsReportTable });
+    const gateNow = evaluateEvidenceGate({ finalAction, steps: finalSteps, wantsReportTable, knownIdentifiers });
     const composeOnly = gateNow.composeOnly;
     try {
       const recoveryInstruction = buildAgentRecoveryInstruction({

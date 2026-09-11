@@ -150,6 +150,13 @@ pub struct AIRequest {
     /// Anthropic, `tool_config` for Gemini). Ignored when `tools` is `None`.
     #[serde(default)]
     pub tool_choice: Option<serde_json::Value>,
+    /// Per-request thinking/reasoning gate driven by the panel "Thinking" toggle.
+    /// `None` keeps the capability-gated default (reasoning on for models that
+    /// support it); `Some(false)` forces it off across every provider so the run
+    /// spends no thinking tokens; `Some(true)` is the explicit opt-in (still
+    /// capability-gated, never forced onto a model that would 400).
+    #[serde(default)]
+    pub enable_thinking: Option<bool>,
 }
 
 fn default_ai_request_mode() -> AIRequestMode {

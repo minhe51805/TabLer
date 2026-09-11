@@ -18,15 +18,15 @@ use super::errors::{
     ai_provider_response_error_with_preview, response_retry_after_seconds,
 };
 use super::extraction::{
-    extract_anthropic_response_text, extract_gemini_response_text, extract_openai_like_reasoning,
-    extract_openai_like_response_text, extract_tool_call_as_action_json, publish_stream_payload,
-    split_think_block,
+    extract_anthropic_reasoning, extract_anthropic_response_text, extract_gemini_reasoning,
+    extract_gemini_response_text, extract_openai_like_reasoning, extract_openai_like_response_text,
+    extract_tool_call_as_action_json, publish_stream_payload, split_think_block,
 };
 use super::prompt::build_ai_prompt;
 use super::providers::{
-    apply_attachments, apply_native_tools, build_provider_request_body, effective_wire_provider,
-    parse_models_list_response, resolve_provider_body_shape, streaming_endpoint,
-    streaming_request_body,
+    apply_attachments, apply_conversation_history, apply_native_tools,
+    build_provider_request_body_with_thinking, effective_wire_provider, parse_models_list_response,
+    resolve_provider_body_shape, streaming_endpoint, streaming_request_body_with_thinking,
 };
 use super::{ai_http_client, run_blocking_storage_task, FetchedModel, AI_REQUEST_CANCELLED_ERROR};
 
@@ -160,12 +160,18 @@ pub(crate) async fn execute_ai_stream_request(
     validate_ai_endpoint(&config, &base_endpoint)?;
     let wire_provider = effective_wire_provider(&config, &base_endpoint);
     let endpoint = streaming_endpoint(&config, &base_endpoint);
-    let mut body = streaming_request_body(
+    let mut body = streaming_request_body_with_thinking(
         &config,
         &base_endpoint,
         &system_prompt,
         &prompt,
         &request.mode,
+        request.enable_thinking,
+    );
+    apply_conversation_history(
+        &mut body,
+        resolve_provider_body_shape(&config, &base_endpoint),
+        &request.history,
     );
     apply_attachments(
         &mut body,
@@ -349,18 +355,24 @@ pub(crate) async fn execute_ai_request(
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
             let wire_provider = effective_wire_provider(&config, &endpoint);
-            let mut body = build_provider_request_body(
+            let mut body = build_provider_request_body_with_thinking(
                 &config,
                 &endpoint,
                 &system_prompt,
                 &prompt,
                 &request.mode,
+                request.enable_thinking,
             );
             apply_native_tools(
                 &mut body,
                 &wire_provider,
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
+            );
+            apply_conversation_history(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &request.history,
             );
             apply_attachments(
                 &mut body,
@@ -464,10 +476,11 @@ pub(crate) async fn execute_ai_request(
 
                 if matches!(wire_provider, AIProviderType::Anthropic) {
                     if let Some(text) = extract_anthropic_response_text(&resp_json) {
-                        let (reasoning, cleaned) = split_think_block(&text);
+                        let block_reasoning = extract_anthropic_reasoning(&resp_json);
+                        let (think_reasoning, cleaned) = split_think_block(&text);
                         return Ok(AIResponse {
                             text: cleaned,
-                            reasoning,
+                            reasoning: block_reasoning.or(think_reasoning),
                             error: None,
                         });
                     }
@@ -495,18 +508,24 @@ pub(crate) async fn execute_ai_request(
         AIProviderType::Anthropic => {
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
-            let mut body = build_provider_request_body(
+            let mut body = build_provider_request_body_with_thinking(
                 &config,
                 &endpoint,
                 &system_prompt,
                 &prompt,
                 &request.mode,
+                request.enable_thinking,
             );
             apply_native_tools(
                 &mut body,
                 &config.provider_type,
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
+            );
+            apply_conversation_history(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &request.history,
             );
             apply_attachments(
                 &mut body,
@@ -592,10 +611,11 @@ pub(crate) async fn execute_ai_request(
             }
 
             if let Some(text) = extract_anthropic_response_text(&resp_json) {
-                let (reasoning, cleaned) = split_think_block(&text);
+                let block_reasoning = extract_anthropic_reasoning(&resp_json);
+                let (think_reasoning, cleaned) = split_think_block(&text);
                 return Ok(AIResponse {
                     text: cleaned,
-                    reasoning,
+                    reasoning: block_reasoning.or(think_reasoning),
                     error: None,
                 });
             }
@@ -610,18 +630,24 @@ pub(crate) async fn execute_ai_request(
         AIProviderType::Gemini | AIProviderType::Vertex => {
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
-            let mut body = build_provider_request_body(
+            let mut body = build_provider_request_body_with_thinking(
                 &config,
                 &endpoint,
                 &system_prompt,
                 &prompt,
                 &request.mode,
+                request.enable_thinking,
             );
             apply_native_tools(
                 &mut body,
                 &config.provider_type,
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
+            );
+            apply_conversation_history(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &request.history,
             );
             apply_attachments(
                 &mut body,
@@ -716,10 +742,11 @@ pub(crate) async fn execute_ai_request(
             }
 
             if let Some(text) = extract_gemini_response_text(&resp_json) {
-                let (reasoning, cleaned) = split_think_block(&text);
+                let thought_reasoning = extract_gemini_reasoning(&resp_json);
+                let (think_reasoning, cleaned) = split_think_block(&text);
                 return Ok(AIResponse {
                     text: cleaned,
-                    reasoning,
+                    reasoning: thought_reasoning.or(think_reasoning),
                     error: None,
                 });
             }

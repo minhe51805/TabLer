@@ -1,4 +1,4 @@
-import { CornerDownLeft, ExternalLink, Eye, FileText, Info, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
+import { BrainCircuit, CornerDownLeft, ExternalLink, Eye, FileText, Info, MoreHorizontal, Play, RotateCcw, Sparkles } from "lucide-react";
 import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
@@ -256,6 +256,62 @@ function AIAskUserReply({
   );
 }
 
+/** Claude/ChatGPT-style live "thinking" trace. While the model streams its
+ *  chain-of-thought the panel stays open and fills in token by token (auto
+ *  scrolling to the freshest tokens); once the answer lands it collapses into a
+ *  "Model reasoning" toggle so the thought stays available without dominating
+ *  the turn. This replaces the old behaviour that stalled on a static
+ *  "Thinking" pill and then dumped the whole reasoning in one block. */
+function AIThinkingTrace({
+  text,
+  streaming,
+  copy,
+}: {
+  text: string;
+  streaming: boolean;
+  copy: AIWorkspaceCopy;
+}) {
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+
+  // Keep the newest reasoning tokens in view as they stream in.
+  useEffect(() => {
+    if (!streaming) return;
+    const node = bodyRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [text, streaming]);
+
+  if (streaming) {
+    return (
+      <div className="ai-workspace-chat-reasoning is-streaming">
+        <div className="ai-workspace-chat-reasoning-summary">
+          <span className="ai-workspace-thinking-orb" aria-hidden="true" />
+          <span className="ai-workspace-chat-reasoning-label">{copy.bubbleMeta.thinking}</span>
+          <span className="ai-workspace-thinking-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        </div>
+        <div className="ai-workspace-chat-reasoning-body" ref={bodyRef}>
+          <AIWorkspaceMarkdown className="ai-workspace-chat-reasoning-text" compact text={text} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <details className="ai-workspace-chat-reasoning">
+      <summary className="ai-workspace-chat-reasoning-summary">
+        <BrainCircuit className="w-3.5 h-3.5" />
+        <span className="ai-workspace-chat-reasoning-label">{copy.modal.reasoningLabel}</span>
+      </summary>
+      <div className="ai-workspace-chat-reasoning-body">
+        <AIWorkspaceMarkdown className="ai-workspace-chat-reasoning-text" compact text={text} />
+      </div>
+    </details>
+  );
+}
+
 export const AIConversationView = memo(function AIConversationView({
   bubbles,
   copy,
@@ -301,6 +357,10 @@ export const AIConversationView = memo(function AIConversationView({
           <div ref={threadRef} className="ai-workspace-chat-thread">
             {bubbles.map((bubble, bubbleIndex) => {
               const conversationText = getBubbleConversationText(bubble);
+              // The model's live chain-of-thought: streamed token by token from
+              // `reasoning_delta` while loading, retained afterwards. Powers the
+              // collapsible "Thinking" trace panel below.
+              const reasoningText = bubble.reasoning?.trim();
               // ask_user bubbles at the tail of the thread render their
               // options as one-click reply buttons instead of plain text.
               const askUserOptions = bubble.askUserOptions?.length
@@ -378,13 +438,26 @@ export const AIConversationView = memo(function AIConversationView({
                     )}
                     {hasVisibleAgentProgress
                       && <AIAgentSteps steps={bubble.agentSteps ?? []} compact durationMs={bubble.settledAt ? Math.max(0, bubble.settledAt - bubble.createdAt) : undefined} />}
+                    {reasoningText && !hasVisibleAgentProgress && (
+                      <AIThinkingTrace
+                        text={reasoningText}
+                        streaming={bubble.status === "loading"}
+                        copy={copy}
+                      />
+                    )}
                     {bubble.status === "loading" && !hasVisibleAgentProgress ? (
-                      <div className="ai-workspace-thinking-line">
-                        <span className="ai-workspace-thinking-orb" aria-hidden="true" />
-                        <span className="ai-workspace-thinking-shimmer">
-                          {conversationText || copy.bubbleMeta.thinking}
-                        </span>
-                      </div>
+                      // The live thinking trace above already carries the "model
+                      // is working" feedback while it streams reasoning, so only
+                      // fall back to the plain shimmer once real answer text lands
+                      // or when the model streams no reasoning at all.
+                      (conversationText || !reasoningText) ? (
+                        <div className="ai-workspace-thinking-line">
+                          <span className="ai-workspace-thinking-orb" aria-hidden="true" />
+                          <span className="ai-workspace-thinking-shimmer">
+                            {conversationText || copy.bubbleMeta.thinking}
+                          </span>
+                        </div>
+                      ) : null
                     ) : bubble.status !== "loading" ? (
                       conversationText
                         && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={displayConversationText} />

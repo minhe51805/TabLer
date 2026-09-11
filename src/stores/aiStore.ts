@@ -174,6 +174,9 @@ export interface AIState {
   requestPhase: AIRequestPhase;
   streamingText: string;
   streamingReasoning: boolean;
+  /** Accumulated model chain-of-thought captured live from `reasoning_delta`
+   *  stream events; drives the collapsible "Thinking…" block. */
+  streamingReasoningText: string;
   streamingUsage: Record<string, unknown> | null;
   /** True while an automatic provider failover is switching the active provider. */
   isProviderFailingOver: boolean;
@@ -274,6 +277,7 @@ export const useAIStore = create<AIState>((set, get) => ({
   requestPhase: "idle",
   streamingText: "",
   streamingReasoning: false,
+  streamingReasoningText: "",
   streamingUsage: null,
   isProviderFailingOver: false,
 
@@ -413,6 +417,7 @@ export const useAIStore = create<AIState>((set, get) => ({
         requestPhase: "requesting",
         streamingText: "",
         streamingReasoning: false,
+        streamingReasoningText: "",
         streamingUsage: null,
       });
 
@@ -420,6 +425,7 @@ export const useAIStore = create<AIState>((set, get) => ({
       try {
         if (mode === "panel" && !nativeToolPayload) {
           let streamedText = "";
+          let streamedReasoning = "";
           unlisten = await listen<{
             requestId: string;
             kind: "text_delta" | "reasoning_delta" | "usage" | "error" | "done";
@@ -432,7 +438,14 @@ export const useAIStore = create<AIState>((set, get) => ({
               streamedText += payload.text;
               if (intent !== "agent") set({ streamingText: streamedText });
             } else if (payload.kind === "reasoning_delta") {
-              set({ streamingReasoning: true });
+              // Accumulate the model's chain-of-thought so the UI can stream it
+              // live into the "Thinking…" block instead of dumping one block.
+              if (payload.text) {
+                streamedReasoning += payload.text;
+                set({ streamingReasoning: true, streamingReasoningText: streamedReasoning });
+              } else {
+                set({ streamingReasoning: true });
+              }
             } else if (payload.kind === "usage" && payload.usage) {
               set({ streamingUsage: payload.usage });
             }
@@ -460,7 +473,7 @@ export const useAIStore = create<AIState>((set, get) => ({
                 invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false),
             },
           );
-          return { text: streamedText };
+          return { text: streamedText, reasoning: streamedReasoning || undefined };
         }
 
         const resp = await invokeWithTimeout<{ text: string; reasoning?: string; error?: string }>(
@@ -531,6 +544,7 @@ export const useAIStore = create<AIState>((set, get) => ({
             activeAIRequestId: null,
             requestPhase: "idle",
             streamingReasoning: false,
+            streamingReasoningText: "",
           });
         }
       }

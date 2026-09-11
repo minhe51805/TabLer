@@ -260,6 +260,7 @@ export function useAIAssistantGeneration({
   openSessionRef,
 }: UseAIAssistantGenerationOptions) {
   const streamingText = useAIStore((state) => state.streamingText);
+  const streamingReasoningText = useAIStore((state) => state.streamingReasoningText);
 
   useEffect(() => {
     const bubbleId = activeGenerationBubbleIdRef.current;
@@ -272,6 +273,21 @@ export function useAIAssistantGeneration({
       ),
     );
   }, [activeGenerationBubbleIdRef, setBubbles, streamingText]);
+
+  // Stream the model's live chain-of-thought into the loading bubble so the
+  // conversation shows a "Thinking…" block filling in token by token instead of
+  // stalling and then dumping the whole reasoning at once when the answer lands.
+  useEffect(() => {
+    const bubbleId = activeGenerationBubbleIdRef.current;
+    if (!bubbleId || !streamingReasoningText) return;
+    setBubbles((current) =>
+      current.map((bubble) =>
+        bubble.id === bubbleId && bubble.status === "loading"
+          ? { ...bubble, reasoning: streamingReasoningText }
+          : bubble,
+      ),
+    );
+  }, [activeGenerationBubbleIdRef, setBubbles, streamingReasoningText]);
 
   const createAssistantBubble = useCallback(async (
     prompt: string,

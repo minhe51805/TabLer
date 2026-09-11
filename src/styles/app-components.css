@@ -20341,6 +20341,77 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   }
 }
 
+/* Live "thinking" trace panel: streams the model's chain-of-thought token by
+   token while loading, then collapses into a "Model reasoning" toggle. */
+.ai-workspace-chat-reasoning {
+  margin: 6px 0 2px;
+  border: 1px solid color-mix(in srgb, var(--mm-accent) 22%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--mm-accent) 6%, var(--mm-surface-0));
+  overflow: hidden;
+}
+
+.ai-workspace-chat-reasoning-summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--accent-hover);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.ai-workspace-chat-reasoning-summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Disclosure caret only for the collapsible (settled) variant. */
+details.ai-workspace-chat-reasoning .ai-workspace-chat-reasoning-summary::after {
+  content: "";
+  margin-left: auto;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.18s ease;
+  opacity: 0.65;
+}
+
+details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::after {
+  transform: rotate(45deg);
+}
+
+.ai-workspace-chat-reasoning-label {
+  white-space: nowrap;
+}
+
+.ai-workspace-chat-reasoning-body {
+  padding: 0 11px 9px;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  line-height: 1.55;
+}
+
+/* While streaming, cap the height and auto-scroll to the freshest tokens with a
+   soft top fade so the panel reads like a live console instead of jumping. */
+.ai-workspace-chat-reasoning.is-streaming .ai-workspace-chat-reasoning-body {
+  max-height: 170px;
+  overflow-y: auto;
+  padding-top: 2px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
+}
+
+.ai-workspace-chat-reasoning-text {
+  margin: 0;
+  opacity: 0.92;
+}
+
 .ai-workspace-chat-text {
   margin: 6px 0 0;
   color: var(--text-primary);

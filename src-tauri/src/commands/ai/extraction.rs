@@ -146,6 +146,29 @@ pub(crate) fn extract_openai_like_reasoning(payload: &serde_json::Value) -> Opti
     None
 }
 
+/// Streaming variant of [`extract_openai_like_reasoning`]: pulls the incremental
+/// reasoning delta (`reasoning_content` / `reasoning`) WITHOUT trimming, so the
+/// spaces and newlines between streamed tokens survive and the "Thinking…" block
+/// reads naturally instead of collapsing into one run-on line.
+pub(crate) fn extract_openai_like_reasoning_delta(payload: &serde_json::Value) -> Option<String> {
+    for pointer in [
+        "/choices/0/delta/reasoning_content",
+        "/choices/0/delta/reasoning",
+        "/choices/0/message/reasoning_content",
+        "/choices/0/message/reasoning",
+    ] {
+        if let Some(text) = payload
+            .pointer(pointer)
+            .and_then(extract_stream_text_from_json)
+        {
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+    }
+    None
+}
+
 pub(crate) fn extract_openai_like_response_text(payload: &serde_json::Value) -> Option<String> {
     if let Some(text) = payload
         .pointer("/choices/0/message/content")
@@ -271,7 +294,7 @@ pub(crate) fn extract_stream_deltas(
                     .pointer(pointer)
                     .and_then(extract_stream_text_from_json)
             }),
-            extract_openai_like_reasoning(payload),
+            extract_openai_like_reasoning_delta(payload),
         ),
     }
 }
@@ -286,8 +309,13 @@ pub(crate) fn publish_stream_payload(
     output_bytes: &mut usize,
 ) -> Result<(), String> {
     let (text_delta, reasoning_delta) = extract_stream_deltas(provider, payload);
-    if reasoning_delta.is_some() {
-        emit_ai_stream_event(app, request_id, "reasoning_delta", None, None)?;
+    // Forward the actual reasoning text so the UI can stream the model's
+    // chain-of-thought live into the collapsible "Thinking…" block, instead of
+    // only flashing a boolean flag and dumping the whole block at the end.
+    if let Some(reasoning) = reasoning_delta {
+        if !reasoning.is_empty() {
+            emit_ai_stream_event(app, request_id, "reasoning_delta", Some(reasoning), None)?;
+        }
     }
 
     if let Some(delta) = text_delta {
@@ -460,6 +488,25 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
         assert_eq!(parsed["action"], "list_tables");
         assert_eq!(parsed["args"]["limit"], 5);
+    }
+
+    #[test]
+    fn stream_deltas_expose_openai_reasoning_delta_without_trimming() {
+        // A streamed reasoning chunk must keep its leading space so the live
+        // "Thinking…" text does not collapse into a run-on string.
+        let payload = json!({
+            "choices": [{ "delta": { "reasoning_content": " still thinking" } }]
+        });
+        let (text, reasoning) = extract_stream_deltas(&AIProviderType::OpenAI, &payload);
+        assert!(text.is_none());
+        assert_eq!(reasoning.as_deref(), Some(" still thinking"));
+    }
+
+    #[test]
+    fn stream_deltas_expose_anthropic_thinking_delta() {
+        let payload = json!({ "delta": { "thinking": "let me reason" } });
+        let (_text, reasoning) = extract_stream_deltas(&AIProviderType::Anthropic, &payload);
+        assert_eq!(reasoning.as_deref(), Some("let me reason"));
     }
 
     #[test]

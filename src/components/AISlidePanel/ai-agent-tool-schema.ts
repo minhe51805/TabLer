@@ -36,6 +36,7 @@ export const AI_AGENT_TOOL_NAMES = [
   "create_checkpoint",
   "restore_checkpoint",
   "skill",
+  "read_skill_resource",
   "delegate",
   "read_page",
   "finish",
@@ -582,6 +583,25 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
         },
       },
       ["name"],
+    ),
+  },
+
+  read_skill_resource: {
+    name: "read_skill_resource",
+    description:
+      "Load one bundled reference file of a skill you have already loaded (progressive disclosure). Pick a path from that skill's 'Bundled resources' list — only references/ and scripts/ files are readable, and only for a skill loaded this run. Use this to pull detailed schemas, docs, or scripts on demand instead of re-deriving them.",
+    parameters: objectSchema(
+      {
+        name: {
+          type: "string",
+          description: "Skill name whose resource to read (must be loaded via the skill tool first).",
+        },
+        path: {
+          type: "string",
+          description: "Relative resource path exactly as listed, e.g. references/schema.md.",
+        },
+      },
+      ["name", "path"],
     ),
   },
 

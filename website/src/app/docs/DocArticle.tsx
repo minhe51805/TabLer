@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { AlertTriangle, Info, Lightbulb } from "lucide-react";
 import type { DocBlock } from "@/lib/docs";
 
@@ -114,12 +115,19 @@ function renderBlock(block: DocBlock, key: number, id?: string) {
     case "cards":
       return (
         <div key={key} className="doc-cards">
-          {block.items.map((item, i) => (
-            <article key={i} className="doc-card">
-              <h3>{item.title}</h3>
-              <p>{item.text}</p>
-            </article>
-          ))}
+          {block.items.map((item, i) =>
+            item.href ? (
+              <Link key={i} href={item.href} className="doc-card doc-card-link">
+                <h3>{item.title}</h3>
+                <p>{item.text}</p>
+              </Link>
+            ) : (
+              <article key={i} className="doc-card">
+                <h3>{item.title}</h3>
+                <p>{item.text}</p>
+              </article>
+            ),
+          )}
         </div>
       );
     case "image":

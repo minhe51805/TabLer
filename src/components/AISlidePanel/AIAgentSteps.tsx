@@ -88,6 +88,7 @@ function getActionIcon(action: AIWorkspaceAgentActionName): ReactNode {
     case "restore_checkpoint":
       return <RotateCcw className="w-3.5 h-3.5" />;
     case "skill":
+    case "read_skill_resource":
       return <Wand2 className="w-3.5 h-3.5" />;
     case "finish":
     default:
@@ -141,6 +142,7 @@ function getActionLabel(
     case "propose_seed_data":
       return copy.modal.agentActionProposeSeedData;
     case "skill":
+    case "read_skill_resource":
       return copy.modal.agentActionSkill;
     case "finish":
     default:

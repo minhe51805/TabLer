@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   BookOpen,
   Bot,
@@ -63,13 +63,13 @@ export function DocsSidebar({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const connectionsHref = docHref("connections");
-  const [openConnections, setOpenConnections] = useState(
-    () => pathname === connectionsHref,
-  );
-
-  useEffect(() => {
-    if (pathname === connectionsHref) setOpenConnections(true);
-  }, [pathname, connectionsHref]);
+  const inConnectionsSection =
+    pathname === connectionsHref ||
+    connectSubnav.some((link) => link.href === pathname);
+  // null = follow the route (auto-open in the connections section); a boolean
+  // is an explicit user toggle that overrides the route-based default.
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const openConnections = manualOpen ?? inConnectionsSection;
 
   const bySlug = new Map(items.map((item) => [item.slug, item]));
 
@@ -112,7 +112,7 @@ export function DocsSidebar({
                         onClick={() => {
                           setOpen(false);
                           const next = !openConnections;
-                          setOpenConnections(next);
+                          setManualOpen(next);
                           if (next) router.push(connectionsHref);
                         }}
                       >
@@ -128,17 +128,23 @@ export function DocsSidebar({
                       </button>
                       {openConnections ? (
                         <ul className="docs-subnav">
-                          {connectSubnav.map((link) => (
-                            <li key={link.href}>
-                              <Link
-                                href={link.href}
-                                className="docs-subnav-link"
-                                onClick={() => setOpen(false)}
-                              >
-                                {link.label}
-                              </Link>
-                            </li>
-                          ))}
+                          {connectSubnav.map((link) => {
+                            const isSubActive = pathname === link.href;
+                            return (
+                              <li key={link.href}>
+                                <Link
+                                  href={link.href}
+                                  className={`docs-subnav-link${
+                                    isSubActive ? " is-active" : ""
+                                  }`}
+                                  aria-current={isSubActive ? "page" : undefined}
+                                  onClick={() => setOpen(false)}
+                                >
+                                  {link.label}
+                                </Link>
+                              </li>
+                            );
+                          })}
                         </ul>
                       ) : null}
                     </li>

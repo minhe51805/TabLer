@@ -48,6 +48,7 @@ export type AIWorkspaceAgentActionName =
   | "ask_user"
   | "update_plan"
   | "skill"
+  | "read_skill_resource"
   | "list_tables"
   | "search_schema"
   | "list_schema_objects"

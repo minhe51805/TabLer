@@ -540,6 +540,11 @@ export function buildAgentControllerPrompt(params: {
           ...(glossaryLines ?? []),
         ].join("\n")
       : "",
+    // Prompt-cache stability: this catalog is backend-sorted and fetched once
+    // per run, and it lives here in the STATIC context preamble — ahead of the
+    // volatile step trace. Keep it in the prefix so remote prompt caching can
+    // reuse it across every controller call of the run; do not move it into the
+    // per-step tail. Skill BODIES load later as tool observations by design.
     (availableSkills ?? []).length > 0
       ? [
           "<available_skills>",

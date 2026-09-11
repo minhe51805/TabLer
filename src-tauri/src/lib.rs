@@ -384,7 +384,10 @@ pub fn run() {
             agent_memory::save_agent_memory,
             agent_memory::delete_agent_memory,
             ai_skills::list_ai_skills,
-            ai_skills::read_ai_skill, // File commands
+            ai_skills::read_ai_skill,
+            ai_skills::read_ai_skill_resource,
+            ai_skills::ai_skills_directory,
+            ai_skills::create_ai_skill, // File commands
             read_sql_file,
             read_sql_file_from_path,
             read_csv_file,

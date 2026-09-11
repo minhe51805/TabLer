@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { getSiteLanguage } from "@/lib/language";
 import { getDictionary } from "@/lib/i18n";
-import { getDocHeadings, getDocs } from "@/lib/docs";
+import { engineHref, engineOrder, getDocs } from "@/lib/docs";
 import { repositoryUrl } from "@/lib/site";
 import { LanguageToggle } from "../LanguageToggle";
 import { DocsSidebar } from "./DocsSidebar";
@@ -24,15 +24,10 @@ export default async function DocsLayout({
     title: page.title,
   }));
 
-  const connectionsPage = docs.pages.find((page) => page.slug === "connections");
-  const connectSubnav = connectionsPage
-    ? getDocHeadings(connectionsPage)
-        .headings.filter((heading) => heading.level === 3)
-        .map((heading) => ({
-          href: `/docs/connections#${heading.id}`,
-          label: heading.text,
-        }))
-    : [];
+  const connectSubnav = engineOrder.map((engine) => ({
+    href: engineHref(docs, engine.key),
+    label: engine.label,
+  }));
 
   return (
     <main className="docs-page" id="main">

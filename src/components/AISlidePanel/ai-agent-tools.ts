@@ -109,6 +109,16 @@ export type AIAgentSkillAction = AIAgentToolActionBase<
   AIAgentSkillArgs
 >;
 
+export interface AIAgentReadSkillResourceArgs extends Record<string, unknown> {
+  name: string;
+  path: string;
+}
+
+export type AIAgentReadSkillResourceAction = AIAgentToolActionBase<
+  "read_skill_resource",
+  AIAgentReadSkillResourceArgs
+>;
+
 export interface AIAgentCreateCheckpointArgs extends Record<string, unknown> {
   label?: string;
 }
@@ -309,6 +319,7 @@ export type AIAgentToolAction =
   | AIAgentDeleteMemoryAction
   | AIAgentEditQuerySqlAction
   | AIAgentSkillAction
+  | AIAgentReadSkillResourceAction
   | AIAgentCreateCheckpointAction
   | AIAgentRestoreCheckpointAction
   | AIAgentDelegateAction

@@ -833,7 +833,7 @@ export function ConnectionDetailsStep({
                     <textarea
                       value={formData.ssh_config.privateKey || ""}
                       onChange={(e) => onFieldChange("ssh_config", { ...formData.ssh_config!, privateKey: e.target.value })}
-                      placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----"}
+                      placeholder={"Paste OpenSSH/PEM private key contents"}
                       rows={4}
                       className="input font-mono text-xs"
                       spellCheck={false}

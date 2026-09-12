@@ -469,10 +469,7 @@ impl DatabaseDriver for SidecarDriver {
         )
     }
 
-    async fn preview_write_transaction(
-        &self,
-        statements: &[String],
-    ) -> Result<Vec<QueryResult>> {
+    async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
         expect_queries(
             self.client
                 .call(SidecarCall::PreviewWriteTransaction {

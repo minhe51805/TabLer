@@ -130,7 +130,12 @@ impl SshTunnelManager {
                 if let Some(key) = inline_key {
                     authenticate_with_inline_key(&sess, &config.user, key, pass)?;
                 } else if let Some(path) = key_path {
-                    sess.userauth_pubkey_file(&config.user, None, std::path::Path::new(path), pass)?;
+                    sess.userauth_pubkey_file(
+                        &config.user,
+                        None,
+                        std::path::Path::new(path),
+                        pass,
+                    )?;
                 } else {
                     return Err(anyhow!(
                         "SSH private-key auth requires either an inline private key or a key file path."

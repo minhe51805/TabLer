@@ -70,10 +70,16 @@ async fn reference_sidecar_round_trips_over_a_real_process() {
         .await
         .expect("insert over sidecar");
 
-    let count = driver.count_rows("t", None).await.expect("count over sidecar");
+    let count = driver
+        .count_rows("t", None)
+        .await
+        .expect("count over sidecar");
     assert_eq!(count, 2);
 
-    let tables = driver.list_tables(None).await.expect("list tables over sidecar");
+    let tables = driver
+        .list_tables(None)
+        .await
+        .expect("list tables over sidecar");
     assert!(tables.iter().any(|t| t.name == "t"));
 
     let result = driver

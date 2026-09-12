@@ -91,7 +91,10 @@ mod tests {
             message: "line one\nline two".into(),
         };
         let line = encode_frame(&frame).unwrap();
-        assert!(!line.contains('\n'), "payload newline must be escaped: {line}");
+        assert!(
+            !line.contains('\n'),
+            "payload newline must be escaped: {line}"
+        );
         let decoded: SidecarFrame = decode_frame(&line).unwrap();
         match decoded {
             SidecarFrame::Log { message, .. } => assert_eq!(message, "line one\nline two"),

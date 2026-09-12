@@ -81,6 +81,7 @@ export const docsSlugs = [
   "mongodb",
   "libsql",
   "cloudflare-d1",
+  "plugins",
   "sql-workspace",
   "exploring-data",
   "visualize",
@@ -2464,6 +2465,7 @@ const en: DocsBundle = {
       label: "Guides",
       slugs: [
         "connections",
+        "plugins",
         "sql-workspace",
         "exploring-data",
         "visualize",
@@ -2695,6 +2697,53 @@ const en: DocsBundle = {
     buildEnginePage(EN_ENGINE_LABELS, EN_MONGODB),
     buildEnginePage(EN_ENGINE_LABELS, EN_LIBSQL),
     buildEnginePage(EN_ENGINE_LABELS, EN_CLOUDFLARE_D1),
+    {
+      slug: "plugins",
+      icon: "Puzzle",
+      title: "Plugins & drivers",
+      description:
+        "TableR ships lean and adds database engines as installable driver plugins — install from the app, the plugin store, or a downloaded bundle.",
+      blocks: [
+        { type: "p", text:
+          "TableR keeps a small, fast core and adds most database engines as plugins you install on demand. Instead of one heavy build with every driver compiled in, you install only the engines you actually use — and the app verifies each bundle before it loads." },
+        { type: "callout", tone: "tip", title: "Browse the plugin store", text:
+          "Every official driver is listed on the plugin store with one-click bundle downloads and per-plugin install steps. The store link is at the bottom of this page." },
+        { type: "h2", text: "Why plugins" },
+        { type: "ul", items: [
+          "Lean core — the base app stays small; you add engines only when you need them.",
+          "Independent updates — a driver can ship a fix without waiting for a full app release.",
+          "Verified on install — the app recomputes each bundle's SHA-256 digest and refuses anything that does not match its manifest.",
+          "Explicit permissions — every plugin declares exactly which capabilities it uses (metadata, read, execute, network), shown before you install.",
+        ] },
+        { type: "h2", text: "Two kinds of driver" },
+        { type: "p", text:
+          "Driver plugins come in two runtimes. The difference decides how a plugin connects and whether it needs a compiled binary." },
+        { type: "table",
+          head: ["Type", "Runtime", "How it connects", "Install"],
+          rows: [
+            ["Cloud / HTTP", "declarative-http-v1", "Talks to the database over HTTPS", "Installs instantly from the registry — manifest-only, no binary"],
+            ["Native", "driver-sidecar-v1", "Out-of-process driver over a native protocol", "Also needs a per-OS binary from a full release build"],
+          ] },
+        { type: "p", text:
+          "Cloud / HTTP drivers today: Google BigQuery, ClickHouse, Cloudflare D1, OpenSearch, and Snowflake. Native drivers: DuckDB, Cassandra, Redis, and LibSQL — these connect once the matching binary is present." },
+        { type: "h2", text: "Install a plugin" },
+        { type: "steps", items: [
+          { title: "From the Official registry", text: "In the app, open App menu → Plugin Manager → Official registry, then click Install next to the engine. Cloud / HTTP drivers are ready to use immediately." },
+          { title: "From a downloaded bundle", text: "Download a bundle from the plugin store, unzip it, then choose Install plugin and pick the unzipped folder — the one that directly contains plugin.json." },
+          { title: "Native drivers", text: "Install as above, then make sure the matching per-OS binary from a full release build is present. Without it the driver imports but cannot connect yet." },
+        ] },
+        { type: "callout", tone: "info", title: "Manifest-only bundles", text:
+          "A cloud / HTTP driver bundle is just its signed manifest — there is no compiled code to download, so it installs and connects the moment the registry entry is verified." },
+        { type: "h2", text: "How install stays safe" },
+        { type: "p", text:
+          "On import the host recomputes the bundle's SHA-256 digest byte-for-byte and rejects the bundle unless it equals the digest recorded in the manifest. Downloaded assets are additionally checked by size and hash before they are written. Credentials stay on your machine and never touch the website that hosts the plugins." },
+        { type: "h2", text: "Browse & download" },
+        { type: "cards", items: [
+          { title: "Open the plugin store", text: "Browse every official driver, review permissions, and download bundles.", href: "/plugins" },
+          { title: "Connections & databases", text: "See all supported engines and how to connect once a driver is installed.", href: "/docs/connections" },
+        ] },
+      ],
+    },
     {
       slug: "sql-workspace",
       icon: "Code2",
@@ -3039,6 +3088,7 @@ const vi: DocsBundle = {
       label: "Hướng dẫn",
       slugs: [
         "connections",
+        "plugins",
         "sql-workspace",
         "exploring-data",
         "visualize",
@@ -3270,6 +3320,53 @@ const vi: DocsBundle = {
     buildEnginePage(VI_ENGINE_LABELS, VI_MONGODB),
     buildEnginePage(VI_ENGINE_LABELS, VI_LIBSQL),
     buildEnginePage(VI_ENGINE_LABELS, VI_CLOUDFLARE_D1),
+    {
+      slug: "plugins",
+      icon: "Puzzle",
+      title: "Plugin & driver",
+      description:
+        "TableR chạy gọn nhẹ và bổ sung hệ CSDL dưới dạng plugin driver cài được — cài từ trong app, từ plugin store, hoặc từ bundle tải về.",
+      blocks: [
+        { type: "p", text:
+          "TableR giữ phần lõi nhỏ gọn, nhanh và bổ sung phần lớn hệ CSDL dưới dạng plugin cài theo nhu cầu. Thay vì một bản build nặng nề gói sẵn mọi driver, bạn chỉ cài những engine thực sự dùng — và app xác minh từng bundle trước khi nạp." },
+        { type: "callout", tone: "tip", title: "Duyệt plugin store", text:
+          "Mọi driver chính thức đều được liệt kê trên plugin store, có nút tải bundle một chạm và hướng dẫn cài cho từng plugin. Link store nằm ở cuối trang này." },
+        { type: "h2", text: "Vì sao dùng plugin" },
+        { type: "ul", items: [
+          "Lõi gọn nhẹ — app nền tảng giữ nhỏ; bạn chỉ thêm engine khi cần.",
+          "Cập nhật độc lập — một driver có thể vá lỗi mà không chờ bản phát hành app đầy đủ.",
+          "Xác minh khi cài — app tính lại SHA-256 của từng bundle và từ chối mọi thứ không khớp manifest.",
+          "Quyền rõ ràng — mỗi plugin khai báo đúng những khả năng nó dùng (metadata, đọc, thực thi, mạng), hiển thị trước khi cài.",
+        ] },
+        { type: "h2", text: "Hai loại driver" },
+        { type: "p", text:
+          "Plugin driver có hai runtime. Khác biệt này quyết định cách plugin kết nối và có cần binary biên dịch hay không." },
+        { type: "table",
+          head: ["Loại", "Runtime", "Cách kết nối", "Cài đặt"],
+          rows: [
+            ["Đám mây / HTTP", "declarative-http-v1", "Giao tiếp với CSDL qua HTTPS", "Cài tức thì từ registry — chỉ manifest, không cần binary"],
+            ["Native", "driver-sidecar-v1", "Driver chạy ngoài tiến trình qua giao thức native", "Cần thêm binary theo từng HĐH từ bản build phát hành đầy đủ"],
+          ] },
+        { type: "p", text:
+          "Driver đám mây / HTTP hiện có: Google BigQuery, ClickHouse, Cloudflare D1, OpenSearch và Snowflake. Driver native: DuckDB, Cassandra, Redis và LibSQL — kết nối được khi có binary tương ứng." },
+        { type: "h2", text: "Cài một plugin" },
+        { type: "steps", items: [
+          { title: "Từ Registry chính thức", text: "Trong app, mở Menu ứng dụng → Plugin Manager → Registry chính thức, rồi bấm Cài cạnh engine. Driver đám mây / HTTP dùng được ngay lập tức." },
+          { title: "Từ bundle tải về", text: "Tải bundle từ plugin store, giải nén, rồi chọn Cài plugin và chỉ tới thư mục vừa giải nén — thư mục chứa trực tiếp plugin.json." },
+          { title: "Driver native", text: "Cài như trên, rồi bảo đảm có binary đúng HĐH từ bản build phát hành đầy đủ. Thiếu binary thì driver vẫn nhập được nhưng chưa kết nối được." },
+        ] },
+        { type: "callout", tone: "info", title: "Bundle chỉ gồm manifest", text:
+          "Bundle của driver đám mây / HTTP chỉ là manifest đã ký — không có mã biên dịch để tải, nên cài và kết nối được ngay khi entry registry được xác minh." },
+        { type: "h2", text: "Vì sao cài đặt luôn an toàn" },
+        { type: "p", text:
+          "Khi nhập, host tính lại SHA-256 của bundle theo từng byte và từ chối bundle nếu không bằng digest ghi trong manifest. Asset tải về còn được kiểm tra kích thước và hash trước khi ghi. Thông tin đăng nhập ở lại trên máy bạn và không bao giờ đi qua website chứa plugin." },
+        { type: "h2", text: "Duyệt & tải" },
+        { type: "cards", items: [
+          { title: "Mở plugin store", text: "Duyệt mọi driver chính thức, xem quyền và tải bundle.", href: "/plugins" },
+          { title: "Kết nối & CSDL", text: "Xem mọi engine được hỗ trợ và cách kết nối sau khi cài driver.", href: "/docs/connections" },
+        ] },
+      ],
+    },
     {
       slug: "sql-workspace",
       icon: "Code2",

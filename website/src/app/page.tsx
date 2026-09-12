@@ -111,6 +111,7 @@ export default async function Home() {
             <a href="#open-source">{t.nav.openSource}</a>
             <a href="/changelog">{t.nav.changelog}</a>
             <Link href="/docs">{t.nav.docs}</Link>
+            <Link href="/plugins">{t.nav.plugins}</Link>
           </nav>
 
           <div className="header-actions">
@@ -419,6 +420,7 @@ export default async function Home() {
             <a href={downloadUrl}>{t.footer.download}</a>
             <Link href="/changelog">{t.footer.changelog}</Link>
             <Link href="/docs">{t.footer.docs}</Link>
+            <Link href="/plugins">{t.nav.plugins}</Link>
             <a
               href="https://buymeacoffee.com/minjev"
               target="_blank"

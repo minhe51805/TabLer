@@ -119,16 +119,7 @@ where
                 streams.lock().unwrap().remove(&id);
             }
             HostFrame::Request(SidecarRequest { id, call }) => {
-                handle_request(
-                    id,
-                    call,
-                    &backend,
-                    &driver,
-                    &cancels,
-                    &streams,
-                    &out_tx,
-                )
-                .await;
+                handle_request(id, call, &backend, &driver, &cancels, &streams, &out_tx).await;
             }
         }
     }
@@ -183,7 +174,10 @@ async fn handle_request<B: SidecarBackend>(
             let cancels = Arc::clone(cancels);
             let streams = Arc::clone(streams);
             tokio::spawn(async move {
-                let outcome = match d.insert_table_row_stream_atomically(row_rx, cancelled).await {
+                let outcome = match d
+                    .insert_table_row_stream_atomically(row_rx, cancelled)
+                    .await
+                {
                     Ok(n) => SidecarOutcome::Ok(SidecarResponsePayload::Affected(n)),
                     Err(e) => err_outcome(e, SidecarErrorKind::Query),
                 };
@@ -209,7 +203,6 @@ async fn handle_request<B: SidecarBackend>(
         }
     }
 }
-
 
 /// Map one unary [`SidecarCall`] to its [`DatabaseDriver`] method and wrap the
 /// result in a typed payload. Mirrors the host `SidecarDriver` impl exactly, so
@@ -387,7 +380,6 @@ async fn send_frame(tx: &mpsc::Sender<String>, frame: SidecarFrame) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{serve, SidecarBackend};
@@ -446,15 +438,14 @@ mod tests {
         }
     }
 
-
     /// Drive the real `SidecarClient` against the real `serve` loop over an
     /// in-memory duplex: handshake, connect, then a full DDL/DML/read round
     /// trip, and a clean shutdown. Proves the sidecar-side harness honors the
     /// wire contract end to end without spawning a process.
     #[tokio::test]
     async fn serve_round_trips_the_full_lifecycle_over_a_duplex() {
-        let db_path = std::env::temp_dir()
-            .join(format!("tabler-sidecar-harness-{}.db", std::process::id()));
+        let db_path =
+            std::env::temp_dir().join(format!("tabler-sidecar-harness-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&db_path);
 
         let (host_io, sidecar_io) = tokio::io::duplex(1 << 16);
@@ -571,4 +562,3 @@ mod tests {
         client.shutdown().await;
     }
 }
-

@@ -17,6 +17,8 @@
     "check:frontend": "npm run typecheck && npm run lint && npm run test:run && npm run build",
     "check:release-contract": "node scripts/check-release-contract.mjs",
     "check:tauri-target": "node scripts/check-tauri-binary-target.mjs",
+    "build:plugin-registry": "node scripts/build-plugin-registry.mjs",
+    "build:plugin-repository": "node scripts/build-plugin-repository.mjs",
     "check:sql-splitter": "node scripts/check-sql-splitter.mjs && cargo test sql_splitter_contract --manifest-path src-tauri/Cargo.toml",
     "build:release": "tauri build --config src-tauri/tauri.release.conf.json",
     "build:release:full": "tauri build --features duckdb-driver,cassandra-driver,redis-driver,libsql-driver --config src-tauri/tauri.release.conf.json",

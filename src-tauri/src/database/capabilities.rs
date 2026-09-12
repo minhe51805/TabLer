@@ -51,6 +51,23 @@ pub const fn agent_allows_sql_write_preview(database_type: DatabaseType) -> bool
     matches!(query_model_for(database_type), QueryModel::Sql)
 }
 
+/// SQLite-family engines: embedded/file engines that share SQLite's SQL dialect
+/// for identifier quoting and `PRAGMA foreign_keys` toggling.
+///
+/// Consolidated here (tech-debt audit D8): this exact 4-member group was spelled
+/// out inline across `export_support.rs`, `restore.rs`, and `search.rs`. Adding
+/// another SQLite-compatible engine should update this one function instead of
+/// hunting every `SQLite | DuckDB | LibSQL | CloudflareD1` match arm.
+pub const fn is_sqlite_family(database_type: DatabaseType) -> bool {
+    matches!(
+        database_type,
+        DatabaseType::SQLite
+            | DatabaseType::DuckDB
+            | DatabaseType::LibSQL
+            | DatabaseType::CloudflareD1
+    )
+}
+
 pub fn agent_sql_read_unsupported_error(database_type: DatabaseType) -> Option<String> {
     if agent_allows_sql_read(database_type) {
         return None;
@@ -422,6 +439,24 @@ mod tests {
             .map(|profile| profile.key)
             .collect::<HashSet<_>>();
         assert_eq!(keys.len(), ALL_DATABASE_TYPES.len());
+    }
+
+    #[test]
+    fn sqlite_family_is_exactly_the_embedded_sqlite_dialect_engines() {
+        for database_type in ALL_DATABASE_TYPES {
+            let expected = matches!(
+                database_type,
+                DatabaseType::SQLite
+                    | DatabaseType::DuckDB
+                    | DatabaseType::LibSQL
+                    | DatabaseType::CloudflareD1
+            );
+            assert_eq!(
+                is_sqlite_family(database_type),
+                expected,
+                "is_sqlite_family mismatch for {database_type:?}"
+            );
+        }
     }
 
     #[test]

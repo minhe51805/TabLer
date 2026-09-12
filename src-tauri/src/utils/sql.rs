@@ -630,6 +630,39 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Deserialize)]
+    struct SqlClassificationContract {
+        cases: Vec<SqlClassificationCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct SqlClassificationCase {
+        sql: String,
+        #[serde(rename = "readOnly")]
+        read_only: bool,
+    }
+
+    #[test]
+    fn frontend_backend_sql_classification_contract() {
+        // Backend half of the FE<->BE contract (tech-debt audit D6): the same
+        // fixture is asserted on the frontend by
+        // tests/utils/sql-classification-contract.test.ts. If either classifier
+        // drifts on these shared statements, its own side fails.
+        let contract: SqlClassificationContract = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/sql-classification-contract.json"
+        ))
+        .expect("shared SQL classification contract should parse");
+
+        for case in contract.cases {
+            let decision = classify_sql_with_dialect(&case.sql, None);
+            assert_eq!(
+                decision.read_only, case.read_only,
+                "classify_sql_with_dialect read_only mismatch for `{}`",
+                case.sql
+            );
+        }
+    }
+
     #[test]
     fn classifier_handles_comments_ctes_and_multiple_statements() {
         let decision = classify_sql(

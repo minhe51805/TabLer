@@ -1,6 +1,40 @@
 use crate::database::ai_models::{AIProviderConfig, AIProviderType};
 use reqwest::{StatusCode, Url};
 
+/// Machine-readable classification appended to a finished AI error message so
+/// the frontend (`normalizeAIRequestError` in `src/utils/ai-request-errors.ts`)
+/// can route retry/failover decisions off an authoritative marker instead of
+/// guessing from substrings (tech-debt D7). The frontend strips this suffix
+/// before showing the message, so users never see it. The kind strings mirror
+/// the frontend `AIRequestErrorCode` union; the shared contract lives in
+/// `tests/fixtures/ai-error-kinds.json`.
+pub(crate) const AI_ERROR_KIND_MARKER_KEY: &str = "ai_error_kind";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AiErrorKind {
+    Cancelled,
+    Timeout,
+    Provider,
+    InvalidResponse,
+}
+
+impl AiErrorKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            AiErrorKind::Cancelled => "cancelled",
+            AiErrorKind::Timeout => "timeout",
+            AiErrorKind::Provider => "provider",
+            AiErrorKind::InvalidResponse => "invalid-response",
+        }
+    }
+}
+
+/// Appends the machine-readable kind marker to a finished error message.
+pub(crate) fn tag_ai_error_kind(message: String, kind: AiErrorKind) -> String {
+    format!("{message} [{AI_ERROR_KIND_MARKER_KEY}={}]", kind.as_str())
+}
+
+
 pub(crate) fn ai_storage_load_error() -> String {
     "Could not load AI provider settings.".to_string()
 }
@@ -82,11 +116,22 @@ pub(crate) fn ai_provider_request_error(
         format!("Could not reach {endpoint_label}. Check the endpoint and network connection.")
     };
 
-    format!("The AI request to \"{provider_label}\" could not be completed. {detail}")
+    let kind = if error.is_timeout() {
+        AiErrorKind::Timeout
+    } else {
+        AiErrorKind::Provider
+    };
+    tag_ai_error_kind(
+        format!("The AI request to \"{provider_label}\" could not be completed. {detail}"),
+        kind,
+    )
 }
 
 pub(crate) fn ai_provider_response_error() -> String {
-    "The AI provider returned an invalid or unsupported response.".to_string()
+    tag_ai_error_kind(
+        "The AI provider returned an invalid or unsupported response.".to_string(),
+        AiErrorKind::InvalidResponse,
+    )
 }
 
 fn is_sensitive_response_key(key: &str) -> bool {
@@ -165,9 +210,9 @@ fn compact_response_preview(body: &str, api_key: Option<&str>) -> String {
 }
 
 pub(crate) fn ai_provider_api_error(message: &str, api_key: Option<&str>) -> String {
-    format!(
-        "AI API error: {}",
-        compact_response_preview(message, api_key)
+    tag_ai_error_kind(
+        format!("AI API error: {}", compact_response_preview(message, api_key)),
+        AiErrorKind::Provider,
     )
 }
 
@@ -234,7 +279,7 @@ pub(crate) fn ai_provider_http_status_error(
         String::new()
     };
 
-    if preview.is_empty() {
+    let message = if preview.is_empty() {
         format!(
             "The AI provider \"{provider_label}\" at {endpoint_label} returned HTTP {status_label}.{retry_note}"
         )
@@ -242,7 +287,8 @@ pub(crate) fn ai_provider_http_status_error(
         format!(
             "The AI provider \"{provider_label}\" at {endpoint_label} returned HTTP {status_label}. Response preview: {preview}{retry_note}"
         )
-    }
+    };
+    tag_ai_error_kind(message, AiErrorKind::Provider)
 }
 
 pub(crate) fn ai_provider_non_json_response_error(
@@ -269,8 +315,11 @@ pub(crate) fn ai_provider_non_json_response_error(
         .unwrap_or_else(|| endpoint.to_string());
     let preview = compact_response_preview(body, api_key);
 
-    format!(
-        "The AI provider \"{provider_label}\" at {endpoint_label} returned a non-JSON response. Response preview: {preview}"
+    tag_ai_error_kind(
+        format!(
+            "The AI provider \"{provider_label}\" at {endpoint_label} returned a non-JSON response. Response preview: {preview}"
+        ),
+        AiErrorKind::InvalidResponse,
     )
 }
 
@@ -299,8 +348,11 @@ pub(crate) fn ai_provider_response_error_with_preview(
 
     let compact_preview = compact_response_preview(&payload.to_string(), api_key);
 
-    format!(
-        "The AI provider \"{provider_label}\" at {endpoint_label} returned an unsupported response shape. Response preview: {compact_preview}"
+    tag_ai_error_kind(
+        format!(
+            "The AI provider \"{provider_label}\" at {endpoint_label} returned an unsupported response shape. Response preview: {compact_preview}"
+        ),
+        AiErrorKind::InvalidResponse,
     )
 }
 
@@ -397,5 +449,97 @@ mod tests {
             Some(4),
         );
         assert!(!bad_request.contains("retry_after_ms="));
+    }
+
+    fn openai_test_config() -> AIProviderConfig {
+        serde_json::from_str(&format!(
+            r#"{{"id":"p1","name":"OpenAI","provider_type":{},"endpoint":"https://api.openai.com/v1/chat/completions","model":"gpt-test","is_enabled":true}}"#,
+            serde_json::to_string(&AIProviderType::OpenAI).unwrap()
+        ))
+        .expect("provider config should deserialize")
+    }
+
+    /// D7: every terminal AI error builder appends its machine-readable
+    /// `[ai_error_kind=<code>]` marker so the frontend classifier can route
+    /// retry/failover off it instead of guessing from substrings.
+    #[test]
+    fn ai_error_builders_append_machine_readable_kind_markers() {
+        let config = openai_test_config();
+        let endpoint = "https://api.openai.com/v1/chat/completions";
+
+        assert!(ai_provider_response_error().ends_with("[ai_error_kind=invalid-response]"));
+        assert!(ai_provider_api_error("boom", None).ends_with("[ai_error_kind=provider]"));
+        assert!(
+            ai_provider_http_status_error(
+                &config,
+                endpoint,
+                StatusCode::TOO_MANY_REQUESTS,
+                "{}",
+                None,
+                Some(4),
+            )
+            .ends_with("[ai_error_kind=provider]")
+        );
+        assert!(
+            ai_provider_non_json_response_error(&config, endpoint, "<html>", None)
+                .ends_with("[ai_error_kind=invalid-response]")
+        );
+        assert!(
+            ai_provider_response_error_with_preview(&config, endpoint, &json!({"foo": "bar"}), None)
+                .ends_with("[ai_error_kind=invalid-response]")
+        );
+
+        // The kind marker rides alongside the retry_after_ms marker without
+        // clobbering it: both must survive on the same message.
+        let http = ai_provider_http_status_error(
+            &config,
+            endpoint,
+            StatusCode::TOO_MANY_REQUESTS,
+            "{}",
+            None,
+            Some(4),
+        );
+        assert!(http.contains("retry_after_ms=4000"));
+        assert!(http.contains("[ai_error_kind=provider]"));
+    }
+
+    /// Cross-language contract shared with the frontend classifier
+    /// (`tests/utils/ai-request-errors.test.ts` + `src/utils/ai-request-errors.ts`).
+    /// If the marker key or the set of emitted kinds drifts from the frontend's
+    /// recognized codes, one side fails.
+    #[test]
+    fn ai_error_kind_markers_match_shared_frontend_contract() {
+        #[derive(serde::Deserialize)]
+        struct Contract {
+            #[serde(rename = "markerKey")]
+            marker_key: String,
+            kinds: Vec<String>,
+        }
+
+        let contract: Contract = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/ai-error-kinds.json"
+        ))
+        .expect("shared AI error-kind contract should parse");
+
+        assert_eq!(contract.marker_key, AI_ERROR_KIND_MARKER_KEY);
+
+        let emitted = [
+            AiErrorKind::Cancelled,
+            AiErrorKind::Timeout,
+            AiErrorKind::Provider,
+            AiErrorKind::InvalidResponse,
+        ];
+        for kind in emitted {
+            assert!(
+                contract.kinds.iter().any(|listed| listed == kind.as_str()),
+                "frontend contract is missing backend kind {}",
+                kind.as_str()
+            );
+        }
+        assert_eq!(
+            contract.kinds.len(),
+            emitted.len(),
+            "contract lists kinds the backend never emits"
+        );
     }
 }

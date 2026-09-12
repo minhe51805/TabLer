@@ -93,7 +93,14 @@ function renderBlock(block: DocBlock, key: number, id?: string) {
           <Icon size={18} aria-hidden="true" />
           <div>
             {block.title ? <strong>{block.title}</strong> : null}
-            <p>{block.text}</p>
+            {block.text ? <p>{block.text}</p> : null}
+            {block.steps ? (
+              <ol className="doc-callout-steps">
+                {block.steps.map((step, i) => (
+                  <li key={i}>{step}</li>
+                ))}
+              </ol>
+            ) : null}
           </div>
         </div>
       );

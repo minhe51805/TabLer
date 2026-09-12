@@ -2251,6 +2251,24 @@ footer {
   line-height: 1.65;
 }
 
+.doc-callout-steps {
+  margin: 6px 0 0;
+  padding-left: 22px;
+  list-style: decimal;
+  color: #3c454f;
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.doc-callout-steps li {
+  display: list-item;
+  padding-left: 3px;
+}
+
+.doc-callout-steps li + li {
+  margin-top: 5px;
+}
+
 .doc-callout-info {
   border-color: #bcdcff;
   background: var(--blue-soft);

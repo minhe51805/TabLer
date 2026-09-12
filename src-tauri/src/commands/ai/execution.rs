@@ -15,7 +15,8 @@ use super::endpoints::{
 use super::errors::{
     ai_provider_api_error, ai_provider_config_error, ai_provider_http_status_error,
     ai_provider_non_json_response_error, ai_provider_request_error, ai_provider_response_error,
-    ai_provider_response_error_with_preview, response_retry_after_seconds,
+    ai_provider_response_error_with_preview, response_retry_after_seconds, tag_ai_error_kind,
+    AiErrorKind,
 };
 use super::extraction::{
     extract_anthropic_reasoning, extract_anthropic_response_text, extract_gemini_reasoning,
@@ -25,7 +26,8 @@ use super::extraction::{
 use super::prompt::build_ai_prompt;
 use super::providers::{
     apply_attachments, apply_conversation_history, apply_native_tools,
-    build_provider_request_body_with_thinking, effective_wire_provider, parse_models_list_response,
+    build_provider_request_body_with_thinking, effective_wire_provider, is_thinking_param_rejection,
+    mark_model_thinking_unsupported, model_thinking_unsupported, parse_models_list_response,
     resolve_provider_body_shape, streaming_endpoint, streaming_request_body_with_thinking,
 };
 use super::{ai_http_client, run_blocking_storage_task, FetchedModel, AI_REQUEST_CANCELLED_ERROR};
@@ -46,7 +48,7 @@ pub(crate) async fn fetch_provider_models(
         AIProviderType::Anthropic => {
             request_builder = request_builder
                 .header("x-api-key", api_key.unwrap_or_default())
-                .header("anthropic-version", "2023-06-01");
+                .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION);
         }
         AIProviderType::Gemini => {
             request_builder =
@@ -184,7 +186,7 @@ pub(crate) async fn execute_ai_stream_request(
         AIProviderType::Anthropic => {
             request_builder = request_builder
                 .header("x-api-key", api_key.as_deref().unwrap_or_default())
-                .header("anthropic-version", "2023-06-01");
+                .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION);
         }
         AIProviderType::Gemini => {
             request_builder =
@@ -198,7 +200,10 @@ pub(crate) async fn execute_ai_stream_request(
     }
 
     let response = tokio::select! {
-        _ = cancellation_token.cancelled() => return Err(AI_REQUEST_CANCELLED_ERROR.to_string()),
+        _ = cancellation_token.cancelled() => return Err(tag_ai_error_kind(
+            AI_REQUEST_CANCELLED_ERROR.to_string(),
+            AiErrorKind::Cancelled,
+        )),
         response = request_builder.json(&body).send() => response
             .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?,
     };
@@ -227,7 +232,10 @@ pub(crate) async fn execute_ai_stream_request(
 
     loop {
         let next = tokio::select! {
-            _ = cancellation_token.cancelled() => return Err(AI_REQUEST_CANCELLED_ERROR.to_string()),
+            _ = cancellation_token.cancelled() => return Err(tag_ai_error_kind(
+                AI_REQUEST_CANCELLED_ERROR.to_string(),
+                AiErrorKind::Cancelled,
+            )),
             next = stream.next() => next,
         };
         let Some(chunk) = next else { break };
@@ -391,7 +399,7 @@ pub(crate) async fn execute_ai_request(
                 if matches!(wire_provider, AIProviderType::Anthropic) {
                     req = req
                         .header("x-api-key", api_key.as_deref().unwrap_or_default())
-                        .header("anthropic-version", "2023-06-01");
+                        .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION);
                 } else if let Some(ref api_key) = api_key {
                     req = req.bearer_auth(api_key);
                 }
@@ -410,8 +418,49 @@ pub(crate) async fn execute_ai_request(
                     .map_err(|_| ai_provider_response_error())?;
 
                 if !status.is_success() {
+                    // D2 self-heal: if the provider rejected the extended-thinking
+                    // parameter with a 400, record that this model won't accept it
+                    // and rebuild the body without thinking for one clean retry.
+                    // The mark also spares every later turn / send path from
+                    // re-sending a parameter the model doesn't understand.
+                    if status.as_u16() == 400
+                        && !model_thinking_unsupported(&config.model)
+                        && is_thinking_param_rejection(&raw_body)
+                        && attempt + 1 < max_attempts
+                    {
+                        mark_model_thinking_unsupported(&config.model);
+                        body = build_provider_request_body_with_thinking(
+                            &config,
+                            &endpoint,
+                            &system_prompt,
+                            &prompt,
+                            &request.mode,
+                            Some(false),
+                        );
+                        apply_native_tools(
+                            &mut body,
+                            &wire_provider,
+                            request.tools.as_ref(),
+                            request.tool_choice.as_ref(),
+                        );
+                        apply_conversation_history(
+                            &mut body,
+                            resolve_provider_body_shape(&config, &endpoint),
+                            &request.history,
+                        );
+                        apply_attachments(
+                            &mut body,
+                            resolve_provider_body_shape(&config, &endpoint),
+                            &prompt,
+                            &request.attachments,
+                        );
+                        continue;
+                    }
                     if should_retry_openai_like_status(status) && attempt + 1 < max_attempts {
-                        sleep(Duration::from_millis(800 * (attempt as u64 + 1))).await;
+                        sleep(Duration::from_millis(
+                            crate::config::AI_RETRY_BACKOFF_BASE_MS * (attempt as u64 + 1),
+                        ))
+                        .await;
                         continue;
                     }
 
@@ -537,7 +586,7 @@ pub(crate) async fn execute_ai_request(
             let response = client
                 .post(&endpoint)
                 .header("x-api-key", api_key.as_deref().unwrap_or_default())
-                .header("anthropic-version", "2023-06-01")
+                .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION)
                 .json(&body)
                 .send()
                 .await

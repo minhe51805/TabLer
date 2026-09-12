@@ -18,7 +18,7 @@ use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Instant;
 use tokio::sync::RwLock;
 
-const POOL_MAX_CONNECTIONS: u32 = 8;
+use crate::config::POOL_MAX_CONNECTIONS;
 
 pub struct PostgresDriver {
     pub(super) pool: StdRwLock<PgPool>,

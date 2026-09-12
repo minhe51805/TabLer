@@ -131,4 +131,26 @@ describe("agent engine tool gates", () => {
     );
     expect(fromRust).toEqual(AGENT_QUERY_MODEL_BY_ENGINE);
   });
+
+  it("keeps engine display labels in lockstep with the generated Rust capability matrix", () => {
+    // Tech-debt audit D8: the display label is single-sourced from the Rust
+    // capability matrix (`driver_capabilities().label`). The backend
+    // `connection_engine_label` now delegates to that matrix, so this test is
+    // the frontend half of the same contract — it fails if `ENGINE_LABEL`
+    // (surfaced via `agentToolAvailability().engineLabel`) drifts from the
+    // canonical labels the way Redshift/Cassandra/BigQuery once did.
+    const labelsFromRust = Object.fromEntries(
+      (capabilityMatrix as Array<{ key: string; label: string }>).map((row) => [
+        row.key,
+        row.label,
+      ]),
+    );
+    const labelsFromAgent = Object.fromEntries(
+      Object.keys(AGENT_QUERY_MODEL_BY_ENGINE).map((key) => [
+        key,
+        agentToolAvailability(key).engineLabel,
+      ]),
+    );
+    expect(labelsFromAgent).toEqual(labelsFromRust);
+  });
 });

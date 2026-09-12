@@ -6,6 +6,7 @@ mod prompt;
 mod providers;
 
 use crate::database::ai_models::{AIProviderConfig, AIRequest, AIResponse};
+use crate::error::AppError;
 use crate::storage::ai_storage::AIStorage;
 use crate::utils::rate_limiter::AIRequestLimiter;
 use serde::Serialize;
@@ -162,7 +163,14 @@ pub async fn ask_ai(
     storage: State<'_, AIStorage>,
     ai_rate_limiter: State<'_, AIRequestLimiter>,
     cancellation_state: State<'_, AIRequestCancellationState>,
-) -> Result<AIResponse, String> {
+) -> Result<AIResponse, AppError> {
+    // Tech-debt audit D7: the AI request flow now returns the unified `AppError`
+    // type. Provider/validation strings pass through as `AppError::Other`, whose
+    // `Display` is the bare message (no prefix), so the wire string the frontend
+    // classifier (`normalizeAIRequestError`) sees is byte-identical to before.
+    // Categorizing into typed variants (e.g. RateLimited) is a deliberate
+    // follow-up: it changes the wire string and needs a coordinated frontend
+    // change, so it is intentionally not done in this pass.
     request
         .validate()
         .map_err(|e| format!("Invalid request: {}", e))?;
@@ -182,7 +190,10 @@ pub async fn ask_ai(
     }
 
     let result = tokio::select! {
-        _ = cancellation_token.cancelled() => Err(AI_REQUEST_CANCELLED_ERROR.to_string()),
+        _ = cancellation_token.cancelled() => Err(errors::tag_ai_error_kind(
+            AI_REQUEST_CANCELLED_ERROR.to_string(),
+            errors::AiErrorKind::Cancelled,
+        )),
         result = execution::execute_ai_request(request, storage.inner(), ai_rate_limiter.inner()) => result,
     };
 
@@ -190,7 +201,7 @@ pub async fn ask_ai(
         cancellation_state.finish(request_id).await;
     }
 
-    result
+    result.map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -200,7 +211,9 @@ pub async fn ask_ai_stream(
     storage: State<'_, AIStorage>,
     ai_rate_limiter: State<'_, AIRequestLimiter>,
     cancellation_state: State<'_, AIRequestCancellationState>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
+    // D7: same message-preserving `AppError` passthrough as `ask_ai` — the stream
+    // "error" event and the returned error carry the identical string.
     request
         .validate()
         .map_err(|error| format!("Invalid request: {error}"))?;
@@ -228,10 +241,10 @@ pub async fn ask_ai_stream(
     cancellation_state.finish(&request_id).await;
 
     match result {
-        Ok(()) => emit_ai_stream_event(&app, &request_id, "done", None, None),
+        Ok(()) => emit_ai_stream_event(&app, &request_id, "done", None, None).map_err(AppError::from),
         Err(error) => {
             let _ = emit_ai_stream_event(&app, &request_id, "error", Some(error.clone()), None);
-            Err(error)
+            Err(AppError::from(error))
         }
     }
 }

@@ -826,6 +826,23 @@ export function ConnectionDetailsStep({
                     />
                   </div>
                 )}
+
+                {(formData.ssh_config.authType === "privateKey" || formData.ssh_config.authType === "privateKeyWithPassphrase") && (
+                  <div className="connection-form-field">
+                    <label className="form-label uppercase tracking-wide">Private Key (paste, optional)</label>
+                    <textarea
+                      value={formData.ssh_config.privateKey || ""}
+                      onChange={(e) => onFieldChange("ssh_config", { ...formData.ssh_config!, privateKey: e.target.value })}
+                      placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----"}
+                      rows={4}
+                      className="input font-mono text-xs"
+                      spellCheck={false}
+                    />
+                    <p className="text-xs opacity-70 mt-1">
+                      Paste the key contents to authenticate without a file on disk. When set, this takes priority over the file path above.
+                    </p>
+                  </div>
+                )}
                 
                 {formData.ssh_config.authType === "privateKeyWithPassphrase" && (
                   <div className="connection-form-field">

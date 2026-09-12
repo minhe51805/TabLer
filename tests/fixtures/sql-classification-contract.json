@@ -1,0 +1,19 @@
+{
+  "_comment": "Shared FE<->BE SQL-classification contract (tech-debt audit D6). The frontend heuristic (SQLEditorUtils isMutatingStatement/isSessionSwitchStatement) and the backend authority (utils::sql::classify_sql_with_dialect) must agree on read-only vs not for these statements. Two tests read this one file: tests/utils/sql-classification-contract.test.ts (FE) and a unit test in src-tauri/src/utils/sql.rs (BE). Transaction-control (BEGIN/COMMIT) and EXPLAIN are intentionally excluded: the coarse FE heuristic does not gate them (the backend does), so they are not part of this shared contract.",
+  "cases": [
+    { "sql": "SELECT * FROM users", "readOnly": true },
+    { "sql": "SELECT count(*) FROM orders WHERE total > 100", "readOnly": true },
+    { "sql": "SHOW TABLES", "readOnly": true },
+    { "sql": "INSERT INTO users (name) VALUES ('a')", "readOnly": false },
+    { "sql": "UPDATE users SET name = 'x' WHERE id = 1", "readOnly": false },
+    { "sql": "DELETE FROM users WHERE id = 1", "readOnly": false },
+    { "sql": "REPLACE INTO users (id, name) VALUES (1, 'a')", "readOnly": false },
+    { "sql": "CREATE TABLE t (id INT)", "readOnly": false },
+    { "sql": "ALTER TABLE t ADD COLUMN c INT", "readOnly": false },
+    { "sql": "DROP TABLE t", "readOnly": false },
+    { "sql": "TRUNCATE TABLE t", "readOnly": false },
+    { "sql": "USE analytics", "readOnly": false },
+    { "sql": "SET ROLE admin", "readOnly": false },
+    { "sql": "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed", "readOnly": false }
+  ]
+}

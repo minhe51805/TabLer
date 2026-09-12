@@ -4,6 +4,7 @@ mod ai_skills;
 mod ai_workspace_cache;
 mod ai_workspace_history;
 mod commands;
+pub mod config;
 pub mod database;
 pub mod error;
 pub mod mcp;
@@ -14,6 +15,17 @@ pub mod query_history;
 pub mod ssh;
 pub mod storage;
 mod utils;
+
+/// Sandbox SQL-safety guard, re-exported at the crate root so the driver
+/// integration harness (`tests/driver_integration.rs`) can exercise the
+/// filesystem/network/OS capability boundary end-to-end against live engines.
+/// These are the exact functions the sandbox gateway in `commands::query`
+/// calls before any statement reaches a driver; this is a test-facing
+/// re-export, not a widening of the private `utils` module.
+pub mod sandbox_guard {
+    pub use crate::utils::sql::{classify_sql_with_dialect, detect_dangerous_capability};
+}
+
 mod watcher;
 
 use ai_workspace_cache::{

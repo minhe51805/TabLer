@@ -20,15 +20,16 @@ use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-const READ_ONLY_QUERY_TIMEOUT: Duration = Duration::from_secs(180);
-const MUTATING_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Sandbox result caps for AI-agent reads (defense-in-depth alongside the query
-/// timeout). The agent works from SAMPLES, so a run past either ceiling is
-/// truncated and flagged `truncated` so the model knows it did not see the full
-/// set. Human paths (SQL editor, metrics) pass `None` and are never capped here.
-const SANDBOX_AGENT_MAX_ROWS: usize = 5_000;
-const SANDBOX_AGENT_MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
+// Query timeouts (D5) and sandbox caps (D10) are centralized in `crate::config`.
+// Timeouts are resolved at call time via `read_only_query_timeout()` /
+// `mutating_query_timeout()` so an operator env override can raise them without
+// changing the compiled defaults (180s read / 60s mutating).
+//
+// Sandbox result caps for AI-agent reads (defense-in-depth alongside the query
+// timeout). The agent works from SAMPLES, so a run past either ceiling is
+// truncated and flagged `truncated` so the model knows it did not see the full
+// set. Human paths (SQL editor, metrics) pass `None` and are never capped here.
+use crate::config::{SANDBOX_AGENT_MAX_RESULT_BYTES, SANDBOX_AGENT_MAX_ROWS};
 
 /// Cheap upper-bound estimate of a row's JSON footprint — avoids serializing the
 /// whole result set just to measure it.
@@ -255,9 +256,9 @@ fn timeout_for_statements<'a>(
 ) -> Duration {
     let sql = statements.collect::<Vec<_>>().join(";\n");
     if classify_sql_with_dialect(&sql, database_type).read_only {
-        READ_ONLY_QUERY_TIMEOUT
+        crate::config::read_only_query_timeout()
     } else {
-        MUTATING_QUERY_TIMEOUT
+        crate::config::mutating_query_timeout()
     }
 }
 
@@ -456,7 +457,7 @@ pub async fn execute_query_progressive(
             driver.execute_query(&sql).await
         }
     };
-    let result = timeout(READ_ONLY_QUERY_TIMEOUT, exec).await;
+    let result = timeout(crate::config::read_only_query_timeout(), exec).await;
     let mut result = match result {
         Ok(inner) => inner.map_err(format_query_runtime_error)?,
         Err(_) => {
@@ -927,9 +928,9 @@ pub async fn execute_agent_readonly_query(
 mod tests {
     use super::{
         cap_sandbox_result, timeout_for_statements, validate_sandbox_batch,
-        validate_sandbox_statement, QueryCancellationState, MUTATING_QUERY_TIMEOUT,
-        READ_ONLY_QUERY_TIMEOUT,
+        validate_sandbox_statement, QueryCancellationState,
     };
+    use crate::config::{mutating_query_timeout, read_only_query_timeout};
     use crate::database::models::QueryResult;
     use tokio_util::sync::CancellationToken;
 
@@ -1148,19 +1149,19 @@ mod tests {
     fn timeout_uses_read_only_window_only_for_read_batches() {
         assert_eq!(
             timeout_for_statements(["SELECT 1"].into_iter(), None),
-            READ_ONLY_QUERY_TIMEOUT
+            read_only_query_timeout()
         );
         assert_eq!(
             timeout_for_statements(["SELECT 1", "SELECT 2"].into_iter(), None),
-            READ_ONLY_QUERY_TIMEOUT
+            read_only_query_timeout()
         );
         assert_eq!(
             timeout_for_statements(["UPDATE users SET name = 'x'"].into_iter(), None),
-            MUTATING_QUERY_TIMEOUT
+            mutating_query_timeout()
         );
         assert_eq!(
             timeout_for_statements(["SELECT 1", "DELETE FROM users"].into_iter(), None),
-            MUTATING_QUERY_TIMEOUT
+            mutating_query_timeout()
         );
         assert_eq!(
             timeout_for_statements(
@@ -1168,7 +1169,7 @@ mod tests {
                     .into_iter(),
                 None
             ),
-            MUTATING_QUERY_TIMEOUT
+            mutating_query_timeout()
         );
     }
 }

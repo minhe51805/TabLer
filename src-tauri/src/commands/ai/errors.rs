@@ -34,7 +34,6 @@ pub(crate) fn tag_ai_error_kind(message: String, kind: AiErrorKind) -> String {
     format!("{message} [{AI_ERROR_KIND_MARKER_KEY}={}]", kind.as_str())
 }
 
-
 pub(crate) fn ai_storage_load_error() -> String {
     "Could not load AI provider settings.".to_string()
 }
@@ -211,7 +210,10 @@ fn compact_response_preview(body: &str, api_key: Option<&str>) -> String {
 
 pub(crate) fn ai_provider_api_error(message: &str, api_key: Option<&str>) -> String {
     tag_ai_error_kind(
-        format!("AI API error: {}", compact_response_preview(message, api_key)),
+        format!(
+            "AI API error: {}",
+            compact_response_preview(message, api_key)
+        ),
         AiErrorKind::Provider,
     )
 }
@@ -469,25 +471,26 @@ mod tests {
 
         assert!(ai_provider_response_error().ends_with("[ai_error_kind=invalid-response]"));
         assert!(ai_provider_api_error("boom", None).ends_with("[ai_error_kind=provider]"));
-        assert!(
-            ai_provider_http_status_error(
-                &config,
-                endpoint,
-                StatusCode::TOO_MANY_REQUESTS,
-                "{}",
-                None,
-                Some(4),
-            )
-            .ends_with("[ai_error_kind=provider]")
-        );
+        assert!(ai_provider_http_status_error(
+            &config,
+            endpoint,
+            StatusCode::TOO_MANY_REQUESTS,
+            "{}",
+            None,
+            Some(4),
+        )
+        .ends_with("[ai_error_kind=provider]"));
         assert!(
             ai_provider_non_json_response_error(&config, endpoint, "<html>", None)
                 .ends_with("[ai_error_kind=invalid-response]")
         );
-        assert!(
-            ai_provider_response_error_with_preview(&config, endpoint, &json!({"foo": "bar"}), None)
-                .ends_with("[ai_error_kind=invalid-response]")
-        );
+        assert!(ai_provider_response_error_with_preview(
+            &config,
+            endpoint,
+            &json!({"foo": "bar"}),
+            None
+        )
+        .ends_with("[ai_error_kind=invalid-response]"));
 
         // The kind marker rides alongside the retry_after_ms marker without
         // clobbering it: both must survive on the same message.

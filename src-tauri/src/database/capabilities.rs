@@ -482,8 +482,7 @@ pub fn all_driver_capabilities() -> Vec<DriverCapabilityProfile> {
 pub fn is_declarative_http_protocol(protocol: &str) -> bool {
     ALL_DATABASE_TYPES.iter().copied().any(|database_type| {
         let profile = driver_capabilities(database_type);
-        profile.key == protocol
-            && matches!(profile.distribution, DriverDistribution::PluginHttp)
+        profile.key == protocol && matches!(profile.distribution, DriverDistribution::PluginHttp)
     })
 }
 
@@ -496,8 +495,7 @@ pub fn is_declarative_http_protocol(protocol: &str) -> bool {
 pub fn is_plugin_native_protocol(protocol: &str) -> bool {
     ALL_DATABASE_TYPES.iter().copied().any(|database_type| {
         let profile = driver_capabilities(database_type);
-        profile.key == protocol
-            && matches!(profile.distribution, DriverDistribution::PluginNative)
+        profile.key == protocol && matches!(profile.distribution, DriverDistribution::PluginNative)
     })
 }
 
@@ -752,11 +750,23 @@ mod tests {
             assert!(builtin.contains(key), "{key} must remain built-in");
         }
         // HTTP and native-crate engines are never built-in.
-        for key in ["clickhouse", "bigquery", "snowflake", "cloudflare_d1", "opensearch"] {
-            assert!(!builtin.contains(key), "{key} must be a plugin, not built-in");
+        for key in [
+            "clickhouse",
+            "bigquery",
+            "snowflake",
+            "cloudflare_d1",
+            "opensearch",
+        ] {
+            assert!(
+                !builtin.contains(key),
+                "{key} must be a plugin, not built-in"
+            );
         }
         for key in ["duckdb", "cassandra", "redis", "libsql"] {
-            assert!(!builtin.contains(key), "{key} must be a plugin, not built-in");
+            assert!(
+                !builtin.contains(key),
+                "{key} must be a plugin, not built-in"
+            );
         }
     }
 

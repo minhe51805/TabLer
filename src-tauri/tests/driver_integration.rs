@@ -775,4 +775,3 @@ async fn duckdb_sandbox_guard_boundary_is_live() {
 
     let _ = std::fs::remove_file(&path);
 }
-

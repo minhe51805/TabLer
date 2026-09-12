@@ -185,8 +185,9 @@ impl SidecarClient {
                     batch.push(row);
                     if batch.len() >= STREAM_BATCH_ROWS {
                         let chunk = std::mem::take(&mut batch);
-                        if let Err(e) =
-                            self.write_frame(&HostFrame::StreamChunk { id, rows: chunk }).await
+                        if let Err(e) = self
+                            .write_frame(&HostFrame::StreamChunk { id, rows: chunk })
+                            .await
                         {
                             self.forget(id);
                             return Err(e);
@@ -196,7 +197,9 @@ impl SidecarClient {
                 None => {
                     if !batch.is_empty() {
                         let chunk = std::mem::take(&mut batch);
-                        let _ = self.write_frame(&HostFrame::StreamChunk { id, rows: chunk }).await;
+                        let _ = self
+                            .write_frame(&HostFrame::StreamChunk { id, rows: chunk })
+                            .await;
                     }
                     let _ = self.write_frame(&HostFrame::StreamEnd { id }).await;
                     break;
@@ -294,7 +297,11 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
     use tokio::sync::mpsc;
 
-    async fn send_ok<W: AsyncWrite + Unpin>(writer: &mut W, id: u64, payload: SidecarResponsePayload) {
+    async fn send_ok<W: AsyncWrite + Unpin>(
+        writer: &mut W,
+        id: u64,
+        payload: SidecarResponsePayload,
+    ) {
         let frame = SidecarFrame::Response(SidecarResponse {
             id,
             outcome: SidecarOutcome::Ok(payload),

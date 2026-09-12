@@ -1,6 +1,6 @@
 use crate::database::ai_models::{
-    AIConversationMessage, AIConversationRole, AIProviderConfig, AIProviderType, AIRequestAttachment,
-    AIRequestMode,
+    AIConversationMessage, AIConversationRole, AIProviderConfig, AIProviderType,
+    AIRequestAttachment, AIRequestMode,
 };
 use serde_json::json;
 #[cfg(test)]
@@ -360,7 +360,12 @@ pub(crate) fn parse_models_list_response(
         ModelsListShape::OpenAiData => value
             .get("data")
             .and_then(|data| data.as_array())
-            .map(|entries| entries.iter().filter_map(parse_openai_model_entry).collect())
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(parse_openai_model_entry)
+                    .collect()
+            })
             .unwrap_or_default(),
         ModelsListShape::OllamaTags => value
             .get("models")
@@ -408,9 +413,11 @@ pub(crate) fn parse_models_list_response(
 fn model_capacity(value: &serde_json::Value, keys: &[&str]) -> Option<u64> {
     keys.iter().find_map(|key| {
         let field = value.get(*key)?;
-        let count = field
-            .as_u64()
-            .or_else(|| field.as_str().and_then(|raw| raw.trim().parse::<u64>().ok()))?;
+        let count = field.as_u64().or_else(|| {
+            field
+                .as_str()
+                .and_then(|raw| raw.trim().parse::<u64>().ok())
+        })?;
         (count > 0).then_some(count)
     })
 }
@@ -422,8 +429,10 @@ fn model_capacity(value: &serde_json::Value, keys: &[&str]) -> Option<u64> {
 fn parse_openai_model_entry(entry: &serde_json::Value) -> Option<FetchedModel> {
     let id = entry.get("id").and_then(|id| id.as_str())?.to_string();
     let top_provider = entry.get("top_provider");
-    let context_window = model_capacity(entry, &["context_length", "context_window"])
-        .or_else(|| top_provider.and_then(|tp| model_capacity(tp, &["context_length", "context_window"])));
+    let context_window =
+        model_capacity(entry, &["context_length", "context_window"]).or_else(|| {
+            top_provider.and_then(|tp| model_capacity(tp, &["context_length", "context_window"]))
+        });
     let max_output_tokens = top_provider
         .and_then(|tp| model_capacity(tp, &["max_completion_tokens", "max_output_tokens"]))
         .or_else(|| model_capacity(entry, &["max_completion_tokens", "max_output_tokens"]));
@@ -783,7 +792,11 @@ pub(crate) fn apply_conversation_history(
             let transcript = history
                 .iter()
                 .map(|message| {
-                    format!("{}: {}", transcript_role(&message.role), message.content.trim())
+                    format!(
+                        "{}: {}",
+                        transcript_role(&message.role),
+                        message.content.trim()
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
@@ -868,7 +881,9 @@ mod tests {
         assert!(is_thinking_param_rejection(
             "Invalid JSON payload received. Unknown name \"thinkingConfig\""
         ));
-        assert!(is_thinking_param_rejection("field budget_tokens not allowed"));
+        assert!(is_thinking_param_rejection(
+            "field budget_tokens not allowed"
+        ));
     }
 
     #[test]
@@ -896,23 +911,11 @@ mod tests {
     fn anthropic_body_drops_thinking_once_model_is_marked() {
         let marked = "claude-sonnet-4-marked-test";
         // Before marking, a known-supporting family gets the thinking block.
-        let before = build_anthropic_body(
-            marked,
-            "sys",
-            "hi",
-            &AIRequestMode::Panel,
-            Some(true),
-        );
+        let before = build_anthropic_body(marked, "sys", "hi", &AIRequestMode::Panel, Some(true));
         assert!(before.get("thinking").is_some());
         // After a 400 self-heal marks it, the block is gone.
         mark_model_thinking_unsupported(marked);
-        let after = build_anthropic_body(
-            marked,
-            "sys",
-            "hi",
-            &AIRequestMode::Panel,
-            Some(true),
-        );
+        let after = build_anthropic_body(marked, "sys", "hi", &AIRequestMode::Panel, Some(true));
         assert!(after.get("thinking").is_none());
     }
 
@@ -1139,7 +1142,11 @@ mod tests {
             "system": "sys",
             "prompt": "Current user request:\nnow"
         });
-        apply_conversation_history(&mut body, ProviderBodyShape::OllamaGenerate, &sample_history());
+        apply_conversation_history(
+            &mut body,
+            ProviderBodyShape::OllamaGenerate,
+            &sample_history(),
+        );
         let prompt = body["prompt"].as_str().expect("prompt string");
         assert!(prompt.starts_with("Recent conversation:\n"));
         assert!(prompt.contains("User: first question"));
@@ -1351,7 +1358,10 @@ mod tests {
             "user prompt",
             &AIRequestMode::Panel,
         );
-        assert_eq!(body["systemInstruction"]["parts"][0]["text"], "system prompt");
+        assert_eq!(
+            body["systemInstruction"]["parts"][0]["text"],
+            "system prompt"
+        );
         assert_eq!(body["contents"][0]["role"], "user");
         assert_eq!(body["contents"][0]["parts"][0]["text"], "user prompt");
 
@@ -1378,7 +1388,10 @@ mod tests {
             Some(&tools),
             Some(&choice),
         );
-        assert_eq!(tool_body["tools"], json!([{ "functionDeclarations": tools }]));
+        assert_eq!(
+            tool_body["tools"],
+            json!([{ "functionDeclarations": tools }])
+        );
         assert_eq!(tool_body["tool_config"], choice);
         assert!(tool_body.get("tool_choice").is_none());
     }
@@ -1485,7 +1498,8 @@ mod tests {
             &AIRequestMode::Panel,
         );
         assert_eq!(
-            body.pointer("/thinking/type").and_then(|value| value.as_str()),
+            body.pointer("/thinking/type")
+                .and_then(|value| value.as_str()),
             Some("enabled")
         );
         let budget = body
@@ -1584,7 +1598,9 @@ mod tests {
         );
         assert!(anthropic_body.get("thinking").is_none());
         assert_eq!(
-            anthropic_body.get("max_tokens").and_then(|value| value.as_u64()),
+            anthropic_body
+                .get("max_tokens")
+                .and_then(|value| value.as_u64()),
             Some(4096)
         );
 
@@ -1700,7 +1716,10 @@ mod tests {
             ]
         });
         let parsed = parse_models_list_response(ModelsListShape::OpenAiData, &openai);
-        assert_eq!(ids(&parsed), vec!["gpt-4o".to_string(), "gpt-4o-mini".to_string()]);
+        assert_eq!(
+            ids(&parsed),
+            vec!["gpt-4o".to_string(), "gpt-4o-mini".to_string()]
+        );
         assert_eq!(parsed[0].context_window, Some(128_000));
         assert_eq!(parsed[0].max_output_tokens, Some(16_384));
         assert_eq!(
@@ -1725,7 +1744,9 @@ mod tests {
             vec!["llama3:latest".to_string(), "qwen2.5-coder:7b".to_string()]
         );
         // The Ollama tag list exposes no capacity metadata.
-        assert!(parsed_ollama.iter().all(|model| model.context_window.is_none()));
+        assert!(parsed_ollama
+            .iter()
+            .all(|model| model.context_window.is_none()));
 
         // Gemini strips the `models/` prefix and drops entries that cannot
         // generate content, but keeps entries missing the capability metadata.

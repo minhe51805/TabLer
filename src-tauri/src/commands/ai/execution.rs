@@ -26,9 +26,10 @@ use super::extraction::{
 use super::prompt::build_ai_prompt;
 use super::providers::{
     apply_attachments, apply_conversation_history, apply_native_tools,
-    build_provider_request_body_with_thinking, effective_wire_provider, is_thinking_param_rejection,
-    mark_model_thinking_unsupported, model_thinking_unsupported, parse_models_list_response,
-    resolve_provider_body_shape, streaming_endpoint, streaming_request_body_with_thinking,
+    build_provider_request_body_with_thinking, effective_wire_provider,
+    is_thinking_param_rejection, mark_model_thinking_unsupported, model_thinking_unsupported,
+    parse_models_list_response, resolve_provider_body_shape, streaming_endpoint,
+    streaming_request_body_with_thinking,
 };
 use super::{ai_http_client, run_blocking_storage_task, FetchedModel, AI_REQUEST_CANCELLED_ERROR};
 
@@ -51,8 +52,7 @@ pub(crate) async fn fetch_provider_models(
                 .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION);
         }
         AIProviderType::Gemini => {
-            request_builder =
-                request_builder.header("x-goog-api-key", api_key.unwrap_or_default());
+            request_builder = request_builder.header("x-goog-api-key", api_key.unwrap_or_default());
         }
         _ => {
             if let Some(api_key) = api_key {

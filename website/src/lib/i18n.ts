@@ -16,6 +16,7 @@ const en = {
     openSource: "Open source",
     changelog: "Changelog",
     docs: "Docs",
+    plugins: "Plugins",
     download: "Download",
   },
   hero: {
@@ -181,6 +182,62 @@ const en = {
     preRelease: "Pre-release",
     viewNotes: "View release notes for",
   },
+  plugins: {
+    back: "Back to home",
+    eyebrow: "PLUGIN REPOSITORY",
+    heading: "Database driver plugins",
+    intro:
+      "TableR ships lean and adds database engines as plugins. Browse every official driver here, download a bundle, or install it straight from the app's Plugin Manager.",
+    trustTitle: "Verified bundles",
+    trustCopy: (count: number) =>
+      `${count} official plugins, each SHA-256 verified on install`,
+    counts: {
+      installable: "Install from the app now",
+      pending: "Awaiting release binaries",
+    },
+    registryTitle: "Registry endpoint",
+    registryCopy:
+      "The desktop app's Plugin Manager reads this registry to list and install plugins. Point a custom registry URL here in Settings.",
+    groups: {
+      http: {
+        title: "Cloud & HTTP drivers",
+        copy: "Manifest-only drivers that talk to a database over HTTPS. They install instantly from the Official registry tab — no binary or extra download.",
+      },
+      native: {
+        title: "Native drivers",
+        copy: "Out-of-process drivers that connect over native protocols. They need a per-OS binary shipped with a release build before they can connect.",
+      },
+      format: {
+        title: "Export formats & tools",
+        copy: "Non-driver plugins that add capabilities such as extra export formats to the data grid.",
+      },
+    },
+    card: {
+      version: "Version",
+      size: "Bundle",
+      permissions: "Permissions",
+      protocol: "Protocol",
+      download: "Download bundle",
+      docs: "Open docs",
+      installNow: "Installs from registry",
+      binaryPending: "Needs release binary",
+      formatsLabel: "Adds formats",
+    },
+    install: {
+      title: "How to install a plugin",
+      steps: [
+        "In the app, open App menu → Plugin Manager → Official registry, then click Install next to the engine. Cloud/HTTP drivers install instantly.",
+        "Or download a bundle below, unzip it, then choose Install plugin → pick the unzipped folder (the one containing plugin.json).",
+        "Native drivers additionally require the matching per-OS binary from a full release build before they can connect.",
+      ],
+    },
+    security: {
+      title: "Safe by default",
+      copy: "On install the app recomputes each bundle's SHA-256 digest and refuses to import it unless the digest matches the manifest. Credentials never touch this website.",
+    },
+    empty:
+      "The plugin catalog is not available yet. Run the repository generator to publish it.",
+  },
   changelog: {
     back: "Back to home",
     eyebrow: "RELEASE HISTORY",
@@ -202,6 +259,7 @@ const vi: typeof en = {
     openSource: "Mã nguồn mở",
     changelog: "Lịch sử bản phát hành",
     docs: "Tài liệu",
+    plugins: "Plugin",
     download: "Tải xuống",
   },
   hero: {
@@ -366,6 +424,62 @@ const vi: typeof en = {
     latest: "Mới nhất",
     preRelease: "Bản thử nghiệm",
     viewNotes: "Xem ghi chú phát hành cho",
+  },
+  plugins: {
+    back: "Về trang chủ",
+    eyebrow: "KHO PLUGIN",
+    heading: "Plugin driver cơ sở dữ liệu",
+    intro:
+      "TableR chạy gọn nhẹ và bổ sung từng hệ CSDL dưới dạng plugin. Duyệt mọi driver chính thức tại đây, tải bundle về, hoặc cài trực tiếp từ Plugin Manager trong ứng dụng.",
+    trustTitle: "Bundle đã xác minh",
+    trustCopy: (count: number) =>
+      `${count} plugin chính thức, mỗi bundle được xác minh SHA-256 khi cài`,
+    counts: {
+      installable: "Cài ngay từ ứng dụng",
+      pending: "Chờ binary bản phát hành",
+    },
+    registryTitle: "Địa chỉ registry",
+    registryCopy:
+      "Plugin Manager trong app đọc registry này để liệt kê và cài plugin. Trỏ registry URL tùy chỉnh về đây trong phần Cài đặt.",
+    groups: {
+      http: {
+        title: "Driver đám mây & HTTP",
+        copy: "Driver chỉ gồm manifest, giao tiếp với CSDL qua HTTPS. Cài tức thì từ tab Registry chính thức — không cần binary hay tải thêm.",
+      },
+      native: {
+        title: "Driver native",
+        copy: "Driver chạy ngoài tiến trình, kết nối qua giao thức native. Cần binary theo từng HĐH đi kèm bản build phát hành thì mới kết nối được.",
+      },
+      format: {
+        title: "Định dạng xuất & công cụ",
+        copy: "Plugin không phải driver, bổ sung khả năng như định dạng xuất dữ liệu cho bảng kết quả.",
+      },
+    },
+    card: {
+      version: "Phiên bản",
+      size: "Bundle",
+      permissions: "Quyền",
+      protocol: "Giao thức",
+      download: "Tải bundle",
+      docs: "Mở tài liệu",
+      installNow: "Cài từ registry",
+      binaryPending: "Cần binary phát hành",
+      formatsLabel: "Thêm định dạng",
+    },
+    install: {
+      title: "Cách cài một plugin",
+      steps: [
+        "Trong app, mở Menu ứng dụng → Plugin Manager → Registry chính thức, rồi bấm Cài cạnh engine. Driver đám mây/HTTP cài tức thì.",
+        "Hoặc tải bundle bên dưới, giải nén, rồi chọn Cài plugin → chọn thư mục vừa giải nén (thư mục chứa plugin.json).",
+        "Driver native cần thêm binary đúng HĐH từ bản build phát hành đầy đủ thì mới kết nối được.",
+      ],
+    },
+    security: {
+      title: "An toàn mặc định",
+      copy: "Khi cài, app tính lại SHA-256 của từng bundle và từ chối nhập nếu digest không khớp manifest. Thông tin đăng nhập không bao giờ đi qua website.",
+    },
+    empty:
+      "Danh mục plugin chưa sẵn sàng. Hãy chạy trình sinh repository để xuất bản.",
   },
   changelog: {
     back: "Về trang chủ",

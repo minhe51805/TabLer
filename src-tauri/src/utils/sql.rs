@@ -267,10 +267,7 @@ pub fn classify_sql_with_dialect(
     decision
 }
 
-fn classify_sql_dialect_inner(
-    sql: &str,
-    database_type: Option<DatabaseType>,
-) -> SqlSafetyDecision {
+fn classify_sql_dialect_inner(sql: &str, database_type: Option<DatabaseType>) -> SqlSafetyDecision {
     let dialect = sql_dialect_for(database_type);
     match Parser::parse_sql(&*dialect, sql) {
         Ok(parsed) if parsed.is_empty() => SqlSafetyDecision {
@@ -763,11 +760,14 @@ mod tests {
 
     #[test]
     fn classify_stamps_filesystem_access_flag() {
-        let flagged =
-            classify_sql_with_dialect("SELECT pg_read_file('/etc/passwd')", Some(DatabaseType::PostgreSQL));
+        let flagged = classify_sql_with_dialect(
+            "SELECT pg_read_file('/etc/passwd')",
+            Some(DatabaseType::PostgreSQL),
+        );
         assert!(flagged.filesystem_access);
 
-        let clean = classify_sql_with_dialect("SELECT id FROM users", Some(DatabaseType::PostgreSQL));
+        let clean =
+            classify_sql_with_dialect("SELECT id FROM users", Some(DatabaseType::PostgreSQL));
         assert!(!clean.filesystem_access);
     }
 }

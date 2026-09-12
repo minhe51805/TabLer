@@ -547,7 +547,13 @@ mod tests {
     fn accepts_known_declarative_http_protocols() {
         // Phase 1: the declarative-http host is no longer hard-locked to
         // OpenSearch; any PluginHttp engine protocol validates.
-        for protocol in ["clickhouse", "bigquery", "snowflake", "cloudflare_d1", "opensearch"] {
+        for protocol in [
+            "clickhouse",
+            "bigquery",
+            "snowflake",
+            "cloudflare_d1",
+            "opensearch",
+        ] {
             let mut value = manifest();
             value.kind = "adapter".to_string();
             value.capabilities = vec!["database".to_string()];

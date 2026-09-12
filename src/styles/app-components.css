@@ -5517,6 +5517,35 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   background: var(--mm-surface-2);
 }
 
+.app-plugin-manager-store-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px dashed var(--mm-border);
+  background: var(--mm-surface-2);
+}
+
+.app-plugin-manager-store-cta-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.app-plugin-manager-store-cta-copy strong {
+  color: var(--text-primary);
+  font-size: var(--mm-fs-small);
+  font-weight: 700;
+}
+
+.app-plugin-manager-store-cta-copy span {
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-micro);
+}
+
 .app-plugin-manager-row-title {
   color: var(--text-primary);
   font-size: var(--mm-fs-small);

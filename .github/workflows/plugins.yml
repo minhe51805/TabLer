@@ -1,0 +1,129 @@
+name: Plugins Build
+
+# Dedicated pipeline that BUILDS and PACKAGES the TableR driver plugins,
+# separate from the app "Quality Gate" (ci.yml) and the "Clean Machine Release
+# Validation" (release-validation.yml). It runs the three plugin scripts as an
+# end-to-end chain and publishes the results as downloadable CI artifacts:
+#
+#   1. build-plugin-registry.mjs   -> plugin-registry.json (+ normalized manifests)
+#                                     verified reproducible via `git diff --exit-code`.
+#   2. package-http-plugins.mjs    -> dist-plugins/ importable HTTP bundles
+#                                     (self-exits non-zero if any import gate fails).
+#   3. build-plugin-repository.mjs -> website/public/plugins/ website-hostable repo
+#                                     (registry.json, store.json, bundle zips, assets).
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - "plugins/**"
+      - "plugin-registry.json"
+      - "scripts/build-plugin-registry.mjs"
+      - "scripts/package-http-plugins.mjs"
+      - "scripts/build-plugin-repository.mjs"
+      - "tests/scripts/build-plugin-registry.test.js"
+      - ".github/workflows/plugins.yml"
+  pull_request:
+    paths:
+      - "plugins/**"
+      - "plugin-registry.json"
+      - "scripts/build-plugin-registry.mjs"
+      - "scripts/package-http-plugins.mjs"
+      - "scripts/build-plugin-repository.mjs"
+      - "tests/scripts/build-plugin-registry.test.js"
+      - ".github/workflows/plugins.yml"
+  workflow_dispatch:
+    inputs:
+      repo_base_url:
+        description: "Public origin the desktop app downloads plugins from (PLUGIN_REPO_BASE_URL)"
+        required: false
+        default: "https://tabler.app"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugins-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  build-plugins:
+    name: Build and package plugins
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies from lockfile
+        run: npm ci --legacy-peer-deps
+
+      # Gate 1: the committed registry and the normalized plugin manifests must be
+      # byte-for-byte reproducible from source. Any drift fails the build.
+      - name: Verify plugin registry determinism
+        run: |
+          node scripts/build-plugin-registry.mjs
+          git diff --exit-code -- plugins plugin-registry.json
+
+      # Gate 2: the independent SHA-256 mirror contract test for the registry.
+      - name: Test plugin registry contract
+        run: npx vitest run tests/scripts/build-plugin-registry.test.js
+
+      # Build 1: stage the importable HTTP driver bundles. The script sets a
+      # non-zero exit code if any bundle's recomputed digest fails the import gate.
+      - name: Package HTTP driver plugins
+        run: node scripts/package-http-plugins.mjs
+
+      # The packager only stages folders; zip each one so the artifact also ships
+      # the shareable `dist-plugins/<id>.zip` archives documented in IMPORT.md.
+      - name: Zip importable HTTP bundle folders
+        run: |
+          cd dist-plugins
+          for dir in */; do
+            [ -d "$dir" ] || continue
+            id="${dir%/}"
+            rm -f "$id.zip"
+            (cd "$id" && zip -r -q "../$id.zip" .)
+          done
+
+      # Build 2: assemble the website-hostable plugin repository (registry.json,
+      # store.json, per-plugin bundle zips, and present sidecar binary assets).
+      - name: Build website plugin repository
+        env:
+          PLUGIN_REPO_BASE_URL: ${{ github.event.inputs.repo_base_url || 'https://tabler.app' }}
+        run: node scripts/build-plugin-repository.mjs
+
+      - name: Upload importable HTTP bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabler-plugins-dist
+          path: dist-plugins
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload website plugin repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabler-plugin-repository
+          path: website/public/plugins
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload plugin registry
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabler-plugin-registry
+          path: plugin-registry.json
+          if-no-files-found: error
+          retention-days: 30

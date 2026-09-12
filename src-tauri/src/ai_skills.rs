@@ -99,7 +99,13 @@ fn parse_inline_tool_list(raw: &str) -> Vec<String> {
         .trim_start_matches('[')
         .trim_end_matches(']')
         .split(',')
-        .map(|item| item.trim().trim_matches('"').trim_matches('\'').trim().to_string())
+        .map(|item| {
+            item.trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .trim()
+                .to_string()
+        })
         .filter(|item| !item.is_empty())
         .take(MAX_SKILL_ALLOWED_TOOLS)
         .collect()
@@ -520,7 +526,10 @@ pub fn read_skill_resource_in_roots(
             ));
         };
         let content = if raw.chars().count() > MAX_SKILL_RESOURCE_CHARS {
-            let cut = raw.chars().take(MAX_SKILL_RESOURCE_CHARS).collect::<String>();
+            let cut = raw
+                .chars()
+                .take(MAX_SKILL_RESOURCE_CHARS)
+                .collect::<String>();
             format!("{cut}\n\n[resource truncated at {MAX_SKILL_RESOURCE_CHARS} characters — the file is larger]")
         } else {
             raw
@@ -532,7 +541,9 @@ pub fn read_skill_resource_in_roots(
             content,
         });
     }
-    Err(format!("Resource '{relative}' was not found for skill '{trimmed}'."))
+    Err(format!(
+        "Resource '{relative}' was not found for skill '{trimmed}'."
+    ))
 }
 
 /// Read one bundled resource file of a skill on demand (progressive disclosure
@@ -628,7 +639,10 @@ mod tests {
         let raw = "---\nname: git-release\ndescription: \"Create consistent releases\"\n---\n\n## What I do\n- Draft notes\n";
         let (meta, body) = parse_skill_md(raw);
         assert_eq!(meta.name.as_deref(), Some("git-release"));
-        assert_eq!(meta.description.as_deref(), Some("Create consistent releases"));
+        assert_eq!(
+            meta.description.as_deref(),
+            Some("Create consistent releases")
+        );
         assert!(body.contains("## What I do"));
     }
 
@@ -666,16 +680,16 @@ mod tests {
 
     #[test]
     fn scaffolds_a_valid_skill_the_reader_accepts() {
-        let base =
-            std::env::temp_dir().join(format!("tabler-skill-new-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("tabler-skill-new-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
 
-        let dir = create_skill_in_root(&base, "db-audit", Some("Audit a schema".to_string()))
-            .unwrap();
+        let dir =
+            create_skill_in_root(&base, "db-audit", Some("Audit a schema".to_string())).unwrap();
         assert!(dir.join("references").is_dir());
         // The scaffold must round-trip through the real reader with matching name.
-        let content = read_skill_in_roots(&[(base.clone(), "test".to_string())], "db-audit").unwrap();
+        let content =
+            read_skill_in_roots(&[(base.clone(), "test".to_string())], "db-audit").unwrap();
         assert_eq!(content.name, "db-audit");
         assert_eq!(content.version.as_deref(), Some("0.1.0"));
         assert!(content.description.contains("Audit a schema"));
@@ -699,8 +713,7 @@ mod tests {
 
     #[test]
     fn reads_bundled_reference_resource() {
-        let base =
-            std::env::temp_dir().join(format!("tabler-skill-res-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("tabler-skill-res-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let dir = base.join("db-audit");
         std::fs::create_dir_all(dir.join("references")).unwrap();
@@ -713,14 +726,18 @@ mod tests {
 
         let roots = [(base.clone(), "test".to_string())];
         let content = read_skill_in_roots(&roots, "db-audit").unwrap();
-        assert!(content.resources.contains(&"references/schema.md".to_string()));
+        assert!(content
+            .resources
+            .contains(&"references/schema.md".to_string()));
 
         let resource =
             read_skill_resource_in_roots(&roots, "db-audit", "references/schema.md").unwrap();
         assert!(resource.content.contains("TABLE users"));
 
         // Traversal attempt is refused even end-to-end.
-        assert!(read_skill_resource_in_roots(&roots, "db-audit", "references/../SKILL.md").is_err());
+        assert!(
+            read_skill_resource_in_roots(&roots, "db-audit", "references/../SKILL.md").is_err()
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

@@ -92,4 +92,3 @@ mod tests {
         assert_eq!(decoded.execution_time_ms, 1_234_u128);
     }
 }
-

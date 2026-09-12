@@ -10,8 +10,8 @@ use crate::database::parameterized_query::{
 };
 use crate::error::AppError;
 use crate::utils::sql::{
-    classify_sql_with_dialect, detect_dangerous_capability, split_sql_statements, SqlSafetyDecision,
-    SqlStatementKind,
+    classify_sql_with_dialect, detect_dangerous_capability, split_sql_statements,
+    SqlSafetyDecision, SqlStatementKind,
 };
 use std::collections::HashMap;
 use tauri::{Emitter, State};
@@ -848,7 +848,8 @@ pub async fn execute_agent_parameterized_query(
         .map_err(|error| error.to_string())?;
     // Same read-only pin `execute_agent_readonly_query` hard-codes: there is
     // no caller argument that can lower this boundary.
-    if let Err(error) = validate_sandbox_batch(std::slice::from_ref(&sql), true, Some(database_type))
+    if let Err(error) =
+        validate_sandbox_batch(std::slice::from_ref(&sql), true, Some(database_type))
     {
         log_sandbox_denial(&connection_id, 1, &error);
         return Err(error.into());

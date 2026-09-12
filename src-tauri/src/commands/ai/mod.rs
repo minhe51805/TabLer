@@ -241,7 +241,9 @@ pub async fn ask_ai_stream(
     cancellation_state.finish(&request_id).await;
 
     match result {
-        Ok(()) => emit_ai_stream_event(&app, &request_id, "done", None, None).map_err(AppError::from),
+        Ok(()) => {
+            emit_ai_stream_event(&app, &request_id, "done", None, None).map_err(AppError::from)
+        }
         Err(error) => {
             let _ = emit_ai_stream_event(&app, &request_id, "error", Some(error.clone()), None);
             Err(AppError::from(error))

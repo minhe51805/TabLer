@@ -926,8 +926,6 @@ mod tests {
         }
     }
 
-
-
     #[test]
     fn translates_select_star_from_collection() {
         let parsed = MongoDbDriver::parse_command("Select * From users").unwrap();

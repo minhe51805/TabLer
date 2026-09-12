@@ -32,6 +32,10 @@ interface AppPluginManagerModalProps {
 
 const CORE_MODULES = ["Explorer", "SQL Editor", "Metrics", "ER Diagram", "Terminal", "AI Assist"];
 
+// Public plugin store on the marketing website — the browsable home for every
+// downloadable driver bundle. Configurable per deployment.
+const PLUGIN_STORE_URL = "https://tabler.app/plugins";
+
 type PluginManagerSection =
   | "overview"
   | "installed"
@@ -96,6 +100,8 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
         rollbackSuccess: "Đã khôi phục plugin",
         registry: "Registry chính thức",
         browseRegistry: "Mở registry",
+        storeCta: "Tải thêm plugin",
+        storeHint: "Duyệt kho plugin đầy đủ trên web và tải bundle về.",
         registryEmpty: "Registry chưa có package tương thích cho nền tảng này.",
         updateAvailable: "Có bản cập nhật",
         installFromRegistry: "Cài đặt",
@@ -142,6 +148,8 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
       rollbackSuccess: "Plugin rolled back",
       registry: "Official registry",
       browseRegistry: "Browse registry",
+      storeCta: "Get more plugins",
+      storeHint: "Browse the full plugin store on the web and download bundles.",
       registryEmpty: "No compatible packages are published for this platform yet.",
       updateAvailable: "Update available",
       installFromRegistry: "Install",
@@ -504,6 +512,20 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
 
             {activeSection === "registry" ? (
               <div className="app-plugin-manager-panel-group">
+            <div className="app-plugin-manager-store-cta">
+              <div className="app-plugin-manager-store-cta-copy">
+                <strong>{copy.storeCta}</strong>
+                <span>{copy.storeHint}</span>
+              </div>
+              <button
+                type="button"
+                className="app-plugin-manager-action-btn"
+                onClick={() => window.open(PLUGIN_STORE_URL, "_blank", "noopener,noreferrer")}
+              >
+                <Download className="w-4 h-4" />
+                <span>{copy.browseRegistry}</span>
+              </button>
+            </div>
             {isRegistryLoading && latestRegistryPackages.length === 0 ? (
               <div className="app-plugin-manager-empty"><LoaderCircle className="w-4 h-4 animate-spin" /></div>
             ) : latestRegistryPackages.length === 0 ? (

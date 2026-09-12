@@ -1,0 +1,398 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-12T16:39:25.367Z",
+  "repoBaseUrl": "https://tabler.app",
+  "registryUrl": "https://tabler.app/plugins/registry.json",
+  "counts": {
+    "total": 10,
+    "http": 5,
+    "native": 4,
+    "format": 1,
+    "installable": 6
+  },
+  "plugins": [
+    {
+      "id": "bigquery-driver",
+      "name": "Google BigQuery driver",
+      "version": "1.0.0",
+      "description": "Adds Google BigQuery connectivity over the declarative HTTP driver host.",
+      "author": "TableR Team",
+      "category": "http",
+      "runtime": "declarative-http-v1",
+      "engine": {
+        "id": "bigquery",
+        "label": "Google BigQuery",
+        "protocol": "bigquery",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "bigquery",
+          "label": "Google BigQuery",
+          "protocol": "bigquery",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute",
+        "network.fetch"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/bigquery-driver-1.0.0.zip",
+        "size": 613,
+        "sha256": "8e640bf1649b93196e75e6da7da5e2478ac374d6baa7e83f78ce1e25da375e1a"
+      },
+      "docsSlug": "bigquery",
+      "digest": "b68304ba1d69c0e53736ffa14d46837e387798f915e19a82278174639e4340fc"
+    },
+    {
+      "id": "cassandra-driver",
+      "name": "Cassandra native driver",
+      "version": "1.0.0",
+      "description": "Adds Apache Cassandra / ScyllaDB connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+      "author": "TableR Team",
+      "category": "native",
+      "runtime": "driver-sidecar-v1",
+      "engine": {
+        "id": "cassandra",
+        "label": "Cassandra",
+        "protocol": "cassandra",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "cassandra",
+          "label": "Cassandra",
+          "protocol": "cassandra",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "disk-binary",
+      "binaryPending": true,
+      "bundle": {
+        "path": "/plugins/bundles/cassandra-driver-1.0.0.zip",
+        "size": 643,
+        "sha256": "94a7641f0e8e52d939cb10b99db96f10a2a7306a3d8ab1749f9c0a22e4595ce7"
+      },
+      "docsSlug": "cassandra",
+      "digest": "fe2bc824feff3bbe07e563ba014103ef4961863a55e17b920964b51a64c57e0a"
+    },
+    {
+      "id": "clickhouse-driver",
+      "name": "ClickHouse driver",
+      "version": "1.0.0",
+      "description": "Adds ClickHouse connectivity over the declarative HTTP driver host.",
+      "author": "TableR Team",
+      "category": "http",
+      "runtime": "declarative-http-v1",
+      "engine": {
+        "id": "clickhouse",
+        "label": "ClickHouse",
+        "protocol": "clickhouse",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "clickhouse",
+          "label": "ClickHouse",
+          "protocol": "clickhouse",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute",
+        "network.fetch"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/clickhouse-driver-1.0.0.zip",
+        "size": 607,
+        "sha256": "aae0669002d358bf86bfd57d0134a3c10b8d83f3401408f8684cf23a38e5d5ce"
+      },
+      "docsSlug": "clickhouse",
+      "digest": "5c285f79d3ce1f00e26e0b060880587cbb450fcf2e9a46e1014e9214da8f2cf6"
+    },
+    {
+      "id": "cloudflare-d1-driver",
+      "name": "Cloudflare D1 driver",
+      "version": "1.0.0",
+      "description": "Adds Cloudflare D1 connectivity over the declarative HTTP driver host.",
+      "author": "TableR Team",
+      "category": "http",
+      "runtime": "declarative-http-v1",
+      "engine": {
+        "id": "cloudflare-d1",
+        "label": "Cloudflare D1",
+        "protocol": "cloudflare_d1",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "cloudflare-d1",
+          "label": "Cloudflare D1",
+          "protocol": "cloudflare_d1",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute",
+        "network.fetch"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/cloudflare-d1-driver-1.0.0.zip",
+        "size": 614,
+        "sha256": "383ee2faf0aef1bde21f44641e35e7adcb934da6b213946e6a3a53f91c5e45a4"
+      },
+      "docsSlug": "cloudflare-d1",
+      "digest": "8d65bc247107a35d6aa59183886ab47a0dc526721f8372ea10e664990b8c7f48"
+    },
+    {
+      "id": "duckdb-driver",
+      "name": "DuckDB native driver",
+      "version": "1.0.0",
+      "description": "Adds DuckDB connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+      "author": "TableR Team",
+      "category": "native",
+      "runtime": "driver-sidecar-v1",
+      "engine": {
+        "id": "duckdb",
+        "label": "DuckDB",
+        "protocol": "duckdb",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "duckdb",
+          "label": "DuckDB",
+          "protocol": "duckdb",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "disk-binary",
+      "binaryPending": true,
+      "bundle": {
+        "path": "/plugins/bundles/duckdb-driver-1.0.0.zip",
+        "size": 630,
+        "sha256": "012f83fc5b03fd758204870e793432e3a64755358bea12aa193ca73efdade44b"
+      },
+      "docsSlug": "duckdb",
+      "digest": "4af1a22ae4057943b16d9dc4132d346d80b9e24294f494258e1d0829da297113"
+    },
+    {
+      "id": "libsql-driver",
+      "name": "LibSQL native driver",
+      "version": "1.0.0",
+      "description": "Adds LibSQL / Turso connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+      "author": "TableR Team",
+      "category": "native",
+      "runtime": "driver-sidecar-v1",
+      "engine": {
+        "id": "libsql",
+        "label": "LibSQL",
+        "protocol": "libsql",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "libsql",
+          "label": "LibSQL",
+          "protocol": "libsql",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "disk-binary",
+      "binaryPending": true,
+      "bundle": {
+        "path": "/plugins/bundles/libsql-driver-1.0.0.zip",
+        "size": 633,
+        "sha256": "5ddf44774837f625d73b46c603a002dfa3005b7ab88b7f0fc5f50e6038a163b5"
+      },
+      "docsSlug": "libsql",
+      "digest": "738f61b0cda84d67e2d08c5e528b5620831b2cdc4d6760675ea3dd90d168c5a3"
+    },
+    {
+      "id": "opensearch-driver",
+      "name": "OpenSearch read-only driver",
+      "version": "1.0.0",
+      "description": "Adds bounded, read-only OpenSearch index browsing and JSON search through the declarative HTTP driver host.",
+      "author": "TableR Team",
+      "category": "http",
+      "runtime": "declarative-http-v1",
+      "engine": {
+        "id": "opensearch",
+        "label": "OpenSearch",
+        "protocol": "opensearch",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "opensearch",
+          "label": "OpenSearch",
+          "protocol": "opensearch",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute",
+        "network.fetch"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/opensearch-driver-1.0.0.zip",
+        "size": 638,
+        "sha256": "dee719601a74cce52d6bf8f4fce321aec6c119377253bdd4fc4f61474c6f2b96"
+      },
+      "docsSlug": null,
+      "digest": "8db6d8e892c7151a63ede9ff223021eaf472eeec0df36d485a82a612127b6150"
+    },
+    {
+      "id": "portable-formats",
+      "name": "Portable text formats",
+      "version": "1.0.0",
+      "description": "Adds TSV, pipe-delimited, and JSON Lines exports to the data grid.",
+      "author": "TableR Team",
+      "category": "format",
+      "runtime": null,
+      "engine": null,
+      "engines": [],
+      "formats": [
+        "tsv",
+        "psv",
+        "jsonl"
+      ],
+      "permissions": [],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/portable-formats-1.0.0.zip",
+        "size": 774,
+        "sha256": "4e36289929e5d1db38f765c65a3f73c6b4e535a23fd4cd37e06e717506766ce6"
+      },
+      "docsSlug": null,
+      "digest": "fc9447c4917ba2e3c0bac2e034d5d77d6bbf76812f819a22f6f666a2a43d80e7"
+    },
+    {
+      "id": "redis-driver",
+      "name": "Redis native driver",
+      "version": "1.0.0",
+      "description": "Adds Redis connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+      "author": "TableR Team",
+      "category": "native",
+      "runtime": "driver-sidecar-v1",
+      "engine": {
+        "id": "redis",
+        "label": "Redis",
+        "protocol": "redis",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "redis",
+          "label": "Redis",
+          "protocol": "redis",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "disk-binary",
+      "binaryPending": true,
+      "bundle": {
+        "path": "/plugins/bundles/redis-driver-1.0.0.zip",
+        "size": 624,
+        "sha256": "e93f4dd5a85a089758426ce08e9a388674fad94b5f26d599b1ea1a469ba0b788"
+      },
+      "docsSlug": "redis",
+      "digest": "4091867d2d7a34975c6c842a06861a11722c94c43b71f0788cfabee974b267df"
+    },
+    {
+      "id": "snowflake-driver",
+      "name": "Snowflake driver",
+      "version": "1.0.0",
+      "description": "Adds Snowflake connectivity over the declarative HTTP driver host.",
+      "author": "TableR Team",
+      "category": "http",
+      "runtime": "declarative-http-v1",
+      "engine": {
+        "id": "snowflake",
+        "label": "Snowflake",
+        "protocol": "snowflake",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "snowflake",
+          "label": "Snowflake",
+          "protocol": "snowflake",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute",
+        "network.fetch"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/snowflake-driver-1.0.0.zip",
+        "size": 604,
+        "sha256": "2ba9ca4eda7ecfaf52c976e8d0e9e640b373390c2d5d12ac72170a65eed3418c"
+      },
+      "docsSlug": "snowflake",
+      "digest": "b2d1f9abfea4bb59117e571a0983279b6ca3daaebdc881b64881f0b359454d52"
+    }
+  ]
+}

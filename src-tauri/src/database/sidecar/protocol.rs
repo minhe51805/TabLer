@@ -36,9 +36,13 @@ pub struct SidecarRequest {
 #[serde(tag = "op", content = "args", rename_all = "snake_case")]
 pub enum SidecarCall {
     /// First call on a fresh process: agree on the protocol version.
-    Handshake { protocol_version: String },
+    Handshake {
+        protocol_version: String,
+    },
     /// Open the underlying connection. Boxed to keep the enum small.
-    Connect { config: Box<ConnectionConfig> },
+    Connect {
+        config: Box<ConnectionConfig>,
+    },
     Ping,
     Disconnect,
     ListDatabases,
@@ -217,11 +221,18 @@ pub enum HostFrame {
     Request(SidecarRequest),
     /// Abort the in-flight operation for `id` (bulk/stream inserts, and the
     /// cooperative cancellation flag the trait passes as `Arc<AtomicBool>`).
-    Cancel { id: u64 },
+    Cancel {
+        id: u64,
+    },
     /// A batch of rows for an in-flight `InsertTableRowStreamAtomically`.
-    StreamChunk { id: u64, rows: Vec<CsvImportRow> },
+    StreamChunk {
+        id: u64,
+        rows: Vec<CsvImportRow>,
+    },
     /// End-of-stream marker for `InsertTableRowStreamAtomically`.
-    StreamEnd { id: u64 },
+    StreamEnd {
+        id: u64,
+    },
     /// Ask the sidecar to exit cleanly.
     Shutdown,
 }
@@ -232,7 +243,10 @@ pub enum HostFrame {
 pub enum SidecarFrame {
     Response(SidecarResponse),
     /// Free-form diagnostic surfaced to the host log, never to the UI.
-    Log { level: String, message: String },
+    Log {
+        level: String,
+        message: String,
+    },
 }
 
 #[cfg(test)]

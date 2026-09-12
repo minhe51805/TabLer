@@ -1334,6 +1334,378 @@ footer {
   font-weight: 680;
 }
 
+/* ---- Plugin repository / store page ---- */
+.plugins-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas);
+}
+
+.plugins-shell {
+  flex: 1;
+  padding-top: 70px;
+  padding-bottom: 76px;
+}
+
+.plugins-intro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 48px;
+  padding-bottom: 34px;
+  border-bottom: 1px solid var(--line);
+}
+
+.plugins-intro h1 {
+  margin: 0;
+  font-size: 48px;
+  line-height: 1.06;
+}
+
+.plugins-intro > div:first-child > p:last-child {
+  max-width: 660px;
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.plugins-trust {
+  min-width: max-content;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 15px;
+  border: 1px solid #bfe7d4;
+  border-radius: 7px;
+  color: #176f4b;
+  background: var(--green-soft);
+}
+
+.plugins-trust svg {
+  flex: 0 0 auto;
+}
+
+.plugins-trust div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.plugins-trust strong {
+  font-size: 13px;
+}
+
+.plugins-trust span {
+  color: #4c7664;
+  font-size: 11px;
+}
+
+.plugins-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.plugins-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 620;
+  border: 1px solid var(--line);
+}
+
+.plugins-chip-ready {
+  color: #176f4b;
+  background: var(--green-soft);
+  border-color: #bfe7d4;
+}
+
+.plugins-chip-pending {
+  color: #8a5a00;
+  background: #fdf4e3;
+  border-color: #f0dcae;
+}
+
+.plugins-registry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 22px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.plugins-registry strong {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.plugins-registry code {
+  font-size: 13px;
+  color: var(--blue-dark);
+  word-break: break-all;
+}
+
+.plugins-registry span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.plugins-group {
+  margin-top: 40px;
+}
+
+.plugins-group-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.plugins-group-head svg {
+  flex: 0 0 auto;
+  margin-top: 4px;
+  color: var(--blue);
+}
+
+.plugins-group-head h2 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.plugins-group-head p {
+  margin: 6px 0 0;
+  max-width: 720px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.plugin-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.plugin-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.plugin-card-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.plugin-card-title h3 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.plugin-card-version {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.plugin-badge {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.plugin-badge-ready {
+  color: #176f4b;
+  background: var(--green-soft);
+  border: 1px solid #bfe7d4;
+}
+
+.plugin-badge-pending {
+  color: #8a5a00;
+  background: #fdf4e3;
+  border: 1px solid #f0dcae;
+}
+
+.plugin-card-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.plugin-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 0;
+}
+
+.plugin-card-meta div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plugin-card-meta dt {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plugin-card-meta dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.plugin-card-meta code {
+  font-size: 12.5px;
+  color: var(--blue-dark);
+}
+
+.plugin-card-perms {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plugin-perms-label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plugin-perms-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.plugin-perm {
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--canvas);
+  border: 1px solid var(--soft-line);
+}
+
+.plugin-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.plugins-install {
+  margin-top: 40px;
+  padding: 20px 22px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.plugins-install strong {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.plugins-install ol {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.plugins-help {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 22px;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.plugins-help svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--green);
+}
+
+.plugins-help strong {
+  color: var(--ink);
+}
+
+.plugins-help div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.plugins-empty {
+  margin-top: 40px;
+  padding: 40px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+@media (max-width: 720px) {
+  .plugins-intro {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 20px;
+  }
+
+  .plugins-intro h1 {
+    font-size: 38px;
+  }
+
+  .plugin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 980px) {
   .main-nav {
     display: none;

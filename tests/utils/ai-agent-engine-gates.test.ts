@@ -11,6 +11,7 @@ import {
 import { formatAgentToolCatalog } from "@/components/AISlidePanel/ai-agent-tool-schema";
 import type { DatabaseType, QueryModel } from "@/types";
 import capabilityMatrix from "../../docs/generated/driver-capabilities.json";
+import { PLUGIN_HTTP_PROTOCOLS, PLUGIN_NATIVE_PROTOCOLS } from "@/utils/plugin-driver-runtime";
 
 const SQL_ENGINES: DatabaseType[] = [
   "mysql",
@@ -152,5 +153,64 @@ describe("agent engine tool gates", () => {
       ]),
     );
     expect(labelsFromAgent).toEqual(labelsFromRust);
+  });
+
+  it("keeps the plugin-split distribution in lockstep with the generated Rust matrix", () => {
+    // Plugin-split Phase 0: the packaging tier is single-sourced from
+    // `driver_distribution()` in capabilities.rs. This binds the frontend to the
+    // generated matrix so the built-in vs plugin decision cannot silently drift.
+    const byKey = Object.fromEntries(
+      (capabilityMatrix as Array<{ key: string; distribution: string }>).map((row) => [
+        row.key,
+        row.distribution,
+      ]),
+    );
+    // Built-in: the five shipped wire drivers plus their wire-compatible variants.
+    for (const key of [
+      "mysql",
+      "mariadb",
+      "postgresql",
+      "cockroachdb",
+      "greenplum",
+      "redshift",
+      "vertica",
+      "sqlite",
+      "mssql",
+      "mongodb",
+    ]) {
+      expect(byKey[key]).toBe("builtin");
+    }
+    // HTTP engines: candidates for downloadable HTTP plugin manifests.
+    for (const key of ["clickhouse", "bigquery", "snowflake", "cloudflare_d1", "opensearch"]) {
+      expect(byKey[key]).toBe("plugin_http");
+    }
+    // Native-crate engines: feature-flag build or sidecar only.
+    for (const key of ["duckdb", "cassandra", "redis", "libsql"]) {
+      expect(byKey[key]).toBe("plugin_native");
+    }
+  });
+
+  it("PLUGIN_HTTP_PROTOCOLS matches the plugin_http engines in the generated matrix", () => {
+    // The frontend gating set (which engines require an installed HTTP plugin)
+    // must equal the Rust taxonomy so the connection picker never drifts from
+    // what the backend `require_installed_http_plugin` gate enforces.
+    const fromMatrix = (capabilityMatrix as Array<{ key: string; distribution: string }>)
+      .filter((row) => row.distribution === "plugin_http")
+      .map((row) => row.key)
+      .sort();
+    expect([...PLUGIN_HTTP_PROTOCOLS].sort()).toEqual(fromMatrix);
+  });
+
+  it("PLUGIN_NATIVE_PROTOCOLS matches the plugin_native engines in the generated matrix", () => {
+    // The frontend gating set (which engines are feature-flag/native builds that
+    // a lean binary may drop) must equal the Rust taxonomy, so the connection
+    // picker's build-availability check never drifts from the backend
+    // `compiled_native_driver_availability` / `get_native_driver_availability`
+    // surface it reads at runtime.
+    const fromMatrix = (capabilityMatrix as Array<{ key: string; distribution: string }>)
+      .filter((row) => row.distribution === "plugin_native")
+      .map((row) => row.key)
+      .sort();
+    expect([...PLUGIN_NATIVE_PROTOCOLS].sort()).toEqual(fromMatrix);
   });
 });

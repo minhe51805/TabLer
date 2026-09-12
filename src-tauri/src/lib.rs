@@ -306,6 +306,7 @@ pub fn run() {
             rename_saved_connection,
             check_connection_status,
             get_connection_capabilities,
+            get_native_driver_availability,
             parse_connection_url,
             parse_url_details,
             get_support_url,

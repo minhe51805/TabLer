@@ -15,10 +15,18 @@ use std::time::{Duration, Instant};
 
 use tabler_lib::database::models::{ConnectionConfig, DatabaseType};
 use tabler_lib::database::{
-    cassandra::CassandraDriver, clickhouse::ClickHouseDriver, driver::DatabaseDriver,
-    duckdb::DuckDbDriver, mongodb::MongoDbDriver, mssql::MssqlDriver, mysql::MySqlDriver,
-    postgres::PostgresDriver, redis::RedisDriver,
+    clickhouse::ClickHouseDriver, driver::DatabaseDriver, mongodb::MongoDbDriver,
+    mssql::MssqlDriver, mysql::MySqlDriver, postgres::PostgresDriver,
 };
+// Native (`plugin_native`) driver crates are off in the lean default build, so
+// their imports and the tests that use them are gated on the matching feature
+// (enabled by `npm run test:integration:drivers`).
+#[cfg(feature = "cassandra-driver")]
+use tabler_lib::database::cassandra::CassandraDriver;
+#[cfg(feature = "duckdb-driver")]
+use tabler_lib::database::duckdb::DuckDbDriver;
+#[cfg(feature = "redis-driver")]
+use tabler_lib::database::redis::RedisDriver;
 use tabler_lib::sandbox_guard::{classify_sql_with_dialect, detect_dangerous_capability};
 
 fn integration_enabled() -> bool {
@@ -145,6 +153,7 @@ async fn sqlite_file_round_trip_lifecycle() {
     let _ = std::fs::remove_file(&path);
 }
 
+#[cfg(feature = "duckdb-driver")]
 #[tokio::test]
 async fn duckdb_file_round_trip_lifecycle() {
     if !integration_enabled() {
@@ -331,6 +340,7 @@ async fn clickhouse_round_trip_lifecycle() {
     let _ = driver.disconnect().await;
 }
 
+#[cfg(feature = "redis-driver")]
 #[tokio::test]
 async fn redis_round_trip_lifecycle() {
     if !integration_enabled() {
@@ -425,6 +435,7 @@ async fn mssql_round_trip_lifecycle() {
     let _ = driver.disconnect().await;
 }
 
+#[cfg(feature = "cassandra-driver")]
 #[tokio::test]
 async fn cassandra_round_trip_lifecycle() {
     if std::env::var("TABLER_IT_CASSANDRA").as_deref() != Ok("1") {
@@ -732,6 +743,7 @@ async fn mysql_sandbox_guard_boundary_is_live() {
     .await;
 }
 
+#[cfg(feature = "duckdb-driver")]
 #[tokio::test]
 async fn duckdb_sandbox_guard_boundary_is_live() {
     if !integration_enabled() {

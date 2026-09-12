@@ -281,7 +281,7 @@ pub(super) fn validate_contributions(manifest: &PluginManifest) -> Result<(), St
         match (driver.runtime.as_str(), driver.status.as_str()) {
             ("wasm-component-v1", "experimental") => {}
             ("declarative-http-v1", "stable") => {
-                if driver.protocol != "opensearch" {
+                if !crate::database::capabilities::is_declarative_http_protocol(&driver.protocol) {
                     return Err(format!(
                         "Driver '{}' uses a protocol unsupported by declarative-http-v1.",
                         driver.id
@@ -293,6 +293,25 @@ pub(super) fn validate_contributions(manifest: &PluginManifest) -> Result<(), St
                     "query.execute",
                     "network.fetch",
                 ] {
+                    if !manifest.permissions.iter().any(|value| value == permission) {
+                        return Err(format!(
+                            "Driver '{}' requires the '{}' permission.",
+                            driver.id, permission
+                        ));
+                    }
+                }
+            }
+            ("driver-sidecar-v1", "stable") | ("driver-sidecar-v1", "experimental") => {
+                // Native engines delivered as an out-of-process sidecar. The
+                // protocol must be a `PluginNative` engine, sourced from the same
+                // matrix as the HTTP allow-list so it cannot drift.
+                if !crate::database::capabilities::is_plugin_native_protocol(&driver.protocol) {
+                    return Err(format!(
+                        "Driver '{}' uses a protocol unsupported by driver-sidecar-v1.",
+                        driver.id
+                    ));
+                }
+                for permission in ["connection.metadata", "query.read", "query.execute"] {
                     if !manifest.permissions.iter().any(|value| value == permission) {
                         return Err(format!(
                             "Driver '{}' requires the '{}' permission.",
@@ -634,6 +653,79 @@ pub(crate) fn resolve_active_plugin_driver(
     Ok(ActivePluginDriver {
         plugin_id: record.manifest.id,
         contribution,
+    })
+}
+
+/// A resolved, verified `driver-sidecar-v1` plugin ready to spawn: the same
+/// managed-location / enabled / verified / capability checks as
+/// `resolve_active_plugin_driver`, plus the installed bundle directory (needed
+/// to locate the per-platform sidecar binary) and a runtime guard.
+#[derive(Debug, Clone)]
+// Compiled always (for the re-export + unit test) but only *used* by the native
+// sidecar fallback in lean builds; allow dead_code so the all-features build,
+// which clippy gates with `-D warnings`, stays clean.
+#[allow(dead_code)]
+pub(crate) struct ResolvedSidecar {
+    pub plugin_id: String,
+    pub driver_id: String,
+    pub bundle_dir: PathBuf,
+}
+
+#[allow(dead_code)] // used by the native sidecar fallback (lean builds) + unit tests
+pub(crate) fn resolve_active_sidecar(
+    storage: &PluginStorage,
+    plugin_id: &str,
+    driver_id: &str,
+) -> Result<ResolvedSidecar, String> {
+    let bundle_root = storage
+        .bundles_dir()
+        .canonicalize()
+        .map_err(|e| format!("Failed to inspect the plugin bundle directory: {e}"))?;
+    let records = sync_installed_plugins(storage)?;
+    let record = records
+        .into_iter()
+        .find(|record| record.manifest.id == plugin_id)
+        .ok_or_else(|| format!("Required driver plugin '{plugin_id}' is not installed."))?;
+
+    let installed_path = Path::new(&record.bundle_path)
+        .canonicalize()
+        .map_err(|e| format!("Failed to inspect driver plugin '{plugin_id}': {e}"))?;
+    if !installed_path.starts_with(&bundle_root) {
+        return Err(format!(
+            "Driver plugin '{plugin_id}' is outside the managed plugin directory."
+        ));
+    }
+    if !record.enabled || !record.verified || record.validation_error.is_some() {
+        return Err(format!(
+            "Driver plugin '{plugin_id}' must be enabled and verified before use."
+        ));
+    }
+    if !record
+        .manifest
+        .capabilities
+        .iter()
+        .any(|capability| capability == "database")
+    {
+        return Err(format!(
+            "Driver plugin '{plugin_id}' did not declare the database capability."
+        ));
+    }
+    let contribution = record
+        .manifest
+        .contributes
+        .drivers
+        .iter()
+        .find(|driver| driver.id == driver_id)
+        .ok_or_else(|| format!("Plugin '{plugin_id}' does not provide driver '{driver_id}'."))?;
+    if contribution.runtime != "driver-sidecar-v1" {
+        return Err(format!(
+            "Driver '{driver_id}' in plugin '{plugin_id}' is not a driver-sidecar-v1 runtime."
+        ));
+    }
+    Ok(ResolvedSidecar {
+        plugin_id: record.manifest.id.clone(),
+        driver_id: driver_id.to_string(),
+        bundle_dir: installed_path,
     })
 }
 

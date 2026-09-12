@@ -26,10 +26,18 @@ if (!desktopPackage) {
   throw new Error("The TableR desktop Cargo package was not found.");
 }
 
+// Only bins that ship in the default build count toward the "one app binary"
+// contract. Feature-gated bins (the `driver-sidecar-v1` sidecars:
+// reference_sidecar, {duckdb,cassandra,redis,libsql}_sidecar) carry
+// `required-features`, so `cargo build` without extra flags never emits them and
+// the shipped Tauri bundle stays a single `tabler` executable.
 const desktopBins = desktopPackage.targets.filter((target) => target.kind.includes("bin"));
-if (desktopBins.length !== 1 || desktopBins[0].name !== "tabler") {
+const defaultBins = desktopBins.filter(
+  (target) => !(target["required-features"] && target["required-features"].length > 0),
+);
+if (defaultBins.length !== 1 || defaultBins[0].name !== "tabler") {
   throw new Error(
-    `The Tauri package must expose exactly one 'tabler' binary; found: ${desktopBins
+    `The Tauri package must expose exactly one always-built 'tabler' binary; found: ${defaultBins
       .map((target) => target.name)
       .join(", ") || "none"}.`,
   );

@@ -112,5 +112,11 @@ jobs:
           TABLER_TEST_MYSQL_DATABASE: tabler_test
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml -- --include-ignored
 
+      # Phase 4e: builds the reference `driver-sidecar-v1` binary and drives it
+      # end-to-end through `SidecarDriver::spawn` over a real process boundary.
+      # SQLite-backed, so no external service is required.
+      - name: Test reference sidecar (e2e)
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --features reference-sidecar --test sidecar_e2e
+
       - name: Check backend
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml

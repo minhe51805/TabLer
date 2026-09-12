@@ -2183,7 +2183,7 @@ footer {
 }
 
 /* Tables ---------------------------------------------------------- */
-
+/* first-column cells wrap so long text does not overflow the table */
 .doc-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);
@@ -2215,7 +2215,8 @@ footer {
 }
 
 .doc-table td:first-child {
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: break-word;
   font-family: var(--font-geist-mono), monospace;
   font-size: 13px;
   color: var(--ink);

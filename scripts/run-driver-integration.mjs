@@ -46,7 +46,13 @@ try {
   }
   const res = spawnSync(
     "cargo",
-    ["test", "--test", "driver_integration"],
+    [
+      "test",
+      "--features",
+      "duckdb-driver,cassandra-driver,redis-driver,libsql-driver",
+      "--test",
+      "driver_integration",
+    ],
     { cwd: path.join(repoRoot, "src-tauri"), stdio: "inherit", shell: process.platform === "win32", env },
   );
   cargoStatus = res.status ?? 1;

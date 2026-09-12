@@ -1,4 +1,8 @@
 pub(crate) use super::plugins_support::resolve_active_plugin_driver;
+// Re-exported for the native-sidecar fallback in `manager.rs`, which is only
+// compiled when a native driver feature is absent; unused in all-features builds.
+#[allow(unused_imports)]
+pub(crate) use super::plugins_support::resolve_active_sidecar;
 use super::plugins_support::*;
 use crate::database::manager::DatabaseManager;
 use crate::storage::plugin_storage::{InstalledPluginRecord, PluginManifest, PluginStorage};
@@ -483,6 +487,40 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_resolution_rejects_a_non_sidecar_runtime() {
+        // The bundled opensearch driver is declarative-http-v1, so the native
+        // sidecar resolver must refuse it even though it is a valid installed
+        // driver — guarding against pointing sidecar spawning at an HTTP plugin.
+        let root = std::env::temp_dir().join(format!("tabler-sidecar-runtime-{}", Uuid::new_v4()));
+        let storage = PluginStorage::from_data_dir(root.clone()).unwrap();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("plugins")
+            .join("opensearch-driver");
+        let destination = storage.bundles_dir().join("opensearch-driver.tableplugin");
+        copy_dir_recursive(&source, &destination).unwrap();
+        let validated = validate_bundle(&destination).unwrap();
+        storage
+            .save_plugins(&[InstalledPluginRecord {
+                manifest: validated.manifest,
+                bundle_path: destination.to_string_lossy().to_string(),
+                enabled: true,
+                installed_at: now_unix_seconds(),
+                updated_at: now_unix_seconds(),
+                verified: true,
+                computed_integrity: Some(validated.digest),
+                validation_error: None,
+                rollback_available: false,
+                previous_version: None,
+            }])
+            .unwrap();
+
+        let err = resolve_active_sidecar(&storage, "opensearch-driver", "opensearch").unwrap_err();
+        assert!(err.contains("driver-sidecar-v1"), "got: {err}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn rejects_unrecognized_declarative_driver_protocols() {
         let mut value = manifest();
         value.kind = "adapter".to_string();
@@ -506,6 +544,37 @@ mod tests {
     }
 
     #[test]
+    fn accepts_known_declarative_http_protocols() {
+        // Phase 1: the declarative-http host is no longer hard-locked to
+        // OpenSearch; any PluginHttp engine protocol validates.
+        for protocol in ["clickhouse", "bigquery", "snowflake", "cloudflare_d1", "opensearch"] {
+            let mut value = manifest();
+            value.kind = "adapter".to_string();
+            value.capabilities = vec!["database".to_string()];
+            value.permissions = vec![
+                "connection.metadata".to_string(),
+                "query.read".to_string(),
+                "query.execute".to_string(),
+                "network.fetch".to_string(),
+            ];
+            value.contributes.drivers = vec![PluginDriverContribution {
+                // Driver id must be a stable slug; the protocol keeps the exact
+                // engine key (e.g. "cloudflare_d1") the capability matrix uses.
+                id: protocol.replace('_', "-"),
+                label: protocol.to_string(),
+                protocol: protocol.to_string(),
+                runtime: "declarative-http-v1".to_string(),
+                status: "stable".to_string(),
+            }];
+            assert!(
+                validate_contributions(&value).is_ok(),
+                "protocol {protocol} should validate, got {:?}",
+                validate_contributions(&value)
+            );
+        }
+    }
+
+    #[test]
     fn generated_registry_matches_the_runtime_contract() {
         let registry_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -514,7 +583,10 @@ mod tests {
         let registry: PluginRegistryIndex = serde_json::from_slice(&raw).unwrap();
         validate_registry(&registry).unwrap();
         assert_eq!(registry.schema_version, 1);
-        assert_eq!(registry.packages.len(), 2);
+        // Built-in registry packages: portable-formats + the declarative-http
+        // driver plugins for every PluginHttp engine (opensearch, clickhouse,
+        // bigquery, snowflake, cloudflare-d1).
+        assert_eq!(registry.packages.len(), 6);
     }
 
     #[test]

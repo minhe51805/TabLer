@@ -5,6 +5,291 @@
     {
       "manifest": {
         "apiVersion": 1,
+        "id": "bigquery-driver",
+        "name": "Google BigQuery driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-07-16T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds Google BigQuery connectivity over the declarative HTTP driver host.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "b68304ba1d69c0e53736ffa14d46837e387798f915e19a82278174639e4340fc"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "bigquery",
+              "label": "Google BigQuery",
+              "protocol": "bigquery",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-07-16T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Google BigQuery driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "cassandra-driver",
+        "name": "Cassandra native driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-07-16T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds Apache Cassandra / ScyllaDB connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute"
+        ],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "fe2bc824feff3bbe07e563ba014103ef4961863a55e17b920964b51a64c57e0a"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "cassandra",
+              "label": "Cassandra",
+              "protocol": "cassandra",
+              "runtime": "driver-sidecar-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-07-16T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Cassandra native driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "clickhouse-driver",
+        "name": "ClickHouse driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-07-16T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds ClickHouse connectivity over the declarative HTTP driver host.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "5c285f79d3ce1f00e26e0b060880587cbb450fcf2e9a46e1014e9214da8f2cf6"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "clickhouse",
+              "label": "ClickHouse",
+              "protocol": "clickhouse",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-07-16T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for ClickHouse driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "cloudflare-d1-driver",
+        "name": "Cloudflare D1 driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-07-16T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds Cloudflare D1 connectivity over the declarative HTTP driver host.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "8d65bc247107a35d6aa59183886ab47a0dc526721f8372ea10e664990b8c7f48"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "cloudflare-d1",
+              "label": "Cloudflare D1",
+              "protocol": "cloudflare_d1",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-07-16T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Cloudflare D1 driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "duckdb-driver",
+        "name": "DuckDB native driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-07-16T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds DuckDB connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute"
+        ],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "4af1a22ae4057943b16d9dc4132d346d80b9e24294f494258e1d0829da297113"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "duckdb",
+              "label": "DuckDB",
+              "protocol": "duckdb",
+              "runtime": "driver-sidecar-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-07-16T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for DuckDB native driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "libsql-driver",
+        "name": "LibSQL native driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-07-16T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds LibSQL / Turso connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute"
+        ],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "738f61b0cda84d67e2d08c5e528b5620831b2cdc4d6760675ea3dd90d168c5a3"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "libsql",
+              "label": "LibSQL",
+              "protocol": "libsql",
+              "runtime": "driver-sidecar-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-07-16T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for LibSQL native driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
         "id": "opensearch-driver",
         "name": "OpenSearch read-only driver",
         "version": "1.0.0",
@@ -115,6 +400,101 @@
       "assets": [],
       "publishedAt": "2026-07-16T00:00:00.000Z",
       "releaseNotes": "Built-in registry package for Portable text formats 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "redis-driver",
+        "name": "Redis native driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-07-16T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds Redis connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute"
+        ],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "4091867d2d7a34975c6c842a06861a11722c94c43b71f0788cfabee974b267df"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "redis",
+              "label": "Redis",
+              "protocol": "redis",
+              "runtime": "driver-sidecar-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-07-16T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Redis native driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "snowflake-driver",
+        "name": "Snowflake driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-07-16T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds Snowflake connectivity over the declarative HTTP driver host.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "b2d1f9abfea4bb59117e571a0983279b6ca3daaebdc881b64881f0b359454d52"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "snowflake",
+              "label": "Snowflake",
+              "protocol": "snowflake",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-07-16T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Snowflake driver 1.0.0."
     }
   ]
 }

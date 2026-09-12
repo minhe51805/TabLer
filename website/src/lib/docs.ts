@@ -447,7 +447,7 @@ const VI_ENGINE_LABELS: EnginePageLabels = {
   troubleHead: ["Triệu chứng", "Nguyên nhân thường gặp", "Cách xử lý"],
   nextStepsCards: [
     { title: "Không gian SQL", text: "Viết và chạy truy vấn, quản lý tab và đọc kết quả.", href: "/docs/sql-workspace" },
-    { title: "Khám phá dữ liệu", text: "Duyệt schema, bảng, cột và tìm kiếm across database.", href: "/docs/exploring-data" },
+    { title: "Khám phá dữ liệu", text: "Duyệt schema, bảng, cột và tìm kiếm xuyên nhiều database.", href: "/docs/exploring-data" },
     { title: "Tất cả engine", text: "Quay lại tổng quan kết nối và danh sách engine đầy đủ.", href: "/docs/connections" },
   ],
 };

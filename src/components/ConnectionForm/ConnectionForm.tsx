@@ -5,7 +5,12 @@ import { useI18n } from "../../i18n";
 import type { ConnectionConfig } from "../../types";
 import { emitAppToast } from "../../utils/app-toast";
 import { splitSqlStatements } from "../../utils/sqlStatements";
-import { findStableOpenSearchDriver } from "../../utils/plugin-driver-runtime";
+import {
+  resolvePluginHttpDrivers,
+  isPluginHttpProtocol,
+  applyEngineRuntimeAvailability,
+} from "../../utils/plugin-driver-runtime";
+import { invokeWithTimeout } from "../../utils/tauri-utils";
 import { ConnectionPickerStep } from "./steps/ConnectionPickerStep";
 import { ConnectionDetailsStep, type DetailsStrings } from "./steps/ConnectionDetailsStep";
 import {
@@ -55,18 +60,50 @@ export function ConnectionForm({
   const installedPlugins = usePluginStore((state) => state.plugins);
   const pluginsHaveLoaded = usePluginStore((state) => state.hasLoaded);
   const loadPlugins = usePluginStore((state) => state.loadPlugins);
-  const openSearchDriver = useMemo(
-    () => findStableOpenSearchDriver(installedPlugins),
+  const installPlugin = usePluginStore((state) => state.installPlugin);
+  const [isInstallingPlugin, setIsInstallingPlugin] = useState(false);
+  const pluginHttpDrivers = useMemo(
+    () => resolvePluginHttpDrivers(installedPlugins),
     [installedPlugins],
   );
+  // Which native-crate engines this build actually compiled in (Cargo features).
+  // Defaults to empty so the shipped build — which enables all of them — behaves
+  // exactly as before; a lean build reports the subset it linked.
+  const [nativeDriverAvailability, setNativeDriverAvailability] = useState<
+    Record<string, boolean>
+  >({});
+  useEffect(() => {
+    let cancelled = false;
+    void invokeWithTimeout<Record<string, boolean>>(
+      "get_native_driver_availability",
+      {},
+      5_000,
+      "Checking installed database engines",
+    )
+      .then((availability) => {
+        if (!cancelled && availability) setNativeDriverAvailability(availability);
+      })
+      .catch(() => {
+        // Fail open: keep native engines visible; the backend still guards the
+        // connect path with a clear "not compiled into this build" error.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  // Single source of truth shared with the Plugin Manager (see
+  // applyEngineRuntimeAvailability): PluginHttp engines gate on an
+  // installed/enabled driver with a 3-state "active"/"installed"/"roadmap",
+  // native engines gate on the compiled build + installed sidecars, and every
+  // other engine keeps its static flag. Both surfaces can never disagree.
   const availableDatabases = useMemo(
     () =>
-      ALL_DATABASES.map((database) =>
-        database.key === "opensearch"
-          ? { ...database, supported: Boolean(openSearchDriver) }
-          : database,
+      applyEngineRuntimeAvailability(
+        ALL_DATABASES,
+        installedPlugins,
+        nativeDriverAvailability,
       ),
-    [openSearchDriver],
+    [installedPlugins, nativeDriverAvailability],
   );
 
   // --- State ---
@@ -120,7 +157,12 @@ export function ConnectionForm({
   const isBootstrappingWorkspace = isCreatingDatabase || isConnecting;
   const sqliteDatabaseName = (formData.database || "").trim() || (formData.name || "").trim() || "local-database";
   const supportedCount = availableDatabases.filter((db) => db.supported).length;
-  const roadmapCount = availableDatabases.length - supportedCount;
+  // Engines whose driver bundle is installed but not enabled yet — counted
+  // separately so they are not mixed into the roadmap total.
+  const installedDisabledCount = availableDatabases.filter(
+    (db) => !db.supported && db.pluginHttpState === "installed",
+  ).length;
+  const roadmapCount = availableDatabases.length - supportedCount - installedDisabledCount;
   const localRoadmapCount = availableDatabases.filter(
     (db) => !LOCAL_BOOTSTRAP_READY.has(db.key),
   ).length;
@@ -171,6 +213,10 @@ export function ConnectionForm({
         emptySearch: "Không có loại cơ sở dữ liệu nào khớp tìm kiếm.",
         readyNow: "Sẵn sàng ngay",
         readyNowCaption: "Các engine bạn có thể cấu hình ngay trong bản build này.",
+        installPlugin: "Cài plugin",
+        installPluginSuccess: "Đã cài plugin",
+        installedDisabled: "Đã cài · cần bật",
+        installedDisabledCaption: "Bundle driver đã được cài nhưng đang tắt. Bật nó trong Trình quản lý plugin để kết nối.",
         roadmapCaption: "Các engine sắp tới đã hiển thị trong định hướng sản phẩm.",
         localReadyCaption: "Khởi tạo và mở các engine này trực tiếp từ TableR.",
         connectOnly: "Chỉ kết nối",
@@ -272,6 +318,10 @@ export function ConnectionForm({
       emptySearch: "No database types match that search.",
       readyNow: "Ready now",
       readyNowCaption: "Engines you can configure immediately in this build.",
+      installPlugin: "Install plugin",
+      installPluginSuccess: "Plugin installed",
+      installedDisabled: "Installed · needs enabling",
+      installedDisabledCaption: "The driver bundle is installed but disabled. Enable it in Plugin Manager to connect.",
       roadmapCaption: "Upcoming engines visible in the product direction.",
       localReadyCaption: "Bootstrap and open these engines directly from TableR.",
       connectOnly: "Connect only",
@@ -532,14 +582,15 @@ export function ConnectionForm({
             : prev.username,
         file_path: db.connectionMode === "file" ? prev.file_path : "",
         use_ssl: db.supportsSsl ? prev.use_ssl : false,
-        additional_fields: db.key === "opensearch" && openSearchDriver
-          ? {
-              plugin_id: openSearchDriver.pluginId,
-              plugin_driver_id: openSearchDriver.id,
-            }
-          : switchedEngine
-            ? {}
-            : (prev.additional_fields ?? {}),
+        additional_fields:
+          isPluginHttpProtocol(db.key) && pluginHttpDrivers[db.key]
+            ? {
+                plugin_id: pluginHttpDrivers[db.key]!.pluginId,
+                plugin_driver_id: pluginHttpDrivers[db.key]!.id,
+              }
+            : switchedEngine
+              ? {}
+              : (prev.additional_fields ?? {}),
       };
     });
     setStep("form");
@@ -707,7 +758,8 @@ export function ConnectionForm({
     if (!bootstrapMode) {
       return [
         { key: "ready", title: copy.readyNow, caption: copy.readyNowCaption, items: filteredDbs.filter((db) => db.supported) },
-        { key: "roadmap", title: copy.roadmap, caption: copy.roadmapCaption, items: filteredDbs.filter((db) => !db.supported) },
+        { key: "installed-disabled", title: copy.installedDisabled, caption: copy.installedDisabledCaption, items: filteredDbs.filter((db) => !db.supported && db.pluginHttpState === "installed") },
+        { key: "roadmap", title: copy.roadmap, caption: copy.roadmapCaption, items: filteredDbs.filter((db) => !db.supported && db.pluginHttpState !== "installed") },
       ].filter((s) => s.items.length > 0);
     }
     return [
@@ -751,6 +803,22 @@ export function ConnectionForm({
   }, [pickerSections, selectedDb, step]);
 
   // --- Picker strings for child ---
+  const handleInstallPluginFromPicker = useCallback(async () => {
+    setIsInstallingPlugin(true);
+    try {
+      const installed = await installPlugin();
+      if (installed) {
+        emitAppToast({
+          tone: "success",
+          title: copy.installPluginSuccess,
+          description: `${installed.manifest.name} v${installed.manifest.version}`,
+        });
+      }
+    } finally {
+      setIsInstallingPlugin(false);
+    }
+  }, [copy.installPluginSuccess, installPlugin]);
+
   const pickerStrings = {
     pickerKicker: copy.pickerKicker,
     pickerLocalTitle: copy.pickerLocalTitle,
@@ -769,6 +837,7 @@ export function ConnectionForm({
     emptySearch: copy.emptySearch,
     readyNow: copy.readyNow,
     readyNowCaption: copy.readyNowCaption,
+    installPlugin: copy.installPlugin,
     roadmapCaption: copy.roadmapCaption,
     localReadyCaption: copy.localReadyCaption,
     localRoadmap: copy.localRoadmap,
@@ -880,6 +949,8 @@ export function ConnectionForm({
         onClose={onClose}
         onContinue={() => selectedDb && handleContinueFromPicker(selectedDb)}
         onBack={() => setStep("pick")}
+        onInstallPlugin={handleInstallPluginFromPicker}
+        isInstallingPlugin={isInstallingPlugin}
       />
     );
 

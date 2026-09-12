@@ -20,7 +20,8 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../i18n";
 import { emitAppToast } from "../utils/app-toast";
-import { findStableOpenSearchDriver } from "../utils/plugin-driver-runtime";
+import { applyEngineRuntimeAvailability } from "../utils/plugin-driver-runtime";
+import { invokeWithTimeout } from "../utils/tauri-utils";
 import { ALL_DATABASES } from "./ConnectionForm/engine-registry";
 import { usePluginStore } from "../stores/pluginStore";
 import type { InstalledPluginRecord, PluginRegistryPackage } from "../types/plugin";
@@ -157,14 +158,50 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
     };
   }, [language]);
 
-  const openSearchDriver = findStableOpenSearchDriver(installedPlugins);
-  const databaseAdapters = ALL_DATABASES.map((database) =>
-    database.key === "opensearch"
-      ? { ...database, supported: Boolean(openSearchDriver) }
-      : database,
+  // Which native-crate engines this build actually compiled in (Cargo features);
+  // mirrors the connection picker so the Plugin Manager reflects the same
+  // "installed / connectable" truth instead of the static build-time flag. Fails
+  // open (empty map) so the shipped build — which enables all of them — is
+  // unchanged, and a failed report never hides a supported engine.
+  const [nativeDriverAvailability, setNativeDriverAvailability] = useState<
+    Record<string, boolean>
+  >({});
+  useEffect(() => {
+    let cancelled = false;
+    void invokeWithTimeout<Record<string, boolean>>(
+      "get_native_driver_availability",
+      {},
+      5_000,
+      "Checking installed database engines",
+    )
+      .then((availability) => {
+        if (!cancelled && availability) setNativeDriverAvailability(availability);
+      })
+      .catch(() => {
+        // Fail open: keep native engines visible; the backend still guards the
+        // connect path with a clear "not compiled into this build" error.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  // Same single source of truth the connection picker uses
+  // (applyEngineRuntimeAvailability), so an engine can never be "ready here /
+  // roadmap there": PluginHttp engines gate on an installed/enabled driver,
+  // native engines on the compiled build + installed sidecars.
+  const databaseAdapters = applyEngineRuntimeAvailability(
+    ALL_DATABASES,
+    installedPlugins,
+    nativeDriverAvailability,
   );
   const readyAdapters = databaseAdapters.filter((db) => db.supported);
-  const roadmapAdapters = databaseAdapters.filter((db) => !db.supported);
+  // A driver bundle that is installed but not active yet (disabled/unverified)
+  // lives in "Installed local bundles" — it is no longer a roadmap-only engine,
+  // so keep it out of the External plugin roadmap to avoid the contradictory
+  // "installed here / roadmap there" state. Identical filter to the picker.
+  const roadmapAdapters = databaseAdapters.filter(
+    (db) => !db.supported && db.pluginHttpState !== "installed",
+  );
   const latestRegistryPackages = useMemo(() => {
     const latest = new Map<string, PluginRegistryPackage>();
     for (const item of registryPackages) {

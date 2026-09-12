@@ -9,6 +9,23 @@ pub enum DriverTier {
     Specialized,
 }
 
+/// How the engine is packaged and shipped (plugin-split taxonomy).
+///
+/// `Builtin` drivers are compiled into TableR and always connectable. `PluginHttp`
+/// engines speak HTTP/REST and are the candidates to move behind installable
+/// plugin manifests (like OpenSearch today) so they can ship out-of-band without
+/// a rebuild. `PluginNative` engines use a compiled wire-protocol crate and can
+/// only be externalized through a feature-flag build or an out-of-process
+/// sidecar — never a downloaded declarative manifest, because Rust has no stable
+/// ABI for loading compiled drivers at runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DriverDistribution {
+    Builtin,
+    PluginHttp,
+    PluginNative,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilitySupport {
@@ -40,6 +57,37 @@ pub const fn query_model_for(database_type: DatabaseType) -> QueryModel {
     }
 }
 
+/// Packaging tier for each engine (plugin-split). The built-in set is the five
+/// wire drivers the product always ships — MySQL, PostgreSQL, SQLite, SQL Server,
+/// MongoDB — plus every engine that reuses one of those compiled drivers
+/// (MariaDB → MySQL wire; CockroachDB/Greenplum/Redshift/Vertica → PostgreSQL
+/// wire). HTTP engines are `PluginHttp`; compiled-crate engines are
+/// `PluginNative`. The match is exhaustive on purpose: adding a new engine forces
+/// a packaging decision here.
+pub const fn driver_distribution(database_type: DatabaseType) -> DriverDistribution {
+    match database_type {
+        DatabaseType::MySQL
+        | DatabaseType::MariaDB
+        | DatabaseType::PostgreSQL
+        | DatabaseType::CockroachDB
+        | DatabaseType::Greenplum
+        | DatabaseType::Redshift
+        | DatabaseType::Vertica
+        | DatabaseType::SQLite
+        | DatabaseType::MSSQL
+        | DatabaseType::MongoDB => DriverDistribution::Builtin,
+        DatabaseType::ClickHouse
+        | DatabaseType::BigQuery
+        | DatabaseType::Snowflake
+        | DatabaseType::CloudflareD1
+        | DatabaseType::OpenSearch => DriverDistribution::PluginHttp,
+        DatabaseType::DuckDB
+        | DatabaseType::Cassandra
+        | DatabaseType::Redis
+        | DatabaseType::LibSQL => DriverDistribution::PluginNative,
+    }
+}
+
 pub const fn agent_allows_sql_read(database_type: DatabaseType) -> bool {
     matches!(
         query_model_for(database_type),
@@ -49,6 +97,23 @@ pub const fn agent_allows_sql_read(database_type: DatabaseType) -> bool {
 
 pub const fn agent_allows_sql_write_preview(database_type: DatabaseType) -> bool {
     matches!(query_model_for(database_type), QueryModel::Sql)
+}
+
+/// SQLite-family engines: embedded/file engines that share SQLite's SQL dialect
+/// for identifier quoting and `PRAGMA foreign_keys` toggling.
+///
+/// Consolidated here (tech-debt audit D8): this exact 4-member group was spelled
+/// out inline across `export_support.rs`, `restore.rs`, and `search.rs`. Adding
+/// another SQLite-compatible engine should update this one function instead of
+/// hunting every `SQLite | DuckDB | LibSQL | CloudflareD1` match arm.
+pub const fn is_sqlite_family(database_type: DatabaseType) -> bool {
+    matches!(
+        database_type,
+        DatabaseType::SQLite
+            | DatabaseType::DuckDB
+            | DatabaseType::LibSQL
+            | DatabaseType::CloudflareD1
+    )
 }
 
 pub fn agent_sql_read_unsupported_error(database_type: DatabaseType) -> Option<String> {
@@ -129,6 +194,7 @@ pub struct DriverCapabilityProfile {
     pub label: &'static str,
     pub tier: DriverTier,
     pub query_model: QueryModel,
+    pub distribution: DriverDistribution,
     pub capabilities: DriverCapabilitySet,
     pub limitations: &'static [&'static str],
 }
@@ -219,6 +285,7 @@ const fn profile(
         label,
         tier,
         query_model: query_model_for(database_type),
+        distribution: driver_distribution(database_type),
         capabilities: DriverCapabilitySet {
             connect,
             query,
@@ -407,10 +474,75 @@ pub fn all_driver_capabilities() -> Vec<DriverCapabilityProfile> {
         .collect()
 }
 
+/// Protocols the built-in `declarative-http-v1` plugin host can drive. These are
+/// exactly the HTTP/REST engines (`DriverDistribution::PluginHttp`), so an
+/// installed plugin manifest may only contribute a driver for an engine TableR
+/// ships a compiled HTTP driver for. Derived from the matrix so the allow-list
+/// cannot drift from the packaging taxonomy.
+pub fn is_declarative_http_protocol(protocol: &str) -> bool {
+    ALL_DATABASE_TYPES.iter().copied().any(|database_type| {
+        let profile = driver_capabilities(database_type);
+        profile.key == protocol
+            && matches!(profile.distribution, DriverDistribution::PluginHttp)
+    })
+}
+
+/// Whether `protocol` names one of the `DriverDistribution::PluginNative`
+/// engines (DuckDB, Cassandra, Redis, LibSQL). Mirrors
+/// `is_declarative_http_protocol` for the native-sidecar (`driver-sidecar-v1`)
+/// runtime: an installed sidecar plugin may only contribute a driver for an
+/// engine TableR classifies as native. Derived from the matrix so the allow-list
+/// cannot drift from the packaging taxonomy.
+pub fn is_plugin_native_protocol(protocol: &str) -> bool {
+    ALL_DATABASE_TYPES.iter().copied().any(|database_type| {
+        let profile = driver_capabilities(database_type);
+        profile.key == protocol
+            && matches!(profile.distribution, DriverDistribution::PluginNative)
+    })
+}
+
+/// Which `DriverDistribution::PluginNative` engines (DuckDB, Cassandra, Redis,
+/// LibSQL) are actually compiled into this build. Unlike the HTTP plugins, these
+/// link a wire-protocol crate at build time behind a Cargo feature, so a lean
+/// build can drop them to shrink the binary. This MUST be evaluated with `cfg!`
+/// (never a const table) so the report reflects the real feature set, letting
+/// the frontend gate the connection picker instead of failing only at connect.
+/// The key strings mirror `DriverCapabilityProfile::key`, and a test pins that
+/// this list stays exactly the `PluginNative` set in the matrix.
+pub fn compiled_native_driver_availability() -> Vec<(&'static str, bool)> {
+    vec![
+        ("duckdb", cfg!(feature = "duckdb-driver")),
+        ("cassandra", cfg!(feature = "cassandra-driver")),
+        ("redis", cfg!(feature = "redis-driver")),
+        ("libsql", cfg!(feature = "libsql-driver")),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn plugin_native_protocol_allowlist_matches_the_matrix() {
+        // The sidecar runtime accepts exactly the PluginNative engines, sourced
+        // from the same matrix as the packaging taxonomy so it cannot drift.
+        for database_type in ALL_DATABASE_TYPES.iter().copied() {
+            let profile = driver_capabilities(database_type);
+            let expected = matches!(profile.distribution, DriverDistribution::PluginNative);
+            assert_eq!(
+                is_plugin_native_protocol(profile.key),
+                expected,
+                "{}",
+                profile.key
+            );
+        }
+        assert!(is_plugin_native_protocol("duckdb"));
+        assert!(is_plugin_native_protocol("redis"));
+        // HTTP-plugin and built-in protocols are rejected by the native gate.
+        assert!(!is_plugin_native_protocol("clickhouse"));
+        assert!(!is_plugin_native_protocol("mysql"));
+    }
 
     #[test]
     fn capability_catalog_contains_every_engine_once() {
@@ -422,6 +554,24 @@ mod tests {
             .map(|profile| profile.key)
             .collect::<HashSet<_>>();
         assert_eq!(keys.len(), ALL_DATABASE_TYPES.len());
+    }
+
+    #[test]
+    fn sqlite_family_is_exactly_the_embedded_sqlite_dialect_engines() {
+        for database_type in ALL_DATABASE_TYPES {
+            let expected = matches!(
+                database_type,
+                DatabaseType::SQLite
+                    | DatabaseType::DuckDB
+                    | DatabaseType::LibSQL
+                    | DatabaseType::CloudflareD1
+            );
+            assert_eq!(
+                is_sqlite_family(database_type),
+                expected,
+                "is_sqlite_family mismatch for {database_type:?}"
+            );
+        }
     }
 
     #[test]
@@ -522,6 +672,91 @@ mod tests {
                     assert!(err.contains("does not support SQL observations"));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn distribution_split_matches_the_plugin_taxonomy() {
+        use DriverDistribution::*;
+        for database_type in ALL_DATABASE_TYPES {
+            let expected = match database_type {
+                DatabaseType::MySQL
+                | DatabaseType::MariaDB
+                | DatabaseType::PostgreSQL
+                | DatabaseType::CockroachDB
+                | DatabaseType::Greenplum
+                | DatabaseType::Redshift
+                | DatabaseType::Vertica
+                | DatabaseType::SQLite
+                | DatabaseType::MSSQL
+                | DatabaseType::MongoDB => Builtin,
+                DatabaseType::ClickHouse
+                | DatabaseType::BigQuery
+                | DatabaseType::Snowflake
+                | DatabaseType::CloudflareD1
+                | DatabaseType::OpenSearch => PluginHttp,
+                DatabaseType::DuckDB
+                | DatabaseType::Cassandra
+                | DatabaseType::Redis
+                | DatabaseType::LibSQL => PluginNative,
+            };
+            assert_eq!(
+                driver_capabilities(database_type).distribution,
+                expected,
+                "distribution mismatch for {database_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_availability_keys_match_the_plugin_native_taxonomy() {
+        // The build-availability report must cover exactly the PluginNative
+        // engines in the matrix, so a newly added native engine cannot silently
+        // escape the feature-flag surface the frontend gates its picker on.
+        let reported = compiled_native_driver_availability()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect::<HashSet<_>>();
+        let expected = all_driver_capabilities()
+            .into_iter()
+            .filter(|p| p.distribution == DriverDistribution::PluginNative)
+            .map(|p| p.key)
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            reported, expected,
+            "native availability keys drifted from the plugin_native taxonomy"
+        );
+    }
+
+    #[test]
+    fn native_availability_reflects_the_active_feature_set() {
+        // The report must mirror the real cfg! surface under any feature set
+        // (default or lean), so lean builds truthfully hide dropped engines.
+        let map: std::collections::HashMap<_, _> =
+            compiled_native_driver_availability().into_iter().collect();
+        assert_eq!(map["duckdb"], cfg!(feature = "duckdb-driver"));
+        assert_eq!(map["cassandra"], cfg!(feature = "cassandra-driver"));
+        assert_eq!(map["redis"], cfg!(feature = "redis-driver"));
+        assert_eq!(map["libsql"], cfg!(feature = "libsql-driver"));
+    }
+
+    #[test]
+    fn builtin_set_is_backed_by_the_five_shipped_wire_drivers() {
+        let builtin = all_driver_capabilities()
+            .into_iter()
+            .filter(|p| p.distribution == DriverDistribution::Builtin)
+            .map(|p| p.key)
+            .collect::<HashSet<_>>();
+        // The five engines the product keeps built-in must always stay in-app.
+        for key in ["mysql", "postgresql", "sqlite", "mssql", "mongodb"] {
+            assert!(builtin.contains(key), "{key} must remain built-in");
+        }
+        // HTTP and native-crate engines are never built-in.
+        for key in ["clickhouse", "bigquery", "snowflake", "cloudflare_d1", "opensearch"] {
+            assert!(!builtin.contains(key), "{key} must be a plugin, not built-in");
+        }
+        for key in ["duckdb", "cassandra", "redis", "libsql"] {
+            assert!(!builtin.contains(key), "{key} must be a plugin, not built-in");
         }
     }
 

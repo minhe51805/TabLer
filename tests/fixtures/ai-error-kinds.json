@@ -1,0 +1,4 @@
+{
+  "markerKey": "ai_error_kind",
+  "kinds": ["cancelled", "timeout", "provider", "invalid-response"]
+}

@@ -4,6 +4,10 @@ version = "0.1.6"
 description = "TableR - Cross-platform database client"
 authors = ["TableR Team"]
 edition = "2021"
+# The crate ships a second binary (`reference_sidecar`, Phase 4e, gated by the
+# `reference-sidecar` feature). Pin the app binary as the default so a bare
+# `cargo run` -- which is what `tauri dev` invokes -- is unambiguous.
+default-run = "tabler"
 
 [workspace]
 members = ["mcp-stdio"]
@@ -13,6 +17,37 @@ resolver = "2"
 [features]
 e2e = ["dep:tauri-plugin-wdio"]
 
+# Native protocol drivers (plugin-split). Each compiled wire-protocol driver is
+# optional. As of the native-distribution work the default (shipped) build is
+# LEAN: it links none of them, so the four `plugin_native` engines (DuckDB,
+# Cassandra, Redis, LibSQL) are delivered as installable `driver-sidecar-v1`
+# plugins instead of being baked into the app binary. Opt back in per engine with
+# `--features <engine>-driver` (see the `*:full` npm scripts and
+# docs/architecture/PLUGIN_DRIVER_DISTRIBUTION.md).
+default = []
+duckdb-driver = ["dep:duckdb"]
+cassandra-driver = ["dep:scylla"]
+redis-driver = ["dep:redis"]
+libsql-driver = ["dep:libsql"]
+# Builds the reference `driver-sidecar-v1` sidecar binary and its end-to-end
+# test. Off by default so normal app builds do not carry the extra binary.
+reference-sidecar = []
+# Per-engine native sidecar binaries (Phase 4 native distribution). Each feature
+# pulls its wire-protocol crate and builds a standalone `driver-sidecar-v1`
+# executable that a lean app resolves from an installed plugin instead of linking
+# the crate. All off by default so the shipped app binary stays lean and carries
+# no extra binaries; a release pipeline builds these per platform to publish.
+duckdb-sidecar = ["duckdb-driver"]
+cassandra-sidecar = ["cassandra-driver"]
+redis-sidecar = ["redis-driver"]
+libsql-sidecar = ["libsql-driver"]
+# Windows-only opt-ins that make a vendored/system OpenSSL available so the SSH
+# tunnel can use it directly (see src/ssh/ssh_tunnel.rs). Off by default; on Unix
+# OpenSSL is always present so these are unnecessary. Declared here so the
+# `unexpected_cfgs` lint recognizes them (clippy runs with `-D warnings`).
+vendored-openssl = []
+openssl-on-win32 = []
+
 [lib]
 name = "tabler_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -20,6 +55,42 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [[bin]]
 name = "tabler"
 path = "src/main.rs"
+
+# Reference native-driver sidecar (Phase 4e). A real out-of-process
+# `DatabaseDriver` speaking the `driver-sidecar-v1` protocol over stdio, backed
+# by the built-in SQLite driver. Gated so it is only built when requested (and
+# by the `sidecar_e2e` integration test).
+[[bin]]
+name = "reference_sidecar"
+path = "src/bin/reference_sidecar.rs"
+required-features = ["reference-sidecar"]
+
+# Per-engine native sidecars (Phase 4 native distribution). Each is gated on its
+# own `*-sidecar` feature (which pulls the wire-protocol crate), so `cargo build`
+# without extra flags never emits them and the shipped bundle stays single-binary.
+# A release pipeline builds one per platform, e.g.
+# `cargo build --release --bin duckdb_sidecar --features duckdb-sidecar`, and
+# packages it into the matching `plugins/<engine>-driver` bundle under
+# `bin/<os>-<arch>/<driver_id>[.exe]`.
+[[bin]]
+name = "duckdb_sidecar"
+path = "src/bin/duckdb_sidecar.rs"
+required-features = ["duckdb-sidecar"]
+
+[[bin]]
+name = "cassandra_sidecar"
+path = "src/bin/cassandra_sidecar.rs"
+required-features = ["cassandra-sidecar"]
+
+[[bin]]
+name = "redis_sidecar"
+path = "src/bin/redis_sidecar.rs"
+required-features = ["redis-sidecar"]
+
+[[bin]]
+name = "libsql_sidecar"
+path = "src/bin/libsql_sidecar.rs"
+required-features = ["libsql-sidecar"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -49,15 +120,15 @@ async-trait = "0.1"
 rfd = "0.15"
 futures-util = "0.3"
 fs2 = "0.4"
-libsql = { version = "0.9.30", default-features = false, features = ["remote", "tls"] }
+libsql = { version = "0.9.30", default-features = false, features = ["remote", "tls"], optional = true }
 tiberius = { version = "0.12.3", default-features = false, features = ["rustls", "tds73", "chrono", "winauth", "sql-browser-tokio"] }
 tokio-util = { version = "0.7", features = ["compat", "rt"] }
-duckdb = { version = "1.1.1", features = ["bundled"] }
-redis = "1.1.0"
+duckdb = { version = "1.1.1", features = ["bundled"], optional = true }
+redis = { version = "1.1.0", optional = true }
 shlex = "1"
 mongodb = "3.5.2"
 json5 = "0.4"
-scylla = "1.5.0"
+scylla = { version = "1.5.0", optional = true }
 portable-pty = "0.9.0"
 aes-gcm = "0.10"
 pbkdf2 = "0.12"

@@ -48,7 +48,7 @@ export interface PluginDriverContribution {
   id: string;
   label: string;
   protocol: string;
-  runtime: "wasm-component-v1" | "declarative-http-v1";
+  runtime: "wasm-component-v1" | "declarative-http-v1" | "driver-sidecar-v1";
   status: "experimental" | "stable";
 }
 

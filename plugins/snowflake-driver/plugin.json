@@ -1,0 +1,43 @@
+{
+  "apiVersion": 1,
+  "id": "snowflake-driver",
+  "name": "Snowflake driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-07-16T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds Snowflake connectivity over the declarative HTTP driver host.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute",
+    "network.fetch"
+  ],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "b2d1f9abfea4bb59117e571a0983279b6ca3daaebdc881b64881f0b359454d52"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "snowflake",
+        "label": "Snowflake",
+        "protocol": "snowflake",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

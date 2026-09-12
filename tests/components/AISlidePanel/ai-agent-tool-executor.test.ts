@@ -653,6 +653,83 @@ describe("skill allowlist enforcement", () => {
   });
 });
 
+describe("skill bundled resources + allowed-tools", () => {
+  it("lists resources on load, reads a listed one, and refuses unlisted paths", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    vi.mocked(invokeMutation)
+      .mockResolvedValueOnce({
+        name: "db-audit",
+        body: "audit steps",
+        resources: ["references/schema.md"],
+        allowedTools: [],
+      })
+      .mockResolvedValueOnce({
+        name: "db-audit",
+        resource: "references/schema.md",
+        content: "TABLE users(id)",
+      });
+    const exec = createAgentToolExecutor(mkDeps({ allowedSkillNames: ["db-audit"] }));
+    const load = await exec.runAgentTool({
+      action: "skill",
+      args: { name: "db-audit" },
+    } as AIAgentToolAction);
+    expect(load).toContain("Bundled resources");
+    expect(load).toContain("references/schema.md");
+
+    const good = await exec.runAgentTool({
+      action: "read_skill_resource",
+      args: { name: "db-audit", path: "references/schema.md" },
+    } as AIAgentToolAction);
+    expect(good).toContain("TABLE users");
+    expect(vi.mocked(invokeMutation)).toHaveBeenCalledWith("read_ai_skill_resource", {
+      name: "db-audit",
+      resource: "references/schema.md",
+    });
+
+    const unlisted = await exec.runAgentTool({
+      action: "read_skill_resource",
+      args: { name: "db-audit", path: "references/secrets.md" },
+    } as AIAgentToolAction);
+    expect(unlisted).toContain("is not a listed resource");
+  });
+
+  it("refuses read_skill_resource for a skill not loaded this run (fail-closed)", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    const obs = await run(mkDeps({ allowedSkillNames: ["db-audit"] }), {
+      action: "read_skill_resource",
+      args: { name: "db-audit", path: "references/schema.md" },
+    });
+    expect(obs).toContain("is not loaded this run");
+    expect(vi.mocked(invokeMutation)).not.toHaveBeenCalledWith(
+      "read_ai_skill_resource",
+      expect.anything(),
+    );
+  });
+
+  it("enforces a loaded skill's allowed-tools restriction for the rest of the run", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    vi.mocked(invokeMutation).mockResolvedValue({
+      name: "reader",
+      body: "read only",
+      resources: [],
+      allowedTools: ["run_readonly_sql"],
+    });
+    const exec = createAgentToolExecutor(mkDeps({ allowedSkillNames: ["reader"] }));
+    const load = await exec.runAgentTool({
+      action: "skill",
+      args: { name: "reader" },
+    } as AIAgentToolAction);
+    expect(load).toContain("restricts tools to");
+
+    const blocked = await exec.runAgentTool({
+      action: "preview_write",
+      args: { statements: ["update users set x = 1"] },
+    } as AIAgentToolAction);
+    expect(blocked).toContain("restricts tools to");
+    expect(blocked).toContain("preview_write");
+  });
+});
+
 describe("agent memory tools", () => {
   it("reads a memory entry through read_agent_memory in the run scope", async () => {
     const { invokeMutation } = await import("@/utils/tauri-utils");

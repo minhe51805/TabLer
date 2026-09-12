@@ -1969,6 +1969,16 @@ footer {
   height: 16px;
 }
 
+.docs-subnav-link.is-active {
+  background: var(--blue-wash, rgba(37, 99, 235, 0.08));
+  color: var(--blue);
+  font-weight: 640;
+}
+
+.docs-subnav-link.is-active::before {
+  height: 18px;
+}
+
 /* Article shell --------------------------------------------------- */
 
 .docs-main {
@@ -2173,7 +2183,7 @@ footer {
 }
 
 /* Tables ---------------------------------------------------------- */
-
+/* first-column cells wrap so long text does not overflow the table */
 .doc-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--line);
@@ -2205,7 +2215,8 @@ footer {
 }
 
 .doc-table td:first-child {
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: break-word;
   font-family: var(--font-geist-mono), monospace;
   font-size: 13px;
   color: var(--ink);
@@ -2239,6 +2250,24 @@ footer {
   color: #3c454f;
   font-size: 14.5px;
   line-height: 1.65;
+}
+
+.doc-callout-steps {
+  margin: 6px 0 0;
+  padding-left: 22px;
+  list-style: decimal;
+  color: #3c454f;
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.doc-callout-steps li {
+  display: list-item;
+  padding-left: 3px;
+}
+
+.doc-callout-steps li + li {
+  margin-top: 5px;
 }
 
 .doc-callout-info {
@@ -2342,6 +2371,26 @@ footer {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.6;
+}
+
+.doc-card-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.doc-card-link:hover {
+  border-color: var(--blue);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
+  transform: translateY(-2px);
+}
+
+.doc-card-link h3 {
+  color: var(--blue);
 }
 
 /* Figure ---------------------------------------------------------- */

@@ -1,0 +1,42 @@
+{
+  "apiVersion": 1,
+  "id": "duckdb-driver",
+  "name": "DuckDB native driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-07-16T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds DuckDB connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute"
+  ],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "4af1a22ae4057943b16d9dc4132d346d80b9e24294f494258e1d0829da297113"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "duckdb",
+        "label": "DuckDB",
+        "protocol": "duckdb",
+        "runtime": "driver-sidecar-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

@@ -43,6 +43,55 @@ pub struct SshSessionContext {
     active: AtomicBool,
 }
 
+/// Authenticate an SSH session from an inline (pasted) private key.
+///
+/// libssh2's in-memory public-key auth is only compiled when OpenSSL is
+/// available (always on Unix; on Windows it needs the `vendored-openssl` /
+/// `openssl-on-win32` feature). Where it is present we use it directly so the
+/// key never touches disk.
+#[cfg(any(unix, feature = "vendored-openssl", feature = "openssl-on-win32"))]
+fn authenticate_with_inline_key(
+    sess: &Session,
+    user: &str,
+    key: &str,
+    passphrase: Option<&str>,
+) -> Result<()> {
+    sess.userauth_pubkey_memory(user, None, key, passphrase)?;
+    Ok(())
+}
+
+/// Windows default build has no in-memory pubkey auth (it requires OpenSSL), so
+/// fall back to a short-lived temp key file that is removed on every exit path.
+#[cfg(not(any(unix, feature = "vendored-openssl", feature = "openssl-on-win32")))]
+fn authenticate_with_inline_key(
+    sess: &Session,
+    user: &str,
+    key: &str,
+    passphrase: Option<&str>,
+) -> Result<()> {
+    use std::io::Write;
+
+    struct TempKey(std::path::PathBuf);
+    impl Drop for TempKey {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    let mut path = std::env::temp_dir();
+    path.push(format!("tabler-ssh-{}.key", uuid::Uuid::new_v4()));
+    let guard = TempKey(path.clone());
+    {
+        let mut file = std::fs::File::create(&path)?;
+        file.write_all(key.as_bytes())?;
+        file.flush()?;
+    }
+    let result = sess.userauth_pubkey_file(user, None, &guard.0, passphrase);
+    // `guard` drops here and deletes the temp key regardless of the outcome.
+    result?;
+    Ok(())
+}
+
 impl SshTunnelManager {
     pub fn new() -> Self {
         Self {
@@ -63,13 +112,28 @@ impl SshTunnelManager {
                 sess.userauth_password(&config.user, &p)?;
             }
             SshAuthMethod::PrivateKey | SshAuthMethod::PrivateKeyWithPassphrase => {
-                if let Some(path) = config.private_key_path {
-                    let path = std::path::Path::new(&path);
-                    let pass = config.passphrase.as_deref();
-                    sess.userauth_pubkey_file(&config.user, None, path, pass)?;
+                let pass = config.passphrase.as_deref();
+                let inline_key = config
+                    .private_key
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|key| !key.is_empty());
+                let key_path = config
+                    .private_key_path
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty());
+                // tech-debt audit D4: an inline key (pasted in the UI and kept in
+                // the OS keyring) used to be stored but silently ignored here —
+                // only a file path worked. Authenticate from the key contents when
+                // present, and fall back to the file path otherwise.
+                if let Some(key) = inline_key {
+                    authenticate_with_inline_key(&sess, &config.user, key, pass)?;
+                } else if let Some(path) = key_path {
+                    sess.userauth_pubkey_file(&config.user, None, std::path::Path::new(path), pass)?;
                 } else {
                     return Err(anyhow!(
-                        "PrivateKey auth without a file path is not fully supported yet"
+                        "SSH private-key auth requires either an inline private key or a key file path."
                     ));
                 }
             }

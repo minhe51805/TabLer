@@ -47,6 +47,7 @@ import {
 import { getAgentMemoryIndex } from "./use-agent-memory";
 import { emitAppToast } from "../../../utils/app-toast";
 import { useUIStore } from "../../../stores/uiStore";
+import { useSkillPrefsStore } from "../../../stores/skillPrefsStore";
 import {
   DEFAULT_AGENT_TOKEN_BUDGET,
   extractAgentUsageTokens,
@@ -639,6 +640,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             })().then((entries) =>
               entries
                 .filter((entry) => entry.source === "global")
+                // Per-skill opt-out: a skill the user disabled is not injected,
+                // so it costs nothing and the agent never sees it.
+                .filter((entry) => useSkillPrefsStore.getState().isEnabled(entry.name))
                 .slice(0, 32),
             )
           : undefined;

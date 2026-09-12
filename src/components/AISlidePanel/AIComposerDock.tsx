@@ -34,6 +34,7 @@ import type {
   AIWorkspaceAgentAutonomy,
   AIWorkspaceInteractionMode,
 } from "./ai-workspace-types";
+import { describeSandboxPolicy, type SandboxPolicy } from "./ai-execution-policy";
 
 interface AIComposerDockProps {
   copy: AIWorkspaceCopy;
@@ -66,6 +67,8 @@ interface AIComposerDockProps {
   onOpenSettings: () => void;
   /** Whether Safe Mode is currently enabled (level >= 1). */
   safeModeEnabled?: boolean;
+  /** Effective sandbox posture (Safe Mode level + autonomy), shown as a badge. */
+  sandboxPolicy?: SandboxPolicy;
   /** Flip the global Safe Mode level between 0 (off) and 1 (read-only). */
   onToggleSafeMode?: (next: boolean) => void;
   onCloseHistory: () => void;
@@ -158,6 +161,7 @@ export function AIComposerDock({
   onSetShowThinking,
   onOpenSettings,
   safeModeEnabled,
+  sandboxPolicy,
   onToggleSafeMode,
   onCloseHistory,
   onGenerate,
@@ -609,6 +613,15 @@ export function AIComposerDock({
                         >
                           <span className="ai-ws-safemode-knob" />
                         </button>
+                      </div>
+                    )}
+                    {sandboxPolicy && (
+                      <div
+                        className="ai-workspace-command-sandbox-policy"
+                        title={describeSandboxPolicy(sandboxPolicy).description}
+                      >
+                        <Shield className="w-3.5 h-3.5" />
+                        <span>Sandbox: {describeSandboxPolicy(sandboxPolicy).label}</span>
                       </div>
                     )}
                   </div>

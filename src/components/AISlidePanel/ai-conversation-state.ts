@@ -4,6 +4,7 @@ import type {
   AIWorkspaceInteractionMode,
 } from "./ai-workspace-types";
 import type { AIConversationMessage } from "../../types";
+import { AI_MAX_HISTORY_CHARS, AI_MAX_HISTORY_MESSAGES } from "../../config";
 
 export const AI_WORKSPACE_HISTORY_VERSION = 1;
 export const AI_WORKSPACE_HISTORY_LEGACY_STORAGE_KEY = "tabler.ai.workspace.history.v1";
@@ -30,11 +31,13 @@ export const DEFAULT_HISTORY_BUDGET: HistoryBudget = {
   maxMessageChars: MAX_HISTORY_MESSAGE_CHARS,
 };
 
-// Mirror of the backend AIRequest::validate() caps (src-tauri/.../ai_models.rs):
-// exceed EITHER and the whole request is rejected, so every budget is clamped
-// to stay under them — a generous window can never break a send.
-export const BACKEND_MAX_HISTORY_MESSAGES = 12;
-export const BACKEND_MAX_HISTORY_CHARS = 24_000;
+// Mirror of the backend AIRequest::validate() caps: exceed EITHER and the whole
+// request is rejected, so every budget is clamped to stay under them — a generous
+// window can never break a send. Sourced from `src/config` (tech-debt audit D1)
+// so the two sides can never silently drift; the cross-language contract test
+// binds `src/config/ai-limits.ts` to `src-tauri/src/config.rs`.
+export const BACKEND_MAX_HISTORY_MESSAGES = AI_MAX_HISTORY_MESSAGES;
+export const BACKEND_MAX_HISTORY_CHARS = AI_MAX_HISTORY_CHARS;
 // The workspace digest rides along as a user/assistant pair on every send;
 // reserve its two slots + char budget so history windowing never crowds it out.
 const DIGEST_RESERVE_MESSAGES = 2;

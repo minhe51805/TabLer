@@ -1,0 +1,42 @@
+{
+  "apiVersion": 1,
+  "id": "libsql-driver",
+  "name": "LibSQL native driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-07-16T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds LibSQL / Turso connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute"
+  ],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "738f61b0cda84d67e2d08c5e528b5620831b2cdc4d6760675ea3dd90d168c5a3"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "libsql",
+        "label": "LibSQL",
+        "protocol": "libsql",
+        "runtime": "driver-sidecar-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

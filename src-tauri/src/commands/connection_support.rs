@@ -1,4 +1,5 @@
 use super::connection::CONNECTION_TIMEOUT;
+use crate::database::capabilities::driver_capabilities;
 use crate::database::driver::DatabaseDriver;
 use crate::database::models::{ConnectionConfig, DatabaseType};
 use crate::database::mssql::MssqlDriver;
@@ -45,27 +46,14 @@ pub(super) fn connection_rate_limit_key(config: &ConnectionConfig) -> String {
 }
 
 pub(super) fn connection_engine_label(db_type: DatabaseType) -> &'static str {
-    match db_type {
-        DatabaseType::MySQL => "MySQL",
-        DatabaseType::MariaDB => "MariaDB",
-        DatabaseType::PostgreSQL => "PostgreSQL",
-        DatabaseType::CockroachDB => "CockroachDB",
-        DatabaseType::Greenplum => "Greenplum",
-        DatabaseType::Redshift => "Redshift",
-        DatabaseType::SQLite => "SQLite",
-        DatabaseType::DuckDB => "DuckDB",
-        DatabaseType::Cassandra => "Cassandra",
-        DatabaseType::Snowflake => "Snowflake",
-        DatabaseType::MSSQL => "SQL Server",
-        DatabaseType::Redis => "Redis",
-        DatabaseType::MongoDB => "MongoDB",
-        DatabaseType::Vertica => "Vertica",
-        DatabaseType::ClickHouse => "ClickHouse",
-        DatabaseType::BigQuery => "BigQuery",
-        DatabaseType::LibSQL => "LibSQL",
-        DatabaseType::CloudflareD1 => "Cloudflare D1",
-        DatabaseType::OpenSearch => "OpenSearch",
-    }
+    // Single source of truth (tech-debt audit D8): the engine display label lives
+    // in the driver capability matrix (`capabilities.rs`). Delegating here keeps
+    // connection error messages, that matrix, and the frontend `ENGINE_LABEL`
+    // table from drifting — they previously disagreed on Redshift ("Redshift" vs
+    // "Amazon Redshift"), Cassandra ("Cassandra" vs "Apache Cassandra") and
+    // BigQuery ("BigQuery" vs "Google BigQuery"). These three connection-error
+    // labels now match the rest of the app.
+    driver_capabilities(db_type).label
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,0 +1,43 @@
+{
+  "apiVersion": 1,
+  "id": "cloudflare-d1-driver",
+  "name": "Cloudflare D1 driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-07-16T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds Cloudflare D1 connectivity over the declarative HTTP driver host.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute",
+    "network.fetch"
+  ],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "8d65bc247107a35d6aa59183886ab47a0dc526721f8372ea10e664990b8c7f48"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "cloudflare-d1",
+        "label": "Cloudflare D1",
+        "protocol": "cloudflare_d1",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

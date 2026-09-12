@@ -4,6 +4,7 @@ mod ai_skills;
 mod ai_workspace_cache;
 mod ai_workspace_history;
 mod commands;
+pub mod config;
 pub mod database;
 pub mod error;
 pub mod mcp;
@@ -14,6 +15,17 @@ pub mod query_history;
 pub mod ssh;
 pub mod storage;
 mod utils;
+
+/// Sandbox SQL-safety guard, re-exported at the crate root so the driver
+/// integration harness (`tests/driver_integration.rs`) can exercise the
+/// filesystem/network/OS capability boundary end-to-end against live engines.
+/// These are the exact functions the sandbox gateway in `commands::query`
+/// calls before any statement reaches a driver; this is a test-facing
+/// re-export, not a widening of the private `utils` module.
+pub mod sandbox_guard {
+    pub use crate::utils::sql::{classify_sql_with_dialect, detect_dangerous_capability};
+}
+
 mod watcher;
 
 use ai_workspace_cache::{
@@ -294,6 +306,7 @@ pub fn run() {
             rename_saved_connection,
             check_connection_status,
             get_connection_capabilities,
+            get_native_driver_availability,
             parse_connection_url,
             parse_url_details,
             get_support_url,
@@ -384,7 +397,10 @@ pub fn run() {
             agent_memory::save_agent_memory,
             agent_memory::delete_agent_memory,
             ai_skills::list_ai_skills,
-            ai_skills::read_ai_skill, // File commands
+            ai_skills::read_ai_skill,
+            ai_skills::read_ai_skill_resource,
+            ai_skills::ai_skills_directory,
+            ai_skills::create_ai_skill, // File commands
             read_sql_file,
             read_sql_file_from_path,
             read_csv_file,

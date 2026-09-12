@@ -10,7 +10,8 @@ use crate::database::parameterized_query::{
 };
 use crate::error::AppError;
 use crate::utils::sql::{
-    classify_sql_with_dialect, split_sql_statements, SqlSafetyDecision, SqlStatementKind,
+    classify_sql_with_dialect, detect_dangerous_capability, split_sql_statements, SqlSafetyDecision,
+    SqlStatementKind,
 };
 use std::collections::HashMap;
 use tauri::{Emitter, State};
@@ -19,8 +20,69 @@ use tokio::time::{timeout, Duration};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-const READ_ONLY_QUERY_TIMEOUT: Duration = Duration::from_secs(180);
-const MUTATING_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
+// Query timeouts (D5) and sandbox caps (D10) are centralized in `crate::config`.
+// Timeouts are resolved at call time via `read_only_query_timeout()` /
+// `mutating_query_timeout()` so an operator env override can raise them without
+// changing the compiled defaults (180s read / 60s mutating).
+//
+// Sandbox result caps for AI-agent reads (defense-in-depth alongside the query
+// timeout). The agent works from SAMPLES, so a run past either ceiling is
+// truncated and flagged `truncated` so the model knows it did not see the full
+// set. Human paths (SQL editor, metrics) pass `None` and are never capped here.
+use crate::config::{SANDBOX_AGENT_MAX_RESULT_BYTES, SANDBOX_AGENT_MAX_ROWS};
+
+/// Cheap upper-bound estimate of a row's JSON footprint — avoids serializing the
+/// whole result set just to measure it.
+fn estimate_row_bytes(row: &[serde_json::Value]) -> usize {
+    row.iter()
+        .map(|value| match value {
+            serde_json::Value::Null => 4,
+            serde_json::Value::Bool(_) => 5,
+            serde_json::Value::Number(_) => 8,
+            serde_json::Value::String(text) => text.len() + 2,
+            other => other.to_string().len(),
+        })
+        .sum::<usize>()
+        + row.len()
+}
+
+/// Truncates a sandbox result in place to at most `max_rows` and roughly
+/// `max_bytes` of row JSON, flagging `truncated` when it drops anything. Always
+/// keeps at least one row when the input is non-empty so the agent still sees
+/// the result shape.
+fn cap_sandbox_result(result: &mut QueryResult, max_rows: usize, max_bytes: usize) {
+    if result.rows.len() > max_rows {
+        result.rows.truncate(max_rows);
+        result.truncated = true;
+    }
+    let mut running_bytes = 0usize;
+    let mut keep = result.rows.len();
+    for (index, row) in result.rows.iter().enumerate() {
+        running_bytes = running_bytes.saturating_add(estimate_row_bytes(row));
+        if running_bytes > max_bytes {
+            keep = index.max(1);
+            break;
+        }
+    }
+    if keep < result.rows.len() {
+        result.rows.truncate(keep);
+        result.truncated = true;
+    }
+}
+
+/// Structured audit record for a statement the sandbox refused to run. Kept on a
+/// dedicated `operation=sandbox.denied` line (separate from runtime/connection
+/// errors) so a security review can grep every rejected attempt with its reason.
+/// The SQL text itself is deliberately NOT logged — it may carry sensitive
+/// literals — only the classification reason and coarse counts.
+fn log_sandbox_denial(connection_id: &str, statements_count: usize, reason: &str) {
+    log::warn!(
+        "operation=sandbox.denied connection_id={} statements_count={} reason={}",
+        connection_id,
+        statements_count,
+        reason
+    );
+}
 
 #[derive(Default)]
 pub struct QueryCancellationState {
@@ -135,6 +197,15 @@ fn validate_sandbox_statement(
     statement: &str,
     database_type: Option<crate::database::models::DatabaseType>,
 ) -> Result<(), String> {
+    // Fail-closed capability guard FIRST: filesystem/network/OS-command SQL
+    // (pg_read_file, DuckDB read_csv, INTO OUTFILE, COPY ... TO PROGRAM, …)
+    // exfiltrates data or runs code even when it parses as a plain read, so it
+    // must never cross the sandbox boundary regardless of statement kind.
+    if let Some(reason) = detect_dangerous_capability(statement, database_type) {
+        return Err(format!(
+            "Sandbox gateway blocks SQL that {reason}. This filesystem/network/OS capability is not allowed inside the sandbox."
+        ));
+    }
     let decision = classify_sql_with_dialect(statement, database_type);
     if let Some(error) = decision.parse_error {
         return Err(format!("Sandbox gateway could not parse SQL: {error}"));
@@ -185,9 +256,9 @@ fn timeout_for_statements<'a>(
 ) -> Duration {
     let sql = statements.collect::<Vec<_>>().join(";\n");
     if classify_sql_with_dialect(&sql, database_type).read_only {
-        READ_ONLY_QUERY_TIMEOUT
+        crate::config::read_only_query_timeout()
     } else {
-        MUTATING_QUERY_TIMEOUT
+        crate::config::mutating_query_timeout()
     }
 }
 
@@ -386,7 +457,7 @@ pub async fn execute_query_progressive(
             driver.execute_query(&sql).await
         }
     };
-    let result = timeout(READ_ONLY_QUERY_TIMEOUT, exec).await;
+    let result = timeout(crate::config::read_only_query_timeout(), exec).await;
     let mut result = match result {
         Ok(inner) => inner.map_err(format_query_runtime_error)?,
         Err(_) => {
@@ -633,6 +704,9 @@ pub async fn execute_sandboxed_query(
     require_read_only: Option<bool>,
     request_id: Option<String>,
     safe_mode_approved_by_user: Option<bool>,
+    // AI-agent reads pass a ceiling so an unbounded SELECT can never pull the
+    // whole table into the model; human paths (editor, metrics) omit it.
+    max_rows: Option<usize>,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
@@ -667,6 +741,7 @@ pub async fn execute_sandboxed_query(
             operation_id,
             error
         );
+        log_sandbox_denial(&connection_id, statements.len(), &error);
         return Err(AppError::from(error));
     }
 
@@ -729,11 +804,15 @@ pub async fn execute_sandboxed_query(
     }
     let mut result = result?;
     result.sandboxed = true;
+    if let Some(max_rows) = max_rows {
+        cap_sandbox_result(&mut result, max_rows, SANDBOX_AGENT_MAX_RESULT_BYTES);
+    }
     log::info!(
-        "operation_id={} operation=query.execute_sandboxed status=succeeded columns={} rows={}",
+        "operation_id={} operation=query.execute_sandboxed status=succeeded columns={} rows={} truncated={}",
         operation_id,
         result.columns.len(),
-        result.rows.len()
+        result.rows.len(),
+        result.truncated
     );
     Ok(result)
 }
@@ -769,7 +848,11 @@ pub async fn execute_agent_parameterized_query(
         .map_err(|error| error.to_string())?;
     // Same read-only pin `execute_agent_readonly_query` hard-codes: there is
     // no caller argument that can lower this boundary.
-    validate_sandbox_batch(std::slice::from_ref(&sql), true, Some(database_type))?;
+    if let Err(error) = validate_sandbox_batch(std::slice::from_ref(&sql), true, Some(database_type))
+    {
+        log_sandbox_denial(&connection_id, 1, &error);
+        return Err(error.into());
+    }
     let style = placeholder_style_for_database(database_type);
     let compiled =
         compile_parameterized_query(&sql, &parameters, style).map_err(|error| error.to_string())?;
@@ -821,7 +904,10 @@ pub async fn execute_agent_readonly_query(
     // Pin is local to this command: callers have no `require_read_only` argument
     // they could flip. Fail here first so a future change to the shared
     // sandbox helper cannot silently lower the agent boundary.
-    validate_sandbox_batch(&statements, true, Some(database_type))?;
+    if let Err(error) = validate_sandbox_batch(&statements, true, Some(database_type)) {
+        log_sandbox_denial(&connection_id, statements.len(), &error);
+        return Err(error.into());
+    }
     execute_sandboxed_query(
         connection_id,
         statements,
@@ -829,6 +915,8 @@ pub async fn execute_agent_readonly_query(
         request_id,
         // Agent tool path: never carries human approval.
         None,
+        // AI reads are capped so an unbounded SELECT returns a flagged sample.
+        Some(SANDBOX_AGENT_MAX_ROWS),
         db_manager,
         cancellation_state,
         safe_mode,
@@ -839,10 +927,63 @@ pub async fn execute_agent_readonly_query(
 #[cfg(test)]
 mod tests {
     use super::{
-        timeout_for_statements, validate_sandbox_batch, validate_sandbox_statement,
-        QueryCancellationState, MUTATING_QUERY_TIMEOUT, READ_ONLY_QUERY_TIMEOUT,
+        cap_sandbox_result, timeout_for_statements, validate_sandbox_batch,
+        validate_sandbox_statement, QueryCancellationState,
     };
+    use crate::config::{mutating_query_timeout, read_only_query_timeout};
+    use crate::database::models::QueryResult;
     use tokio_util::sync::CancellationToken;
+
+    fn result_with_rows(count: usize) -> QueryResult {
+        QueryResult {
+            columns: Vec::new(),
+            rows: (0..count)
+                .map(|index| vec![serde_json::Value::from(index as i64)])
+                .collect(),
+            affected_rows: 0,
+            execution_time_ms: 0,
+            query: String::new(),
+            sandboxed: true,
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn sandbox_gateway_blocks_filesystem_and_network_sql() {
+        // These parse as reads but reach the local filesystem / network / OS —
+        // the sandbox must reject them before the driver is ever touched.
+        assert!(validate_sandbox_statement("SELECT pg_read_file('/etc/passwd')", None).is_err());
+        assert!(validate_sandbox_statement("SELECT load_file('/etc/passwd')", None).is_err());
+        assert!(
+            validate_sandbox_statement("SELECT * FROM read_csv('/home/u/.ssh/id_rsa')", None)
+                .is_err()
+        );
+        assert!(
+            validate_sandbox_statement("SELECT * FROM users INTO OUTFILE '/tmp/u'", None).is_err()
+        );
+        // A benign read with a lookalike column name must still pass.
+        assert!(validate_sandbox_statement("SELECT read_csv_notes FROM reports", None).is_ok());
+    }
+
+    #[test]
+    fn cap_sandbox_result_truncates_rows_and_flags_truncated() {
+        let mut result = result_with_rows(10);
+        cap_sandbox_result(&mut result, 4, usize::MAX);
+        assert_eq!(result.rows.len(), 4);
+        assert!(result.truncated);
+
+        // Under the caps: nothing dropped, flag stays false.
+        let mut small = result_with_rows(3);
+        cap_sandbox_result(&mut small, 5000, usize::MAX);
+        assert_eq!(small.rows.len(), 3);
+        assert!(!small.truncated);
+
+        // Byte cap keeps at least one row even when the first row alone exceeds it.
+        let mut byte_capped = result_with_rows(10);
+        cap_sandbox_result(&mut byte_capped, 5000, 1);
+        assert_eq!(byte_capped.rows.len(), 1);
+        assert!(byte_capped.truncated);
+    }
 
     #[test]
     fn sandbox_uses_canonical_classifier_for_edge_cases() {
@@ -1008,19 +1149,19 @@ mod tests {
     fn timeout_uses_read_only_window_only_for_read_batches() {
         assert_eq!(
             timeout_for_statements(["SELECT 1"].into_iter(), None),
-            READ_ONLY_QUERY_TIMEOUT
+            read_only_query_timeout()
         );
         assert_eq!(
             timeout_for_statements(["SELECT 1", "SELECT 2"].into_iter(), None),
-            READ_ONLY_QUERY_TIMEOUT
+            read_only_query_timeout()
         );
         assert_eq!(
             timeout_for_statements(["UPDATE users SET name = 'x'"].into_iter(), None),
-            MUTATING_QUERY_TIMEOUT
+            mutating_query_timeout()
         );
         assert_eq!(
             timeout_for_statements(["SELECT 1", "DELETE FROM users"].into_iter(), None),
-            MUTATING_QUERY_TIMEOUT
+            mutating_query_timeout()
         );
         assert_eq!(
             timeout_for_statements(
@@ -1028,7 +1169,7 @@ mod tests {
                     .into_iter(),
                 None
             ),
-            MUTATING_QUERY_TIMEOUT
+            mutating_query_timeout()
         );
     }
 }

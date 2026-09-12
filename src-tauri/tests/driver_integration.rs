@@ -15,10 +15,19 @@ use std::time::{Duration, Instant};
 
 use tabler_lib::database::models::{ConnectionConfig, DatabaseType};
 use tabler_lib::database::{
-    cassandra::CassandraDriver, clickhouse::ClickHouseDriver, driver::DatabaseDriver,
-    duckdb::DuckDbDriver, mongodb::MongoDbDriver, mssql::MssqlDriver, mysql::MySqlDriver,
-    postgres::PostgresDriver, redis::RedisDriver,
+    clickhouse::ClickHouseDriver, driver::DatabaseDriver, mongodb::MongoDbDriver,
+    mssql::MssqlDriver, mysql::MySqlDriver, postgres::PostgresDriver,
 };
+// Native (`plugin_native`) driver crates are off in the lean default build, so
+// their imports and the tests that use them are gated on the matching feature
+// (enabled by `npm run test:integration:drivers`).
+#[cfg(feature = "cassandra-driver")]
+use tabler_lib::database::cassandra::CassandraDriver;
+#[cfg(feature = "duckdb-driver")]
+use tabler_lib::database::duckdb::DuckDbDriver;
+#[cfg(feature = "redis-driver")]
+use tabler_lib::database::redis::RedisDriver;
+use tabler_lib::sandbox_guard::{classify_sql_with_dialect, detect_dangerous_capability};
 
 fn integration_enabled() -> bool {
     matches!(
@@ -144,6 +153,7 @@ async fn sqlite_file_round_trip_lifecycle() {
     let _ = std::fs::remove_file(&path);
 }
 
+#[cfg(feature = "duckdb-driver")]
 #[tokio::test]
 async fn duckdb_file_round_trip_lifecycle() {
     if !integration_enabled() {
@@ -330,6 +340,7 @@ async fn clickhouse_round_trip_lifecycle() {
     let _ = driver.disconnect().await;
 }
 
+#[cfg(feature = "redis-driver")]
 #[tokio::test]
 async fn redis_round_trip_lifecycle() {
     if !integration_enabled() {
@@ -424,6 +435,7 @@ async fn mssql_round_trip_lifecycle() {
     let _ = driver.disconnect().await;
 }
 
+#[cfg(feature = "cassandra-driver")]
 #[tokio::test]
 async fn cassandra_round_trip_lifecycle() {
     if std::env::var("TABLER_IT_CASSANDRA").as_deref() != Ok("1") {
@@ -630,3 +642,137 @@ async fn mysql_cancels_running_query_server_side() {
     );
     let _ = driver.disconnect().await;
 }
+
+// ─── Sandbox capability guard, proven end-to-end against live engines ─────────
+//
+// `src/utils/sql.rs` unit-tests the guard's verdicts in isolation. These bind
+// those verdicts to real per-dialect engine behavior: the filesystem/OS
+// statement is refused by the guard *before* it can ever reach the live
+// server, while the plain read the guard approves really executes there and
+// returns rows. The dangerous statement is deliberately never sent to the
+// engine — the whole point of the sandbox is that the guard stops it first.
+
+async fn assert_live_sandbox_boundary(
+    engine: &str,
+    db_type: DatabaseType,
+    driver: Box<dyn DatabaseDriver>,
+    dangerous_sql: &str,
+    safe_read_sql: &str,
+) {
+    // Fail-closed: the dialect's filesystem/network/OS capability is rejected
+    // and stamped, so the sandbox gateway blocks it ahead of any driver call.
+    assert!(
+        detect_dangerous_capability(dangerous_sql, Some(db_type)).is_some(),
+        "{engine}: capability guard must block `{dangerous_sql}` before execution"
+    );
+    assert!(
+        classify_sql_with_dialect(dangerous_sql, Some(db_type)).filesystem_access,
+        "{engine}: classifier must stamp filesystem_access for `{dangerous_sql}`"
+    );
+
+    // The plain read is capability-clean and classifies read-only.
+    assert!(
+        detect_dangerous_capability(safe_read_sql, Some(db_type)).is_none(),
+        "{engine}: guard must allow the plain read `{safe_read_sql}`"
+    );
+    let safe_decision = classify_sql_with_dialect(safe_read_sql, Some(db_type));
+    assert!(
+        safe_decision.read_only && !safe_decision.filesystem_access,
+        "{engine}: plain read must classify read-only and capability-clean"
+    );
+
+    // End-to-end: the guard-approved read actually runs on the live engine.
+    driver
+        .ping()
+        .await
+        .unwrap_or_else(|e| panic!("{engine} ping: {e}"));
+    let result = driver
+        .execute_query(safe_read_sql)
+        .await
+        .unwrap_or_else(|e| panic!("{engine} guard-approved read: {e}"));
+    let first_cell = result.rows.first().and_then(|row| row.first());
+    assert!(
+        first_cell.is_some_and(|value| !value.is_null()),
+        "{engine}: guard-approved read must return a live, non-null cell: {result:?}"
+    );
+
+    let _ = driver.disconnect().await;
+}
+
+#[tokio::test]
+async fn postgres_sandbox_guard_boundary_is_live() {
+    let Some(config) = postgres_live_config() else {
+        eprintln!("skipped: set TABLER_TEST_POSTGRES_HOST or TABLER_DRIVER_INTEGRATION=1");
+        return;
+    };
+    let driver = retry_connect(20, || {
+        let config = config.clone();
+        async move { PostgresDriver::connect(&config).await }
+    })
+    .await
+    .expect("PostgreSQL connect");
+    assert_live_sandbox_boundary(
+        "PostgreSQL",
+        DatabaseType::PostgreSQL,
+        Box::new(driver),
+        "SELECT pg_read_file('/etc/hostname')",
+        "SELECT 1",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn mysql_sandbox_guard_boundary_is_live() {
+    let Some(config) = mysql_live_config() else {
+        eprintln!("skipped: set TABLER_TEST_MYSQL_HOST or TABLER_DRIVER_INTEGRATION=1");
+        return;
+    };
+    let driver = retry_connect(30, || {
+        let config = config.clone();
+        async move { MySqlDriver::connect(&config).await }
+    })
+    .await
+    .expect("MySQL connect");
+    assert_live_sandbox_boundary(
+        "MySQL",
+        DatabaseType::MySQL,
+        Box::new(driver),
+        "SELECT load_file('/etc/hostname')",
+        "SELECT 1",
+    )
+    .await;
+}
+
+#[cfg(feature = "duckdb-driver")]
+#[tokio::test]
+async fn duckdb_sandbox_guard_boundary_is_live() {
+    if !integration_enabled() {
+        eprintln!("skipped: set TABLER_DRIVER_INTEGRATION=1 to enable");
+        return;
+    }
+
+    let path = std::env::temp_dir().join(format!(
+        "tabler-it-duckdb-guard-{}.duckdb",
+        std::process::id()
+    ));
+    let mut config = base_config(DatabaseType::DuckDB);
+    config.file_path = Some(path.to_string_lossy().into_owned());
+
+    let driver = retry_connect(10, || {
+        let config = config.clone();
+        async move { DuckDbDriver::connect(&config).await }
+    })
+    .await
+    .expect("DuckDB connect");
+    assert_live_sandbox_boundary(
+        "DuckDB",
+        DatabaseType::DuckDB,
+        Box::new(driver),
+        "SELECT * FROM read_csv_auto('/etc/hostname')",
+        "SELECT 1",
+    )
+    .await;
+
+    let _ = std::fs::remove_file(&path);
+}
+

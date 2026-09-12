@@ -21444,6 +21444,100 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   padding: 22px 24px;
 }
 
+/* Agent Skills manager */
+.ai-skills-manager-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 24px 22px;
+}
+
+.ai-skills-manager-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-skills-manager-summary {
+  font-size: 12px;
+  color: var(--mm-text-muted, #64748b);
+}
+
+.ai-skills-manager-error {
+  font-size: 12px;
+  color: #dc2626;
+  word-break: break-word;
+}
+
+.ai-skills-manager-notice {
+  font-size: 12px;
+  color: var(--mm-text-muted, #64748b);
+  word-break: break-word;
+}
+
+.ai-skills-manager-empty {
+  font-size: 13px;
+  color: var(--mm-text-muted, #64748b);
+  padding: 18px 0;
+  text-align: center;
+}
+
+.ai-skills-manager-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ai-skills-manager-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--mm-border);
+  border-radius: 14px;
+  background: var(--mm-surface-1, rgba(148, 163, 184, 0.06));
+}
+
+.ai-skills-manager-row.is-disabled {
+  opacity: 0.55;
+}
+
+.ai-skills-manager-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ai-skills-manager-row-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.ai-skills-manager-row-version {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--mm-text-muted, #64748b);
+}
+
+.ai-skills-manager-row-desc {
+  font-size: 12px;
+  color: var(--mm-text-muted, #64748b);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+
+.ai-skills-manager-row-meta {
+  font-size: 11px;
+  color: var(--mm-text-muted, #64748b);
+}
+
 .ai-workspace-modal-header {
   border-bottom: 1px solid var(--mm-border);
 }
@@ -38729,6 +38823,27 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
+}
+.app-root .ai-workspace-command-sandbox-policy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 8px 6px;
+  padding: 4px 10px;
+  color: var(--text-secondary, inherit);
+  font-size: 11px;
+}
+.app-root .ai-workspace-command-sandbox-policy > svg {
+  color: var(--accent, #0a84ff);
+  flex-shrink: 0;
+}
+.app-root .ai-workspace-command-sandbox-policy > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
 }
 .app-root .ai-ws-safemode-switch {
   position: relative;

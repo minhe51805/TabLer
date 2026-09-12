@@ -3,6 +3,7 @@ use super::export::{
     DatabaseExportSnapshotTable, ExportTableBundle, SqlExportPayload, EXPORT_BATCH_SIZE,
     EXPORT_BATCH_TIMEOUT, EXPORT_METADATA_TIMEOUT,
 };
+use crate::database::capabilities::is_sqlite_family;
 use crate::database::driver::DatabaseDriver;
 use crate::database::models::{
     ColumnDetail, ColumnInfo, DatabaseType, ForeignKeyInfo, SchemaObjectInfo, TableInfo,
@@ -946,23 +947,23 @@ pub(super) fn quote_identifier_for(db_type: DatabaseType, value: &str) -> Result
 }
 
 pub(super) fn database_export_preamble(db_type: DatabaseType) -> String {
-    match db_type {
-        DatabaseType::MySQL | DatabaseType::MariaDB => "SET FOREIGN_KEY_CHECKS=0;\n\n".to_string(),
-        DatabaseType::SQLite
-        | DatabaseType::DuckDB
-        | DatabaseType::LibSQL
-        | DatabaseType::CloudflareD1 => "PRAGMA foreign_keys = OFF;\n\n".to_string(),
-        _ => String::new(),
+    // D8: sqlite-family membership comes from `is_sqlite_family` (single source).
+    if matches!(db_type, DatabaseType::MySQL | DatabaseType::MariaDB) {
+        "SET FOREIGN_KEY_CHECKS=0;\n\n".to_string()
+    } else if is_sqlite_family(db_type) {
+        "PRAGMA foreign_keys = OFF;\n\n".to_string()
+    } else {
+        String::new()
     }
 }
 
 pub(super) fn database_export_postamble(db_type: DatabaseType) -> String {
-    match db_type {
-        DatabaseType::MySQL | DatabaseType::MariaDB => "\nSET FOREIGN_KEY_CHECKS=1;\n".to_string(),
-        DatabaseType::SQLite
-        | DatabaseType::DuckDB
-        | DatabaseType::LibSQL
-        | DatabaseType::CloudflareD1 => "\nPRAGMA foreign_keys = ON;\n".to_string(),
-        _ => String::new(),
+    // D8: sqlite-family membership comes from `is_sqlite_family` (single source).
+    if matches!(db_type, DatabaseType::MySQL | DatabaseType::MariaDB) {
+        "\nSET FOREIGN_KEY_CHECKS=1;\n".to_string()
+    } else if is_sqlite_family(db_type) {
+        "\nPRAGMA foreign_keys = ON;\n".to_string()
+    } else {
+        String::new()
     }
 }

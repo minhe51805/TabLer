@@ -105,18 +105,69 @@ pub(crate) fn streaming_endpoint(config: &AIProviderConfig, endpoint: &str) -> S
 }
 
 fn default_max_output_tokens(mode: &AIRequestMode) -> u32 {
+    // Values centralized in `crate::config` (tech-debt audit D10). Panel needs
+    // room to close the JSON action object plus a markdown explanation.
     match mode {
-        AIRequestMode::Inline => 256,
-        // Panel covers the chat + the agent controller. Agent finish turns embed
-        // SQL plus a markdown explanation, so 1024 tokens often truncated the
-        // JSON action mid-string; give it enough room to close the object.
-        AIRequestMode::Panel => 4096,
+        AIRequestMode::Inline => crate::config::AI_INLINE_MAX_OUTPUT_TOKENS,
+        AIRequestMode::Panel => crate::config::AI_PANEL_MAX_OUTPUT_TOKENS,
     }
 }
 
 /// Extended-thinking token budget for Anthropic panel turns. Rides on TOP of the
 /// answer budget because Anthropic counts thinking tokens against `max_tokens`.
-const ANTHROPIC_THINKING_BUDGET_TOKENS: u32 = 2048;
+use crate::config::ANTHROPIC_THINKING_BUDGET_TOKENS;
+
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
+/// Process-global set of model ids a provider has rejected extended-thinking for
+/// (tech-debt audit D2). The static allowlists above (`*_supports_thinking`) are
+/// a best-effort fast path by name; a model released after this build with a new
+/// naming scheme would either silently miss thinking or 400 on the parameter.
+/// This cache lets the app SELF-HEAL: once a model 400s on the thinking param we
+/// stop sending it for the rest of the process, so the very next turn succeeds.
+fn thinking_unsupported_models() -> &'static Mutex<HashSet<String>> {
+    static MODELS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    MODELS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Records that `model` rejected the extended-thinking parameter (case-insensitive)
+/// so later turns and other send paths skip it.
+pub(crate) fn mark_model_thinking_unsupported(model: &str) {
+    if model.trim().is_empty() {
+        return;
+    }
+    if let Ok(mut set) = thinking_unsupported_models().lock() {
+        set.insert(model.to_ascii_lowercase());
+    }
+}
+
+/// True once `model` has been recorded as rejecting extended-thinking.
+pub(crate) fn model_thinking_unsupported(model: &str) -> bool {
+    thinking_unsupported_models()
+        .lock()
+        .map(|set| set.contains(&model.to_ascii_lowercase()))
+        .unwrap_or(false)
+}
+
+/// Heuristic: does a provider's error body look like a rejection of the
+/// extended-thinking parameter (as opposed to an unrelated 400)? Matches the
+/// parameter names TableR sends for thinking across OpenAI-like / Anthropic /
+/// Gemini. Kept pure so it is unit-tested. Only consulted on a 400, and the only
+/// consequence of a false positive is one thinking-free retry, so a broad match
+/// is safe.
+pub(crate) fn is_thinking_param_rejection(body_text: &str) -> bool {
+    let text = body_text.to_ascii_lowercase();
+    const THINKING_PARAMS: [&str; 6] = [
+        "enable_thinking",
+        "chat_template_kwargs",
+        "thinkingconfig",
+        "includethoughts",
+        "budget_tokens",
+        "\"thinking\"",
+    ];
+    THINKING_PARAMS.iter().any(|needle| text.contains(needle))
+}
 
 /// OpenAI-compatible models that emit chain-of-thought via the chat-template
 /// `enable_thinking` switch (DeepSeek-R1, Qwen "thinking"/QwQ builds). NVIDIA's
@@ -175,7 +226,8 @@ fn build_openai_like_body(
         // stays capability-gated so unknown models never get a kwarg they'd 400 on.
         let thinking_on = enable_thinking.unwrap_or(true)
             && matches!(mode, AIRequestMode::Panel)
-            && model_supports_openai_thinking_switch(model);
+            && model_supports_openai_thinking_switch(model)
+            && !model_thinking_unsupported(model);
         body["chat_template_kwargs"] = json!({ "enable_thinking": thinking_on });
     }
 
@@ -206,6 +258,7 @@ fn build_anthropic_body(
     if enable_thinking.unwrap_or(true)
         && matches!(mode, AIRequestMode::Panel)
         && anthropic_model_supports_thinking(model)
+        && !model_thinking_unsupported(model)
     {
         let budget_tokens = ANTHROPIC_THINKING_BUDGET_TOKENS;
         body["max_tokens"] = json!(default_max_output_tokens(mode) + budget_tokens);
@@ -237,6 +290,7 @@ fn build_gemini_body(
     if enable_thinking.unwrap_or(true)
         && matches!(mode, AIRequestMode::Panel)
         && gemini_model_supports_thinking(model)
+        && !model_thinking_unsupported(model)
     {
         body["generationConfig"] = json!({
             "thinkingConfig": { "includeThoughts": true }
@@ -801,6 +855,66 @@ pub(crate) fn sample_provider(provider_type: AIProviderType) -> AIProviderConfig
 mod tests {
     use super::super::extraction::take_visible_stream_delta;
     use super::*;
+
+    #[test]
+    fn thinking_rejection_matches_each_provider_param_name() {
+        // OpenAI-like (NVIDIA chat-template), Anthropic, Gemini rejection bodies.
+        assert!(is_thinking_param_rejection(
+            "{\"error\":{\"message\":\"unexpected keyword argument 'enable_thinking'\"}}"
+        ));
+        assert!(is_thinking_param_rejection(
+            "Unsupported parameter: \"thinking\" is not supported on this model"
+        ));
+        assert!(is_thinking_param_rejection(
+            "Invalid JSON payload received. Unknown name \"thinkingConfig\""
+        ));
+        assert!(is_thinking_param_rejection("field budget_tokens not allowed"));
+    }
+
+    #[test]
+    fn thinking_rejection_ignores_unrelated_400s() {
+        assert!(!is_thinking_param_rejection(
+            "{\"error\":{\"message\":\"model not found\"}}"
+        ));
+        assert!(!is_thinking_param_rejection("context length exceeded"));
+    }
+
+    #[test]
+    fn marking_model_disables_thinking_and_is_case_insensitive() {
+        let model = "Vendor-Future-Model-2099";
+        assert!(!model_thinking_unsupported(model));
+        mark_model_thinking_unsupported(model);
+        assert!(model_thinking_unsupported(model));
+        // Same model, different casing, resolves to the same disabled entry.
+        assert!(model_thinking_unsupported("vendor-future-model-2099"));
+        // Blank names are ignored (never poison the cache).
+        mark_model_thinking_unsupported("   ");
+        assert!(!model_thinking_unsupported("   "));
+    }
+
+    #[test]
+    fn anthropic_body_drops_thinking_once_model_is_marked() {
+        let marked = "claude-sonnet-4-marked-test";
+        // Before marking, a known-supporting family gets the thinking block.
+        let before = build_anthropic_body(
+            marked,
+            "sys",
+            "hi",
+            &AIRequestMode::Panel,
+            Some(true),
+        );
+        assert!(before.get("thinking").is_some());
+        // After a 400 self-heal marks it, the block is gone.
+        mark_model_thinking_unsupported(marked);
+        let after = build_anthropic_body(
+            marked,
+            "sys",
+            "hi",
+            &AIRequestMode::Panel,
+            Some(true),
+        );
+        assert!(after.get("thinking").is_none());
+    }
 
     #[test]
     fn apply_attachments_is_a_noop_without_images() {

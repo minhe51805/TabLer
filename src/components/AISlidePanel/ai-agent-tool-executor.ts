@@ -37,6 +37,7 @@ import {
   AI_AGENT_SEED_DOCUMENT_LIMIT,
   validateAIAgentReadonlySql,
   type AIAgentToolAction,
+  type AIAgentToolName,
   AI_AGENT_TOOL_NAMES,
 } from "./ai-agent-tools";
 import { getAdminQueryPreset, type AdminQueryKind } from "../../utils/admin-query-presets";
@@ -348,6 +349,19 @@ export function analyzeAgentSqlForAgent(
 // The backend truncates authoritatively; this FE check is a redundant backstop
 // so the two layers must not drift apart again.
 const AI_SKILL_BODY_MAX_CHARS = 8_000;
+// Matches ai_skills.rs (MAX_SKILL_RESOURCE_CHARS = 12_000) — same drift guard.
+const AI_SKILL_RESOURCE_MAX_CHARS = 12_000;
+// Tools a loaded skill's `allowed-tools:` restriction can never take away: the
+// agent always keeps the meta/answer tools so a restrictive skill cannot brick
+// the run or trap it without a way to finish or load another skill's docs.
+const SKILL_RESTRICTION_ESSENTIAL_TOOLS = new Set<AIAgentToolName>([
+  "finish",
+  "ask_user",
+  "update_plan",
+  "read_page",
+  "skill",
+  "read_skill_resource",
+]);
 
 export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const {
@@ -383,6 +397,19 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   let lastExplorationToolKey = "";
   /** Side-analysis calls spent this run (delegate budget). */
   let delegateCallsUsed = 0;
+  /**
+   * Skills loaded this run mapped to the bundled resource paths each one
+   * declared. read_skill_resource is fail-closed against this: a resource is
+   * only readable when its skill was loaded this run AND the path was listed by
+   * that skill, so the agent can never fetch an arbitrary file off disk.
+   */
+  const loadedSkillResources = new Map<string, Set<string>>();
+  /**
+   * Union of `allowed-tools:` declared by loaded skills. Once any loaded skill
+   * declares a restriction, the run is confined to that set plus the essential
+   * meta/answer tools — the same guardrail Claude Code applies per skill.
+   */
+  let skillToolRestriction: Set<AIAgentToolName> | null = null;
   /** Local checkpoint snapshots created this run (safety budget). */
   let checkpointCallsUsed = 0;
   /** Rollback confirmations driven this run (one per run). */
@@ -409,6 +436,17 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
 
   const dispatchAgentTool = async (action: AIAgentToolAction): Promise<string> => {
   try {
+    // allowed-tools guardrail: a loaded skill may confine the run to a declared
+    // tool set. Essential meta/answer tools are always exempt so the agent can
+    // still finish, ask, or load another skill's docs.
+    if (
+      skillToolRestriction
+      && !skillToolRestriction.has(action.action as AIAgentToolName)
+      && !SKILL_RESTRICTION_ESSENTIAL_TOOLS.has(action.action as AIAgentToolName)
+    ) {
+      const allowed = [...skillToolRestriction].sort().join(", ");
+      return `Tool error: the active skill restricts tools to [${allowed}] (plus finish, ask_user, update_plan, read_page, skill, read_skill_resource). "${action.action}" is disabled while that skill is loaded — use an allowed tool or finish.`;
+    }
     // Repeating an exploration call with identical arguments returns the
     // identical observation and burns a step from a tight budget. Meta actions
     // (update_plan re-posts the whole checklist by design) and delegate (which
@@ -1366,13 +1404,36 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         return `Tool error: skill "${skillName}" is not in the injected <available_skills> catalog. Pick one of the listed skills.`;
       }
       try {
-        const content = await invokeMutation<{ name: string; body: string }>("read_ai_skill", {
+        const content = await invokeMutation<{
+          name: string;
+          body: string;
+          allowedTools?: string[];
+          resources?: string[];
+          version?: string | null;
+        }>("read_ai_skill", {
           name: skillName,
         });
+        const loadedName = content.name || skillName;
         window.dispatchEvent(new CustomEvent("workspace-activity", {
           detail: { connectionId, label: `Skill: ${content.name}`, durationMs: 0 },
         }));
-        useSkillUsageStore.getState().recordSkillRun(content.name || skillName, connectionId);
+        useSkillUsageStore.getState().recordSkillRun(loadedName, connectionId);
+        // Register bundled resources so read_skill_resource stays fail-closed:
+        // only paths this skill listed may be pulled on demand.
+        const resources = Array.isArray(content.resources)
+          ? content.resources.filter((entry): entry is string => typeof entry === "string")
+          : [];
+        loadedSkillResources.set(loadedName, new Set(resources));
+        // allowed-tools: confine the rest of the run to the declared tools that
+        // actually exist. An unknown name is ignored so a typo can't brick a run.
+        const allowedTools = (Array.isArray(content.allowedTools) ? content.allowedTools : [])
+          .filter((entry): entry is AIAgentToolName =>
+            typeof entry === "string" && (AI_AGENT_TOOL_NAMES as readonly string[]).includes(entry),
+          );
+        if (allowedTools.length > 0) {
+          if (!skillToolRestriction) skillToolRestriction = new Set<AIAgentToolName>();
+          for (const toolName of allowedTools) skillToolRestriction.add(toolName);
+        }
         // Soft cost ceiling: a huge skill file would otherwise be re-injected
         // into the prompt on every remaining run step.
         const rawBody = content.body ?? "";
@@ -1380,14 +1441,69 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           rawBody.length > AI_SKILL_BODY_MAX_CHARS
             ? `${rawBody.slice(0, AI_SKILL_BODY_MAX_CHARS)}\n\n[Body cut at ${AI_SKILL_BODY_MAX_CHARS} characters — the skill file is larger. Follow the instructions above; ask the user to trim the skill if a needed section is missing.]`
             : rawBody;
+        const resourceNote =
+          resources.length > 0
+            ? [
+                "",
+                `Bundled resources — load on demand with read_skill_resource, args {"name":"${loadedName}","path":"<one below>"}:`,
+                ...resources.map((entry) => `- ${entry}`),
+              ].join("\n")
+            : "";
+        const restrictionNote =
+          allowedTools.length > 0
+            ? `\n\n[This skill restricts tools to: ${allowedTools.join(", ")} (plus finish, ask_user, update_plan, read_page, skill, read_skill_resource). Other tools are disabled for the rest of the run.]`
+            : "";
         return [
           `Skill "${content.name}" loaded. Follow these instructions for the remainder of the run:`,
           "",
           body,
-        ].join("\n");
+          resourceNote,
+          restrictionNote,
+        ]
+          .filter((part) => part !== "")
+          .join("\n");
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;
         return `Tool error: could not load skill "${skillName}": ${formatExecutionError(errorValue)}`;
+      }
+    }
+
+    if (action.action === "read_skill_resource") {
+      const skillName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
+      const resourcePath = typeof action.args?.path === "string" ? action.args.path.trim() : "";
+      if (!skillName || !resourcePath) {
+        return "Tool error: read_skill_resource requires args.name and args.path taken from a loaded skill's Bundled resources list.";
+      }
+      // Fail-closed: the skill must have been loaded this run and the path must
+      // be one it listed — mirrors the skill tool's injected-catalog guarantee.
+      const known = loadedSkillResources.get(skillName);
+      if (!known) {
+        return `Tool error: skill "${skillName}" is not loaded this run. Call the skill tool first, then read one of its listed resources.`;
+      }
+      if (!known.has(resourcePath)) {
+        return `Tool error: "${resourcePath}" is not a listed resource of skill "${skillName}". Pick a path from that skill's Bundled resources list.`;
+      }
+      try {
+        const resource = await invokeMutation<{ name: string; resource: string; content: string }>(
+          "read_ai_skill_resource",
+          { name: skillName, resource: resourcePath },
+        );
+        window.dispatchEvent(new CustomEvent("workspace-activity", {
+          detail: { connectionId, label: `Skill resource: ${resource.resource}`, durationMs: 0 },
+        }));
+        const rawContent = resource.content ?? "";
+        const clipped =
+          rawContent.length > AI_SKILL_RESOURCE_MAX_CHARS
+            ? `${rawContent.slice(0, AI_SKILL_RESOURCE_MAX_CHARS)}\n\n[Resource cut at ${AI_SKILL_RESOURCE_MAX_CHARS} characters — the file is larger.]`
+            : rawContent;
+        return [
+          `Resource "${resource.resource}" of skill "${skillName}":`,
+          "",
+          clipped,
+        ].join("\n");
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: could not load resource "${resourcePath}" of skill "${skillName}": ${formatExecutionError(errorValue)}`;
       }
     }
 

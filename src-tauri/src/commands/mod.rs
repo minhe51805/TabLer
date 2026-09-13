@@ -15,6 +15,7 @@ pub mod mcp;
 pub mod operations;
 pub mod plugins;
 mod plugins_support;
+pub mod profiler;
 pub mod query;
 pub mod restore;
 pub mod safe_mode;

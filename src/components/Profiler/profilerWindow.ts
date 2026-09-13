@@ -25,6 +25,18 @@ export const PROFILER_WINDOW_LABEL = "profiler";
 export const PROFILER_CONNECTION_CLOSED_EVENT = "profiler:connection-closed";
 
 /**
+ * Default geometry for the detached profiler window. Centralized (rather than
+ * inlined at the `new WebviewWindow(...)` call) so the initial size and the
+ * minimum size the user can shrink to stay in one obvious place.
+ */
+const PROFILER_WINDOW_GEOMETRY = {
+  width: 1100,
+  height: 720,
+  minWidth: 720,
+  minHeight: 460,
+} as const;
+
+/**
  * Notifies any open profiler that the given connection has been disconnected.
  * Safe no-op outside the Tauri desktop shell (the web build's in-app modal
  * already unmounts when the active connection is cleared).
@@ -67,10 +79,7 @@ export async function openProfilerWindow(
   const profilerWindow = new WebviewWindow(PROFILER_WINDOW_LABEL, {
     url: `index.html?${params.toString()}`,
     title: `Profiler — ${connectionName}`,
-    width: 1100,
-    height: 720,
-    minWidth: 720,
-    minHeight: 460,
+    ...PROFILER_WINDOW_GEOMETRY,
     resizable: true,
     maximizable: true,
     minimizable: true,

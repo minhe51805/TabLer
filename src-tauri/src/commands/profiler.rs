@@ -24,10 +24,23 @@ pub const PROFILER_COLUMNS: [&str; 9] = [
     "query_text",
 ];
 
+/// UI floor for the live-probe poll cadence (ms). Polling faster than this adds
+/// load without meaningfully improving fidelity; every engine's probe advertises
+/// it and the frontend clamps its timer to it — one knob for all engines.
+const DEFAULT_MIN_INTERVAL_MS: u32 = 500;
+
+/// Row cap shared by every probe's `LIMIT` / `TOP (…)` clause. Bounds the rows a
+/// single sample pulls back (and the payload the UI renders) regardless of
+/// engine, kept in one place so the cap can be tuned without editing six SQL
+/// strings.
+const PROBE_ROW_LIMIT: u32 = 200;
+
 /// PostgreSQL / Greenplum: active backends from `pg_stat_activity`. Our own
 /// sampling backend is excluded via `pg_backend_pid()`, and idle sessions are
 /// dropped so the trace only shows work in flight.
-const POSTGRES_PROBE_SQL: &str = "SELECT \
+fn postgres_probe_sql() -> String {
+    format!(
+        "SELECT \
 pid::text AS session_id, \
 datname AS db_name, \
 usename AS username, \
@@ -42,12 +55,16 @@ WHERE pid <> pg_backend_pid() \
 AND state IS NOT NULL AND state <> 'idle' \
 AND query IS NOT NULL AND query <> '' \
 ORDER BY duration_ms DESC NULLS LAST \
-LIMIT 200";
+LIMIT {PROBE_ROW_LIMIT}"
+    )
+}
 
 /// MySQL / MariaDB: `information_schema.PROCESSLIST`. Our own connection is
 /// excluded via `CONNECTION_ID()`; `Sleep` commands (idle pooled sessions) are
 /// dropped. `TIME` is whole seconds, promoted to milliseconds for the contract.
-const MYSQL_PROBE_SQL: &str = "SELECT \
+fn mysql_probe_sql() -> String {
+    format!(
+        "SELECT \
 CAST(ID AS CHAR) AS session_id, \
 DB AS db_name, \
 USER AS username, \
@@ -62,12 +79,16 @@ WHERE ID <> CONNECTION_ID() \
 AND COMMAND <> 'Sleep' \
 AND INFO IS NOT NULL \
 ORDER BY TIME DESC \
-LIMIT 200";
+LIMIT {PROBE_ROW_LIMIT}"
+    )
+}
 
 /// SQL Server: `sys.dm_exec_requests` joined to the session/connection DMVs and
 /// the cached statement text. Our own session is excluded via `@@SPID` and only
 /// user processes are kept. `total_elapsed_time` is already in milliseconds.
-const MSSQL_PROBE_SQL: &str = "SELECT TOP (200) \
+fn mssql_probe_sql() -> String {
+    format!(
+        "SELECT TOP ({PROBE_ROW_LIMIT}) \
 CAST(r.session_id AS VARCHAR(20)) AS session_id, \
 DB_NAME(r.database_id) AS db_name, \
 s.login_name AS username, \
@@ -82,7 +103,9 @@ JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id \
 LEFT JOIN sys.dm_exec_connections c ON r.session_id = c.session_id \
 CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t \
 WHERE r.session_id <> @@SPID AND s.is_user_process = 1 \
-ORDER BY r.total_elapsed_time DESC";
+ORDER BY r.total_elapsed_time DESC"
+    )
+}
 
 /// Canonical column contract every engine's **top-queries** probe SQL aliases to.
 ///
@@ -97,7 +120,9 @@ pub const TOP_QUERY_COLUMNS: [&str; 5] = ["query_text", "calls", "total_ms", "me
 /// `mean_exec_time`). Requires the `pg_stat_statements` extension to be created
 /// and preloaded; the probe surfaces a clear error if the view is missing.
 /// Timing columns are already in milliseconds.
-const POSTGRES_TOP_QUERIES_SQL: &str = "SELECT \
+fn postgres_top_queries_sql() -> String {
+    format!(
+        "SELECT \
 query AS query_text, \
 calls AS calls, \
 round(total_exec_time::numeric, 2)::float8 AS total_ms, \
@@ -106,12 +131,16 @@ rows AS rows \
 FROM pg_stat_statements \
 WHERE query IS NOT NULL AND query <> '' \
 ORDER BY total_exec_time DESC \
-LIMIT 200";
+LIMIT {PROBE_ROW_LIMIT}"
+    )
+}
 
 /// MySQL / MariaDB: `performance_schema.events_statements_summary_by_digest`.
 /// The `*_TIMER_WAIT` columns are in picoseconds, so they are divided by 1e9 to
 /// yield milliseconds. Requires `performance_schema` to be enabled.
-const MYSQL_TOP_QUERIES_SQL: &str = "SELECT \
+fn mysql_top_queries_sql() -> String {
+    format!(
+        "SELECT \
 DIGEST_TEXT AS query_text, \
 COUNT_STAR AS calls, \
 ROUND(SUM_TIMER_WAIT / 1000000000, 2) AS total_ms, \
@@ -120,12 +149,16 @@ SUM_ROWS_SENT AS rows \
 FROM performance_schema.events_statements_summary_by_digest \
 WHERE DIGEST_TEXT IS NOT NULL \
 ORDER BY SUM_TIMER_WAIT DESC \
-LIMIT 200";
+LIMIT {PROBE_ROW_LIMIT}"
+    )
+}
 
 /// SQL Server: `sys.dm_exec_query_stats` joined to the cached statement text.
 /// `total_elapsed_time` is microseconds, divided by 1000 for milliseconds; the
 /// mean guards against a zero `execution_count`.
-const MSSQL_TOP_QUERIES_SQL: &str = "SELECT TOP (200) \
+fn mssql_top_queries_sql() -> String {
+    format!(
+        "SELECT TOP ({PROBE_ROW_LIMIT}) \
 t.text AS query_text, \
 qs.execution_count AS calls, \
 CAST(qs.total_elapsed_time / 1000.0 AS DECIMAL(18,2)) AS total_ms, \
@@ -134,7 +167,9 @@ qs.total_rows AS rows \
 FROM sys.dm_exec_query_stats qs \
 CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) t \
 WHERE t.text IS NOT NULL \
-ORDER BY qs.total_elapsed_time DESC";
+ORDER BY qs.total_elapsed_time DESC"
+    )
+}
 
 /// A read-only probe the frontend polls to sample the engine's live activity.
 #[derive(Debug, Clone, Serialize)]
@@ -171,22 +206,22 @@ pub fn profiler_probe_for_database_type(db_type: DatabaseType) -> Result<Profile
             engine: engine_key(db_type),
             source: "pg_stat_activity — active backends".to_string(),
             columns,
-            sql: POSTGRES_PROBE_SQL.to_string(),
-            min_interval_ms: 500,
+            sql: postgres_probe_sql(),
+            min_interval_ms: DEFAULT_MIN_INTERVAL_MS,
         }),
         DatabaseType::MySQL | DatabaseType::MariaDB => Ok(ProfilerProbe {
             engine: engine_key(db_type),
             source: "information_schema.PROCESSLIST — active threads".to_string(),
             columns,
-            sql: MYSQL_PROBE_SQL.to_string(),
-            min_interval_ms: 500,
+            sql: mysql_probe_sql(),
+            min_interval_ms: DEFAULT_MIN_INTERVAL_MS,
         }),
         DatabaseType::MSSQL => Ok(ProfilerProbe {
             engine: engine_key(db_type),
             source: "sys.dm_exec_requests — active requests".to_string(),
             columns,
-            sql: MSSQL_PROBE_SQL.to_string(),
-            min_interval_ms: 500,
+            sql: mssql_probe_sql(),
+            min_interval_ms: DEFAULT_MIN_INTERVAL_MS,
         }),
         other => Err(format!(
             "The live profiler currently samples PostgreSQL, MySQL/MariaDB, and SQL Server. \
@@ -243,7 +278,7 @@ pub fn top_queries_probe_for_database_type(
             engine: engine_key(db_type),
             source: "pg_stat_statements — cumulative statement stats".to_string(),
             columns,
-            sql: POSTGRES_TOP_QUERIES_SQL.to_string(),
+            sql: postgres_top_queries_sql(),
             requires: "The pg_stat_statements extension must be installed (CREATE EXTENSION \
                         pg_stat_statements) and preloaded via shared_preload_libraries."
                 .to_string(),
@@ -252,7 +287,7 @@ pub fn top_queries_probe_for_database_type(
             engine: engine_key(db_type),
             source: "performance_schema — statement digest summary".to_string(),
             columns,
-            sql: MYSQL_TOP_QUERIES_SQL.to_string(),
+            sql: mysql_top_queries_sql(),
             requires: "performance_schema must be enabled (it is on by default) with statement \
                         digest instrumentation active."
                 .to_string(),
@@ -261,7 +296,7 @@ pub fn top_queries_probe_for_database_type(
             engine: engine_key(db_type),
             source: "sys.dm_exec_query_stats — cached plan stats".to_string(),
             columns,
-            sql: MSSQL_TOP_QUERIES_SQL.to_string(),
+            sql: mssql_top_queries_sql(),
             requires: "Reads cached plan statistics; entries evicted from the plan cache are \
                         not shown, and VIEW SERVER STATE permission is required."
                 .to_string(),

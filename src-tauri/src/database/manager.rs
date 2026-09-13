@@ -26,6 +26,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Error returned when a `connection_id` has no live session in the manager.
+///
+/// The wording is load-bearing: the detached Profiler window's auto-close
+/// *safety net* matches on the "... not found. Please connect first." suffix
+/// (`CONNECTION_GONE_MARKER` in `src/components/Profiler/profilerConstants.ts`).
+/// Centralized here so every lookup path stays in lockstep and the message
+/// can't drift out from under that fallback.
+fn connection_not_found(connection_id: &str) -> anyhow::Error {
+    anyhow!("Connection '{}' not found. Please connect first.", connection_id)
+}
+
 /// Manages all active database connections.
 /// Owns the connection pool, lifecycle, and primary database interface.
 #[allow(dead_code)]
@@ -384,12 +395,10 @@ impl DatabaseManager {
     /// block connect/disconnect (write-lock) while waiting on the network.
     pub async fn get_driver(&self, connection_id: &str) -> Result<Arc<dyn DatabaseDriver>> {
         let conns = self.connections.read().await;
-        conns.get(connection_id).cloned().ok_or_else(|| {
-            anyhow!(
-                "Connection '{}' not found. Please connect first.",
-                connection_id
-            )
-        })
+        conns
+            .get(connection_id)
+            .cloned()
+            .ok_or_else(|| connection_not_found(connection_id))
     }
 
     /// Check if a connection exists and is alive. The ping runs on a cloned
@@ -408,12 +417,7 @@ impl DatabaseManager {
             .await
             .get(connection_id)
             .copied()
-            .ok_or_else(|| {
-                anyhow!(
-                    "Connection '{}' not found. Please connect first.",
-                    connection_id
-                )
-            })
+            .ok_or_else(|| connection_not_found(connection_id))
     }
 
     pub async fn get_connection_capabilities(
@@ -424,12 +428,7 @@ impl DatabaseManager {
         let database_type = connection_types
             .get(connection_id)
             .copied()
-            .ok_or_else(|| {
-                anyhow!(
-                    "Connection '{}' not found. Please connect first.",
-                    connection_id
-                )
-            })?;
+            .ok_or_else(|| connection_not_found(connection_id))?;
         Ok(driver_capabilities(database_type))
     }
 

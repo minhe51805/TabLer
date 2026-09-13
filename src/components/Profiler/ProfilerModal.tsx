@@ -20,6 +20,15 @@ import { ProfilerTopQueries } from "./ProfilerTopQueries";
 import { ProfilerExplain } from "./ProfilerExplain";
 import { PROFILER_CONNECTION_CLOSED_EVENT } from "./profilerWindow";
 import { isTauriDesktopWindow } from "../../hooks/useDesktopWindow";
+import {
+  CONNECTION_GONE_MARKER,
+  COPY_FEEDBACK_MS,
+  DEFAULT_POLL_INTERVAL_MS,
+  LIVE_DURATION_CRIT_MS,
+  LIVE_DURATION_WARN_MS,
+  MAX_TRACE_EVENTS,
+  POLL_INTERVAL_CHOICES,
+} from "./profilerConstants";
 
 interface ProfilerProbe {
   engine: string;
@@ -63,9 +72,6 @@ interface Props {
 
 type Cell = string | number | boolean | null;
 
-const INTERVAL_CHOICES = [500, 1000, 2000, 5000] as const;
-const MAX_EVENTS = 500;
-
 function cellText(value: Cell | undefined): string {
   return value === null || value === undefined ? "" : String(value);
 }
@@ -106,8 +112,8 @@ function formatDuration(ms: number): string {
 }
 
 function durationTone(ms: number): string {
-  if (ms >= 5000) return "text-red-500";
-  if (ms >= 1000) return "text-amber-500";
+  if (ms >= LIVE_DURATION_CRIT_MS) return "text-red-500";
+  if (ms >= LIVE_DURATION_WARN_MS) return "text-amber-500";
   return "text-[var(--text-primary)]";
 }
 
@@ -131,7 +137,7 @@ function mergeSamples(previous: TraceEvent[], samples: ProfilerSample[], now: nu
   }
   return Array.from(byKey.values())
     .sort((a, b) => b.lastSeen - a.lastSeen)
-    .slice(0, MAX_EVENTS);
+    .slice(0, MAX_TRACE_EVENTS);
 }
 
 export function ProfilerModal({ connectionId, connectionName, onClose, variant = "overlay" }: Props) {
@@ -140,7 +146,7 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
   const [probeError, setProbeError] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const [intervalMs, setIntervalMs] = useState<number>(1000);
+  const [intervalMs, setIntervalMs] = useState<number>(DEFAULT_POLL_INTERVAL_MS);
   const [events, setEvents] = useState<TraceEvent[]>([]);
   const [search, setSearch] = useState("");
   const [minDurationMs, setMinDurationMs] = useState(0);
@@ -164,7 +170,7 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
       .then((resolved) => {
         if (cancelled) return;
         setProbe(resolved);
-        setIntervalMs(Math.max(1000, resolved.minIntervalMs));
+        setIntervalMs(Math.max(DEFAULT_POLL_INTERVAL_MS, resolved.minIntervalMs));
         setRunning(true);
       })
       .catch((error) => {
@@ -177,10 +183,31 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
     };
   }, [connectionId]);
 
+  // Live sampling loop. Uses a self-rescheduling `setTimeout` with an in-flight
+  // guard rather than a raw `setInterval` (mirroring useConnectionHealthMonitor)
+  // so a slow poll can never stack a second query on top of itself, and it
+  // pauses entirely while the window/tab is hidden — no point sampling a
+  // database the user can't see, and it spares the connection needless load
+  // while the profiler is minimized or backgrounded.
   useEffect(() => {
     if (!running || !probe || tab !== "live") return;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let inFlight = false;
+
+    const schedule = () => {
+      if (cancelled) return;
+      timer = setTimeout(() => void tick(), intervalMs);
+    };
+
     const tick = async () => {
+      // Skip while a previous poll is still running or the window is hidden;
+      // just re-arm the timer so we resume on the next visible tick.
+      if (inFlight || (typeof document !== "undefined" && document.hidden)) {
+        schedule();
+        return;
+      }
+      inFlight = true;
       try {
         const result = await invoke<QueryResult>("execute_query", {
           connectionId,
@@ -196,13 +223,28 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
         if (cancelled) return;
         setPollError(error instanceof Error ? error.message : String(error));
         setRunning(false);
+        return; // stop the loop — `running` is now false
+      } finally {
+        inFlight = false;
+      }
+      schedule();
+    };
+
+    // Refresh immediately when the window becomes visible again, so the trace
+    // is current the moment the user returns instead of after a full interval.
+    const handleVisibility = () => {
+      if (!document.hidden && !inFlight) {
+        if (timer) clearTimeout(timer);
+        void tick();
       }
     };
+    document.addEventListener("visibilitychange", handleVisibility);
     void tick();
-    const timer = window.setInterval(() => void tick(), intervalMs);
+
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [running, probe, intervalMs, connectionId, tab]);
 
@@ -232,7 +274,7 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
   // there is nothing left to profile — close rather than showing a dead window.
   useEffect(() => {
     const connectionGone = (message: string | null) =>
-      !!message && message.includes("not found. Please connect first.");
+      !!message && message.includes(CONNECTION_GONE_MARKER);
     if (connectionGone(probeError) || connectionGone(pollError)) onCloseRef.current();
   }, [probeError, pollError]);
 
@@ -261,7 +303,7 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
   const copySql = useCallback((sql: string) => {
     void navigator.clipboard?.writeText(sql).then(() => {
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
+      window.setTimeout(() => setCopied(false), COPY_FEEDBACK_MS);
     });
   }, []);
 
@@ -398,7 +440,7 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
                     value={intervalMs}
                     onChange={(event) => setIntervalMs(Number(event.target.value))}
                   >
-                    {INTERVAL_CHOICES.map((choice) => (
+                    {POLL_INTERVAL_CHOICES.map((choice) => (
                       <option key={choice} value={choice}>{choice} ms</option>
                     ))}
                   </select>

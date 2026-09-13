@@ -15,6 +15,7 @@ import { AlertTriangle, Check, Copy, Info, RefreshCw, Search, Workflow } from "l
 import type { QueryResult } from "../../types";
 import { analyzeStatement, primaryInsight } from "../../utils/profiler-insights";
 import { ProfilerExplain } from "./ProfilerExplain";
+import { COPY_FEEDBACK_MS, TOP_MEAN_CRIT_MS, TOP_MEAN_WARN_MS } from "./profilerConstants";
 
 interface TopQueriesProbe {
   engine: string;
@@ -81,8 +82,8 @@ function formatCount(value: number): string {
 }
 
 function meanTone(ms: number): string {
-  if (ms >= 1000) return "is-crit";
-  if (ms >= 100) return "is-warn";
+  if (ms >= TOP_MEAN_CRIT_MS) return "is-crit";
+  if (ms >= TOP_MEAN_WARN_MS) return "is-warn";
   return "";
 }
 
@@ -179,7 +180,7 @@ export function ProfilerTopQueries({ connectionId }: Props) {
   const copySql = useCallback((sql: string) => {
     void navigator.clipboard?.writeText(sql).then(() => {
       setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
+      window.setTimeout(() => setCopied(false), COPY_FEEDBACK_MS);
     });
   }, []);
 

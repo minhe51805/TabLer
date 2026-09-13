@@ -128,6 +128,8 @@ export const tr: Record<keyof typeof en, string> = {
   "sidebar.dbShort": "VT",
   "sidebar.erdShort": "ERD",
   "sidebar.metricsShort": "Metrik",
+  "sidebar.profilerShort": "Profil Olusturucu",
+  "sidebar.liveProfiler": "Canli Profil Olusturucu",
   "workspace.kicker.structure": "Yapi Gorunumu",
   "workspace.readyForQueries": "Sorgular icin hazir",
   "workspace.status.success": "Basarili",

@@ -39197,3 +39197,608 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   width: 14px;
   height: 14px;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Live Profiler
+ *
+ * The profiler modal is styled with dedicated classes instead of Tailwind
+ * padding/margin utilities. The global reset (`*, ::before, ::after { margin:0;
+ * padding:0 }`) is declared unlayered, so it outranks Tailwind's layered
+ * utilities and silently zeroed the component's padding (bunched table headers,
+ * flush-left content). These classes mirror the `.datagrid-*` conventions and
+ * the MiniMax token layer so the profiler matches the rest of the app.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+.profiler-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-small);
+}
+
+/* Header -------------------------------------------------------------------- */
+.profiler-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 60px;
+  padding: 0 20px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(90deg, var(--bg-secondary) 55%, var(--bg-tertiary));
+}
+.profiler-header-icon {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mm-success);
+  background: color-mix(in srgb, var(--mm-success) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mm-success) 26%, transparent);
+  box-shadow: 0 3px 12px -5px color-mix(in srgb, var(--mm-success) 70%, transparent);
+}
+.profiler-header-titles { min-width: 0; flex: 1; }
+.profiler-title-row { display: flex; align-items: center; gap: 8px; }
+.profiler-title {
+  font-size: var(--mm-fs-body);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+.profiler-subtitle {
+  margin-top: 2px;
+  font-size: var(--mm-fs-caption);
+  line-height: 1.2;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.profiler-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--mm-radius-pill);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--mm-success);
+  background: color-mix(in srgb, var(--mm-success) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mm-success) 22%, transparent);
+}
+.profiler-live-badge .profiler-dot,
+.profiler-live-badge .profiler-dot-core { width: 6px; height: 6px; }
+.profiler-header-btn {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--mm-radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.profiler-header-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.profiler-header-btn.is-danger:hover {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  border-color: color-mix(in srgb, var(--error) 22%, transparent);
+}
+.profiler-header-divider { width: 1px; height: 20px; margin: 0 2px; flex-shrink: 0; background: var(--border); }
+/* Tabs ---------------------------------------------------------------------- */
+.profiler-tabbar {
+  display: flex;
+  align-items: center;
+  padding: 12px 20px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.profiler-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 4px;
+  border-radius: var(--mm-radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}
+.profiler-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: var(--mm-radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
+}
+.profiler-tab:hover { color: var(--text-primary); background: var(--bg-hover); }
+.profiler-tab.is-active {
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 2px 10px -3px color-mix(in srgb, var(--accent) 80%, transparent);
+}
+
+/* Toolbar ------------------------------------------------------------------- */
+.profiler-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  font-size: var(--mm-fs-caption);
+}
+.profiler-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border-radius: var(--mm-radius-md);
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+.profiler-status.is-live {
+  color: var(--mm-success);
+  background: color-mix(in srgb, var(--mm-success) 10%, transparent);
+  border-color: color-mix(in srgb, var(--mm-success) 22%, transparent);
+}
+.profiler-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-radius: var(--mm-radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.profiler-control { display: inline-flex; align-items: center; gap: 7px; }
+.profiler-control-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.profiler-control-unit { font-size: 10px; }
+.profiler-control-divider { width: 1px; height: 16px; background: var(--border); }
+.profiler-checkbox { cursor: pointer; user-select: none; transition: color var(--transition); }
+.profiler-checkbox:hover { color: var(--text-primary); }
+.profiler-field {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--mm-radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.profiler-field:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+.profiler-field-num { width: 58px; text-align: right; font-variant-numeric: tabular-nums; }
+.profiler-search { position: relative; flex: 1; min-width: 220px; max-width: 420px; }
+.profiler-search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }
+.profiler-search-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px 0 32px;
+  border-radius: var(--mm-radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.profiler-search-input:focus { border-color: var(--accent); background: var(--bg-secondary); box-shadow: 0 0 0 3px var(--accent-dim); }
+.profiler-counts { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.profiler-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: var(--mm-radius-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+.profiler-count.is-active { color: var(--mm-success); background: color-mix(in srgb, var(--mm-success) 10%, transparent); }
+.profiler-count-dot { width: 6px; height: 6px; border-radius: 9999px; background: var(--mm-success); }
+/* Live/finished dot --------------------------------------------------------- */
+.profiler-dot { position: relative; display: inline-flex; width: 8px; height: 8px; flex-shrink: 0; }
+.profiler-dot-core { position: relative; display: inline-flex; width: 8px; height: 8px; border-radius: 9999px; background: color-mix(in srgb, var(--text-muted) 55%, transparent); }
+.profiler-dot.is-on .profiler-dot-core { background: var(--mm-success); }
+.profiler-dot-ping { position: absolute; inset: 0; border-radius: 9999px; background: var(--mm-success); opacity: 0.7; animation: profiler-ping 1.4s cubic-bezier(0, 0, 0.2, 1) infinite; }
+@keyframes profiler-ping { 75%, 100% { transform: scale(2.4); opacity: 0; } }
+@keyframes profiler-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.12; } }
+
+/* Error banner -------------------------------------------------------------- */
+.profiler-error {
+  margin: 12px 20px 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--mm-radius-md);
+  font-size: var(--mm-fs-caption);
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--error) 22%, transparent);
+}
+.profiler-error-label { font-weight: 700; flex-shrink: 0; }
+.profiler-error-msg { min-width: 0; word-break: break-word; }
+
+/* Trace table --------------------------------------------------------------- */
+.profiler-body { flex: 1; min-height: 0; display: flex; }
+.profiler-scroll { flex: 1; min-width: 0; overflow: auto; }
+.profiler-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--mm-fs-small); }
+.profiler-table thead th { position: sticky; top: 0; z-index: 5; }
+.profiler-th {
+  padding: 10px 14px;
+  text-align: left;
+  white-space: nowrap;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.profiler-th-status { width: 40px; }
+.profiler-th-sql { width: 100%; }
+.profiler-th:first-child,
+.profiler-td:first-child { padding-left: 20px; }
+.profiler-th:last-child,
+.profiler-td:last-child { padding-right: 20px; }
+.profiler-td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+.profiler-td-status { width: 40px; }
+.profiler-row { cursor: pointer; transition: background var(--transition); }
+.profiler-row:hover { background: var(--bg-tertiary); }
+.profiler-row.is-selected { background: var(--accent-dim); }
+.profiler-cell-truncate { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profiler-duration { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.profiler-state-badge {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: var(--mm-radius-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profiler-sql-cell {
+  max-width: 460px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mm-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--mm-fs-caption);
+  color: var(--text-secondary);
+}
+.profiler-row:hover .profiler-sql-cell { color: var(--text-primary); }
+.profiler-muted { color: var(--text-muted); }
+/* Empty state --------------------------------------------------------------- */
+.profiler-empty { padding: 64px 20px; text-align: center; }
+/* The empty state is a single tall <td>. The global `table td { border-bottom }`
+ * (minimax preset) would otherwise draw a stray divider across the middle of the
+ * panel, so cancel it here with higher specificity than that rule. */
+:root[data-theme-preset="tabler.minimax"] .profiler-table td.profiler-empty,
+:root .profiler-table td.profiler-empty { border-bottom: none; }
+.profiler-empty-inner { display: flex; flex-direction: column; align-items: center; }
+.profiler-empty-orb { position: relative; width: 64px; height: 64px; margin-bottom: 16px; display: inline-flex; align-items: center; justify-content: center; }
+.profiler-empty-orb-core {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.profiler-empty.is-live .profiler-empty-orb-core {
+  color: var(--mm-success);
+  background: color-mix(in srgb, var(--mm-success) 10%, transparent);
+  border-color: color-mix(in srgb, var(--mm-success) 24%, transparent);
+}
+.profiler-empty-wave { position: absolute; border-radius: 9999px; background: color-mix(in srgb, var(--mm-success) 12%, transparent); }
+.profiler-empty-wave-1 { inset: 0; animation: profiler-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; }
+.profiler-empty-wave-2 { inset: 8px; animation: profiler-pulse 2s ease-in-out infinite; }
+.profiler-empty-title { font-size: var(--mm-fs-small); font-weight: 700; color: var(--text-primary); }
+.profiler-empty-hint { margin-top: 4px; max-width: 320px; font-size: var(--mm-fs-caption); color: var(--text-muted); }
+
+/* Unavailable state --------------------------------------------------------- */
+.profiler-unavailable { flex: 1; display: flex; align-items: center; justify-content: center; padding: 32px; }
+.profiler-unavailable-inner { max-width: 340px; text-align: center; }
+.profiler-unavailable-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 12px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mm-warning);
+  background: color-mix(in srgb, var(--mm-warning) 12%, transparent);
+}
+.profiler-unavailable-title { margin-bottom: 4px; font-size: var(--mm-fs-small); font-weight: 700; color: var(--text-primary); }
+.profiler-unavailable-msg { font-size: var(--mm-fs-caption); color: var(--text-muted); word-break: break-word; }
+
+/* Detail panel -------------------------------------------------------------- */
+.profiler-detail { width: 380px; flex-shrink: 0; overflow: auto; border-left: 1px solid var(--border); background: var(--bg-secondary); font-size: var(--mm-fs-caption); }
+.profiler-detail-head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 46px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.profiler-detail-title { font-size: var(--mm-fs-small); font-weight: 700; color: var(--text-primary); }
+.profiler-detail-actions { display: inline-flex; align-items: center; gap: 6px; }
+.profiler-detail-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--mm-radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+.profiler-detail-btn:hover { background: var(--bg-hover); }
+.profiler-detail-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.profiler-detail-body { padding: 16px; }
+.profiler-dl { display: flex; flex-direction: column; gap: 9px; }
+.profiler-dl-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.profiler-dl-key { flex-shrink: 0; color: var(--text-muted); }
+.profiler-dl-val { min-width: 0; text-align: right; color: var(--text-primary); word-break: break-word; }
+.profiler-sql-box { margin-top: 16px; border: 1px solid var(--border); border-radius: var(--mm-radius-md); overflow: hidden; }
+.profiler-sql-box-head {
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+.profiler-sql-box-pre {
+  margin: 0;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-family: var(--mm-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--mm-fs-caption);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Top Queries tab — additions. Same rationale as the block above: Tailwind
+ * padding/margin utilities are dead under the unlayered global reset, so
+ * these classes provide explicit padding/spacing using the --mm-* tokens.
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/* Sort segmented control */
+.profiler-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--mm-radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}
+.profiler-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: var(--mm-radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
+}
+.profiler-seg-btn:hover { color: var(--text-primary); }
+.profiler-seg-btn.is-active {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 14%, transparent);
+}
+
+/* Info note banner */
+.profiler-info-note {
+  margin: 12px 20px 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--mm-radius-md);
+  font-size: var(--mm-fs-caption);
+  color: var(--text-muted);
+  background: var(--accent-dim);
+  border: 1px solid var(--border);
+}
+.profiler-info-note-icon { flex-shrink: 0; margin-top: 1px; color: var(--accent); }
+.profiler-info-note-strong { color: var(--text-primary); font-weight: 700; }
+
+/* Sortable header + numeric cells */
+.profiler-th-sort { cursor: pointer; user-select: none; }
+.profiler-th-sort:hover { color: var(--text-primary); }
+.profiler-th-rank { width: 48px; }
+.profiler-td-rank { width: 48px; }
+.profiler-num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.profiler-td.is-crit { color: var(--error); }
+.profiler-td.is-warn { color: var(--mm-warning); }
+
+/* Statement cell */
+.profiler-td-sql { max-width: 460px; }
+.profiler-sql-flex { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.profiler-sql-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mm-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--text-primary);
+}
+.profiler-insight-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: var(--mm-radius-sm);
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+}
+.profiler-insight-badge.is-warn { color: var(--mm-warning); background: color-mix(in srgb, var(--mm-warning) 16%, transparent); }
+.profiler-insight-badge.is-info { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+/* Detail insights */
+.profiler-detail-insights { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.profiler-detail-insight {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--mm-radius-md);
+  font-size: var(--mm-fs-caption);
+}
+.profiler-detail-insight.is-warn { color: var(--mm-warning); background: color-mix(in srgb, var(--mm-warning) 8%, transparent); border: 1px solid color-mix(in srgb, var(--mm-warning) 22%, transparent); }
+.profiler-detail-insight.is-info { color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); }
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Explain overlay (ProfilerExplain) — same rationale: Tailwind padding/margin
+ * utilities are dead under the unlayered global reset, so provide explicit
+ * spacing via classes using the --mm-* tokens.
+ * ───────────────────────────────────────────────────────────────────────── */
+.profiler-explain-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: color-mix(in srgb, #000 50%, transparent);
+  backdrop-filter: blur(4px);
+}
+.profiler-explain-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  width: min(1100px, calc(100vw - 32px));
+  max-height: 90vh;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--mm-radius-lg);
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.5);
+}
+.profiler-explain-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.profiler-explain-title { flex: 1; font-size: var(--mm-fs-small); font-weight: 700; color: var(--text-primary); }
+.profiler-explain-tag {
+  padding: 3px 8px;
+  border-radius: var(--mm-radius-sm);
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+  color: var(--mm-warning);
+  background: color-mix(in srgb, var(--mm-warning) 12%, transparent);
+}
+.profiler-explain-close {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--mm-radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.profiler-explain-close:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+.profiler-explain-sql {
+  margin: 0;
+  padding: 10px 20px;
+  max-height: 96px;
+  overflow: auto;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  font-family: var(--mm-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--mm-fs-caption);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.profiler-explain-body { flex: 1; min-height: 0; overflow: auto; }
+.profiler-explain-loading { padding: 32px; text-align: center; font-size: var(--mm-fs-small); color: var(--text-muted); }
+.profiler-explain-error-wrap { padding: 20px; }
+.profiler-explain-error {
+  padding: 14px 16px;
+  border-radius: var(--mm-radius-md);
+  font-size: var(--mm-fs-small);
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--error) 22%, transparent);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+

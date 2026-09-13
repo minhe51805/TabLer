@@ -15,6 +15,7 @@ import { ConnectionExporter, ConnectionImporter } from "../ConnectionExporter";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { ConnectionConfig } from "../../types/database";
 import { DiagnosticBundleModal } from "../DiagnosticBundleModal";
+import { ProfilerLauncher } from "../Profiler";
 
 const AISettingsModal = lazy(() => import("../AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
 
@@ -84,6 +85,7 @@ export function AppGlobalModals({
 
   return (
     <>
+      <ProfilerLauncher />
       {showAISettings && (
         <Suspense fallback={null}>
           <AISettingsModal onClose={() => setShowAISettings(false)} />

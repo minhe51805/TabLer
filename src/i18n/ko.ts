@@ -128,6 +128,8 @@ export const ko: Record<keyof typeof en, string> = {
   "sidebar.dbShort": "DB",
   "sidebar.erdShort": "ERD",
   "sidebar.metricsShort": "메트릭",
+  "sidebar.profilerShort": "프로파일러",
+  "sidebar.liveProfiler": "라이브 프로파일러",
   "workspace.kicker.structure": "구조 보기",
   "workspace.readyForQueries": "쿼리 준비 완료",
   "workspace.status.success": "성공",

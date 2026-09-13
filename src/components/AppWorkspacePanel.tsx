@@ -3,6 +3,7 @@ import {
   BarChart3,
   Plus,
   GitBranch,
+  Activity,
   Terminal,
   Download,
   Upload,
@@ -891,6 +892,17 @@ export function AppWorkspacePanel({
       title: t("sidebar.metricsBoards"),
       active: isMetricsPanelActive,
       onClick: onOpenMetricsBoard,
+      disabled: !isConnected,
+    },
+    {
+      key: "profiler",
+      icon: Activity,
+      label: t("sidebar.profilerShort"),
+      title: t("sidebar.liveProfiler"),
+      // The profiler is a modal overlay, not a workspace panel, so it has no
+      // persistent "active" panel state — the rail button just launches it.
+      active: false,
+      onClick: () => window.dispatchEvent(new CustomEvent("open-live-profiler")),
       disabled: !isConnected,
     },
   ] as const;

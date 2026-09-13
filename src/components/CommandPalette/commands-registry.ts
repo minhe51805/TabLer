@@ -390,6 +390,14 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
         window.dispatchEvent(new CustomEvent("toggle-sql-favorites-palette"));
       }, ctx),
     },
+    {
+      id: "tools.live-profiler",
+      label: "Live Profiler",
+      category: "Tools",
+      action: makeAction("tools.live-profiler", () => {
+        window.dispatchEvent(new CustomEvent("open-live-profiler"));
+      }, ctx),
+    },
 
     // ── Navigation ─────────────────────────────────────────────────────────────
     {

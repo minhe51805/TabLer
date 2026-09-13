@@ -589,10 +589,12 @@ mod tests {
         let registry: PluginRegistryIndex = serde_json::from_slice(&raw).unwrap();
         validate_registry(&registry).unwrap();
         assert_eq!(registry.schema_version, 1);
-        // Built-in registry packages: portable-formats + the declarative-http
-        // driver plugins for every PluginHttp engine (opensearch, clickhouse,
-        // bigquery, snowflake, cloudflare-d1).
-        assert_eq!(registry.packages.len(), 6);
+        // Built-in registry packages: portable-formats + one driver plugin per
+        // non-builtin engine. That is the five declarative-http-v1 PluginHttp
+        // drivers (opensearch, clickhouse, bigquery, snowflake, cloudflare-d1)
+        // and the four driver-sidecar-v1 PluginNative drivers (cassandra,
+        // duckdb, libsql, redis), for ten packages total.
+        assert_eq!(registry.packages.len(), 10);
     }
 
     #[test]

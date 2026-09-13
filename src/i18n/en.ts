@@ -127,6 +127,8 @@ export const en = {
   "sidebar.dbShort": "DB",
   "sidebar.erdShort": "ERD",
   "sidebar.metricsShort": "Metrics",
+  "sidebar.profilerShort": "Profiler",
+  "sidebar.liveProfiler": "Live Profiler",
   "workspace.kicker.structure": "Structure View",
   "workspace.readyForQueries": "Ready for queries",
   "workspace.status.success": "Success",

@@ -128,6 +128,8 @@ export const vi: Record<keyof typeof en, string> = {
   "sidebar.dbShort": "CSDL",
   "sidebar.erdShort": "ERD",
   "sidebar.metricsShort": "Metrics",
+  "sidebar.profilerShort": "Profiler",
+  "sidebar.liveProfiler": "Trình phân tích trực tiếp",
   "workspace.kicker.structure": "Xem cấu trúc",
   "workspace.readyForQueries": "Sẵn sàng truy vấn",
   "workspace.status.success": "Thành công",

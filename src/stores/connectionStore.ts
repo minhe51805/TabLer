@@ -17,6 +17,7 @@ import { useGlobalErrorStore } from "./globalErrorStore";
 import { useUIStore } from "./uiStore";
 import { invalidateConnectionCapabilities } from "../hooks/useConnectionCapabilities";
 import { applyConnectionAssignments } from "./connection-group-store";
+import { notifyProfilerConnectionClosed } from "../components/Profiler/profilerWindow";
 import {
   disconnectedPatch,
   executeStartupCommands,
@@ -305,6 +306,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       if (!options?.keepTabs) {
         useUIStore.getState().removeTabsForConnection(connectionId);
       }
+      // Tell any open profiler (including the detached native window, which does
+      // not share this store) that the session is gone so it closes itself.
+      void notifyProfilerConnectionClosed(connectionId);
     } catch (error) {
       useGlobalErrorStore.getState().setError(`Disconnect failed: ${error}`);
     }

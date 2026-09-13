@@ -80,6 +80,12 @@ function formatCount(value: number): string {
   return Math.round(value).toLocaleString();
 }
 
+function meanTone(ms: number): string {
+  if (ms >= 1000) return "is-crit";
+  if (ms >= 100) return "is-warn";
+  return "";
+}
+
 const SORT_LABELS: Record<SortKey, string> = {
   totalMs: "Total time",
   meanMs: "Mean time",
@@ -205,9 +211,13 @@ export function ProfilerTopQueries({ connectionId }: Props) {
 
   if (probeError) {
     return (
-      <div className="p-5">
-        <div className="p-4 rounded-lg bg-amber-500/5 border border-amber-500/20 text-sm text-amber-400">
-          {probeError}
+      <div className="profiler-unavailable">
+        <div className="profiler-unavailable-inner">
+          <span className="profiler-unavailable-icon">
+            <AlertTriangle className="w-6 h-6" />
+          </span>
+          <div className="profiler-unavailable-title">Top Queries unavailable</div>
+          <div className="profiler-unavailable-msg">{probeError}</div>
         </div>
       </div>
     );
@@ -216,10 +226,10 @@ export function ProfilerTopQueries({ connectionId }: Props) {
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 px-5 py-3 border-b border-[var(--border)] text-xs">
+      <div className="profiler-toolbar">
         <button
           type="button"
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[var(--bg-tertiary)] hover:bg-[var(--border)] disabled:opacity-50"
+          className="profiler-detail-btn"
           onClick={() => probe && void refresh(probe)}
           disabled={loading || !probe}
           title="Re-read the statement store"
@@ -227,72 +237,89 @@ export function ProfilerTopQueries({ connectionId }: Props) {
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           {loading ? "Loading…" : "Refresh"}
         </button>
-        {(["totalMs", "meanMs", "calls", "rows"] as const).map((key) => (
-          <button
-            key={key}
-            type="button"
-            className={`px-2 py-1 rounded ${sortKey === key ? "bg-[var(--bg-tertiary)] text-[var(--text-primary)]" : "text-[var(--text-muted)] hover:bg-[var(--bg-tertiary)]"}`}
-            onClick={() => toggleSort(key)}
-          >
-            {SORT_LABELS[key]}
-            {sortIndicator(key)}
-          </button>
-        ))}
-        <div className="relative flex-1 min-w-[160px]">
-          <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+        <div className="profiler-seg">
+          {(["totalMs", "meanMs", "calls", "rows"] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              className={`profiler-seg-btn${sortKey === key ? " is-active" : ""}`}
+              onClick={() => toggleSort(key)}
+            >
+              {SORT_LABELS[key]}
+              {sortIndicator(key)}
+            </button>
+          ))}
+        </div>
+        <div className="profiler-search">
+          <Search className="profiler-search-icon w-3.5 h-3.5" />
           <input
             type="text"
-            placeholder="Filter by statement text..."
+            placeholder="Filter by statement text…"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            className="w-full bg-[var(--bg-tertiary)] border border-[var(--border)] rounded pl-7 pr-2 py-1"
+            className="profiler-search-input"
           />
         </div>
-        <span className="text-[var(--text-muted)]">{filtered.length} statements</span>
+        <span className="profiler-counts">
+          <span className="profiler-count">{filtered.length} statements</span>
+        </span>
       </div>
 
       {probe && (
-        <div className="mx-5 mt-3 flex items-start gap-2 p-2.5 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] text-xs text-[var(--text-muted)]">
-          <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+        <div className="profiler-info-note">
+          <Info className="profiler-info-note-icon w-3.5 h-3.5" />
           <span>
-            <strong className="text-[var(--text-primary)]">{probe.source}.</strong> {probe.requires}
+            <strong className="profiler-info-note-strong">{probe.source}.</strong> {probe.requires}
           </span>
         </div>
       )}
 
       {queryError && (
-        <div className="mx-5 mt-3 p-2.5 rounded-lg bg-red-500/5 border border-red-500/20 text-xs text-red-400">
-          {queryError}
+        <div className="profiler-error">
+          <span className="profiler-error-label">Error:</span>
+          <span className="profiler-error-msg">{queryError}</span>
         </div>
       )}
 
 
-      <div className="flex-1 min-h-0 flex mt-3">
-        <div className="flex-1 min-w-0 overflow-auto">
-          <table className="w-full text-xs border-collapse">
-            <thead className="sticky top-0 bg-[var(--bg-secondary)]">
-              <tr className="text-left text-[var(--text-muted)]">
-                <th className="px-3 py-2 font-medium">#</th>
-                <th className="px-3 py-2 font-medium cursor-pointer" onClick={() => toggleSort("totalMs")}>
+      <div className="profiler-body">
+        <div className="profiler-scroll">
+          <table className="profiler-table">
+            <thead>
+              <tr>
+                <th className="profiler-th profiler-th-rank">#</th>
+                <th className="profiler-th profiler-th-sort" onClick={() => toggleSort("totalMs")}>
                   Total{sortIndicator("totalMs")}
                 </th>
-                <th className="px-3 py-2 font-medium cursor-pointer" onClick={() => toggleSort("meanMs")}>
+                <th className="profiler-th profiler-th-sort" onClick={() => toggleSort("meanMs")}>
                   Mean{sortIndicator("meanMs")}
                 </th>
-                <th className="px-3 py-2 font-medium cursor-pointer" onClick={() => toggleSort("calls")}>
+                <th className="profiler-th profiler-th-sort" onClick={() => toggleSort("calls")}>
                   Calls{sortIndicator("calls")}
                 </th>
-                <th className="px-3 py-2 font-medium cursor-pointer" onClick={() => toggleSort("rows")}>
+                <th className="profiler-th profiler-th-sort" onClick={() => toggleSort("rows")}>
                   Rows{sortIndicator("rows")}
                 </th>
-                <th className="px-3 py-2 font-medium">Statement</th>
+                <th className="profiler-th profiler-th-sql">Statement</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-10 text-center text-[var(--text-muted)]">
-                    {loading ? "Reading statement store..." : "No statements recorded in the store yet."}
+                  <td colSpan={6} className="profiler-empty">
+                    <div className="profiler-empty-inner">
+                      <span className="profiler-empty-orb-core">
+                        <RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} />
+                      </span>
+                      <div className="profiler-empty-title">
+                        {loading ? "Reading statement store…" : "No statements recorded yet"}
+                      </div>
+                      <div className="profiler-empty-hint">
+                        {loading
+                          ? "Querying the engine's statement store."
+                          : "Run some queries on this connection, then hit Refresh."}
+                      </div>
+                    </div>
                   </td>
                 </tr>
               ) : (
@@ -302,24 +329,24 @@ export function ProfilerTopQueries({ connectionId }: Props) {
                     <tr
                       key={row.key}
                       onClick={() => setSelectedKey(row.key)}
-                      className={`border-t border-[var(--border)] cursor-pointer hover:bg-[var(--bg-tertiary)] ${selectedKey === row.key ? "bg-[var(--bg-tertiary)]" : ""}`}
+                      className={`profiler-row${selectedKey === row.key ? " is-selected" : ""}`}
                     >
-                      <td className="px-3 py-2 text-[var(--text-muted)] tabular-nums">{position + 1}</td>
-                      <td className="px-3 py-2 tabular-nums">{formatMs(row.totalMs)}</td>
-                      <td className="px-3 py-2 tabular-nums">{formatMs(row.meanMs)}</td>
-                      <td className="px-3 py-2 tabular-nums">{formatCount(row.calls)}</td>
-                      <td className="px-3 py-2 tabular-nums">{formatCount(row.rows)}</td>
-                      <td className="px-3 py-2 font-mono max-w-[460px]">
-                        <div className="flex items-center gap-1.5 min-w-0">
+                      <td className="profiler-td profiler-td-rank profiler-muted profiler-num">{position + 1}</td>
+                      <td className="profiler-td profiler-duration">{formatMs(row.totalMs)}</td>
+                      <td className={`profiler-td profiler-num ${meanTone(row.meanMs)}`}>{formatMs(row.meanMs)}</td>
+                      <td className="profiler-td profiler-num">{formatCount(row.calls)}</td>
+                      <td className="profiler-td profiler-num profiler-muted">{formatCount(row.rows)}</td>
+                      <td className="profiler-td profiler-td-sql">
+                        <div className="profiler-sql-flex">
                           {insight && (
                             <span
-                              className={`shrink-0 px-1 py-0.5 rounded text-[10px] font-sans font-medium ${insight.severity === "warn" ? "bg-amber-500/15 text-amber-400" : "bg-sky-500/15 text-sky-400"}`}
+                              className={`profiler-insight-badge ${insight.severity === "warn" ? "is-warn" : "is-info"}`}
                               title={insight.message}
                             >
                               {insight.label}
                             </span>
                           )}
-                          <span className="truncate">{row.queryText || "—"}</span>
+                          <span className="profiler-sql-text">{row.queryText || "—"}</span>
                         </div>
                       </td>
                     </tr>
@@ -331,13 +358,13 @@ export function ProfilerTopQueries({ connectionId }: Props) {
         </div>
 
         {selected && (
-          <div className="w-[360px] shrink-0 border-l border-[var(--border)] overflow-auto p-4 text-xs">
-            <div className="flex items-center justify-between gap-2 mb-3">
-              <strong className="text-sm">Statement detail</strong>
-              <div className="flex items-center gap-1.5">
+          <div className="profiler-detail">
+            <div className="profiler-detail-head">
+              <strong className="profiler-detail-title">Statement detail</strong>
+              <div className="profiler-detail-actions">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] hover:bg-[var(--border)] disabled:opacity-40"
+                  className="profiler-detail-btn"
                   onClick={() => selected.queryText && setExplainSql(selected.queryText)}
                   disabled={!selected.queryText}
                   title="Show the query plan (planning only, nothing executes)"
@@ -347,44 +374,46 @@ export function ProfilerTopQueries({ connectionId }: Props) {
                 </button>
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded bg-[var(--bg-tertiary)] hover:bg-[var(--border)]"
+                  className="profiler-detail-btn"
                   onClick={() => copySql(selected.queryText)}
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copied ? "Copied" : "Copy SQL"}
+                  {copied ? "Copied" : "Copy"}
                 </button>
               </div>
             </div>
-
-            {selectedInsights.length > 0 && (
-              <div className="mb-3 space-y-1.5">
-                {selectedInsights.map((insight) => (
-                  <div
-                    key={insight.code}
-                    className={`flex items-start gap-1.5 p-2 rounded-lg border text-[11px] ${insight.severity === "warn" ? "bg-amber-500/5 border-amber-500/20 text-amber-300" : "bg-sky-500/5 border-sky-500/20 text-sky-300"}`}
-                  >
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                    <span>{insight.message}</span>
+            <div className="profiler-detail-body">
+              {selectedInsights.length > 0 && (
+                <div className="profiler-detail-insights">
+                  {selectedInsights.map((insight) => (
+                    <div
+                      key={insight.code}
+                      className={`profiler-detail-insight ${insight.severity === "warn" ? "is-warn" : "is-info"}`}
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{insight.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <dl className="profiler-dl">
+                {([
+                  ["Total time", formatMs(selected.totalMs)],
+                  ["Mean time", formatMs(selected.meanMs)],
+                  ["Calls", formatCount(selected.calls)],
+                  ["Rows", formatCount(selected.rows)],
+                ] as const).map(([label, value]) => (
+                  <div key={label} className="profiler-dl-row">
+                    <dt className="profiler-dl-key">{label}</dt>
+                    <dd className="profiler-dl-val profiler-num">{value}</dd>
                   </div>
                 ))}
+              </dl>
+              <div className="profiler-sql-box">
+                <div className="profiler-sql-box-head">SQL</div>
+                <pre className="profiler-sql-box-pre">{selected.queryText || "—"}</pre>
               </div>
-            )}
-            <dl className="space-y-1.5">
-              {([
-                ["Total time", formatMs(selected.totalMs)],
-                ["Mean time", formatMs(selected.meanMs)],
-                ["Calls", formatCount(selected.calls)],
-                ["Rows", formatCount(selected.rows)],
-              ] as const).map(([label, value]) => (
-                <div key={label} className="flex gap-2">
-                  <dt className="w-24 text-[var(--text-muted)] shrink-0">{label}</dt>
-                  <dd className="min-w-0 break-words tabular-nums">{value}</dd>
-                </div>
-              ))}
-            </dl>
-            <pre className="mt-3 p-3 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border)] font-mono whitespace-pre-wrap break-words">
-              {selected.queryText || "—"}
-            </pre>
+            </div>
           </div>
         )}
       </div>

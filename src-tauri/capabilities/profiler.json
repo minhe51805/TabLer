@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
+  "identifier": "profiler-window",
+  "description": "Capability for the detached Live Profiler window",
+  "windows": ["profiler"],
   "permissions": [
     "core:default",
     "core:window:default",
@@ -11,9 +11,6 @@
     "core:window:allow-unminimize",
     "core:window:allow-set-focus",
     "core:window:allow-start-dragging",
-    "core:window:allow-toggle-maximize",
-    "core:webview:allow-create-webview-window",
-    "dialog:allow-open",
-    "opener:allow-open-url"
+    "core:window:allow-toggle-maximize"
   ]
 }

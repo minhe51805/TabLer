@@ -126,6 +126,8 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "sidebar.dbShort": "DB",
   "sidebar.erdShort": "ERD",
   "sidebar.metricsShort": "指标",
+  "sidebar.profilerShort": "分析器",
+  "sidebar.liveProfiler": "实时分析器",
   "workspace.kicker.structure": "结构视图",
   "workspace.readyForQueries": "准备开始查询",
   "workspace.status.success": "成功",

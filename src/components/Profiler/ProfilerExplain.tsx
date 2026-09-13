@@ -102,36 +102,26 @@ export function ProfilerExplain({ connectionId, engine, sql, onClose }: Props) {
   }, [run]);
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl shadow-2xl w-[min(1100px,calc(100vw-32px))] max-h-[90vh] flex flex-col overflow-hidden"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-[var(--border)]">
-          <strong className="text-sm flex-1">Explain plan</strong>
+    <div className="profiler-explain-overlay" onClick={onClose}>
+      <div className="profiler-explain-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="profiler-explain-head">
+          <strong className="profiler-explain-title">Explain plan</strong>
           {placeholders && (
-            <span className="text-[11px] text-amber-400" title="Statement-store digests use $1 / ? placeholders">
+            <span className="profiler-explain-tag" title="Statement-store digests use $1 / ? placeholders">
               normalized statement
             </span>
           )}
-          <button type="button" className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)]" onClick={onClose} title="Close">
+          <button type="button" className="profiler-explain-close" onClick={onClose} title="Close">
             <X className="w-4 h-4" />
           </button>
         </div>
-        <pre className="px-5 py-2 text-xs font-mono text-[var(--text-muted)] whitespace-pre-wrap break-words border-b border-[var(--border)] max-h-24 overflow-auto">
-          {sql}
-        </pre>
-        <div className="flex-1 min-h-0 overflow-auto">
+        <pre className="profiler-explain-sql">{sql}</pre>
+        <div className="profiler-explain-body">
           {loading ? (
-            <div className="p-8 text-center text-sm text-[var(--text-muted)]">Planning…</div>
+            <div className="profiler-explain-loading">Planning…</div>
           ) : error ? (
-            <div className="p-5">
-              <div className="p-4 rounded-lg bg-red-500/5 border border-red-500/20 text-sm text-red-400 whitespace-pre-wrap">
-                {error}
-              </div>
+            <div className="profiler-explain-error-wrap">
+              <div className="profiler-explain-error">{error}</div>
             </div>
           ) : plan ? (
             <ExplainVisualizer plan={plan} sourceSql={sql} />

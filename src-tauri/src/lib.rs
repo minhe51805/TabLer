@@ -63,7 +63,7 @@ use commands::mcp::{
     stop_mcp_local_server,
 };
 use commands::operations::get_operational_queries;
-use commands::profiler::{get_profiler_probe, get_top_queries_probe};
+use commands::profiler::{execute_profiler_sample, get_profiler_probe, get_top_queries_probe};
 use commands::plugins::{
     check_plugin_updates, get_plugin_registry, install_plugin_bundle, install_registry_plugin,
     list_installed_plugins, reload_installed_plugins, rollback_plugin_bundle, set_plugin_enabled,
@@ -478,6 +478,8 @@ pub fn run() {
             get_profiler_probe,
             // Profiler: statement-store aggregate ranking probe
             get_top_queries_probe,
+            // Profiler: native (non-SQL) sampling, e.g. MongoDB $currentOp / system.profile
+            execute_profiler_sample,
             push_workspace_sync,
             pull_workspace_sync,
         ]);

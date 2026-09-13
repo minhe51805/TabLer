@@ -36,7 +36,15 @@ interface ProfilerProbe {
   columns: string[];
   sql: string;
   minIntervalMs: number;
+  /**
+   * How to run the probe: "sql" runs `sql` through `execute_query`; "mongodb"
+   * (no SQL) samples natively via `execute_profiler_sample`. Kept in sync with
+   * `TRANSPORT_*` in the backend `commands/profiler.rs`.
+   */
+  transport: string;
 }
+
+const MONGO_TRANSPORT = "mongodb";
 
 interface ProfilerSample {
   sessionId: string;
@@ -209,12 +217,18 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
       }
       inFlight = true;
       try {
-        const result = await invoke<QueryResult>("execute_query", {
-          connectionId,
-          sql: probe.sql,
-          requestId: crypto.randomUUID(),
-          safeModeApprovedByUser: false,
-        });
+        const result =
+          probe.transport === MONGO_TRANSPORT
+            ? await invoke<QueryResult>("execute_profiler_sample", {
+                connectionId,
+                kind: "live",
+              })
+            : await invoke<QueryResult>("execute_query", {
+                connectionId,
+                sql: probe.sql,
+                requestId: crypto.randomUUID(),
+                safeModeApprovedByUser: false,
+              });
         if (cancelled) return;
         const now = Date.now();
         setEvents((previous) => mergeSamples(previous, mapSamples(result, probe.columns), now));
@@ -576,16 +590,18 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
                   <div className="profiler-detail-head">
                     <strong className="profiler-detail-title">Statement detail</strong>
                     <div className="profiler-detail-actions">
-                      <button
-                        type="button"
-                        className="profiler-detail-btn"
-                        onClick={() => selected.queryText && setExplainSql(selected.queryText)}
-                        disabled={!selected.queryText}
-                        title="Show the query plan (planning only, nothing executes)"
-                      >
-                        <Workflow className="w-3.5 h-3.5" />
-                        Explain
-                      </button>
+                      {probe?.transport !== MONGO_TRANSPORT && (
+                        <button
+                          type="button"
+                          className="profiler-detail-btn"
+                          onClick={() => selected.queryText && setExplainSql(selected.queryText)}
+                          disabled={!selected.queryText}
+                          title="Show the query plan (planning only, nothing executes)"
+                        >
+                          <Workflow className="w-3.5 h-3.5" />
+                          Explain
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="profiler-detail-btn"

@@ -357,9 +357,11 @@ impl MongoDbDriver {
     /// True when a `$currentOp` failure is the deployment rejecting the
     /// `allUsers` argument (shared Atlas tiers surface Atlas error code 8000
     /// "arg=allUsers isn't allowed in this atlas tier"), which we recover from
-    /// by sampling only the current user's operations.
+    /// by sampling only the current user's operations. Matched case-insensitively
+    /// so a future change to the message's casing does not silently disable the
+    /// fallback and bring the per-poll error back.
     fn is_all_users_rejected(error: &mongodb::error::Error) -> bool {
-        error.to_string().contains("allUsers")
+        error.to_string().to_ascii_lowercase().contains("allusers")
     }
 
     /// Open a `$currentOp` cursor on `admin`, preferring cluster-wide
@@ -386,6 +388,24 @@ impl MongoDbDriver {
             .aggregate(Self::current_op_pipeline(false))
             .await
             .context("Failed to sample MongoDB active operations via $currentOp")
+    }
+
+    /// Report whether database profiling is active for `database`. MongoDB's
+    /// `{ profile: -1 }` command returns `{ was: <level> }` where level 0 means
+    /// profiling is off (so `system.profile` is never populated) and 1/2 record
+    /// slow/all operations. Returns `false` only when we can confirm it is off;
+    /// if the status cannot be read we assume it is on so we never show a
+    /// misleading "profiling disabled" hint on a transient error.
+    async fn profiling_enabled(&self, database: &str) -> bool {
+        match self
+            .client
+            .database(database)
+            .run_command(doc! { "profile": -1 })
+            .await
+        {
+            Ok(status) => Self::bson_to_i64(status.get("was")) != 0,
+            Err(_) => true,
+        }
     }
 
     /// Build the canonical column metadata for a profiler result. The exact
@@ -690,6 +710,17 @@ impl DatabaseDriver for MongoDbDriver {
             .into_iter()
             .filter_map(Self::profile_group_to_row)
             .collect::<Vec<_>>();
+        // An empty ranking almost always means profiling is disabled on this
+        // database (`system.profile` is then never populated), which would
+        // otherwise render as a silently blank table. Confirm the level and
+        // surface an actionable hint instead of leaving the user guessing.
+        if rows.is_empty() && !self.profiling_enabled(&active_database).await {
+            return Err(anyhow!(
+                "MongoDB database profiling is disabled on '{active_database}', so there are no \
+                 recorded operations to rank. Enable it in mongosh with db.setProfilingLevel(1) \
+                 (slow ops) or db.setProfilingLevel(2) (all ops), let some queries run, then refresh."
+            ));
+        }
         Ok(Self::canonical_result(
             &TOP_QUERY_COLUMNS,
             rows,

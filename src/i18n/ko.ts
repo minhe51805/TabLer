@@ -28,6 +28,8 @@ export const ko: Record<keyof typeof en, string> = {
   "workspace.error.retry": "다시 시도",
   "workspace.error.goLauncher": "런처로 이동",
   "workspace.error.generic": "작업 공간을 불러오는 중 예기치 않은 오류가 발생했습니다.",
+  "workspace.error.timeout":
+    "30초 후 워크스페이스 연결이 시간 초과되었습니다. 데이터베이스에 접근할 수 없거나 방화벽에 의해 차단되었을 수 있습니다.",
   "common.connections": "연결",
   "common.metrics": "메트릭",
   "common.auto": "자동",

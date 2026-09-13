@@ -46,8 +46,18 @@ export interface ConnectionState {
   isSwitchingDatabase: boolean;
   isLoadingTables: boolean;
   isLoadingSchemaObjects: boolean;
+  /**
+   * Set when a saved-connection attempt fails: the failing connection id plus
+   * the error message. Drives the in-place error state of <WorkspaceConnecting>
+   * (message + Try Again + Go to Launcher) so a failed connect keeps the SAME
+   * connecting screen mounted instead of bouncing back to the launcher with a
+   * detached error bar. Cleared on a new attempt, on success, and when the user
+   * leaves for the launcher.
+   */
+  connectError: { id: string; message: string } | null;
 
   setConnectionHealth: (connectionId: string, healthy: boolean) => void;
+  clearConnectionError: () => void;
   loadSavedConnections: () => Promise<void>;
   connectToDatabase: (config: ConnectionConfig) => Promise<void>;
   connectSavedConnection: (connectionId: string) => Promise<void>;
@@ -142,6 +152,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       activeConnectionId: connectionId,
       currentDatabase: database ?? null,
       ...(keepExistingMetadata ? {} : { schemaObjects: [], tables: [] }),
+      connectError: null,
       isConnecting: false,
     });
   };
@@ -194,6 +205,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
   isSwitchingDatabase: false,
   isLoadingTables: false,
   isLoadingSchemaObjects: false,
+  connectError: null,
+
+  clearConnectionError: () => set({ connectError: null }),
 
   setConnectionHealth: (connectionId, healthy) => {
     // Skip identical writes so subscribers are not notified needlessly.
@@ -267,13 +281,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
 
   connectSavedConnection: async (connectionId) => {
     if (get().isConnecting) return;
-    const previousState = snapshotForRestore();
     const connection = get().connections.find((item) => item.id === connectionId);
     const keepsExistingMetadata = reconnectTargetsShownMetadata(connectionId, connection?.database);
     set({
       isConnecting: true,
       activeConnectionId: connectionId,
       currentDatabase: connection?.database ?? null,
+      connectError: null,
       ...(keepsExistingMetadata ? {} : { schemaObjects: [], tables: [] }),
     });
 
@@ -294,7 +308,20 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       await executeStartupCommands(connectionId, connection?.startupCommands ?? "");
       loadMetadataAfterConnect(connectionId, connection?.database);
     } catch (error) {
-      restoreOrClearOnConnectError(error, connectionId, previousState);
+      // A failed saved-connection attempt keeps the SAME connecting screen
+      // mounted and flips it to an in-place error (message + Try Again + Go to
+      // Launcher) instead of bouncing back to the launcher with a detached
+      // error bar. The failed target stays as `activeConnectionId` (it is NOT
+      // added to `connectedIds`), so <WorkspaceConnecting> keeps rendering and
+      // simply swaps its skeleton for the error + recovery actions. We do not
+      // publish to the global error store here to avoid a second, redundant
+      // error surface behind the overlay.
+      const message = error instanceof Error ? error.message : String(error);
+      set({
+        isConnecting: false,
+        activeConnectionId: connectionId,
+        connectError: { id: connectionId, message: `Connection to target failed: ${message}` },
+      });
     }
   },
 

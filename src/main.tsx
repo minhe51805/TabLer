@@ -142,7 +142,7 @@ async function startApp() {
     if (import.meta.env.MODE === "e2e") {
       await import("@wdio/tauri-plugin");
     }
-    window.__TABLER_SET_BOOT_STATUS__?.("Importing App module...", "warning");
+    window.__TABLER_SET_BOOT_STATUS__?.("Loading application…");
     const module = await import("./App");
     clearPersistedBootFailure();
     (globalThis as TablerBootGlobal).__TABLER_HIDE_BOOT_SCREEN__?.();

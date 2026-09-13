@@ -155,6 +155,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
       tables: [],
       schemaObjects: [],
       isConnecting: false,
+      connectError: null,
     });
     if (leavingConnectionId && currentState.connectedIds.has(leavingConnectionId)) {
       void currentState.disconnectFromDatabase(leavingConnectionId, { keepTabs: true });

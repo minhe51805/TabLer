@@ -27,6 +27,8 @@ export const en = {
   "workspace.error.retry": "Try Again",
   "workspace.error.goLauncher": "Go to Launcher",
   "workspace.error.generic": "An unexpected error occurred while loading the workspace.",
+  "workspace.error.timeout":
+    "Workspace connection timed out after 30 seconds. The database may be unreachable or blocked by a firewall.",
   "common.connections": "Connections",
   "common.metrics": "Metrics",
   "common.auto": "Auto",

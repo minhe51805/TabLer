@@ -49,7 +49,7 @@ function App() {
   const { theme: _activeTheme, activateTheme } = useTheme();
   const {
     connection: {
-      activeConnectionId, connectedIds, connections, currentDatabase, isConnecting,
+      activeConnectionId, connectedIds, connections, currentDatabase, isConnecting, connectError,
       fetchDatabases, fetchTables, fetchSchemaObjects,
     },
     errors: { error, clearError, setError },
@@ -135,7 +135,7 @@ function App() {
     hasMountedAISlidePanel, shouldRenderGlobalModals,
   } = useWorkspaceChromeState({
     isRecoverableErrorDelayActive, isConnecting, connectionFormIntent, activeConnectionId,
-    activeConn, connectedIds, forceLauncherVisible, showStartupConnectionManager, activeTab,
+    activeConn, connectedIds, forceLauncherVisible, connectError, showStartupConnectionManager, activeTab,
     workspaceActivityByConnection, currentDatabase, showAISettings, showAboutModal,
     showPluginManager, showMcpIntegrations, showUserRoleManagement, showKeyboardShortcutsModal,
     showThemeCustomizer, showConnectionExporter, showConnectionImporter, isCommandPaletteOpen,

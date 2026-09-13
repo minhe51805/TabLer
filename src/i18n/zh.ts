@@ -28,6 +28,8 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "workspace.error.retry": "重试",
   "workspace.error.goLauncher": "返回启动器",
   "workspace.error.generic": "加载工作区时发生意外错误。",
+  "workspace.error.timeout":
+    "工作区连接在 30 秒后超时。数据库可能无法访问或被防火墙阻止。",
   "common.connections": "连接",
   "common.metrics": "指标",
   "common.auto": "自动",

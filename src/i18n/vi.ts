@@ -26,8 +26,10 @@ export const vi: Record<keyof typeof en, string> = {
   "workspace.error.kicker": "Sự cố kết nối",
   "workspace.error.title": "Lỗi workspace",
   "workspace.error.retry": "Thử lại",
-  "workspace.error.goLauncher": "Về Launcher",
+  "workspace.error.goLauncher": "Quay về Launcher",
   "workspace.error.generic": "Đã xảy ra lỗi không mong muốn khi tải workspace.",
+  "workspace.error.timeout":
+    "Kết nối workspace đã quá thời gian chờ sau 30 giây. Cơ sở dữ liệu có thể không truy cập được hoặc bị tường lửa chặn.",
   "common.connections": "Kết nối",
   "common.metrics": "Metrics",
   "common.auto": "Tự động",

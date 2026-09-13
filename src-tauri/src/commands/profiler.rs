@@ -1,7 +1,15 @@
 use crate::database::manager::DatabaseManager;
-use crate::database::models::DatabaseType;
+use crate::database::models::{DatabaseType, QueryResult};
 use serde::Serialize;
 use tauri::State;
+
+/// How the frontend must execute a probe. SQL engines run the probe's `sql`
+/// through the normal `execute_query` path; document/native engines (MongoDB)
+/// have no SQL to run, so the frontend calls `execute_profiler_sample` which
+/// dispatches to the driver's native sampling instead. Kept as a stable string
+/// so the UI can branch without knowing the engine list.
+pub const TRANSPORT_SQL: &str = "sql";
+pub const TRANSPORT_MONGODB: &str = "mongodb";
 
 /// Canonical column contract every engine's probe SQL must alias its columns to.
 ///
@@ -33,7 +41,7 @@ const DEFAULT_MIN_INTERVAL_MS: u32 = 500;
 /// single sample pulls back (and the payload the UI renders) regardless of
 /// engine, kept in one place so the cap can be tuned without editing six SQL
 /// strings.
-const PROBE_ROW_LIMIT: u32 = 200;
+pub(crate) const PROBE_ROW_LIMIT: u32 = 200;
 
 /// PostgreSQL / Greenplum: active backends from `pg_stat_activity`. Our own
 /// sampling backend is excluded via `pg_backend_pid()`, and idle sessions are
@@ -183,10 +191,14 @@ pub struct ProfilerProbe {
     /// The canonical column names the SQL aliases to, in contract order.
     pub columns: Vec<String>,
     /// The single read-only SELECT that samples currently-running statements.
+    /// Empty for non-SQL transports (e.g. MongoDB), which sample natively.
     pub sql: String,
     /// UI floor for the poll interval (ms). Polling faster than this would add
     /// avoidable load without meaningfully improving fidelity.
     pub min_interval_ms: u32,
+    /// How the frontend must run this probe: [`TRANSPORT_SQL`] (run `sql` via
+    /// `execute_query`) or [`TRANSPORT_MONGODB`] (call `execute_profiler_sample`).
+    pub transport: String,
 }
 
 /// Serialize a `DatabaseType` to its stable lowercase key (e.g. `postgresql`).
@@ -208,6 +220,7 @@ pub fn profiler_probe_for_database_type(db_type: DatabaseType) -> Result<Profile
             columns,
             sql: postgres_probe_sql(),
             min_interval_ms: DEFAULT_MIN_INTERVAL_MS,
+            transport: TRANSPORT_SQL.to_string(),
         }),
         DatabaseType::MySQL | DatabaseType::MariaDB => Ok(ProfilerProbe {
             engine: engine_key(db_type),
@@ -215,6 +228,7 @@ pub fn profiler_probe_for_database_type(db_type: DatabaseType) -> Result<Profile
             columns,
             sql: mysql_probe_sql(),
             min_interval_ms: DEFAULT_MIN_INTERVAL_MS,
+            transport: TRANSPORT_SQL.to_string(),
         }),
         DatabaseType::MSSQL => Ok(ProfilerProbe {
             engine: engine_key(db_type),
@@ -222,9 +236,20 @@ pub fn profiler_probe_for_database_type(db_type: DatabaseType) -> Result<Profile
             columns,
             sql: mssql_probe_sql(),
             min_interval_ms: DEFAULT_MIN_INTERVAL_MS,
+            transport: TRANSPORT_SQL.to_string(),
+        }),
+        DatabaseType::MongoDB => Ok(ProfilerProbe {
+            engine: engine_key(db_type),
+            source: "$currentOp \u{2014} active operations".to_string(),
+            columns,
+            // No SQL: the frontend samples MongoDB natively via
+            // `execute_profiler_sample` (admin `$currentOp` aggregation).
+            sql: String::new(),
+            min_interval_ms: DEFAULT_MIN_INTERVAL_MS,
+            transport: TRANSPORT_MONGODB.to_string(),
         }),
         other => Err(format!(
-            "The live profiler currently samples PostgreSQL, MySQL/MariaDB, and SQL Server. \
+            "The live profiler currently samples PostgreSQL, MySQL/MariaDB, SQL Server, and MongoDB. \
              {} support is on the roadmap (statement-store aggregates and native traces land \
              in later phases).",
             engine_key(other)
@@ -261,10 +286,14 @@ pub struct TopQueriesProbe {
     /// The canonical column names the SQL aliases to, in contract order.
     pub columns: Vec<String>,
     /// The single read-only SELECT that ranks the statement store.
+    /// Empty for non-SQL transports (e.g. MongoDB), which sample natively.
     pub sql: String,
     /// Operator-facing prerequisite the store depends on (e.g. an extension),
     /// surfaced in the UI so an empty/erroring result is self-explanatory.
     pub requires: String,
+    /// How the frontend must run this probe: [`TRANSPORT_SQL`] (run `sql` via
+    /// `execute_query`) or [`TRANSPORT_MONGODB`] (call `execute_profiler_sample`).
+    pub transport: String,
 }
 
 /// Resolve the top-queries probe for an engine, or a clear roadmap error for
@@ -282,6 +311,7 @@ pub fn top_queries_probe_for_database_type(
             requires: "The pg_stat_statements extension must be installed (CREATE EXTENSION \
                         pg_stat_statements) and preloaded via shared_preload_libraries."
                 .to_string(),
+            transport: TRANSPORT_SQL.to_string(),
         }),
         DatabaseType::MySQL | DatabaseType::MariaDB => Ok(TopQueriesProbe {
             engine: engine_key(db_type),
@@ -291,6 +321,7 @@ pub fn top_queries_probe_for_database_type(
             requires: "performance_schema must be enabled (it is on by default) with statement \
                         digest instrumentation active."
                 .to_string(),
+            transport: TRANSPORT_SQL.to_string(),
         }),
         DatabaseType::MSSQL => Ok(TopQueriesProbe {
             engine: engine_key(db_type),
@@ -300,10 +331,23 @@ pub fn top_queries_probe_for_database_type(
             requires: "Reads cached plan statistics; entries evicted from the plan cache are \
                         not shown, and VIEW SERVER STATE permission is required."
                 .to_string(),
+            transport: TRANSPORT_SQL.to_string(),
+        }),
+        DatabaseType::MongoDB => Ok(TopQueriesProbe {
+            engine: engine_key(db_type),
+            source: "system.profile \u{2014} profiled operations".to_string(),
+            columns,
+            // No SQL: the frontend samples MongoDB natively via
+            // `execute_profiler_sample` (system.profile aggregation).
+            sql: String::new(),
+            requires: "Database profiling must be enabled (db.setProfilingLevel(1) or 2); this \
+                        ranks the current database's system.profile capped collection by total time."
+                .to_string(),
+            transport: TRANSPORT_MONGODB.to_string(),
         }),
         other => Err(format!(
-            "Top Queries currently reads the statement store for PostgreSQL, MySQL/MariaDB, and \
-             SQL Server. {} support is on the roadmap.",
+            "Top Queries currently reads the statement store for PostgreSQL, MySQL/MariaDB, \
+             SQL Server, and MongoDB. {} support is on the roadmap.",
             engine_key(other)
         )),
     }
@@ -322,6 +366,35 @@ pub async fn get_top_queries_probe(
         .await
         .map_err(|error| error.to_string())?;
     top_queries_probe_for_database_type(db_type)
+}
+
+/// Sample a non-SQL engine's profiler natively (currently MongoDB).
+///
+/// SQL engines expose their sample as a probe `sql` string the frontend runs
+/// through `execute_query`; MongoDB has no SQL to run, so its probe advertises
+/// `transport = "mongodb"` and the frontend calls this command instead. `kind`
+/// selects `"live"` (active operations via `$currentOp`) or `"top"`
+/// (system.profile ranking); both return the same canonical `QueryResult` shape
+/// the SQL probes produce, so the trace/ranking tables render identically.
+#[tauri::command]
+pub async fn execute_profiler_sample(
+    connection_id: String,
+    kind: String,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<QueryResult, String> {
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let result = match kind.as_str() {
+        "live" => driver.profiler_live_sample().await,
+        "top" => driver.profiler_top_sample().await,
+        other => return Err(format!("Unknown profiler sample kind: {other}")),
+    };
+    // Surface the full anyhow chain (`{:#}`), not just the outermost context,
+    // so the UI shows MongoDB's real cause (e.g. "not authorized ... [inprog]")
+    // instead of only the generic "Failed to sample ... via $currentOp" wrapper.
+    result.map_err(|error| format!("{error:#}"))
 }
 
 #[cfg(test)]
@@ -398,8 +471,36 @@ mod tests {
         let error = profiler_probe_for_database_type(DatabaseType::SQLite).unwrap_err();
         assert!(error.contains("live profiler"));
         assert!(error.contains("sqlite"));
-        assert!(profiler_probe_for_database_type(DatabaseType::MongoDB).is_err());
+        assert!(profiler_probe_for_database_type(DatabaseType::Cassandra).is_err());
         assert!(profiler_probe_for_database_type(DatabaseType::Redis).is_err());
+    }
+
+    #[test]
+    fn mongodb_live_probe_uses_the_native_command_transport() {
+        let probe = profiler_probe_for_database_type(DatabaseType::MongoDB).unwrap();
+        assert_eq!(probe.engine, "mongodb");
+        assert_eq!(probe.transport, TRANSPORT_MONGODB);
+        // MongoDB has no SQL to run; the frontend samples it via
+        // `execute_profiler_sample` instead of `execute_query`.
+        assert!(probe.sql.is_empty());
+        assert_eq!(probe.columns.len(), PROFILER_COLUMNS.len());
+        assert!(!probe.source.is_empty());
+    }
+
+    #[test]
+    fn sql_engines_use_the_sql_transport() {
+        for db in SUPPORTED {
+            assert_eq!(
+                profiler_probe_for_database_type(db).unwrap().transport,
+                TRANSPORT_SQL,
+                "engine {db:?} live probe must use the SQL transport"
+            );
+            assert_eq!(
+                top_queries_probe_for_database_type(db).unwrap().transport,
+                TRANSPORT_SQL,
+                "engine {db:?} top-queries probe must use the SQL transport"
+            );
+        }
     }
 
     #[test]
@@ -471,7 +572,18 @@ mod tests {
         let error = top_queries_probe_for_database_type(DatabaseType::SQLite).unwrap_err();
         assert!(error.contains("Top Queries"));
         assert!(error.contains("sqlite"));
-        assert!(top_queries_probe_for_database_type(DatabaseType::MongoDB).is_err());
+        assert!(top_queries_probe_for_database_type(DatabaseType::Cassandra).is_err());
         assert!(top_queries_probe_for_database_type(DatabaseType::Redis).is_err());
+    }
+
+    #[test]
+    fn mongodb_top_queries_probe_uses_the_native_command_transport() {
+        let probe = top_queries_probe_for_database_type(DatabaseType::MongoDB).unwrap();
+        assert_eq!(probe.engine, "mongodb");
+        assert_eq!(probe.transport, TRANSPORT_MONGODB);
+        assert!(probe.sql.is_empty());
+        assert_eq!(probe.columns.len(), TOP_QUERY_COLUMNS.len());
+        assert!(!probe.source.is_empty());
+        assert!(!probe.requires.is_empty());
     }
 }

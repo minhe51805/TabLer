@@ -28,6 +28,8 @@ export const tr: Record<keyof typeof en, string> = {
   "workspace.error.retry": "Tekrar dene",
   "workspace.error.goLauncher": "Baslaticiya don",
   "workspace.error.generic": "Calisma alani yuklenirken beklenmeyen bir hata olustu.",
+  "workspace.error.timeout":
+    "Calisma alani baglantisi 30 saniye sonra zaman asimina ugradi. Veritabani erisilemez olabilir veya guvenlik duvari tarafindan engellenmis olabilir.",
   "common.connections": "Baglantilar",
   "common.metrics": "Metrikler",
   "common.auto": "Otomatik",

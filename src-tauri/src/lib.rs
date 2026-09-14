@@ -62,7 +62,6 @@ use commands::mcp::{
     list_mcp_tokens, revoke_mcp_token, set_mcp_connection_policy, start_mcp_local_server,
     stop_mcp_local_server,
 };
-use commands::operations::get_operational_queries;
 use commands::profiler::{execute_profiler_sample, get_profiler_probe, get_top_queries_probe};
 use commands::plugins::{
     check_plugin_updates, get_plugin_registry, install_plugin_bundle, install_registry_plugin,
@@ -472,8 +471,6 @@ pub fn run() {
             // Maintenance commands
             preview_maintenance_command,
             run_maintenance_command,
-            // Operations dashboard queries
-            get_operational_queries,
             // Live profiler (per-engine active-session sampling probe)
             get_profiler_probe,
             // Profiler: statement-store aggregate ranking probe

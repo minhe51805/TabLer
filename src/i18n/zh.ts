@@ -29,8 +29,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "workspace.error.retry": "重试",
   "workspace.error.goLauncher": "返回启动器",
   "workspace.error.generic": "加载工作区时发生意外错误。",
-  "workspace.error.timeout":
-    "工作区连接在 30 秒后超时。数据库可能无法访问或被防火墙阻止。",
+  "workspace.error.timeout": "工作区连接在 30 秒后超时。数据库可能无法访问或被防火墙阻止。",
   "common.connections": "连接",
   "common.metrics": "指标",
   "common.auto": "自动",
@@ -85,8 +84,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "menu.item.keyboardShortcuts": "键盘快捷键",
   "help.about.kicker": "关于",
   "help.about.title": "关于 TableR",
-  "help.about.description":
-    "一个专注于查询、浏览、结构编辑和指标面板的数据库工作区。",
+  "help.about.description": "一个专注于查询、浏览、结构编辑和指标面板的数据库工作区。",
   "help.about.version": "版本",
   "help.about.build": "构建",
   "help.about.modules": "模块",
@@ -190,8 +188,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "startup.manager.pickWorkspace": "选择数据库工作区",
   "startup.manager.searchPlaceholder": "搜索连接...",
   "startup.manager.noConnections": "还没有已保存连接",
-  "startup.manager.noConnectionsDescription":
-    "先创建一个新连接，或初始化本地数据库开始使用。",
+  "startup.manager.noConnectionsDescription": "先创建一个新连接，或初始化本地数据库开始使用。",
   "explorer.noActiveConnection": "没有活动连接",
   "explorer.connectToExplore": "连接数据库后即可浏览数据表",
   "explorer.title": "Explorer",
@@ -286,8 +283,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.deleteBoard": "删除面板",
   "metrics.renameBoardModalKicker": "指标面板",
   "metrics.renameBoardModalTitle": "重命名面板",
-  "metrics.renameBoardModalSubtitle":
-    "更新在指标侧边栏和工作区中显示的面板名称。",
+  "metrics.renameBoardModalSubtitle": "更新在指标侧边栏和工作区中显示的面板名称。",
   "metrics.boardNamePlaceholder": "面板名称",
   "metrics.rename": "重命名",
   "metrics.manual": "手动",
@@ -320,8 +316,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.validation.addQuery": "添加一个只读 SQL 查询来加载该 widget。",
   "metrics.validation.singleStatement": "Metrics widget 仅支持单条只读语句。",
   "metrics.validation.readOnlyOnly": "Metrics board widget 仅支持只读查询。",
-  "metrics.validation.noMutatingCte":
-    "Metrics board widget 不允许带写操作的 CTE。",
+  "metrics.validation.noMutatingCte": "Metrics board widget 不允许带写操作的 CTE。",
   "metrics.widget.refresh": "刷新 widget",
   "metrics.widget.issue": "问题",
   "metrics.widget.refreshing": "刷新中",
@@ -339,22 +334,18 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "tabs.hideResults": "隐藏结果",
   "tabs.showResults": "显示结果",
   "tabs.readyToExecute": "按 Ctrl+Enter 运行",
-  "tabs.noSqlToExecute":
-    "还没有可运行的内容。先输入查询或命令，再按 Ctrl+Enter。",
+  "tabs.deliveringRows": "正在接收 {{count}} 行...",
+  "tabs.noSqlToExecute": "还没有可运行的内容。先输入查询或命令，再按 Ctrl+Enter。",
   "metrics.widget.openResult": "Open result in workspace",
   "metrics.widget.openSourceSql": "Open source SQL",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
-  "ai.toast.providerFailover":
-    "提供者“{{failed}}”出现故障，正在切换到提供者“{{next}}”，请稍候。",
-  "ai.failover.consentTitle":
-    "提供者出现故障",
+  "ai.toast.providerFailover": "提供者“{{failed}}”出现故障，正在切换到提供者“{{next}}”，请稍候。",
+  "ai.failover.consentTitle": "提供者出现故障",
   "ai.failover.consentBody":
     "提供者“{{failed}}”持续出错。是否允许 TableR 记住这一点，并在以后再次发生时自动切换到其他已启用的提供者？",
-  "ai.failover.consentAllow":
-    "允许自动切换",
-  "ai.failover.consentDeny":
-    "暂不",
+  "ai.failover.consentAllow": "允许自动切换",
+  "ai.failover.consentDeny": "暂不",
 
   // ── Data grid toolbar ─────────────────────────────────────────────────
   "datagrid.filterRows": "筛选行",

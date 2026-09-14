@@ -204,8 +204,7 @@ export const vi: Record<keyof typeof en, string> = {
   "explorer.disconnectTitle": "Ngắt kết nối CSDL hiện tại",
   "explorer.refreshTitle": "Làm mới",
   "explorer.searchPlaceholder": "Tìm bảng, view, trigger hoặc routine...",
-  "explorer.browseHint":
-    "Duyệt bảng, view, trigger và routine từ cơ sở dữ liệu hiện tại.",
+  "explorer.browseHint": "Duyệt bảng, view, trigger và routine từ cơ sở dữ liệu hiện tại.",
   "explorer.tablesReady": "{{count}} bảng sẵn sàng để duyệt",
   "explorer.switchWorkspace": "Chuyển workspace để duyệt đối tượng",
   "explorer.databaseObjects": "Đối tượng CSDL",
@@ -320,14 +319,10 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.widget.loading": "Đang tải...",
   "metrics.widget.noData": "Không có dữ liệu",
   "metrics.widget.queryNeedsSeries": "Query cần một nhãn và một giá trị số.",
-  "metrics.validation.addQuery":
-    "Hãy thêm một câu SQL chỉ đọc để nạp dữ liệu cho widget này.",
-  "metrics.validation.singleStatement":
-    "Widget metrics chỉ hỗ trợ một câu lệnh chỉ đọc duy nhất.",
-  "metrics.validation.readOnlyOnly":
-    "Metrics board chỉ hỗ trợ các query ở chế độ chỉ đọc.",
-  "metrics.validation.noMutatingCte":
-    "CTE có thao tác ghi không được phép trong metrics board.",
+  "metrics.validation.addQuery": "Hãy thêm một câu SQL chỉ đọc để nạp dữ liệu cho widget này.",
+  "metrics.validation.singleStatement": "Widget metrics chỉ hỗ trợ một câu lệnh chỉ đọc duy nhất.",
+  "metrics.validation.readOnlyOnly": "Metrics board chỉ hỗ trợ các query ở chế độ chỉ đọc.",
+  "metrics.validation.noMutatingCte": "CTE có thao tác ghi không được phép trong metrics board.",
   "metrics.widget.refresh": "Làm mới widget",
   "metrics.widget.issue": "Lỗi",
   "metrics.widget.refreshing": "Đang làm mới",
@@ -346,6 +341,7 @@ export const vi: Record<keyof typeof en, string> = {
   "tabs.hideResults": "Ẩn kết quả",
   "tabs.showResults": "Hiện kết quả",
   "tabs.readyToExecute": "Nhấn Ctrl+Enter để chạy",
+  "tabs.deliveringRows": "Đang nhận {{count}} dòng...",
   "tabs.noSqlToExecute":
     "Chưa có gì để chạy. Hãy nhập query hoặc command trước rồi nhấn Ctrl+Enter.",
   "metrics.widget.openResult": "Open result in workspace",
@@ -354,14 +350,11 @@ export const vi: Record<keyof typeof en, string> = {
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":
     'Provider "{{failed}}" đang lỗi, sẽ chuyển sang provider "{{next}}", vui lòng đợi.',
-  "ai.failover.consentTitle":
-    "Provider đang lỗi",
+  "ai.failover.consentTitle": "Provider đang lỗi",
   "ai.failover.consentBody":
     'Provider "{{failed}}" đang gặp lỗi liên tục. Cho phép TableR ghi nhớ và tự động chuyển sang provider khác khi gặp lỗi về sau không?',
-  "ai.failover.consentAllow":
-    "Cho phép tự chuyển",
-  "ai.failover.consentDeny":
-    "Không",
+  "ai.failover.consentAllow": "Cho phép tự chuyển",
+  "ai.failover.consentDeny": "Không",
 
   // ── Data grid toolbar ─────────────────────────────────────────────────
   "datagrid.filterRows": "Lọc dòng",
@@ -474,7 +467,8 @@ export const vi: Record<keyof typeof en, string> = {
   "datagrid.copiedDescription": "{{count}} dòng đã nằm trên clipboard.",
   "datagrid.copyFailed": "Copy thất bại",
   "datagrid.exportFailed": "Xuất thất bại",
-  "datagrid.partialResultBanner": "CSDL trả về một phần kết quả. Tinh chỉnh truy vấn hoặc tải thêm dữ liệu để tiếp tục.",
+  "datagrid.partialResultBanner":
+    "CSDL trả về một phần kết quả. Tinh chỉnh truy vấn hoặc tải thêm dữ liệu để tiếp tục.",
 
   // ── Data grid context menu ───────────────────────────────────────────
   "datagrid.ctxCopied": "Đã copy {{target}}",
@@ -508,7 +502,8 @@ export const vi: Record<keyof typeof en, string> = {
   "datagrid.insKicker": "Thêm dòng",
   "datagrid.insAddTo": "Thêm dòng vào {{table}}",
   "datagrid.insAdd": "Thêm dòng",
-  "datagrid.insDescription": "Nhập các giá trị bắt buộc bên dưới. Cột có giá trị mặc định của CSDL được xử lý tự động.",
+  "datagrid.insDescription":
+    "Nhập các giá trị bắt buộc bên dưới. Cột có giá trị mặc định của CSDL được xử lý tự động.",
   "datagrid.insCloseAria": "Đóng hộp thoại thêm dòng",
   "datagrid.insPlaceholderUuid": "Giá trị UUID",
   "datagrid.insPlaceholderNumeric": "Giá trị số",
@@ -524,7 +519,8 @@ export const vi: Record<keyof typeof en, string> = {
   "datagrid.pasteDescription": "Ánh xạ cột từ clipboard",
   "datagrid.pasteHeadersDetected": "phát hiện dòng tiêu đề",
   "datagrid.pastePositional": "ánh xạ theo vị trí",
-  "datagrid.pasteNullOmitted": "Các cột bảng không khớp được bỏ qua để CSDL dùng giá trị mặc định: {{columns}}",
+  "datagrid.pasteNullOmitted":
+    "Các cột bảng không khớp được bỏ qua để CSDL dùng giá trị mặc định: {{columns}}",
   "datagrid.pasteSkippedInline": "Bỏ qua các cột clipboard: {{columns}}",
   "datagrid.pasteCloseAria": "Đóng hộp thoại dán",
   "datagrid.pasteMappingsTitle": "Ánh xạ cột",

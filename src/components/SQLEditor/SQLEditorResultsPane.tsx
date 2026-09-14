@@ -2,6 +2,7 @@ import { AlertCircle, Terminal, X } from "lucide-react";
 import { DataGrid } from "../DataGrid/DataGrid";
 import type { QueryResult } from "../../types";
 import { useI18n } from "../../i18n";
+import { ProgressiveDeliveryIndicator } from "./ProgressiveDeliveryIndicator";
 
 interface SQLEditorResultsPaneProps {
   error: string | null;
@@ -34,11 +35,7 @@ export function SQLEditorResultsPane({
 
   return (
     <>
-      <div
-        ref={splitRef}
-        className="sql-results-resize"
-        onMouseDown={onSplitDrag}
-      >
+      <div ref={splitRef} className="sql-results-resize" onMouseDown={onSplitDrag}>
         <div className="sql-results-resize-grip" />
       </div>
 
@@ -48,6 +45,7 @@ export function SQLEditorResultsPane({
             <Terminal className="w-3.5 h-3.5 text-[var(--fintech-green)]" />
             <span>{t("tabs.results")}</span>
             <kbd className="kbd">Ctrl+Shift+`</kbd>
+            <ProgressiveDeliveryIndicator />
           </div>
 
           <button
@@ -67,9 +65,7 @@ export function SQLEditorResultsPane({
               <AlertCircle className="sql-results-message-icon h-4 w-4 shrink-0" />
               <div>
                 <p className="sql-results-message-title">Execution Error</p>
-                <pre className="sql-results-message-body sql-results-message-code">
-                  {error}
-                </pre>
+                <pre className="sql-results-message-body sql-results-message-code">{error}</pre>
               </div>
             </div>
           ) : notice ? (
@@ -77,9 +73,7 @@ export function SQLEditorResultsPane({
               <Terminal className="sql-results-message-icon h-4 w-4 shrink-0" />
               <div>
                 <p className="sql-results-message-title">{t("tabs.results")}</p>
-                <p className="sql-results-message-body">
-                  {notice}
-                </p>
+                <p className="sql-results-message-body">{notice}</p>
               </div>
             </div>
           ) : result ? (
@@ -92,9 +86,7 @@ export function SQLEditorResultsPane({
           ) : (
             <div className="sql-results-empty">
               <Terminal className="h-8 w-8 text-[var(--fintech-green)] opacity-50" />
-              <p className="sql-results-empty-copy">
-                {t("tabs.readyToExecute")}
-              </p>
+              <p className="sql-results-empty-copy">{t("tabs.readyToExecute")}</p>
               <button
                 type="button"
                 onClick={onToggleResultsPane}

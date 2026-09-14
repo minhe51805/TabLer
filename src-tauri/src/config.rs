@@ -111,6 +111,26 @@ pub fn mutating_query_timeout() -> Duration {
     ))
 }
 
+/// Lower bound for a per-query `timeout_ms` override (1 second). A caller can
+/// never pick a window too small to ever finish a real statement: sub-second
+/// values are clamped up to this floor.
+pub const MIN_QUERY_TIMEOUT_MS: u64 = 1_000;
+/// Upper bound for a per-query `timeout_ms` override (10 minutes). A runaway or
+/// typo can never disable the safety net: larger values are clamped down here.
+pub const MAX_QUERY_TIMEOUT_MS: u64 = 600_000;
+
+/// Pure resolver for a per-query timeout override (roadmap Phase 3D backend
+/// perf): when the caller supplies a positive `timeout_ms`, clamp it to
+/// `[MIN_QUERY_TIMEOUT_MS, MAX_QUERY_TIMEOUT_MS]`; otherwise fall back to the
+/// classified `default_window` (read-only vs mutating). `None`/`Some(0)` leave
+/// behaviour unchanged. Kept pure so it is unit-testable without a live driver.
+pub fn resolve_query_timeout(timeout_ms: Option<u64>, default_window: Duration) -> Duration {
+    match timeout_ms.filter(|&ms| ms > 0) {
+        Some(ms) => Duration::from_millis(ms.clamp(MIN_QUERY_TIMEOUT_MS, MAX_QUERY_TIMEOUT_MS)),
+        None => default_window,
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Sandbox result caps for AI-agent reads (D10)
 // ─────────────────────────────────────────────────────────────────────────
@@ -150,5 +170,37 @@ mod tests {
     fn compiled_defaults_are_the_documented_windows() {
         assert_eq!(DEFAULT_READ_ONLY_QUERY_TIMEOUT_SECS, 180);
         assert_eq!(DEFAULT_MUTATING_QUERY_TIMEOUT_SECS, 60);
+    }
+
+    #[test]
+    fn query_timeout_override_falls_back_when_absent_or_zero() {
+        let default = Duration::from_secs(180);
+        assert_eq!(resolve_query_timeout(None, default), default);
+        assert_eq!(resolve_query_timeout(Some(0), default), default);
+    }
+
+    #[test]
+    fn query_timeout_override_uses_valid_positive_millis() {
+        let default = Duration::from_secs(180);
+        assert_eq!(
+            resolve_query_timeout(Some(30_000), default),
+            Duration::from_millis(30_000)
+        );
+    }
+
+    #[test]
+    fn query_timeout_override_clamps_to_the_documented_bounds() {
+        let default = Duration::from_secs(180);
+        // Below the 1s floor clamps up; above the 10min ceiling clamps down.
+        assert_eq!(
+            resolve_query_timeout(Some(1), default),
+            Duration::from_millis(MIN_QUERY_TIMEOUT_MS)
+        );
+        assert_eq!(
+            resolve_query_timeout(Some(u64::MAX), default),
+            Duration::from_millis(MAX_QUERY_TIMEOUT_MS)
+        );
+        assert_eq!(MIN_QUERY_TIMEOUT_MS, 1_000);
+        assert_eq!(MAX_QUERY_TIMEOUT_MS, 600_000);
     }
 }

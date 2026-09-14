@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useI18n } from "../../../i18n";
 import type { QueryResult } from "../../../types";
 
@@ -24,7 +25,7 @@ export function FkPreviewPopover({
   onClose,
 }: FkPreviewPopoverProps) {
   const { t } = useI18n();
-  return (
+  return createPortal(
     <div className="datagrid-fk-preview">
       <div className="datagrid-fk-preview-header">
         <span className="datagrid-fk-preview-title">
@@ -71,6 +72,7 @@ export function FkPreviewPopover({
           <div className="datagrid-fk-preview-empty">{t("datagrid.fkHint")}</div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

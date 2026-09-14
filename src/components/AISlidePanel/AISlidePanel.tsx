@@ -208,6 +208,14 @@ export function AISlidePanel({
     if (!isOpen) return;
     if (syncedWorkspaceIdRef.current === activeChatWorkspaceId) return;
     syncedWorkspaceIdRef.current = activeChatWorkspaceId;
+    // Only adopt the workspace's own database when the connection has no active
+    // database yet. If the user already selected a database (e.g. from the
+    // sidebar), that explicit choice is authoritative: merely opening the panel
+    // must not silently re-scope the shared connection session — on SQL Server
+    // a single session backs the whole workspace, so overriding it here makes
+    // the AI read a database the user never picked. Explicitly switching chat
+    // workspaces (handleSelectChatWorkspace) still re-scopes on purpose.
+    if (useConnectionStore.getState().currentDatabase) return;
     ensureWorkspaceDatabase(activeChatWorkspaceId);
   }, [activeChatWorkspaceId, ensureWorkspaceDatabase, isOpen]);
 

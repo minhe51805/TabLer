@@ -461,7 +461,7 @@ export function buildAgentControllerPrompt(params: {
   const databaseMentionMismatch = detectDatabaseMentionMismatch({
     userPrompt,
     knownDatabaseNames,
-    boundDatabase: workspaceBoundDatabase ?? currentDatabase,
+    boundDatabase: currentDatabase ?? workspaceBoundDatabase ?? null,
   });
   const visibleTables = availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT
     ? availableTableNames

@@ -1,0 +1,25 @@
+# Build output / dependencies
+dist
+build
+node_modules
+**/node_modules/**
+
+# Rust build artifacts
+src-tauri/target
+
+# Next.js website build output
+website/.next
+website/out
+
+# Generated plugin repository artifacts
+website/public/plugins
+
+# Lockfiles and generated data
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+*.min.js
+*.min.css
+
+# Rust is handled by rustfmt, not prettier
+*.rs

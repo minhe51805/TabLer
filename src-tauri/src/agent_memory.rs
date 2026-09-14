@@ -34,7 +34,7 @@ const MAX_MEMORY_NAME_CHARS: usize = 64;
 /// Scope path components (connection id, database name) never travel raw into
 /// the filesystem: allowlist ASCII identifiers so a hostile scope string
 /// cannot traverse out of the memory root.
-fn sanitize_scope_component(raw: &str) -> Option<String> {
+pub(crate) fn sanitize_scope_component(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty()
         || trimmed.len() > MAX_MEMORY_NAME_CHARS

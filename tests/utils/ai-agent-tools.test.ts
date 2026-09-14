@@ -40,6 +40,28 @@ describe("AI agent tool contract", () => {
     expect(AI_AGENT_TOOL_NAMES).not.toContain("plan");
   });
 
+  it("parses Anthropic's native memory tool action without a catalog spec", () => {
+    const action = parseAIAgentToolAction(
+      JSON.stringify({
+        action: "memory",
+        message: "check what I remember",
+        args: { command: "view", path: "/memories" },
+      }),
+    );
+    expect(action.action).toBe("memory");
+    expect(action.args).toEqual({ command: "view", path: "/memories" });
+    // The native memory tool is Anthropic-only and never part of the catalog.
+    expect(AI_AGENT_TOOL_NAMES).not.toContain("memory");
+  });
+
+  it("rejects a native memory action with an unknown command", () => {
+    expect(() =>
+      parseAIAgentToolAction(
+        JSON.stringify({ action: "memory", message: "", args: { command: "wipe" } }),
+      ),
+    ).toThrow(/args\.command/);
+  });
+
   it("parses skill loads and trims the skill name", () => {
     expect(parseAIAgentToolAction(
       '{"action":"skill","message":"This matches the db-audit skill","args":{"name":" db-audit "}}',

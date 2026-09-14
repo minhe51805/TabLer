@@ -1,5 +1,6 @@
 use tauri::{Emitter, Manager};
 mod agent_memory;
+mod agent_memory_native;
 mod ai_skills;
 mod ai_workspace_cache;
 mod ai_workspace_history;
@@ -396,6 +397,7 @@ pub fn run() {
             agent_memory::read_agent_memory,
             agent_memory::save_agent_memory,
             agent_memory::delete_agent_memory,
+            agent_memory_native::run_agent_memory_tool,
             ai_skills::list_ai_skills,
             ai_skills::read_ai_skill,
             ai_skills::read_ai_skill_resource,

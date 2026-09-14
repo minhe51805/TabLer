@@ -47,6 +47,24 @@ pub const AI_PANEL_MAX_OUTPUT_TOKENS: u32 = 4_096;
 /// Extended-thinking budget added ON TOP of the answer budget for Anthropic
 /// panel turns (Anthropic counts thinking tokens against `max_tokens`).
 pub const ANTHROPIC_THINKING_BUDGET_TOKENS: u32 = 2_048;
+
+/// Anthropic Context Editing beta header value. Sent as `anthropic-beta`
+/// alongside `ANTHROPIC_API_VERSION` on Anthropic tool/agent requests so the
+/// server can prune stale `tool_use`/`tool_result` pairs itself (see
+/// `providers::anthropic_context_management`). Bump here only, like D3.
+pub const ANTHROPIC_CONTEXT_MANAGEMENT_BETA: &str = "context-management-2025-06-27";
+/// Prompt input-token threshold at which the server starts clearing old tool
+/// results (`clear_tool_uses_20250919.trigger`). Set high enough that short
+/// agent runs are untouched, but below the compact/token budgets so it relieves
+/// pressure before those fire.
+pub const ANTHROPIC_CONTEXT_CLEAR_TRIGGER_TOKENS: u32 = 100_000;
+/// How many of the most recent tool_use/result pairs the server keeps when it
+/// clears (`clear_tool_uses_20250919.keep`).
+pub const ANTHROPIC_CONTEXT_KEEP_TOOL_USES: u32 = 3;
+/// Minimum tokens the server must reclaim per clear, so a clear is worth moving
+/// the prompt-cache breakpoint (`clear_tool_uses_20250919.clear_at_least`).
+pub const ANTHROPIC_CONTEXT_CLEAR_AT_LEAST_TOKENS: u32 = 10_000;
+
 /// Base backoff between provider retries; scaled by attempt number.
 pub const AI_RETRY_BACKOFF_BASE_MS: u64 = 800;
 

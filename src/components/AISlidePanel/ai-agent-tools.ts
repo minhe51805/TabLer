@@ -100,6 +100,43 @@ export type AIAgentDeleteMemoryAction = AIAgentToolActionBase<
   AIAgentDeleteMemoryArgs
 >;
 
+/**
+ * Anthropic's NATIVE memory tool (`memory_20250818`). Unlike catalog tools it
+ * is NOT in AI_AGENT_TOOL_NAMES and carries no JSON schema: Claude emits a
+ * `command` plus filesystem-style fields, which the executor forwards verbatim
+ * to the `run_agent_memory_tool` backend command (a sandboxed /memories tree).
+ * Anthropic-only — it is never declared to any other provider.
+ */
+export const NATIVE_MEMORY_TOOL_ACTION = "memory" as const;
+export const NATIVE_MEMORY_TOOL_COMMANDS = [
+  "view",
+  "create",
+  "str_replace",
+  "insert",
+  "delete",
+  "rename",
+] as const;
+export type NativeMemoryToolCommand = (typeof NATIVE_MEMORY_TOOL_COMMANDS)[number];
+
+export interface AIAgentMemoryToolArgs extends Record<string, unknown> {
+  command: NativeMemoryToolCommand;
+  path?: string;
+  file_text?: string;
+  old_str?: string;
+  new_str?: string;
+  insert_line?: number;
+  insert_text?: string;
+  old_path?: string;
+  new_path?: string;
+  view_range?: number[];
+}
+
+export interface AIAgentMemoryToolAction {
+  action: "memory";
+  args: AIAgentMemoryToolArgs;
+  message: string;
+}
+
 export interface AIAgentSkillArgs extends Record<string, unknown> {
   name: string;
 }
@@ -317,6 +354,7 @@ export type AIAgentToolAction =
   | AIAgentReadMemoryAction
   | AIAgentSaveMemoryAction
   | AIAgentDeleteMemoryAction
+  | AIAgentMemoryToolAction
   | AIAgentEditQuerySqlAction
   | AIAgentSkillAction
   | AIAgentReadSkillResourceAction
@@ -459,6 +497,25 @@ function isAIAgentToolName(value: unknown): value is AIAgentToolName {
     && (AI_AGENT_TOOL_NAMES as readonly string[]).includes(value);
 }
 
+/**
+ * Validate the loose args of a native memory tool call. The backend sandbox
+ * does the authoritative validation (paths, sizes, traversal); here we only
+ * guarantee a known `command` so a malformed call throws a repair-friendly
+ * message instead of round-tripping to the backend, then forward the rest of
+ * the filesystem fields verbatim.
+ */
+function parseNativeMemoryToolArgs(
+  args: Record<string, unknown>,
+): AIAgentMemoryToolArgs {
+  const command = typeof args.command === "string" ? args.command.trim() : "";
+  if (!(NATIVE_MEMORY_TOOL_COMMANDS as readonly string[]).includes(command)) {
+    throw new Error(
+      `The memory tool requires args.command to be one of: ${NATIVE_MEMORY_TOOL_COMMANDS.join(", ")}.`,
+    );
+  }
+  return { ...args, command: command as NativeMemoryToolCommand };
+}
+
 export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
   const candidate = extractJsonObjectCandidate(rawResponse);
   const sanitizedCandidate = sanitizeJsonStringLiterals(candidate);
@@ -489,7 +546,8 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
       : String(parseError ?? "Unknown JSON parse error");
     throw new Error(`The agent returned malformed JSON: ${message}`);
   }
-  if (!isAIAgentToolName(parsed.action)) {
+  const isNativeMemoryAction = parsed.action === NATIVE_MEMORY_TOOL_ACTION;
+  if (!isNativeMemoryAction && !isAIAgentToolName(parsed.action)) {
     throw new Error("The agent returned an unsupported action.");
   }
   if (
@@ -529,9 +587,20 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
   }
   const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
 
+  if (isNativeMemoryAction) {
+    // Anthropic's native memory tool has no catalog spec — forward the command
+    // and filesystem args verbatim (the backend sandbox is the source of truth
+    // for path/size/traversal validation).
+    return {
+      action: NATIVE_MEMORY_TOOL_ACTION,
+      args: parseNativeMemoryToolArgs(args),
+      message,
+    };
+  }
+
   return {
-    action: parsed.action,
-    args: parseAgentToolArgs(parsed.action, args),
+    action: parsed.action as AIAgentToolName,
+    args: parseAgentToolArgs(parsed.action as AIAgentToolName, args),
     message,
   } as AIAgentToolAction;
 }

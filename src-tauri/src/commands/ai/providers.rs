@@ -813,6 +813,35 @@ pub(crate) fn apply_conversation_history(
 /// providers and Anthropic share the top-level `tools`/`tool_choice` shape;
 /// Gemini nests declarations under `tools[].functionDeclarations` and uses
 /// `tool_config` for the selection hint.
+/// Context Editing (beta `context-management-2025-06-27`) configuration for
+/// Anthropic tool/agent requests. Once the prompt crosses the trigger, the
+/// server clears all but the most recent tool_use/tool_result pairs *server
+/// side* — the transcript we send is unchanged, but the model processes far
+/// fewer tokens and the cached prefix is preserved. Emitted only when tools are
+/// present (see `apply_native_tools`), so plain completion bodies stay identical.
+pub(crate) fn anthropic_context_management() -> serde_json::Value {
+    json!({
+        "edits": [
+            {
+                "type": "clear_tool_uses_20250919",
+                "trigger": {
+                    "type": "input_tokens",
+                    "value": crate::config::ANTHROPIC_CONTEXT_CLEAR_TRIGGER_TOKENS
+                },
+                "keep": {
+                    "type": "tool_uses",
+                    "value": crate::config::ANTHROPIC_CONTEXT_KEEP_TOOL_USES
+                },
+                "clear_at_least": {
+                    "type": "input_tokens",
+                    "value": crate::config::ANTHROPIC_CONTEXT_CLEAR_AT_LEAST_TOKENS
+                },
+                "clear_tool_inputs": false
+            }
+        ]
+    })
+}
+
 pub(crate) fn apply_native_tools(
     body: &mut serde_json::Value,
     provider_type: &AIProviderType,
@@ -835,6 +864,20 @@ pub(crate) fn apply_native_tools(
             if let Some(choice) = tool_choice {
                 object.insert("tool_config".to_string(), choice.clone());
             }
+        }
+        AIProviderType::Anthropic => {
+            object.insert("tools".to_string(), tools.clone());
+            if let Some(choice) = tool_choice {
+                object.insert("tool_choice".to_string(), choice.clone());
+            }
+            // Context Editing beta: let the server prune stale tool_use/result
+            // pairs on long agent runs (paired with the `anthropic-beta:
+            // context-management-2025-06-27` header set at the Anthropic send
+            // sites in execution.rs). Only reached when tools are present.
+            object.insert(
+                "context_management".to_string(),
+                anthropic_context_management(),
+            );
         }
         _ => {
             object.insert("tools".to_string(), tools.clone());
@@ -1319,6 +1362,48 @@ mod tests {
         );
         assert_eq!(body["tools"], tools);
         assert_eq!(body["tool_choice"], json!("auto"));
+        // OpenAI-shape requests never carry Anthropic context editing.
+        assert!(body.get("context_management").is_none());
+    }
+
+    #[test]
+    fn apply_native_tools_adds_anthropic_context_editing() {
+        let mut body = json!({ "model": "claude-sonnet-4", "messages": [] });
+        let tools = json!([{ "name": "finish", "input_schema": {} }]);
+        let choice = json!({ "type": "auto" });
+        apply_native_tools(
+            &mut body,
+            &AIProviderType::Anthropic,
+            Some(&tools),
+            Some(&choice),
+        );
+        // Tools + tool_choice keep the Anthropic top-level shape.
+        assert_eq!(body["tools"], tools);
+        assert_eq!(body["tool_choice"], json!({ "type": "auto" }));
+        // Context Editing (beta context-management-2025-06-27) is attached so the
+        // server clears stale tool results itself on long agent runs.
+        assert_eq!(
+            body["context_management"]["edits"][0]["type"],
+            json!("clear_tool_uses_20250919")
+        );
+        assert_eq!(
+            body["context_management"]["edits"][0]["trigger"]["type"],
+            json!("input_tokens")
+        );
+        assert_eq!(
+            body["context_management"]["edits"][0]["keep"]["value"],
+            json!(crate::config::ANTHROPIC_CONTEXT_KEEP_TOOL_USES)
+        );
+    }
+
+    #[test]
+    fn apply_native_tools_context_editing_is_absent_without_tools() {
+        let mut body = json!({ "model": "claude-sonnet-4", "messages": [] });
+        apply_native_tools(&mut body, &AIProviderType::Anthropic, None, None);
+        // No tools => no context_management (and no tools key): plain completion
+        // bodies stay byte-identical.
+        assert!(body.get("context_management").is_none());
+        assert!(body.get("tools").is_none());
     }
 
     #[test]

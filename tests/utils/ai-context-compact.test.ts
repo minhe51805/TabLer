@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCompactTranscript, buildCompactUserPrompt, buildPostCompactHistory, buildWorkspaceContextMessages, COMPACT_DIGEST_CHAR_BUDGET, deriveMemoryTitle, extractDigestFromReply, extractMemoryKeywords, isCompactCommand, estimateTokensFromChars, formatTokensCompact } from "../../src/utils/ai-context-compact";
+import { buildCompactTranscript, buildCompactUserPrompt, buildPostCompactHistory, buildWorkspaceContextMessages, COMPACT_DIGEST_CHAR_BUDGET, deriveMemoryTitle, extractDigestFromReply, extractMemoryKeywords, isCompactCommand, estimateTokensFromChars, formatTokensCompact, resolveAutoCompactTokenLimit, CONTEXT_WINDOW_COMPACT_HEADROOM, AUTO_COMPACT_TRIGGER_CHARS } from "../../src/utils/ai-context-compact";
 import { buildAIWorkspaceKey } from "../../src/components/AISlidePanel/ai-conversation-state";
 import type { AIWorkspaceBubbleData } from "../../src/components/AISlidePanel/ai-workspace-types";
 
@@ -36,6 +36,28 @@ describe("isCompactCommand", () => {
     expect(isCompactCommand("")).toBe(false);
   });
 });
+describe("resolveAutoCompactTokenLimit", () => {
+  it("triggers at the headroom fraction of a known model context window", () => {
+    expect(resolveAutoCompactTokenLimit(200_000)).toBe(
+      Math.floor(200_000 * CONTEXT_WINDOW_COMPACT_HEADROOM),
+    );
+    expect(resolveAutoCompactTokenLimit(1_000_000)).toBe(
+      Math.floor(1_000_000 * CONTEXT_WINDOW_COMPACT_HEADROOM),
+    );
+    // Fires before the window is full, never at/after 100%.
+    expect(resolveAutoCompactTokenLimit(200_000)).toBeLessThan(200_000);
+  });
+
+  it("falls back to the fixed display window when no window is configured", () => {
+    const fallback = estimateTokensFromChars(AUTO_COMPACT_TRIGGER_CHARS);
+    expect(resolveAutoCompactTokenLimit(null)).toBe(fallback);
+    expect(resolveAutoCompactTokenLimit(undefined)).toBe(fallback);
+    expect(resolveAutoCompactTokenLimit(0)).toBe(fallback);
+    expect(resolveAutoCompactTokenLimit(-5)).toBe(fallback);
+  });
+});
+
+
 
 describe("buildAIWorkspaceKey", () => {
   it("scopes to the user workspace when one is active", () => {

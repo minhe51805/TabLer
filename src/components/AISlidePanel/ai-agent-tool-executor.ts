@@ -1777,6 +1777,39 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       }
     }
 
+    if (action.action === "memory") {
+      // Anthropic's NATIVE memory tool (memory_20250818). Forward the command
+      // plus filesystem args to the sandboxed backend, which returns the
+      // tool_result string the agent loop feeds back to the model. Errors are
+      // returned as observations (not thrown) so Claude can self-correct — the
+      // same contract as an `is_error` tool_result.
+      const memoryArgs = action.args;
+      try {
+        const result = await invokeMutation<string>("run_agent_memory_tool", {
+          command: memoryArgs.command,
+          path: memoryArgs.path ?? null,
+          fileText: memoryArgs.file_text ?? null,
+          oldStr: memoryArgs.old_str ?? null,
+          newStr: memoryArgs.new_str ?? null,
+          insertLine:
+            typeof memoryArgs.insert_line === "number" ? memoryArgs.insert_line : null,
+          insertText: memoryArgs.insert_text ?? null,
+          oldPath: memoryArgs.old_path ?? null,
+          newPath: memoryArgs.new_path ?? null,
+          viewRange: Array.isArray(memoryArgs.view_range) ? memoryArgs.view_range : null,
+          connectionId: memoryScope?.connectionId ?? null,
+          database: memoryScope?.database ?? null,
+        });
+        window.dispatchEvent(new CustomEvent("workspace-activity", {
+          detail: { connectionId, label: `Memory tool: ${memoryArgs.command}`, durationMs: 0 },
+        }));
+        return result;
+      } catch (errorValue) {
+        if (isSupersededAIRequestError(errorValue)) throw errorValue;
+        return `Tool error: memory ${memoryArgs.command} failed: ${formatExecutionError(errorValue)}`;
+      }
+    }
+
     // Unknown action: never say "finish" here — the model needs the list of
     // valid tools to self-correct (a bare "unknown tool" makes small models
     // conclude the deployment is broken instead of retrying).

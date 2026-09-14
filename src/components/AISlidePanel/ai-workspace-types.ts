@@ -71,6 +71,9 @@ export type AIWorkspaceAgentActionName =
   | "restore_checkpoint"
   | "delegate"
   | "read_page"
+  // Anthropic's native memory tool (memory_20250818) surfaces in the agent
+  // trace like any other action; it is Anthropic-only and has no catalog spec.
+  | "memory"
   | "finish";
 
 export type AIWorkspaceAgentStepStatus = "running" | "done" | "error";

@@ -50,7 +50,10 @@ use commands::ai_checkpoints::{
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
 use commands::data_export::{cancel_table_export, export_table_data, TableExportCancellationState};
-use commands::data_import::{import_csv, import_json, preview_import_csv, preview_import_json};
+use commands::data_import::{
+    import_csv, import_json, import_xlsx, preview_import_csv, preview_import_json,
+    preview_import_xlsx,
+};
 use commands::deep_link::parse_deep_link;
 use commands::diagnostics::{
     export_diagnostic_bundle, preview_diagnostic_bundle, DiagnosticReviewState,
@@ -332,6 +335,8 @@ pub fn run() {
             import_csv,
             preview_import_json,
             import_json,
+            preview_import_xlsx,
+            import_xlsx,
             execute_sandboxed_query,
             execute_agent_readonly_query,
             preview_write_transaction,

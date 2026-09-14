@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FileJson, FileSpreadsheet, Loader2, Play, X } from "lucide-react";
+import { FileJson, FileSpreadsheet, Loader2, Play, Table, X } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { invokeMutation, invokeWithTimeout } from "../../utils/tauri-utils";
 
-type ImportFormat = "csv" | "json";
+type ImportFormat = "csv" | "json" | "xlsx";
 
 interface ImportPreview {
   fileName: string;
@@ -15,6 +15,8 @@ interface ImportPreview {
   totalRowsTruncated?: boolean;
   delimiter?: string; // CSV only
   shape?: string; // JSON only: "array" | "ndjson"
+  sheetNames?: string[]; // XLSX only
+  sheet?: string; // XLSX only: the active sheet
 }
 
 interface ImportSummary {
@@ -91,7 +93,12 @@ export function ImportWizard() {
     setIsBusy(true);
     setError(null);
     try {
-      const command = chosen === "csv" ? "preview_import_csv" : "preview_import_json";
+      const command =
+        chosen === "csv"
+          ? "preview_import_csv"
+          : chosen === "json"
+            ? "preview_import_json"
+            : "preview_import_xlsx";
       const result = await invokeMutation<ImportPreview>(command, { sampleRows: 20 });
       setFormat(chosen);
       setPreview(result);
@@ -100,7 +107,10 @@ export function ImportWizard() {
       );
       setTargetTable(
         (current) =>
-          current || result.fileName.replace(/\.(csv|tsv|json|ndjson|jsonl)$/i, "").trim(),
+          current ||
+          result.fileName
+            .replace(/\.(csv|tsv|json|ndjson|jsonl|xlsx|xlsm|xls|xlsb|ods)$/i, "")
+            .trim(),
       );
     } catch (errorValue) {
       setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
@@ -108,6 +118,30 @@ export function ImportWizard() {
       setIsBusy(false);
     }
   }, []);
+
+  const switchSheet = useCallback(
+    async (nextSheet: string) => {
+      if (!preview?.filePath) return;
+      setIsBusy(true);
+      setError(null);
+      try {
+        const result = await invokeMutation<ImportPreview>("preview_import_xlsx", {
+          path: preview.filePath,
+          sheet: nextSheet,
+          sampleRows: 20,
+        });
+        setPreview(result);
+        setTargetColumns(
+          result.columns.map((column) => column.trim().toLowerCase().replace(/\s+/g, "_")),
+        );
+      } catch (errorValue) {
+        setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [preview],
+  );
 
   const runImport = useCallback(async () => {
     if (
@@ -128,34 +162,36 @@ export function ImportWizard() {
         sourceIndex: index,
         targetColumn: targetColumns[index] || preview.columns[index],
       }));
-      const command = format === "csv" ? "import_csv" : "import_json";
-      const args =
-        format === "csv"
-          ? {
-              connectionId,
-              table: targetTable,
-              path: preview.filePath,
-              mappings,
-              hasHeader,
-              createTable,
-              batchSize: 200,
-              operationId,
-            }
-          : {
-              connectionId,
-              table: targetTable,
-              path: preview.filePath,
-              sourceColumns: preview.columns,
-              mappings,
-              createTable,
-              batchSize: 200,
-              operationId,
-            };
+      const base = {
+        connectionId,
+        table: targetTable,
+        path: preview.filePath,
+        mappings,
+        createTable,
+        batchSize: 200,
+        operationId,
+      };
+      let command: string;
+      let args: Record<string, unknown>;
+      let label: string;
+      if (format === "csv") {
+        command = "import_csv";
+        args = { ...base, hasHeader };
+        label = "CSV import";
+      } else if (format === "json") {
+        command = "import_json";
+        args = { ...base, sourceColumns: preview.columns };
+        label = "JSON import";
+      } else {
+        command = "import_xlsx";
+        args = { ...base, sheet: preview.sheet ?? "" };
+        label = "Excel import";
+      }
       const result = await invokeWithTimeout<ImportSummary>(
         command,
         args,
         IMPORT_TIMEOUT_MS,
-        format === "csv" ? "CSV import" : "JSON import",
+        label,
       );
       setSummary(result);
     } catch (errorValue) {
@@ -223,6 +259,15 @@ export function ImportWizard() {
               {isBusy ? <Loader2 size={13} className="animate-spin" /> : <FileJson size={13} />}{" "}
               Choose JSON file…
             </button>
+            <button
+              type="button"
+              className="global-search-mode active"
+              disabled={isBusy}
+              onClick={() => void pickFile("xlsx")}
+            >
+              {isBusy ? <Loader2 size={13} className="animate-spin" /> : <Table size={13} />} Choose
+              Excel file…
+            </button>
           </div>
         ) : (
           <>
@@ -234,11 +279,32 @@ export function ImportWizard() {
               </span>
               {format === "csv" ? (
                 <span>delimiter “{preview.delimiter}”</span>
-              ) : (
+              ) : format === "json" ? (
                 <span>{preview.shape === "ndjson" ? "NDJSON" : "JSON array"}</span>
+              ) : (
+                <span>sheet “{preview.sheet}”</span>
               )}
             </div>
 
+            {format === "xlsx" && preview.sheetNames && preview.sheetNames.length > 0 && (
+              <div className="schema-diff-selects">
+                <label className="schema-drops-toggle">
+                  Sheet
+                  <select
+                    value={preview.sheet ?? ""}
+                    disabled={isBusy}
+                    onChange={(event) => void switchSheet(event.target.value)}
+                    aria-label="Worksheet"
+                  >
+                    {preview.sheetNames.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
             <div className="schema-diff-selects">
               <input
                 value={targetTable}

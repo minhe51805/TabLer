@@ -17,6 +17,7 @@ use crate::database::models::{DatabaseType, QueryParameter, QueryParameterType};
 use crate::database::parameterized_query::{
     compile_parameterized_query, placeholder_style_for_database,
 };
+use calamine::{open_workbook_auto, Data, Reader};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
@@ -40,6 +41,9 @@ const PROGRESS_ROW_STRIDE: u64 = 250;
 /// A JSON array is parsed fully into memory, so it gets a stricter cap than
 /// the streaming NDJSON/CSV paths. Larger data should use NDJSON instead.
 const MAX_JSON_ARRAY_FILE_BYTES: u64 = 512 * 1024 * 1024;
+/// calamine decompresses a spreadsheet fully into memory, so Excel/ODS files
+/// get their own cap (a small .xlsx can expand to a very large sheet).
+const MAX_XLSX_FILE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -823,14 +827,249 @@ pub async fn import_json(
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XlsxPreview {
+    pub file_name: String,
+    /// Absolute path so `import_xlsx` and sheet-switching can re-read the file.
+    pub file_path: String,
+    pub sheet_names: Vec<String>,
+    /// The sheet this preview was built from.
+    pub sheet: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub total_rows: usize,
+    pub total_rows_truncated: bool,
+}
+
+/// Formats an Excel serial datetime/duration without pulling in chrono, using
+/// calamine's own component splitter.
+fn format_excel_datetime(value: &calamine::ExcelDateTime) -> String {
+    if value.is_duration() {
+        let total_seconds = (value.as_f64() * 86_400.0).round() as i64;
+        let hours = total_seconds / 3600;
+        let minutes = (total_seconds % 3600) / 60;
+        let seconds = total_seconds % 60;
+        return format!("{hours}:{minutes:02}:{seconds:02}");
+    }
+    let (year, month, day, hour, minute, second, milli) = value.to_ymd_hms_milli();
+    if hour == 0 && minute == 0 && second == 0 && milli == 0 {
+        format!("{year:04}-{month:02}-{day:02}")
+    } else if milli == 0 {
+        format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
+    } else {
+        format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}.{milli:03}")
+    }
+}
+
+/// Renders one worksheet cell as an import string, converting typed cells
+/// (numbers, booleans, dates) to a stable textual form. Error cells import as
+/// empty so a `#DIV/0!` never lands in a data column.
+fn xlsx_cell_to_string(cell: &Data) -> String {
+    match cell {
+        Data::Empty => String::new(),
+        Data::String(text) => text.clone(),
+        Data::Bool(flag) => flag.to_string(),
+        Data::Int(number) => number.to_string(),
+        Data::Float(number) => number.to_string(),
+        Data::DateTime(datetime) => format_excel_datetime(datetime),
+        Data::DateTimeIso(text) => text.clone(),
+        Data::DurationIso(text) => text.clone(),
+        Data::Error(_) => String::new(),
+    }
+}
+
+/// Derives header column names from the first worksheet row; blank cells get a
+/// positional `column_N` fallback like the CSV path.
+fn xlsx_header_columns(header: &[Data]) -> Vec<String> {
+    header
+        .iter()
+        .enumerate()
+        .map(|(index, cell)| {
+            let name = xlsx_cell_to_string(cell);
+            if name.trim().is_empty() {
+                format!("column_{}", index + 1)
+            } else {
+                name
+            }
+        })
+        .collect()
+}
+
+/// Converts a worksheet row to positional strings, padding/truncating to the
+/// header width so every row lines up with the mapped columns.
+fn align_row_to_len(row: &[Data], len: usize) -> Vec<String> {
+    (0..len)
+        .map(|index| row.get(index).map(xlsx_cell_to_string).unwrap_or_default())
+        .collect()
+}
+
+/// Opens the workbook, returning the sheet-name list plus the requested (or
+/// first) sheet's range. calamine loads the whole sheet into memory.
+fn open_xlsx_sheet(
+    path: &std::path::Path,
+    sheet: Option<&str>,
+) -> Result<(Vec<String>, String, calamine::Range<Data>), String> {
+    let mut workbook =
+        open_workbook_auto(path).map_err(|error| format!("Failed to open spreadsheet: {error}"))?;
+    let sheet_names = workbook.sheet_names().to_owned();
+    if sheet_names.is_empty() {
+        return Err("The selected spreadsheet has no sheets.".to_string());
+    }
+    let active = match sheet {
+        Some(name) if sheet_names.iter().any(|candidate| candidate == name) => name.to_string(),
+        Some(name) => return Err(format!("Sheet '{name}' was not found in the spreadsheet.")),
+        None => sheet_names[0].clone(),
+    };
+    let range = workbook
+        .worksheet_range(&active)
+        .map_err(|error| format!("Failed to read sheet '{active}': {error}"))?;
+    Ok((sheet_names, active, range))
+}
+
+#[tauri::command]
+pub async fn preview_import_xlsx(
+    path: Option<String>,
+    sheet: Option<String>,
+    sample_rows: Option<usize>,
+) -> Result<XlsxPreview, String> {
+    let file_path = match path {
+        Some(existing) => std::path::PathBuf::from(existing),
+        None => rfd::FileDialog::new()
+            .add_filter("Excel / ODS files", &["xlsx", "xlsm", "xls", "xlsb", "ods"])
+            .add_filter("All files", &["*"])
+            .pick_file()
+            .ok_or_else(|| "No file selected.".to_string())?,
+    };
+
+    let metadata = std::fs::metadata(&file_path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_XLSX_FILE_BYTES {
+        return Err(format!(
+            "Spreadsheet files are limited to {} MB.",
+            MAX_XLSX_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let (sheet_names, active, range) = open_xlsx_sheet(&file_path, sheet.as_deref())?;
+    let sample_cap = sample_rows.unwrap_or(DEFAULT_SAMPLE_ROWS).max(1);
+
+    let mut row_iter = range.rows();
+    let columns = match row_iter.next() {
+        Some(header) => xlsx_header_columns(header),
+        None => Vec::new(),
+    };
+    if columns.is_empty() {
+        return Err(format!("Sheet '{active}' is empty."));
+    }
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut total_rows = 0usize;
+    let mut total_rows_truncated = false;
+    for row in row_iter {
+        if total_rows < MAX_PREVIEW_COUNT_ROWS {
+            total_rows += 1;
+        } else {
+            total_rows_truncated = true;
+        }
+        if rows.len() < sample_cap {
+            rows.push(align_row_to_len(row, columns.len()));
+        }
+    }
+
+    Ok(XlsxPreview {
+        file_name: file_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("unknown.xlsx")
+            .to_string(),
+        file_path: file_path.to_string_lossy().to_string(),
+        sheet_names,
+        sheet: active,
+        columns,
+        rows,
+        total_rows,
+        total_rows_truncated,
+    })
+}
+
+/// Imports one worksheet. The first row is treated as the header (defining
+/// column width); remaining rows become positional cells fed to the shared
+/// sink. calamine holds the sheet in memory, so this path is not streamed.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn import_xlsx(
+    connection_id: String,
+    table: String,
+    path: String,
+    sheet: String,
+    mappings: Vec<ImportColumnMapping>,
+    create_table: bool,
+    batch_size: Option<usize>,
+    operation_id: Option<String>,
+    app: AppHandle,
+    cancellation_state: State<'_, CsvImportCancellationState>,
+    db_manager: State<'_, DatabaseManager>,
+) -> Result<ImportSummary, String> {
+    let file_path = std::path::PathBuf::from(&path);
+    if !file_path.exists() {
+        return Err(format!("File not found: {path}"));
+    }
+    let metadata = std::fs::metadata(&file_path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_XLSX_FILE_BYTES {
+        return Err(format!(
+            "Spreadsheet files are limited to {} MB.",
+            MAX_XLSX_FILE_BYTES / (1024 * 1024)
+        ));
+    }
+    let total_bytes = metadata.len();
+
+    let (_, _, range) = open_xlsx_sheet(&file_path, Some(&sheet))?;
+    let column_count = range.rows().next().map(|row| row.len()).unwrap_or(0);
+    if column_count == 0 {
+        return Err(format!("Sheet '{sheet}' is empty."));
+    }
+    // Materialise data rows (calamine already holds the sheet in memory), then
+    // hand an owned iterator to the shared sink.
+    let data_rows: Vec<Vec<String>> = range
+        .rows()
+        .skip(1)
+        .map(|row| align_row_to_len(row, column_count))
+        .collect();
+    let total = (data_rows.len() as u64).max(1);
+    let rows = data_rows
+        .into_iter()
+        .enumerate()
+        .map(move |(index, cells)| {
+            // Byte progress is approximated for the in-memory spreadsheet path.
+            let processed = ((index as u64 + 1).saturating_mul(total_bytes)) / total;
+            Ok((cells, processed))
+        });
+
+    execute_import(
+        &connection_id,
+        &table,
+        &mappings,
+        create_table,
+        batch_size,
+        operation_id,
+        &app,
+        cancellation_state.inner(),
+        db_manager.inner(),
+        total_bytes,
+        rows,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        align_object, build_insert_batch, collect_keys, detect_delimiter, json_shape_from_prefix,
-        json_value_to_cell, parse_json_object_line, sample_and_count, ImportColumnMapping,
-        JsonShape,
+        align_object, align_row_to_len, build_insert_batch, collect_keys, detect_delimiter,
+        json_shape_from_prefix, json_value_to_cell, parse_json_object_line, sample_and_count,
+        xlsx_cell_to_string, xlsx_header_columns, ImportColumnMapping, JsonShape,
     };
     use crate::database::models::DatabaseType;
+    use calamine::{Data, ExcelDateTime, ExcelDateTimeType};
     use std::collections::HashSet;
     use std::io::Cursor;
 
@@ -993,5 +1232,29 @@ mod tests {
     fn parse_json_object_line_rejects_non_objects() {
         assert!(parse_json_object_line("[1,2,3]").is_err());
         assert!(parse_json_object_line("not json").is_err());
+    }
+
+    #[test]
+    fn xlsx_cells_render_typed_values_including_dates() {
+        assert_eq!(xlsx_cell_to_string(&Data::Empty), "");
+        assert_eq!(xlsx_cell_to_string(&Data::String("hi".to_string())), "hi");
+        assert_eq!(xlsx_cell_to_string(&Data::Bool(true)), "true");
+        assert_eq!(xlsx_cell_to_string(&Data::Int(42)), "42");
+        assert_eq!(xlsx_cell_to_string(&Data::Float(42.5)), "42.5");
+        // 45943.0 is the Excel 1900-epoch serial for 2025-10-13 (midnight).
+        let datetime = ExcelDateTime::new(45943.0, ExcelDateTimeType::DateTime, false);
+        assert_eq!(xlsx_cell_to_string(&Data::DateTime(datetime)), "2025-10-13");
+    }
+
+    #[test]
+    fn xlsx_header_uses_positional_fallback_for_blanks() {
+        let header = vec![Data::String("name".to_string()), Data::Empty, Data::Int(3)];
+        assert_eq!(xlsx_header_columns(&header), vec!["name", "column_2", "3"]);
+    }
+
+    #[test]
+    fn xlsx_rows_align_and_pad_to_header_width() {
+        let row = vec![Data::String("a".to_string()), Data::Int(2)];
+        assert_eq!(align_row_to_len(&row, 3), vec!["a", "2", ""]);
     }
 }

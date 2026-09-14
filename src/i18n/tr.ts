@@ -23,6 +23,7 @@ export const tr: Record<keyof typeof en, string> = {
   "workspace.connecting.kicker": "Baglanti kuruluyor",
   "workspace.connecting.checking": "Veritabani erisimi kontrol ediliyor",
   "workspace.connecting.elapsed": "{{seconds}} sn gecti",
+  "workspace.connecting.cancel": "Baglantiyi iptal et",
   "workspace.error.kicker": "Baglanti sorunu",
   "workspace.error.title": "Calisma alani hatasi",
   "workspace.error.retry": "Tekrar dene",

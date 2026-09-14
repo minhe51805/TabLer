@@ -8189,6 +8189,147 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   animation-delay: 0.3s;
 }
 
+/* Quiet "abort the connection" pill shown under the status footer while still
+ * connecting. Neutral by default, warms to the danger accent on hover so it
+ * reads as a soft escape hatch rather than a loud destructive action. */
+.workspace-connecting-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 18px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.workspace-connecting-cancel:hover {
+  color: var(--error, #ef4444);
+  border-color: color-mix(in srgb, var(--error, #ef4444) 42%, transparent);
+  background: color-mix(in srgb, var(--error, #ef4444) 9%, var(--bg-secondary));
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--error, #ef4444) 16%, transparent);
+}
+
+.workspace-connecting-cancel:active {
+  transform: translateY(0.5px);
+}
+
+.workspace-connecting-cancel:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--error, #ef4444) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.workspace-connecting-cancel svg {
+  width: 14px;
+  height: 14px;
+  opacity: 0.9;
+}
+
+/* Recovery actions shown in the error state (Try Again + Go to Launcher). They
+ * share one row (flex: 1 each) and reuse the connecting screen's tokens so they
+ * match the quiet cancel pill: same radius, spacing, and transition language. */
+.workspace-connecting-action {
+  display: inline-flex;
+  flex: 1 1 0;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease;
+}
+
+.workspace-connecting-action svg {
+  width: 15px;
+  height: 15px;
+}
+
+.workspace-connecting-action:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.workspace-connecting-action:active {
+  transform: translateY(0.5px);
+}
+
+/* Primary: filled accent (Try Again). */
+.workspace-connecting-action--primary {
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.workspace-connecting-action--primary:hover {
+  filter: brightness(1.08);
+}
+
+/* Secondary: quiet ghost (Go to Launcher). */
+.workspace-connecting-action--secondary:hover {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--text-secondary) 38%, var(--border-color));
+  background: var(--bg-hover);
+}
+
+/* Identity chip under the title: the database / host / file being reached.
+ * A crisp pill with an accent glyph so it reads as an intentional badge
+ * instead of faint gray text lost against the white backdrop. */
+.workspace-connecting-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 4px 12px 4px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 78%, var(--text-secondary) 22%);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  box-shadow: 0 1px 2px rgba(4, 10, 24, 0.05);
+}
+
+.workspace-connecting-detail svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.workspace-connecting-detail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Keep the connecting screen alive even for reduced-motion users: the orbit
      rings and skeleton shimmer are essential "still working" feedback. We keep

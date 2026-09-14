@@ -560,6 +560,11 @@ export function AppWorkspacePanel({
             useConnectionStore.getState().clearConnectionError();
             onGoToLauncher();
           }}
+          onCancel={() => {
+            setLoadingTimeoutExceeded(false);
+            useConnectionStore.getState().cancelConnectionAttempt();
+            onGoToLauncher();
+          }}
         />
       );
     }

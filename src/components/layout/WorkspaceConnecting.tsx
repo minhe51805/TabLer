@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Database, Home, RefreshCw } from "lucide-react";
+import { Database, Home, RefreshCw, X } from "lucide-react";
 import { useI18n } from "../../i18n";
 
 interface WorkspaceConnectingProps {
@@ -19,6 +19,11 @@ interface WorkspaceConnectingProps {
   onRetry?: () => void;
   /** Return to the main launcher. The quiet escape hatch when `error` is set. */
   onGoToLauncher?: () => void;
+  /**
+   * Abort the in-progress connection and return to the launcher. Rendered as a
+   * quiet button under the skeleton while still connecting (before any `error`).
+   */
+  onCancel?: () => void;
 }
 
 /**
@@ -36,6 +41,7 @@ export function WorkspaceConnecting({
   error,
   onRetry,
   onGoToLauncher,
+  onCancel,
 }: WorkspaceConnectingProps) {
   const { t } = useI18n();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -82,12 +88,9 @@ export function WorkspaceConnecting({
             {displayName}
           </h2>
           {detailText && (
-            <span
-              className="inline-flex max-w-[280px] items-center gap-1.5 rounded-full border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-1 text-xs text-[var(--text-secondary)]"
-              title={detailText}
-            >
-              <Database className="h-3 w-3 shrink-0 opacity-60" />
-              <span className="truncate">{detailText}</span>
+            <span className="workspace-connecting-detail" title={detailText}>
+              <Database />
+              <span className="workspace-connecting-detail-label">{detailText}</span>
             </span>
           )}
         </div>
@@ -98,14 +101,14 @@ export function WorkspaceConnecting({
             <p className="max-h-32 overflow-y-auto text-center text-[13px] leading-relaxed text-red-500 break-words">
               {error || t("workspace.error.generic")}
             </p>
-            <div className="flex w-full flex-col gap-2">
+            <div className="flex w-full gap-2">
               {onRetry && (
                 <button
                   type="button"
                   onClick={onRetry}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition-[filter] hover:brightness-110"
+                  className="workspace-connecting-action workspace-connecting-action--primary"
                 >
-                  <RefreshCw className="h-4 w-4" />
+                  <RefreshCw />
                   {t("workspace.error.retry")}
                 </button>
               )}
@@ -113,9 +116,9 @@ export function WorkspaceConnecting({
                 <button
                   type="button"
                   onClick={onGoToLauncher}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-[var(--border-color)] bg-transparent px-4 py-2.5 text-sm font-semibold text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+                  className="workspace-connecting-action workspace-connecting-action--secondary"
                 >
-                  <Home className="h-4 w-4" />
+                  <Home />
                   {t("workspace.error.goLauncher")}
                 </button>
               )}
@@ -130,12 +133,21 @@ export function WorkspaceConnecting({
               <div className="workspace-connecting-skeleton-bar" style={{ width: "84%" }} />
             </div>
 
-            {/* Status footer */}
-            <div className="flex w-full items-center justify-between text-[11px] font-medium text-[var(--text-secondary)] opacity-75">
-              <span className="truncate">{t("workspace.connecting.checking")}</span>
-              <span className="ml-3 shrink-0 tabular-nums">
-                {t("workspace.connecting.elapsed", { seconds: elapsedSeconds })}
-              </span>
+            {/* Status footer + quiet cancel action */}
+            <div className="flex w-full flex-col items-center gap-4">
+              <div className="flex w-full items-center justify-between text-[11px] font-medium text-[var(--text-secondary)] opacity-75">
+                <span className="truncate">{t("workspace.connecting.checking")}</span>
+                <span className="ml-3 shrink-0 tabular-nums">
+                  {t("workspace.connecting.elapsed", { seconds: elapsedSeconds })}
+                </span>
+              </div>
+
+              {onCancel && (
+                <button type="button" onClick={onCancel} className="workspace-connecting-cancel">
+                  <X />
+                  {t("workspace.connecting.cancel")}
+                </button>
+              )}
             </div>
           </>
         )}

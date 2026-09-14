@@ -23,6 +23,7 @@ export const ko: Record<keyof typeof en, string> = {
   "workspace.connecting.kicker": "연결 설정 중",
   "workspace.connecting.checking": "데이터베이스 접근 가능 여부 확인 중",
   "workspace.connecting.elapsed": "{{seconds}}초 경과",
+  "workspace.connecting.cancel": "연결 취소",
   "workspace.error.kicker": "연결 문제",
   "workspace.error.title": "작업 공간 오류",
   "workspace.error.retry": "다시 시도",

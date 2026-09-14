@@ -58,6 +58,7 @@ export interface ConnectionState {
 
   setConnectionHealth: (connectionId: string, healthy: boolean) => void;
   clearConnectionError: () => void;
+  cancelConnectionAttempt: () => void;
   loadSavedConnections: () => Promise<void>;
   connectToDatabase: (config: ConnectionConfig) => Promise<void>;
   connectSavedConnection: (connectionId: string) => Promise<void>;
@@ -116,6 +117,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
   /** (connectionId, database) of the last fully completed switch; enables the
    *  redundant-switch skip below without re-fetching metadata. */
   let lastCompletedDatabaseSwitchKey: string | null = null;
+
+  // In-flight connect tracking so the connecting screen's Cancel button can
+  // abort the backend attempt (cancel_connection_attempt) and turn any
+  // late-resolving connect into a no-op instead of yanking the user back into
+  // the workspace after they left for the launcher.
+  let connectAttemptToken = 0;
+  let activeConnectRequestId: string | null = null;
 
   /**
    * True when a connect attempt targets the connection+database whose
@@ -209,6 +217,20 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
 
   clearConnectionError: () => set({ connectError: null }),
 
+  // Abort the in-flight connect: bump the attempt token (so the pending
+  // connect's resolve/reject can no longer flip the store into a connected or
+  // error state), best-effort cancel the backend attempt, and stop the
+  // connecting spinner. The caller (Cancel button) navigates to the launcher.
+  cancelConnectionAttempt: () => {
+    connectAttemptToken += 1;
+    const requestId = activeConnectRequestId;
+    activeConnectRequestId = null;
+    if (requestId) {
+      void invokeMutation("cancel_connection_attempt", { requestId }).catch(() => {});
+    }
+    set({ isConnecting: false, connectError: null });
+  },
+
   setConnectionHealth: (connectionId, healthy) => {
     // Skip identical writes so subscribers are not notified needlessly.
     if (get().connectionHealth[connectionId] === healthy) return;
@@ -248,9 +270,11 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       ...(keepsExistingMetadata ? {} : { schemaObjects: [], tables: [] }),
     });
 
+    const attemptToken = ++connectAttemptToken;
     try {
       const connections = get().connections;
       const requestId = crypto.randomUUID();
+      activeConnectRequestId = requestId;
       await invokeWithTimeout(
         "connect_database",
         { config: normalizedConfig, requestId },
@@ -260,6 +284,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
           onTimeout: () => invokeMutation("cancel_connection_attempt", { requestId }),
         },
       );
+      // Cancelled while awaiting the backend? Do not finalize the connection.
+      if (connectAttemptToken !== attemptToken) return;
       invalidateConnectionCapabilities(normalizedConfig.id);
 
       const savedConfig = sanitizeConnectionConfig(normalizedConfig);
@@ -275,6 +301,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       );
       loadMetadataAfterConnect(normalizedConfig.id, normalizedConfig.database);
     } catch (error) {
+      // A cancelled attempt must not surface an error or bounce to the launcher.
+      if (connectAttemptToken !== attemptToken) return;
       restoreOrClearOnConnectError(error, normalizedConfig.id, previousState);
     }
   },
@@ -291,8 +319,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       ...(keepsExistingMetadata ? {} : { schemaObjects: [], tables: [] }),
     });
 
+    const attemptToken = ++connectAttemptToken;
     try {
       const requestId = crypto.randomUUID();
+      activeConnectRequestId = requestId;
       await invokeWithTimeout(
         "connect_saved_connection",
         { connectionId, requestId },
@@ -302,6 +332,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
           onTimeout: () => invokeMutation("cancel_connection_attempt", { requestId }),
         },
       );
+      // Cancelled while awaiting the backend? Do not finalize the connection.
+      if (connectAttemptToken !== attemptToken) return;
       invalidateConnectionCapabilities(connectionId);
       markConnected(connectionId, connection?.database, undefined, { keepExistingMetadata: keepsExistingMetadata });
 
@@ -316,6 +348,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       // simply swaps its skeleton for the error + recovery actions. We do not
       // publish to the global error store here to avoid a second, redundant
       // error surface behind the overlay.
+      // A cancelled attempt must not surface an error screen.
+      if (connectAttemptToken !== attemptToken) return;
       const message = error instanceof Error ? error.message : String(error);
       set({
         isConnecting: false,

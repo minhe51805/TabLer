@@ -22,6 +22,7 @@ export const en = {
   "workspace.connecting.kicker": "Establishing connection",
   "workspace.connecting.checking": "Checking database reachability",
   "workspace.connecting.elapsed": "{{seconds}}s elapsed",
+  "workspace.connecting.cancel": "Cancel connection",
   "workspace.error.kicker": "Connection issue",
   "workspace.error.title": "Workspace Error",
   "workspace.error.retry": "Try Again",

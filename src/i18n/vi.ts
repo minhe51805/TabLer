@@ -23,6 +23,7 @@ export const vi: Record<keyof typeof en, string> = {
   "workspace.connecting.kicker": "Đang thiết lập kết nối",
   "workspace.connecting.checking": "Đang kiểm tra cơ sở dữ liệu có vào được không",
   "workspace.connecting.elapsed": "đã trôi qua {{seconds}}s",
+  "workspace.connecting.cancel": "Hủy kết nối",
   "workspace.error.kicker": "Sự cố kết nối",
   "workspace.error.title": "Lỗi workspace",
   "workspace.error.retry": "Thử lại",

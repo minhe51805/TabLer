@@ -23,6 +23,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "workspace.connecting.kicker": "正在建立连接",
   "workspace.connecting.checking": "正在检查数据库是否可访问",
   "workspace.connecting.elapsed": "已用时 {{seconds}} 秒",
+  "workspace.connecting.cancel": "取消连接",
   "workspace.error.kicker": "连接问题",
   "workspace.error.title": "工作区错误",
   "workspace.error.retry": "重试",

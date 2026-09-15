@@ -145,7 +145,28 @@ pub const SANDBOX_AGENT_MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 // ─────────────────────────────────────────────────────────────────────────
 
 /// Max pooled connections per Postgres/MySQL connection (desktop, single-user).
+/// Used as the fallback when a connection does not set its own override.
 pub const POOL_MAX_CONNECTIONS: u32 = 8;
+
+/// Lower bound for a per-connection pool-size override. A pool must keep at
+/// least one usable connection (the drivers set `min_connections(1)`), so any
+/// smaller positive value clamps up to this floor.
+pub const MIN_POOL_MAX_CONNECTIONS: u32 = 1;
+/// Upper bound for a per-connection pool-size override. A typo can never
+/// exhaust the server's connection budget: larger values clamp down here.
+pub const MAX_POOL_MAX_CONNECTIONS: u32 = 64;
+
+/// Pure resolver for a per-connection pool-size override (roadmap Phase 3D
+/// backend perf): when the caller supplies a positive `max_connections`, clamp
+/// it to `[MIN_POOL_MAX_CONNECTIONS, MAX_POOL_MAX_CONNECTIONS]`; otherwise fall
+/// back to the compiled `POOL_MAX_CONNECTIONS` default. `None`/`Some(0)` leave
+/// behaviour unchanged. Kept pure so it is unit-testable without a live driver.
+pub fn resolve_pool_max_connections(max_connections: Option<u32>) -> u32 {
+    match max_connections.filter(|&n| n > 0) {
+        Some(n) => n.clamp(MIN_POOL_MAX_CONNECTIONS, MAX_POOL_MAX_CONNECTIONS),
+        None => POOL_MAX_CONNECTIONS,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -202,5 +223,34 @@ mod tests {
         );
         assert_eq!(MIN_QUERY_TIMEOUT_MS, 1_000);
         assert_eq!(MAX_QUERY_TIMEOUT_MS, 600_000);
+    }
+
+    #[test]
+    fn pool_max_connections_falls_back_when_absent_or_zero() {
+        assert_eq!(POOL_MAX_CONNECTIONS, 8);
+        assert_eq!(resolve_pool_max_connections(None), POOL_MAX_CONNECTIONS);
+        assert_eq!(resolve_pool_max_connections(Some(0)), POOL_MAX_CONNECTIONS);
+    }
+
+    #[test]
+    fn pool_max_connections_uses_valid_positive_overrides() {
+        assert_eq!(resolve_pool_max_connections(Some(4)), 4);
+        assert_eq!(resolve_pool_max_connections(Some(20)), 20);
+    }
+
+    #[test]
+    fn pool_max_connections_clamps_to_the_documented_bounds() {
+        // A positive value at the floor is preserved; a huge value clamps down
+        // to the ceiling so a typo can never exhaust the server's budget.
+        assert_eq!(
+            resolve_pool_max_connections(Some(1)),
+            MIN_POOL_MAX_CONNECTIONS
+        );
+        assert_eq!(
+            resolve_pool_max_connections(Some(u32::MAX)),
+            MAX_POOL_MAX_CONNECTIONS
+        );
+        assert_eq!(MIN_POOL_MAX_CONNECTIONS, 1);
+        assert_eq!(MAX_POOL_MAX_CONNECTIONS, 64);
     }
 }

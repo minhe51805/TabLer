@@ -17,7 +17,7 @@ use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Instant;
 use tokio::sync::RwLock;
 
-use crate::config::POOL_MAX_CONNECTIONS;
+use crate::config::resolve_pool_max_connections;
 
 pub struct MySqlDriver {
     pub(super) pool: MySqlPool,
@@ -89,11 +89,12 @@ impl MySqlDriver {
         }
 
         // Try to connect with retry logic
+        let max_connections = resolve_pool_max_connections(config.pool_max_connections());
         let mut last_error = None;
         for attempt in 1..=3 {
             let pool_opts = MySqlPoolOptions::new()
                 .min_connections(1)
-                .max_connections(POOL_MAX_CONNECTIONS)
+                .max_connections(max_connections)
                 .max_lifetime(std::time::Duration::from_secs(1800))
                 .acquire_timeout(std::time::Duration::from_secs(30))
                 .idle_timeout(std::time::Duration::from_secs(600))

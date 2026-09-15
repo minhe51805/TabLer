@@ -133,6 +133,20 @@ impl ConnectionConfig {
         );
     }
 
+    /// Optional per-connection pool-size override for server engines
+    /// (Postgres/MySQL). Stored in `additional_fields` (same backward-compatible
+    /// mechanism as `external_access`) so it never changes the persisted
+    /// connection schema. A blank, zero, negative, or unparseable value is
+    /// treated as unset, so `config::resolve_pool_max_connections` falls back to
+    /// the compiled `POOL_MAX_CONNECTIONS` default.
+    pub fn pool_max_connections(&self) -> Option<u32> {
+        self.additional_fields
+            .get("pool_max_connections")
+            .or_else(|| self.additional_fields.get("poolMaxConnections"))
+            .map(|value| value.trim())
+            .and_then(|value| value.parse::<u32>().ok())
+    }
+
     /// Resolve effective SSL mode: explicit `ssl_mode` takes precedence, else falls back to `use_ssl`.
     pub fn effective_ssl_mode(&self) -> SslMode {
         match self.ssl_mode {

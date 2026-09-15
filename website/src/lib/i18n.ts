@@ -21,6 +21,7 @@ const en = {
   },
   hero: {
     kicker: "Open-source database workspace",
+    headline: "Every database, one focused workspace",
     lede: "Query, explore, visualize, and understand your databases from one focused desktop workspace.",
     download: "Download",
     viewOnGitHub: "View on GitHub",
@@ -264,6 +265,7 @@ const vi: typeof en = {
   },
   hero: {
     kicker: "Không gian làm việc CSDL mã nguồn mở",
+    headline: "Mọi cơ sở dữ liệu trong một không gian tập trung",
     lede: "Truy vấn, khám phá, trực quan hóa và thấu hiểu cơ sở dữ liệu của bạn trong một workspace desktop tập trung.",
     download: "Tải xuống",
     viewOnGitHub: "Xem trên GitHub",

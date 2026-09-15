@@ -133,7 +133,7 @@ export default async function Home() {
             <span className="status-dot" />
             {t.hero.kicker}
           </div>
-          <h1>TableR</h1>
+          <h1>{t.hero.headline}</h1>
           <p className="hero-lede">{t.hero.lede}</p>
           <div className="hero-actions">
             <a className="button button-primary" href={downloadUrl}>

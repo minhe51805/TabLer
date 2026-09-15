@@ -1025,6 +1025,22 @@ export function toAnthropicTools(
   }));
 }
 
+/**
+ * Anthropic's NATIVE client-side memory tool. Declared as an opaque type block
+ * (no `input_schema`) ONLY on Anthropic requests, paired with the
+ * `context-management-2025-06-27` beta header the backend already sends. Claude
+ * drives it with view/create/str_replace/insert/delete/rename commands against
+ * a virtual `/memories` tree; the backend `run_agent_memory_tool` command
+ * executes them in a per-connection sandbox. It is deliberately NOT part of
+ * `AI_AGENT_TOOL_NAMES`: it has no JSON-schema spec and must never be offered
+ * to other providers.
+ */
+export const NATIVE_MEMORY_TOOL_TYPE = "memory_20250818";
+export const NATIVE_ANTHROPIC_MEMORY_TOOL = {
+  type: NATIVE_MEMORY_TOOL_TYPE,
+  name: "memory",
+} as const;
+
 /** Gemini `tools[].functionDeclarations` entry. */
 export interface GeminiFunctionDeclaration {
   name: string;
@@ -1133,7 +1149,15 @@ export function nativeToolPayloadForProvider(
   const specs = listEnabledAgentToolSpecs(options ?? true);
   switch (providerType) {
     case "anthropic":
-      return { tools: toAnthropicTools(specs), tool_choice: { type: "auto" } };
+      // Append Anthropic's NATIVE memory tool (opaque type block, no
+      // input_schema) so Claude can persist notes across turns in the
+      // /memories sandbox, backed by the `run_agent_memory_tool` command.
+      // Anthropic-only: no other provider understands this type block, and it
+      // is absent from AI_AGENT_TOOL_NAMES so it is never offered elsewhere.
+      return {
+        tools: [...toAnthropicTools(specs), NATIVE_ANTHROPIC_MEMORY_TOOL],
+        tool_choice: { type: "auto" },
+      };
     case "gemini":
     case "vertex":
       // Vertex AI speaks the same generateContent wire format as Gemini:

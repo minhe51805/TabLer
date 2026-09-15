@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { AlertCircle, Check, FileCode, Trash2, X } from "lucide-react";
 import type { DefaultMode } from "../utils/dialect-sql-generator";
 import type { ColumnEditorState, BuildColumnSqlResult } from "../utils/dialect-sql-generator";
@@ -25,7 +26,7 @@ export function AlterColumnModal({
   onStageDelete,
   onOpenSql,
 }: Props) {
-  return (
+  return createPortal(
     <div className="structure-editor-overlay" onClick={onClose}>
       <div className="structure-editor-modal" onClick={(event) => event.stopPropagation()}>
         <div className="structure-editor-header">
@@ -182,6 +183,7 @@ export function AlterColumnModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

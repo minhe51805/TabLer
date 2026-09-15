@@ -18,13 +18,16 @@ use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Instant;
 use tokio::sync::RwLock;
 
-use crate::config::POOL_MAX_CONNECTIONS;
+use crate::config::resolve_pool_max_connections;
 
 pub struct PostgresDriver {
     pub(super) pool: StdRwLock<PgPool>,
     connect_options: PgConnectOptions,
     pub(super) current_db: Arc<RwLock<Option<String>>>,
     cancel_registry: StdRwLock<QueryCancelRegistry>,
+    /// Resolved pool size for this connection, reused when the pool is rebuilt
+    /// on `use_database` so the override survives a database switch.
+    pool_max_connections: u32,
 }
 
 impl PostgresDriver {
@@ -100,12 +103,14 @@ impl PostgresDriver {
                 .ssl_client_key(std::path::Path::new(key_path));
         }
 
-        let pool = Self::open_pool(options.clone()).await?;
+        let pool_max_connections = resolve_pool_max_connections(config.pool_max_connections());
+        let pool = Self::open_pool(options.clone(), pool_max_connections).await?;
         Ok(Self {
             pool: StdRwLock::new(pool),
             connect_options: options,
             current_db: Arc::new(RwLock::new(Some(database.to_string()))),
             cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
+            pool_max_connections,
         })
     }
 
@@ -116,12 +121,12 @@ impl PostgresDriver {
             .clone()
     }
 
-    async fn open_pool(options: PgConnectOptions) -> Result<PgPool> {
+    async fn open_pool(options: PgConnectOptions, max_connections: u32) -> Result<PgPool> {
         let mut last_error = None;
         for attempt in 1..=3 {
             let pool_opts = PgPoolOptions::new()
                 .min_connections(1)
-                .max_connections(POOL_MAX_CONNECTIONS)
+                .max_connections(max_connections)
                 .max_lifetime(std::time::Duration::from_secs(1800))
                 .acquire_timeout(std::time::Duration::from_secs(30))
                 .idle_timeout(std::time::Duration::from_secs(600))
@@ -733,7 +738,7 @@ impl DatabaseDriver for PostgresDriver {
         }
 
         let options = self.connect_options.clone().database(database);
-        let new_pool = Self::open_pool(options).await?;
+        let new_pool = Self::open_pool(options, self.pool_max_connections).await?;
         let old_pool = {
             let mut guard = self
                 .pool

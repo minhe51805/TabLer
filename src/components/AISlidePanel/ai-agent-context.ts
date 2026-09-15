@@ -240,6 +240,22 @@ const AGENT_FULL_CATALOG_NAME_LIMIT = 400;
 const RECENT_OBSERVATION_CHAR_BUDGET = 2_000;
 /** Older observations keep a condensed peek instead of disappearing entirely. */
 const OLDER_OBSERVATION_PEEK_CHARS = 400;
+/**
+ * Hard cap on how many saved-memory index entries are injected into the
+ * controller prompt. The recall index is standing context on EVERY step, so an
+ * unbounded list would silently inflate cost as a connection accrues memories.
+ * Relevant matches are sorted first before the cap, so a relevant memory is
+ * never hidden by it (bodies still load on demand via read_memory).
+ */
+const MAX_AGENT_MEMORY_INDEX_ENTRIES = 24;
+/**
+ * Shared, proactive save_memory directive (item 7). Kept as one constant so the
+ * "populated index", "relevant match", and "empty index" prompt branches all
+ * nudge the model to persist durable facts the SAME way — with a concrete
+ * example — instead of the weaker, drifting phrasings they used before.
+ */
+const AGENT_MEMORY_SAVE_HINT =
+  "Proactively persist durable facts with save_memory the moment you learn them — a schema fact, a user preference (naming, formatting, SQL dialect), or a correction the user makes (e.g. \"is_deleted marks a soft-delete\", \"amounts are stored in cents\", a status column's enum values). Save without being asked so future runs start smarter; never store credentials — they are rejected.";
 
 function clampObservationText(text: string, budget: number) {
   const flat = text.trim();
@@ -461,7 +477,7 @@ export function buildAgentControllerPrompt(params: {
   const databaseMentionMismatch = detectDatabaseMentionMismatch({
     userPrompt,
     knownDatabaseNames,
-    boundDatabase: workspaceBoundDatabase ?? currentDatabase,
+    boundDatabase: currentDatabase ?? workspaceBoundDatabase ?? null,
   });
   const visibleTables = availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT
     ? availableTableNames
@@ -559,7 +575,13 @@ export function buildAgentControllerPrompt(params: {
           // Recall: rank the saved memories by relevance to THIS request so the
           // one that answers it is surfaced first and explicitly flagged,
           // instead of relying on the model to notice it in storage order.
-          const ranked = rankAgentMemoriesByRelevance(agentMemoryIndex ?? [], userPrompt);
+          const ranked = rankAgentMemoriesByRelevance(agentMemoryIndex ?? [], userPrompt)
+            // Relevant matches first, THEN cap — so the bound trims only the
+            // least-relevant tail and can never drop a memory that matches this
+            // request. Keeps the standing recall index cost bounded per step.
+            .slice()
+            .sort((left, right) => Number(right.relevant) - Number(left.relevant))
+            .slice(0, MAX_AGENT_MEMORY_INDEX_ENTRIES);
           const anyRelevant = ranked.some((item) => item.relevant);
           return [
             "<agent_memory>",
@@ -567,11 +589,13 @@ export function buildAgentControllerPrompt(params: {
               `<memory relevant="${relevant}"><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`),
             "</agent_memory>",
             anyRelevant
-              ? "These are saved observations for THIS connection/database (freshness = <updated>), ordered by relevance to the current request. Entries with relevant=\"true\" closely match what the user is asking — load them with read_memory FIRST, before other tools, and use them to answer. Persist new durable facts with save_memory (never credentials; they are rejected)."
-              : "These are saved observations for THIS connection/database (freshness = <updated>). Load one of them with read_memory when it looks relevant; persist new durable facts with save_memory (never credentials; they are rejected).",
+              ? `These are saved observations for THIS connection/database (freshness = <updated>), ordered by relevance to the current request. Entries with relevant="true" closely match what the user is asking — load them with read_memory FIRST, before other tools, and use them to answer. ${AGENT_MEMORY_SAVE_HINT}`
+              : `These are saved observations for THIS connection/database (freshness = <updated>). Load one of them with read_memory when it looks relevant. ${AGENT_MEMORY_SAVE_HINT}`,
           ].join("\n");
         })()
-      : "",
+      : workspaceToolsEnabled
+        ? `No saved memories exist yet for this connection/database. ${AGENT_MEMORY_SAVE_HINT}`
+        : "",
     (queryTabs ?? []).length > 0
       ? [
           "Query tabs open for this connection (tabId is required by edit_query_sql; sql is the current content to fix):",

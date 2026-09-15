@@ -273,10 +273,15 @@ pub fn classify_sql_safety(sql: String, database_type: Option<String>) -> SqlSaf
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_query(
     connection_id: String,
     sql: String,
     request_id: Option<String>,
+    // Optional per-query wall-clock override (roadmap Phase 3D backend perf).
+    // `None`/`0` keep the classified default (180s read / 60s mutating); any
+    // positive value is clamped to 1s–600s by `config::resolve_query_timeout`.
+    timeout_ms: Option<u64>,
     safe_mode_approved_by_user: Option<bool>,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
@@ -314,7 +319,10 @@ pub async fn execute_query(
         .connection_database_type(&connection_id)
         .await
         .ok();
-    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str), db_type);
+    let timeout_window = crate::config::resolve_query_timeout(
+        timeout_ms,
+        timeout_for_statements(statements.iter().map(String::as_str), db_type),
+    );
     let request_id = request_id
         .as_deref()
         .map(str::trim)

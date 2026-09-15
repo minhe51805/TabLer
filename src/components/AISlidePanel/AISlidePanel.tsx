@@ -8,7 +8,7 @@ import { emitAppToast } from "../../utils/app-toast";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { inferDatabaseFromWorkspaceName, selectActiveAIChatWorkspace, useAIChatWorkspaceStore } from "../../stores/aiChatWorkspaceStore";
-import { AUTO_COMPACT_TRIGGER_CHARS, COMPACT_COMMAND, buildCompactTranscript, buildCompactUserPrompt, buildPostCompactHistory, buildWorkspaceContextMessages, deriveMemoryTitle, extractDigestFromReply, extractMemoryKeywords, isCompactCommand, estimateTokensFromChars, formatTokensCompact } from "../../utils/ai-context-compact";
+import { AUTO_COMPACT_TRIGGER_CHARS, COMPACT_COMMAND, buildCompactTranscript, buildCompactUserPrompt, buildPostCompactHistory, buildWorkspaceContextMessages, deriveMemoryTitle, extractDigestFromReply, extractMemoryKeywords, isCompactCommand, estimateTokensFromChars, formatTokensCompact, resolveAutoCompactTokenLimit } from "../../utils/ai-context-compact";
 import type { AIConversationMessage, MetricsWidgetType } from "../../types";
 import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import { normalizeAIProviderConfigs } from "../../utils/ai-provider-registry";
@@ -208,6 +208,14 @@ export function AISlidePanel({
     if (!isOpen) return;
     if (syncedWorkspaceIdRef.current === activeChatWorkspaceId) return;
     syncedWorkspaceIdRef.current = activeChatWorkspaceId;
+    // Only adopt the workspace's own database when the connection has no active
+    // database yet. If the user already selected a database (e.g. from the
+    // sidebar), that explicit choice is authoritative: merely opening the panel
+    // must not silently re-scope the shared connection session — on SQL Server
+    // a single session backs the whole workspace, so overriding it here makes
+    // the AI read a database the user never picked. Explicitly switching chat
+    // workspaces (handleSelectChatWorkspace) still re-scopes on purpose.
+    if (useConnectionStore.getState().currentDatabase) return;
     ensureWorkspaceDatabase(activeChatWorkspaceId);
   }, [activeChatWorkspaceId, ensureWorkspaceDatabase, isOpen]);
 
@@ -1254,9 +1262,10 @@ export function AISlidePanel({
     // Auto-compact against the same footprint the meter shows (hơn là window
     // trim đã cap sẵn ~10k — so sánh đó khiến auto-compact không bao giờ chạy).
     const historyChars = estimateConversationFootprint(activeThreadBubbles);
-    const overContextWindow = contextWindowLimit
-      ? estimateTokensFromChars(historyChars) > contextWindowLimit
-      : historyChars > AUTO_COMPACT_TRIGGER_CHARS;
+    // Compact at ~80% of the real model window (or the fixed fallback window)
+    // so the summary happens BEFORE the window is full, not after we overflow.
+    const overContextWindow =
+      estimateTokensFromChars(historyChars) > resolveAutoCompactTokenLimit(contextWindowLimit);
     if (activeChatWorkspace && overContextWindow) {
       const compacted = await handleCompactContext(true);
       if (compacted) historyForRun = compacted.recentHistory;

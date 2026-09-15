@@ -23,6 +23,7 @@ export const tr: Record<keyof typeof en, string> = {
   "workspace.connecting.kicker": "Baglanti kuruluyor",
   "workspace.connecting.checking": "Veritabani erisimi kontrol ediliyor",
   "workspace.connecting.elapsed": "{{seconds}} sn gecti",
+  "workspace.connecting.cancel": "Baglantiyi iptal et",
   "workspace.error.kicker": "Baglanti sorunu",
   "workspace.error.title": "Calisma alani hatasi",
   "workspace.error.retry": "Tekrar dene",
@@ -96,7 +97,8 @@ export const tr: Record<keyof typeof en, string> = {
   "help.shortcuts.title": "Klavye Kisayollari",
   "titlebar.noActiveConnection": "Aktif baglanti yok",
   "dbVisibility.title": "Gezginde gösterilecek veritabanları",
-  "dbVisibility.hint": "İşareti kaldırılan veritabanları Gezginden gizlenir. Tümünü gizle Gezgini tamamen boşaltır.",
+  "dbVisibility.hint":
+    "İşareti kaldırılan veritabanları Gezginden gizlenir. Tümünü gizle Gezgini tamamen boşaltır.",
   "globalSearch.allTables": "Tüm tablolar",
   "globalSearch.searchDatabase": "Aranacak veritabanı",
   "globalSearch.scanningAll": "Tüm tablolar taranıyor…",
@@ -194,8 +196,7 @@ export const tr: Record<keyof typeof en, string> = {
   "startup.manager.noConnectionsDescription":
     "Baslamak icin yeni bir baglanti olusturun veya yerel bir veritabani baslatin.",
   "explorer.noActiveConnection": "Aktif baglanti yok",
-  "explorer.connectToExplore":
-    "Tablolari incelemek icin bir veritabanina baglanin",
+  "explorer.connectToExplore": "Tablolari incelemek icin bir veritabanina baglanin",
   "explorer.title": "Gezgin",
   "explorer.workspace": "Calisma Alani",
   "explorer.create": "Olustur",
@@ -207,12 +208,10 @@ export const tr: Record<keyof typeof en, string> = {
   "explorer.browseHint":
     "Mevcut veritabanindaki tablolari, gorunumleri, tetikleyicileri ve rutinleri inceleyin.",
   "explorer.tablesReady": "{{count}} tablo incelemeye hazir",
-  "explorer.switchWorkspace":
-    "Nesneleri incelemek icin calisma alanini degistirin",
+  "explorer.switchWorkspace": "Nesneleri incelemek icin calisma alanini degistirin",
   "explorer.databaseObjects": "Veritabani nesneleri",
   "explorer.groupedBySchema": "Semaya gore gruplandirilmis",
-  "explorer.showingSchemaByDefault":
-    "Varsayilan olarak {{schema}} gosteriliyor",
+  "explorer.showingSchemaByDefault": "Varsayilan olarak {{schema}} gosteriliyor",
   "explorer.allSchemas": "Tum semalar",
   "explorer.loadingObjects": "Veritabani nesneleri yukleniyor...",
   "explorer.noObjectsMatch": "Filtreyle eslesen nesne yok",
@@ -321,10 +320,8 @@ export const tr: Record<keyof typeof en, string> = {
   "metrics.widget.untitledRadial": "Adsız radyal grafik",
   "metrics.widget.loading": "Yukleniyor...",
   "metrics.widget.noData": "Veri yok",
-  "metrics.widget.queryNeedsSeries":
-    "Sorgu bir etiket ve bir sayisal deger gerektiriyor.",
-  "metrics.validation.addQuery":
-    "Bu widget'i yuklemek icin salt okunur bir SQL sorgusu ekleyin.",
+  "metrics.widget.queryNeedsSeries": "Sorgu bir etiket ve bir sayisal deger gerektiriyor.",
+  "metrics.validation.addQuery": "Bu widget'i yuklemek icin salt okunur bir SQL sorgusu ekleyin.",
   "metrics.validation.singleStatement":
     "Metrik widget'lari yalnızca tek bir salt okunur ifadeyi destekler.",
   "metrics.validation.readOnlyOnly":
@@ -349,6 +346,7 @@ export const tr: Record<keyof typeof en, string> = {
   "tabs.hideResults": "Sonuclari gizle",
   "tabs.showResults": "Sonuclari goster",
   "tabs.readyToExecute": "Calistirmak icin Ctrl+Enter'a basin",
+  "tabs.deliveringRows": "{{count}} satir aliniyor...",
   "tabs.noSqlToExecute":
     "Henuz calıstiracak bir sey yok. Once bir sorgu veya komut yazin, ardindan Ctrl+Enter'a basin.",
   "metrics.widget.openResult": "Open result in workspace",
@@ -357,14 +355,11 @@ export const tr: Record<keyof typeof en, string> = {
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":
     '"{{failed}}" sağlayıcısı hata veriyor, "{{next}}" sağlayıcısına geçiliyor, lütfen bekleyin.',
-  "ai.failover.consentTitle":
-    "Sağlayıcı hata veriyor",
+  "ai.failover.consentTitle": "Sağlayıcı hata veriyor",
   "ai.failover.consentBody":
     '"{{failed}}" sağlayıcısı hata vermeye devam ediyor. TableR bunu hatırlayıp ileride tekrar olduğunda başka bir etkin sağlayıcıya otomatik geçmesine izin verir misiniz?',
-  "ai.failover.consentAllow":
-    "Otomatik geçişe izin ver",
-  "ai.failover.consentDeny":
-    "Şimdi değil",
+  "ai.failover.consentAllow": "Otomatik geçişe izin ver",
+  "ai.failover.consentDeny": "Şimdi değil",
 
   // ── Data grid toolbar ─────────────────────────────────────────────────
   "datagrid.filterRows": "Satırları filtrele",
@@ -477,7 +472,8 @@ export const tr: Record<keyof typeof en, string> = {
   "datagrid.copiedDescription": "{{count}} satır panoya kopyalandı.",
   "datagrid.copyFailed": "Kopyalama başarısız",
   "datagrid.exportFailed": "Dışa aktarma başarısız",
-  "datagrid.partialResultBanner": "Veritabanı kısmi bir sonuç döndürdü. Devam etmek için sorguyu daraltın veya daha fazla veri yükleyin.",
+  "datagrid.partialResultBanner":
+    "Veritabanı kısmi bir sonuç döndürdü. Devam etmek için sorguyu daraltın veya daha fazla veri yükleyin.",
 
   // ── Data grid context menu ───────────────────────────────────────────
   "datagrid.ctxCopied": "{{target}} kopyalandı",
@@ -511,7 +507,8 @@ export const tr: Record<keyof typeof en, string> = {
   "datagrid.insKicker": "Satır ekle",
   "datagrid.insAddTo": "{{table}} tablosuna satır ekle",
   "datagrid.insAdd": "Satır ekle",
-  "datagrid.insDescription": "Aşağıya zorunlu değerleri girin. Veritabanı varsayılanı olan sütunlar otomatik işlenir.",
+  "datagrid.insDescription":
+    "Aşağıya zorunlu değerleri girin. Veritabanı varsayılanı olan sütunlar otomatik işlenir.",
   "datagrid.insCloseAria": "Satır ekleme penceresini kapat",
   "datagrid.insPlaceholderUuid": "UUID değeri",
   "datagrid.insPlaceholderNumeric": "Sayısal değer",
@@ -527,7 +524,8 @@ export const tr: Record<keyof typeof en, string> = {
   "datagrid.pasteDescription": "Panodan sütun eşlemeleri",
   "datagrid.pasteHeadersDetected": "başlık satırı algılandı",
   "datagrid.pastePositional": "konuma göre eşleme",
-  "datagrid.pasteNullOmitted": "Eşleşmeyen tablo sütunları atlandı; veritabanı varsayılanları uygulanır: {{columns}}",
+  "datagrid.pasteNullOmitted":
+    "Eşleşmeyen tablo sütunları atlandı; veritabanı varsayılanları uygulanır: {{columns}}",
   "datagrid.pasteSkippedInline": "Atlanan pano sütunları: {{columns}}",
   "datagrid.pasteCloseAria": "Yapıştır penceresini kapat",
   "datagrid.pasteMappingsTitle": "Sütun eşlemeleri",
@@ -535,7 +533,8 @@ export const tr: Record<keyof typeof en, string> = {
   "datagrid.pasteTableColumn": "Tablo sütunu",
   "datagrid.pasteSkippedTitle": "Atlanan pano sütunları (eşleşen tablo sütunu yok)",
   "datagrid.pasteColumnFallback": "{{index}}. sütun",
-  "datagrid.pastePreviewStreaming": "önizleme satırı kontrol edildi; dosyanın tamamı akışla alınacak",
+  "datagrid.pastePreviewStreaming":
+    "önizleme satırı kontrol edildi; dosyanın tamamı akışla alınacak",
   "datagrid.pasteRowsToInsert": "satır eklenecek",
   "datagrid.pasteNullDefaults": "{{count}} sütun veritabanı varsayılanını kullanır",
   "datagrid.pasteRowsProcessed": "{{count}} satır işlendi",
@@ -575,7 +574,8 @@ export const tr: Record<keyof typeof en, string> = {
   "datagrid.copyHintJson": "Her satıra bir nesne",
   "datagrid.copyHintMql": "Mongo shell insert'leri",
   "datagrid.sortRows": "Satırları sırala",
-  "datagrid.sortHintMulti": "Çok sütunlu sıralama etkin — eklemek için bir sütun seçin veya sıralamaları temizleyin",
+  "datagrid.sortHintMulti":
+    "Çok sütunlu sıralama etkin — eklemek için bir sütun seçin veya sıralamaları temizleyin",
   "datagrid.sortHintBy": "{{column}} sütununa göre sıralı ({{direction}})",
   "datagrid.sortHintNone": "Bir sütuna göre sırala",
   "datagrid.clearSort": "Sıralamayı temizle",

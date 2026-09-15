@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { ShieldCheck, X } from "lucide-react";
 import { useI18n, type TranslationKey } from "../../../i18n";
 import { emitAppToast } from "../../../utils/app-toast";
@@ -102,7 +103,7 @@ export function DataGridAnonymizerModal({ columns, dataRows, onClose }: DataGrid
     }
   };
 
-  return (
+  return createPortal(
     <div className="qs-overlay" role="presentation" onClick={onClose}>
       <div
         className="qs-panel data-import-panel"
@@ -201,6 +202,7 @@ export function DataGridAnonymizerModal({ columns, dataRows, onClose }: DataGrid
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

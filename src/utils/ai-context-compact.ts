@@ -31,6 +31,31 @@ export function estimateTokensFromChars(chars: number): number {
   return Math.ceil(chars / CHARS_PER_TOKEN);
 }
 
+/**
+ * Fraction of a model's context window the conversation footprint may reach
+ * before auto-compaction fires. Mirrors Claude Code's ~80% auto-compact
+ * trigger: summarize BEFORE the window is full so the pending request and its
+ * reply still fit, instead of only compacting once we have already overflowed
+ * (comparing against 100% of the window means the request that trips it is
+ * already too big to send).
+ */
+export const CONTEXT_WINDOW_COMPACT_HEADROOM = 0.8;
+
+/**
+ * Token ceiling at which auto-compaction should fire for the active model.
+ * When the model's real context window is known we trigger at HEADROOM% of it
+ * (model-aware); otherwise we fall back to the fixed character-based display
+ * window. Always returns a token count so callers can compare in token space.
+ */
+export function resolveAutoCompactTokenLimit(
+  contextWindowTokens: number | null | undefined,
+): number {
+  if (typeof contextWindowTokens === "number" && contextWindowTokens > 0) {
+    return Math.floor(contextWindowTokens * CONTEXT_WINDOW_COMPACT_HEADROOM);
+  }
+  return estimateTokensFromChars(AUTO_COMPACT_TRIGGER_CHARS);
+}
+
 export function formatTokensCompact(tokens: number): string {
   if (tokens >= 1_000_000) {
     const millions = tokens / 1_000_000;

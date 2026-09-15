@@ -1,5 +1,6 @@
 use tauri::{Emitter, Manager};
 mod agent_memory;
+mod agent_memory_native;
 mod ai_skills;
 mod ai_workspace_cache;
 mod ai_workspace_history;
@@ -49,7 +50,10 @@ use commands::ai_checkpoints::{
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
 use commands::data_export::{cancel_table_export, export_table_data, TableExportCancellationState};
-use commands::data_import::{import_csv, preview_import_csv};
+use commands::data_import::{
+    import_csv, import_json, import_xlsx, preview_import_csv, preview_import_json,
+    preview_import_xlsx,
+};
 use commands::deep_link::parse_deep_link;
 use commands::diagnostics::{
     export_diagnostic_bundle, preview_diagnostic_bundle, DiagnosticReviewState,
@@ -62,13 +66,12 @@ use commands::mcp::{
     list_mcp_tokens, revoke_mcp_token, set_mcp_connection_policy, start_mcp_local_server,
     stop_mcp_local_server,
 };
-use commands::operations::get_operational_queries;
-use commands::profiler::{execute_profiler_sample, get_profiler_probe, get_top_queries_probe};
 use commands::plugins::{
     check_plugin_updates, get_plugin_registry, install_plugin_bundle, install_registry_plugin,
     list_installed_plugins, reload_installed_plugins, rollback_plugin_bundle, set_plugin_enabled,
     uninstall_plugin_bundle,
 };
+use commands::profiler::{execute_profiler_sample, get_profiler_probe, get_top_queries_probe};
 use commands::query::*;
 use commands::restore::{preview_database_restore, restore_database_sql};
 use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
@@ -330,6 +333,10 @@ pub fn run() {
             generate_migration_script,
             preview_import_csv,
             import_csv,
+            preview_import_json,
+            import_json,
+            preview_import_xlsx,
+            import_xlsx,
             execute_sandboxed_query,
             execute_agent_readonly_query,
             preview_write_transaction,
@@ -397,6 +404,7 @@ pub fn run() {
             agent_memory::read_agent_memory,
             agent_memory::save_agent_memory,
             agent_memory::delete_agent_memory,
+            agent_memory_native::run_agent_memory_tool,
             ai_skills::list_ai_skills,
             ai_skills::read_ai_skill,
             ai_skills::read_ai_skill_resource,
@@ -472,8 +480,6 @@ pub fn run() {
             // Maintenance commands
             preview_maintenance_command,
             run_maintenance_command,
-            // Operations dashboard queries
-            get_operational_queries,
             // Live profiler (per-engine active-session sampling probe)
             get_profiler_probe,
             // Profiler: statement-store aggregate ranking probe

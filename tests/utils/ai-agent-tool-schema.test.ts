@@ -127,8 +127,14 @@ describe("AI agent tool schema", () => {
 
   it("shapes Anthropic and Gemini tool payloads in their native formats", () => {
     const anthropic = nativeToolPayloadForProvider("anthropic");
-    expect(anthropic.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
+    // One hidden catalog tool (describe_tables) is dropped, and Anthropic's
+    // native memory tool block is appended — netting back to the registry size.
+    expect(anthropic.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length);
     expect((anthropic.tools[0] as Record<string, unknown>)).toHaveProperty("input_schema");
+    // The native memory tool is the trailing entry: an opaque type block with
+    // no input_schema (memory_20250818).
+    const nativeMemory = anthropic.tools[anthropic.tools.length - 1] as Record<string, unknown>;
+    expect(nativeMemory).toEqual({ type: "memory_20250818", name: "memory" });
     expect(anthropic.tool_choice).toEqual({ type: "auto" });
 
     const gemini = nativeToolPayloadForProvider("gemini");
@@ -138,6 +144,24 @@ describe("AI agent tool schema", () => {
     // Vertex AI reuses the exact Gemini generateContent tool shape.
     const vertex = nativeToolPayloadForProvider("vertex");
     expect(vertex).toEqual(gemini);
+  });
+
+  it("offers the native memory tool (memory_20250818) only to Anthropic", () => {
+    const hasNativeMemory = (payload: { tools: unknown[] }) =>
+      payload.tools.some(
+        (tool) => (tool as { type?: string }).type === "memory_20250818",
+      );
+    expect(hasNativeMemory(nativeToolPayloadForProvider("anthropic"))).toBe(true);
+    for (const provider of [
+      "openai",
+      "openrouter",
+      "ollama",
+      "custom",
+      "gemini",
+      "vertex",
+    ] as const) {
+      expect(hasNativeMemory(nativeToolPayloadForProvider(provider))).toBe(false);
+    }
   });
 
   it("normalizes Gemini schemas to the Gemini proto (audit fix)", () => {
@@ -272,7 +296,10 @@ describe("native tool calling wire parity", () => {
       expect(names).toContain("list_tables");
       expect(names).toContain("describe_table");
       expect(names).toContain("finish");
-      return names;
+      // The native memory tool (memory_20250818) is intentionally Anthropic-only
+      // (see the dedicated test above), so exclude it from the cross-provider
+      // catalog-parity comparison below.
+      return names.filter((name) => name !== "memory");
     });
 
     // Parity: no provider family drops or gains tools relative to the others.

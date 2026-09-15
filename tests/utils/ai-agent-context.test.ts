@@ -292,7 +292,42 @@ describe("agent memory index injection", () => {
     expect(prompt).toContain("metric-definitions");
     expect(prompt).toContain("2026-01-01T00:00:00Z");
     expect(prompt).toContain("read_memory");
-    expect(prompt).toContain("never credentials");
+    // Credential-safety guidance stays present regardless of exact wording.
+    expect(prompt).toContain("credentials");
+    // Item 7: the proactive save_memory directive (with a concrete example) is
+    // injected so the agent persists durable facts without being asked.
+    expect(prompt).toContain("Proactively persist durable facts with save_memory");
+    expect(prompt).toContain("soft-delete");
+  });
+
+  it("caps the injected memory index and keeps a relevant match past the cap", () => {
+    // A relevant entry buried at the end of an over-cap list must survive the
+    // hard cap, and the total injected entries must not exceed it (item 6).
+    const filler = Array.from({ length: 40 }, (_unused, index) => ({
+      name: `note-${index}`,
+      description: `unrelated observation number ${index}`,
+      updatedAt: "2026-01-01T00:00:00Z",
+    }));
+    const relevant = {
+      name: "orders-soft-delete",
+      description: "orders.is_deleted marks a soft-delete row",
+      updatedAt: "2026-02-02T00:00:00Z",
+    };
+    const prompt = buildAgentControllerPrompt({
+      userPrompt: "which orders are soft-deleted?",
+      assistIntent: "sql",
+      currentDatabase: "appdb",
+      availableTableNames: ["orders"],
+      steps: [],
+      workspaceToolsEnabled: true,
+      agentMemoryIndex: [...filler, relevant],
+    });
+    // Each entry renders one `<memory ` tag; the cap holds the count at 24.
+    const injected = (prompt.match(/<memory /g) ?? []).length;
+    expect(injected).toBe(24);
+    // Relevance-ranked match is surfaced despite being last in storage order.
+    expect(prompt).toContain("orders-soft-delete");
+    expect(prompt).toContain('relevant="true"');
   });
 
   it("omits the memory block when the index is empty", () => {

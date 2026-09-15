@@ -29,7 +29,11 @@
     "test:integration:heavy": "node scripts/run-driver-integration.mjs --heavy",
     "dev:debug": "node scripts/dev-with-debug-port.mjs",
     "test:performance": "vitest run tests/performance/v016-performance.test.ts",
-    "check:secrets": "node scripts/check-secret-leaks.mjs"
+    "check:secrets": "node scripts/check-secret-leaks.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint:fix": "eslint src tests --fix --max-warnings=0",
+    "prepare": "husky"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -78,7 +82,10 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "husky": "^9.1.7",
     "jsdom": "^29.0.1",
+    "lint-staged": "^17.5.1",
+    "prettier": "^3.9.6",
     "typescript": "~5.9.3",
     "vite": "^7.0.4",
     "vitest": "^4.1.0"

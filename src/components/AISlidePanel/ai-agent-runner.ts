@@ -2,7 +2,6 @@ import type { AgentTraceStep } from "./ai-agent-context";
 import type {
   AIAgentFinishAction,
   AIAgentToolAction,
-  AIAgentToolName,
 } from "./ai-agent-tools";
 
 export type AIAgentRunnerPhase =
@@ -31,7 +30,9 @@ export interface AIAgentRunnerSnapshot {
   /** Cumulative model tokens spent so far in this run (0 when untracked). */
   tokensUsed: number;
   requestReason?: AIAgentActionRequestReason;
-  action?: AIAgentToolName;
+  // Includes the Anthropic-only native "memory" action, which is not part of
+  // the AIAgentToolName catalog.
+  action?: AIAgentToolAction["action"];
   message?: string;
   error?: string;
   steps: AgentTraceStep[];

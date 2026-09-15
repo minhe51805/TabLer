@@ -76,6 +76,7 @@ function getActionIcon(action: AIWorkspaceAgentActionName): ReactNode {
     case "read_memory":
     case "save_memory":
     case "delete_memory":
+    case "memory":
       return <BookOpen className="w-3.5 h-3.5" />;
     case "read_page":
       return <Eye className="w-3.5 h-3.5" />;
@@ -129,6 +130,7 @@ function getActionLabel(
     case "read_memory":
     case "save_memory":
     case "delete_memory":
+    case "memory":
       return copy.modal.agentActionRememberTerm;
     case "create_checkpoint":
       return copy.modal.agentActionCreateCheckpoint;

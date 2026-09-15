@@ -399,7 +399,11 @@ pub(crate) async fn execute_ai_request(
                 if matches!(wire_provider, AIProviderType::Anthropic) {
                     req = req
                         .header("x-api-key", api_key.as_deref().unwrap_or_default())
-                        .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION);
+                        .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION)
+                        .header(
+                            "anthropic-beta",
+                            crate::config::ANTHROPIC_CONTEXT_MANAGEMENT_BETA,
+                        );
                 } else if let Some(ref api_key) = api_key {
                     req = req.bearer_auth(api_key);
                 }
@@ -587,6 +591,10 @@ pub(crate) async fn execute_ai_request(
                 .post(&endpoint)
                 .header("x-api-key", api_key.as_deref().unwrap_or_default())
                 .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION)
+                .header(
+                    "anthropic-beta",
+                    crate::config::ANTHROPIC_CONTEXT_MANAGEMENT_BETA,
+                )
                 .json(&body)
                 .send()
                 .await

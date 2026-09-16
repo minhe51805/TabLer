@@ -31,7 +31,6 @@ binary. The product-level target the epic started from:
 > unchanged and still guards the connect path; an engine without an available
 > plugin therefore stays gated in the UI until one exists.
 
-
 Rust has no stable ABI, so "download a compiled Rust driver and load it at
 runtime" is not possible in-process. That single fact splits the non-core
 engines into two very different tracks (HTTP vs native), which is the core of
@@ -43,11 +42,11 @@ Every engine is classified exactly once by `driver_distribution()` in
 `src-tauri/src/database/capabilities.rs`. The match is exhaustive on purpose:
 adding a new `DatabaseType` forces a packaging decision.
 
-| Distribution   | Meaning | Engines |
-|----------------|---------|---------|
-| `builtin`      | Always compiled in; ships in every build. | MySQL, MariaDB, PostgreSQL, CockroachDB, Greenplum, Redshift, Vertica, SQLite, SQL Server (MSSQL), MongoDB |
-| `plugin_http`  | HTTP/REST engines; the compiled driver is gated behind an installable plugin manifest (`declarative-http-v1`). | ClickHouse, BigQuery, Snowflake, Cloudflare D1, OpenSearch |
-| `plugin_native`| Wire-protocol crate compiled behind a Cargo feature (off by default). The lean default build ships none of them; each is delivered as an installable out-of-process `driver-sidecar-v1` plugin, or linked back in with `--features <engine>-driver`. | DuckDB, Cassandra, Redis, LibSQL |
+| Distribution    | Meaning                                                                                                                                                                                                                                              | Engines                                                                                                    |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `builtin`       | Always compiled in; ships in every build.                                                                                                                                                                                                            | MySQL, MariaDB, PostgreSQL, CockroachDB, Greenplum, Redshift, Vertica, SQLite, SQL Server (MSSQL), MongoDB |
+| `plugin_http`   | HTTP/REST engines; the compiled driver is gated behind an installable plugin manifest (`declarative-http-v1`).                                                                                                                                       | ClickHouse, BigQuery, Snowflake, Cloudflare D1, OpenSearch                                                 |
+| `plugin_native` | Wire-protocol crate compiled behind a Cargo feature (off by default). The lean default build ships none of them; each is delivered as an installable out-of-process `driver-sidecar-v1` plugin, or linked back in with `--features <engine>-driver`. | DuckDB, Cassandra, Redis, LibSQL                                                                           |
 
 The classification is serialized into `docs/generated/driver-capabilities.json`
 (field `distribution`) by the `generate_capability_matrix` example, and a Rust
@@ -77,16 +76,19 @@ extra to keep in-app.
 ## 4. What ships today (Phases 0-3.5)
 
 ### Phase 0 - Taxonomy foundation
+
 - `DriverDistribution` enum + `driver_distribution()` + `distribution` field on
   the capability profile; matrix regenerated; frontend `DriverDistribution` type
   mirrors it; contract test binds the frontend set to the generated matrix.
 
 ### Phase 1 - Generalized the plugin host gate
+
 - The `declarative-http-v1` validation gate accepts exactly the `plugin_http`
   protocol set, derived from the matrix (`is_declarative_http_protocol`) so the
   allow-list cannot drift from the taxonomy.
 
 ### Phase 2 - HTTP engines gated behind installable plugins
+
 - `manager.rs` routes ClickHouse, BigQuery, Snowflake, Cloudflare D1 and
   OpenSearch through `require_installed_http_plugin(...)`: they only connect once
   a matching plugin is installed, enabled and verified.
@@ -98,6 +100,7 @@ extra to keep in-app.
   `plugin_id`/`plugin_driver_id` into the connection when selected.
 
 ### Phase 3 - Native drivers behind Cargo features
+
 - `Cargo.toml` features: `duckdb-driver`, `cassandra-driver`, `redis-driver`,
   `libsql-driver`. Originally all in `default`; the native-distribution work
   (Phase 4g) flips `default` to empty so the shipped build is lean and these are
@@ -110,9 +113,11 @@ extra to keep in-app.
   `cargo check --no-default-features` compiles without the four native crates.
 
 ### Phase 3.5 - Build-availability surfaced to the UI
+
 Phase 3 made native drivers optional but nothing told the frontend which were
 compiled in, so a lean build would still advertise a dropped engine and only
 fail at connect. Closed the loop:
+
 - Backend `compiled_native_driver_availability()` (evaluated with `cfg!`, never a
   const table) reports which `plugin_native` engines are linked, exposed via the
   `get_native_driver_availability` Tauri command. Tests pin the key set to the
@@ -159,8 +164,9 @@ it rather than linking the crate.
 Phase 4 lands as verified sub-phases. Status:
 
 ### Phase 4a - IPC protocol contract (done)
+
 - `src-tauri/src/database/sidecar/protocol.rs`: `SIDECAR_PROTOCOL_VERSION =
-  "driver-sidecar-v1"`, a `SidecarCall` enum mirroring every `DatabaseDriver`
+"driver-sidecar-v1"`, a `SidecarCall` enum mirroring every `DatabaseDriver`
   method one-to-one, typed `SidecarResponsePayload`/`SidecarError`, and the
   framed `HostFrame`/`SidecarFrame` messages (Request/Cancel/StreamChunk/
   StreamEnd/Shutdown). Every payload reuses the existing serde models, so host
@@ -168,6 +174,7 @@ Phase 4 lands as verified sub-phases. Status:
   framing (`encode_frame`/`decode_frame`). Round-trip + framing tests pin it.
 
 ### Phase 4b - host-side proxy (done)
+
 - `sidecar/client.rs` `SidecarClient`: transport-agnostic (any
   `AsyncRead`/`AsyncWrite`), with a writer task, a reader task, per-id oneshot
   correlation, unary-call timeout, cooperative cancellation (`call_cancellable`
@@ -180,6 +187,7 @@ Phase 4 lands as verified sub-phases. Status:
   `disconnect`). `spawn` negotiates the handshake then opens the connection.
 
 ### Phase 4d - runtime recognition + asset resolution (done)
+
 - `capabilities::is_plugin_native_protocol` mirrors `is_declarative_http_protocol`
   for the `PluginNative` set (matrix-sourced, cannot drift).
 - Manifest validation accepts `("driver-sidecar-v1", "stable"|"experimental")`,
@@ -191,6 +199,7 @@ Phase 4 lands as verified sub-phases. Status:
   includes `driver-sidecar-v1`.
 
 ### Phase 4c - manager routing (done)
+
 - `manager.rs` `connect_native_sidecar` mirrors `require_installed_http_plugin`:
   when a native crate feature is absent, the engine's fallback arm resolves a
   verified `driver-sidecar-v1` plugin (`resolve_active_sidecar`, which reuses the
@@ -202,8 +211,9 @@ Phase 4 lands as verified sub-phases. Status:
   routing).
 
 ### Phase 4f - registry packaging + picker gating (done)
+
 - `scripts/build-plugin-registry.mjs` is sidecar-ready: `computeBundleDigest`
-  now hashes the *whole* bundle (semantic manifest, then every other file sorted
+  now hashes the _whole_ bundle (semantic manifest, then every other file sorted
   by its forward-slash path as `path + 0x00 + u64LE(len) + contents`), byte-for-
   byte mirroring the Rust host's `compute_bundle_digest`. `collectBundleFiles`
   walks each bundle recursively and `buildAssets` publishes one download asset
@@ -219,7 +229,8 @@ Phase 4 lands as verified sub-phases. Status:
   `plugin-driver-runtime.ts` sidecar helpers + tests).
 
 ### Phase 4e - reference sidecar + end-to-end test (done)
-- `src-tauri/src/bin/reference_sidecar.rs`: a real out-of-process
+
+- `src-tauri/src/sidecar_bins/reference_sidecar.rs`: a real out-of-process
   `driver-sidecar-v1` binary. It plugs a concrete `SidecarBackend` (backed by the
   built-in SQLite driver, so it needs no external server and runs in CI) into the
   reusable `sidecar::server::serve` loop and speaks the framed protocol over
@@ -242,8 +253,10 @@ Phase 4 lands as verified sub-phases. Status:
   `unexpected_cfgs` no longer fails the same gate.
 
 ### Phase 4g - native distribution: lean default + sidecar plugins (done, packaging)
+
 The mechanism (4a-4f) was complete but the shipped app still linked all four
 native crates and no native plugins existed. Phase 4g makes the split real:
+
 - `Cargo.toml` `default = []` -- the shipped `cargo build --release` /
   `npm run build:release` is now lean and links no native crate. Full builds are
   one command away: `npm run build:release:full` (release) / `npm run tauri:full`
@@ -253,12 +266,19 @@ native crates and no native plugins existed. Phase 4g makes the split real:
   (`duckdb`/`cassandra`/`redis`/`libsql`) with the DB permissions the validator
   requires. `plugin-registry.json` regenerated to 10 packages; the five
   `plugin_http` manifests' digests are unchanged (determinism gate stays green).
-- Four per-engine sidecar binaries: `src-tauri/src/bin/{duckdb,cassandra,redis,libsql}_sidecar.rs`,
+- Four per-engine sidecar binaries: `src-tauri/src/sidecar_bins/{duckdb,cassandra,redis,libsql}_sidecar.rs`,
   each gated behind its own `*-sidecar` feature (which pulls the driver crate) via
   `[[bin]] required-features`. They mirror `reference_sidecar`: plug the real
   compiled driver into `sidecar::serve`. `check-tauri-binary-target.mjs` now
   ignores feature-gated bins, so the default build still exposes exactly one
   `tabler` binary.
+- Sidecar bin roots live in `src/sidecar_bins/`, not `src/bin/`, on purpose: the
+  Tauri CLI pinned by `package-lock.json` (2.10.x) collects every file under
+  `src/bin/` as a bundle binary _without_ honouring `required-features`, so a
+  gated sidecar placed there made the v0.1.6a release build die while bundling
+  (`failed to copy binary ... <engine>_sidecar does not exist`). Upstream fix
+  #15427 ("respect src/bin required-features") ships in `@tauri-apps/cli` 2.11.4+,
+  so these can move back to `src/bin/` once the CLI bump is taken.
 - Verified: lean `cargo check` / `clippy --lib -D warnings` / test build green;
   `redis_sidecar` compiles (`cargo check --features redis-sidecar --bin redis_sidecar`);
   registry + engine-gate vitest and `tsc` green; `check:tauri-target` green.
@@ -279,6 +299,7 @@ Remaining (release pipeline, not committed): the plugin bundles currently ship
 the manifest only (`assets: []`), so a freshly installed native plugin reports
 "no sidecar binary for this platform" until its binary is attached. To finish the
 download-and-connect loop, per OS/arch:
+
 1. `cargo build --release --bin <engine>_sidecar --features <engine>-sidecar`.
 2. Place the binary at `plugins/<engine>-driver/bin/<os>-<arch>/<driver_id>[.exe]`.
 3. Re-run `node scripts/build-plugin-registry.mjs` (it hashes the binary into the

@@ -8,6 +8,7 @@ import {
   type AIRequestAttachment,
   type AIRequestIntent,
   type AIRequestMode,
+  type FetchedModel,
   type LocalOllamaSetupResult,
   type LocalOllamaStatus,
 } from "../types";
@@ -15,6 +16,7 @@ import { buildNativeToolPayload } from "../components/AISlidePanel/ai-agent-tool
 import { useConnectionStore } from "./connectionStore";
 import { getActiveAIProvider, normalizeAIProviderConfigs } from "../utils/ai-provider-registry";
 import { AIRequestError, normalizeAIRequestError } from "../utils/ai-request-errors";
+import { extractStreamingAgentAnswer } from "../utils/ai-stream-answer";
 import { emitAppToast } from "../utils/app-toast";
 import { useGlobalErrorStore } from "./globalErrorStore";
 
@@ -167,15 +169,48 @@ function getAIRequestTimeout(config: AIProviderConfig, mode: AIRequestMode, inte
   return AI_TIMEOUTS.default;
 }
 
+/**
+ * The panel "Thinking" toggle is a single source of truth in this store so the
+ * request builder can gate reasoning per call. Persisted under the legacy key so
+ * a user's existing preference migrates seamlessly from the old component state.
+ */
+const AI_THINKING_STORAGE_KEY = "tabler.ai.workspace.showThinking.v1";
+
+function loadThinkingPreference(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = window.localStorage.getItem(AI_THINKING_STORAGE_KEY);
+    return raw === null ? true : raw === "true";
+  } catch {
+    return true;
+  }
+}
+
+function persistThinkingPreference(enabled: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(AI_THINKING_STORAGE_KEY, String(enabled));
+  } catch {
+    // Ignore storage write failures (private mode, quota, etc.).
+  }
+}
+
 export interface AIState {
   aiConfigs: AIProviderConfig[];
   activeAIRequestId: string | null;
   requestPhase: AIRequestPhase;
   streamingText: string;
   streamingReasoning: boolean;
+  /** Accumulated model chain-of-thought captured live from `reasoning_delta`
+   *  stream events; drives the collapsible "Thinking…" block. */
+  streamingReasoningText: string;
   streamingUsage: Record<string, unknown> | null;
   /** True while an automatic provider failover is switching the active provider. */
   isProviderFailingOver: boolean;
+  /** Panel "Thinking" toggle. When false, requests omit the reasoning opt-in so
+   *  the model spends no thinking tokens and the live trace stays hidden. */
+  thinkingEnabled: boolean;
+  setThinkingEnabled: (enabled: boolean) => void;
 
   loadAIConfigs: () => Promise<{
     aiConfigs: AIProviderConfig[];
@@ -189,6 +224,15 @@ export interface AIState {
     aiConfigs: AIProviderConfig[];
     aiKeyStatus: Record<string, boolean>;
   }>;
+  /**
+   * Calls the provider's own "list models" API (via the `list_provider_models`
+   * command) and returns the models it exposes, each with any capability
+   * metadata (context window, output budget, input modalities) the provider
+   * advertised, so AI settings can populate the catalog and auto-fill those
+   * fields without manual typing. Callers should persist the config first so
+   * the backend reads the latest endpoint + API key.
+   */
+  listProviderModels: (providerId: string) => Promise<FetchedModel[]>;
   getLocalOllamaStatus: () => Promise<LocalOllamaStatus>;
   setupLocalOllama: () => Promise<LocalOllamaSetupResult>;
   cancelAIRequest: () => Promise<boolean>;
@@ -264,8 +308,15 @@ export const useAIStore = create<AIState>((set, get) => ({
   requestPhase: "idle",
   streamingText: "",
   streamingReasoning: false,
+  streamingReasoningText: "",
   streamingUsage: null,
   isProviderFailingOver: false,
+  thinkingEnabled: loadThinkingPreference(),
+
+  setThinkingEnabled: (enabled) => {
+    persistThinkingPreference(enabled);
+    set({ thinkingEnabled: enabled });
+  },
 
   loadAIConfigs: async () => {
     try {
@@ -294,6 +345,14 @@ export const useAIStore = create<AIState>((set, get) => ({
       throw e;
     }
   },
+
+  listProviderModels: async (providerId) =>
+    invokeWithTimeout<FetchedModel[]>(
+      "list_provider_models",
+      { providerId },
+      30_000,
+      "Fetching provider models",
+    ),
 
   promoteNextEnabledProvider: () => {
     const configs = get().aiConfigs;
@@ -395,6 +454,7 @@ export const useAIStore = create<AIState>((set, get) => ({
         requestPhase: "requesting",
         streamingText: "",
         streamingReasoning: false,
+        streamingReasoningText: "",
         streamingUsage: null,
       });
 
@@ -402,6 +462,7 @@ export const useAIStore = create<AIState>((set, get) => ({
       try {
         if (mode === "panel" && !nativeToolPayload) {
           let streamedText = "";
+          let streamedReasoning = "";
           unlisten = await listen<{
             requestId: string;
             kind: "text_delta" | "reasoning_delta" | "usage" | "error" | "done";
@@ -412,9 +473,25 @@ export const useAIStore = create<AIState>((set, get) => ({
             if (payload.requestId !== requestId || get().activeAIRequestId !== requestId) return;
             if (payload.kind === "text_delta" && payload.text) {
               streamedText += payload.text;
-              if (intent !== "agent") set({ streamingText: streamedText });
+              if (intent === "agent") {
+                // Agent calls stream a JSON tool action, so the raw text is not
+                // user-facing. Pull the finish action's answer out of the partial
+                // JSON as it lands so the final reply streams token-by-token like a
+                // normal chat turn instead of stalling and then dumping all at once.
+                const partialAnswer = extractStreamingAgentAnswer(streamedText);
+                if (partialAnswer) set({ streamingText: partialAnswer });
+              } else {
+                set({ streamingText: streamedText });
+              }
             } else if (payload.kind === "reasoning_delta") {
-              set({ streamingReasoning: true });
+              // Accumulate the model's chain-of-thought so the UI can stream it
+              // live into the "Thinking…" block instead of dumping one block.
+              if (payload.text) {
+                streamedReasoning += payload.text;
+                set({ streamingReasoning: true, streamingReasoningText: streamedReasoning });
+              } else {
+                set({ streamingReasoning: true });
+              }
             } else if (payload.kind === "usage" && payload.usage) {
               set({ streamingUsage: payload.usage });
             }
@@ -433,6 +510,7 @@ export const useAIStore = create<AIState>((set, get) => ({
                 language: getCurrentAppLanguage(),
                 history,
                 attachments: attachments && attachments.length > 0 ? attachments : undefined,
+                enable_thinking: get().thinkingEnabled,
               },
             },
             timeoutMs,
@@ -442,7 +520,7 @@ export const useAIStore = create<AIState>((set, get) => ({
                 invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false),
             },
           );
-          return { text: streamedText };
+          return { text: streamedText, reasoning: streamedReasoning || undefined };
         }
 
         const resp = await invokeWithTimeout<{ text: string; reasoning?: string; error?: string }>(
@@ -459,6 +537,7 @@ export const useAIStore = create<AIState>((set, get) => ({
               language: getCurrentAppLanguage(),
               history,
               attachments: attachments && attachments.length > 0 ? attachments : undefined,
+              enable_thinking: get().thinkingEnabled,
               ...(nativeToolPayload
                 ? {
                     tools: nativeToolPayload.tools,
@@ -513,6 +592,7 @@ export const useAIStore = create<AIState>((set, get) => ({
             activeAIRequestId: null,
             requestPhase: "idle",
             streamingReasoning: false,
+            streamingReasoningText: "",
           });
         }
       }

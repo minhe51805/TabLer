@@ -1,4 +1,4 @@
-export type AIProviderType = "openai" | "anthropic" | "gemini" | "openrouter" | "ollama" | "custom";
+export type AIProviderType = "openai" | "anthropic" | "gemini" | "vertex" | "openrouter" | "ollama" | "custom";
 export type AIResponseLanguage = "en" | "vi" | "zh" | "tr" | "ko";
 export type AIConversationRole = "user" | "assistant";
 
@@ -8,6 +8,18 @@ export interface AIModelSettings {
     max_output_tokens?: number | null;
     input_types?: string[];
     output_types?: string[];
+}
+
+/**
+ * One model returned by a provider's "list models" API, plus any capability
+ * metadata that API exposed (mirrors the backend `FetchedModel`). Fields the
+ * provider omits are absent so the UI can fall back to its own defaults.
+ */
+export interface FetchedModel {
+    id: string;
+    context_window?: number | null;
+    max_output_tokens?: number | null;
+    input_types?: string[];
 }
 
 export interface AIProviderConfig {
@@ -87,6 +99,10 @@ export interface AIRequest {
     history?: AIConversationMessage[];
     /** Current-turn image attachments; text files are inlined into `prompt`. */
     attachments?: AIRequestAttachment[];
+    /** Panel "Thinking" toggle. `false` forces reasoning off across every
+     *  provider (no thinking tokens); `true`/omitted keeps the capability-gated
+     *  default so only models that support reasoning actually emit it. */
+    enable_thinking?: boolean;
 }
 
 export interface AIResponse {

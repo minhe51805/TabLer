@@ -3,6 +3,7 @@ import {
   BarChart3,
   Plus,
   GitBranch,
+  Activity,
   Terminal,
   Download,
   Upload,
@@ -22,7 +23,6 @@ import {
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { APP_VERSION } from "../constants/version";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { WorkspaceErrorFallback } from "./layout/WorkspaceErrorFallback";
 import { WorkspaceConnecting } from "./layout/WorkspaceConnecting";
 import { MetricsSidebar } from "./MetricsSidebar/MetricsSidebar";
 import { Sidebar } from "./Sidebar";
@@ -252,6 +252,11 @@ export function AppWorkspacePanel({
   const isERDiagramPanelActive = activeTab?.type === "er-diagram";
 
   const [loadingTimeoutExceeded, setLoadingTimeoutExceeded] = useState(false);
+  // A failed saved-connection attempt is surfaced in-place on the SAME
+  // connecting screen (message + Try Again + Go to Launcher) rather than
+  // bouncing back to the launcher. Subscribe reactively so the screen flips the
+  // moment the store records the error.
+  const connectError = useConnectionStore((state) => state.connectError);
   const [hasMountedTerminalDock, setHasMountedTerminalDock] =
     useState(showTerminalPanel);
   const [showToolbarMore, setShowToolbarMore] = useState(false);
@@ -513,41 +518,53 @@ export function AppWorkspacePanel({
   };
 
   const renderTabContent = () => {
-    if (loadingTimeoutExceeded) {
+    // A real connect failure for the connection currently being established.
+    const activeConnectError =
+      connectError && activeConn && connectError.id === activeConn.id ? connectError : null;
+    if (
+      !isConnected &&
+      activeConn &&
+      (isConnecting || loadingTimeoutExceeded || activeConnectError)
+    ) {
+      const connectionDetail =
+        currentDatabase ||
+        activeConn.database ||
+        activeConn.host ||
+        activeConn.file_path ||
+        "";
+      // The connecting screen owns the failure state too: a real connect failure
+      // (or a 30s timeout) flips it to an in-place error (message + Try Again +
+      // Go to Launcher) instead of bouncing back to the launcher or popping a
+      // separate, disconnected error card in the workspace pane.
+      const connectingError = activeConnectError
+        ? activeConnectError.message
+        : loadingTimeoutExceeded
+          ? t("workspace.error.timeout")
+          : null;
       return (
-        <WorkspaceErrorFallback
-          variant="inline"
-          error={new Error("Workspace connection timed out after 30 seconds.")}
+        <WorkspaceConnecting
+          name={activeConn.name}
+          detail={connectionDetail}
+          error={connectingError}
           onRetry={() => {
             setLoadingTimeoutExceeded(false);
             if (activeConn?.id) {
-              useConnectionStore.setState({ isConnecting: false });
-              void useConnectionStore
-                .getState()
-                .connectSavedConnection(activeConn.id);
+              useConnectionStore.setState({ isConnecting: false, connectError: null });
+              void useConnectionStore.getState().connectSavedConnection(activeConn.id);
             } else {
               onRefreshWorkspace();
             }
           }}
           onGoToLauncher={() => {
             setLoadingTimeoutExceeded(false);
+            useConnectionStore.getState().clearConnectionError();
             onGoToLauncher();
           }}
-        />
-      );
-    }
-
-    if (!isConnected && isConnecting && activeConn) {
-      return (
-        <WorkspaceConnecting
-          name={activeConn.name}
-          detail={
-            currentDatabase ||
-            activeConn.database ||
-            activeConn.host ||
-            activeConn.file_path ||
-            ""
-          }
+          onCancel={() => {
+            setLoadingTimeoutExceeded(false);
+            useConnectionStore.getState().cancelConnectionAttempt();
+            onGoToLauncher();
+          }}
         />
       );
     }
@@ -891,6 +908,17 @@ export function AppWorkspacePanel({
       title: t("sidebar.metricsBoards"),
       active: isMetricsPanelActive,
       onClick: onOpenMetricsBoard,
+      disabled: !isConnected,
+    },
+    {
+      key: "profiler",
+      icon: Activity,
+      label: t("sidebar.profilerShort"),
+      title: t("sidebar.liveProfiler"),
+      // The profiler is a modal overlay, not a workspace panel, so it has no
+      // persistent "active" panel state — the rail button just launches it.
+      active: false,
+      onClick: () => window.dispatchEvent(new CustomEvent("open-live-profiler")),
       disabled: !isConnected,
     },
   ] as const;

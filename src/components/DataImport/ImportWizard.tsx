@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FileSpreadsheet, Loader2, Play, X } from "lucide-react";
+import { FileJson, FileSpreadsheet, Loader2, Play, Table, X } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { invokeMutation, invokeWithTimeout } from "../../utils/tauri-utils";
 
-interface CsvPreview {
+type ImportFormat = "csv" | "json" | "xlsx";
+
+interface ImportPreview {
   fileName: string;
   filePath: string;
   columns: string[];
   rows: string[][];
   totalRows: number;
   totalRowsTruncated?: boolean;
-  delimiter: string;
+  delimiter?: string; // CSV only
+  shape?: string; // JSON only: "array" | "ndjson"
+  sheetNames?: string[]; // XLSX only
+  sheet?: string; // XLSX only: the active sheet
 }
 
 interface ImportSummary {
@@ -33,14 +38,16 @@ interface CsvImportProgress {
 const IMPORT_TIMEOUT_MS = 1_800_000;
 
 /**
- * CSV Data Import wizard (roadmap Phase 2B, Tools → Import CSV).
+ * Data Import wizard (roadmap Phase 2B, Tools → Import data).
+ * Supports CSV and JSON (array-of-objects or NDJSON).
  * Three steps: pick file → configure target/mapping → execute.
  */
 export function ImportWizard() {
   const [isOpen, setIsOpen] = useState(false);
   const connectionId = useConnectionStore((state) => state.activeConnectionId);
 
-  const [preview, setPreview] = useState<CsvPreview | null>(null);
+  const [format, setFormat] = useState<ImportFormat>("csv");
+  const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [targetTable, setTargetTable] = useState("");
   const [targetColumns, setTargetColumns] = useState<string[]>([]);
   const [hasHeader, setHasHeader] = useState(true);
@@ -59,9 +66,13 @@ export function ImportWizard() {
     void listen<CsvImportProgress>("csv-import-progress", (event) => {
       if (event.payload.operationId !== csvImportOperationIdRef.current) return;
       setProgress(event.payload);
-    }).then((cleanup) => { unlisten = cleanup; }).catch(() => {
-      // Browser-only tests and previews do not expose Tauri's event bridge.
-    });
+    })
+      .then((cleanup) => {
+        unlisten = cleanup;
+      })
+      .catch(() => {
+        // Browser-only tests and previews do not expose Tauri's event bridge.
+      });
     return () => unlisten?.();
   }, []);
 
@@ -78,14 +89,29 @@ export function ImportWizard() {
     return () => window.removeEventListener("open-data-import-palette", open);
   }, []);
 
-  const pickFile = useCallback(async () => {
+  const pickFile = useCallback(async (chosen: ImportFormat) => {
     setIsBusy(true);
     setError(null);
     try {
-      const result = await invokeMutation<CsvPreview>("preview_import_csv", { sampleRows: 20 });
+      const command =
+        chosen === "csv"
+          ? "preview_import_csv"
+          : chosen === "json"
+            ? "preview_import_json"
+            : "preview_import_xlsx";
+      const result = await invokeMutation<ImportPreview>(command, { sampleRows: 20 });
+      setFormat(chosen);
       setPreview(result);
-      setTargetColumns(result.columns.map((column) => column.trim().toLowerCase().replace(/\s+/g, "_")));
-      setTargetTable((current) => current || result.fileName.replace(/\.csv$/i, "").trim());
+      setTargetColumns(
+        result.columns.map((column) => column.trim().toLowerCase().replace(/\s+/g, "_")),
+      );
+      setTargetTable(
+        (current) =>
+          current ||
+          result.fileName
+            .replace(/\.(csv|tsv|json|ndjson|jsonl|xlsx|xlsm|xls|xlsb|ods)$/i, "")
+            .trim(),
+      );
     } catch (errorValue) {
       setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
     } finally {
@@ -93,8 +119,38 @@ export function ImportWizard() {
     }
   }, []);
 
+  const switchSheet = useCallback(
+    async (nextSheet: string) => {
+      if (!preview?.filePath) return;
+      setIsBusy(true);
+      setError(null);
+      try {
+        const result = await invokeMutation<ImportPreview>("preview_import_xlsx", {
+          path: preview.filePath,
+          sheet: nextSheet,
+          sampleRows: 20,
+        });
+        setPreview(result);
+        setTargetColumns(
+          result.columns.map((column) => column.trim().toLowerCase().replace(/\s+/g, "_")),
+        );
+      } catch (errorValue) {
+        setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [preview],
+  );
+
   const runImport = useCallback(async () => {
-    if (!preview || !connectionId || !targetTable.trim() || targetColumns.some((column) => !column.trim())) return;
+    if (
+      !preview ||
+      !connectionId ||
+      !targetTable.trim() ||
+      targetColumns.some((column) => !column.trim())
+    )
+      return;
     const operationId = `csv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
     csvImportOperationIdRef.current = operationId;
     setIsBusy(true);
@@ -102,23 +158,40 @@ export function ImportWizard() {
     setProgress(null);
     setError(null);
     try {
+      const mappings = preview.columns.map((_column, index) => ({
+        sourceIndex: index,
+        targetColumn: targetColumns[index] || preview.columns[index],
+      }));
+      const base = {
+        connectionId,
+        table: targetTable,
+        path: preview.filePath,
+        mappings,
+        createTable,
+        batchSize: 200,
+        operationId,
+      };
+      let command: string;
+      let args: Record<string, unknown>;
+      let label: string;
+      if (format === "csv") {
+        command = "import_csv";
+        args = { ...base, hasHeader };
+        label = "CSV import";
+      } else if (format === "json") {
+        command = "import_json";
+        args = { ...base, sourceColumns: preview.columns };
+        label = "JSON import";
+      } else {
+        command = "import_xlsx";
+        args = { ...base, sheet: preview.sheet ?? "" };
+        label = "Excel import";
+      }
       const result = await invokeWithTimeout<ImportSummary>(
-        "import_csv",
-        {
-          connectionId,
-          table: targetTable,
-          path: preview.filePath,
-          mappings: preview.columns.map((_column, index) => ({
-            sourceIndex: index,
-            targetColumn: targetColumns[index] || preview.columns[index],
-          })),
-          hasHeader,
-          createTable,
-          batchSize: 200,
-          operationId,
-        },
+        command,
+        args,
         IMPORT_TIMEOUT_MS,
-        "CSV import",
+        label,
       );
       setSummary(result);
     } catch (errorValue) {
@@ -129,7 +202,7 @@ export function ImportWizard() {
       setIsCancelling(false);
       setProgress(null);
     }
-  }, [connectionId, createTable, hasHeader, preview, targetColumns, targetTable]);
+  }, [connectionId, createTable, format, hasHeader, preview, targetColumns, targetTable]);
 
   const handleCancelImport = useCallback(async () => {
     const operationId = csvImportOperationIdRef.current;
@@ -147,10 +220,15 @@ export function ImportWizard() {
 
   return (
     <div className="qs-overlay" role="presentation">
-      <div className="qs-panel data-import-panel" role="dialog" aria-label="Import CSV">
+      <div className="qs-panel data-import-panel" role="dialog" aria-label="Import data">
         <div className="qs-input-row">
-          <strong>Import CSV</strong>
-          <button type="button" className="qs-clear-btn" aria-label="Close" onClick={() => setIsOpen(false)}>
+          <strong>Import data</strong>
+          <button
+            type="button"
+            className="qs-clear-btn"
+            aria-label="Close"
+            onClick={() => setIsOpen(false)}
+          >
             <X size={14} />
           </button>
         </div>
@@ -158,9 +236,37 @@ export function ImportWizard() {
         {error && <div className="qs-empty global-search-error">{error}</div>}
 
         {!preview ? (
-          <div className="qs-empty">
-            <button type="button" className="global-search-mode active" disabled={isBusy} onClick={() => void pickFile()}>
-              {isBusy ? <Loader2 size={13} className="animate-spin" /> : <FileSpreadsheet size={13} />} Choose CSV file…
+          <div className="qs-empty" style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              className="global-search-mode active"
+              disabled={isBusy}
+              onClick={() => void pickFile("csv")}
+            >
+              {isBusy ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <FileSpreadsheet size={13} />
+              )}{" "}
+              Choose CSV file…
+            </button>
+            <button
+              type="button"
+              className="global-search-mode active"
+              disabled={isBusy}
+              onClick={() => void pickFile("json")}
+            >
+              {isBusy ? <Loader2 size={13} className="animate-spin" /> : <FileJson size={13} />}{" "}
+              Choose JSON file…
+            </button>
+            <button
+              type="button"
+              className="global-search-mode active"
+              disabled={isBusy}
+              onClick={() => void pickFile("xlsx")}
+            >
+              {isBusy ? <Loader2 size={13} className="animate-spin" /> : <Table size={13} />} Choose
+              Excel file…
             </button>
           </div>
         ) : (
@@ -171,9 +277,34 @@ export function ImportWizard() {
                 {preview.totalRows}
                 {preview.totalRowsTruncated ? "+" : ""} rows
               </span>
-              <span>delimiter “{preview.delimiter}”</span>
+              {format === "csv" ? (
+                <span>delimiter “{preview.delimiter}”</span>
+              ) : format === "json" ? (
+                <span>{preview.shape === "ndjson" ? "NDJSON" : "JSON array"}</span>
+              ) : (
+                <span>sheet “{preview.sheet}”</span>
+              )}
             </div>
 
+            {format === "xlsx" && preview.sheetNames && preview.sheetNames.length > 0 && (
+              <div className="schema-diff-selects">
+                <label className="schema-drops-toggle">
+                  Sheet
+                  <select
+                    value={preview.sheet ?? ""}
+                    disabled={isBusy}
+                    onChange={(event) => void switchSheet(event.target.value)}
+                    aria-label="Worksheet"
+                  >
+                    {preview.sheetNames.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
             <div className="schema-diff-selects">
               <input
                 value={targetTable}
@@ -181,12 +312,22 @@ export function ImportWizard() {
                 placeholder="Target table name"
                 aria-label="Target table name"
               />
+              {format === "csv" && (
+                <label className="schema-drops-toggle">
+                  <input
+                    type="checkbox"
+                    checked={hasHeader}
+                    onChange={(event) => setHasHeader(event.target.checked)}
+                  />
+                  First row = header
+                </label>
+              )}
               <label className="schema-drops-toggle">
-                <input type="checkbox" checked={hasHeader} onChange={(event) => setHasHeader(event.target.checked)} />
-                First row = header
-              </label>
-              <label className="schema-drops-toggle">
-                <input type="checkbox" checked={createTable} onChange={(event) => setCreateTable(event.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={createTable}
+                  onChange={(event) => setCreateTable(event.target.checked)}
+                />
                 Create table (all TEXT)
               </label>
             </div>
@@ -201,7 +342,10 @@ export function ImportWizard() {
                     value={targetColumns[index] ?? ""}
                     onChange={(event) =>
                       setTargetColumns((current) =>
-                        current.map((value, position) => (position === index ? event.target.value : value)))
+                        current.map((value, position) =>
+                          position === index ? event.target.value : value,
+                        ),
+                      )
                     }
                     aria-label={`Target column for ${column}`}
                   />
@@ -211,7 +355,13 @@ export function ImportWizard() {
 
             {summary && (
               <div className="schema-diff-summary">
-                <span style={{ color: summary.cancelled ? "var(--fintech-amber, #f59e0b)" : "var(--fintech-green, #22c55e)" }}>
+                <span
+                  style={{
+                    color: summary.cancelled
+                      ? "var(--fintech-amber, #f59e0b)"
+                      : "var(--fintech-green, #22c55e)",
+                  }}
+                >
                   {summary.cancelled
                     ? `Cancelled after importing ${summary.insertedRows} row(s)`
                     : `Imported ${summary.insertedRows} rows in ${summary.batches} batch(es)`}
@@ -224,7 +374,8 @@ export function ImportWizard() {
               <div className="schema-diff-summary">
                 <span>
                   {progress.processedRows} rows ·{" "}
-                  {Math.min(100, Math.round((progress.processedBytes / progress.totalBytes) * 100))}%
+                  {Math.min(100, Math.round((progress.processedBytes / progress.totalBytes) * 100))}
+                  %
                 </span>
                 <span
                   style={{
@@ -253,14 +404,23 @@ export function ImportWizard() {
               <button
                 type="button"
                 className="global-search-mode active"
-                disabled={isBusy || !targetTable.trim() || targetColumns.some((column) => !column.trim())}
+                disabled={
+                  isBusy || !targetTable.trim() || targetColumns.some((column) => !column.trim())
+                }
                 onClick={() => void runImport()}
               >
-                {isBusy ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />} Import
+                {isBusy ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}{" "}
+                Import
               </button>
               {isBusy && (
-                <button type="button" className="global-search-mode" disabled={isCancelling} onClick={() => void handleCancelImport()}>
-                  {isCancelling ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />} Cancel import
+                <button
+                  type="button"
+                  className="global-search-mode"
+                  disabled={isCancelling}
+                  onClick={() => void handleCancelImport()}
+                >
+                  {isCancelling ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}{" "}
+                  Cancel import
                 </button>
               )}
             </div>

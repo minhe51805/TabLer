@@ -138,16 +138,152 @@ function numberIsObserved(value: number, observed: Set<number>): boolean {
   return false;
 }
 
+/**
+ * Identifier (table/column name) verification — the companion to number
+ * verification. The model must not cite a table or column that neither the
+ * live schema nor any tool observation ever mentioned. Extraction is
+ * deliberately narrow (backticked names and dotted `table.column` references)
+ * so ordinary prose never trips the gate, matching the conservative stance of
+ * the numeric checks: being generous only risks missing a fabrication, never
+ * accusing a real name.
+ */
+
+/** One stray identifier is tolerable; two or more trigger a verification round. */
+export const IDENTIFIER_UNSUPPORTED_LIMIT = 2;
+/** A "did you mean" hint only fires when a real name is at most this far. */
+const IDENTIFIER_SUGGESTION_MAX_DISTANCE = 2;
+/** Identifiers shorter than this are too generic to verify safely. */
+const IDENTIFIER_MIN_LENGTH = 3;
+
+/** Backticked or quoted identifiers: `orders`, "user_id", `public.users`. */
+const BACKTICKED_IDENTIFIER_PATTERN = /[`"']([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)[`"']/g;
+/** Dotted references in prose: orders.total, public.users. */
+const DOTTED_IDENTIFIER_PATTERN = /\b[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*\b/g;
+/** Structured name fields the harness writes into observations. */
+const OBSERVATION_NAME_FIELD_PATTERN = /"(?:name|column|table|identifier|columnName|colName)"\s*:\s*"([^"\n]+)"/g;
+/** `col:type` tokens from the schema capsule and describe_table output. */
+const OBSERVATION_COLUMN_TOKEN_PATTERN = /\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*[A-Za-z]/g;
+
+export function normalizeIdentifier(raw: string): string {
+  return raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[`"'[\]]/g, "")
+    .trim();
+}
+
+/** A dotted `a.b` reference yields both the qualifier and the leaf name. */
+function identifierSegments(raw: string): string[] {
+  return normalizeIdentifier(raw)
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function addObservedIdentifier(into: Set<string>, raw: string) {
+  for (const segment of identifierSegments(raw)) {
+    if (segment.length >= IDENTIFIER_MIN_LENGTH) into.add(segment);
+  }
+}
+
+/**
+ * Identifiers the trace actually witnessed: the structured facts the executor
+ * attaches (table names, column-stats columns) plus a generous regex sweep of
+ * observation text (JSON name fields, backticked names, `col:type` tokens).
+ * Generosity here only widens the allow-list, so it can never accuse a name.
+ */
+export function collectObservedIdentifiers(steps: AgentTraceStep[]): Set<string> {
+  const observed = new Set<string>();
+  for (const step of steps) {
+    const facts = readStepFacts(step);
+    if (facts) {
+      for (const table of facts.tables ?? []) addObservedIdentifier(observed, table);
+      for (const stat of facts.columnStats ?? []) addObservedIdentifier(observed, stat.column);
+    }
+    const text = `${step.observation ?? ""}\n${step.message ?? ""}`;
+    for (const pattern of [
+      OBSERVATION_NAME_FIELD_PATTERN,
+      BACKTICKED_IDENTIFIER_PATTERN,
+      OBSERVATION_COLUMN_TOKEN_PATTERN,
+    ]) {
+      for (const match of text.matchAll(pattern)) addObservedIdentifier(observed, match[1]);
+    }
+  }
+  return observed;
+}
+
+/** Narrowly extracts the schema identifiers a draft answer cites as facts. */
+export function extractClaimedIdentifiers(response: string): string[] {
+  const claimed: string[] = [];
+  for (const match of response.matchAll(BACKTICKED_IDENTIFIER_PATTERN)) claimed.push(match[1]);
+  for (const match of response.matchAll(DOTTED_IDENTIFIER_PATTERN)) claimed.push(match[0]);
+  return claimed;
+}
+
+/** Classic Levenshtein edit distance, used only for short identifiers. */
+function editDistance(left: string, right: string): number {
+  const rows = left.length + 1;
+  const cols = right.length + 1;
+  const distances = Array.from({ length: rows }, () => new Array<number>(cols).fill(0));
+  for (let row = 0; row < rows; row += 1) distances[row][0] = row;
+  for (let col = 0; col < cols; col += 1) distances[0][col] = col;
+  for (let row = 1; row < rows; row += 1) {
+    for (let col = 1; col < cols; col += 1) {
+      const cost = left[row - 1] === right[col - 1] ? 0 : 1;
+      distances[row][col] = Math.min(
+        distances[row - 1][col] + 1,
+        distances[row][col - 1] + 1,
+        distances[row - 1][col - 1] + cost,
+      );
+    }
+  }
+  return distances[rows - 1][cols - 1];
+}
+
+/** Nearest allowed identifier within edit distance, for a "did you mean" hint. */
+export function nearestKnownIdentifier(
+  cited: string,
+  candidates: Iterable<string>,
+): string | undefined {
+  const target = normalizeIdentifier(cited);
+  if (target.length < IDENTIFIER_MIN_LENGTH) return undefined;
+  const budget = Math.min(
+    IDENTIFIER_SUGGESTION_MAX_DISTANCE,
+    Math.max(1, Math.floor(target.length * 0.4)),
+  );
+  let best: string | undefined;
+  let bestDistance = Infinity;
+  for (const candidate of candidates) {
+    if (candidate === target) return candidate;
+    const distance = editDistance(target, candidate);
+    if (distance > 0 && distance <= budget && distance < bestDistance) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+export interface UnsupportedIdentifier {
+  cited: string;
+  suggestion?: string;
+}
+
 export interface AgentResponseVerification {
   ok: boolean;
   unsupported: number[];
+  unsupportedIdentifiers: UnsupportedIdentifier[];
 }
 
 export function verifyAgentResponseAgainstEvidence(
   response: string | undefined,
   steps: AgentTraceStep[],
+  knownIdentifiers?: Iterable<string>,
 ): AgentResponseVerification {
-  if (!response || !response.trim()) return { ok: true, unsupported: [] };
+  if (!response || !response.trim()) {
+    return { ok: true, unsupported: [], unsupportedIdentifiers: [] };
+  }
 
   const observed = collectObservedNumbers(steps);
   const unsupported = new Set<number>();
@@ -156,8 +292,31 @@ export function verifyAgentResponseAgainstEvidence(
     unsupported.add(claimed);
   }
 
+  // Allow-list = names witnessed in the trace + the verified schema names the
+  // caller supplies. A cited identifier absent from both is a likely
+  // fabrication; the nearest allowed name (if close) becomes a repair hint.
+  const allowedIdentifiers = collectObservedIdentifiers(steps);
+  for (const known of knownIdentifiers ?? []) addObservedIdentifier(allowedIdentifiers, known);
+  const unsupportedIdentifiers: UnsupportedIdentifier[] = [];
+  const flagged = new Set<string>();
+  for (const cited of extractClaimedIdentifiers(response)) {
+    for (const segment of identifierSegments(cited)) {
+      if (segment.length < IDENTIFIER_MIN_LENGTH) continue;
+      if (allowedIdentifiers.has(segment)) continue;
+      if (flagged.has(segment)) continue;
+      flagged.add(segment);
+      unsupportedIdentifiers.push({
+        cited: segment,
+        suggestion: nearestKnownIdentifier(segment, allowedIdentifiers),
+      });
+    }
+  }
+
   return {
-    ok: unsupported.size < VERIFICATION_UNSUPPORTED_LIMIT,
+    ok:
+      unsupported.size < VERIFICATION_UNSUPPORTED_LIMIT
+      && unsupportedIdentifiers.length < IDENTIFIER_UNSUPPORTED_LIMIT,
     unsupported: [...unsupported].slice(0, 8),
+    unsupportedIdentifiers: unsupportedIdentifiers.slice(0, 8),
   };
 }

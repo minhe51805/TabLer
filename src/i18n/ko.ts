@@ -23,11 +23,14 @@ export const ko: Record<keyof typeof en, string> = {
   "workspace.connecting.kicker": "연결 설정 중",
   "workspace.connecting.checking": "데이터베이스 접근 가능 여부 확인 중",
   "workspace.connecting.elapsed": "{{seconds}}초 경과",
+  "workspace.connecting.cancel": "연결 취소",
   "workspace.error.kicker": "연결 문제",
   "workspace.error.title": "작업 공간 오류",
   "workspace.error.retry": "다시 시도",
   "workspace.error.goLauncher": "런처로 이동",
   "workspace.error.generic": "작업 공간을 불러오는 중 예기치 않은 오류가 발생했습니다.",
+  "workspace.error.timeout":
+    "30초 후 워크스페이스 연결이 시간 초과되었습니다. 데이터베이스에 접근할 수 없거나 방화벽에 의해 차단되었을 수 있습니다.",
   "common.connections": "연결",
   "common.metrics": "메트릭",
   "common.auto": "자동",
@@ -94,7 +97,8 @@ export const ko: Record<keyof typeof en, string> = {
   "help.shortcuts.title": "키보드 단축키",
   "titlebar.noActiveConnection": "활성 연결 없음",
   "dbVisibility.title": "탐색기에 표시할 데이터베이스",
-  "dbVisibility.hint": "체크 해제한 DB는 탐색기에서 숨겨집니다. 모두 숨기면 탐색기가 비어 있게 됩니다.",
+  "dbVisibility.hint":
+    "체크 해제한 DB는 탐색기에서 숨겨집니다. 모두 숨기면 탐색기가 비어 있게 됩니다.",
   "globalSearch.allTables": "모든 테이블",
   "globalSearch.searchDatabase": "검색할 데이터베이스",
   "globalSearch.scanningAll": "모든 테이블 스캔 중…",
@@ -128,6 +132,8 @@ export const ko: Record<keyof typeof en, string> = {
   "sidebar.dbShort": "DB",
   "sidebar.erdShort": "ERD",
   "sidebar.metricsShort": "메트릭",
+  "sidebar.profilerShort": "프로파일러",
+  "sidebar.liveProfiler": "라이브 프로파일러",
   "workspace.kicker.structure": "구조 보기",
   "workspace.readyForQueries": "쿼리 준비 완료",
   "workspace.status.success": "성공",
@@ -199,8 +205,7 @@ export const ko: Record<keyof typeof en, string> = {
   "explorer.disconnectTitle": "현재 데이터베이스 연결 해제",
   "explorer.refreshTitle": "새로고침",
   "explorer.searchPlaceholder": "테이블, 뷰, 트리거 또는 루틴 찾기...",
-  "explorer.browseHint":
-    "현재 데이터베이스의 테이블, 뷰, 트리거 및 루틴을 탐색합니다.",
+  "explorer.browseHint": "현재 데이터베이스의 테이블, 뷰, 트리거 및 루틴을 탐색합니다.",
   "explorer.tablesReady": "{{count}}개 테이블 탐색 준비 완료",
   "explorer.switchWorkspace": "개체를 탐색하려면 작업 공간을 전환하세요",
   "explorer.databaseObjects": "데이터베이스 개체",
@@ -315,14 +320,10 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.widget.loading": "로딩 중...",
   "metrics.widget.noData": "데이터 없음",
   "metrics.widget.queryNeedsSeries": "쿼리에 라벨과 숫자 값이 필요합니다.",
-  "metrics.validation.addQuery":
-    "이 위젯을 로드하려면 읽기 전용 SQL 쿼리를 추가하세요.",
-  "metrics.validation.singleStatement":
-    "메트릭 위젯은 단일 읽기 전용 문만 지원합니다.",
-  "metrics.validation.readOnlyOnly":
-    "메트릭 보드 위젯은 읽기 전용 쿼리만 지원합니다.",
-  "metrics.validation.noMutatingCte":
-    "메트릭 보드 위젯에서는 변경 CTE 문이 허용되지 않습니다.",
+  "metrics.validation.addQuery": "이 위젯을 로드하려면 읽기 전용 SQL 쿼리를 추가하세요.",
+  "metrics.validation.singleStatement": "메트릭 위젯은 단일 읽기 전용 문만 지원합니다.",
+  "metrics.validation.readOnlyOnly": "메트릭 보드 위젯은 읽기 전용 쿼리만 지원합니다.",
+  "metrics.validation.noMutatingCte": "메트릭 보드 위젯에서는 변경 CTE 문이 허용되지 않습니다.",
   "metrics.widget.refresh": "위젯 새로고침",
   "metrics.widget.issue": "문제",
   "metrics.widget.refreshing": "새로고침 중",
@@ -341,6 +342,7 @@ export const ko: Record<keyof typeof en, string> = {
   "tabs.hideResults": "결과 숨기기",
   "tabs.showResults": "결과 표시",
   "tabs.readyToExecute": "실행하려면 Ctrl+Enter을 누르세요",
+  "tabs.deliveringRows": "{{count}}개 행 수신 중...",
   "tabs.noSqlToExecute":
     "아직 실행할 항목이 없습니다. 먼저 쿼리나 명령을 입력한 다음 Ctrl+Enter을 누르세요.",
   "metrics.widget.openResult": "Open result in workspace",
@@ -349,14 +351,11 @@ export const ko: Record<keyof typeof en, string> = {
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":
     '"{{failed}}" 공급자에 오류가 발생했습니다. "{{next}}" 공급자로 전환 중입니다. 잠시만 기다려 주세요.',
-  "ai.failover.consentTitle":
-    "공급자 오류 발생",
+  "ai.failover.consentTitle": "공급자 오류 발생",
   "ai.failover.consentBody":
     '"{{failed}}" 공급자에서 계속 오류가 발생합니다. TableR이 이를 기억하고 나중에 다시 발생할 때 다른 활성 공급자로 자동 전환하는 것을 허용하시겠습니까?',
-  "ai.failover.consentAllow":
-    "자동 전환 허용",
-  "ai.failover.consentDeny":
-    "나중에",
+  "ai.failover.consentAllow": "자동 전환 허용",
+  "ai.failover.consentDeny": "나중에",
 
   // ── Data grid toolbar ─────────────────────────────────────────────────
   "datagrid.filterRows": "행 필터",
@@ -469,7 +468,8 @@ export const ko: Record<keyof typeof en, string> = {
   "datagrid.copiedDescription": "{{count}}행이 클립보드에 복사되었습니다.",
   "datagrid.copyFailed": "복사 실패",
   "datagrid.exportFailed": "내보내기 실패",
-  "datagrid.partialResultBanner": "데이터베이스가 부분 결과만 반환했습니다. 계속하려면 쿼리를 다듬거나 더 많은 데이터를 로드하세요.",
+  "datagrid.partialResultBanner":
+    "데이터베이스가 부분 결과만 반환했습니다. 계속하려면 쿼리를 다듬거나 더 많은 데이터를 로드하세요.",
 
   // ── Data grid context menu ───────────────────────────────────────────
   "datagrid.ctxCopied": "{{target}} 복사됨",
@@ -503,7 +503,8 @@ export const ko: Record<keyof typeof en, string> = {
   "datagrid.insKicker": "행 삽입",
   "datagrid.insAddTo": "{{table}}에 행 추가",
   "datagrid.insAdd": "행 추가",
-  "datagrid.insDescription": "아래에 필수 값을 입력하세요. 데이터베이스 기본값이 있는 열은 자동 처리됩니다.",
+  "datagrid.insDescription":
+    "아래에 필수 값을 입력하세요. 데이터베이스 기본값이 있는 열은 자동 처리됩니다.",
   "datagrid.insCloseAria": "행 삽입 대화상자 닫기",
   "datagrid.insPlaceholderUuid": "UUID 값",
   "datagrid.insPlaceholderNumeric": "숫자 값",
@@ -519,7 +520,8 @@ export const ko: Record<keyof typeof en, string> = {
   "datagrid.pasteDescription": "클립보드의 열 매핑",
   "datagrid.pasteHeadersDetected": "헤더 행 감지됨",
   "datagrid.pastePositional": "위치 기반 매핑",
-  "datagrid.pasteNullOmitted": "매칭되지 않은 테이블 열은 생략되어 데이터베이스 기본값이 적용됩니다: {{columns}}",
+  "datagrid.pasteNullOmitted":
+    "매칭되지 않은 테이블 열은 생략되어 데이터베이스 기본값이 적용됩니다: {{columns}}",
   "datagrid.pasteSkippedInline": "건너뛴 클립보드 열: {{columns}}",
   "datagrid.pasteCloseAria": "붙여넣기 대화상자 닫기",
   "datagrid.pasteMappingsTitle": "열 매핑",

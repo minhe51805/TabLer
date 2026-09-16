@@ -1,5 +1,5 @@
 use crate::database::ai_models::{
-    AIConversationMessage, AIConversationRole, AIRequestIntent, AIRequestMode, AIResponseLanguage,
+    AIConversationMessage, AIRequestIntent, AIRequestMode, AIResponseLanguage,
 };
 
 fn response_language_name(language: &AIResponseLanguage) -> &'static str {
@@ -107,32 +107,21 @@ pub(crate) fn build_ai_prompt(
         ),
     };
 
-    let conversation_history = if history.is_empty() {
-        String::new()
-    } else {
-        let formatted = history
-            .iter()
-            .map(|message| {
-                let role = match message.role {
-                    AIConversationRole::User => "User",
-                    AIConversationRole::Assistant => "Assistant",
-                };
-                format!("{role}: {}", message.content.trim())
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        format!("Recent conversation:\n{}\n\n", formatted)
-    };
-
+    // Prior conversation is NO LONGER flattened into this prompt. It rides as
+    // real multi-turn messages (see `apply_conversation_history` in providers.rs),
+    // which gives the model clean role structure and, on Anthropic, a stable
+    // cache-able prefix. `history_note` above still nudges the model to use it.
+    // The current turn stays a single message: workspace context (when present)
+    // followed by the user request and the intent-specific answer instruction.
     let prompt = if effective_context.is_empty() {
         format!(
-            "{}Current user request:\n{}\n\n{}",
-            conversation_history, user_prompt, response_instruction
+            "Current user request:\n{}\n\n{}",
+            user_prompt, response_instruction
         )
     } else {
         format!(
-            "Workspace context:\n{}\n\n{}Current user request:\n{}\n\n{}",
-            effective_context, conversation_history, user_prompt, response_instruction
+            "Workspace context:\n{}\n\nCurrent user request:\n{}\n\n{}",
+            effective_context, user_prompt, response_instruction
         )
     };
 

@@ -33,6 +33,7 @@ interface PickerStrings {
   emptySearch: string;
   readyNow: string;
   readyNowCaption: string;
+  installPlugin: string;
   roadmapCaption: string;
   localReadyCaption: string;
   localRoadmap: string;
@@ -79,6 +80,8 @@ export interface ConnectionPickerStepProps {
   onClose: () => void;
   onContinue: () => void;
   onBack?: () => void;
+  onInstallPlugin?: () => void;
+  isInstallingPlugin?: boolean;
 }
 
 function getPickerMetaLabel(db: DbEntry, language: AppLanguage) {
@@ -114,13 +117,21 @@ function getPickerDescription(db: DbEntry, bootstrapMode: boolean, language: App
     return language === "vi" ? "Chưa khả dụng trong bản build này." : "Not available in this build yet.";
   }
 
-  return db.supported
-    ? language === "vi"
+  if (db.supported) {
+    return language === "vi"
       ? "Sẵn sàng cấu hình host, thông tin đăng nhập và chi tiết cơ sở dữ liệu."
-      : "Ready to configure with host, credentials, and database details."
-    : language === "vi"
-      ? "Đã hiển thị trong lộ trình sản phẩm và chưa khả dụng trong bản build này."
-      : "Shown in the product roadmap and not available in this build yet.";
+      : "Ready to configure with host, credentials, and database details.";
+  }
+
+  if (db.pluginHttpState === "installed") {
+    return language === "vi"
+      ? "Plugin driver đã được cài nhưng đang tắt. Hãy bật nó trong Trình quản lý plugin để kết nối."
+      : "The driver plugin is installed but disabled. Enable it in Plugin Manager to connect.";
+  }
+
+  return language === "vi"
+    ? "Engine này cần cài plugin driver mới dùng được. Bấm \"Cài plugin\" để thêm."
+    : "This engine needs a driver plugin before you can use it. Use \"Install plugin\" to add one.";
 }
 
 function getPickerCapabilities(db: DbEntry, bootstrapMode: boolean, language: AppLanguage) {
@@ -142,9 +153,13 @@ function getPickerCapabilities(db: DbEntry, bootstrapMode: boolean, language: Ap
         ? language === "vi"
           ? "Sẵn sàng"
           : "Ready now"
-        : language === "vi"
-          ? "Lộ trình"
-          : "Roadmap",
+        : db.pluginHttpState === "installed"
+          ? language === "vi"
+            ? "Đã cài · cần bật"
+            : "Installed · off"
+          : language === "vi"
+            ? "Lộ trình"
+            : "Roadmap",
     );
   }
 
@@ -246,6 +261,20 @@ function getPickerHighlights(db: DbEntry, bootstrapMode: boolean, language: AppL
         ];
   }
 
+  if (db.pluginHttpState === "installed") {
+    return language === "vi"
+      ? [
+          "Bundle driver cho engine này đã được cài trong máy của bạn.",
+          "Nó hiện đang tắt nên chưa thể kết nối được.",
+          "Mở Trình quản lý plugin và bật nó lên để bắt đầu kết nối.",
+        ]
+      : [
+          "The driver bundle for this engine is already installed locally.",
+          "It is currently disabled, so connections are not possible yet.",
+          "Open Plugin Manager and enable it to start connecting.",
+        ];
+  }
+
   return language === "vi"
     ? [
         "Engine này đang được hiển thị như một phần của lộ trình sản phẩm.",
@@ -276,9 +305,15 @@ function getPickerStatus(db: DbEntry, bootstrapMode: boolean, language: AppLangu
     return { label: language === "vi" ? "Sắp có" : "Soon", tone: "soon", canContinue: false };
   }
 
-  return db.supported
-    ? { label: language === "vi" ? "Sẵn sàng" : "Ready", tone: "supported", canContinue: true }
-    : { label: language === "vi" ? "Sắp có" : "Soon", tone: "soon", canContinue: false };
+  if (db.supported) {
+    return { label: language === "vi" ? "Sẵn sàng" : "Ready", tone: "supported", canContinue: true };
+  }
+
+  if (db.pluginHttpState === "installed") {
+    return { label: language === "vi" ? "Cần bật" : "Needs enabling", tone: "soon", canContinue: false };
+  }
+
+  return { label: language === "vi" ? "Sắp có" : "Soon", tone: "soon", canContinue: false };
 }
 
 export function ConnectionPickerStep({
@@ -300,6 +335,8 @@ export function ConnectionPickerStep({
   onSwitchIntent,
   onClose,
   onContinue,
+  onInstallPlugin,
+  isInstallingPlugin,
 }: ConnectionPickerStepProps) {
   const readyCount = bootstrapMode ? Array.from(LOCAL_BOOTSTRAP_READY).length : supportedCount;
   const roadmapTotal = bootstrapMode ? localRoadmapCount : roadmapCount;
@@ -376,6 +413,18 @@ export function ConnectionPickerStep({
             </div>
           </div>
 
+          {onInstallPlugin && !bootstrapMode ? (
+            <button
+              type="button"
+              onClick={onInstallPlugin}
+              disabled={isInstallingPlugin}
+              className="btn btn-secondary connection-picker-install-plugin"
+              title={strings.installPlugin}
+            >
+              <Plug className="w-3.5 h-3.5" />
+              <span>{strings.installPlugin}</span>
+            </button>
+          ) : null}
           {showCloseButton && (
             <button
               type="button"
@@ -415,7 +464,11 @@ export function ConnectionPickerStep({
                   <div
                     key={section.key}
                     className="connection-picker-rail-group"
-                    data-tone={section.key.includes("roadmap") ? "roadmap" : "ready"}
+                    data-tone={
+                      section.key.includes("roadmap") || section.key === "installed-disabled"
+                        ? "roadmap"
+                        : "ready"
+                    }
                   >
                     <span className="connection-picker-rail-group-label">
                       <span>{section.title}</span>

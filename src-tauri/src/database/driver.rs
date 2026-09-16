@@ -78,6 +78,25 @@ pub trait DatabaseDriver: Send + Sync {
         self.execute_parameterized_query(sql, parameters).await
     }
 
+    /// Sample the currently-running operations for the live profiler, returning
+    /// rows aliased to the canonical profiler column contract. SQL engines are
+    /// sampled from the frontend via `execute_query`, so only non-SQL drivers
+    /// (e.g. MongoDB's `$currentOp`) override this.
+    async fn profiler_live_sample(&self) -> Result<QueryResult> {
+        Err(anyhow::anyhow!(
+            "Live profiling is not supported by this database driver"
+        ))
+    }
+
+    /// Rank the most expensive operations from the engine's own statement store
+    /// for the Top Queries tab, aliased to the canonical top-queries columns.
+    /// Only non-SQL drivers (e.g. MongoDB's `system.profile`) override this.
+    async fn profiler_top_sample(&self) -> Result<QueryResult> {
+        Err(anyhow::anyhow!(
+            "Top-queries profiling is not supported by this database driver"
+        ))
+    }
+
     /// Get rows from a table with pagination
     #[allow(clippy::too_many_arguments)]
     async fn get_table_data(

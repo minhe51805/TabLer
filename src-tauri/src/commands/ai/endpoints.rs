@@ -2,6 +2,8 @@ use crate::database::ai_models::{AIProviderConfig, AIProviderType};
 use reqwest::{StatusCode, Url};
 use std::net::IpAddr;
 
+use super::providers::{resolve_provider_body_shape, ProviderBodyShape};
+
 pub(crate) fn provider_requires_api_key(provider_type: &AIProviderType) -> bool {
     !matches!(
         provider_type,
@@ -123,6 +125,13 @@ pub(crate) fn resolve_provider_endpoint(config: &AIProviderConfig) -> String {
                 config.endpoint.trim().to_string()
             };
         }
+        AIProviderType::Vertex => {
+            // Vertex embeds project + location + model in the URL, so there is
+            // no derivable default — the user pastes the full generateContent
+            // endpoint. Return it verbatim; a blank one is surfaced by
+            // validate_ai_endpoint as an invalid-URL error.
+            return config.endpoint.trim().to_string();
+        }
         AIProviderType::Custom => "",
     };
 
@@ -194,8 +203,134 @@ pub(crate) fn resolve_provider_endpoint(config: &AIProviderConfig) -> String {
                 endpoint
             }
         }
-        AIProviderType::Gemini => endpoint,
+        AIProviderType::Gemini | AIProviderType::Vertex => endpoint,
     }
+}
+
+/// The response envelope a provider's "list models" API returns, so the parser
+/// knows which JSON path to walk. Resolved alongside the URL because a Custom
+/// provider can wear an OpenAI, Anthropic, or Ollama dialect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModelsListShape {
+    /// OpenAI / OpenRouter / Anthropic: `{ "data": [ { "id": "..." } ] }`.
+    OpenAiData,
+    /// Gemini: `{ "models": [ { "name": "models/..." } ] }`.
+    GeminiModels,
+    /// Ollama `/api/tags`: `{ "models": [ { "name": "..." } ] }`.
+    OllamaTags,
+}
+
+/// Derives the "list models" endpoint (and its response shape) from a
+/// provider's configured chat/generate endpoint. Returns `Err` for providers
+/// whose catalog cannot be listed generically — currently only Vertex AI,
+/// whose models are publisher/project/location scoped and added by hand.
+pub(crate) fn resolve_models_list_endpoint(
+    config: &AIProviderConfig,
+) -> Result<(String, ModelsListShape), String> {
+    if matches!(config.provider_type, AIProviderType::Vertex) {
+        return Err(
+            "Fetching the model list isn't supported for Vertex AI — add model IDs manually."
+                .to_string(),
+        );
+    }
+
+    let endpoint = resolve_provider_endpoint(config);
+    let mut url =
+        Url::parse(&endpoint).map_err(|error| format!("Invalid AI endpoint URL: {error}"))?;
+
+    let shape = match config.provider_type {
+        AIProviderType::Gemini => {
+            set_gemini_models_path(&mut url);
+            ModelsListShape::GeminiModels
+        }
+        AIProviderType::Ollama => {
+            url.set_path("/api/tags");
+            url.set_query(None);
+            ModelsListShape::OllamaTags
+        }
+        AIProviderType::Anthropic => {
+            replace_wire_suffix(&mut url, &["messages"], "models");
+            ModelsListShape::OpenAiData
+        }
+        AIProviderType::OpenAI | AIProviderType::OpenRouter => {
+            replace_wire_suffix(&mut url, &["chat", "completions"], "models");
+            ModelsListShape::OpenAiData
+        }
+        // A Custom provider can point at any dialect; follow the same body-shape
+        // resolution the chat path uses so the models URL matches the API.
+        AIProviderType::Custom => match resolve_provider_body_shape(config, &endpoint) {
+            ProviderBodyShape::OllamaChat | ProviderBodyShape::OllamaGenerate => {
+                url.set_path("/api/tags");
+                url.set_query(None);
+                ModelsListShape::OllamaTags
+            }
+            ProviderBodyShape::Anthropic => {
+                replace_wire_suffix(&mut url, &["messages"], "models");
+                ModelsListShape::OpenAiData
+            }
+            _ => {
+                replace_wire_suffix(&mut url, &["chat", "completions"], "models");
+                ModelsListShape::OpenAiData
+            }
+        },
+        AIProviderType::Vertex => unreachable!("Vertex is handled above"),
+    };
+
+    Ok((url.to_string(), shape))
+}
+
+/// Strips a known wire suffix (e.g. `chat/completions`, `messages`) from the
+/// end of the path when present, then appends `replacement`. Base URLs that do
+/// not carry the suffix simply get `replacement` appended.
+fn replace_wire_suffix(url: &mut Url, suffix_segments: &[&str], replacement: &str) {
+    let mut segments: Vec<String> = url
+        .path_segments()
+        .map(|parts| {
+            parts
+                .filter(|segment| !segment.is_empty())
+                .map(|segment| segment.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if segments.len() >= suffix_segments.len() {
+        let tail_start = segments.len() - suffix_segments.len();
+        let matches_suffix = segments[tail_start..]
+            .iter()
+            .zip(suffix_segments.iter())
+            .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected));
+        if matches_suffix {
+            segments.truncate(tail_start);
+        }
+    }
+
+    segments.push(replacement.to_string());
+    url.set_path(&format!("/{}", segments.join("/")));
+    url.set_query(None);
+}
+
+/// Trims a Gemini `generateContent` URL down to the model-collection path,
+/// e.g. `/v1beta/models/gemini-pro:generateContent` -> `/v1beta/models`.
+fn set_gemini_models_path(url: &mut Url) {
+    let segments: Vec<String> = url
+        .path_segments()
+        .map(|parts| {
+            parts
+                .filter(|segment| !segment.is_empty())
+                .map(|segment| segment.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let base: Vec<String> = match segments
+        .iter()
+        .position(|segment| segment.eq_ignore_ascii_case("models"))
+    {
+        Some(position) => segments[..=position].to_vec(),
+        None => vec!["v1beta".to_string(), "models".to_string()],
+    };
+    url.set_path(&format!("/{}", base.join("/")));
+    url.set_query(None);
 }
 
 pub(crate) fn is_ollama_native_chat_endpoint(endpoint: &str) -> bool {
@@ -318,5 +453,91 @@ mod tests {
             ),
             "https://generativelanguage.googleapis.com/v1beta/models/demo-model:streamGenerateContent?key=demo&alt=sse"
         );
+
+        // Vertex embeds project/location/model in the URL, so the pasted
+        // endpoint is used verbatim and streams like Gemini.
+        let mut vertex = sample_provider(AIProviderType::Vertex);
+        vertex.endpoint =
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
+                .to_string();
+        assert_eq!(resolve_provider_endpoint(&vertex), vertex.endpoint);
+        assert_eq!(
+            streaming_endpoint(&vertex, &vertex.endpoint),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1/publishers/google/models/gemini-2.0-flash:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn resolves_models_list_endpoints_per_provider() {
+        let openai = sample_provider(AIProviderType::OpenAI);
+        assert_eq!(
+            resolve_models_list_endpoint(&openai).unwrap(),
+            (
+                "https://api.openai.com/v1/models".to_string(),
+                ModelsListShape::OpenAiData
+            )
+        );
+
+        let openrouter = sample_provider(AIProviderType::OpenRouter);
+        assert_eq!(
+            resolve_models_list_endpoint(&openrouter).unwrap(),
+            (
+                "https://openrouter.ai/api/v1/models".to_string(),
+                ModelsListShape::OpenAiData
+            )
+        );
+
+        let anthropic = sample_provider(AIProviderType::Anthropic);
+        assert_eq!(
+            resolve_models_list_endpoint(&anthropic).unwrap(),
+            (
+                "https://api.anthropic.com/v1/models".to_string(),
+                ModelsListShape::OpenAiData
+            )
+        );
+
+        let gemini = sample_provider(AIProviderType::Gemini);
+        assert_eq!(
+            resolve_models_list_endpoint(&gemini).unwrap(),
+            (
+                "https://generativelanguage.googleapis.com/v1beta/models".to_string(),
+                ModelsListShape::GeminiModels
+            )
+        );
+
+        let ollama = sample_provider(AIProviderType::Ollama);
+        assert_eq!(
+            resolve_models_list_endpoint(&ollama).unwrap(),
+            (
+                "http://localhost:11434/api/tags".to_string(),
+                ModelsListShape::OllamaTags
+            )
+        );
+
+        // A Custom base URL gets the OpenAI-style /models suffix appended.
+        let mut custom = sample_provider(AIProviderType::Custom);
+        custom.endpoint = "https://kiraai.vn/api/v1".to_string();
+        assert_eq!(
+            resolve_models_list_endpoint(&custom).unwrap(),
+            (
+                "https://kiraai.vn/api/v1/models".to_string(),
+                ModelsListShape::OpenAiData
+            )
+        );
+
+        // A Custom provider pinned to the native Ollama chat format lists tags.
+        let mut custom_ollama = sample_provider(AIProviderType::Custom);
+        custom_ollama.endpoint = "http://localhost:11434/api/chat".to_string();
+        custom_ollama.api_format = Some("ollama-chat".to_string());
+        assert_eq!(
+            resolve_models_list_endpoint(&custom_ollama).unwrap(),
+            (
+                "http://localhost:11434/api/tags".to_string(),
+                ModelsListShape::OllamaTags
+            )
+        );
+
+        // Vertex has no generic model-list API.
+        assert!(resolve_models_list_endpoint(&sample_provider(AIProviderType::Vertex)).is_err());
     }
 }

@@ -142,7 +142,7 @@ async function startApp() {
     if (import.meta.env.MODE === "e2e") {
       await import("@wdio/tauri-plugin");
     }
-    window.__TABLER_SET_BOOT_STATUS__?.("Importing App module...", "warning");
+    window.__TABLER_SET_BOOT_STATUS__?.("Loading application…");
     const module = await import("./App");
     clearPersistedBootFailure();
     (globalThis as TablerBootGlobal).__TABLER_HIDE_BOOT_SCREEN__?.();
@@ -162,6 +162,31 @@ async function startApp() {
   }
 }
 
+// Detached Profiler window: opened via `new WebviewWindow(..., "index.html?window=profiler")`.
+// It boots straight into the lightweight standalone profiler root instead of the
+// full workspace shell, so it never re-runs window-profile sync against the main window.
+async function startProfilerWindow() {
+  try {
+    const { ProfilerWindowApp } = await import("./components/Profiler/ProfilerWindowApp");
+    clearPersistedBootFailure();
+    (globalThis as TablerBootGlobal).__TABLER_HIDE_BOOT_SCREEN__?.();
+    root.render(
+      <React.StrictMode>
+        <ProfilerWindowApp />
+      </React.StrictMode>,
+    );
+    setTimeout(() => {
+      isAppBooted = true;
+    }, 2000);
+  } catch (error) {
+    renderBootFailure("boot.profiler", error);
+  }
+}
+
 // Log boot start
 window.__TABLER_SET_BOOT_STATUS__?.("Starting TableR...");
-void startApp();
+if (new URLSearchParams(window.location.search).get("window") === "profiler") {
+  void startProfilerWindow();
+} else {
+  void startApp();
+}

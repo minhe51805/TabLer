@@ -653,6 +653,83 @@ describe("skill allowlist enforcement", () => {
   });
 });
 
+describe("skill bundled resources + allowed-tools", () => {
+  it("lists resources on load, reads a listed one, and refuses unlisted paths", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    vi.mocked(invokeMutation)
+      .mockResolvedValueOnce({
+        name: "db-audit",
+        body: "audit steps",
+        resources: ["references/schema.md"],
+        allowedTools: [],
+      })
+      .mockResolvedValueOnce({
+        name: "db-audit",
+        resource: "references/schema.md",
+        content: "TABLE users(id)",
+      });
+    const exec = createAgentToolExecutor(mkDeps({ allowedSkillNames: ["db-audit"] }));
+    const load = await exec.runAgentTool({
+      action: "skill",
+      args: { name: "db-audit" },
+    } as AIAgentToolAction);
+    expect(load).toContain("Bundled resources");
+    expect(load).toContain("references/schema.md");
+
+    const good = await exec.runAgentTool({
+      action: "read_skill_resource",
+      args: { name: "db-audit", path: "references/schema.md" },
+    } as AIAgentToolAction);
+    expect(good).toContain("TABLE users");
+    expect(vi.mocked(invokeMutation)).toHaveBeenCalledWith("read_ai_skill_resource", {
+      name: "db-audit",
+      resource: "references/schema.md",
+    });
+
+    const unlisted = await exec.runAgentTool({
+      action: "read_skill_resource",
+      args: { name: "db-audit", path: "references/secrets.md" },
+    } as AIAgentToolAction);
+    expect(unlisted).toContain("is not a listed resource");
+  });
+
+  it("refuses read_skill_resource for a skill not loaded this run (fail-closed)", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    const obs = await run(mkDeps({ allowedSkillNames: ["db-audit"] }), {
+      action: "read_skill_resource",
+      args: { name: "db-audit", path: "references/schema.md" },
+    });
+    expect(obs).toContain("is not loaded this run");
+    expect(vi.mocked(invokeMutation)).not.toHaveBeenCalledWith(
+      "read_ai_skill_resource",
+      expect.anything(),
+    );
+  });
+
+  it("enforces a loaded skill's allowed-tools restriction for the rest of the run", async () => {
+    const { invokeMutation } = await import("@/utils/tauri-utils");
+    vi.mocked(invokeMutation).mockResolvedValue({
+      name: "reader",
+      body: "read only",
+      resources: [],
+      allowedTools: ["run_readonly_sql"],
+    });
+    const exec = createAgentToolExecutor(mkDeps({ allowedSkillNames: ["reader"] }));
+    const load = await exec.runAgentTool({
+      action: "skill",
+      args: { name: "reader" },
+    } as AIAgentToolAction);
+    expect(load).toContain("restricts tools to");
+
+    const blocked = await exec.runAgentTool({
+      action: "preview_write",
+      args: { statements: ["update users set x = 1"] },
+    } as AIAgentToolAction);
+    expect(blocked).toContain("restricts tools to");
+    expect(blocked).toContain("preview_write");
+  });
+});
+
 describe("agent memory tools", () => {
   it("reads a memory entry through read_agent_memory in the run scope", async () => {
     const { invokeMutation } = await import("@/utils/tauri-utils");
@@ -924,5 +1001,195 @@ describe("edit_query_sql createIfMissing", () => {
     } as AIAgentToolAction;
     const observation = await runAgentTool(action);
     expect(observation).toContain("could not open a new AI Query tab");
+  });
+});
+
+describe("propose_seed_data (SQL + document engines)", () => {
+  const SEED_DOCS = [
+    { name: "Nguyen Van A", email: "a@example.com", status: "active" },
+    { name: "Tran Thi B", email: "b@example.com", status: "active" },
+  ];
+
+  it("opens a NEW query tab with the insertMany script, never auto-run", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const { runAgentTool } = createAgentToolExecutor(
+      mkDeps({ openQueryTab, toolAvailability: agentToolAvailability("mongodb") }),
+    );
+    const observation = await runAgentTool({
+      action: "propose_seed_data",
+      message: "fill users",
+      args: { collection: "users", documents: SEED_DOCS, rationale: "demo users seed" },
+    } as unknown as AIAgentToolAction);
+    expect(openQueryTab).toHaveBeenCalledTimes(1);
+    const call = openQueryTab.mock.calls[0]?.[0];
+    if (!call) throw new Error("openQueryTab was not called with the seed proposal");
+    expect(call.autoRun).toBe(false);
+    expect(call.sql).toContain("db.users.insertMany([");
+    expect(call.sql).toContain('"name":"Nguyen Van A"');
+    expect(call.sql).not.toContain("Seed data proposal");
+    expect(call.sql.startsWith("db.users.insertMany([")).toBe(true);
+    expect(call.title).toBe("Query users");
+    const flat = observation.replace(/\s+/g, "");
+    expect(flat).toContain('"collection":"users"');
+    expect(flat).toContain('"documentCount":2');
+    expect(observation).toContain("NOT auto-run");
+  });
+
+  it("emits dialect-quoted INSERT statements on SQL engines", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const deps = mkDeps({
+      openQueryTab,
+      toolAvailability: agentToolAvailability("postgresql"),
+      dbType: "postgresql",
+    });
+    const observation = await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS, rationale: "demo users seed" },
+    } as unknown as AIAgentToolAction);
+    expect(openQueryTab).toHaveBeenCalledTimes(1);
+    const call = openQueryTab.mock.calls[0]?.[0];
+    if (!call) throw new Error("openQueryTab was not called with the seed proposal");
+    expect(call.autoRun).toBe(false);
+    expect(call.sql).toContain('INSERT INTO "users" ("name", "email", "status") VALUES');
+    expect(call.sql).toContain("'Nguyen Van A'");
+    expect(call.sql).not.toContain("insertMany");
+    expect(call.sql).not.toContain("Seed data proposal");
+    expect(observation).toContain("INSERT INTO users");
+  });
+
+  it("prepends USE [db] on SQL Server so the INSERT targets the right database", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const deps = mkDeps({
+      openQueryTab,
+      toolAvailability: agentToolAvailability("mssql"),
+      dbType: "mssql",
+      currentDatabase: "AppDb",
+    });
+    await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS },
+    } as unknown as AIAgentToolAction);
+    const sql = openQueryTab.mock.calls[0]?.[0]?.sql ?? "";
+    expect(sql.startsWith("USE [AppDb];")).toBe(true);
+    expect(sql).toContain("INSERT INTO [users]");
+    expect(sql).toContain("N'Nguyen Van A'");
+    expect(sql).not.toContain("Seed data proposal");
+  });
+
+  it("escapes a bracket in the SQL Server database name for the USE prefix", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const deps = mkDeps({
+      openQueryTab,
+      toolAvailability: agentToolAvailability("mssql"),
+      dbType: "mssql",
+      currentDatabase: "we[i]rd",
+    });
+    await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS },
+    } as unknown as AIAgentToolAction);
+    const sql = openQueryTab.mock.calls[0]?.[0]?.sql ?? "";
+    expect(sql.startsWith("USE [we[i]]rd];")).toBe(true);
+  });
+
+  it("omits the USE prefix on SQL Server when the current database is unknown", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const deps = mkDeps({
+      openQueryTab,
+      toolAvailability: agentToolAvailability("mssql"),
+      dbType: "mssql",
+      currentDatabase: null,
+    });
+    await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS },
+    } as unknown as AIAgentToolAction);
+    const sql = openQueryTab.mock.calls[0]?.[0]?.sql ?? "";
+    expect(sql).not.toContain("USE [");
+    expect(sql.startsWith("INSERT INTO [users]")).toBe(true);
+  });
+
+  it("does not add a USE prefix on non-SQL-Server engines", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const deps = mkDeps({
+      openQueryTab,
+      toolAvailability: agentToolAvailability("postgresql"),
+      dbType: "postgresql",
+      currentDatabase: "AppDb",
+    });
+    await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS },
+    } as unknown as AIAgentToolAction);
+    const sql = openQueryTab.mock.calls[0]?.[0]?.sql ?? "";
+    expect(sql).not.toContain("USE ");
+    expect(sql.startsWith('INSERT INTO "users"')).toBe(true);
+  });
+
+  it("fills NULL for fields a row omits and keeps the column union order", async () => {
+    const openQueryTab = vi.fn((_args: { sql: string; title: string; autoRun: boolean }) => true);
+    const deps = mkDeps({
+      openQueryTab,
+      toolAvailability: agentToolAvailability("postgresql"),
+      dbType: "postgresql",
+    });
+    await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: [{ name: "A", age: 30 }, { name: "B" }] },
+    } as unknown as AIAgentToolAction);
+    const sql = openQueryTab.mock.calls[0]?.[0]?.sql ?? "";
+    expect(sql).toContain('("name", "age")');
+    expect(sql).toContain("('A', 30)");
+    expect(sql).toContain("('B', NULL)");
+  });
+
+  it("is blocked on engines without writes (redis)", async () => {
+    const openQueryTab = vi.fn(() => true);
+    const deps = mkDeps({ openQueryTab, toolAvailability: agentToolAvailability("redis") });
+    const observation = await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: SEED_DOCS },
+    } as unknown as AIAgentToolAction);
+    expect(observation).toContain("Tool blocked: propose_seed_data is not available");
+    expect(openQueryTab).not.toHaveBeenCalled();
+  });
+
+  it("refuses collection names that cannot ride db.<name> shell syntax", async () => {
+    const deps = mkDeps({ toolAvailability: agentToolAvailability("mongodb") });
+    for (const bad of ["db.users", "user data", "system.users", "a.b"]) {
+      const observation = await run(deps, {
+        action: "propose_seed_data",
+        args: { collection: bad, documents: SEED_DOCS },
+      } as unknown as AIAgentToolAction);
+      expect(observation).toContain("Tool error: args.collection");
+    }
+  });
+
+  it("refuses non-object or empty documents", async () => {
+    const deps = mkDeps();
+    const openQueryTab = vi.fn(() => true);
+    deps.openQueryTab = openQueryTab;
+    const observation = await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: ["just a string"] },
+    } as unknown as AIAgentToolAction);
+    expect(observation).toContain("must be an object");
+    expect(openQueryTab).not.toHaveBeenCalled();
+
+    const emptyObservation = await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: [{}] },
+    } as unknown as AIAgentToolAction);
+    expect(emptyObservation).toContain("at least one field");
+  });
+
+  it("enforces the document cap", async () => {
+    const deps = mkDeps();
+    const many = Array.from({ length: 201 }, () => ({ name: "x" }));
+    const observation = await run(deps, {
+      action: "propose_seed_data",
+      args: { collection: "users", documents: many },
+    } as unknown as AIAgentToolAction);
+    expect(observation).toContain("200-document cap");
   });
 });

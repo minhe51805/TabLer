@@ -13,6 +13,7 @@ export const AI_PROVIDER_TYPES = [
   "openai",
   "anthropic",
   "gemini",
+  "vertex",
   "openrouter",
   "ollama",
   "custom",
@@ -40,6 +41,17 @@ export const AI_PROVIDER_REGISTRY: Record<AIProviderType, AIProviderDefinition> 
     isLocalByDefault: false,
     getDefaultEndpoint: (model) =>
       `https://generativelanguage.googleapis.com/v1beta/models/${model.trim() || "{model}"}:generateContent`,
+  },
+  vertex: {
+    type: "vertex",
+    label: "Vertex AI",
+    requiresApiKey: true,
+    isLocalByDefault: false,
+    // Vertex embeds project + location + model in the URL, so there is no
+    // derivable default — the user pastes the full generateContent endpoint.
+    getDefaultEndpoint: () => "",
+    endpointPlaceholder:
+      "https://LOCATION-aiplatform.googleapis.com/v1/projects/PROJECT/locations/LOCATION/publishers/google/models/MODEL:generateContent",
   },
   openrouter: {
     type: "openrouter",
@@ -97,6 +109,14 @@ export function getAIProviderEndpointFieldCopy(
     return {
       label: "Custom URL",
       hint: "Optional. Leave blank to use the local Ollama default endpoint.",
+      placeholder,
+    };
+  }
+
+  if (config.provider_type === "vertex") {
+    return {
+      label: "Vertex AI URL",
+      hint: "Required. Paste your full Vertex AI generateContent URL (project + location + model). TableR authenticates with a Bearer access token.",
       placeholder,
     };
   }

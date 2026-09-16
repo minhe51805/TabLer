@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Database } from "lucide-react";
+import { Database, Home, RefreshCw, X } from "lucide-react";
 import { useI18n } from "../../i18n";
 
 interface WorkspaceConnectingProps {
@@ -8,25 +8,55 @@ interface WorkspaceConnectingProps {
   name?: string | null;
   /** Database / host / file path line shown under the name. */
   detail?: string | null;
+  /**
+   * When set, the SAME full-screen composition keeps its glyph + identity but
+   * swaps only the area below the title: the shimmering "still connecting"
+   * skeleton becomes the connection-error message plus recovery actions — so a
+   * failed connect never detaches into a separate floating card.
+   */
+  error?: string | null;
+  /** Retry / reconnect. Rendered as the primary action when `error` is set. */
+  onRetry?: () => void;
+  /** Return to the main launcher. The quiet escape hatch when `error` is set. */
+  onGoToLauncher?: () => void;
+  /**
+   * Abort the in-progress connection and return to the launcher. Rendered as a
+   * quiet button under the skeleton while still connecting (before any `error`).
+   */
+  onCancel?: () => void;
 }
 
 /**
  * Full-screen "checking that the database is reachable" state shown while a
  * saved connection is being established. Borderless centered composition:
- * a database glyph with orbiting satellites, connection identity, shimmering
- * skeleton rows (the workspace "materialising") and an elapsed-seconds line.
+ * a database glyph with orbiting satellites, connection identity, and — below
+ * the title — either shimmering skeleton rows (the workspace "materialising")
+ * while connecting, or, once the attempt fails, the error message with Try
+ * Again + Go to Launcher actions. The header stays put so the user keeps their
+ * context instead of being thrown to a disconnected error card.
  */
-export function WorkspaceConnecting({ name, detail }: WorkspaceConnectingProps) {
+export function WorkspaceConnecting({
+  name,
+  detail,
+  error,
+  onRetry,
+  onGoToLauncher,
+  onCancel,
+}: WorkspaceConnectingProps) {
   const { t } = useI18n();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const hasError = Boolean(error);
 
   useEffect(() => {
+    // Freeze the elapsed counter once we surface an error: it is no longer
+    // "still connecting", so a ticking timer would be misleading.
+    if (hasError) return;
     const startedAt = Date.now();
     const timer = window.setInterval(() => {
       setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [hasError]);
 
   const displayName = name || t("workspace.ready.connectedWorkspace");
   const detailText = detail || "";
@@ -58,30 +88,69 @@ export function WorkspaceConnecting({ name, detail }: WorkspaceConnectingProps) 
             {displayName}
           </h2>
           {detailText && (
-            <span
-              className="inline-flex max-w-[280px] items-center gap-1.5 rounded-full border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-1 text-xs text-[var(--text-secondary)]"
-              title={detailText}
-            >
-              <Database className="h-3 w-3 shrink-0 opacity-60" />
-              <span className="truncate">{detailText}</span>
+            <span className="workspace-connecting-detail" title={detailText}>
+              <Database />
+              <span className="workspace-connecting-detail-label">{detailText}</span>
             </span>
           )}
         </div>
 
-        {/* Shimmering skeleton rows — the workspace materialising */}
-        <div className="flex w-full flex-col gap-2.5" aria-hidden="true">
-          <div className="workspace-connecting-skeleton-bar" style={{ width: "92%" }} />
-          <div className="workspace-connecting-skeleton-bar" style={{ width: "74%" }} />
-          <div className="workspace-connecting-skeleton-bar" style={{ width: "84%" }} />
-        </div>
+        {/* Below the title: loading skeleton while connecting, error + actions on failure */}
+        {hasError ? (
+          <div className="flex w-full flex-col items-center gap-4">
+            <p className="max-h-32 overflow-y-auto text-center text-[13px] leading-relaxed text-red-500 break-words">
+              {error || t("workspace.error.generic")}
+            </p>
+            <div className="flex w-full gap-2">
+              {onRetry && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="workspace-connecting-action workspace-connecting-action--primary"
+                >
+                  <RefreshCw />
+                  {t("workspace.error.retry")}
+                </button>
+              )}
+              {onGoToLauncher && (
+                <button
+                  type="button"
+                  onClick={onGoToLauncher}
+                  className="workspace-connecting-action workspace-connecting-action--secondary"
+                >
+                  <Home />
+                  {t("workspace.error.goLauncher")}
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Shimmering skeleton rows — the workspace materialising */}
+            <div className="flex w-full flex-col gap-2.5" aria-hidden="true">
+              <div className="workspace-connecting-skeleton-bar" style={{ width: "92%" }} />
+              <div className="workspace-connecting-skeleton-bar" style={{ width: "74%" }} />
+              <div className="workspace-connecting-skeleton-bar" style={{ width: "84%" }} />
+            </div>
 
-        {/* Status footer */}
-        <div className="flex w-full items-center justify-between text-[11px] font-medium text-[var(--text-secondary)] opacity-75">
-          <span className="truncate">{t("workspace.connecting.checking")}</span>
-          <span className="ml-3 shrink-0 tabular-nums">
-            {t("workspace.connecting.elapsed", { seconds: elapsedSeconds })}
-          </span>
-        </div>
+            {/* Status footer + quiet cancel action */}
+            <div className="flex w-full flex-col items-center gap-4">
+              <div className="flex w-full items-center justify-between text-[11px] font-medium text-[var(--text-secondary)] opacity-75">
+                <span className="truncate">{t("workspace.connecting.checking")}</span>
+                <span className="ml-3 shrink-0 tabular-nums">
+                  {t("workspace.connecting.elapsed", { seconds: elapsedSeconds })}
+                </span>
+              </div>
+
+              {onCancel && (
+                <button type="button" onClick={onCancel} className="workspace-connecting-cancel">
+                  <X />
+                  {t("workspace.connecting.cancel")}
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>,
     document.body,

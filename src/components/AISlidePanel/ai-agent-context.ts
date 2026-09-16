@@ -6,6 +6,7 @@ import {
 } from "./AISlidePanelUtils";
 import type { AgentToolAvailability } from "./ai-agent-engine-gates";
 import { formatAgentToolCatalog, NATIVE_TOOL_CALLING_ENABLED } from "./ai-agent-tool-schema";
+import { rankAgentMemoriesByRelevance } from "./ai-agent-memory-recall";
 import type { AIWorkspaceAgentActionName, AIWorkspaceAgentStep } from "./ai-workspace-types";
 
 export type AssistIntent = "sql" | "explain" | "overview" | "optimize" | "fix-error" | "general";
@@ -82,6 +83,61 @@ export function repeatCallDetailedReminder(
     + "these exact arguments again. Inspect the latest result and choose a "
     + "different action, different arguments, or finish the task if enough "
     + "evidence has been gathered.";
+}
+
+/**
+ * A tool observation is a FAILURE when the executor returned a "Tool error"
+ * or "Tool blocked" string instead of real evidence (same convention
+ * hasExecutedReadStep uses in ai-agent-quality-gates).
+ */
+export function isFailedToolObservation(observation: string): boolean {
+  const trimmed = observation.trimStart();
+  return trimmed.startsWith("Tool error") || trimmed.startsWith("Tool blocked");
+}
+
+/** Consecutive failed tool observations that trigger a mid-run reflection. */
+export const TOOL_ERROR_REFLECTION_THRESHOLD = 3;
+
+/**
+ * Counts how many of the most recent EXECUTED tool steps failed in an
+ * unbroken streak. Meta steps (plan/think/update_plan/checkpoints — they carry
+ * no real tool observation) are transparent: they neither count as a failure
+ * nor reset the streak, matching the repeat-call chain's meta transparency. Any
+ * successful tool observation ends the streak.
+ *
+ * Unlike the repeat-call guard (which only fires when the SAME call repeats),
+ * this catches a run grinding through DIFFERENT calls that all fail, so the
+ * controller can be nudged to step back and re-strategize.
+ */
+export function countTrailingToolErrors(steps: AgentTraceStep[]): number {
+  let count = 0;
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const step = steps[index];
+    if (!isRepeatTrackedAction(step.action)) continue;
+    if (isFailedToolObservation(step.observation)) {
+      count += 1;
+    } else {
+      break;
+    }
+  }
+  return count;
+}
+
+/**
+ * A "step back and re-strategize" instruction appended to the next controller
+ * prompt after a streak of failing tool calls. It asks the model to state what
+ * it has learned, name the shared blocker, and switch approach (different tool,
+ * corrected args, narrower query, ask_user) — or finish honestly when the
+ * data/capability is genuinely unavailable.
+ */
+export function toolErrorReflectionNudge(consecutiveErrors: number): string {
+  return `Reflection checkpoint: your last ${consecutiveErrors} tool calls in a row all failed `
+    + "(Tool error / Tool blocked). Stop repeating the same approach and re-strategize before the next call: "
+    + "(1) briefly state what you have actually confirmed so far from the observations above; "
+    + "(2) name the specific blocker these errors share; "
+    + "(3) choose a DIFFERENT approach that avoids it — a different tool, corrected arguments, a narrower query, "
+    + "or ask_user if the request is ambiguous. "
+    + "If the errors mean the data or capability is genuinely unavailable, finish now with an honest explanation instead of retrying.";
 }
 
 /**
@@ -184,6 +240,22 @@ const AGENT_FULL_CATALOG_NAME_LIMIT = 400;
 const RECENT_OBSERVATION_CHAR_BUDGET = 2_000;
 /** Older observations keep a condensed peek instead of disappearing entirely. */
 const OLDER_OBSERVATION_PEEK_CHARS = 400;
+/**
+ * Hard cap on how many saved-memory index entries are injected into the
+ * controller prompt. The recall index is standing context on EVERY step, so an
+ * unbounded list would silently inflate cost as a connection accrues memories.
+ * Relevant matches are sorted first before the cap, so a relevant memory is
+ * never hidden by it (bodies still load on demand via read_memory).
+ */
+const MAX_AGENT_MEMORY_INDEX_ENTRIES = 24;
+/**
+ * Shared, proactive save_memory directive (item 7). Kept as one constant so the
+ * "populated index", "relevant match", and "empty index" prompt branches all
+ * nudge the model to persist durable facts the SAME way — with a concrete
+ * example — instead of the weaker, drifting phrasings they used before.
+ */
+const AGENT_MEMORY_SAVE_HINT =
+  "Proactively persist durable facts with save_memory the moment you learn them — a schema fact, a user preference (naming, formatting, SQL dialect), or a correction the user makes (e.g. \"is_deleted marks a soft-delete\", \"amounts are stored in cents\", a status column's enum values). Save without being asked so future runs start smarter; never store credentials — they are rejected.";
 
 function clampObservationText(text: string, budget: number) {
   const flat = text.trim();
@@ -405,7 +477,7 @@ export function buildAgentControllerPrompt(params: {
   const databaseMentionMismatch = detectDatabaseMentionMismatch({
     userPrompt,
     knownDatabaseNames,
-    boundDatabase: workspaceBoundDatabase ?? currentDatabase,
+    boundDatabase: currentDatabase ?? workspaceBoundDatabase ?? null,
   });
   const visibleTables = availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT
     ? availableTableNames
@@ -470,7 +542,7 @@ export function buildAgentControllerPrompt(params: {
       : "Known tables: unavailable for this turn unless the user explicitly provides them.",
     workspaceToolStatus ? `Workspace tools status: ${workspaceToolStatus}` : "",
     workspaceToolsEnabled && toolAvailability && !sqlRead
-      ? `Engine: ${toolAvailability.engineLabel} (${toolAvailability.queryModel}). SQL tools are disabled; do not call run_readonly_sql or preview_write.`
+      ? `Engine: ${toolAvailability.engineLabel} (${toolAvailability.queryModel}). SQL tools are disabled; do not call run_readonly_sql or preview_write.${toolAvailability.documentPropose ? " Filling collections IS supported via propose_seed_data." : ""}`
       : "",
     preInspectedSummaries.length > 0
       ? [
@@ -484,6 +556,11 @@ export function buildAgentControllerPrompt(params: {
           ...(glossaryLines ?? []),
         ].join("\n")
       : "",
+    // Prompt-cache stability: this catalog is backend-sorted and fetched once
+    // per run, and it lives here in the STATIC context preamble — ahead of the
+    // volatile step trace. Keep it in the prefix so remote prompt caching can
+    // reuse it across every controller call of the run; do not move it into the
+    // per-step tail. Skill BODIES load later as tool observations by design.
     (availableSkills ?? []).length > 0
       ? [
           "<available_skills>",
@@ -494,14 +571,31 @@ export function buildAgentControllerPrompt(params: {
         ].join("\n")
       : "",
     (agentMemoryIndex ?? []).length > 0
-      ? [
-          "<agent_memory>",
-          ...(agentMemoryIndex ?? []).map((entry) =>
-            `<memory><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`),
-          "</agent_memory>",
-          "These are saved observations for THIS connection/database (freshness = <updated>). Load one of them with read_memory when it looks relevant; persist new durable facts with save_memory (never credentials; they are rejected).",
-        ].join("\n")
-      : "",
+      ? (() => {
+          // Recall: rank the saved memories by relevance to THIS request so the
+          // one that answers it is surfaced first and explicitly flagged,
+          // instead of relying on the model to notice it in storage order.
+          const ranked = rankAgentMemoriesByRelevance(agentMemoryIndex ?? [], userPrompt)
+            // Relevant matches first, THEN cap — so the bound trims only the
+            // least-relevant tail and can never drop a memory that matches this
+            // request. Keeps the standing recall index cost bounded per step.
+            .slice()
+            .sort((left, right) => Number(right.relevant) - Number(left.relevant))
+            .slice(0, MAX_AGENT_MEMORY_INDEX_ENTRIES);
+          const anyRelevant = ranked.some((item) => item.relevant);
+          return [
+            "<agent_memory>",
+            ...ranked.map(({ entry, relevant }) =>
+              `<memory relevant="${relevant}"><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`),
+            "</agent_memory>",
+            anyRelevant
+              ? `These are saved observations for THIS connection/database (freshness = <updated>), ordered by relevance to the current request. Entries with relevant="true" closely match what the user is asking — load them with read_memory FIRST, before other tools, and use them to answer. ${AGENT_MEMORY_SAVE_HINT}`
+              : `These are saved observations for THIS connection/database (freshness = <updated>). Load one of them with read_memory when it looks relevant. ${AGENT_MEMORY_SAVE_HINT}`,
+          ].join("\n");
+        })()
+      : workspaceToolsEnabled
+        ? `No saved memories exist yet for this connection/database. ${AGENT_MEMORY_SAVE_HINT}`
+        : "",
     (queryTabs ?? []).length > 0
       ? [
           "Query tabs open for this connection (tabId is required by edit_query_sql; sql is the current content to fix):",
@@ -540,6 +634,9 @@ export function buildAgentControllerPrompt(params: {
       : "",
     workspaceToolsEnabled && sqlWritePreview
       ? "- To propose data or schema changes, run preview_write with the mutating statements: it executes them inside one transaction and always rolls back, showing real affected rows. NEVER claim a change was persisted; the human applies the final SQL through the approval flow."
+      : "",
+    workspaceToolsEnabled && (toolAvailability?.documentPropose || toolAvailability?.sqlWritePreview)
+      ? "- To fill an empty or sparse table or collection with sample data: verify its fields with describe_table or sample_table_data first, then call propose_seed_data with realistic rows matching those fields. It opens the INSERT (or MongoDB insertMany) script in a NEW query tab that the user reviews and runs — you cannot insert data directly and must never claim data was written."
       : "",
     workspaceToolsEnabled
       ? "- When you discover a durable, non-obvious semantic fact (what a metric means, what an alias maps to, a hidden relationship), call remember_term once so every future run for this database inherits it."

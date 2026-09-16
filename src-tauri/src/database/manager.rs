@@ -1,10 +1,13 @@
 use super::bigquery::BigQueryDriver;
 use super::capabilities::{driver_capabilities, DriverCapability, DriverCapabilityProfile};
+#[cfg(feature = "cassandra-driver")]
 use super::cassandra::CassandraDriver;
 use super::clickhouse::ClickHouseDriver;
 use super::cloudflare_d1::CloudflareD1Driver;
 use super::driver::DatabaseDriver;
+#[cfg(feature = "duckdb-driver")]
 use super::duckdb::DuckDbDriver;
+#[cfg(feature = "libsql-driver")]
 use super::libsql::LibSqlDriver;
 use super::models::*;
 use super::mongodb::MongoDbDriver;
@@ -12,6 +15,7 @@ use super::mssql::MssqlDriver;
 use super::mysql::MySqlDriver;
 use super::opensearch::OpenSearchDriver;
 use super::postgres::PostgresDriver;
+#[cfg(feature = "redis-driver")]
 use super::redis::RedisDriver;
 use super::snowflake::SnowflakeDriver;
 use super::sqlite::SqliteDriver;
@@ -21,6 +25,20 @@ use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// Error returned when a `connection_id` has no live session in the manager.
+///
+/// The wording is load-bearing: the detached Profiler window's auto-close
+/// *safety net* matches on the "... not found. Please connect first." suffix
+/// (`CONNECTION_GONE_MARKER` in `src/components/Profiler/profilerConstants.ts`).
+/// Centralized here so every lookup path stays in lockstep and the message
+/// can't drift out from under that fallback.
+fn connection_not_found(connection_id: &str) -> anyhow::Error {
+    anyhow!(
+        "Connection '{}' not found. Please connect first.",
+        connection_id
+    )
+}
 
 /// Manages all active database connections.
 /// Owns the connection pool, lifecycle, and primary database interface.
@@ -59,6 +77,110 @@ impl Drop for PendingTunnel {
             let _ = self.manager.disconnect_tunnel(handle);
         }
     }
+}
+
+/// Plugin-split gate for HTTP engines. `PluginHttp` engines (ClickHouse,
+/// BigQuery, Snowflake, Cloudflare D1, OpenSearch) only connect once an
+/// installed, enabled, verified declarative-http-v1 plugin contributes the
+/// matching protocol — the compiled driver stays in-app but is unreachable
+/// without the plugin, so the app ships only the built-in engines by default.
+/// Returns the resolved plugin id for provenance.
+async fn require_installed_http_plugin(
+    plugin_storage: &PluginStorage,
+    config: &ConnectionConfig,
+    protocol: &str,
+) -> Result<String> {
+    let plugin_id = config
+        .additional_fields
+        .get("plugin_id")
+        .map(String::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let driver_id = config
+        .additional_fields
+        .get("plugin_driver_id")
+        .map(String::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if plugin_id.is_empty() || driver_id.is_empty() {
+        return Err(anyhow!(
+            "{protocol} connections require an installed driver plugin"
+        ));
+    }
+    let storage = plugin_storage.clone();
+    let active = tokio::task::spawn_blocking(move || {
+        crate::commands::plugins::resolve_active_plugin_driver(&storage, &plugin_id, &driver_id)
+    })
+    .await
+    .map_err(|_| anyhow!("Driver plugin verification stopped unexpectedly"))?
+    .map_err(anyhow::Error::msg)?;
+    if active.contribution.runtime != "declarative-http-v1"
+        || active.contribution.status != "stable"
+        || active.contribution.protocol != protocol
+    {
+        return Err(anyhow!(
+            "The selected plugin driver is incompatible with the {protocol} host"
+        ));
+    }
+    Ok(active.plugin_id)
+}
+
+/// Native-engine (`plugin_native`) sidecar gate, mirroring
+/// `require_installed_http_plugin`: when the wire-protocol crate was not built
+/// in, the engine only connects via a verified `driver-sidecar-v1` plugin that
+/// ships a per-platform sidecar executable. Resolves and spawns it, returning
+/// the proxy driver. Compiled only in builds where a native feature is absent.
+#[cfg(any(
+    not(feature = "duckdb-driver"),
+    not(feature = "cassandra-driver"),
+    not(feature = "redis-driver"),
+    not(feature = "libsql-driver"),
+))]
+async fn connect_native_sidecar(
+    plugin_storage: &PluginStorage,
+    config: &ConnectionConfig,
+    protocol: &str,
+) -> Result<Arc<dyn DatabaseDriver>> {
+    let plugin_id = config
+        .additional_fields
+        .get("plugin_id")
+        .map(String::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let driver_id = config
+        .additional_fields
+        .get("plugin_driver_id")
+        .map(String::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if plugin_id.is_empty() || driver_id.is_empty() {
+        return Err(anyhow!(
+            "{protocol} connections require an installed native driver plugin (sidecar)"
+        ));
+    }
+    let storage = plugin_storage.clone();
+    let (resolve_plugin, resolve_driver) = (plugin_id.clone(), driver_id.clone());
+    let resolved = tokio::task::spawn_blocking(move || {
+        crate::commands::plugins::resolve_active_sidecar(&storage, &resolve_plugin, &resolve_driver)
+    })
+    .await
+    .map_err(|_| anyhow!("Native driver plugin verification stopped unexpectedly"))?
+    .map_err(anyhow::Error::msg)?;
+
+    let executable = crate::database::sidecar::sidecar_executable_path(
+        &resolved.bundle_dir,
+        &resolved.driver_id,
+    );
+    if !executable.exists() {
+        return Err(anyhow!(
+            "Native driver plugin '{}' has no sidecar binary for this platform ({}).",
+            resolved.plugin_id,
+            crate::database::sidecar::platform_target()
+        ));
+    }
+    let driver = crate::database::sidecar::SidecarDriver::spawn(&executable, &[], config).await?;
+    let driver: Arc<dyn DatabaseDriver> = Arc::new(driver);
+    Ok(driver)
 }
 
 impl DatabaseManager {
@@ -150,54 +272,64 @@ impl DatabaseManager {
                 let path = actual_config.file_path.as_deref().unwrap_or(":memory:");
                 Arc::new(SqliteDriver::connect(path).await?)
             }
+            #[cfg(feature = "duckdb-driver")]
             DatabaseType::DuckDB => Arc::new(DuckDbDriver::connect(&actual_config).await?),
+            #[cfg(not(feature = "duckdb-driver"))]
+            DatabaseType::DuckDB => {
+                connect_native_sidecar(&self.plugin_storage, &actual_config, "duckdb").await?
+            }
+            #[cfg(feature = "cassandra-driver")]
             DatabaseType::Cassandra => Arc::new(CassandraDriver::connect(&actual_config).await?),
-            DatabaseType::Snowflake => Arc::new(SnowflakeDriver::connect(&actual_config).await?),
+            #[cfg(not(feature = "cassandra-driver"))]
+            DatabaseType::Cassandra => {
+                connect_native_sidecar(&self.plugin_storage, &actual_config, "cassandra").await?
+            }
+            DatabaseType::Snowflake => {
+                require_installed_http_plugin(&self.plugin_storage, &actual_config, "snowflake")
+                    .await?;
+                Arc::new(SnowflakeDriver::connect(&actual_config).await?)
+            }
             DatabaseType::MSSQL => Arc::new(MssqlDriver::connect(&actual_config).await?),
+            #[cfg(feature = "libsql-driver")]
             DatabaseType::LibSQL => Arc::new(LibSqlDriver::connect(&actual_config).await?),
-            DatabaseType::ClickHouse => Arc::new(ClickHouseDriver::connect(&actual_config).await?),
-            DatabaseType::BigQuery => Arc::new(BigQueryDriver::connect(&actual_config).await?),
+            #[cfg(not(feature = "libsql-driver"))]
+            DatabaseType::LibSQL => {
+                connect_native_sidecar(&self.plugin_storage, &actual_config, "libsql").await?
+            }
+            DatabaseType::ClickHouse => {
+                require_installed_http_plugin(&self.plugin_storage, &actual_config, "clickhouse")
+                    .await?;
+                Arc::new(ClickHouseDriver::connect(&actual_config).await?)
+            }
+            DatabaseType::BigQuery => {
+                require_installed_http_plugin(&self.plugin_storage, &actual_config, "bigquery")
+                    .await?;
+                Arc::new(BigQueryDriver::connect(&actual_config).await?)
+            }
             DatabaseType::CloudflareD1 => {
+                require_installed_http_plugin(
+                    &self.plugin_storage,
+                    &actual_config,
+                    "cloudflare_d1",
+                )
+                .await?;
                 Arc::new(CloudflareD1Driver::connect(&actual_config).await?)
             }
+            #[cfg(feature = "redis-driver")]
             DatabaseType::Redis => Arc::new(RedisDriver::connect(&actual_config).await?),
+            #[cfg(not(feature = "redis-driver"))]
+            DatabaseType::Redis => {
+                connect_native_sidecar(&self.plugin_storage, &actual_config, "redis").await?
+            }
             DatabaseType::MongoDB => Arc::new(MongoDbDriver::connect(&actual_config).await?),
             DatabaseType::OpenSearch => {
-                let plugin_id = actual_config
-                    .additional_fields
-                    .get("plugin_id")
-                    .map(String::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let driver_id = actual_config
-                    .additional_fields
-                    .get("plugin_driver_id")
-                    .map(String::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                if plugin_id.is_empty() || driver_id.is_empty() {
-                    return Err(anyhow!(
-                        "OpenSearch connections require an installed driver plugin"
-                    ));
-                }
-                let storage = self.plugin_storage.clone();
-                let active = tokio::task::spawn_blocking(move || {
-                    crate::commands::plugins::resolve_active_plugin_driver(
-                        &storage, &plugin_id, &driver_id,
-                    )
-                })
-                .await
-                .map_err(|_| anyhow!("Driver plugin verification stopped unexpectedly"))?
-                .map_err(anyhow::Error::msg)?;
-                if active.contribution.runtime != "declarative-http-v1"
-                    || active.contribution.status != "stable"
-                    || active.contribution.protocol != "opensearch"
-                {
-                    return Err(anyhow!(
-                        "The selected plugin driver is incompatible with the OpenSearch host ABI"
-                    ));
-                }
-                Arc::new(OpenSearchDriver::connect(&actual_config, active.plugin_id).await?)
+                let plugin_id = require_installed_http_plugin(
+                    &self.plugin_storage,
+                    &actual_config,
+                    "opensearch",
+                )
+                .await?;
+                Arc::new(OpenSearchDriver::connect(&actual_config, plugin_id).await?)
             }
         };
 
@@ -266,12 +398,10 @@ impl DatabaseManager {
     /// block connect/disconnect (write-lock) while waiting on the network.
     pub async fn get_driver(&self, connection_id: &str) -> Result<Arc<dyn DatabaseDriver>> {
         let conns = self.connections.read().await;
-        conns.get(connection_id).cloned().ok_or_else(|| {
-            anyhow!(
-                "Connection '{}' not found. Please connect first.",
-                connection_id
-            )
-        })
+        conns
+            .get(connection_id)
+            .cloned()
+            .ok_or_else(|| connection_not_found(connection_id))
     }
 
     /// Check if a connection exists and is alive. The ping runs on a cloned
@@ -290,12 +420,7 @@ impl DatabaseManager {
             .await
             .get(connection_id)
             .copied()
-            .ok_or_else(|| {
-                anyhow!(
-                    "Connection '{}' not found. Please connect first.",
-                    connection_id
-                )
-            })
+            .ok_or_else(|| connection_not_found(connection_id))
     }
 
     pub async fn get_connection_capabilities(
@@ -306,12 +431,7 @@ impl DatabaseManager {
         let database_type = connection_types
             .get(connection_id)
             .copied()
-            .ok_or_else(|| {
-                anyhow!(
-                    "Connection '{}' not found. Please connect first.",
-                    connection_id
-                )
-            })?;
+            .ok_or_else(|| connection_not_found(connection_id))?;
         Ok(driver_capabilities(database_type))
     }
 

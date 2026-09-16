@@ -1,5 +1,10 @@
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import {
+  extractJsonObjectCandidate,
+  repairTruncatedJson,
+  sanitizeJsonStringLiterals,
+} from "./json-repair";
+import {
   isHighRiskStatement,
   isMutatingStatement,
   isSessionSwitchStatement,
@@ -24,6 +29,7 @@ export {
   AI_AGENT_SAMPLE_MAX_ROWS,
   AI_AGENT_SCHEMA_OBJECTS_LIMIT,
   AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS,
+  AI_AGENT_SEED_DOCUMENT_LIMIT,
   AI_AGENT_TOOL_NAMES,
 } from "./ai-agent-tool-schema";
 export type { AIAgentToolName } from "./ai-agent-tool-schema";
@@ -40,10 +46,7 @@ export interface AIAgentAskUserArgs extends Record<string, unknown> {
   multiple?: boolean;
 }
 
-export type AIAgentAskUserAction = AIAgentToolActionBase<
-  "ask_user",
-  AIAgentAskUserArgs
->;
+export type AIAgentAskUserAction = AIAgentToolActionBase<"ask_user", AIAgentAskUserArgs>;
 
 export interface AIAgentRememberTermArgs extends Record<string, unknown> {
   term: string;
@@ -74,10 +77,7 @@ export interface AIAgentReadMemoryArgs extends Record<string, unknown> {
   name: string;
 }
 
-export type AIAgentReadMemoryAction = AIAgentToolActionBase<
-  "read_memory",
-  AIAgentReadMemoryArgs
->;
+export type AIAgentReadMemoryAction = AIAgentToolActionBase<"read_memory", AIAgentReadMemoryArgs>;
 
 export interface AIAgentSaveMemoryArgs extends Record<string, unknown> {
   name: string;
@@ -85,10 +85,7 @@ export interface AIAgentSaveMemoryArgs extends Record<string, unknown> {
   body: string;
 }
 
-export type AIAgentSaveMemoryAction = AIAgentToolActionBase<
-  "save_memory",
-  AIAgentSaveMemoryArgs
->;
+export type AIAgentSaveMemoryAction = AIAgentToolActionBase<"save_memory", AIAgentSaveMemoryArgs>;
 
 export interface AIAgentDeleteMemoryArgs extends Record<string, unknown> {
   name: string;
@@ -99,13 +96,57 @@ export type AIAgentDeleteMemoryAction = AIAgentToolActionBase<
   AIAgentDeleteMemoryArgs
 >;
 
+/**
+ * Anthropic's NATIVE memory tool (`memory_20250818`). Unlike catalog tools it
+ * is NOT in AI_AGENT_TOOL_NAMES and carries no JSON schema: Claude emits a
+ * `command` plus filesystem-style fields, which the executor forwards verbatim
+ * to the `run_agent_memory_tool` backend command (a sandboxed /memories tree).
+ * Anthropic-only — it is never declared to any other provider.
+ */
+export const NATIVE_MEMORY_TOOL_ACTION = "memory" as const;
+export const NATIVE_MEMORY_TOOL_COMMANDS = [
+  "view",
+  "create",
+  "str_replace",
+  "insert",
+  "delete",
+  "rename",
+] as const;
+export type NativeMemoryToolCommand = (typeof NATIVE_MEMORY_TOOL_COMMANDS)[number];
+
+export interface AIAgentMemoryToolArgs extends Record<string, unknown> {
+  command: NativeMemoryToolCommand;
+  path?: string;
+  file_text?: string;
+  old_str?: string;
+  new_str?: string;
+  insert_line?: number;
+  insert_text?: string;
+  old_path?: string;
+  new_path?: string;
+  view_range?: number[];
+}
+
+export interface AIAgentMemoryToolAction {
+  action: "memory";
+  args: AIAgentMemoryToolArgs;
+  message: string;
+}
+
 export interface AIAgentSkillArgs extends Record<string, unknown> {
   name: string;
 }
 
-export type AIAgentSkillAction = AIAgentToolActionBase<
-  "skill",
-  AIAgentSkillArgs
+export type AIAgentSkillAction = AIAgentToolActionBase<"skill", AIAgentSkillArgs>;
+
+export interface AIAgentReadSkillResourceArgs extends Record<string, unknown> {
+  name: string;
+  path: string;
+}
+
+export type AIAgentReadSkillResourceAction = AIAgentToolActionBase<
+  "read_skill_resource",
+  AIAgentReadSkillResourceArgs
 >;
 
 export interface AIAgentCreateCheckpointArgs extends Record<string, unknown> {
@@ -132,10 +173,7 @@ export interface AIAgentReadPageArgs extends Record<string, unknown> {
   limit?: number;
 }
 
-export type AIAgentReadPageAction = AIAgentToolActionBase<
-  "read_page",
-  AIAgentReadPageArgs
->;
+export type AIAgentReadPageAction = AIAgentToolActionBase<"read_page", AIAgentReadPageArgs>;
 
 export interface AIAgentPreviewWriteArgs extends Record<string, unknown> {
   statements: string[];
@@ -153,15 +191,9 @@ export interface AIAgentListTablesArgs extends Record<string, unknown> {
   minRows?: number;
 }
 
-export type AIAgentListTablesAction = AIAgentToolActionBase<
-  "list_tables",
-  AIAgentListTablesArgs
->;
+export type AIAgentListTablesAction = AIAgentToolActionBase<"list_tables", AIAgentListTablesArgs>;
 
-export type AIAgentSearchSchemaAction = AIAgentToolActionBase<
-  "search_schema",
-  { query: string }
->;
+export type AIAgentSearchSchemaAction = AIAgentToolActionBase<"search_schema", { query: string }>;
 
 export interface AIAgentListSchemaObjectsArgs extends Record<string, unknown> {
   objectType?: "view" | "trigger" | "routine" | "all";
@@ -222,25 +254,16 @@ export interface AIAgentFindValueArgs extends Record<string, unknown> {
   limit?: number;
 }
 
-export type AIAgentFindValueAction = AIAgentToolActionBase<
-  "find_value",
-  AIAgentFindValueArgs
->;
+export type AIAgentFindValueAction = AIAgentToolActionBase<"find_value", AIAgentFindValueArgs>;
 
-export type AIAgentCheckSqlAction = AIAgentToolActionBase<
-  "check_sql",
-  { sql: string }
->;
+export type AIAgentCheckSqlAction = AIAgentToolActionBase<"check_sql", { sql: string }>;
 
 export interface AIAgentRunPresetArgs extends Record<string, unknown> {
   presetId?: "process-list" | "user-management";
   list?: boolean;
 }
 
-export type AIAgentRunPresetAction = AIAgentToolActionBase<
-  "run_preset",
-  AIAgentRunPresetArgs
->;
+export type AIAgentRunPresetAction = AIAgentToolActionBase<"run_preset", AIAgentRunPresetArgs>;
 
 export interface AIAgentFinishArgs extends Record<string, unknown> {
   response?: unknown;
@@ -260,19 +283,24 @@ export interface AIAgentUpdatePlanArgs extends Record<string, unknown> {
   steps: AIAgentUpdatePlanStep[];
 }
 
-export type AIAgentUpdatePlanAction = AIAgentToolActionBase<
-  "update_plan",
-  AIAgentUpdatePlanArgs
->;
+export type AIAgentUpdatePlanAction = AIAgentToolActionBase<"update_plan", AIAgentUpdatePlanArgs>;
 
 export interface AIAgentDelegateArgs extends Record<string, unknown> {
   instruction: string;
   focusTables?: string[];
 }
 
-export type AIAgentDelegateAction = AIAgentToolActionBase<
-  "delegate",
-  AIAgentDelegateArgs
+export type AIAgentDelegateAction = AIAgentToolActionBase<"delegate", AIAgentDelegateArgs>;
+
+export interface AIAgentProposeSeedDataArgs extends Record<string, unknown> {
+  collection: string;
+  documents: unknown[];
+  rationale?: string;
+}
+
+export type AIAgentProposeSeedDataAction = AIAgentToolActionBase<
+  "propose_seed_data",
+  AIAgentProposeSeedDataArgs
 >;
 
 export type AIAgentToolAction =
@@ -290,149 +318,40 @@ export type AIAgentToolAction =
   | AIAgentCheckSqlAction
   | AIAgentRunPresetAction
   | AIAgentPreviewWriteAction
+  | AIAgentProposeSeedDataAction
   | AIAgentRememberTermAction
   | AIAgentReadMemoryAction
   | AIAgentSaveMemoryAction
   | AIAgentDeleteMemoryAction
+  | AIAgentMemoryToolAction
   | AIAgentEditQuerySqlAction
   | AIAgentSkillAction
+  | AIAgentReadSkillResourceAction
   | AIAgentCreateCheckpointAction
   | AIAgentRestoreCheckpointAction
   | AIAgentDelegateAction
   | AIAgentReadPageAction
   | AIAgentFinishAction;
 
-function stripOptionalCodeFence(text: string) {
-  const trimmed = text.trim();
-  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  return fencedMatch?.[1]?.trim() || trimmed;
-}
-
-function extractJsonObjectCandidate(text: string) {
-  const stripped = stripOptionalCodeFence(text);
-  const startIndex = stripped.indexOf("{");
-  if (startIndex === -1) return stripped;
-
-  let depth = 0;
-  let inString = false;
-  let escaping = false;
-
-  for (let index = startIndex; index < stripped.length; index += 1) {
-    const char = stripped[index];
-    if (inString) {
-      if (escaping) {
-        escaping = false;
-      } else if (char === "\\") {
-        escaping = true;
-      } else if (char === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = true;
-    } else if (char === "{") {
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return stripped.slice(startIndex, index + 1);
-    }
-  }
-
-  return stripped.slice(startIndex);
-}
-
-function sanitizeJsonStringLiterals(candidate: string) {
-  let result = "";
-  let inString = false;
-  let escaping = false;
-
-  for (const char of candidate) {
-    if (inString) {
-      if (escaping) {
-        result += char;
-        escaping = false;
-        continue;
-      }
-      if (char === "\\") {
-        result += char;
-        escaping = true;
-        continue;
-      }
-      if (char === "\"") {
-        result += char;
-        inString = false;
-        continue;
-      }
-      if (char === "\n") {
-        result += "\\n";
-        continue;
-      }
-      if (char === "\r") {
-        result += "\\r";
-        continue;
-      }
-      if (char === "\t") {
-        result += "\\t";
-        continue;
-      }
-
-      const codePoint = char.charCodeAt(0);
-      result += codePoint < 0x20
-        ? `\\u${codePoint.toString(16).padStart(4, "0")}`
-        : char;
-      continue;
-    }
-
-    if (char === "\"") inString = true;
-    result += char;
-  }
-
-  return result;
-}
-
-function repairTruncatedJson(candidate: string) {
-  let inString = false;
-  let escaping = false;
-  const stack: string[] = [];
-
-  for (const char of candidate) {
-    if (inString) {
-      if (escaping) {
-        escaping = false;
-      } else if (char === "\\") {
-        escaping = true;
-      } else if (char === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === "\"") {
-      inString = true;
-    } else if (char === "{" || char === "[") {
-      stack.push(char);
-    } else if (char === "}" || char === "]") {
-      stack.pop();
-    }
-  }
-
-  let repaired = candidate;
-  if (inString && escaping) repaired += "\\";
-  if (inString) repaired += "\"";
-  repaired = repaired.replace(/,\s*$/, "");
-
-  for (let index = stack.length - 1; index >= 0; index -= 1) {
-    repaired += stack[index] === "{" ? "}" : "]";
-  }
-
-  return repaired;
-}
-
 function isAIAgentToolName(value: unknown): value is AIAgentToolName {
-  return typeof value === "string"
-    && (AI_AGENT_TOOL_NAMES as readonly string[]).includes(value);
+  return typeof value === "string" && (AI_AGENT_TOOL_NAMES as readonly string[]).includes(value);
+}
+
+/**
+ * Validate the loose args of a native memory tool call. The backend sandbox
+ * does the authoritative validation (paths, sizes, traversal); here we only
+ * guarantee a known `command` so a malformed call throws a repair-friendly
+ * message instead of round-tripping to the backend, then forward the rest of
+ * the filesystem fields verbatim.
+ */
+function parseNativeMemoryToolArgs(args: Record<string, unknown>): AIAgentMemoryToolArgs {
+  const command = typeof args.command === "string" ? args.command.trim() : "";
+  if (!(NATIVE_MEMORY_TOOL_COMMANDS as readonly string[]).includes(command)) {
+    throw new Error(
+      `The memory tool requires args.command to be one of: ${NATIVE_MEMORY_TOOL_COMMANDS.join(", ")}.`,
+    );
+  }
+  return { ...args, command: command as NativeMemoryToolCommand };
 }
 
 export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
@@ -460,17 +379,19 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
   }
 
   if (!parsed) {
-    const message = parseError instanceof Error
-      ? parseError.message
-      : String(parseError ?? "Unknown JSON parse error");
+    const message =
+      parseError instanceof Error
+        ? parseError.message
+        : String(parseError ?? "Unknown JSON parse error");
     throw new Error(`The agent returned malformed JSON: ${message}`);
   }
-  if (!isAIAgentToolName(parsed.action)) {
+  const isNativeMemoryAction = parsed.action === NATIVE_MEMORY_TOOL_ACTION;
+  if (!isNativeMemoryAction && !isAIAgentToolName(parsed.action)) {
     throw new Error("The agent returned an unsupported action.");
   }
   if (
-    parsed.args !== undefined
-    && (parsed.args === null || Array.isArray(parsed.args) || typeof parsed.args !== "object")
+    parsed.args !== undefined &&
+    (parsed.args === null || Array.isArray(parsed.args) || typeof parsed.args !== "object")
   ) {
     throw new Error("The agent returned invalid tool arguments.");
   }
@@ -505,9 +426,20 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
   }
   const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
 
+  if (isNativeMemoryAction) {
+    // Anthropic's native memory tool has no catalog spec — forward the command
+    // and filesystem args verbatim (the backend sandbox is the source of truth
+    // for path/size/traversal validation).
+    return {
+      action: NATIVE_MEMORY_TOOL_ACTION,
+      args: parseNativeMemoryToolArgs(args),
+      message,
+    };
+  }
+
   return {
-    action: parsed.action,
-    args: parseAgentToolArgs(parsed.action, args),
+    action: parsed.action as AIAgentToolName,
+    args: parseAgentToolArgs(parsed.action as AIAgentToolName, args),
     message,
   } as AIAgentToolAction;
 }
@@ -524,9 +456,9 @@ export function validateAIAgentReadonlySql(sql: string) {
     if (!normalized) continue;
 
     if (
-      isSessionSwitchStatement(statement)
-      || isMutatingStatement(statement)
-      || isHighRiskStatement(statement)
+      isSessionSwitchStatement(statement) ||
+      isMutatingStatement(statement) ||
+      isHighRiskStatement(statement)
     ) {
       throw new Error("The agent tool only allows read-only SQL observations.");
     }

@@ -1,4 +1,6 @@
-use crate::database::ai_models::{AIProviderType, AIRequest, AIRequestMode, AIResponse};
+use crate::database::ai_models::{
+    AIProviderConfig, AIProviderType, AIRequest, AIRequestMode, AIResponse,
+};
 use crate::storage::ai_storage::AIStorage;
 use crate::utils::rate_limiter::AIRequestLimiter;
 use futures_util::StreamExt;
@@ -7,25 +9,91 @@ use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 
 use super::endpoints::{
-    is_nvidia_integrate_endpoint, provider_requires_api_key, resolve_provider_endpoint,
-    should_retry_openai_like_status, validate_ai_endpoint,
+    is_nvidia_integrate_endpoint, provider_requires_api_key, resolve_models_list_endpoint,
+    resolve_provider_endpoint, should_retry_openai_like_status, validate_ai_endpoint,
 };
 use super::errors::{
     ai_provider_api_error, ai_provider_config_error, ai_provider_http_status_error,
     ai_provider_non_json_response_error, ai_provider_request_error, ai_provider_response_error,
-    ai_provider_response_error_with_preview, response_retry_after_seconds,
+    ai_provider_response_error_with_preview, response_retry_after_seconds, tag_ai_error_kind,
+    AiErrorKind,
 };
 use super::extraction::{
-    extract_anthropic_response_text, extract_gemini_response_text, extract_openai_like_reasoning,
-    extract_openai_like_response_text, extract_tool_call_as_action_json, publish_stream_payload,
-    split_think_block,
+    extract_anthropic_reasoning, extract_anthropic_response_text, extract_gemini_reasoning,
+    extract_gemini_response_text, extract_openai_like_reasoning, extract_openai_like_response_text,
+    extract_tool_call_as_action_json, publish_stream_payload, split_think_block,
 };
 use super::prompt::build_ai_prompt;
 use super::providers::{
-    apply_attachments, apply_native_tools, build_provider_request_body, effective_wire_provider,
-    resolve_provider_body_shape, streaming_endpoint, streaming_request_body,
+    apply_attachments, apply_conversation_history, apply_native_tools,
+    build_provider_request_body_with_thinking, effective_wire_provider,
+    is_thinking_param_rejection, mark_model_thinking_unsupported, model_thinking_unsupported,
+    parse_models_list_response, resolve_provider_body_shape, streaming_endpoint,
+    streaming_request_body_with_thinking,
 };
-use super::{ai_http_client, run_blocking_storage_task, AI_REQUEST_CANCELLED_ERROR};
+use super::{ai_http_client, run_blocking_storage_task, FetchedModel, AI_REQUEST_CANCELLED_ERROR};
+
+/// Calls a provider's "list models" API and returns the model IDs it exposes,
+/// powering the "Fetch models" button in AI settings so users don't have to
+/// type each model by hand. Auth mirrors the chat path (Anthropic `x-api-key`,
+/// Gemini `x-goog-api-key`, everything else Bearer).
+pub(crate) async fn fetch_provider_models(
+    config: &AIProviderConfig,
+    api_key: Option<&str>,
+) -> Result<Vec<FetchedModel>, String> {
+    let (endpoint, shape) = resolve_models_list_endpoint(config)?;
+    validate_ai_endpoint(config, &endpoint)?;
+
+    let mut request_builder = ai_http_client().get(&endpoint);
+    match effective_wire_provider(config, &endpoint) {
+        AIProviderType::Anthropic => {
+            request_builder = request_builder
+                .header("x-api-key", api_key.unwrap_or_default())
+                .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION);
+        }
+        AIProviderType::Gemini => {
+            request_builder = request_builder.header("x-goog-api-key", api_key.unwrap_or_default());
+        }
+        _ => {
+            if let Some(api_key) = api_key {
+                request_builder = request_builder.bearer_auth(api_key);
+            }
+        }
+    }
+
+    let response = request_builder
+        .send()
+        .await
+        .map_err(|error| ai_provider_request_error(config, &endpoint, &error))?;
+    let status = response.status();
+    let retry_after = response_retry_after_seconds(&response);
+    if !status.is_success() {
+        let raw_body = response
+            .text()
+            .await
+            .map_err(|_| ai_provider_response_error())?;
+        return Err(ai_provider_http_status_error(
+            config,
+            &endpoint,
+            status,
+            &raw_body,
+            api_key,
+            retry_after,
+        ));
+    }
+
+    let resp_json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| ai_provider_response_error())?;
+    let models = parse_models_list_response(shape, &resp_json);
+    if models.is_empty() {
+        return Err(
+            "The provider responded, but no models were found. Add model IDs manually.".to_string(),
+        );
+    }
+    Ok(models)
+}
 
 pub(crate) async fn execute_ai_stream_request(
     request: AIRequest,
@@ -94,12 +162,18 @@ pub(crate) async fn execute_ai_stream_request(
     validate_ai_endpoint(&config, &base_endpoint)?;
     let wire_provider = effective_wire_provider(&config, &base_endpoint);
     let endpoint = streaming_endpoint(&config, &base_endpoint);
-    let mut body = streaming_request_body(
+    let mut body = streaming_request_body_with_thinking(
         &config,
         &base_endpoint,
         &system_prompt,
         &prompt,
         &request.mode,
+        request.enable_thinking,
+    );
+    apply_conversation_history(
+        &mut body,
+        resolve_provider_body_shape(&config, &base_endpoint),
+        &request.history,
     );
     apply_attachments(
         &mut body,
@@ -112,7 +186,7 @@ pub(crate) async fn execute_ai_stream_request(
         AIProviderType::Anthropic => {
             request_builder = request_builder
                 .header("x-api-key", api_key.as_deref().unwrap_or_default())
-                .header("anthropic-version", "2023-06-01");
+                .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION);
         }
         AIProviderType::Gemini => {
             request_builder =
@@ -126,7 +200,10 @@ pub(crate) async fn execute_ai_stream_request(
     }
 
     let response = tokio::select! {
-        _ = cancellation_token.cancelled() => return Err(AI_REQUEST_CANCELLED_ERROR.to_string()),
+        _ = cancellation_token.cancelled() => return Err(tag_ai_error_kind(
+            AI_REQUEST_CANCELLED_ERROR.to_string(),
+            AiErrorKind::Cancelled,
+        )),
         response = request_builder.json(&body).send() => response
             .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?,
     };
@@ -155,7 +232,10 @@ pub(crate) async fn execute_ai_stream_request(
 
     loop {
         let next = tokio::select! {
-            _ = cancellation_token.cancelled() => return Err(AI_REQUEST_CANCELLED_ERROR.to_string()),
+            _ = cancellation_token.cancelled() => return Err(tag_ai_error_kind(
+                AI_REQUEST_CANCELLED_ERROR.to_string(),
+                AiErrorKind::Cancelled,
+            )),
             next = stream.next() => next,
         };
         let Some(chunk) = next else { break };
@@ -283,18 +363,24 @@ pub(crate) async fn execute_ai_request(
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
             let wire_provider = effective_wire_provider(&config, &endpoint);
-            let mut body = build_provider_request_body(
+            let mut body = build_provider_request_body_with_thinking(
                 &config,
                 &endpoint,
                 &system_prompt,
                 &prompt,
                 &request.mode,
+                request.enable_thinking,
             );
             apply_native_tools(
                 &mut body,
                 &wire_provider,
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
+            );
+            apply_conversation_history(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &request.history,
             );
             apply_attachments(
                 &mut body,
@@ -313,7 +399,11 @@ pub(crate) async fn execute_ai_request(
                 if matches!(wire_provider, AIProviderType::Anthropic) {
                     req = req
                         .header("x-api-key", api_key.as_deref().unwrap_or_default())
-                        .header("anthropic-version", "2023-06-01");
+                        .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION)
+                        .header(
+                            "anthropic-beta",
+                            crate::config::ANTHROPIC_CONTEXT_MANAGEMENT_BETA,
+                        );
                 } else if let Some(ref api_key) = api_key {
                     req = req.bearer_auth(api_key);
                 }
@@ -332,8 +422,49 @@ pub(crate) async fn execute_ai_request(
                     .map_err(|_| ai_provider_response_error())?;
 
                 if !status.is_success() {
+                    // D2 self-heal: if the provider rejected the extended-thinking
+                    // parameter with a 400, record that this model won't accept it
+                    // and rebuild the body without thinking for one clean retry.
+                    // The mark also spares every later turn / send path from
+                    // re-sending a parameter the model doesn't understand.
+                    if status.as_u16() == 400
+                        && !model_thinking_unsupported(&config.model)
+                        && is_thinking_param_rejection(&raw_body)
+                        && attempt + 1 < max_attempts
+                    {
+                        mark_model_thinking_unsupported(&config.model);
+                        body = build_provider_request_body_with_thinking(
+                            &config,
+                            &endpoint,
+                            &system_prompt,
+                            &prompt,
+                            &request.mode,
+                            Some(false),
+                        );
+                        apply_native_tools(
+                            &mut body,
+                            &wire_provider,
+                            request.tools.as_ref(),
+                            request.tool_choice.as_ref(),
+                        );
+                        apply_conversation_history(
+                            &mut body,
+                            resolve_provider_body_shape(&config, &endpoint),
+                            &request.history,
+                        );
+                        apply_attachments(
+                            &mut body,
+                            resolve_provider_body_shape(&config, &endpoint),
+                            &prompt,
+                            &request.attachments,
+                        );
+                        continue;
+                    }
                     if should_retry_openai_like_status(status) && attempt + 1 < max_attempts {
-                        sleep(Duration::from_millis(800 * (attempt as u64 + 1))).await;
+                        sleep(Duration::from_millis(
+                            crate::config::AI_RETRY_BACKOFF_BASE_MS * (attempt as u64 + 1),
+                        ))
+                        .await;
                         continue;
                     }
 
@@ -398,10 +529,11 @@ pub(crate) async fn execute_ai_request(
 
                 if matches!(wire_provider, AIProviderType::Anthropic) {
                     if let Some(text) = extract_anthropic_response_text(&resp_json) {
-                        let (reasoning, cleaned) = split_think_block(&text);
+                        let block_reasoning = extract_anthropic_reasoning(&resp_json);
+                        let (think_reasoning, cleaned) = split_think_block(&text);
                         return Ok(AIResponse {
                             text: cleaned,
-                            reasoning,
+                            reasoning: block_reasoning.or(think_reasoning),
                             error: None,
                         });
                     }
@@ -429,18 +561,24 @@ pub(crate) async fn execute_ai_request(
         AIProviderType::Anthropic => {
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
-            let mut body = build_provider_request_body(
+            let mut body = build_provider_request_body_with_thinking(
                 &config,
                 &endpoint,
                 &system_prompt,
                 &prompt,
                 &request.mode,
+                request.enable_thinking,
             );
             apply_native_tools(
                 &mut body,
                 &config.provider_type,
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
+            );
+            apply_conversation_history(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &request.history,
             );
             apply_attachments(
                 &mut body,
@@ -452,7 +590,11 @@ pub(crate) async fn execute_ai_request(
             let response = client
                 .post(&endpoint)
                 .header("x-api-key", api_key.as_deref().unwrap_or_default())
-                .header("anthropic-version", "2023-06-01")
+                .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION)
+                .header(
+                    "anthropic-beta",
+                    crate::config::ANTHROPIC_CONTEXT_MANAGEMENT_BETA,
+                )
                 .json(&body)
                 .send()
                 .await
@@ -526,10 +668,11 @@ pub(crate) async fn execute_ai_request(
             }
 
             if let Some(text) = extract_anthropic_response_text(&resp_json) {
-                let (reasoning, cleaned) = split_think_block(&text);
+                let block_reasoning = extract_anthropic_reasoning(&resp_json);
+                let (think_reasoning, cleaned) = split_think_block(&text);
                 return Ok(AIResponse {
                     text: cleaned,
-                    reasoning,
+                    reasoning: block_reasoning.or(think_reasoning),
                     error: None,
                 });
             }
@@ -541,21 +684,27 @@ pub(crate) async fn execute_ai_request(
                 api_key.as_deref(),
             ))
         }
-        AIProviderType::Gemini => {
+        AIProviderType::Gemini | AIProviderType::Vertex => {
             let endpoint = resolve_provider_endpoint(&config);
             validate_ai_endpoint(&config, &endpoint)?;
-            let mut body = build_provider_request_body(
+            let mut body = build_provider_request_body_with_thinking(
                 &config,
                 &endpoint,
                 &system_prompt,
                 &prompt,
                 &request.mode,
+                request.enable_thinking,
             );
             apply_native_tools(
                 &mut body,
                 &config.provider_type,
                 request.tools.as_ref(),
                 request.tool_choice.as_ref(),
+            );
+            apply_conversation_history(
+                &mut body,
+                resolve_provider_body_shape(&config, &endpoint),
+                &request.history,
             );
             apply_attachments(
                 &mut body,
@@ -564,9 +713,19 @@ pub(crate) async fn execute_ai_request(
                 &request.attachments,
             );
 
-            let response = client
-                .post(&endpoint)
-                .header("x-goog-api-key", api_key.as_deref().unwrap_or_default())
+            let mut request_builder = client.post(&endpoint);
+            if matches!(config.provider_type, AIProviderType::Vertex) {
+                // Vertex AI authenticates with an OAuth2 Bearer access token
+                // rather than Gemini's x-goog-api-key header. The generateContent
+                // body/response wire format is otherwise identical.
+                if let Some(ref token) = api_key {
+                    request_builder = request_builder.bearer_auth(token);
+                }
+            } else {
+                request_builder = request_builder
+                    .header("x-goog-api-key", api_key.as_deref().unwrap_or_default());
+            }
+            let response = request_builder
                 .json(&body)
                 .send()
                 .await
@@ -640,10 +799,11 @@ pub(crate) async fn execute_ai_request(
             }
 
             if let Some(text) = extract_gemini_response_text(&resp_json) {
-                let (reasoning, cleaned) = split_think_block(&text);
+                let thought_reasoning = extract_gemini_reasoning(&resp_json);
+                let (think_reasoning, cleaned) = split_think_block(&text);
                 return Ok(AIResponse {
                     text: cleaned,
-                    reasoning,
+                    reasoning: thought_reasoning.or(think_reasoning),
                     error: None,
                 });
             }

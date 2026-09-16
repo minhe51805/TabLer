@@ -16,6 +16,7 @@ export function useAppCoreStores() {
     connections,
     currentDatabase,
     isConnecting,
+    connectError,
     loadSavedConnections,
     fetchDatabases,
     fetchTables,
@@ -27,6 +28,7 @@ export function useAppCoreStores() {
       connections: state.connections,
       currentDatabase: state.currentDatabase,
       isConnecting: state.isConnecting,
+      connectError: state.connectError,
       loadSavedConnections: state.loadSavedConnections,
       fetchDatabases: state.fetchDatabases,
       fetchTables: state.fetchTables,
@@ -76,7 +78,7 @@ export function useAppCoreStores() {
     forceLauncherVisible
   } = useAppLayoutStore();
   return {
-    connection: { activeConnectionId, connectedIds, connections, currentDatabase, isConnecting, loadSavedConnections, fetchDatabases, fetchTables, fetchSchemaObjects },
+    connection: { activeConnectionId, connectedIds, connections, currentDatabase, isConnecting, connectError, loadSavedConnections, fetchDatabases, fetchTables, fetchSchemaObjects },
     errors: { error, clearError, setError },
     ui: { tabs, activeTabId, addTab, setActiveTab },
     modals: { connectionFormIntent, showStartupConnectionManager, showAISettings, setShowAISettings, showAboutModal, setShowAboutModal, showPluginManager, setShowPluginManager, showMcpIntegrations, setShowMcpIntegrations, showUserRoleManagement, setShowUserRoleManagement, showKeyboardShortcutsModal, setShowKeyboardShortcutsModal, showThemeCustomizer, setShowThemeCustomizer, showConnectionExporter, setShowConnectionExporter, showConnectionImporter, setShowConnectionImporter },

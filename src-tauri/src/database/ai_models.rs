@@ -7,6 +7,7 @@ pub enum AIProviderType {
     OpenAI,
     Anthropic,
     Gemini,
+    Vertex,
     OpenRouter,
     Ollama,
     Custom,
@@ -149,6 +150,13 @@ pub struct AIRequest {
     /// Anthropic, `tool_config` for Gemini). Ignored when `tools` is `None`.
     #[serde(default)]
     pub tool_choice: Option<serde_json::Value>,
+    /// Per-request thinking/reasoning gate driven by the panel "Thinking" toggle.
+    /// `None` keeps the capability-gated default (reasoning on for models that
+    /// support it); `Some(false)` forces it off across every provider so the run
+    /// spends no thinking tokens; `Some(true)` is the explicit opt-in (still
+    /// capability-gated, never forced onto a model that would 400).
+    #[serde(default)]
+    pub enable_thinking: Option<bool>,
 }
 
 fn default_ai_request_mode() -> AIRequestMode {
@@ -180,16 +188,19 @@ impl AIRequest {
 
         // Limit prompt size to prevent abuse. Agent controller prompts embed the
         // running tool trace + schema, so they legitimately need more headroom.
-        if self.prompt.len() > 80_000 {
+        // All caps below are the single source of truth in `crate::config` and
+        // are mirrored to the frontend (tech-debt audit D1); the cross-language
+        // contract test fails the build if the two sides ever drift.
+        if self.prompt.len() > crate::config::AI_MAX_PROMPT_CHARS {
             return Err("Prompt is too long (max 80,000 characters)".to_string());
         }
 
         // Limit context size
-        if self.context.len() > 50_000 {
+        if self.context.len() > crate::config::AI_MAX_CONTEXT_CHARS {
             return Err("Context is too long (max 50,000 characters)".to_string());
         }
 
-        if self.history.len() > 12 {
+        if self.history.len() > crate::config::AI_MAX_HISTORY_MESSAGES {
             return Err("Conversation history is too long (max 12 messages)".to_string());
         }
 
@@ -198,14 +209,14 @@ impl AIRequest {
             .iter()
             .map(|message| message.content.len())
             .sum::<usize>();
-        if history_chars > 24_000 {
+        if history_chars > crate::config::AI_MAX_HISTORY_CHARS {
             return Err("Conversation history is too large (max 24,000 characters)".to_string());
         }
 
         // Native tool definitions are machine-generated on the frontend, so a
         // huge payload signals abuse rather than a legitimate call.
         if let Some(tools) = &self.tools {
-            if tools.to_string().len() > 20_000 {
+            if tools.to_string().len() > crate::config::AI_MAX_TOOLS_CHARS {
                 return Err("Tool definitions are too large (max 20,000 characters)".to_string());
             }
         }

@@ -1,0 +1,43 @@
+{
+  "apiVersion": 1,
+  "id": "clickhouse-driver",
+  "name": "ClickHouse driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-07-16T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds ClickHouse connectivity over the declarative HTTP driver host.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute",
+    "network.fetch"
+  ],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "5c285f79d3ce1f00e26e0b060880587cbb450fcf2e9a46e1014e9214da8f2cf6"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "clickhouse",
+        "label": "ClickHouse",
+        "protocol": "clickhouse",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

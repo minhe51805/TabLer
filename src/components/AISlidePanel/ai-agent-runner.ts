@@ -2,7 +2,6 @@ import type { AgentTraceStep } from "./ai-agent-context";
 import type {
   AIAgentFinishAction,
   AIAgentToolAction,
-  AIAgentToolName,
 } from "./ai-agent-tools";
 
 export type AIAgentRunnerPhase =
@@ -31,7 +30,9 @@ export interface AIAgentRunnerSnapshot {
   /** Cumulative model tokens spent so far in this run (0 when untracked). */
   tokensUsed: number;
   requestReason?: AIAgentActionRequestReason;
-  action?: AIAgentToolName;
+  // Includes the Anthropic-only native "memory" action, which is not part of
+  // the AIAgentToolName catalog.
+  action?: AIAgentToolAction["action"];
   message?: string;
   error?: string;
   steps: AgentTraceStep[];
@@ -143,8 +144,15 @@ export async function runAIAgentToolLoop(
   const requestAction = async (
     reason: AIAgentActionRequestReason,
     forceFinish: boolean,
-    includeHistory: boolean,
   ) => {
+    // Conversation history + workspace digest are already bounded (the back-end
+    // caps clamp them and older turns live in the compacted digest), so there
+    // is no token reason to hide them mid-run. Replay them on the calls that
+    // need conversational grounding: the opening call (reads the request in
+    // context) and any finishing/composing call (writes the user-facing
+    // answer). Pure mid-run tool calls stay lean on the agent trace alone.
+    // Derived from run state, not tied to a magic iteration number.
+    const includeHistory = iteration <= 1 || forceFinish;
     emit("requesting-action", { requestReason: reason });
     const action = await options.requestAction({
       forceFinish,
@@ -170,7 +178,7 @@ export async function runAIAgentToolLoop(
     let finalAction: AIAgentToolAction | null = null;
 
     if (!options.workspaceToolsEnabled) {
-      finalAction = await requestAction("direct", true, true);
+      finalAction = await requestAction("direct", true);
     } else {
       iteration = 1;
       while (true) {
@@ -189,7 +197,6 @@ export async function runAIAgentToolLoop(
         const action = await requestAction(
           "iterate",
           iteration >= effectiveBudget || tokenBudgetExhausted(),
-          iteration === 1,
         );
 
         if (action.action === "finish") {
@@ -237,7 +244,7 @@ export async function runAIAgentToolLoop(
 
       if (!finalAction) {
         iteration = effectiveBudget + 1;
-        finalAction = await requestAction("budget", true, false);
+        finalAction = await requestAction("budget", true);
       }
     }
 

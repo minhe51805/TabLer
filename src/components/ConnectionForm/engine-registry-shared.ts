@@ -49,6 +49,16 @@ export interface DbEntry {
   databaseMode: ConnectionFieldMode;
   databasePlaceholder?: string;
   extraFields?: EngineExtraField[];
+  /**
+   * Runtime availability of a PluginHttp engine's driver, computed from the
+   * installed plugin set. Only populated for PluginHttp protocols; undefined
+   * for built-in / native engines.
+   *  - "active"    -> an enabled, verified, stable driver is installed.
+   *  - "installed" -> a driver bundle is installed but not active yet (disabled/
+   *                   unverified) — it needs enabling, NOT a roadmap-only engine.
+   *  - "roadmap"   -> no matching plugin bundle is installed at all.
+   */
+  pluginHttpState?: "active" | "installed" | "roadmap";
 }
 
 type DbFieldConfig = Pick<

@@ -28,11 +28,13 @@ import { getAIFailoverConsent, setAIFailoverConsent } from "../../utils/ai-failo
 import { formatAttachmentBytes, type AIAttachmentDraft } from "../../utils/ai-attachments";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import { AISlashCommandMenu } from "./AISlashCommandMenu";
+import { ConfirmDialog } from "../ConfirmDialog";
 import type { AISlashCommand } from "./ai-slash-commands";
 import type {
   AIWorkspaceAgentAutonomy,
   AIWorkspaceInteractionMode,
 } from "./ai-workspace-types";
+import { describeSandboxPolicy, type SandboxPolicy } from "./ai-execution-policy";
 
 interface AIComposerDockProps {
   copy: AIWorkspaceCopy;
@@ -65,6 +67,8 @@ interface AIComposerDockProps {
   onOpenSettings: () => void;
   /** Whether Safe Mode is currently enabled (level >= 1). */
   safeModeEnabled?: boolean;
+  /** Effective sandbox posture (Safe Mode level + autonomy), shown as a badge. */
+  sandboxPolicy?: SandboxPolicy;
   /** Flip the global Safe Mode level between 0 (off) and 1 (read-only). */
   onToggleSafeMode?: (next: boolean) => void;
   onCloseHistory: () => void;
@@ -157,6 +161,7 @@ export function AIComposerDock({
   onSetShowThinking,
   onOpenSettings,
   safeModeEnabled,
+  sandboxPolicy,
   onToggleSafeMode,
   onCloseHistory,
   onGenerate,
@@ -246,6 +251,40 @@ export function AIComposerDock({
     window.addEventListener("ai-failover-consent-change", sync);
     return () => window.removeEventListener("ai-failover-consent-change", sync);
   }, []);
+
+  // Guard the utility toggles (Data read, auto provider switch, Thinking)
+  // behind a confirmation dialog so an accidental tap never silently flips
+  // them. The pending change is applied only after the user confirms.
+  const [pendingToggle, setPendingToggle] = useState<
+    { kind: "data" | "autoSwitch" | "thinking"; next: boolean } | null
+  >(null);
+
+  const requestToggle = (kind: "data" | "autoSwitch" | "thinking", next: boolean) => {
+    setPendingToggle({ kind, next });
+  };
+
+  const applyPendingToggle = () => {
+    if (!pendingToggle) return;
+    const { kind, next } = pendingToggle;
+    if (kind === "data") onSetSessionDataReadEnabled(next);
+    else if (kind === "autoSwitch") setAIFailoverConsent(next ? "approved" : "declined");
+    else onSetShowThinking(next);
+    setPendingToggle(null);
+  };
+
+  const pendingToggleFeatureLabel = pendingToggle
+    ? pendingToggle.kind === "data"
+      ? copy.composer.dataReadToggleLabel
+      : pendingToggle.kind === "autoSwitch"
+        ? copy.composer.autoProviderSwitchLabel
+        : copy.composer.thinkingToggleLabel
+    : "";
+  const pendingToggleMessage = pendingToggle
+    ? (pendingToggle.next
+        ? copy.composer.toggleConfirmMessageEnable
+        : copy.composer.toggleConfirmMessageDisable
+      ).replace("{feature}", pendingToggleFeatureLabel)
+    : "";
 
   return (
     <div
@@ -576,6 +615,15 @@ export function AIComposerDock({
                         </button>
                       </div>
                     )}
+                    {sandboxPolicy && (
+                      <div
+                        className="ai-workspace-command-sandbox-policy"
+                        title={describeSandboxPolicy(sandboxPolicy).description}
+                      >
+                        <Shield className="w-3.5 h-3.5" />
+                        <span>Sandbox: {describeSandboxPolicy(sandboxPolicy).label}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -599,7 +647,7 @@ export function AIComposerDock({
                       role="menuitemcheckbox"
                       aria-checked={isSessionDataReadEnabled}
                       className={`ai-workspace-command-utility-item ${isSessionDataReadEnabled ? "is-active" : ""}`}
-                      onClick={() => onSetSessionDataReadEnabled(!isSessionDataReadEnabled)}
+                      onClick={() => requestToggle("data", !isSessionDataReadEnabled)}
                       disabled={!isConnectionAvailable}
                     >
                       <span className="ai-workspace-command-utility-icon"><Database className="w-3.5 h-3.5" /></span>
@@ -614,7 +662,7 @@ export function AIComposerDock({
                       role="menuitemcheckbox"
                       aria-checked={autoSwitchEnabled}
                       className={`ai-workspace-command-utility-item ${autoSwitchEnabled ? "is-active" : ""}`}
-                      onClick={() => setAIFailoverConsent(autoSwitchEnabled ? "declined" : "approved")}
+                      onClick={() => requestToggle("autoSwitch", !autoSwitchEnabled)}
                     >
                       <span className="ai-workspace-command-utility-icon"><ArrowLeftRight className="w-3.5 h-3.5" /></span>
                       <span className="ai-workspace-command-utility-copy">
@@ -630,7 +678,7 @@ export function AIComposerDock({
                           role="menuitemcheckbox"
                           aria-checked={showThinking}
                           className={`ai-workspace-command-utility-item ${showThinking ? "is-active" : ""}`}
-                          onClick={() => onSetShowThinking(!showThinking)}
+                          onClick={() => requestToggle("thinking", !showThinking)}
                         >
                           <span className="ai-workspace-command-utility-icon"><Brain className="w-3.5 h-3.5" /></span>
                           <span className="ai-workspace-command-utility-copy">
@@ -721,6 +769,15 @@ export function AIComposerDock({
           </button>
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={pendingToggle !== null}
+        title={copy.composer.toggleConfirmTitle}
+        message={pendingToggleMessage}
+        confirmText={copy.composer.toggleConfirmConfirm}
+        cancelText={copy.composer.toggleConfirmCancel}
+        onConfirm={applyPendingToggle}
+        onCancel={() => setPendingToggle(null)}
+      />
     </div>
   );
 }

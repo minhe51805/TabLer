@@ -81,6 +81,18 @@ pub async fn get_connection_capabilities(
         .map_err(|error| error.to_string())
 }
 
+/// Reports which `plugin_native` engines were compiled into this build. Builtin
+/// engines are always present and HTTP engines are gated by installed plugins,
+/// so the frontend only needs the native (compile-time) surface to gate its
+/// connection picker and avoid offering an engine this binary cannot drive.
+#[tauri::command]
+pub fn get_native_driver_availability() -> HashMap<String, bool> {
+    crate::database::capabilities::compiled_native_driver_availability()
+        .into_iter()
+        .map(|(key, available)| (key.to_string(), available))
+        .collect()
+}
+
 #[cfg(test)]
 mod connection_diagnostic_tests {
     use super::{

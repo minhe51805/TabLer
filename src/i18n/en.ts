@@ -22,11 +22,14 @@ export const en = {
   "workspace.connecting.kicker": "Establishing connection",
   "workspace.connecting.checking": "Checking database reachability",
   "workspace.connecting.elapsed": "{{seconds}}s elapsed",
+  "workspace.connecting.cancel": "Cancel connection",
   "workspace.error.kicker": "Connection issue",
   "workspace.error.title": "Workspace Error",
   "workspace.error.retry": "Try Again",
   "workspace.error.goLauncher": "Go to Launcher",
   "workspace.error.generic": "An unexpected error occurred while loading the workspace.",
+  "workspace.error.timeout":
+    "Workspace connection timed out after 30 seconds. The database may be unreachable or blocked by a firewall.",
   "common.connections": "Connections",
   "common.metrics": "Metrics",
   "common.auto": "Auto",
@@ -93,7 +96,8 @@ export const en = {
   "help.shortcuts.title": "Keyboard Shortcuts",
   "titlebar.noActiveConnection": "No active connection",
   "dbVisibility.title": "Databases shown in Explorer",
-  "dbVisibility.hint": "Unchecked databases stay hidden from the Explorer. Hide all leaves the Explorer empty.",
+  "dbVisibility.hint":
+    "Unchecked databases stay hidden from the Explorer. Hide all leaves the Explorer empty.",
   "globalSearch.allTables": "All tables",
   "globalSearch.searchDatabase": "Search database",
   "globalSearch.scanningAll": "Scanning all tables…",
@@ -127,6 +131,8 @@ export const en = {
   "sidebar.dbShort": "DB",
   "sidebar.erdShort": "ERD",
   "sidebar.metricsShort": "Metrics",
+  "sidebar.profilerShort": "Profiler",
+  "sidebar.liveProfiler": "Live Profiler",
   "workspace.kicker.structure": "Structure View",
   "workspace.readyForQueries": "Ready for queries",
   "workspace.status.success": "Success",
@@ -198,8 +204,7 @@ export const en = {
   "explorer.disconnectTitle": "Disconnect current database",
   "explorer.refreshTitle": "Refresh",
   "explorer.searchPlaceholder": "Find a table, view, trigger, or routine...",
-  "explorer.browseHint":
-    "Browse tables, views, triggers, and routines from the current database.",
+  "explorer.browseHint": "Browse tables, views, triggers, and routines from the current database.",
   "explorer.tablesReady": "{{count}} tables ready to browse",
   "explorer.switchWorkspace": "Switch workspace to browse objects",
   "explorer.databaseObjects": "Database objects",
@@ -314,8 +319,7 @@ export const en = {
   "metrics.widget.loading": "Loading...",
   "metrics.widget.noData": "No data",
   "metrics.widget.queryNeedsSeries": "Query needs a label and a numeric value.",
-  "metrics.validation.addQuery":
-    "Add a read-only SQL query to load this widget.",
+  "metrics.validation.addQuery": "Add a read-only SQL query to load this widget.",
   "metrics.validation.singleStatement":
     "Metrics widgets only support a single read-only statement.",
   "metrics.validation.readOnlyOnly":
@@ -344,18 +348,16 @@ export const en = {
   "tabs.hideResults": "Hide results",
   "tabs.showResults": "Show results",
   "tabs.readyToExecute": "Press Ctrl+Enter to run",
+  "tabs.deliveringRows": "Receiving {{count}} rows...",
   "tabs.noSqlToExecute":
     "Nothing to run yet. Type a query or command first, then press Ctrl+Enter.",
   "ai.toast.providerFailover":
     'Provider "{{failed}}" is failing — switching to provider "{{next}}", please wait.',
-  "ai.failover.consentTitle":
-    "Provider failing",
+  "ai.failover.consentTitle": "Provider failing",
   "ai.failover.consentBody":
     'Provider "{{failed}}" keeps failing. Allow TableR to remember this and automatically switch to another enabled provider when it happens again?',
-  "ai.failover.consentAllow":
-    "Allow auto-switch",
-  "ai.failover.consentDeny":
-    "Not now",
+  "ai.failover.consentAllow": "Allow auto-switch",
+  "ai.failover.consentDeny": "Not now",
 
   // ── Data grid toolbar ─────────────────────────────────────────────────
   "datagrid.filterRows": "Filter rows",
@@ -468,7 +470,8 @@ export const en = {
   "datagrid.copiedDescription": "{{count}} rows on the clipboard.",
   "datagrid.copyFailed": "Copy failed",
   "datagrid.exportFailed": "Export failed",
-  "datagrid.partialResultBanner": "The database returned a partial result set. Refine the query or load more data to continue.",
+  "datagrid.partialResultBanner":
+    "The database returned a partial result set. Refine the query or load more data to continue.",
 
   // ── Data grid context menu ───────────────────────────────────────────
   "datagrid.ctxCopied": "Copied {{target}}",
@@ -502,7 +505,8 @@ export const en = {
   "datagrid.insKicker": "Insert row",
   "datagrid.insAddTo": "Add row to {{table}}",
   "datagrid.insAdd": "Add row",
-  "datagrid.insDescription": "Enter the required values below. Columns with database defaults are handled automatically.",
+  "datagrid.insDescription":
+    "Enter the required values below. Columns with database defaults are handled automatically.",
   "datagrid.insCloseAria": "Close insert dialog",
   "datagrid.insPlaceholderUuid": "UUID value",
   "datagrid.insPlaceholderNumeric": "Numeric value",
@@ -518,7 +522,8 @@ export const en = {
   "datagrid.pasteDescription": "Column mappings from clipboard",
   "datagrid.pasteHeadersDetected": "headers detected",
   "datagrid.pastePositional": "positional mapping",
-  "datagrid.pasteNullOmitted": "Unmapped table columns are omitted so database defaults can apply: {{columns}}",
+  "datagrid.pasteNullOmitted":
+    "Unmapped table columns are omitted so database defaults can apply: {{columns}}",
   "datagrid.pasteSkippedInline": "Skipped clipboard columns: {{columns}}",
   "datagrid.pasteCloseAria": "Close paste dialog",
   "datagrid.pasteMappingsTitle": "Column mappings",

@@ -1,0 +1,42 @@
+{
+  "apiVersion": 1,
+  "id": "redis-driver",
+  "name": "Redis native driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-07-16T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds Redis connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute"
+  ],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "4091867d2d7a34975c6c842a06861a11722c94c43b71f0788cfabee974b267df"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "redis",
+        "label": "Redis",
+        "protocol": "redis",
+        "runtime": "driver-sidecar-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

@@ -40,6 +40,7 @@ describe("AI provider registry", () => {
     ["openai", "OpenAI", "https://api.openai.com/v1/chat/completions"],
     ["anthropic", "Claude", "https://api.anthropic.com/v1/messages"],
     ["gemini", "Gemini", "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent"],
+    ["vertex", "Vertex AI", ""],
     ["openrouter", "OpenRouter", "https://openrouter.ai/api/v1/chat/completions"],
     ["ollama", "Ollama", "http://localhost:11434/v1/chat/completions"],
     ["custom", "Custom", ""],

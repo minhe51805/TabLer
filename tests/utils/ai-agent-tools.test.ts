@@ -23,6 +23,7 @@ describe("AI agent tool contract", () => {
       "check_sql",
       "run_preset",
       "preview_write",
+      "propose_seed_data",
       "remember_term",
       "read_memory",
       "save_memory",
@@ -31,11 +32,34 @@ describe("AI agent tool contract", () => {
       "create_checkpoint",
       "restore_checkpoint",
       "skill",
+      "read_skill_resource",
       "delegate",
       "read_page",
       "finish",
     ]);
     expect(AI_AGENT_TOOL_NAMES).not.toContain("plan");
+  });
+
+  it("parses Anthropic's native memory tool action without a catalog spec", () => {
+    const action = parseAIAgentToolAction(
+      JSON.stringify({
+        action: "memory",
+        message: "check what I remember",
+        args: { command: "view", path: "/memories" },
+      }),
+    );
+    expect(action.action).toBe("memory");
+    expect(action.args).toEqual({ command: "view", path: "/memories" });
+    // The native memory tool is Anthropic-only and never part of the catalog.
+    expect(AI_AGENT_TOOL_NAMES).not.toContain("memory");
+  });
+
+  it("rejects a native memory action with an unknown command", () => {
+    expect(() =>
+      parseAIAgentToolAction(
+        JSON.stringify({ action: "memory", message: "", args: { command: "wipe" } }),
+      ),
+    ).toThrow(/args\.command/);
   });
 
   it("parses skill loads and trims the skill name", () => {

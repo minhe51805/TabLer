@@ -12,6 +12,7 @@ interface WorkspaceChromeStateInputs {
   activeConn: ConnectionConfig | undefined;
   connectedIds: Set<string>;
   forceLauncherVisible: boolean;
+  connectError: { id: string; message: string } | null;
   showStartupConnectionManager: boolean;
   activeTab: Tab | null;
   workspaceActivityByConnection: Record<string, WorkspaceActivityState>;
@@ -39,23 +40,34 @@ interface WorkspaceChromeStateInputs {
 export function useWorkspaceChromeState(inputs: WorkspaceChromeStateInputs) {
   const {
     isRecoverableErrorDelayActive, isConnecting, connectionFormIntent, activeConnectionId,
-    activeConn, connectedIds, forceLauncherVisible, showStartupConnectionManager, activeTab,
+    activeConn, connectedIds, forceLauncherVisible, connectError, showStartupConnectionManager, activeTab,
     workspaceActivityByConnection, currentDatabase, showAISettings, showAboutModal,
     showPluginManager, showMcpIntegrations, showUserRoleManagement, showKeyboardShortcutsModal,
     showThemeCustomizer, showConnectionExporter, showConnectionImporter, isCommandPaletteOpen,
     isQuickSwitcherOpen, showAISlidePanel, isConnected, tabs,
   } = inputs;
 
+  // A saved-connection attempt that just failed keeps its identity as
+  // `activeConnectionId` (but is NOT in `connectedIds`) so the connecting
+  // screen can render an in-place error. While that error is showing we must
+  // NOT force the launcher back on — the recovery actions live on that screen.
+  const hasConnectError =
+    !isConnected &&
+    !!activeConnectionId &&
+    !!connectError &&
+    connectError.id === activeConnectionId;
   const shouldForceStartupLauncher =
     !isRecoverableErrorDelayActive &&
     !isConnecting &&
     !connectionFormIntent &&
+    !hasConnectError &&
     (!activeConnectionId || !activeConn || !connectedIds.has(activeConnectionId));
   const showStartupShell =
-    forceLauncherVisible ||
-    (!isRecoverableErrorDelayActive &&
-      (shouldForceStartupLauncher ||
-        (!isConnected && !isConnecting && (showStartupConnectionManager || !!connectionFormIntent))));
+    !hasConnectError &&
+    (forceLauncherVisible ||
+      (!isRecoverableErrorDelayActive &&
+        (shouldForceStartupLauncher ||
+          (!isConnected && !isConnecting && (showStartupConnectionManager || !!connectionFormIntent)))));
   const isMetricsWorkspace = activeTab?.type === "metrics";
   const activeWorkspaceActivity =
     activeConnectionId ? workspaceActivityByConnection[activeConnectionId] ?? null : null;

@@ -6,6 +6,7 @@ mod prompt;
 mod providers;
 
 use crate::database::ai_models::{AIProviderConfig, AIRequest, AIResponse};
+use crate::error::AppError;
 use crate::storage::ai_storage::AIStorage;
 use crate::utils::rate_limiter::AIRequestLimiter;
 use serde::Serialize;
@@ -20,6 +21,23 @@ use tokio_util::sync::CancellationToken;
 pub(crate) const AI_REQUEST_CANCELLED_ERROR: &str = "AI request cancelled.";
 const MAX_AI_STREAM_BUFFER_BYTES: usize = 1_048_576;
 pub(crate) const MAX_AI_STREAM_OUTPUT_BYTES: usize = 2_097_152;
+
+/// One model advertised by a provider's "list models" API, plus any capability
+/// metadata that API exposed. TableR uses this to auto-fill a model's context
+/// window / output budget / input modalities when the user imports it, instead
+/// of forcing manual entry. Fields the provider omits stay `None`/empty so the
+/// frontend keeps its own defaults. Field names stay snake_case to match the
+/// `AIModelSettings` wire format the frontend already consumes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FetchedModel {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub input_types: Vec<String>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -145,7 +163,14 @@ pub async fn ask_ai(
     storage: State<'_, AIStorage>,
     ai_rate_limiter: State<'_, AIRequestLimiter>,
     cancellation_state: State<'_, AIRequestCancellationState>,
-) -> Result<AIResponse, String> {
+) -> Result<AIResponse, AppError> {
+    // Tech-debt audit D7: the AI request flow now returns the unified `AppError`
+    // type. Provider/validation strings pass through as `AppError::Other`, whose
+    // `Display` is the bare message (no prefix), so the wire string the frontend
+    // classifier (`normalizeAIRequestError`) sees is byte-identical to before.
+    // Categorizing into typed variants (e.g. RateLimited) is a deliberate
+    // follow-up: it changes the wire string and needs a coordinated frontend
+    // change, so it is intentionally not done in this pass.
     request
         .validate()
         .map_err(|e| format!("Invalid request: {}", e))?;
@@ -165,7 +190,10 @@ pub async fn ask_ai(
     }
 
     let result = tokio::select! {
-        _ = cancellation_token.cancelled() => Err(AI_REQUEST_CANCELLED_ERROR.to_string()),
+        _ = cancellation_token.cancelled() => Err(errors::tag_ai_error_kind(
+            AI_REQUEST_CANCELLED_ERROR.to_string(),
+            errors::AiErrorKind::Cancelled,
+        )),
         result = execution::execute_ai_request(request, storage.inner(), ai_rate_limiter.inner()) => result,
     };
 
@@ -173,7 +201,7 @@ pub async fn ask_ai(
         cancellation_state.finish(request_id).await;
     }
 
-    result
+    result.map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -183,7 +211,9 @@ pub async fn ask_ai_stream(
     storage: State<'_, AIStorage>,
     ai_rate_limiter: State<'_, AIRequestLimiter>,
     cancellation_state: State<'_, AIRequestCancellationState>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
+    // D7: same message-preserving `AppError` passthrough as `ask_ai` — the stream
+    // "error" event and the returned error carry the identical string.
     request
         .validate()
         .map_err(|error| format!("Invalid request: {error}"))?;
@@ -211,10 +241,12 @@ pub async fn ask_ai_stream(
     cancellation_state.finish(&request_id).await;
 
     match result {
-        Ok(()) => emit_ai_stream_event(&app, &request_id, "done", None, None),
+        Ok(()) => {
+            emit_ai_stream_event(&app, &request_id, "done", None, None).map_err(AppError::from)
+        }
         Err(error) => {
             let _ = emit_ai_stream_event(&app, &request_id, "error", Some(error.clone()), None);
-            Err(error)
+            Err(AppError::from(error))
         }
     }
 }
@@ -229,6 +261,44 @@ pub async fn cancel_ai_request(
         return Err("Request ID cannot be empty.".to_string());
     }
     Ok(cancellation_state.cancel(request_id).await)
+}
+
+/// Fetches the model catalog a provider exposes via its "list models" API so
+/// the AI settings modal can populate the catalog without manual typing. The
+/// frontend saves configs first, so this reads the latest endpoint + API key
+/// straight from storage.
+#[tauri::command]
+pub async fn list_provider_models(
+    provider_id: String,
+    storage: State<'_, AIStorage>,
+) -> Result<Vec<FetchedModel>, String> {
+    let provider_id = provider_id.trim().to_string();
+    if provider_id.is_empty() {
+        return Err("Provider ID cannot be empty.".to_string());
+    }
+    let storage = storage.inner().clone();
+    let lookup_id = provider_id.clone();
+    let (config, api_key) = run_blocking_storage_task(move || {
+        let config = storage
+            .load_provider_configs()
+            .map_err(|_| errors::ai_provider_config_error())?
+            .into_iter()
+            .find(|provider| provider.id == lookup_id)
+            .ok_or_else(|| "The selected AI provider was not found.".to_string())?;
+        let api_key = if endpoints::provider_requires_api_key(&config.provider_type) {
+            Some(storage.get_api_key(&config.id).map_err(|_| {
+                "Add an API key for this provider before fetching models.".to_string()
+            })?)
+        } else {
+            storage
+                .get_api_key_optional(&config.id)
+                .map_err(|_| errors::ai_provider_config_error())?
+        };
+        Ok((config, api_key))
+    })
+    .await?;
+
+    execution::fetch_provider_models(&config, api_key.as_deref()).await
 }
 
 /// Persists an agent run trace as JSONL under <data_dir>/traces/ so failed or

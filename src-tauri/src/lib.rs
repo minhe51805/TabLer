@@ -1,9 +1,11 @@
 use tauri::{Emitter, Manager};
 mod agent_memory;
+mod agent_memory_native;
 mod ai_skills;
 mod ai_workspace_cache;
 mod ai_workspace_history;
 mod commands;
+pub mod config;
 pub mod database;
 pub mod error;
 pub mod mcp;
@@ -14,6 +16,17 @@ pub mod query_history;
 pub mod ssh;
 pub mod storage;
 mod utils;
+
+/// Sandbox SQL-safety guard, re-exported at the crate root so the driver
+/// integration harness (`tests/driver_integration.rs`) can exercise the
+/// filesystem/network/OS capability boundary end-to-end against live engines.
+/// These are the exact functions the sandbox gateway in `commands::query`
+/// calls before any statement reaches a driver; this is a test-facing
+/// re-export, not a widening of the private `utils` module.
+pub mod sandbox_guard {
+    pub use crate::utils::sql::{classify_sql_with_dialect, detect_dangerous_capability};
+}
+
 mod watcher;
 
 use ai_workspace_cache::{
@@ -27,8 +40,8 @@ use ai_workspace_cache::{
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
-    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, save_agent_trace, save_ai_configs,
-    AIRequestCancellationState,
+    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, list_provider_models,
+    save_agent_trace, save_ai_configs, AIRequestCancellationState,
 };
 use commands::ai_checkpoints::{
     create_database_checkpoint, delete_database_checkpoint, list_database_checkpoints,
@@ -37,7 +50,10 @@ use commands::ai_checkpoints::{
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
 use commands::data_export::{cancel_table_export, export_table_data, TableExportCancellationState};
-use commands::data_import::{import_csv, preview_import_csv};
+use commands::data_import::{
+    import_csv, import_json, import_xlsx, preview_import_csv, preview_import_json,
+    preview_import_xlsx,
+};
 use commands::deep_link::parse_deep_link;
 use commands::diagnostics::{
     export_diagnostic_bundle, preview_diagnostic_bundle, DiagnosticReviewState,
@@ -50,12 +66,12 @@ use commands::mcp::{
     list_mcp_tokens, revoke_mcp_token, set_mcp_connection_policy, start_mcp_local_server,
     stop_mcp_local_server,
 };
-use commands::operations::get_operational_queries;
 use commands::plugins::{
     check_plugin_updates, get_plugin_registry, install_plugin_bundle, install_registry_plugin,
     list_installed_plugins, reload_installed_plugins, rollback_plugin_bundle, set_plugin_enabled,
     uninstall_plugin_bundle,
 };
+use commands::profiler::{execute_profiler_sample, get_profiler_probe, get_top_queries_probe};
 use commands::query::*;
 use commands::restore::{preview_database_restore, restore_database_sql};
 use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
@@ -294,6 +310,7 @@ pub fn run() {
             rename_saved_connection,
             check_connection_status,
             get_connection_capabilities,
+            get_native_driver_availability,
             parse_connection_url,
             parse_url_details,
             get_support_url,
@@ -316,6 +333,10 @@ pub fn run() {
             generate_migration_script,
             preview_import_csv,
             import_csv,
+            preview_import_json,
+            import_json,
+            preview_import_xlsx,
+            import_xlsx,
             execute_sandboxed_query,
             execute_agent_readonly_query,
             preview_write_transaction,
@@ -353,6 +374,7 @@ pub fn run() {
             cancel_ai_request,
             get_ai_configs,
             save_ai_configs,
+            list_provider_models,
             // Query history commands
             save_query_history,
             get_query_history,
@@ -382,8 +404,12 @@ pub fn run() {
             agent_memory::read_agent_memory,
             agent_memory::save_agent_memory,
             agent_memory::delete_agent_memory,
+            agent_memory_native::run_agent_memory_tool,
             ai_skills::list_ai_skills,
-            ai_skills::read_ai_skill, // File commands
+            ai_skills::read_ai_skill,
+            ai_skills::read_ai_skill_resource,
+            ai_skills::ai_skills_directory,
+            ai_skills::create_ai_skill, // File commands
             read_sql_file,
             read_sql_file_from_path,
             read_csv_file,
@@ -454,8 +480,12 @@ pub fn run() {
             // Maintenance commands
             preview_maintenance_command,
             run_maintenance_command,
-            // Operations dashboard queries
-            get_operational_queries,
+            // Live profiler (per-engine active-session sampling probe)
+            get_profiler_probe,
+            // Profiler: statement-store aggregate ranking probe
+            get_top_queries_probe,
+            // Profiler: native (non-SQL) sampling, e.g. MongoDB $currentOp / system.profile
+            execute_profiler_sample,
             push_workspace_sync,
             pull_workspace_sync,
         ]);

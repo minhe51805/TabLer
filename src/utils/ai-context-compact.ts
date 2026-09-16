@@ -13,6 +13,13 @@ import { getBubbleConversationText } from "../components/AISlidePanel/ai-convers
 export const COMPACT_COMMAND = "/compact";
 /** Approximate character budget of the summarized digest. */
 export const COMPACT_DIGEST_CHAR_BUDGET = 2400;
+/**
+ * Header that tags the workspace-context (digest) message. Exported as the
+ * single source of truth so downstream history trimming can always recognize
+ * and preserve the digest — that is what keeps cross-turn memory alive.
+ */
+export const WORKSPACE_CONTEXT_MESSAGE_PREFIX =
+  "[Workspace context — keep this in mind for the task]";
 /** Total request-history characters after which sending auto-compacts first. */
 export const AUTO_COMPACT_TRIGGER_CHARS = 24_000;
 
@@ -22,6 +29,31 @@ export const CHARS_PER_TOKEN = 4;
 
 export function estimateTokensFromChars(chars: number): number {
   return Math.ceil(chars / CHARS_PER_TOKEN);
+}
+
+/**
+ * Fraction of a model's context window the conversation footprint may reach
+ * before auto-compaction fires. Mirrors Claude Code's ~80% auto-compact
+ * trigger: summarize BEFORE the window is full so the pending request and its
+ * reply still fit, instead of only compacting once we have already overflowed
+ * (comparing against 100% of the window means the request that trips it is
+ * already too big to send).
+ */
+export const CONTEXT_WINDOW_COMPACT_HEADROOM = 0.8;
+
+/**
+ * Token ceiling at which auto-compaction should fire for the active model.
+ * When the model's real context window is known we trigger at HEADROOM% of it
+ * (model-aware); otherwise we fall back to the fixed character-based display
+ * window. Always returns a token count so callers can compare in token space.
+ */
+export function resolveAutoCompactTokenLimit(
+  contextWindowTokens: number | null | undefined,
+): number {
+  if (typeof contextWindowTokens === "number" && contextWindowTokens > 0) {
+    return Math.floor(contextWindowTokens * CONTEXT_WINDOW_COMPACT_HEADROOM);
+  }
+  return estimateTokensFromChars(AUTO_COMPACT_TRIGGER_CHARS);
 }
 
 export function formatTokensCompact(tokens: number): string {
@@ -147,16 +179,28 @@ export function extractDigestFromReply(reply: string) {
 }
 
 /**
- * Digest-only context messages prepended to every request in the workspace,
- * so the model always carries the workspace's durable context.
+ * Digest-only context messages prepended to EVERY request in the workspace,
+ * so the model always carries the workspace's durable context — including
+ * after switching model/provider.
+ *
+ * The digest is bounded to `maxChars` (default COMPACT_DIGEST_CHAR_BUDGET). A
+ * compact summarizer can occasionally ignore the length hint and return a huge
+ * digest; injecting it verbatim on every send could push the request over the
+ * backend's conversation-history cap (12 messages / 24,000 chars) and hard-fail
+ * the whole turn with "Conversation history is too large". Bounding it here
+ * keeps the always-on context injection safe and token-efficient.
  */
-export function buildWorkspaceContextMessages(digest: string | null | undefined): AIConversationMessage[] {
+export function buildWorkspaceContextMessages(
+  digest: string | null | undefined,
+  maxChars = COMPACT_DIGEST_CHAR_BUDGET,
+): AIConversationMessage[] {
   const clean = digest?.trim();
   if (!clean) return [];
+  const bounded = clean.length > maxChars ? `${clean.slice(0, maxChars).trimEnd()}…` : clean;
   return [
     {
       role: "user",
-      content: `[Workspace context — keep this in mind for the task]\n${clean}`,
+      content: `${WORKSPACE_CONTEXT_MESSAGE_PREFIX}\n${bounded}`,
     },
     {
       role: "assistant",
@@ -170,6 +214,11 @@ export function buildWorkspaceContextMessages(digest: string | null | undefined)
  * / opencode semantics). The digest is the essence of the ENTIRE conversation
  * up to the compact point — including the turns right before it — so no
  * verbatim scrollback survives beside it. Continuing turns append fresh.
+ *
+ * This is exactly the workspace-context pair, so it delegates to
+ * `buildWorkspaceContextMessages` to keep both digest-injection paths (the
+ * post-compact turn and every later send) byte-identical and identically
+ * bounded.
  */
 export function buildPostCompactHistory(
   digest: string,
@@ -177,21 +226,7 @@ export function buildPostCompactHistory(
   maxChars = COMPACT_DIGEST_CHAR_BUDGET,
 ): AIConversationMessage[] {
   void _bubbles;
-  const messages: AIConversationMessage[] = [];
-  const trimmedDigest = digest.length > maxChars
-    ? `${digest.slice(0, maxChars).trimEnd()}…`
-    : digest;
-  if (trimmedDigest) {
-    messages.push({
-      role: "user",
-      content: `[Workspace context — keep this in mind for the task]\n${trimmedDigest}`,
-    });
-    messages.push({
-      role: "assistant",
-      content: "Understood. I'll keep this workspace context in mind.",
-    });
-  }
-  return messages;
+  return buildWorkspaceContextMessages(digest, maxChars);
 }
 
 const MEMORY_STOP_WORDS = new Set([

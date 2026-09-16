@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  MAX_REMOTE_HISTORY_MESSAGES,
+  REMOTE_HISTORY_TOKEN_BUDGET,
   resolveAgentRequestContext,
 } from "@/components/AISlidePanel/ai-agent-request-context";
+import { CHARS_PER_TOKEN, WORKSPACE_CONTEXT_MESSAGE_PREFIX } from "@/utils/ai-context-compact";
 import type { AIConversationMessage } from "@/types/ai";
 
 function msg(id: number): AIConversationMessage {
@@ -64,9 +65,38 @@ describe("resolveAgentRequestContext", () => {
     expect(ctx.requestHistory).toHaveLength(10);
   });
 
-  it(`caps remote provider history at ${MAX_REMOTE_HISTORY_MESSAGES} messages`, () => {
+  it("keeps a short remote history intact instead of chopping to a fixed count", () => {
+    // base has 6 short messages — well under the token budget, so all survive.
     const ctx = resolveAgentRequestContext(base);
-    expect(ctx.requestHistory).toHaveLength(MAX_REMOTE_HISTORY_MESSAGES);
+    expect(ctx.requestHistory).toHaveLength(6);
+  });
+
+  it("trims a long remote history to the token budget, keeping the newest turns", () => {
+    const big = "x".repeat(REMOTE_HISTORY_TOKEN_BUDGET * CHARS_PER_TOKEN); // ~budget each
+    const history = Array.from({ length: 6 }, (_, i) => (
+      { role: "user", content: `${i}:${big}` }
+    )) as unknown as AIConversationMessage[];
+    const ctx = resolveAgentRequestContext({ ...base, history });
+    const chars = ctx.requestHistory.reduce((sum, message) => sum + message.content.length, 0);
+    // Never grows past the budget plus the single always-kept newest turn.
+    expect(chars).toBeLessThanOrEqual((REMOTE_HISTORY_TOKEN_BUDGET * CHARS_PER_TOKEN) + big.length);
+    expect(ctx.requestHistory.length).toBeGreaterThan(0);
+    expect(ctx.requestHistory.length).toBeLessThan(6);
+    // The very newest turn is always present.
+    expect(ctx.requestHistory[ctx.requestHistory.length - 1].content).toBe(`5:${big}`);
+  });
+
+  it("always preserves the leading workspace-context digest when trimming remote history", () => {
+    const big = "y".repeat(REMOTE_HISTORY_TOKEN_BUDGET * CHARS_PER_TOKEN);
+    const digestUser = { role: "user", content: `${WORKSPACE_CONTEXT_MESSAGE_PREFIX}\nprior summary` };
+    const digestAssistant = { role: "assistant", content: "Understood. I'll keep this workspace context in mind." };
+    const turns = Array.from({ length: 5 }, (_, i) => ({ role: "user", content: `${i}:${big}` }));
+    const history = [digestUser, digestAssistant, ...turns] as unknown as AIConversationMessage[];
+    const ctx = resolveAgentRequestContext({ ...base, history });
+    expect(ctx.requestHistory[0].content).toContain(WORKSPACE_CONTEXT_MESSAGE_PREFIX);
+    expect(ctx.requestHistory[1]).toEqual(digestAssistant);
+    // The newest real turn is kept right after the preserved digest head.
+    expect(ctx.requestHistory[ctx.requestHistory.length - 1].content).toBe(`4:${big}`);
   });
 
   it("drops history entirely for overview intent", () => {

@@ -3,6 +3,7 @@ import {
   AI_AGENT_TOOL_NAMES,
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
   AI_AGENT_PREVIEW_STATEMENT_LIMIT,
+  AI_AGENT_SEED_DOCUMENT_LIMIT,
   AI_AGENT_SAMPLE_MAX_ROWS,
 } from "@/components/AISlidePanel/ai-agent-tools";
 import { nativeCatalogOptionsForEngine } from "@/components/AISlidePanel/ai-agent-engine-gates";
@@ -43,6 +44,10 @@ describe("AI agent tool schema", () => {
     expect(AI_AGENT_TOOL_SPECS.sample_table_data.parameters.required).toEqual(["table"]);
     expect(AI_AGENT_TOOL_SPECS.run_readonly_sql.parameters.required).toEqual(["sql"]);
     expect(AI_AGENT_TOOL_SPECS.preview_write.parameters.required).toEqual(["statements"]);
+    expect(AI_AGENT_TOOL_SPECS.propose_seed_data.parameters.required).toEqual(["collection", "documents"]);
+    expect(
+      AI_AGENT_TOOL_SPECS.propose_seed_data.parameters.properties?.documents?.maxItems,
+    ).toBe(AI_AGENT_SEED_DOCUMENT_LIMIT);
     expect(AI_AGENT_TOOL_SPECS.remember_term.parameters.required).toEqual(["term", "definition"]);
 
     expect(AI_AGENT_TOOL_SPECS.list_tables.parameters.properties?.limit?.maximum).toBe(200);
@@ -122,13 +127,41 @@ describe("AI agent tool schema", () => {
 
   it("shapes Anthropic and Gemini tool payloads in their native formats", () => {
     const anthropic = nativeToolPayloadForProvider("anthropic");
-    expect(anthropic.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
+    // One hidden catalog tool (describe_tables) is dropped, and Anthropic's
+    // native memory tool block is appended — netting back to the registry size.
+    expect(anthropic.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length);
     expect((anthropic.tools[0] as Record<string, unknown>)).toHaveProperty("input_schema");
+    // The native memory tool is the trailing entry: an opaque type block with
+    // no input_schema (memory_20250818).
+    const nativeMemory = anthropic.tools[anthropic.tools.length - 1] as Record<string, unknown>;
+    expect(nativeMemory).toEqual({ type: "memory_20250818", name: "memory" });
     expect(anthropic.tool_choice).toEqual({ type: "auto" });
 
     const gemini = nativeToolPayloadForProvider("gemini");
     expect(gemini.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length - 1);
     expect(gemini.tool_choice).toEqual({ function_calling_config: { mode: "AUTO" } });
+
+    // Vertex AI reuses the exact Gemini generateContent tool shape.
+    const vertex = nativeToolPayloadForProvider("vertex");
+    expect(vertex).toEqual(gemini);
+  });
+
+  it("offers the native memory tool (memory_20250818) only to Anthropic", () => {
+    const hasNativeMemory = (payload: { tools: unknown[] }) =>
+      payload.tools.some(
+        (tool) => (tool as { type?: string }).type === "memory_20250818",
+      );
+    expect(hasNativeMemory(nativeToolPayloadForProvider("anthropic"))).toBe(true);
+    for (const provider of [
+      "openai",
+      "openrouter",
+      "ollama",
+      "custom",
+      "gemini",
+      "vertex",
+    ] as const) {
+      expect(hasNativeMemory(nativeToolPayloadForProvider(provider))).toBe(false);
+    }
   });
 
   it("normalizes Gemini schemas to the Gemini proto (audit fix)", () => {
@@ -142,11 +175,12 @@ describe("AI agent tool schema", () => {
     // JSON-Schema-only keys must not leak into the wire format.
     expect(JSON.stringify(parameters)).not.toContain("additionalProperties");
     expect(JSON.stringify(parameters)).not.toContain("uniqueItems");
-    // Number bounds rename to minValue/maxValue.
+    // Number bounds keep their JSON Schema names (minimum/maximum) — the Gemini
+    // Schema proto uses those exact fields, NOT minValue/maxValue.
     const limit = (parameters.properties as Record<string, Record<string, unknown>>).limit;
     expect(limit.type).toBe("INTEGER");
-    expect(limit.maximum).toBeUndefined();
-    expect(limit.maxValue).toBe(AI_AGENT_SAMPLE_MAX_ROWS);
+    expect(limit.maxValue).toBeUndefined();
+    expect(limit.maximum).toBe(AI_AGENT_SAMPLE_MAX_ROWS);
   });
 
   it("lists every registry tool in the controller catalog, and only non-SQL tools when tools are off", () => {
@@ -159,6 +193,7 @@ describe("AI agent tool schema", () => {
       "ask_user",
       "update_plan",
       "skill",
+      "read_skill_resource",
       "delegate",
       "read_page",
       "finish",
@@ -224,6 +259,7 @@ describe("native tool calling wire parity", () => {
     "openai",
     "anthropic",
     "gemini",
+    "vertex",
     "openrouter",
     "ollama",
     "custom",
@@ -260,7 +296,10 @@ describe("native tool calling wire parity", () => {
       expect(names).toContain("list_tables");
       expect(names).toContain("describe_table");
       expect(names).toContain("finish");
-      return names;
+      // The native memory tool (memory_20250818) is intentionally Anthropic-only
+      // (see the dedicated test above), so exclude it from the cross-provider
+      // catalog-parity comparison below.
+      return names.filter((name) => name !== "memory");
     });
 
     // Parity: no provider family drops or gains tools relative to the others.

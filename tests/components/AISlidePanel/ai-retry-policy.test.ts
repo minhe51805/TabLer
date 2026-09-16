@@ -6,7 +6,12 @@ import {
 import {
   mergeRunNotes,
   canonicalizeAgentArgs,
+  countTrailingToolErrors,
+  isFailedToolObservation,
   isRepeatTrackedAction,
+  toolErrorReflectionNudge,
+  TOOL_ERROR_REFLECTION_THRESHOLD,
+  type AgentTraceStep,
 } from "@/components/AISlidePanel/ai-agent-context";
 import type { AIWorkspaceAgentStep } from "@/components/AISlidePanel/ai-workspace-types";
 
@@ -132,5 +137,55 @@ describe("repeat-call helpers", () => {
   it("canonicalizes args regardless of property order", () => {
     expect(canonicalizeAgentArgs({ b: 1, a: 2 })).toBe(canonicalizeAgentArgs({ a: 2, b: 1 }));
     expect(canonicalizeAgentArgs({ a: { y: 1, x: 2 } })).toBe(canonicalizeAgentArgs({ a: { x: 2, y: 1 } }));
+  });
+});
+
+describe("tool-error reflection helpers", () => {
+  const traceStep = (
+    action: AgentTraceStep["action"],
+    observation: string,
+  ): AgentTraceStep => ({ step: 1, action, message: action, observation });
+
+  it("flags Tool error / Tool blocked observations, not successful ones", () => {
+    expect(isFailedToolObservation("Tool error: timeout")).toBe(true);
+    expect(isFailedToolObservation("  Tool blocked: no permission")).toBe(true);
+    expect(isFailedToolObservation("id | name\n1 | Ann")).toBe(false);
+    expect(isFailedToolObservation("")).toBe(false);
+  });
+
+  it("counts an unbroken trailing streak of failing tool calls with different tools", () => {
+    const steps: AgentTraceStep[] = [
+      traceStep("list_tables", "users, orders"),
+      traceStep("describe_table", "Tool error: Table \"nope\" is not present"),
+      traceStep("run_readonly_sql", "Tool error: syntax error"),
+      traceStep("sample_table_data", "Tool blocked: read consent denied"),
+    ];
+    // The repeat-call guard would miss this (three different tools); the
+    // trailing-error count catches it.
+    expect(countTrailingToolErrors(steps)).toBe(3);
+  });
+
+  it("treats meta steps as transparent and stops at the first success", () => {
+    const withMeta: AgentTraceStep[] = [
+      traceStep("run_readonly_sql", "Tool error: one"),
+      traceStep("update_plan", "plan recorded"), // meta: neither counts nor resets
+      traceStep("describe_table", "Tool error: two"),
+    ];
+    expect(countTrailingToolErrors(withMeta)).toBe(2);
+
+    const recovered: AgentTraceStep[] = [
+      traceStep("run_readonly_sql", "Tool error: one"),
+      traceStep("run_readonly_sql", "id | name"), // a success ends the streak
+    ];
+    expect(countTrailingToolErrors(recovered)).toBe(0);
+    expect(countTrailingToolErrors([])).toBe(0);
+  });
+
+  it("builds a reflection nudge that names the streak and the escape hatches", () => {
+    const nudge = toolErrorReflectionNudge(TOOL_ERROR_REFLECTION_THRESHOLD);
+    expect(nudge).toContain(`${TOOL_ERROR_REFLECTION_THRESHOLD} tool calls`);
+    expect(nudge).toContain("re-strategize");
+    expect(nudge).toContain("ask_user");
+    expect(nudge).toContain("finish");
   });
 });

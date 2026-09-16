@@ -81,8 +81,38 @@ export function formatActionFailureReason(errorValue: unknown): string {
   return errorValue instanceof Error ? errorValue.message : String(errorValue);
 }
 
-/** Bounded number of evidence-retry rounds before accepting the best answer. */
+/** Default bounded number of evidence-retry rounds before accepting the best answer. */
 export const MAX_EVIDENCE_ROUNDS = 2;
+/**
+ * Hard ceiling on evidence rounds for complex requests. Reports, dashboards and
+ * overviews synthesize multiple reads, so they earn one extra self-correction
+ * round — but never more, so a stubborn run still cannot loop forever.
+ */
+export const MAX_EVIDENCE_ROUNDS_CEILING = 3;
+
+/**
+ * Adaptive round budget: simple asks get the conservative default; complex,
+ * synthesis-heavy asks (a report/dashboard, or an overview intent) get one more
+ * round to gather and self-check evidence. Always clamped to
+ * [1, MAX_EVIDENCE_ROUNDS_CEILING] so the loop stays bounded.
+ */
+export function resolveEvidenceRounds(params: {
+  assistIntent: string;
+  wantsReportTable: boolean;
+}): number {
+  const isComplex = params.wantsReportTable || params.assistIntent === "overview";
+  const rounds = isComplex ? MAX_EVIDENCE_ROUNDS_CEILING : MAX_EVIDENCE_ROUNDS;
+  return Math.max(1, Math.min(rounds, MAX_EVIDENCE_ROUNDS_CEILING));
+}
+
+/**
+ * A short self-critique checklist appended to recovery instructions: before
+ * accepting a finish, the model must re-read its own answer against the trace
+ * and correct anything the evidence does not support. This turns the recovery
+ * round from "gather more" into a genuine self-review pass.
+ */
+export const SELF_CRITIQUE_CHECKLIST =
+  "Before you finish, critique your own draft against the tool observations: (1) every figure, table and column name you cite must appear in a real observation above — remove or correct anything that does not; (2) do not claim any run, write or UI effect the trace does not confirm; (3) if a claim cannot be backed by evidence, drop it or gather the evidence first.";
 
 export interface EvidenceGateEvaluation {
   isFinish: boolean;
@@ -103,8 +133,14 @@ export function evaluateEvidenceGate(params: {
   finalAction: AIAgentFinishAction;
   steps: AgentTraceStep[];
   wantsReportTable: boolean;
+  /**
+   * Verified live-schema names (e.g. availableSchemaTables), allow-listed
+   * alongside trace-witnessed names so a real table the run never happened to
+   * touch is never mistaken for a fabrication.
+   */
+  knownIdentifiers?: Iterable<string>;
 }): EvidenceGateEvaluation {
-  const { finalAction, steps, wantsReportTable } = params;
+  const { finalAction, steps, wantsReportTable, knownIdentifiers } = params;
   const isFinish = finalAction.action === "finish";
   if (!isFinish) {
     return {
@@ -113,7 +149,7 @@ export function evaluateEvidenceGate(params: {
       response: "",
       missingReportTable: false,
       falseSuccessClaim: false,
-      verification: { ok: true, unsupported: [] } as ReturnType<typeof verifyAgentResponseAgainstEvidence>,
+      verification: { ok: true, unsupported: [], unsupportedIdentifiers: [] } as ReturnType<typeof verifyAgentResponseAgainstEvidence>,
       composeOnly: false,
       needsMoreEvidence: false,
     };
@@ -122,7 +158,7 @@ export function evaluateEvidenceGate(params: {
   const response =
     typeof finalAction.args?.response === "string" ? finalAction.args.response : "";
   const missingReportTable = wantsReportTable && !responseHasMarkdownTable(response);
-  const verification = verifyAgentResponseAgainstEvidence(response, steps);
+  const verification = verifyAgentResponseAgainstEvidence(response, steps, knownIdentifiers);
   const falseSuccessClaim = responseClaimsSuccessfulExecution(response) && !hasSuccessfulReadStep(steps);
   const needsMoreEvidence = missingData || missingReportTable || falseSuccessClaim || !verification.ok;
   return {
@@ -135,6 +171,40 @@ export function evaluateEvidenceGate(params: {
     composeOnly: !missingData && !falseSuccessClaim && verification.ok,
     needsMoreEvidence,
   };
+}
+
+/**
+ * Recovery text for a finish blocked by unsupported claims. Two independent
+ * kinds of fabrication can trigger it — figures no observation witnessed and
+ * table/column names absent from both the schema and the trace — so the
+ * instruction names whichever applies (or both). Each fabricated identifier
+ * carries a "did you mean <nearest real name>?" hint when a close match exists,
+ * turning the block into an actionable correction rather than a vague warning.
+ */
+export function buildUnsupportedEvidenceInstruction(
+  verification: ReturnType<typeof verifyAgentResponseAgainstEvidence>,
+): string {
+  const parts: string[] = [];
+  if (verification.unsupported.length > 0) {
+    parts.push(
+      `Your answer cites figures that no tool observation supports (e.g. ${verification.unsupported
+        .slice(0, 4)
+        .join(", ")}).`,
+    );
+  }
+  if (verification.unsupportedIdentifiers.length > 0) {
+    const named = verification.unsupportedIdentifiers
+      .slice(0, 4)
+      .map((item) => (item.suggestion ? `${item.cited} (did you mean ${item.suggestion}?)` : item.cited))
+      .join(", ");
+    parts.push(
+      `Your answer cites table/column names absent from both the workspace schema and every tool observation: ${named}.`,
+    );
+  }
+  parts.push(
+    "Either run the read that verifies them, or correct the answer to cite only names and figures the tools actually observed.",
+  );
+  return parts.join(" ");
 }
 
 /** Composes the controller instruction for an evidence-recovery round. */
@@ -152,13 +222,17 @@ export function buildAgentRecoveryInstruction(params: {
       "Read the actual error, fix the cause (for column errors: re-check describe_table output and use only verified column names; for row counts use list_tables rowCount), re-run a read (sample_table_data, or run_readonly_sql on SQL engines), then finish with the truthful result.",
     ].join(" ");
   }
-  return composeOnly
-    ? "The evidence is already gathered. Finish now: args.response MUST contain ONE complete markdown table — | header | row, |---| separator, then data rows — summarizing the verified data, followed by at most three short notes."
-    : lastChance
-      ? "This is the final round. Run the one read that answers the request, or finish with the complete answer built from the evidence already gathered. Do not end with a promise."
-      : !verification.ok
-        ? `Your answer cites figures that no tool observation supports (e.g. ${verification.unsupported.slice(0, 4).join(", ")}). Either run the read that verifies them, or correct the answer to cite only observed figures.`
-        : "Your previous finish returned no SQL and no executed query, but this request needs real workspace data. Either call sample_table_data, describe_table, or run_readonly_sql now, or if that is genuinely impossible, finish again with a complete explanation instead of a promise.";
+  if (composeOnly) {
+    return "The evidence is already gathered. Finish now: args.response MUST contain ONE complete markdown table — | header | row, |---| separator, then data rows — summarizing the verified data, followed by at most three short notes.";
+  }
+  // Every remaining recovery branch closes with a self-critique pass so the
+  // model re-reads its own draft against the trace before finishing.
+  const base = lastChance
+    ? "This is the final round. Run the one read that answers the request, or finish with the complete answer built from the evidence already gathered. Do not end with a promise."
+    : !verification.ok
+      ? buildUnsupportedEvidenceInstruction(verification)
+      : "Your previous finish returned no SQL and no executed query, but this request needs real workspace data. Either call sample_table_data, describe_table, or run_readonly_sql now, or if that is genuinely impossible, finish again with a complete explanation instead of a promise.";
+  return joinAgentInstructions(base, SELF_CRITIQUE_CHECKLIST);
 }
 
 /** Wraps the shared agent instruction for a specific action-request reason. */

@@ -8,9 +8,50 @@ import {
 import type { AssistIntent } from "./ai-agent-context";
 import { aiModeUsesSchemaContext } from "./ai-workspace-types";
 import type { AIWorkspaceInteractionMode } from "./ai-workspace-types";
+import { CHARS_PER_TOKEN, WORKSPACE_CONTEXT_MESSAGE_PREFIX } from "../../utils/ai-context-compact";
 
-/** Remote providers only see a bounded tail of the conversation. */
-export const MAX_REMOTE_HISTORY_MESSAGES = 4;
+/**
+ * Approximate TOKEN budget for the verbatim tail a REMOTE provider replays.
+ * Trimming by tokens (chars ÷ CHARS_PER_TOKEN) rather than a fixed message
+ * count means long turns cost their real size while short turns are kept
+ * generously — no more chopping to an arbitrary N messages. Nothing is lost:
+ * older context lives in the compacted workspace digest, which
+ * `trimRemoteHistory` always preserves at the head. Local providers replay the
+ * full history (it is already model- and back-end-clamped upstream).
+ */
+export const REMOTE_HISTORY_TOKEN_BUDGET = 2_000;
+
+/**
+ * Trims a remote provider's replayed history to `tokenBudget` (≈ tokens),
+ * keeping the newest turns first, while ALWAYS preserving the leading
+ * workspace-context digest pair so cross-turn memory survives. Replaces the old
+ * fixed 4-message slice, which silently dropped the digest (it sits at the
+ * head) as soon as a couple of fresh turns arrived.
+ */
+export function trimRemoteHistory(
+  history: AIConversationMessage[],
+  tokenBudget = REMOTE_HISTORY_TOKEN_BUDGET,
+): AIConversationMessage[] {
+  if (history.length <= 1) return history;
+
+  const charBudget = Math.max(0, tokenBudget) * CHARS_PER_TOKEN;
+  const hasDigest =
+    typeof history[0]?.content === "string"
+    && history[0].content.startsWith(WORKSPACE_CONTEXT_MESSAGE_PREFIX);
+  const head = hasDigest ? history.slice(0, 2) : [];
+  const tail = hasDigest ? history.slice(2) : history;
+
+  let remaining = charBudget - head.reduce((sum, message) => sum + message.content.length, 0);
+  const keptTail: AIConversationMessage[] = [];
+  for (let index = tail.length - 1; index >= 0; index -= 1) {
+    const cost = tail[index].content.length;
+    // Always keep at least the newest turn, even if it alone exceeds the budget.
+    if (keptTail.length > 0 && cost > remaining) break;
+    remaining -= cost;
+    keptTail.unshift(tail[index]);
+  }
+  return [...head, ...keptTail];
+}
 
 export interface AgentRequestContextInput {
   prompt: string;
@@ -63,7 +104,7 @@ export function resolveAgentRequestContext(
       ? []
       : input.isLocalProvider
         ? input.history
-        : input.history.slice(-MAX_REMOTE_HISTORY_MESSAGES);
+        : trimRemoteHistory(input.history);
 
   return {
     normalizedPrompt,

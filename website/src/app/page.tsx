@@ -110,6 +110,8 @@ export default async function Home() {
             <a href="#engines">{t.nav.engines}</a>
             <a href="#open-source">{t.nav.openSource}</a>
             <a href="/changelog">{t.nav.changelog}</a>
+            <Link href="/docs">{t.nav.docs}</Link>
+            <Link href="/plugins">{t.nav.plugins}</Link>
           </nav>
 
           <div className="header-actions">
@@ -131,7 +133,7 @@ export default async function Home() {
             <span className="status-dot" />
             {t.hero.kicker}
           </div>
-          <h1>TableR</h1>
+          <h1>{t.hero.headline}</h1>
           <p className="hero-lede">{t.hero.lede}</p>
           <div className="hero-actions">
             <a className="button button-primary" href={downloadUrl}>
@@ -417,6 +419,8 @@ export default async function Home() {
             </a>
             <a href={downloadUrl}>{t.footer.download}</a>
             <Link href="/changelog">{t.footer.changelog}</Link>
+            <Link href="/docs">{t.footer.docs}</Link>
+            <Link href="/plugins">{t.nav.plugins}</Link>
             <a
               href="https://buymeacoffee.com/minjev"
               target="_blank"

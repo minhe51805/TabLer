@@ -34,7 +34,10 @@ use tokio::sync::RwLock;
 /// Centralized here so every lookup path stays in lockstep and the message
 /// can't drift out from under that fallback.
 fn connection_not_found(connection_id: &str) -> anyhow::Error {
-    anyhow!("Connection '{}' not found. Please connect first.", connection_id)
+    anyhow!(
+        "Connection '{}' not found. Please connect first.",
+        connection_id
+    )
 }
 
 /// Manages all active database connections.

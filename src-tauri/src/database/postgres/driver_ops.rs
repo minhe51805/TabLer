@@ -1,9 +1,9 @@
-use super::driver::DatabaseDriver;
-use super::models::*;
-use super::pgpass::read_pgpass;
-use super::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry};
-use super::query_common::{statement_returns_rows, MAX_TABLE_PAGE_ROWS};
-use super::safety::{
+use super::PostgresDriver;
+use crate::database::driver::DatabaseDriver;
+use crate::database::models::*;
+use crate::database::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard};
+use crate::database::query_common::MAX_TABLE_PAGE_ROWS;
+use crate::database::safety::{
     normalize_order_dir, qualify_postgres_table_name, quote_postgres_identifier,
     quote_postgres_order_by, sanitize_postgres_filter_clause,
 };
@@ -11,217 +11,11 @@ use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use sqlx::postgres::{PgConnectOptions, PgConnection, PgPool, PgPoolOptions, PgRow};
-use sqlx::{ConnectOptions, Postgres, QueryBuilder, Row};
+use sqlx::postgres::PgRow;
+use sqlx::{Postgres, QueryBuilder, Row};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock as StdRwLock};
+use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::RwLock;
-
-use crate::config::resolve_pool_max_connections;
-
-pub struct PostgresDriver {
-    pub(super) pool: StdRwLock<PgPool>,
-    connect_options: PgConnectOptions,
-    pub(super) current_db: Arc<RwLock<Option<String>>>,
-    cancel_registry: StdRwLock<QueryCancelRegistry>,
-    /// Resolved pool size for this connection, reused when the pool is rebuilt
-    /// on `use_database` so the override survives a database switch.
-    pool_max_connections: u32,
-}
-
-impl PostgresDriver {
-    pub async fn connect(config: &ConnectionConfig) -> Result<Self> {
-        let host = config.host.as_deref().unwrap_or("127.0.0.1");
-        let port = config.port.unwrap_or_else(|| config.default_port());
-        let user = config
-            .username
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .context("PostgreSQL username is required")?;
-        let database = config.database.as_deref().unwrap_or("postgres");
-
-        // Determine password: explicit > env > pgpass
-        let password = if let Some(ref pwd) = config.password {
-            if !pwd.is_empty() {
-                Some(pwd.clone())
-            } else {
-                read_pgpass(host, port, database, user)
-            }
-        } else {
-            // No explicit password — check pgpass
-            read_pgpass(host, port, database, user)
-        };
-
-        let mut options = PgConnectOptions::new()
-            .host(host)
-            .port(port)
-            .username(user)
-            .password(password.as_deref().unwrap_or(""))
-            .database(database);
-
-        options = options.disable_statement_logging();
-
-        // sqlx 0.8 does not expose a dedicated "skip host verification" toggle
-        // for PostgreSQL. If the config requests it, use VerifyCa instead of
-        // VerifyFull so we still validate the certificate chain without forcing
-        // host identity verification.
-        let ssl_mode = match config.effective_ssl_mode() {
-            SslMode::VerifyFull if config.ssl_skip_host_verification.unwrap_or(false) => {
-                SslMode::VerifyCa
-            }
-            mode => mode,
-        };
-
-        options = match ssl_mode {
-            SslMode::Disable => options.ssl_mode(sqlx::postgres::PgSslMode::Disable),
-            SslMode::Prefer => options.ssl_mode(sqlx::postgres::PgSslMode::Prefer),
-            SslMode::Require => options.ssl_mode(sqlx::postgres::PgSslMode::Require),
-            SslMode::VerifyCa => {
-                let mut opts = options.ssl_mode(sqlx::postgres::PgSslMode::VerifyCa);
-                if let Some(ref ca_path) = config.ssl_ca_cert_path {
-                    opts = opts.ssl_root_cert(std::path::Path::new(ca_path));
-                }
-                opts
-            }
-            SslMode::VerifyFull => {
-                let mut opts = options.ssl_mode(sqlx::postgres::PgSslMode::VerifyFull);
-                if let Some(ref ca_path) = config.ssl_ca_cert_path {
-                    opts = opts.ssl_root_cert(std::path::Path::new(ca_path));
-                }
-                opts
-            }
-        };
-
-        // Apply client certificate if provided
-        if let (Some(ref cert_path), Some(ref key_path)) =
-            (&config.ssl_client_cert_path, &config.ssl_client_key_path)
-        {
-            options = options
-                .ssl_client_cert(std::path::Path::new(cert_path))
-                .ssl_client_key(std::path::Path::new(key_path));
-        }
-
-        let pool_max_connections = resolve_pool_max_connections(config.pool_max_connections());
-        let pool = Self::open_pool(options.clone(), pool_max_connections).await?;
-        Ok(Self {
-            pool: StdRwLock::new(pool),
-            connect_options: options,
-            current_db: Arc::new(RwLock::new(Some(database.to_string()))),
-            cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
-            pool_max_connections,
-        })
-    }
-
-    pub(super) fn pool(&self) -> PgPool {
-        self.pool
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-
-    async fn open_pool(options: PgConnectOptions, max_connections: u32) -> Result<PgPool> {
-        let mut last_error = None;
-        for attempt in 1..=3 {
-            let pool_opts = PgPoolOptions::new()
-                .min_connections(1)
-                .max_connections(max_connections)
-                .max_lifetime(std::time::Duration::from_secs(1800))
-                .acquire_timeout(std::time::Duration::from_secs(30))
-                .idle_timeout(std::time::Duration::from_secs(600))
-                // Avoid an extra validation round-trip on every acquire. The initial
-                // connect path already proves the pool is live, and query failures
-                // surface naturally if the server drops later.
-                .test_before_acquire(false);
-
-            match pool_opts.connect_with(options.clone()).await {
-                Ok(pool) => return Ok(pool),
-                Err(e) => {
-                    last_error = Some(e);
-                    if attempt < 3 {
-                        tokio::time::sleep(std::time::Duration::from_millis(500 * attempt)).await;
-                    }
-                }
-            }
-        }
-
-        let error = last_error
-            .map(|err| err.to_string())
-            .unwrap_or_else(|| "unknown connection error".to_string());
-        Err(anyhow::anyhow!(
-            "Failed to connect to PostgreSQL after 3 attempts: {}",
-            error
-        ))
-    }
-
-    pub(super) fn split_schema_table(table: &str) -> (String, String) {
-        if let Some((schema, name)) = table.split_once('.') {
-            (schema.to_string(), name.to_string())
-        } else {
-            ("public".to_string(), table.to_string())
-        }
-    }
-
-    fn query_returns_rows(sql: &str) -> bool {
-        statement_returns_rows(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH"])
-    }
-
-    async fn execute_query_on_conn(conn: &mut PgConnection, sql: &str) -> Result<QueryResult> {
-        let start = Instant::now();
-        let statements = split_sql_statements(sql);
-
-        if statements.len() <= 1 && Self::query_returns_rows(sql) {
-            let (rows, truncated) = Self::fetch_rows_limited(&mut *conn, sql).await?;
-            let mut result =
-                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
-            result.execution_time_ms = start.elapsed().as_millis();
-            return Ok(result);
-        }
-
-        let mut total_affected: u64 = 0;
-        let mut last_result: Option<QueryResult> = None;
-        let iterable: Vec<&String> = if statements.len() > 1 {
-            statements.iter().collect()
-        } else {
-            statements.first().into_iter().collect()
-        };
-
-        for statement in iterable {
-            if Self::query_returns_rows(statement) {
-                let (rows, truncated) = Self::fetch_rows_limited(&mut *conn, statement).await?;
-                last_result = Some(Self::build_result_from_rows(
-                    &rows,
-                    0,
-                    sql.to_string(),
-                    total_affected,
-                    false,
-                    truncated,
-                ));
-            } else {
-                let result = sqlx::query(statement).execute(&mut *conn).await?;
-                total_affected += result.rows_affected();
-            }
-        }
-
-        let elapsed = start.elapsed().as_millis();
-        if let Some(mut result) = last_result {
-            result.execution_time_ms = elapsed;
-            result.affected_rows = total_affected;
-            return Ok(result);
-        }
-
-        Ok(QueryResult {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            affected_rows: total_affected,
-            execution_time_ms: elapsed,
-            query: sql.to_string(),
-            sandboxed: false,
-            truncated: false,
-        })
-    }
-}
 
 #[async_trait]
 impl DatabaseDriver for PostgresDriver {
@@ -500,7 +294,7 @@ impl DatabaseDriver for PostgresDriver {
             let mut rows = Vec::new();
             let mut truncated = false;
             while let Some(row) = stream.try_next().await? {
-                if rows.len() == super::query_common::MAX_QUERY_RESULT_ROWS {
+                if rows.len() == crate::database::query_common::MAX_QUERY_RESULT_ROWS {
                     truncated = true;
                     break;
                 }

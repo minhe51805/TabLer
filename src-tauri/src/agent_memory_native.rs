@@ -97,7 +97,9 @@ fn virtual_segments(raw: &str) -> Result<Vec<String>, String> {
             parts.next();
         }
         _ => {
-            return Err(format!("Path must start with /{VIRTUAL_ROOT} (got '{raw}')."));
+            return Err(format!(
+                "Path must start with /{VIRTUAL_ROOT} (got '{raw}')."
+            ));
         }
     }
 
@@ -199,7 +201,6 @@ fn ensure_size_ok(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-
 /// List a directory as a stable, sorted tree fragment for `view`.
 fn render_directory(dir: &Path, segments: &[String]) -> Result<String, String> {
     let mut names: Vec<(String, bool)> = Vec::new();
@@ -251,9 +252,7 @@ fn render_file(path: &Path, view_range: Option<(i64, i64)>) -> Result<String, St
             }
             let end = if end == -1 { total } else { end };
             if end < start {
-                return Err(
-                    "view_range end must be >= start (or -1 for end of file).".to_string(),
-                );
+                return Err("view_range end must be >= start (or -1 for end of file).".to_string());
             }
             let start_idx = (start - 1).min(total) as usize;
             let end_idx = end.min(total).max(0) as usize;
@@ -287,7 +286,6 @@ fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
 
 /// Execute one memory command against the sandbox `root`. Pure over the
 /// filesystem (no Tauri, no global data dir) so it is unit-testable with a
@@ -414,9 +412,8 @@ pub fn execute_memory_command_in(root: &Path, command: &MemoryCommand) -> Result
                 ));
             }
             if let Some(parent) = to.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    format!("Failed to create destination directory: {error}")
-                })?;
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("Failed to create destination directory: {error}"))?;
             }
             std::fs::rename(&from, &to).map_err(|error| format!("Failed to rename: {error}"))?;
             Ok(format!(
@@ -427,7 +424,6 @@ pub fn execute_memory_command_in(root: &Path, command: &MemoryCommand) -> Result
         }
     }
 }
-
 
 /// Per-(connection, database) sandbox root for the native memory tree. Uses the
 /// SAME scope sanitizer as [`crate::agent_memory`], so the native tree is
@@ -550,7 +546,6 @@ pub fn run_agent_memory_tool(
     let root = native_scope_root(&data_dir, connection_id.as_deref(), database.as_deref());
     execute_memory_command_in(&root, &parsed)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -700,7 +695,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-
     #[test]
     fn rename_then_delete() {
         let root = temp_root();
@@ -839,4 +833,3 @@ mod tests {
         );
     }
 }
-

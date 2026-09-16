@@ -212,7 +212,10 @@ fn engine_key(db_type: DatabaseType) -> String {
 /// Resolve the active-session probe for an engine, or a clear roadmap error for
 /// engines the live profiler does not sample yet.
 pub fn profiler_probe_for_database_type(db_type: DatabaseType) -> Result<ProfilerProbe, String> {
-    let columns = PROFILER_COLUMNS.iter().map(|name| name.to_string()).collect();
+    let columns = PROFILER_COLUMNS
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
     match db_type {
         DatabaseType::PostgreSQL | DatabaseType::Greenplum => Ok(ProfilerProbe {
             engine: engine_key(db_type),
@@ -301,7 +304,10 @@ pub struct TopQueriesProbe {
 pub fn top_queries_probe_for_database_type(
     db_type: DatabaseType,
 ) -> Result<TopQueriesProbe, String> {
-    let columns = TOP_QUERY_COLUMNS.iter().map(|name| name.to_string()).collect();
+    let columns = TOP_QUERY_COLUMNS
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
     match db_type {
         DatabaseType::PostgreSQL | DatabaseType::Greenplum => Ok(TopQueriesProbe {
             engine: engine_key(db_type),
@@ -452,7 +458,13 @@ mod tests {
                 "engine {db:?} probe must start with SELECT"
             );
             for mutating in [
-                "INSERT ", "UPDATE ", "DELETE ", "DROP ", "ALTER ", "CREATE ", "TRUNCATE ",
+                "INSERT ",
+                "UPDATE ",
+                "DELETE ",
+                "DROP ",
+                "ALTER ",
+                "CREATE ",
+                "TRUNCATE ",
             ] {
                 assert!(
                     !upper.contains(mutating),
@@ -529,10 +541,12 @@ mod tests {
 
     #[test]
     fn top_queries_probes_read_the_expected_statement_store() {
-        assert!(top_queries_probe_for_database_type(DatabaseType::PostgreSQL)
-            .unwrap()
-            .sql
-            .contains("pg_stat_statements"));
+        assert!(
+            top_queries_probe_for_database_type(DatabaseType::PostgreSQL)
+                .unwrap()
+                .sql
+                .contains("pg_stat_statements")
+        );
         assert!(top_queries_probe_for_database_type(DatabaseType::MySQL)
             .unwrap()
             .sql
@@ -553,7 +567,13 @@ mod tests {
                 "engine {db:?} top-queries probe must start with SELECT"
             );
             for mutating in [
-                "INSERT ", "UPDATE ", "DELETE ", "DROP ", "ALTER ", "CREATE ", "TRUNCATE ",
+                "INSERT ",
+                "UPDATE ",
+                "DELETE ",
+                "DROP ",
+                "ALTER ",
+                "CREATE ",
+                "TRUNCATE ",
             ] {
                 assert!(
                     !upper.contains(mutating),

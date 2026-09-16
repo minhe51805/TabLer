@@ -56,13 +56,23 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "tabler"
 path = "src/main.rs"
 
+# Sidecar bin roots live in `src/sidecar_bins/`, NOT in `src/bin/`. The Tauri
+# CLI pinned by package-lock.json (2.10.x) collects every file under `src/bin/`
+# as a bundle binary *without* honouring `required-features`, so a gated sidecar
+# placed there makes `tauri build` die while bundling with "failed to copy
+# binary ... <engine>_sidecar does not exist" (CI: the v0.1.6a release build).
+# The upstream fix -- "respect src/bin required-features" (#15427) -- only ships
+# in @tauri-apps/cli 2.11.4+, so these move back to `src/bin/` after that bump.
+# Keeping them outside `src/bin/` is also what keeps the shipped bundle a single
+# `tabler` executable (see scripts/check-tauri-binary-target.mjs).
+#
 # Reference native-driver sidecar (Phase 4e). A real out-of-process
 # `DatabaseDriver` speaking the `driver-sidecar-v1` protocol over stdio, backed
 # by the built-in SQLite driver. Gated so it is only built when requested (and
 # by the `sidecar_e2e` integration test).
 [[bin]]
 name = "reference_sidecar"
-path = "src/bin/reference_sidecar.rs"
+path = "src/sidecar_bins/reference_sidecar.rs"
 required-features = ["reference-sidecar"]
 
 # Per-engine native sidecars (Phase 4 native distribution). Each is gated on its
@@ -74,22 +84,22 @@ required-features = ["reference-sidecar"]
 # `bin/<os>-<arch>/<driver_id>[.exe]`.
 [[bin]]
 name = "duckdb_sidecar"
-path = "src/bin/duckdb_sidecar.rs"
+path = "src/sidecar_bins/duckdb_sidecar.rs"
 required-features = ["duckdb-sidecar"]
 
 [[bin]]
 name = "cassandra_sidecar"
-path = "src/bin/cassandra_sidecar.rs"
+path = "src/sidecar_bins/cassandra_sidecar.rs"
 required-features = ["cassandra-sidecar"]
 
 [[bin]]
 name = "redis_sidecar"
-path = "src/bin/redis_sidecar.rs"
+path = "src/sidecar_bins/redis_sidecar.rs"
 required-features = ["redis-sidecar"]
 
 [[bin]]
 name = "libsql_sidecar"
-path = "src/bin/libsql_sidecar.rs"
+path = "src/sidecar_bins/libsql_sidecar.rs"
 required-features = ["libsql-sidecar"]
 
 [build-dependencies]

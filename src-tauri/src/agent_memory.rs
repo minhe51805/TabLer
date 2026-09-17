@@ -876,7 +876,7 @@ mod tests {
         let staging: Vec<_> = std::fs::read_dir(&scope)
             .unwrap()
             .flatten()
-            .filter(|entry| entry.path().extension().map_or(false, |ext| ext == "tmp"))
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "tmp"))
             .collect();
         assert!(staging.is_empty());
         let _ = std::fs::remove_dir_all(&base);

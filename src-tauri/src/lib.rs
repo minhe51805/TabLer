@@ -480,6 +480,9 @@ pub fn run() {
             commands::schedule::list_query_schedules,
             commands::schedule::save_query_schedule,
             commands::schedule::delete_query_schedule,
+            // P10: an unattended agent task reports its real outcome back here
+            // (the backend only dispatches; it never runs the agent).
+            commands::schedule::complete_agent_schedule_run,
             // Semantic glossary commands
             get_semantic_entries,
             save_semantic_entry,

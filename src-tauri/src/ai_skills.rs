@@ -50,9 +50,9 @@ pub struct AISkillResource {
     pub content: String,
 }
 
-const MAX_SKILL_DESCRIPTION_CHARS: usize = 200;
+pub(crate) const MAX_SKILL_DESCRIPTION_CHARS: usize = 200;
 const MAX_SKILLS_PER_CATALOG: usize = 32;
-const MAX_SKILL_BODY_CHARS: usize = 8_000;
+pub(crate) const MAX_SKILL_BODY_CHARS: usize = 8_000;
 /// Ceiling for a single bundled resource file injected into context on demand.
 const MAX_SKILL_RESOURCE_CHARS: usize = 12_000;
 /// Max resource files listed per skill so the catalog stays bounded.

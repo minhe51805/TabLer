@@ -39,6 +39,13 @@ jobs:
       - name: Typecheck, lint, test, and build
         run: npm run check:frontend
 
+      # The built-in skill pack ships inside the binary via `include_str!`, so a
+      # skill that breaks the agent contract (description over the 200-char cap,
+      # body over 8 000 chars, unknown `allowed-tools` entry, directory name not
+      # matching `name:`) would only surface in the app. Gate it here instead.
+      - name: Validate agent skills
+        run: npm run check:agent-skills
+
       - name: Agent golden-set eval
         run: npm run eval:agent
 

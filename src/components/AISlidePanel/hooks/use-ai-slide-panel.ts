@@ -54,6 +54,7 @@ import { getAgentMemoryIndex } from "./use-agent-memory";
 import { emitAppToast } from "../../../utils/app-toast";
 import { useUIStore } from "../../../stores/uiStore";
 import { buildInsightScope, useAgentInsightsStore } from "../../../stores/agent-insights-store";
+import { useAgentLearningStore } from "../../../stores/agent-learning-store";
 import { useSkillPrefsStore } from "../../../stores/skillPrefsStore";
 import { DEFAULT_AGENT_TOKEN_BUDGET, extractAgentUsageTokens } from "../ai-agent-cost";
 import {
@@ -83,6 +84,7 @@ import {
 } from "../ai-agent-action-requestor";
 import { runAgentEvidenceLoop } from "../ai-agent-evidence-loop";
 import { collectRunEndInsights } from "../ai-agent-insights";
+import { proposeRunLearnings } from "../ai-agent-learning";
 
 import {
   buildRunnerInstructionForReason,
@@ -1518,12 +1520,18 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           // exists if a statement in that trace backs it. Collected before
           // finalization so the evidence is the run's own.
           if (requestId === requestIdRef.current) {
-            useAgentInsightsStore
+            const insights = collectRunEndInsights(finalSteps);
+            const scope = buildInsightScope(connectionId, currentDatabase);
+            useAgentInsightsStore.getState().recordRunInsights(insights, scope);
+            // Learning loop (P9): the same evidence, offered as things the
+            // workspace could keep. Nothing is written here — the user approves
+            // each proposal on its card.
+            useAgentLearningStore
               .getState()
-              .recordRunInsights(
-                collectRunEndInsights(finalSteps),
-                buildInsightScope(connectionId, currentDatabase),
-              );
+              .recordRunLearnings(proposeRunLearnings({ insights, steps: finalSteps }), scope, {
+                connectionId,
+                database: currentDatabase,
+              });
           }
 
           // Best-effort debug artifact: persist the full snapshot stream so

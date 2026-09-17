@@ -1,6 +1,17 @@
 import type { AIWorkspaceCopy } from "./types";
 
 export const VI_COPY: AIWorkspaceCopy = {
+  learnings: {
+    title: "Lượt chạy này có thể lưu lại",
+    saveMemory: "Lưu vào memory",
+    saveRule: "Tạo rule",
+    saveSkill: "Lưu thành skill",
+    saving: "Đang lưu",
+    saved: "Đã lưu",
+    failed: "Không lưu được",
+    dismiss: "Bỏ qua",
+    clearAll: "Xóa hết",
+  },
   insights: {
     title: "Phát hiện từ lượt chạy này",
     confidence: "độ tin cậy",

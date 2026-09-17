@@ -24,6 +24,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
 import { AISqlConfirmDialog } from "./AISqlConfirmDialog";
 import { AICheckpointPickerModal } from "./AICheckpointPickerModal";
 import { AIAgentInsights } from "./AIAgentInsights";
+import { AIAgentLearnings } from "./AIAgentLearnings";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import { formatThreadTimestamp, type AIChatThread } from "./ai-conversation-state";
 import { AIComposerDock } from "./AIComposerDock";
@@ -419,6 +420,10 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                 onUseSuggestion={handleUseSuggestion}
                 onAskUserOptionSelect={m.sendAskUserReply}
                 onAskUserCustomInput={m.focusComposerInput}
+              />
+              <AIAgentLearnings
+                copy={m.aiCopy}
+                scope={buildInsightScope(m.connectionId, m.currentDatabase)}
               />
               <AIAgentInsights
                 copy={m.aiCopy}

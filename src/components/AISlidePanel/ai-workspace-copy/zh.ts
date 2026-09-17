@@ -1,6 +1,17 @@
 import type { AIWorkspaceCopy } from "./types";
 
 export const ZH_COPY: AIWorkspaceCopy = {
+  learnings: {
+    title: "本次运行可保存的经验",
+    saveMemory: "保存到记忆",
+    saveRule: "创建规则",
+    saveSkill: "保存为技能",
+    saving: "保存中",
+    saved: "已保存",
+    failed: "保存失败",
+    dismiss: "忽略",
+    clearAll: "全部清除",
+  },
   insights: {
     title: "本次运行的发现",
     confidence: "置信度",

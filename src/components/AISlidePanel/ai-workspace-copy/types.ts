@@ -4,6 +4,18 @@ export interface PromptIdeaCopy {
 }
 
 export interface AIWorkspaceCopy {
+  /** Chrome for the learning-proposal cards (P9). */
+  learnings: {
+    title: string;
+    saveMemory: string;
+    saveRule: string;
+    saveSkill: string;
+    saving: string;
+    saved: string;
+    failed: string;
+    dismiss: string;
+    clearAll: string;
+  };
   /** Chrome for the proactive insight cards (P8). */
   insights: {
     title: string;

@@ -1,0 +1,125 @@
+/**
+ * Learning-proposal cards (P9) — styles owned by `AIAgentLearnings.tsx`.
+ *
+ * Visually the sibling of the insight strip above the composer, one step more
+ * active: an insight reports, a proposal asks for a click. The evidence line is
+ * kept for the same reason it is there — the user approves what they can check.
+ */
+
+.ai-learnings-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 280px;
+  overflow: auto;
+  margin: 4px 8px 0;
+  padding: 8px 9px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  background: var(--mm-surface-1);
+}
+
+.ai-learnings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-learnings-title {
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.ai-learnings-clear {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: var(--mm-fs-micro);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.ai-learnings-clear:hover {
+  color: var(--text-primary);
+}
+
+.ai-learnings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-learnings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-2);
+}
+
+.ai-learnings-card-title {
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ai-learnings-card-rationale {
+  margin: 0;
+  font-size: var(--mm-fs-micro);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.ai-learnings-evidence {
+  display: block;
+  overflow: hidden;
+  padding: 5px 6px;
+  border-radius: 8px;
+  background: var(--mm-surface-0);
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-learnings-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-learnings-action {
+  border: 1px solid var(--mm-border);
+  border-radius: 8px;
+  background: var(--mm-surface-1);
+  padding: 3px 8px;
+  font-size: var(--mm-fs-micro);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.ai-learnings-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ai-learnings-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.ai-learnings-status {
+  font-size: var(--mm-fs-micro);
+  color: var(--error);
+}

@@ -1,6 +1,17 @@
 import type { AIWorkspaceCopy } from "./types";
 
 export const KO_COPY: AIWorkspaceCopy = {
+  learnings: {
+    title: "이번 실행에서 배울 수 있는 것",
+    saveMemory: "메모리로 저장",
+    saveRule: "규칙 만들기",
+    saveSkill: "스킬로 저장",
+    saving: "저장 중",
+    saved: "저장됨",
+    failed: "저장할 수 없음",
+    dismiss: "닫기",
+    clearAll: "모두 지우기",
+  },
   insights: {
     title: "이번 실행에서 발견된 사항",
     confidence: "신뢰도",

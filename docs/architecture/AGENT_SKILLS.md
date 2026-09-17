@@ -194,4 +194,42 @@ finding is a claim about one schema, and nothing resurfaces inside `INSIGHT_COOL
 so a recurring check cannot nag. `INSIGHT_MAX_STORED` (20) bounds the persisted set.
 
 Taking a suggestion dispatches `insert-sql-from-ai` and never executes anything, so a proactive
+
+## 6. Learning loop (P9)
+
+Implementation: `src/components/AISlidePanel/ai-agent-learning.ts` (proposals + applier),
+`src/stores/agent-learning-store.ts`, `src/components/AISlidePanel/AIAgentLearnings.tsx`.
+
+A finished run can teach the workspace three things, and all three are **offered, never taken**:
+
+| Artifact       | Command                         | Scope                                       |
+| -------------- | ------------------------------- | ------------------------------------------- |
+| Memory         | `save_agent_memory`             | the connection/database the run read        |
+| Guardrail rule | `save_agent_rule`               | global — rules have no per-database variant |
+| Skill          | `create_ai_skill` (with `body`) | global                                      |
+
+`proposeRunLearnings({ insights, steps })` is pure and model-free, and what it may propose is
+bounded by evidence exactly as insights are:
+
+- a **rule** only when the finding names a plain-identifier column (nothing else can be matched
+  literally), always `pre_read` + `warn`: a guardrail learned from an observation informs, and must
+  never be able to refuse work the user asked for;
+- a **memory** for the strongest findings, carrying the executed statement, the row count and the
+  computed confidence, so the saved note is checkable;
+- a **skill** only for a run of at least `MIN_SKILL_STEPS` steps that ended without a tool error and
+  executed at least one read — model reasoning is not a repeatable procedure, so it is not written
+  down as one.
+
+The user approves each card; `applyLearningProposal` takes an injected invoker (so the command
+mapping is unit-tested without a Tauri runtime), retires the card on success and announces the
+written path in a toast. **Nothing in this path runs SQL**, so a learned artifact can never act on
+the database by itself — this is the deliberate difference from the `remember_term` tool, where the
+model writes memory mid-run.
+
+`save_agent_rule` (Rust, `agent_rules.rs`) is the write side of the guardrail pack and its safety
+properties are the load-bearing part: the name must be a slug (it becomes the file stem), values are
+flattened to one line (the frontmatter reader is line-based), and the rendered text must parse _and
+compile_ back into the rule that was requested before anything is written. A rule whose file the
+loader cannot compile is refused rather than installed inert, and an existing file is never
+overwritten, so the loop cannot clobber a hand-authored guardrail.
 finding can never become a way around the write gate.

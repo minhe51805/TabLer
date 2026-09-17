@@ -1,6 +1,17 @@
 import type { AIWorkspaceCopy } from "./types";
 
 export const TR_COPY: AIWorkspaceCopy = {
+  learnings: {
+    title: "Bu çalıştırmanın öğrettikleri",
+    saveMemory: "Belleğe kaydet",
+    saveRule: "Kural oluştur",
+    saveSkill: "Yetenek olarak kaydet",
+    saving: "Kaydediliyor",
+    saved: "Kaydedildi",
+    failed: "Kaydedilemedi",
+    dismiss: "Yoksay",
+    clearAll: "Tümünü temizle",
+  },
   insights: {
     title: "Bu çalıştırmadan çıkan bulgular",
     confidence: "güven",

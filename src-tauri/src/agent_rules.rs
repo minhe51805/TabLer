@@ -955,6 +955,180 @@ fn global_rules_root() -> Result<PathBuf, String> {
     Ok(data_dir.join(RULES_DIR_NAME))
 }
 
+/// Upper bound on a name the app is willing to turn into a rule file stem.
+pub const MAX_RULE_NAME_CHARS: usize = 64;
+/// Upper bound on a rule description written by the app.
+pub const MAX_RULE_DESCRIPTION_CHARS: usize = 400;
+
+/// A rule the app is about to write to `<data_dir>/rules`.
+///
+/// Every field is validated and round-tripped through the loader before the
+/// file lands: a guardrail the engine cannot compile is worse than no guardrail,
+/// because the caller believes it is protected.
+#[derive(Debug, Clone)]
+pub struct NewRuleSpec {
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+    pub event: RuleEvent,
+    pub action: RuleAction,
+    pub pattern: String,
+    pub pattern_not: Option<String>,
+    pub scan: RuleScan,
+}
+
+/// The frontmatter spelling of an event (inverse of `RuleEvent::parse`).
+fn rule_event_field(event: RuleEvent) -> &'static str {
+    match event {
+        RuleEvent::PreRead => "pre_read",
+        RuleEvent::PreWrite => "pre_write",
+        RuleEvent::Any => "any",
+    }
+}
+
+/// The frontmatter spelling of a scan mode (inverse of `RuleScan::parse`).
+fn rule_scan_field(scan: RuleScan) -> &'static str {
+    match scan {
+        RuleScan::Skeleton => "skeleton",
+        RuleScan::Raw => "raw",
+    }
+}
+
+/// A rule name doubles as the file stem, so it must be a slug: anything else
+/// could escape the rules directory or vanish from diagnostics.
+pub fn validate_rule_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Rule name must not be empty.".to_string());
+    }
+    if trimmed.chars().count() > MAX_RULE_NAME_CHARS {
+        return Err(format!(
+            "Rule name must be at most {MAX_RULE_NAME_CHARS} characters."
+        ));
+    }
+    let is_slug = trimmed
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+    if !is_slug {
+        return Err(
+            "Rule name may only contain lowercase letters, digits, '-' and '_' (it becomes the rule's file name)."
+                .to_string(),
+        );
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Render a `NewRuleSpec` as the Markdown file the loader reads.
+///
+/// Values are written unquoted and flattened to one line on purpose: the
+/// frontmatter reader is line-based and trims wrapping quotes, so a value with a
+/// newline (or one wrapped in quotes) would come back changed. The caller
+/// verifies the round-trip instead of trusting this shape.
+fn render_rule_contents(spec: &NewRuleSpec) -> Result<String, String> {
+    let name = validate_rule_name(&spec.name)?;
+    let flatten = |label: &str, value: &str| -> Result<String, String> {
+        let flat = value.replace(['\r', '\n'], " ").trim().to_string();
+        if flat.is_empty() {
+            return Err(format!("Rule {label} must not be empty."));
+        }
+        Ok(flat)
+    };
+    let pattern = flatten("pattern", &spec.pattern)?;
+    let description: String = flatten("description", &spec.description)?
+        .chars()
+        .take(MAX_RULE_DESCRIPTION_CHARS)
+        .collect();
+
+    let mut contents = String::from("---\n");
+    contents.push_str(&format!("name: {name}\n"));
+    contents.push_str(&format!("description: {description}\n"));
+    contents.push_str(&format!("enabled: {}\n", spec.enabled));
+    contents.push_str(&format!("event: {}\n", rule_event_field(spec.event)));
+    contents.push_str(&format!("pattern: {pattern}\n"));
+    if let Some(exception) = spec.pattern_not.as_deref() {
+        contents.push_str(&format!(
+            "pattern-not: {}\n",
+            flatten("pattern-not", exception)?
+        ));
+    }
+    contents.push_str(&format!("action: {}\n", spec.action.as_str()));
+    contents.push_str(&format!("scan: {}\n", rule_scan_field(spec.scan)));
+    contents.push_str("---\n\n");
+    contents.push_str(&format!("# {name}\n\n{description}\n"));
+    Ok(contents)
+}
+
+/// Write one rule into `root`, refusing to clobber an existing file.
+///
+/// Two safety properties, both enforced before the write: the name never reaches
+/// the filesystem unchecked, and the rendered text must parse *and compile* back
+/// into the rule that was asked for.
+pub fn save_rule_into_root(root: &Path, spec: &NewRuleSpec) -> Result<PathBuf, String> {
+    let name = validate_rule_name(&spec.name)?;
+    let contents = render_rule_contents(spec)?;
+
+    let parsed = parse_rule(&name, &contents, RuleOrigin::Global)?;
+    compile_rule(parsed.clone())
+        .map_err(|error| format!("Refusing to write a rule that cannot compile: {error}"))?;
+    if parsed.pattern != spec.pattern.trim() {
+        return Err(
+            "Refusing to write a rule whose pattern does not survive the frontmatter round-trip."
+                .to_string(),
+        );
+    }
+    if parsed.action != spec.action || parsed.event != spec.event || parsed.scan != spec.scan {
+        return Err(
+            "Refusing to write a rule whose action, event or scan does not survive the frontmatter round-trip."
+                .to_string(),
+        );
+    }
+
+    std::fs::create_dir_all(root).map_err(|error| error.to_string())?;
+    let path = root.join(format!("{name}.md"));
+    if path.exists() {
+        return Err(format!(
+            "A rule named '{name}' already exists. Edit that file instead of overwriting it from a suggestion."
+        ));
+    }
+    std::fs::write(&path, contents).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+/// Save a guardrail rule the user approved (P9 learning loop).
+///
+/// Rules are matched on reads too (`pre_read`): the findings this loop learns
+/// from are read-time observations, so a rule about a dead column has to fire on
+/// the SELECT that filters it, not only on a write.
+#[tauri::command]
+pub fn save_agent_rule(
+    name: String,
+    description: String,
+    event: Option<String>,
+    action: Option<String>,
+    pattern: String,
+    pattern_not: Option<String>,
+    scan: Option<String>,
+) -> Result<String, String> {
+    let spec = NewRuleSpec {
+        name,
+        description,
+        enabled: true,
+        // Tolerant parsing, the same contract the loader uses: an unknown value
+        // lands on the weakest setting that still surfaces the problem rather
+        // than on silence.
+        event: RuleEvent::parse(event.as_deref().unwrap_or("any")),
+        action: RuleAction::parse(action.as_deref().unwrap_or("warn")),
+        pattern,
+        pattern_not: pattern_not
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        scan: RuleScan::parse(scan.as_deref().unwrap_or("skeleton")),
+    };
+    let root = global_rules_root()?;
+    let path = save_rule_into_root(&root, &spec)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Install/refresh the built-in guardrail pack. Safe on every startup: once
 /// installed it is a handful of `stat` calls.
 pub fn seed_builtin_rules(force: bool) -> Result<RuleSeedReport, String> {
@@ -1571,5 +1745,72 @@ mod tests {
                 "{file_name} must be recorded in the manifest"
             );
         }
+    }
+    #[test]
+    fn saved_rule_round_trips_through_the_loader() {
+        let root = std::env::temp_dir().join(format!("tabler-rule-save-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let spec = NewRuleSpec {
+            name: "dead-column-users-deleted-at".to_string(),
+            description: "users.deleted_at is never populated: review SQL that filters on it."
+                .to_string(),
+            enabled: true,
+            event: RuleEvent::PreRead,
+            action: RuleAction::Warn,
+            pattern: r"(?i)\bdeleted_at\b".to_string(),
+            pattern_not: None,
+            scan: RuleScan::Skeleton,
+        };
+
+        let path = save_rule_into_root(&root, &spec).expect("rule saved");
+        let contents = std::fs::read_to_string(&path).expect("rule file readable");
+        let parsed = parse_rule(&spec.name, &contents, RuleOrigin::Global).expect("rule parses");
+        assert_eq!(parsed.event, RuleEvent::PreRead);
+        assert_eq!(parsed.action, RuleAction::Warn);
+        assert_eq!(parsed.scan, RuleScan::Skeleton);
+        assert_eq!(parsed.pattern, spec.pattern);
+        assert!(parsed.enabled);
+        compile_rule(parsed).expect("rule compiles");
+
+        // A second save must not clobber a file the user may have edited.
+        let again = save_rule_into_root(&root, &spec).expect_err("must refuse to overwrite");
+        assert!(again.contains("already exists"), "got: {again}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_rule_that_cannot_compile_never_reaches_the_disk() {
+        let root = std::env::temp_dir().join(format!("tabler-rule-broken-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let spec = NewRuleSpec {
+            name: "broken-pattern".to_string(),
+            description: "An invalid regex must be refused before anything is written.".to_string(),
+            enabled: true,
+            event: RuleEvent::Any,
+            action: RuleAction::Warn,
+            pattern: "(unclosed".to_string(),
+            pattern_not: None,
+            scan: RuleScan::Skeleton,
+        };
+
+        let error = save_rule_into_root(&root, &spec).expect_err("invalid regex is rejected");
+        assert!(error.contains("cannot compile"), "got: {error}");
+        assert!(
+            !root.exists(),
+            "a refused rule must not leave a directory behind"
+        );
+    }
+
+    #[test]
+    fn rule_names_are_slugs_so_a_name_cannot_escape_the_rules_dir() {
+        assert!(validate_rule_name("../escape").is_err());
+        assert!(validate_rule_name("Upper").is_err());
+        assert!(validate_rule_name("a/b").is_err());
+        assert!(validate_rule_name("").is_err());
+        assert_eq!(
+            validate_rule_name(" ok-name_1 ").expect("slug"),
+            "ok-name_1"
+        );
     }
 }

@@ -1,6 +1,17 @@
 import type { AIWorkspaceCopy } from "./types";
 
 export const EN_COPY: AIWorkspaceCopy = {
+  learnings: {
+    title: "What this run could teach",
+    saveMemory: "Save as memory",
+    saveRule: "Create rule",
+    saveSkill: "Save as skill",
+    saving: "Saving",
+    saved: "Saved",
+    failed: "Could not save",
+    dismiss: "Dismiss",
+    clearAll: "Clear all",
+  },
   insights: {
     title: "Findings from this run",
     confidence: "confidence",

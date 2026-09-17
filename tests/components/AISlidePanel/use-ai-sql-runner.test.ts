@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestAISqlConfirmationMock = vi.fn();
 const invokeWithTimeoutMock = vi.fn();
+const invokeMutationMock = vi.fn();
 vi.mock("@/utils/tauri-utils", () => ({
   invokeWithTimeout: (...args: unknown[]) => invokeWithTimeoutMock(...args),
+  invokeMutation: (...args: unknown[]) => invokeMutationMock(...args),
 }));
 vi.mock("@/components/AISlidePanel/ai-sql-confirm", () => ({
   requestAISqlConfirmation: (...args: unknown[]) => requestAISqlConfirmationMock(...args),
@@ -33,9 +35,43 @@ function setupRunner() {
   return { result, executeSandboxQuery, setError };
 }
 
+/** The rules engine's answer, shaped exactly as `agent_rules.rs` serialises it. */
+function ruleEvaluation(
+  action: "warn" | "require_approval" | "block" = "warn",
+  overrides: { message?: string; matched?: Array<{ name: string; description: string }> } = {},
+) {
+  const decision = action === "warn" ? "allow" : action;
+  const matched = (
+    overrides.matched ??
+    (action === "warn" ? [] : [{ name: "probe-rule", description: "probe rule" }])
+  ).map((rule) => ({ ...rule, action, origin: "builtin" }));
+  return {
+    verdict: {
+      decision,
+      action,
+      event: "write",
+      message: overrides.message ?? (action === "warn" ? "" : "[probe-rule] probe rule"),
+      matched_rules: matched,
+    },
+    report: { loaded: 0, skipped: 0, errors: [] },
+  };
+}
+
+/**
+ * The guardrail engine must be answered explicitly: an unmocked `invoke` rejects,
+ * and a *failed* evaluation of a write deliberately escalates to
+ * `require_approval`, so every write here would ask for a dialog the test never
+ * approves. "Allow" is therefore the default, and each rule test overrides it.
+ */
+function resetRuleEngine() {
+  invokeMutationMock.mockReset();
+  invokeMutationMock.mockResolvedValue(ruleEvaluation("warn"));
+}
+
 describe("useAISqlRunner Safe Mode pre-approval", () => {
   beforeEach(() => {
     requestAISqlConfirmationMock.mockReset();
+    resetRuleEngine();
     invokeWithTimeoutMock.mockReset();
     invokeWithTimeoutMock.mockResolvedValue({ fileName: "ck.sql", tables: 2, rows: 5 });
     useConnectionStore.setState({ currentDatabase: "app" });
@@ -52,12 +88,9 @@ describe("useAISqlRunner Safe Mode pre-approval", () => {
       await result.current.runSql("SELECT * FROM users");
     });
     expect(requestAISqlConfirmationMock).not.toHaveBeenCalled();
-    expect(executeSandboxQuery).toHaveBeenCalledWith(
-      "conn-1",
-      ["SELECT * FROM users"],
-      undefined,
-      { preApproved: false },
-    );
+    expect(executeSandboxQuery).toHaveBeenCalledWith("conn-1", ["SELECT * FROM users"], undefined, {
+      preApproved: false,
+    });
   });
 
   it("claims pre-approval after the review dialog approves a mutation", async () => {
@@ -109,6 +142,7 @@ describe("useAISqlRunner Safe Mode pre-approval", () => {
 describe("useAISqlRunner auto-checkpoint safety net", () => {
   beforeEach(() => {
     requestAISqlConfirmationMock.mockReset();
+    resetRuleEngine();
     invokeWithTimeoutMock.mockReset();
     invokeWithTimeoutMock.mockResolvedValue({ fileName: "ck.sql", tables: 2, rows: 5 });
     useConnectionStore.setState({
@@ -142,5 +176,82 @@ describe("useAISqlRunner auto-checkpoint safety net", () => {
       await result.current.runSql("SELECT * FROM users", { agentAutonomy: "full" });
     });
     expect(invokeWithTimeoutMock).not.toHaveBeenCalled();
+  });
+
+  describe("useAISqlRunner guardrail rules", () => {
+    beforeEach(() => {
+      requestAISqlConfirmationMock.mockReset();
+      resetRuleEngine();
+      invokeWithTimeoutMock.mockReset();
+      invokeWithTimeoutMock.mockResolvedValue({ fileName: "ck.sql", tables: 2, rows: 5 });
+      useConnectionStore.setState({
+        connections: [{ id: "conn-1", db_type: "mssql" }] as never,
+        currentDatabase: "app",
+      });
+    });
+
+    it("refuses a run a `block` rule objected to, without executing anything", async () => {
+      invokeMutationMock.mockResolvedValue(
+        ruleEvaluation("block", { message: "[no-delete-without-where] DELETE has no WHERE." }),
+      );
+      const { result, executeSandboxQuery, setError } = setupRunner();
+
+      await act(async () => {
+        await expect(result.current.runSql("DELETE FROM users")).rejects.toThrow(
+          /Blocked by a guardrail rule/,
+        );
+      });
+
+      expect(executeSandboxQuery).not.toHaveBeenCalled();
+      // A block is not a dialog: asking the user to approve past it would make the
+      // rule advisory, which is not what `block` means.
+      expect(requestAISqlConfirmationMock).not.toHaveBeenCalled();
+      expect(setError).toHaveBeenCalledWith(expect.stringContaining("no-delete-without-where"));
+    });
+
+    it("forces the dialog for a `require_approval` rule even under full autonomy", async () => {
+      invokeMutationMock.mockResolvedValue(ruleEvaluation("require_approval"));
+      requestAISqlConfirmationMock.mockResolvedValue(true);
+      const { result, executeSandboxQuery } = setupRunner();
+
+      await act(async () => {
+        await result.current.runSql("DROP TABLE audit_log", { agentAutonomy: "full" });
+      });
+
+      // Full autonomy pre-approves autonomy in general, not the specific statement
+      // a rule was written to catch — so the human is still asked.
+      expect(requestAISqlConfirmationMock).toHaveBeenCalledTimes(1);
+      expect(executeSandboxQuery).toHaveBeenCalledTimes(1);
+    });
+
+    it("honours a denial of the rule-forced dialog", async () => {
+      invokeMutationMock.mockResolvedValue(ruleEvaluation("require_approval"));
+      requestAISqlConfirmationMock.mockResolvedValue(false);
+      const { result, executeSandboxQuery } = setupRunner();
+
+      await act(async () => {
+        await expect(
+          result.current.runSql("DROP TABLE audit_log", { agentAutonomy: "full" }),
+        ).rejects.toThrow("Execution cancelled.");
+      });
+
+      expect(executeSandboxQuery).not.toHaveBeenCalled();
+    });
+
+    it("does not force a dialog for a `warn`-only run", async () => {
+      invokeMutationMock.mockResolvedValue(
+        ruleEvaluation("warn", {
+          matched: [{ name: "no-lock-hints-on-write", description: "lock hint on a write" }],
+        }),
+      );
+      const { result, executeSandboxQuery } = setupRunner();
+
+      await act(async () => {
+        await result.current.runSql("SELECT * FROM users", { agentAutonomy: "full" });
+      });
+
+      expect(requestAISqlConfirmationMock).not.toHaveBeenCalled();
+      expect(executeSandboxQuery).toHaveBeenCalledTimes(1);
+    });
   });
 });

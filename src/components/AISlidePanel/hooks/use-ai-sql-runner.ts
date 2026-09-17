@@ -10,6 +10,13 @@ import {
   normalizeStatementForGuard,
 } from "../../SQLEditor/SQLEditorUtils";
 import { classifyAgentRun } from "../ai-execution-policy";
+import {
+  evaluateRunAgainstRules,
+  formatRuleBlockMessage,
+  isRunBlockedByRules,
+  rulesRequireApproval,
+} from "../ai-agent-rules";
+import { invokeMutation } from "../../../utils/tauri-utils";
 import { requestAISqlConfirmation } from "../ai-sql-confirm";
 import { summarizeRunResult } from "../ai-sql-response";
 import type { AIWorkspaceAgentAutonomy } from "../ai-workspace-types";
@@ -59,164 +66,221 @@ export function useAISqlRunner({
 }: UseAISqlRunnerOptions) {
   const [isRunning, setIsRunning] = useState(false);
 
-  const runSql = useCallback(async (sql: string, runOptions?: AIRunSqlOptions): Promise<AIExecutedSqlResult> => {
-    if (!connectionId) {
-      const message = "Please connect to a database before running SQL from AI.";
-      setError(message);
-      throw new Error(message);
-    }
-
-    let sqlToExecute = sql.trim();
-    if (!sqlToExecute) {
-      const message = "There is no SQL to run for this bubble.";
-      setError(message);
-      throw new Error(message);
-    }
-
-    let targetDatabaseFromUse: string | null = null;
-    const leadingUseDirective = extractLeadingUseDirective(sqlToExecute);
-    if (leadingUseDirective) {
-      if ("error" in leadingUseDirective) {
-        setError(leadingUseDirective.error);
-        throw new Error(leadingUseDirective.error);
-      }
-      targetDatabaseFromUse = leadingUseDirective.database;
-      sqlToExecute = leadingUseDirective.remainingSql;
-    }
-
-    const statements = splitSqlStatements(sqlToExecute);
-    if (statements.length === 0) {
-      if (targetDatabaseFromUse) {
-        const activeDatabase = useConnectionStore.getState().currentDatabase;
-        if (activeDatabase !== targetDatabaseFromUse) {
-          await switchDatabase(connectionId, targetDatabaseFromUse);
-        }
-        const message = `Active database is now ${targetDatabaseFromUse}. Add a statement after USE if you want the AI bubble to run something.`;
+  const runSql = useCallback(
+    async (sql: string, runOptions?: AIRunSqlOptions): Promise<AIExecutedSqlResult> => {
+      if (!connectionId) {
+        const message = "Please connect to a database before running SQL from AI.";
         setError(message);
         throw new Error(message);
       }
-      const message = "The SQL bubble did not contain any executable statements.";
-      setError(message);
-      throw new Error(message);
-    }
 
-    if (statements.some(isSessionSwitchStatement)) {
-      const message = "Sandbox execution does not allow USE, ATTACH, or search_path statements in the same run. Choose the database from the app UI first.";
-      setError(message);
-      throw new Error(message);
-    }
-
-    const {
-      requirement: confirmationRequirement,
-      needsDialog,
-      willMutate: hasMutatingStatements,
-      preApproved,
-    } = classifyAgentRun(statements, runOptions?.agentAutonomy);
-    setIsRunning(true);
-    setError(null);
-
-    try {
-      const activeDatabase = useConnectionStore.getState().currentDatabase;
-      if (targetDatabaseFromUse && activeDatabase !== targetDatabaseFromUse) {
-        await switchDatabase(connectionId, targetDatabaseFromUse);
+      let sqlToExecute = sql.trim();
+      if (!sqlToExecute) {
+        const message = "There is no SQL to run for this bubble.";
+        setError(message);
+        throw new Error(message);
       }
 
-      // No dialog for read-only-classified runs or under the standing
-      // "full autonomy" grant; otherwise the review dialog gates the run.
-      const confirmed =
-        !needsDialog || (await requestAISqlConfirmation(confirmationRequirement, statements));
-      if (!confirmed) throw new Error("Execution cancelled.");
+      let targetDatabaseFromUse: string | null = null;
+      const leadingUseDirective = extractLeadingUseDirective(sqlToExecute);
+      if (leadingUseDirective) {
+        if ("error" in leadingUseDirective) {
+          setError(leadingUseDirective.error);
+          throw new Error(leadingUseDirective.error);
+        }
+        targetDatabaseFromUse = leadingUseDirective.database;
+        sqlToExecute = leadingUseDirective.remainingSql;
+      }
 
-      // Safety net #1: before any agent-driven write, snapshot the database
-      // into a local checkpoint (awaited — it must capture the PRE-write
-      // state). Best effort: a failed snapshot never blocks the run.
-      let autoCheckpointReady = false;
-      if (hasMutatingStatements) {
-        try {
-          const storeState = useConnectionStore.getState();
-          const dbType = storeState.connections.find(
-            (connection) => connection.id === connectionId,
-          )?.db_type;
-          if (dbType) {
-            const { invokeWithTimeout } = await import("../../../utils/tauri-utils");
-            const ckLanguage = runOptions?.language ?? "en";
-            emitAppToast({
-              tone: "info",
-              title: ckLanguage === "vi" ? "Đang tạo điểm khôi phục…" : "Creating safety checkpoint…",
-              description: ckLanguage === "vi" ? "Snapshot database trước khi agent ghi dữ liệu." : "Snapshotting the database before the agent writes.",
-              durationMs: 4000,
-            });
-            // Bounded: a whole-database dump must never freeze the run silently.
-            await invokeWithTimeout<CheckpointResult>("create_database_checkpoint", {
-              connectionId,
-              database: storeState.currentDatabase || null,
-              dbType,
-              label: AUTO_CHECKPOINT_LABEL,
-            }, 60_000, "Safety checkpoint");
-            autoCheckpointReady = true;
+      const statements = splitSqlStatements(sqlToExecute);
+      if (statements.length === 0) {
+        if (targetDatabaseFromUse) {
+          const activeDatabase = useConnectionStore.getState().currentDatabase;
+          if (activeDatabase !== targetDatabaseFromUse) {
+            await switchDatabase(connectionId, targetDatabaseFromUse);
           }
-        } catch {
+          const message = `Active database is now ${targetDatabaseFromUse}. Add a statement after USE if you want the AI bubble to run something.`;
+          setError(message);
+          throw new Error(message);
+        }
+        const message = "The SQL bubble did not contain any executable statements.";
+        setError(message);
+        throw new Error(message);
+      }
+
+      if (statements.some(isSessionSwitchStatement)) {
+        const message =
+          "Sandbox execution does not allow USE, ATTACH, or search_path statements in the same run. Choose the database from the app UI first.";
+        setError(message);
+        throw new Error(message);
+      }
+
+      const {
+        requirement: confirmationRequirement,
+        needsDialog,
+        willMutate: hasMutatingStatements,
+        preApproved,
+      } = classifyAgentRun(statements, runOptions?.agentAutonomy);
+      setIsRunning(true);
+      setError(null);
+
+      try {
+        const activeDatabase = useConnectionStore.getState().currentDatabase;
+        if (targetDatabaseFromUse && activeDatabase !== targetDatabaseFromUse) {
+          await switchDatabase(connectionId, targetDatabaseFromUse);
+        }
+
+        // Guardrail rules (P6.1) get a say at the run level, not only inside the
+        // `preview_write` tool. Without this the shipped `block` and
+        // `require_approval` rules would read as protection in the rules manager
+        // while doing nothing — a discarded verdict is worse than no verdict.
+        const ruleVerdict = await evaluateRunAgainstRules(statements, {
+          isMutating: hasMutatingStatements,
+          invoke: (command, args) => invokeMutation(command, args ?? {}),
+        });
+        if (isRunBlockedByRules(ruleVerdict)) {
+          const blocked = `Blocked by a guardrail rule. ${formatRuleBlockMessage(ruleVerdict)}`;
+          setError(blocked);
+          throw new Error(blocked);
+        }
+        // A `require_approval` rule forces the dialog even under the standing "full
+        // autonomy" grant: that grant pre-approves autonomy in general, not the
+        // specific statement a rule was written to catch.
+        const rulesNeedDialog = rulesRequireApproval(ruleVerdict);
+        const dialogRequired = needsDialog || rulesNeedDialog;
+
+        // No dialog for read-only-classified runs or under the standing
+        // "full autonomy" grant; otherwise the review dialog gates the run. A rule
+        // that demands approval rides the same dialog, so there is exactly one
+        // approval surface rather than two competing ones.
+        const confirmed =
+          !dialogRequired ||
+          (await requestAISqlConfirmation(
+            confirmationRequirement ?? (rulesNeedDialog ? "mutation" : null),
+            statements,
+          ));
+        if (!confirmed) throw new Error("Execution cancelled.");
+
+        // Safety net #1: before any agent-driven write, snapshot the database
+        // into a local checkpoint (awaited — it must capture the PRE-write
+        // state). Best effort: a failed snapshot never blocks the run.
+        let autoCheckpointReady = false;
+        if (hasMutatingStatements) {
+          try {
+            const storeState = useConnectionStore.getState();
+            const dbType = storeState.connections.find(
+              (connection) => connection.id === connectionId,
+            )?.db_type;
+            if (dbType) {
+              const { invokeWithTimeout } = await import("../../../utils/tauri-utils");
+              const ckLanguage = runOptions?.language ?? "en";
+              emitAppToast({
+                tone: "info",
+                title:
+                  ckLanguage === "vi" ? "Đang tạo điểm khôi phục…" : "Creating safety checkpoint…",
+                description:
+                  ckLanguage === "vi"
+                    ? "Snapshot database trước khi agent ghi dữ liệu."
+                    : "Snapshotting the database before the agent writes.",
+                durationMs: 4000,
+              });
+              // Bounded: a whole-database dump must never freeze the run silently.
+              await invokeWithTimeout<CheckpointResult>(
+                "create_database_checkpoint",
+                {
+                  connectionId,
+                  database: storeState.currentDatabase || null,
+                  dbType,
+                  label: AUTO_CHECKPOINT_LABEL,
+                },
+                60_000,
+                "Safety checkpoint",
+              );
+              autoCheckpointReady = true;
+            }
+          } catch {
+            const language = runOptions?.language ?? "en";
+            emitAppToast({
+              tone: "error",
+              title: language === "vi" ? "Checkpoint tự động thất bại" : "Auto checkpoint failed",
+              description:
+                language === "vi"
+                  ? "Tiếp tục chạy, nhưng /rollback sẽ không có mốc mới. Có thể tạo tay bằng /backup."
+                  : "Continuing, but /rollback will have no new point. Create one manually with /backup.",
+              durationMs: 8_000,
+            });
+          }
+        }
+
+        const queryResult = await executeSandboxQuery(connectionId, statements, undefined, {
+          preApproved,
+        });
+        if (hasMutatingStatements) {
+          const invalidateStructure = statements.some((statement) => {
+            const normalized = normalizeStatementForGuard(statement);
+            return ["CREATE ", "ALTER ", "DROP ", "TRUNCATE ", "RENAME "].some((prefix) =>
+              normalized.startsWith(prefix),
+            );
+          });
+          window.dispatchEvent(
+            new CustomEvent("table-data-updated", {
+              detail: {
+                connectionId,
+                database: useConnectionStore.getState().currentDatabase || undefined,
+                invalidateStructure,
+              },
+            }),
+          );
+        }
+
+        if (queryResult.execution_time_ms >= 0) {
+          const activityLabel =
+            queryResult.rows.length > 0
+              ? "Query"
+              : queryResult.affected_rows > 0
+                ? queryResult.sandboxed
+                  ? "Sandbox"
+                  : "Write"
+                : "Run";
+          window.dispatchEvent(
+            new CustomEvent("workspace-activity", {
+              detail: {
+                connectionId,
+                label: activityLabel,
+                durationMs: queryResult.execution_time_ms,
+              },
+            }),
+          );
+        }
+
+        // Safety net #3: surface the rollback path when a write touched a lot
+        // of rows. The agent never rolls back on its own — /rollback is the
+        // user's call and restores the pre-run snapshot.
+        if (
+          hasMutatingStatements &&
+          autoCheckpointReady &&
+          queryResult.affected_rows >= ROLLBACK_HINT_THRESHOLD
+        ) {
           const language = runOptions?.language ?? "en";
           emitAppToast({
-            tone: "error",
-            title: language === "vi" ? "Checkpoint tự động thất bại" : "Auto checkpoint failed",
-            description:
-              language === "vi"
-                ? "Tiếp tục chạy, nhưng /rollback sẽ không có mốc mới. Có thể tạo tay bằng /backup."
-                : "Continuing, but /rollback will have no new point. Create one manually with /backup.",
-            durationMs: 8_000,
+            tone: "info",
+            title: writeHintTitle(queryResult.affected_rows, language),
+            description: writeHintBody(language),
+            durationMs: 12_000,
           });
         }
-      }
 
-      const queryResult = await executeSandboxQuery(connectionId, statements, undefined, { preApproved });
-      if (hasMutatingStatements) {
-        const invalidateStructure = statements.some((statement) => {
-          const normalized = normalizeStatementForGuard(statement);
-          return ["CREATE ", "ALTER ", "DROP ", "TRUNCATE ", "RENAME "].some((prefix) => normalized.startsWith(prefix));
-        });
-        window.dispatchEvent(new CustomEvent("table-data-updated", {
-          detail: {
-            connectionId,
-            database: useConnectionStore.getState().currentDatabase || undefined,
-            invalidateStructure,
-          },
-        }));
+        return { queryResult, summary: summarizeRunResult(queryResult) };
+      } catch (errorValue) {
+        const message = formatExecutionError(errorValue);
+        setError(message);
+        throw new Error(message);
+      } finally {
+        setIsRunning(false);
       }
-
-      if (queryResult.execution_time_ms >= 0) {
-        const activityLabel = queryResult.rows.length > 0
-          ? "Query"
-          : queryResult.affected_rows > 0
-            ? queryResult.sandboxed ? "Sandbox" : "Write"
-            : "Run";
-        window.dispatchEvent(new CustomEvent("workspace-activity", {
-          detail: { connectionId, label: activityLabel, durationMs: queryResult.execution_time_ms },
-        }));
-      }
-
-      // Safety net #3: surface the rollback path when a write touched a lot
-      // of rows. The agent never rolls back on its own — /rollback is the
-      // user's call and restores the pre-run snapshot.
-      if (hasMutatingStatements && autoCheckpointReady && queryResult.affected_rows >= ROLLBACK_HINT_THRESHOLD) {
-        const language = runOptions?.language ?? "en";
-        emitAppToast({
-          tone: "info",
-          title: writeHintTitle(queryResult.affected_rows, language),
-          description: writeHintBody(language),
-          durationMs: 12_000,
-        });
-      }
-
-      return { queryResult, summary: summarizeRunResult(queryResult) };
-    } catch (errorValue) {
-      const message = formatExecutionError(errorValue);
-      setError(message);
-      throw new Error(message);
-    } finally {
-      setIsRunning(false);
-    }
-  }, [connectionId, executeSandboxQuery, setError, switchDatabase]);
+    },
+    [connectionId, executeSandboxQuery, setError, switchDatabase],
+  );
 
   return { isRunning, runSql };
 }

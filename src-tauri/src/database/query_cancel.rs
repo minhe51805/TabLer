@@ -153,11 +153,14 @@ mod tests {
         }
         assert!(write_registry(&lock).is_empty());
 
-        let result = (|| -> Result<(), &'static str> {
+        // A block, not a closure: the guard must drop - and so deregister -
+        // before the assertions below read the registry. Inlining the statements
+        // into the function body would keep the guard alive across them.
+        let result: Result<(), &'static str> = {
             let guard = CancelScopeGuard::begin(&lock, "req-err");
             let _ = guard.register_backend(12);
             Err("boom")
-        })();
+        };
         assert!(result.is_err());
         assert!(write_registry(&lock).is_empty());
     }

@@ -30,6 +30,7 @@
     "dev:debug": "node scripts/dev-with-debug-port.mjs",
     "test:performance": "vitest run tests/performance/v016-performance.test.ts",
     "check:secrets": "node scripts/check-secret-leaks.mjs",
+    "check:agent-skills": "node scripts/validate-agent-skills.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint:fix": "eslint src tests --fix --max-warnings=0",

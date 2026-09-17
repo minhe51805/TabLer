@@ -857,7 +857,7 @@ mod tests {
             created_at: 1_700_000_000_000,
         };
         storage
-            .save_ai_attachments(&[record.clone()])
+            .save_ai_attachments(std::slice::from_ref(&record))
             .await
             .expect("save should succeed");
         // INSERT OR IGNORE: a duplicate save must not fail or duplicate.

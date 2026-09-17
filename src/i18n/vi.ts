@@ -395,6 +395,32 @@ export const vi: Record<keyof typeof en, string> = {
   "schedules.edit": "Sửa",
   "schedules.delete": "Xóa",
   "schedules.new": "Tạo lịch mới",
+  "schedules.kind": "Loại lịch",
+  "schedules.kindLocked": "Loại được cố định sau khi lưu — hãy xóa và tạo lại lịch nếu muốn đổi.",
+  "schedules.kindSql": "Truy vấn SQL",
+  "schedules.kindAgent": "Tác vụ agent (chỉ đọc)",
+  "schedules.tagSql": "SQL",
+  "schedules.tagAgent": "Agent",
+  "schedules.agentPrompt": "Nhiệm vụ cho agent",
+  "schedules.agentPromptPlaceholder":
+    "Ví dụ: Kiểm tra các đơn hàng bị kẹt ở trạng thái “pending” hơn 24 giờ và báo cáo những tài khoản khách hàng bị ảnh hưởng.",
+  "schedules.agentReadOnlyHint":
+    "Chạy tự động khi ứng dụng đang mở, chỉ đọc: agent có thể đọc dữ liệu và ghi lại phát hiện, nhưng không bao giờ thay đổi dữ liệu hay đặt câu hỏi. Kết quả xuất hiện trong phần phát hiện của bảng AI.",
+  "schedules.agentRunning": "Đang chạy (chỉ đọc).",
+  "schedules.agentWaiting": "Đang chờ chạy",
+  "schedules.agentWaitConnection":
+    "sẽ bắt đầu khi kết nối của tác vụ này là kết nối đang hoạt động.",
+  "schedules.agentWaitDatabase": "sẽ bắt đầu khi cơ sở dữ liệu của tác vụ này được mở.",
+  "schedules.agentWaitBusy": "sẽ bắt đầu khi yêu cầu AI hiện tại hoàn tất.",
+  "schedules.agentDispatchedStatus":
+    "Đã gửi — chưa có kết quả báo về (ứng dụng có thể đã đóng hoặc đang bận).",
+  "schedules.agentDispatched": "Tác vụ agent theo lịch đã bắt đầu: {{name}}",
+  "schedules.agentDispatchedHint":
+    "Tác vụ chạy ở chế độ chỉ đọc ngay khi không gian làm việc rảnh.",
+  "schedules.agentEmptyTask":
+    "Đã bỏ qua tác vụ agent theo lịch: {{name}} không có nội dung nhiệm vụ",
+  "schedules.agentNeedsHuman":
+    "Cần bạn: tác vụ bị từ chối một việc chỉ con người được làm, nên nó đã ghi lại những gì tìm thấy và dừng ở đó.",
   "querybuilder.aggregates": "Tổng hợp / GROUP BY",
   "querybuilder.allRows": "tất cả dòng",
   "querybuilder.alias": "Bí danh (tùy chọn)",

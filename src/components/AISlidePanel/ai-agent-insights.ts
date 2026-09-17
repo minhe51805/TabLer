@@ -20,12 +20,11 @@
  * justification — it costs zero extra model calls.
  */
 /**
- * `readStepFacts` and `type AgentTraceStep` are deliberately NOT imported yet:
- * the run-end pass that consumes them needs the executed SQL on the trace step,
- * and `AgentTraceStep` does not carry it today (see the note in the collector
- * section below). Import them when that field lands.
+ * The collector consumes `readStepFacts` / `AgentTraceStep`: an insight may only
+ * cite a statement the trace recorded, so the evidence lives on the step facts
+ * (`AgentStepEvidence`) rather than being reconstructed here.
  */
-import { type AgentColumnStats } from "./ai-agent-context";
+import { readStepFacts, type AgentColumnStats, type AgentTraceStep } from "./ai-agent-context";
 
 /** Finding families this engine can prove. Adding one means adding a detector. */
 export type InsightKind = "high-null-column" | "soft-delete-candidate" | "constant-column";
@@ -278,28 +277,92 @@ export const INSIGHT_DETECTORS: readonly InsightDetector[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Run-end collector — NOT IMPLEMENTED YET, and why
+// Run-end collector
 // ---------------------------------------------------------------------------
 //
-// `collectRunEndInsights(steps)` cannot be written correctly today. Every insight
-// must carry `evidence.executedSql`, and **nothing in the codebase records the
-// statement a trace step ran**: `AgentTraceStep` is
-// `{ step, action, message, observation, facts? }`, and the facts footer carries
-// row counts, tables and column stats but no SQL.
+// A pure loop over the trace: no model callback, no I/O, so an insight costs
+// zero extra model calls. This is the pass's entire justification.
 //
-// Deriving the SQL from `message` or `observation` would be fabrication, and it
-// would defeat the one rule that makes this engine trustworthy — "an insight with
-// no executed query behind it is dropped".
+// A card is emitted only from evidence — the statement a step ran and the rows
+// that statement saw (`insightEvidence` on the facts footer). A step with
+// column stats but no executed statement is skipped rather than dressed up: the
+// one rule that makes the engine trustworthy is that every card traces back to
+// a query, and it is enforced here rather than asked of the model.
 //
-// The concrete prerequisite is therefore one optional field, set where a
-// `run_readonly_sql` / `sample_table_data` step is appended to the trace:
-//
-//     executedSql?: string;
-//
-// With it, the collector is a pure loop that stays synchronous and model-free
-// (its entire cost justification): for each step, `readStepFacts(step)`, run each
-// detector over its `columnStats`, dedupe by `id`, sort by `confidence` and take
-// `INSIGHT_MAX_PER_RUN`.
+// Which steps can fund a card is a deliberate consequence of that rule:
+// `run_readonly_sql` / `run_parameterized_sql` record the SQL they were handed,
+// and `sample_table_data` records evidence only when it ran the whole-table
+// aggregate. The sample path itself is driver-side pagination with no SQL text
+// in the frontend, so it reports no evidence and funds nothing.
+
+/**
+ * Collect the findings a finished run has proven, strongest first.
+ *
+ * Synchronous and pure by construction: it reads the trace it is given and
+ * returns cards. Detectors decide what is provable; this pass enforces only the
+ * shared policy — evidence required, the confidence bar, one card per
+ * `(kind, table, column)`, and a hard per-run cap.
+ */
+export function collectRunEndInsights(steps: readonly AgentTraceStep[]): AgentInsight[] {
+  const byId = new Map<string, AgentInsight>();
+  for (const step of steps) {
+    const facts = readStepFacts(step);
+    const evidence = facts?.insightEvidence;
+    if (!facts || !evidence) continue;
+    // Too few rows and the numbers do not support a conclusion, however
+    // saturated they look (the same floor the graders use).
+    if (!Number.isFinite(evidence.rowCount) || evidence.rowCount < MIN_ROWS_FOR_EVIDENCE) continue;
+    const table = facts.tables?.find((name) => typeof name === "string" && name.trim())?.trim();
+    if (!table) continue;
+    const source: InsightSource = {
+      table,
+      executedSql: evidence.executedSql,
+      rowCount: evidence.rowCount,
+    };
+    for (const stats of facts.columnStats ?? []) {
+      for (const detector of INSIGHT_DETECTORS) {
+        const insight = detector(source, stats);
+        if (!insight || insight.confidence < INSIGHT_MIN_CONFIDENCE) continue;
+        const previous = byId.get(insight.id);
+        // The same finding proven twice in one run: keep the stronger proof.
+        if (!previous || insight.confidence > previous.confidence) byId.set(insight.id, insight);
+      }
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => b.confidence - a.confidence || a.id.localeCompare(b.id))
+    .slice(0, INSIGHT_MAX_PER_RUN);
+}
+
+/**
+ * Fold a run's findings into what is already stored: one card per key, nothing
+ * resurfacing inside the cooldown window, newest first, bounded in size.
+ *
+ * The caller supplies `keyOf` because an insight id is only unique *within the
+ * database it was proved on* — two databases both having a `users.deleted_at`
+ * is normal, and they are two different findings.
+ *
+ * The cooldown is what keeps a recurring check from nagging about the same
+ * column on every run — a finding the user has seen is not news again tomorrow.
+ * Fresher evidence replaces the card once the window has lapsed.
+ */
+export function mergeInsightCards<T extends AgentInsight>(
+  stored: readonly T[],
+  incoming: readonly T[],
+  options: { now: number; keyOf: (insight: T) => string },
+): T[] {
+  const { now, keyOf } = options;
+  const byKey = new Map(stored.map((insight) => [keyOf(insight), insight]));
+  for (const insight of incoming) {
+    const key = keyOf(insight);
+    const existing = byKey.get(key);
+    if (existing && now - (existing.seenAt ?? 0) < INSIGHT_COOLDOWN_MILLIS) continue;
+    byKey.set(key, { ...insight, seenAt: now });
+  }
+  return [...byKey.values()]
+    .sort((a, b) => (b.seenAt ?? 0) - (a.seenAt ?? 0) || b.confidence - a.confidence)
+    .slice(0, INSIGHT_MAX_STORED);
+}
 
 /**
  * Grade a soft-delete candidate: the name has to match the convention *and* the

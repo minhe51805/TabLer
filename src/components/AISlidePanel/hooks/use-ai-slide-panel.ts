@@ -32,7 +32,7 @@ import {
   type AIWorkspaceInteractionMode,
 } from "../ai-workspace-types";
 import { evaluateRunAgainstRules } from "../ai-agent-rules";
-import { type AIAgentFinishAction } from "../ai-agent-tools";
+import { type AIAgentFinishAction, type AIAgentToolName } from "../ai-agent-tools";
 import {
   buildAgentControllerPrompt,
   buildAgentPlanPrompt,
@@ -53,6 +53,8 @@ import { runAIAgentToolLoop, type AIAgentActionRequestReason } from "../ai-agent
 import { getAgentMemoryIndex } from "./use-agent-memory";
 import { emitAppToast } from "../../../utils/app-toast";
 import { useUIStore } from "../../../stores/uiStore";
+import { buildInsightScope, useAgentInsightsStore } from "../../../stores/agent-insights-store";
+import { useAgentLearningStore } from "../../../stores/agent-learning-store";
 import { useSkillPrefsStore } from "../../../stores/skillPrefsStore";
 import { DEFAULT_AGENT_TOKEN_BUDGET, extractAgentUsageTokens } from "../ai-agent-cost";
 import {
@@ -81,6 +83,8 @@ import {
   AI_REQUEST_REPLACED_MESSAGE,
 } from "../ai-agent-action-requestor";
 import { runAgentEvidenceLoop } from "../ai-agent-evidence-loop";
+import { collectRunEndInsights } from "../ai-agent-insights";
+import { proposeRunLearnings } from "../ai-agent-learning";
 
 import {
   buildRunnerInstructionForReason,
@@ -119,6 +123,12 @@ export interface AIGeneratedAssistResult {
   /** Provider-failover footer notes (short summary + full raw provider error)
    *  surfaced under the final answer with an info popover. */
   failoverNotes?: AIWorkspaceFailoverNote[];
+  /**
+   * P10: tools an unattended scheduled run tried to call but was refused. Only
+   * present for an unattended run, and read back as evidence that the run
+   * really stayed read-only (the allow-list is a claim; this is the trace).
+   */
+  unattendedBlockedTools?: AIAgentToolName[];
 }
 
 const MAX_AGENT_STEPS = 10;
@@ -380,6 +390,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         onAgentProgress?: (steps: AIWorkspaceAgentStep[]) => void;
         /** Files/images attached by the user for this turn (composer pipeline). */
         attachments?: AIAttachmentDraft[];
+        /**
+         * P10: this run was started by a scheduled agent task. Nobody is
+         * watching, so the run is confined to the read-only tool surface — the
+         * write/memory/checkpoint tools are absent from the catalog and refused
+         * by the executor — and the model is told to report instead of asking.
+         */
+        unattendedReadOnly?: boolean;
       },
     ): Promise<AIGeneratedAssistResult> => {
       const normalizedPrompt = prompt.trim();
@@ -410,6 +427,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       const requestDataReadConsent = options?.requestDataReadConsent;
       const requestDataDestructiveConsent = options?.requestDataDestructiveConsent;
       const onAgentProgress = options?.onAgentProgress;
+      // P10: an unattended scheduled run is read-only. The flag rides the
+      // request payload, the prompt catalog and the executor, so no single
+      // layer has to be trusted on its own.
+      const unattendedReadOnly = options?.unattendedReadOnly === true;
       const {
         assistIntent,
         wantsVisualization,
@@ -754,6 +775,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               availableSkills,
               agentMemoryIndex,
               queryTabs,
+              unattendedReadOnly,
             });
 
           // Model-call layer: transient retry + parse-repair (extracted).
@@ -773,6 +795,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             // Stamps every model call of this run so chain-failover events from
             // parallel non-agent requests never leak into this trace.
             correlationId: `agent-run-${requestId}`,
+            // P10: the read-only tool surface also narrows the native tool
+            // payload of every model call in this run.
+            unattendedReadOnly,
             onRetryWait: ({ delayMs, reason, retry, maxRetries }) => {
               const seconds = Math.max(1, Math.round(delayMs / 1000));
               const transientNote =
@@ -797,7 +822,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               });
             },
           });
-          const { runAgentTool } = createAgentToolExecutor({
+          const { runAgentTool, getUnattendedBlockedTools } = createAgentToolExecutor({
+            // P10: an unattended scheduled run reaches only the read tools; the
+            // executor refuses everything else by name.
+            unattendedReadOnly,
             // Fail-closed: an absent catalog means NO skill may load, otherwise
             // a model could call the skill tool for entries never vetted.
             allowedSkillNames: availableSkills?.map((entry) => entry.name) ?? [],
@@ -1511,6 +1539,25 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             recoverAgentFinishAction,
           }));
 
+          // Proactive insights (P8): a pure, synchronous pass over the trace
+          // the run already produced — no extra model call, and a card only
+          // exists if a statement in that trace backs it. Collected before
+          // finalization so the evidence is the run's own.
+          if (requestId === requestIdRef.current) {
+            const insights = collectRunEndInsights(finalSteps);
+            const scope = buildInsightScope(connectionId, currentDatabase);
+            useAgentInsightsStore.getState().recordRunInsights(insights, scope);
+            // Learning loop (P9): the same evidence, offered as things the
+            // workspace could keep. Nothing is written here — the user approves
+            // each proposal on its card.
+            useAgentLearningStore
+              .getState()
+              .recordRunLearnings(proposeRunLearnings({ insights, steps: finalSteps }), scope, {
+                connectionId,
+                database: currentDatabase,
+              });
+          }
+
           // Best-effort debug artifact: persist the full snapshot stream so
           // failed or surprising runs can be replayed offline.
           try {
@@ -1604,6 +1651,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             agentWidgets: finalization.agentWidgets,
             askUserOptions,
             failoverNotes: failoverNotes.length > 0 ? failoverNotes : undefined,
+            // Read-only compliance evidence: which tools an unattended run
+            // reached for and was refused (empty = it never tried to write).
+            unattendedBlockedTools: unattendedReadOnly ? getUnattendedBlockedTools() : undefined,
           };
         }
         const finalResponse = await recoverNonAgentAssistResponse({

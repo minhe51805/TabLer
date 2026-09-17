@@ -55,6 +55,7 @@ import { useAIWorkspaceEffects } from "./hooks/use-ai-workspace-effects";
 import { useAIPanelPreferences } from "./hooks/use-ai-panel-preferences";
 import { AI_REQUEST_REPLACED_MESSAGE } from "./ai-agent-action-requestor";
 import { useAISlidePanel } from "./hooks/use-ai-slide-panel";
+import { useAgentScheduleRunner } from "./hooks/use-agent-schedule-runner";
 import {
   approveDataRead,
   dataReadScopeKey,
@@ -182,6 +183,12 @@ export function AISlidePanel({
     insertSql,
     runSql,
   } = useAISlidePanel({ isOpen });
+
+  // P10: the panel is the app's only agent runtime, so scheduled agent tasks
+  // are executed here — read-only, one at a time, and only when the workspace is
+  // already on the task's own connection/database. A task that cannot run stays
+  // queued instead of being skipped or claimed as a success.
+  useAgentScheduleRunner({ generateAssist, isGenerating, connectionId, currentDatabase });
 
   const composerRef = useRef<HTMLDivElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);

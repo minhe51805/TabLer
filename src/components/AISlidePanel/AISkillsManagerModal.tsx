@@ -61,7 +61,11 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
       ?.trim();
     if (!name) return;
     try {
-      const path = await invokeMutation<string>("create_ai_skill", { name, description: null });
+      const path = await invokeMutation<string>("create_ai_skill", {
+        name,
+        description: null,
+        body: null,
+      });
       setNotice(t(`Đã tạo skill tại: ${path}`, `Created skill at: ${path}`));
       await refresh();
     } catch (err) {
@@ -153,7 +157,9 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
                     type="button"
                     className={`toolbar-btn icon-only ${row.enabled ? "is-active" : ""}`}
                     onClick={() => setEnabled(row.name, !row.enabled)}
-                    title={row.enabled ? t("Tắt skill", "Disable skill") : t("Bật skill", "Enable skill")}
+                    title={
+                      row.enabled ? t("Tắt skill", "Disable skill") : t("Bật skill", "Enable skill")
+                    }
                   >
                     {row.enabled ? t("Bật", "On") : t("Tắt", "Off")}
                   </button>
@@ -166,4 +172,3 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
     </div>
   );
 }
-

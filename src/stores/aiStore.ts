@@ -80,8 +80,9 @@ function buildFailoverChain(
     return timedOutAt === undefined || now - timedOutAt >= PROVIDER_TIMEOUT_RETRY_AFTER_MS;
   });
   const fallbackPool = healthyFallbacks.length > 0 ? healthyFallbacks : enabledFallbacks;
-  const sortedPool = [...fallbackPool]
-    .sort((left, right) => providerPenaltyRank(left.id) - providerPenaltyRank(right.id));
+  const sortedPool = [...fallbackPool].sort(
+    (left, right) => providerPenaltyRank(left.id) - providerPenaltyRank(right.id),
+  );
   const activeAttempts = attemptsOf(activeConfig);
   // Degenerate config guard: an active provider with no configured model and
   // no visible catalog entries would otherwise produce an EMPTY chain (and a
@@ -147,15 +148,19 @@ function enqueueConfigSave<T>(task: () => Promise<T>): Promise<T> {
 export type AIRequestPhase = "idle" | "requesting" | "cancelling";
 
 function createAIRequestId() {
-  return globalThis.crypto?.randomUUID?.()
-    ?? `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `ai-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  );
 }
 
-function getAIRequestTimeout(config: AIProviderConfig, mode: AIRequestMode, intent: AIRequestIntent) {
+function getAIRequestTimeout(
+  config: AIProviderConfig,
+  mode: AIRequestMode,
+  intent: AIRequestIntent,
+) {
   if (config.provider_type === "ollama") {
-    return mode === "inline"
-      ? AI_TIMEOUTS.localOllamaInline
-      : AI_TIMEOUTS.localOllamaPanel;
+    return mode === "inline" ? AI_TIMEOUTS.localOllamaInline : AI_TIMEOUTS.localOllamaPanel;
   }
 
   if (mode === "panel" && intent === "agent") {
@@ -219,7 +224,7 @@ export interface AIState {
   saveAIConfigs: (
     configs: AIProviderConfig[],
     apiKeyUpdates: Record<string, string>,
-    clearedProviderIds: string[]
+    clearedProviderIds: string[],
   ) => Promise<{
     aiConfigs: AIProviderConfig[];
     aiKeyStatus: Record<string, boolean>;
@@ -243,7 +248,7 @@ export interface AIState {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[],
     attachments?: AIRequestAttachment[],
-    options?: { correlationId?: string },
+    options?: { correlationId?: string; unattendedReadOnly?: boolean },
   ) => Promise<string>;
   askAIWithReasoning: (
     prompt: string,
@@ -252,7 +257,7 @@ export interface AIState {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[],
     attachments?: AIRequestAttachment[],
-    options?: { correlationId?: string },
+    options?: { correlationId?: string; unattendedReadOnly?: boolean },
   ) => Promise<{ text: string; reasoning?: string }>;
   /**
    * Promotes the next enabled provider (cyclic list order, skipping the
@@ -293,10 +298,12 @@ function switchActiveProvider(
   // write, and a failed save still leaves the runtime switch in place.
   // Queued behind other config saves so it can never clobber a user pick.
   void enqueueConfigSave(() =>
-    invokeMutation<[AIProviderConfig[], Record<string, boolean>]>(
-      "save_ai_configs",
-      { providers: normalized, apiKeyUpdates: {}, clearedProviderIds: [] },
-    ))
+    invokeMutation<[AIProviderConfig[], Record<string, boolean>]>("save_ai_configs", {
+      providers: normalized,
+      apiKeyUpdates: {},
+      clearedProviderIds: [],
+    }),
+  )
     .then(([aiConfigs]) => set({ aiConfigs }))
     .catch((error) => console.warn("[AI] Failed to persist provider failover:", error))
     .finally(() => set({ isProviderFailingOver: false }));
@@ -334,10 +341,12 @@ export const useAIStore = create<AIState>((set, get) => ({
   saveAIConfigs: async (configs, apiKeyUpdates, clearedProviderIds) => {
     try {
       const [aiConfigs, aiKeyStatus] = await enqueueConfigSave(() =>
-        invokeMutation<[AIProviderConfig[], Record<string, boolean>]>(
-          "save_ai_configs",
-          { providers: configs, apiKeyUpdates, clearedProviderIds },
-        ));
+        invokeMutation<[AIProviderConfig[], Record<string, boolean>]>("save_ai_configs", {
+          providers: configs,
+          apiKeyUpdates,
+          clearedProviderIds,
+        }),
+      );
       set({ aiConfigs });
       return { aiConfigs, aiKeyStatus };
     } catch (e) {
@@ -361,13 +370,8 @@ export const useAIStore = create<AIState>((set, get) => ({
     const activeIndex = configs.findIndex((config) => config.id === active.id);
     // Cyclic scan starting after the current primary, so repeated calls walk
     // through every enabled provider instead of flipping between two.
-    const rotated = [
-      ...configs.slice(activeIndex + 1),
-      ...configs.slice(0, activeIndex + 1),
-    ];
-    const next = rotated.find(
-      (config) => config.is_enabled && config.id !== active.id,
-    );
+    const rotated = [...configs.slice(activeIndex + 1), ...configs.slice(0, activeIndex + 1)];
+    const next = rotated.find((config) => config.is_enabled && config.id !== active.id);
     if (!next) return null;
     switchActiveProvider(configs, next, active, set);
     return next;
@@ -382,9 +386,7 @@ export const useAIStore = create<AIState>((set, get) => ({
         "Loading local Ollama status",
       );
     } catch (error) {
-      useGlobalErrorStore
-        .getState()
-        .setError(`Failed to load local Ollama status: ${error}`);
+      useGlobalErrorStore.getState().setError(`Failed to load local Ollama status: ${error}`);
       throw error;
     }
   },
@@ -448,7 +450,11 @@ export const useAIStore = create<AIState>((set, get) => ({
       const engineKey = connectionState.connections.find(
         (connection) => connection.id === connectionState.activeConnectionId,
       )?.db_type;
-      const nativeToolPayload = buildNativeToolPayload(config.provider_type, intent, engineKey);
+      const nativeToolPayload = buildNativeToolPayload(config.provider_type, intent, engineKey, {
+        // P10: a scheduled agent task runs unattended and read-only, so the
+        // request carries only the read tools.
+        unattendedReadOnly: options?.unattendedReadOnly === true,
+      });
       set({
         activeAIRequestId: requestId,
         requestPhase: "requesting",
@@ -568,16 +574,18 @@ export const useAIStore = create<AIState>((set, get) => ({
         void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
         // Surface silent chain failovers to any listening agent run so the
         // conversation shows why a step took an extra attempt.
-        window.dispatchEvent(new CustomEvent("ai-provider-chain-failover", {
-          detail: {
-            failedProvider: config.name.trim() || config.id,
-            failedModel: attempt.model ?? null,
-            reason: requestError.code,
-            attempt: index + 1,
-            total: chain.length,
-            ...(options?.correlationId ? { correlationId: options.correlationId } : {}),
-          },
-        }));
+        window.dispatchEvent(
+          new CustomEvent("ai-provider-chain-failover", {
+            detail: {
+              failedProvider: config.name.trim() || config.id,
+              failedModel: attempt.model ?? null,
+              reason: requestError.code,
+              attempt: index + 1,
+              total: chain.length,
+              ...(options?.correlationId ? { correlationId: options.correlationId } : {}),
+            },
+          }),
+        );
         // Deliberately no primary change here: the request-level chain tries
         // the remaining providers silently, and the single visible promotion
         // is owned by the agent hook (promoteNextEnabledProvider) so the
@@ -600,8 +608,24 @@ export const useAIStore = create<AIState>((set, get) => ({
     throw normalizeAIRequestError(lastError);
   },
 
-  askAI: async (prompt, context, mode = "panel", intent = "sql", history = [], attachments, options) => {
-    const response = await get().askAIWithReasoning(prompt, context, mode, intent, history, attachments, options);
+  askAI: async (
+    prompt,
+    context,
+    mode = "panel",
+    intent = "sql",
+    history = [],
+    attachments,
+    options,
+  ) => {
+    const response = await get().askAIWithReasoning(
+      prompt,
+      context,
+      mode,
+      intent,
+      history,
+      attachments,
+      options,
+    );
     return response.text;
   },
 }));

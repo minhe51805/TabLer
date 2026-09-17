@@ -459,7 +459,9 @@ pub fn run() {
             agent_rules::reset_ai_builtin_rules,
             // Guardrail evaluation: plan gate + rules manager.
             agent_rules::evaluate_agent_rules,
-            agent_rules::list_agent_rules, // File commands
+            agent_rules::list_agent_rules,
+            // P9 learning loop: the rule the user approved from a run finding.
+            agent_rules::save_agent_rule, // File commands
             read_sql_file,
             read_sql_file_from_path,
             read_csv_file,
@@ -478,6 +480,9 @@ pub fn run() {
             commands::schedule::list_query_schedules,
             commands::schedule::save_query_schedule,
             commands::schedule::delete_query_schedule,
+            // P10: an unattended agent task reports its real outcome back here
+            // (the backend only dispatches; it never runs the agent).
+            commands::schedule::complete_agent_schedule_run,
             // Semantic glossary commands
             get_semantic_entries,
             save_semantic_entry,

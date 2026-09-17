@@ -396,6 +396,30 @@ export const ko: Record<keyof typeof en, string> = {
   "schedules.edit": "편집",
   "schedules.delete": "삭제",
   "schedules.new": "새 예약",
+  "schedules.kind": "예약 유형",
+  "schedules.kindLocked": "유형은 저장 후 고정됩니다 — 변경하려면 예약을 삭제하고 다시 만드세요.",
+  "schedules.kindSql": "SQL 쿼리",
+  "schedules.kindAgent": "에이전트 작업(읽기 전용)",
+  "schedules.tagSql": "SQL",
+  "schedules.tagAgent": "에이전트",
+  "schedules.agentPrompt": "에이전트 작업 내용",
+  "schedules.agentPromptPlaceholder":
+    "예: 24시간 이상 “pending” 상태로 멈춰 있는 주문을 확인하고 영향을 받은 고객 계정을 보고합니다.",
+  "schedules.agentReadOnlyHint":
+    "앱이 열려 있는 동안 자동으로 읽기 전용으로 실행됩니다. 데이터를 읽고 발견 사항을 기록할 뿐, 데이터를 변경하거나 질문하지 않습니다. 결과는 AI 패널의 인사이트에 표시됩니다.",
+  "schedules.agentRunning": "지금 실행 중(읽기 전용).",
+  "schedules.agentWaiting": "실행 대기 중",
+  "schedules.agentWaitConnection": "이 작업의 연결이 활성 연결일 때 시작됩니다.",
+  "schedules.agentWaitDatabase": "이 작업의 데이터베이스가 열려 있을 때 시작됩니다.",
+  "schedules.agentWaitBusy": "현재 AI 요청이 끝나면 시작됩니다.",
+  "schedules.agentDispatchedStatus":
+    "전달됨 — 아직 결과가 보고되지 않았습니다(앱이 닫혔거나 사용 중일 수 있음).",
+  "schedules.agentDispatched": "예약된 에이전트 작업이 시작되었습니다: {{name}}",
+  "schedules.agentDispatchedHint": "작업 공간이 비는 즉시 읽기 전용으로 실행됩니다.",
+  "schedules.agentEmptyTask":
+    "예약된 에이전트 작업을 건너었습니다: {{name}}에 작업 내용이 없습니다",
+  "schedules.agentNeedsHuman":
+    "사람이 필요합니다: 사람만 할 수 있는 작업이 거부되어, 발견한 내용을 기록하고 거기서 멈췄습니다.",
   "querybuilder.aggregates": "집계 / GROUP BY",
   "querybuilder.allRows": "전체 행",
   "querybuilder.alias": "별칭 (선택)",

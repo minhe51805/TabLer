@@ -587,10 +587,16 @@ pub fn ai_skills_directory() -> Result<String, String> {
 
 /// Scaffold a new skill under an explicit skills root — split out so tests drive
 /// a temp directory instead of the real data dir.
+///
+/// `body` carries the procedure itself when a caller already knows it (the P9
+/// learning loop does); without one the file keeps the scaffolding prompt an
+/// author needs. Either way the frontmatter is generated here, so a written
+/// skill always satisfies the discovery contract.
 fn create_skill_in_root(
     skills_root: &Path,
     name: &str,
     description: Option<String>,
+    body: Option<&str>,
 ) -> Result<PathBuf, String> {
     let name = validate_skill_name(name)?;
     let skill_dir = skills_root.join(&name);
@@ -613,20 +619,40 @@ fn create_skill_in_root(
     } else {
         description
     };
+    let body = match body.map(str::trim) {
+        Some(learned) if !learned.is_empty() => {
+            learned.chars().take(MAX_SKILL_BODY_CHARS).collect::<String>()
+        }
+        // Nothing to teach yet: keep the prompt an author fills in by hand.
+        _ => "Describe when this skill applies and the concrete steps to follow.\n\n## Steps\n\n1. First step.\n2. Second step.\n\n## References\n\nPut detailed docs (schemas, examples) under `references/` and load them on\ndemand with the read_skill_resource tool instead of inlining them here."
+            .to_string(),
+    };
     let template = format!(
-        "---\nname: {name}\ndescription: {description}\nversion: 0.1.0\n---\n\n# {name}\n\nDescribe when this skill applies and the concrete steps to follow.\n\n## Steps\n\n1. First step.\n2. Second step.\n\n## References\n\nPut detailed docs (schemas, examples) under `references/` and load them on\ndemand with the read_skill_resource tool instead of inlining them here.\n"
+        "---\nname: {name}\ndescription: {description}\nversion: 0.1.0\n---\n\n# {name}\n\n{body}\n"
     );
     std::fs::write(&skill_md, template).map_err(|error| error.to_string())?;
     Ok(skill_dir)
 }
 
-/// Scaffold a new global Agent Skill: `<data_dir>/skills/<name>/SKILL.md` with a
-/// valid frontmatter template plus an empty `references/` directory. Refuses to
-/// overwrite an existing skill so authoring never clobbers work.
+/// Create a global Agent Skill: `<data_dir>/skills/<name>/SKILL.md` with valid
+/// frontmatter plus an empty `references/` directory. Refuses to overwrite an
+/// existing skill so authoring never clobbers work.
+///
+/// `body` is optional and exists for the P9 learning loop, which has an actual
+/// procedure to record; the skill manager omits it and gets the scaffold.
 #[tauri::command]
-pub fn create_ai_skill(name: String, description: Option<String>) -> Result<String, String> {
+pub fn create_ai_skill(
+    name: String,
+    description: Option<String>,
+    body: Option<String>,
+) -> Result<String, String> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
-    let skill_dir = create_skill_in_root(&data_dir.join("skills"), &name, description)?;
+    let skill_dir = create_skill_in_root(
+        &data_dir.join("skills"),
+        &name,
+        description,
+        body.as_deref(),
+    )?;
     Ok(skill_dir.to_string_lossy().to_string())
 }
 
@@ -684,8 +710,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
 
-        let dir =
-            create_skill_in_root(&base, "db-audit", Some("Audit a schema".to_string())).unwrap();
+        let dir = create_skill_in_root(&base, "db-audit", Some("Audit a schema".to_string()), None)
+            .unwrap();
         assert!(dir.join("references").is_dir());
         // The scaffold must round-trip through the real reader with matching name.
         let content =
@@ -695,8 +721,34 @@ mod tests {
         assert!(content.description.contains("Audit a schema"));
 
         // Refuses to clobber an existing skill, and rejects bad names.
-        assert!(create_skill_in_root(&base, "db-audit", None).is_err());
-        assert!(create_skill_in_root(&base, "../escape", None).is_err());
+        assert!(create_skill_in_root(&base, "db-audit", None, None).is_err());
+        assert!(create_skill_in_root(&base, "../escape", None, None).is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+    #[test]
+    fn a_learned_body_replaces_the_scaffold_and_still_satisfies_discovery() {
+        let base =
+            std::env::temp_dir().join(format!("tabler-skill-learned-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+
+        let learned = "## What I do\n\n- Read the row counts for `orders`.\n- Compare them against `order_items`.\n\n## Steps\n\n1. `list_tables` for both.\n2. `run_readonly_sql` for the counts.";
+        create_skill_in_root(
+            &base,
+            "orders-audit",
+            Some("Repeatable order/line-item reconciliation".to_string()),
+            Some(learned),
+        )
+        .expect("skill written");
+
+        // The generated frontmatter is what makes the file loadable, so a learned
+        // body must not be able to hide it or the procedure would be invisible.
+        let content =
+            read_skill_in_roots(&[(base.clone(), "test".to_string())], "orders-audit").unwrap();
+        assert!(content.description.contains("Repeatable order"));
+        let raw = std::fs::read_to_string(skill_md_path(&base.join("orders-audit"))).unwrap();
+        assert!(raw.contains(learned));
+        assert!(!raw.contains("1. First step."));
+
         let _ = std::fs::remove_dir_all(&base);
     }
 

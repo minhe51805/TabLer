@@ -54,6 +54,13 @@ import { useSkillUsageStore } from "../../stores/skillUsageStore";
 import { useUIStore } from "../../stores/uiStore";
 import { invalidateAgentMemoryIndex } from "./hooks/use-agent-memory";
 import { invokeMutation } from "../../utils/tauri-utils";
+import {
+  formatRuleBlockMessage,
+  describeRuleVerdict,
+  isRunBlockedByRules,
+  ruleVerdictFromEngineError,
+  type AgentRuleVerdict,
+} from "./ai-agent-rules";
 import { EventCenter } from "../../stores/event-center";
 import {
   isSupersededAIRequestError,
@@ -185,6 +192,19 @@ export interface AgentToolExecutorDeps {
   /** UI language for the rollback dialog copy. */
   language?: string;
   toolAvailability?: AgentToolAvailability;
+  /**
+   * Evaluates candidate statements against the armed guardrail rule pack
+   * (`agent_rules.rs`). Returns the *folded* run verdict.
+   *
+   * Optional on purpose: the pure executor tests must not need a Tauri runtime,
+   * and an absent hook leaves the write path on the legacy rails exactly as
+   * before. When present, a `block` rule refuses the preview and its reason is
+   * fed back to the model as the tool result.
+   */
+  evaluateGuardrailRules?: (
+    statements: string[],
+    options: { isMutating: boolean; workspaceDir?: string | null },
+  ) => Promise<AgentRuleVerdict>;
 }
 
 /**
@@ -242,6 +262,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     restoreCheckpoint,
     language,
     toolAvailability,
+    evaluateGuardrailRules,
   } = deps;
   let lastExplorationToolKey = "";
   /** Side-analysis calls spent this run (delegate budget). */
@@ -1211,6 +1232,39 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           }
         }
 
+        // Guardrail rules (P6.1): user-authored rules in `<workspace>/rules` and
+        // the seeded built-in pack get a say before anything is previewed. A
+        // `block` rule refuses the call and the reason travels back to the model
+        // as the tool result, so it can rewrite the statement instead of
+        // guessing. An engine failure is escalated by the helper rather than
+        // silently passed, because this is the write path.
+        // Filled by the guardrail check below: a `warn` rule's reason must reach the
+        // model rather than being discarded with the verdict.
+        let ruleCaution = "";
+        if (evaluateGuardrailRules) {
+          let verdict: AgentRuleVerdict;
+          try {
+            verdict = await evaluateGuardrailRules(statements, { isMutating: true });
+          } catch (errorValue) {
+            if (isSupersededAIRequestError(errorValue)) throw errorValue;
+            verdict = ruleVerdictFromEngineError(errorValue, true);
+          }
+          if (isRunBlockedByRules(verdict)) {
+            publishAgentProgress({
+              action: "preview_write",
+              message: `Guardrail rule refused the write preview (${verdict.matched_rules
+                .map((match) => match.name)
+                .join(", ")}).`,
+            });
+            return `Tool blocked: ${formatRuleBlockMessage(verdict)}`;
+          }
+          // A `warn` / `require_approval` rule is not a refusal, but it must not be
+          // dropped either: the contract for `warn` is "surface it to the model as a
+          // caution". A discarded verdict is exactly the failure mode this subsystem
+          // exists to prevent, so the notice travels back with the preview.
+          ruleCaution = describeRuleVerdict(verdict);
+        }
+
         if (requestDataReadConsent) {
           const approved = await requestDataReadConsent();
           if (!approved) {
@@ -1237,6 +1291,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             note: "Executed inside one transaction and ROLLED BACK. Nothing was saved. Report these effects as a PREVIEW and direct the user to apply the final SQL through the approval flow.",
             statementCount: statements.length,
             results: summary,
+            ...(ruleCaution ? { guardrailRules: ruleCaution } : {}),
           });
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;

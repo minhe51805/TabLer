@@ -160,3 +160,38 @@ One verdict folds every fired rule by the strictest action. The front-side gate 
   `matched_rules.length`.
 - load errors are surfaced, so "no rule matched" is always distinguishable from
   "the guardrail never loaded".
+
+## 5. Proactive insights (P8)
+
+Implementation: `src/components/AISlidePanel/ai-agent-insights.ts` (engine),
+`src/stores/agent-insights-store.ts` (persistence), `src/components/AISlidePanel/AIAgentInsights.tsx`
+(cards, rendered above the composer in `AIWorkspacePanelView.tsx`).
+
+One rule makes the engine trustworthy, and it is mechanical rather than requested of the model:
+**a card may only cite a statement that actually ran.** Two invariants enforce it:
+
+1. **Evidence is recorded where a statement runs, never reconstructed.** `AgentStepFacts`
+   carries `insightEvidence: { executedSql, rowCount }`, written by the tool executor at
+   `run_readonly_sql`, `run_parameterized_sql`, and `sample_table_data` when that tool ran the
+   whole-table aggregate. `rowCount` is the row count the _evidence statement_ saw — for the
+   aggregate that is the table's size, not the size of the sample. The two values travel in one
+   object so a SQL text can never be stored without the count it produced. The sample path's own
+   read is driver-side pagination with no SQL text in the frontend, so it reports no evidence and
+   funds no card — deriving one from `message`/`observation` would be fabrication.
+2. **Confidence is computed from evidence, never claimed.** `gradeHighNullColumn`,
+   `gradeConstantColumn`, `gradeSoftDeleteCandidate` map an observed number onto a score, so a
+   model cannot print a confidence it did not earn. Findings below
+   `INSIGHT_MIN_CONFIDENCE` (80) are dropped by the collector, not shown as weak cards.
+
+`collectRunEndInsights(steps)` runs at the end of an agent run (called from
+`use-ai-slide-panel.ts`) and is **pure and synchronous** — it reads the trace, runs each detector
+over every `columnStats` entry, dedupes by `(kind, table, column)` keeping the strongest proof,
+sorts by confidence and caps at `INSIGHT_MAX_PER_RUN` (3). It costs zero extra model calls; that
+is its entire justification.
+
+Storage policy (`mergeInsightCards`): cards are keyed per database (`buildInsightScope`) because a
+finding is a claim about one schema, and nothing resurfaces inside `INSIGHT_COOLDOWN_MILLIS` (24 h)
+so a recurring check cannot nag. `INSIGHT_MAX_STORED` (20) bounds the persisted set.
+
+Taking a suggestion dispatches `insert-sql-from-ai` and never executes anything, so a proactive
+finding can never become a way around the write gate.

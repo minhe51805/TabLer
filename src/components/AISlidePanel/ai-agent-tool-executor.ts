@@ -7,7 +7,11 @@ import type {
   TableInfo,
   TableStructure,
 } from "../../types";
-import { appendAgentFacts, buildWorkspaceTableIdentifier } from "./ai-agent-context";
+import {
+  appendAgentFacts,
+  buildWorkspaceTableIdentifier,
+  type AgentStepEvidence,
+} from "./ai-agent-context";
 import { findAgentSchemaMatches, prioritizeSchemaScanCandidates } from "./ai-agent-schema-search";
 import {
   formatExecutionError,
@@ -719,6 +723,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         let columnStats:
           Array<{ column: string; nullRatio: number; distinctCount: number }> | undefined;
         let columnStatsScopeLabel = "";
+        let insightEvidence: AgentStepEvidence | undefined;
         if (statsScope !== "off" && statColumns.length > 0 && requestedOffset === 0) {
           if (statsScope === "whole") {
             try {
@@ -733,9 +738,8 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
                   ];
                 }),
               ];
-              const statsResult = await executeReadonlyQuery(connectionId!, [
-                `SELECT ${selectParts.join(", ")} FROM ${quotedTable}`,
-              ]);
+              const statsSql = `SELECT ${selectParts.join(", ")} FROM ${quotedTable}`;
+              const statsResult = await executeReadonlyQuery(connectionId!, [statsSql]);
               if (requestId !== requestIdRef.current) {
                 throw new Error(AI_REQUEST_REPLACED_MESSAGE);
               }
@@ -752,6 +756,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
                   };
                 });
                 columnStatsScopeLabel = " (whole table)";
+                // This aggregate is the statement the numbers above came from,
+                // so the insight engine may cite it. Sample-scoped stats carry
+                // no evidence on purpose: that read is driver-side pagination,
+                // no SQL text for it exists here, and inventing one would
+                // fabricate the proof an insight is required to show.
+                insightEvidence = { executedSql: statsSql, rowCount: total };
               }
             } catch (errorValue) {
               if (isSupersededAIRequestError(errorValue)) throw errorValue;
@@ -784,6 +794,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             rowsReturned: queryResult.rows.length,
             tables: [matchedTable],
             ...(columnStats ? { columnStats } : {}),
+            ...(insightEvidence ? { insightEvidence } : {}),
           },
         );
       }
@@ -1032,6 +1043,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
 
         return appendAgentFacts(`${summarizeAgentQueryObservation(queryResult)}${explainNote}`, {
           rowsReturned: queryResult.rows.length,
+          // The statement that ran, for the insight engine: `sql` is exactly
+          // what executeReadonlyQuery received above.
+          insightEvidence: { executedSql: sql, rowCount: queryResult.rows.length },
         });
       }
 
@@ -1088,6 +1102,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             }),
             {
               rowsReturned: queryResult.rows.length,
+              insightEvidence: { executedSql: sql, rowCount: queryResult.rows.length },
             },
           );
         } catch (errorValue) {

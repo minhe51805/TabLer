@@ -65,24 +65,26 @@ export function previewAgentArgs(canonicalArgs: string, cap = 500): string {
 }
 
 export const REPEAT_CALL_GENTLE_REMINDER =
-  "You are repeating the exact same tool call with identical arguments. "
-  + "Carefully analyze the previous result before calling again: if the task is "
-  + "not complete, try a different approach or different arguments instead of "
-  + "repeating the call.";
+  "You are repeating the exact same tool call with identical arguments. " +
+  "Carefully analyze the previous result before calling again: if the task is " +
+  "not complete, try a different approach or different arguments instead of " +
+  "repeating the call.";
 
 export function repeatCallDetailedReminder(
   action: AIWorkspaceAgentActionName,
   count: number,
   argsPreview: string,
 ): string {
-  return "Repeated tool call detected:\n"
-    + `- tool: ${action}\n`
-    + `- consecutive_calls: ${count}\n`
-    + `- arguments: ${argsPreview}\n`
-    + "The repeated calls are not making progress. Do not call this tool with "
-    + "these exact arguments again. Inspect the latest result and choose a "
-    + "different action, different arguments, or finish the task if enough "
-    + "evidence has been gathered.";
+  return (
+    "Repeated tool call detected:\n" +
+    `- tool: ${action}\n` +
+    `- consecutive_calls: ${count}\n` +
+    `- arguments: ${argsPreview}\n` +
+    "The repeated calls are not making progress. Do not call this tool with " +
+    "these exact arguments again. Inspect the latest result and choose a " +
+    "different action, different arguments, or finish the task if enough " +
+    "evidence has been gathered."
+  );
 }
 
 /**
@@ -131,13 +133,15 @@ export function countTrailingToolErrors(steps: AgentTraceStep[]): number {
  * data/capability is genuinely unavailable.
  */
 export function toolErrorReflectionNudge(consecutiveErrors: number): string {
-  return `Reflection checkpoint: your last ${consecutiveErrors} tool calls in a row all failed `
-    + "(Tool error / Tool blocked). Stop repeating the same approach and re-strategize before the next call: "
-    + "(1) briefly state what you have actually confirmed so far from the observations above; "
-    + "(2) name the specific blocker these errors share; "
-    + "(3) choose a DIFFERENT approach that avoids it — a different tool, corrected arguments, a narrower query, "
-    + "or ask_user if the request is ambiguous. "
-    + "If the errors mean the data or capability is genuinely unavailable, finish now with an honest explanation instead of retrying.";
+  return (
+    `Reflection checkpoint: your last ${consecutiveErrors} tool calls in a row all failed ` +
+    "(Tool error / Tool blocked). Stop repeating the same approach and re-strategize before the next call: " +
+    "(1) briefly state what you have actually confirmed so far from the observations above; " +
+    "(2) name the specific blocker these errors share; " +
+    "(3) choose a DIFFERENT approach that avoids it — a different tool, corrected arguments, a narrower query, " +
+    "or ask_user if the request is ambiguous. " +
+    "If the errors mean the data or capability is genuinely unavailable, finish now with an honest explanation instead of retrying."
+  );
 }
 
 /**
@@ -185,16 +189,32 @@ export interface AgentStepFacts {
   rowsReturned?: number;
   tables?: string[];
   columnStats?: AgentColumnStats[];
+  /**
+   * The statement this step executed together with the row count it saw (P8).
+   *
+   * Written only where a statement genuinely ran, never derived from the
+   * observation: the insight engine treats this pair as proof and refuses to
+   * emit a finding without it. Both values travel together in one object so a
+   * SQL text can never be stored without the count it produced.
+   */
+  insightEvidence?: AgentStepEvidence;
+}
+
+/**
+ * Evidence a proactive insight is allowed to cite. `rowCount` is the number of
+ * rows the evidence statement itself saw — for an aggregate that is the table's
+ * row count, not the size of a sample.
+ */
+export interface AgentStepEvidence {
+  executedSql: string;
+  rowCount: number;
 }
 
 /** Footer marker appended to observations carrying machine-readable facts. */
 const AGENT_FACTS_PREFIX = "@@facts:";
 
 /** Appends a machine-readable facts footer that survives with the trace. */
-export function appendAgentFacts(
-  observation: string,
-  facts: AgentStepFacts,
-): string {
+export function appendAgentFacts(observation: string, facts: AgentStepFacts): string {
   if (Object.keys(facts).length === 0) return observation;
   return `${observation}\n${AGENT_FACTS_PREFIX}${JSON.stringify(facts)}`;
 }
@@ -255,7 +275,7 @@ const MAX_AGENT_MEMORY_INDEX_ENTRIES = 24;
  * example — instead of the weaker, drifting phrasings they used before.
  */
 const AGENT_MEMORY_SAVE_HINT =
-  "Proactively persist durable facts with save_memory the moment you learn them — a schema fact, a user preference (naming, formatting, SQL dialect), or a correction the user makes (e.g. \"is_deleted marks a soft-delete\", \"amounts are stored in cents\", a status column's enum values). Save without being asked so future runs start smarter; never store credentials — they are rejected.";
+  'Proactively persist durable facts with save_memory the moment you learn them — a schema fact, a user preference (naming, formatting, SQL dialect), or a correction the user makes (e.g. "is_deleted marks a soft-delete", "amounts are stored in cents", a status column\'s enum values). Save without being asked so future runs start smarter; never store credentials — they are rejected.';
 
 function clampObservationText(text: string, budget: number) {
   const flat = text.trim();
@@ -288,7 +308,9 @@ export function detectDatabaseMentionMismatch(params: {
     if (!clean || clean === (boundDatabase ?? "").trim().toLowerCase()) continue;
     if (clean === "default") continue;
     // Word-boundary match so "sales" does not fire inside "salestrends".
-    const pattern = new RegExp(`(^|[^a-z0-9_])${clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9_]|$)`);
+    const pattern = new RegExp(
+      `(^|[^a-z0-9_])${clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9_]|$)`,
+    );
     if (pattern.test(normalizedPrompt)) return name;
   }
   return null;
@@ -365,7 +387,9 @@ export function buildSchemaCapsuleContext(params: {
     ...tableSchemas,
     truncatedOverview ? "NOTE=Overview limited to current capsule tables." : "",
     "RULE=Use only tables in TV or capsule lines. Ask if a needed table is missing.",
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function buildAgentRecoveryContext(params: {
@@ -381,7 +405,9 @@ export function buildAgentRecoveryContext(params: {
     `TV=${visibleTableNames.join(",")}${availableTableNames.length > visibleTableNames.length ? ",..." : ""}`,
     schemaCapsulePreview ? `SCHEMA_PREVIEW=\n${schemaCapsulePreview}` : "",
     "RULE=list_tables for catalog; search_schema for unknown fields; describe_table before assuming columns; stay inside verified schema.",
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function joinAgentInstructions(...parts: Array<string | undefined>) {
@@ -400,15 +426,16 @@ export function buildAgentPlanPrompt(params: {
 }) {
   const { userPrompt, assistIntent, currentDatabase, availableTableNames, appLanguage } = params;
   const visibleTables = availableTableNames.slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
-  const languageRule = appLanguage === "vi"
-    ? "Reply in Vietnamese."
-    : appLanguage === "zh"
-      ? "Reply in Chinese."
-      : appLanguage === "ko"
-        ? "Reply in Korean."
-        : appLanguage === "tr"
-          ? "Reply in Turkish."
-          : "Reply in English.";
+  const languageRule =
+    appLanguage === "vi"
+      ? "Reply in Vietnamese."
+      : appLanguage === "zh"
+        ? "Reply in Chinese."
+        : appLanguage === "ko"
+          ? "Reply in Korean."
+          : appLanguage === "tr"
+            ? "Reply in Turkish."
+            : "Reply in English.";
 
   return [
     "You are an autonomous database agent about to work on a request.",
@@ -428,7 +455,9 @@ export function buildAgentPlanPrompt(params: {
     "",
     "User request:",
     userPrompt,
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function buildAgentControllerPrompt(params: {
@@ -479,9 +508,10 @@ export function buildAgentControllerPrompt(params: {
     knownDatabaseNames,
     boundDatabase: currentDatabase ?? workspaceBoundDatabase ?? null,
   });
-  const visibleTables = availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT
-    ? availableTableNames
-    : availableTableNames.slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
+  const visibleTables =
+    availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT
+      ? availableTableNames
+      : availableTableNames.slice(0, MAX_TABLE_NAMES_IN_CONTEXT);
   const catalogComplete = availableTableNames.length <= AGENT_FULL_CATALOG_NAME_LIMIT;
   const toolSteps = steps.filter((step) => step.action !== "plan");
   const recentFullObservations = 4;
@@ -497,20 +527,26 @@ export function buildAgentControllerPrompt(params: {
     const clamped = clampObservationText(text, budget);
     return facts ? appendAgentFacts(clamped, facts) : clamped;
   };
-  const priorSteps = toolSteps.length === 0
-    ? "No tool actions have run yet."
-    : toolSteps.map((step, index) => {
-        const isRecent = index >= toolSteps.length - recentFullObservations;
-        return [
-          `Step ${step.step}`,
-          `Action: ${step.action}`,
-          `Message: ${step.message || "No message provided."}`,
-          isRecent
-            ? `Observation:\n${clampStepObservation(step, RECENT_OBSERVATION_CHAR_BUDGET)}`
-            : `Observation (older, condensed):\n${clampStepObservation(step, OLDER_OBSERVATION_PEEK_CHARS)}`,
-        ].join("\n");
-      }).join("\n\n");
-  const preInspectedSummaries = (cachedTableSummaries ?? []).slice(0, MAX_PRE_INSPECTED_TABLE_SUMMARIES);
+  const priorSteps =
+    toolSteps.length === 0
+      ? "No tool actions have run yet."
+      : toolSteps
+          .map((step, index) => {
+            const isRecent = index >= toolSteps.length - recentFullObservations;
+            return [
+              `Step ${step.step}`,
+              `Action: ${step.action}`,
+              `Message: ${step.message || "No message provided."}`,
+              isRecent
+                ? `Observation:\n${clampStepObservation(step, RECENT_OBSERVATION_CHAR_BUDGET)}`
+                : `Observation (older, condensed):\n${clampStepObservation(step, OLDER_OBSERVATION_PEEK_CHARS)}`,
+            ].join("\n");
+          })
+          .join("\n\n");
+  const preInspectedSummaries = (cachedTableSummaries ?? []).slice(
+    0,
+    MAX_PRE_INSPECTED_TABLE_SUMMARIES,
+  );
   const sqlRead = toolAvailability?.sqlRead !== false;
   const sqlWritePreview = toolAvailability?.sqlWritePreview !== false;
   // With native function calling the 19-tool schema travels in the request's
@@ -518,7 +554,7 @@ export function buildAgentControllerPrompt(params: {
   // the reply contract so text finals still parse.
   const availableActions = NATIVE_TOOL_CALLING_ENABLED
     ? [
-        'Tools are attached to this request via native function calling — call them with the schemas supplied to the model.',
+        "Tools are attached to this request via native function calling — call them with the schemas supplied to the model.",
         'If you answer in text instead of invoking a tool, reply with exactly one JSON object: {"action":"<tool_name>","message":"short reason","args":{…}} using one of the native tool names (for the final answer use {"action":"finish",…}).',
       ]
     : formatAgentToolCatalog({
@@ -564,8 +600,10 @@ export function buildAgentControllerPrompt(params: {
     (availableSkills ?? []).length > 0
       ? [
           "<available_skills>",
-          ...(availableSkills ?? []).map((skill) =>
-            `<skill><name>${skill.name}</name><description>${skill.description}</description></skill>`),
+          ...(availableSkills ?? []).map(
+            (skill) =>
+              `<skill><name>${skill.name}</name><description>${skill.description}</description></skill>`,
+          ),
           "</available_skills>",
           "When the user's task matches one of these skill descriptions, call the skill tool with that name FIRST and follow the returned instructions.",
         ].join("\n")
@@ -585,8 +623,10 @@ export function buildAgentControllerPrompt(params: {
           const anyRelevant = ranked.some((item) => item.relevant);
           return [
             "<agent_memory>",
-            ...ranked.map(({ entry, relevant }) =>
-              `<memory relevant="${relevant}"><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`),
+            ...ranked.map(
+              ({ entry, relevant }) =>
+                `<memory relevant="${relevant}"><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`,
+            ),
             "</agent_memory>",
             anyRelevant
               ? `These are saved observations for THIS connection/database (freshness = <updated>), ordered by relevance to the current request. Entries with relevant="true" closely match what the user is asking — load them with read_memory FIRST, before other tools, and use them to answer. ${AGENT_MEMORY_SAVE_HINT}`
@@ -599,8 +639,10 @@ export function buildAgentControllerPrompt(params: {
     (queryTabs ?? []).length > 0
       ? [
           "Query tabs open for this connection (tabId is required by edit_query_sql; sql is the current content to fix):",
-          ...(queryTabs ?? []).map((tab) =>
-            `<query_tab><tabId>${tab.tabId}</tabId><title>${tab.title}</title><sql>${tab.sql}</sql></query_tab>`),
+          ...(queryTabs ?? []).map(
+            (tab) =>
+              `<query_tab><tabId>${tab.tabId}</tabId><title>${tab.title}</title><sql>${tab.sql}</sql></query_tab>`,
+          ),
           "To fix a query in one of these tabs, call edit_query_sql with that tabId. Smoke-test mutating SQL with preview_write first. The user accepts or rejects the proposal in the tab; you cannot execute it.",
         ].join("\n")
       : [
@@ -623,19 +665,20 @@ export function buildAgentControllerPrompt(params: {
     NATIVE_TOOL_CALLING_ENABLED
       ? "- Use only the native tool names provided via function calling."
       : "- Use only the action names above.",
-    "- Never invent limits on your own toolbelt. Every tool attached to this request stays callable for the whole run; claims like \"the toolbelt is limited\" or \"only planning and search are available\" are always false. Execute every requested capability yourself.",
-    "- Report every step honestly: a step whose observation was \"Tool error\" or \"Tool blocked\" is FAIL or BLOCKED in your final summary, never PASS. Never claim a UI effect (a tab opened, a checkpoint saved, a memory written) that no tool observation in this run confirmed.",
+    '- Never invent limits on your own toolbelt. Every tool attached to this request stays callable for the whole run; claims like "the toolbelt is limited" or "only planning and search are available" are always false. Execute every requested capability yourself.',
+    '- Report every step honestly: a step whose observation was "Tool error" or "Tool blocked" is FAIL or BLOCKED in your final summary, never PASS. Never claim a UI effect (a tab opened, a checkpoint saved, a memory written) that no tool observation in this run confirmed.',
     workspaceToolsEnabled
       ? "- Work through the FULL request: while your plan still has steps you have not attempted with a real tool call, do not finish. A step may end blocked, but only after you actually invoked its tool."
       : "",
     "- If the request is ambiguous about which table, metric, or meaning is intended, call ask_user once with one short question plus 2-4 concrete options passed via the options array — never write the option list inside the question text — instead of guessing.",
     workspaceToolsEnabled
-      ? "- Tables can be EMPTY. Before building any report, overview, or dashboard, prefer tables whose rowCount is greater than zero in list_tables output (or pass args {\"minRows\":1}), confirm with sample_table_data when unsure, and skip zero-row tables instead of presenting them as content."
+      ? '- Tables can be EMPTY. Before building any report, overview, or dashboard, prefer tables whose rowCount is greater than zero in list_tables output (or pass args {"minRows":1}), confirm with sample_table_data when unsure, and skip zero-row tables instead of presenting them as content.'
       : "",
     workspaceToolsEnabled && sqlWritePreview
       ? "- To propose data or schema changes, run preview_write with the mutating statements: it executes them inside one transaction and always rolls back, showing real affected rows. NEVER claim a change was persisted; the human applies the final SQL through the approval flow."
       : "",
-    workspaceToolsEnabled && (toolAvailability?.documentPropose || toolAvailability?.sqlWritePreview)
+    workspaceToolsEnabled &&
+    (toolAvailability?.documentPropose || toolAvailability?.sqlWritePreview)
       ? "- To fill an empty or sparse table or collection with sample data: verify its fields with describe_table or sample_table_data first, then call propose_seed_data with realistic rows matching those fields. It opens the INSERT (or MongoDB insertMany) script in a NEW query tab that the user reviews and runs — you cannot insert data directly and must never claim data was written."
       : "",
     workspaceToolsEnabled
@@ -712,7 +755,9 @@ export function buildAgentControllerPrompt(params: {
     "",
     "Tool observations so far:",
     priorSteps,
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   return clampAgentPrompt(assembled);
 }

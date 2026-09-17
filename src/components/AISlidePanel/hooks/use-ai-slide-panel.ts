@@ -53,6 +53,7 @@ import { runAIAgentToolLoop, type AIAgentActionRequestReason } from "../ai-agent
 import { getAgentMemoryIndex } from "./use-agent-memory";
 import { emitAppToast } from "../../../utils/app-toast";
 import { useUIStore } from "../../../stores/uiStore";
+import { buildInsightScope, useAgentInsightsStore } from "../../../stores/agent-insights-store";
 import { useSkillPrefsStore } from "../../../stores/skillPrefsStore";
 import { DEFAULT_AGENT_TOKEN_BUDGET, extractAgentUsageTokens } from "../ai-agent-cost";
 import {
@@ -81,6 +82,7 @@ import {
   AI_REQUEST_REPLACED_MESSAGE,
 } from "../ai-agent-action-requestor";
 import { runAgentEvidenceLoop } from "../ai-agent-evidence-loop";
+import { collectRunEndInsights } from "../ai-agent-insights";
 
 import {
   buildRunnerInstructionForReason,
@@ -1510,6 +1512,19 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             publishAgentProgress,
             recoverAgentFinishAction,
           }));
+
+          // Proactive insights (P8): a pure, synchronous pass over the trace
+          // the run already produced — no extra model call, and a card only
+          // exists if a statement in that trace backs it. Collected before
+          // finalization so the evidence is the run's own.
+          if (requestId === requestIdRef.current) {
+            useAgentInsightsStore
+              .getState()
+              .recordRunInsights(
+                collectRunEndInsights(finalSteps),
+                buildInsightScope(connectionId, currentDatabase),
+              );
+          }
 
           // Best-effort debug artifact: persist the full snapshot stream so
           // failed or surprising runs can be replayed offline.

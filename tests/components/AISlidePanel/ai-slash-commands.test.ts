@@ -8,6 +8,8 @@ import {
   matchSlashCommands,
   mergeSlashCommands,
   parseSlashCommandLine,
+  runsSlashCommandImmediately,
+  slashCommandDraft,
   type AgentFileCommand,
   type ResolvedFileCommand,
   type AISlashCommand,
@@ -45,6 +47,56 @@ describe("composer slash commands", () => {
   it("keeps registry names unique so menu selection is unambiguous", () => {
     const names = registry.map((command) => command.name);
     expect(new Set(names).size).toBe(names.length);
+  });
+});
+
+describe('picking a command from the "/" menu', () => {
+  it("only runs the command that carries its own confirmation", () => {
+    // `/rollback` opens the checkpoint picker, and that picker *is* the
+    // confirmation, so a second Enter would only add a step.
+    expect(runsSlashCommandImmediately("rollback")).toBe(true);
+    expect(runsSlashCommandImmediately("  Rollback ")).toBe(true);
+    // Everything else waits for an ordinary Enter through the send path, which is
+    // what expands file-backed runbooks and applies `/backup`/`/compact`.
+    expect(runsSlashCommandImmediately("backup")).toBe(false);
+    expect(runsSlashCommandImmediately("compact")).toBe(false);
+    expect(runsSlashCommandImmediately("review-sql")).toBe(false);
+    expect(runsSlashCommandImmediately("help")).toBe(false);
+  });
+
+  it("parks the command in the composer with no arguments appended", () => {
+    expect(slashCommandDraft("review-sql")).toBe("/review-sql");
+    expect(slashCommandDraft("  profile  ")).toBe("/profile");
+  });
+
+  it("hands the send path a draft it recognises as that very command", () => {
+    // The parked draft is only useful if Enter resolves it exactly like the typed
+    // form: the native handlers, the file-backed lookup and the argument parser
+    // must all agree, or the user would watch Enter do nothing.
+    for (const name of ["backup", "rollback", "profile", "review-sql"]) {
+      const draft = slashCommandDraft(name);
+      const parsed = parseSlashCommandLine(draft);
+      expect(parsed?.name).toBe(name);
+      expect(parsed?.arguments).toBe("");
+    }
+    expect(isBackupCommand(slashCommandDraft("backup"))).toBe(true);
+    expect(isRollbackCommand(slashCommandDraft("rollback"))).toBe(true);
+  });
+
+  it("leaves room for arguments, which is why picking never runs the command", () => {
+    const commands: AgentFileCommand[] = [
+      {
+        name: "profile",
+        description: "Profile a table.",
+        argumentHint: "[table to profile]",
+        argumentNames: ["table"],
+        inject: [],
+        origin: "builtin",
+      },
+    ];
+    // `/profile orders` is only reachable because the menu inserts `/profile`
+    // first; an immediate run would have thrown the table name away.
+    expect(findFileCommandName(`${slashCommandDraft("profile")} orders`, commands)).toBe("profile");
   });
 });
 

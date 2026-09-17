@@ -138,6 +138,15 @@ commands (`/backup`, `/rollback`, `/compact` always win — they are real featur
 prompts), filtered by `src/stores/commandPrefsStore.ts`. `.claude/commands/` is a different
 system entirely (§1).
 
+Picking a command from the `/` menu **parks it in the composer** (`/review-sql`) instead of
+running it, so the user gets a second look, can still add arguments (`/backup nightly`,
+`/profile orders`), and runs it with an ordinary Enter through the single send path
+(`handleGenerate`) — the one place that expands file-backed runbooks and applies the native
+commands. `/rollback` is the sole exception (`runsSlashCommandImmediately`): its checkpoint
+picker _is_ the confirmation, so a second Enter would only be an extra step. Never add a
+second entry to that set without a confirmation step of its own — a pick must not start work
+the user has not confirmed.
+
 ## 4. In-app guardrail rules (`agent_rules.rs`)
 
 Implementation: `src-tauri/src/agent_rules.rs`. Shipped pack: `src-tauri/rules/*.md`.

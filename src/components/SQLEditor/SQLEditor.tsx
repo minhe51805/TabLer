@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSQLEditor } from "./hooks/use-sql-editor";
 import type { QueryEditorSessionState, QueryChromeState } from "./hooks/use-sql-editor";
 import { SQLEditorResultsPane } from "./SQLEditorResultsPane";
+import { defineTableRTheme } from "./SQLEditorTheme";
 import { AlignLeft, Keyboard, Terminal, GitBranch, Loader2, Eye, EyeOff } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useConnectionStore } from "../../stores/connectionStore";
@@ -130,54 +131,31 @@ export function SQLEditor({
           style={{ height: showResultsPane ? `${editorHeight}%` : "100%", minHeight: 96 }}
         >
           {aiProposal ? (
-            <div
-              role="status"
-              style={{
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                flexWrap: "wrap",
-                padding: "6px 10px",
-                margin: "0 0 6px",
-                border: "1px solid #3b82f6",
-                borderRadius: 6,
-                background: "rgba(59, 130, 246, 0.12)",
-                color: "#dbeafe",
-                fontSize: 12,
-              }}
-            >
-              <span
-                style={{
-                  minWidth: 0,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                AI edit proposal: {aiProposal.reason}
+            <div role="status" className="sql-editor-ai-proposal">
+              <span className="sql-editor-ai-proposal-reason">
+                {t("tabs.aiProposal")}: {aiProposal.reason}
               </span>
               <button
                 type="button"
                 onClick={acceptAiProposal}
-                className="sql-editor-tool-btn"
-                style={{ color: "#86efac" }}
+                className="sql-editor-tool-btn sql-editor-proposal-accept"
               >
-                Accept
+                {t("tabs.aiProposalAccept")}
               </button>
               <button
                 type="button"
                 onClick={rejectAiProposal}
-                className="sql-editor-tool-btn"
-                style={{ color: "#fca5a5" }}
+                className="sql-editor-tool-btn sql-editor-proposal-reject"
               >
-                Reject
+                {t("tabs.aiProposalReject")}
               </button>
             </div>
           ) : null}
           <Editor
             defaultLanguage={queryProfile.editorLanguage}
             defaultValue={restoredContent}
-            theme="vs-dark"
+            beforeMount={defineTableRTheme}
+            theme="tabler-dark"
             onChange={(value) => {
               if (value === undefined) return;
               setDraftSql(value);

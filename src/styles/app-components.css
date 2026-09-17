@@ -26262,6 +26262,52 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   padding: 0;
 }
 
+/* AI edit proposal banner — must use theme tokens: the previous hard-coded
+   dark-theme pastels (#dbeafe text, #86efac accept, #fca5a5 reject) washed out
+   on the MiniMax white canvas, leaving the label and both actions unreadable. */
+.sql-editor-ai-proposal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--mm-accent);
+  border-radius: var(--mm-radius-sm);
+  background: var(--mm-accent-dim);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+}
+
+.sql-editor-ai-proposal-reason {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Accept/Reject keep the tool-btn chrome but carry their own semantic color;
+   the extra class raises specificity above `.sql-editor-tool-btn:hover`. */
+.sql-editor-tool-btn.sql-editor-proposal-accept {
+  color: var(--mm-success);
+}
+
+.sql-editor-tool-btn.sql-editor-proposal-accept:hover {
+  border-color: var(--mm-success);
+  background: var(--mm-success-soft);
+  color: var(--mm-success);
+}
+
+.sql-editor-tool-btn.sql-editor-proposal-reject {
+  color: var(--mm-error);
+}
+
+.sql-editor-tool-btn.sql-editor-proposal-reject:hover {
+  border-color: var(--mm-error);
+  background: var(--mm-error-soft);
+  color: var(--mm-error);
+}
+
 /* Toolbar hide/show toggle — when collapsed only the eye button remains */
 .sql-editor-floating-tools.collapsed {
   background: transparent;

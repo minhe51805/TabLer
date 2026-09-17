@@ -26279,11 +26279,64 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   font-size: var(--mm-fs-caption);
 }
 
+/* The reason is the model's own words and is usually a full sentence, not the
+   "one short line" the tool schema asks for. Clipping it to a single ellipsised
+   line hid the only description of the change ("Đề xuất sửa của AI: …"), so let
+   it wrap. The buttons keep their intrinsic width — with `min-width: 0` alone
+   the flexbox shrank the text to nothing instead of overflowing it. */
 .sql-editor-ai-proposal-reason {
+  flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.sql-editor-ai-proposal > .sql-editor-tool-btn {
+  flex: 0 0 auto;
+}
+
+/* Before/after view of the proposal. Accepting used to be the only way to see
+   the proposed SQL, and that rewrites the tab (Ctrl+Z to undo). */
+.sql-editor-ai-proposal-details {
+  flex: 1 1 100%;
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.sql-editor-ai-proposal-block {
+  display: grid;
+  gap: 2px;
+}
+
+.sql-editor-ai-proposal-block-label {
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sql-editor-ai-proposal-code {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--mm-border);
+  border-radius: var(--mm-radius-sm);
+  background: var(--mm-surface-2);
+  color: var(--text-secondary);
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: var(--mm-fs-micro);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The proposed text is what the tab becomes on accept — mark it as incoming. */
+.sql-editor-ai-proposal-code-next {
+  border-color: var(--mm-success);
+  background: var(--mm-success-soft);
+  color: var(--text-primary);
 }
 
 /* Accept/Reject keep the tool-btn chrome but carry their own semantic color;

@@ -14,7 +14,15 @@ const locales: Array<[string, Record<string, string | undefined>]> = [
   ["ko", ko as Record<string, string | undefined>],
 ];
 
-const proposalKeys = ["tabs.aiProposal", "tabs.aiProposalAccept", "tabs.aiProposalReject"] as const;
+const proposalKeys = [
+  "tabs.aiProposal",
+  "tabs.aiProposalAccept",
+  "tabs.aiProposalReject",
+  "tabs.aiProposalShow",
+  "tabs.aiProposalHide",
+  "tabs.aiProposalCurrent",
+  "tabs.aiProposalProposed",
+] as const;
 
 describe("AI edit proposal banner translations", () => {
   for (const [name, dictionary] of locales) {

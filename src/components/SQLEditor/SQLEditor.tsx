@@ -123,6 +123,16 @@ export function SQLEditor({
     parameterDrafts,
   });
 
+  // The banner can only carry the model's one-line `reason`, so the tab has to
+  // offer a way to see WHAT the proposal changes. The hook keeps both sides of
+  // the edit; reveal them behind a toggle instead of forcing the user to accept
+  // blind (accepting just to inspect rewrites the tab and needs a Ctrl+Z).
+  const [proposalDetailsOpen, setProposalDetailsOpen] = useState(false);
+  useEffect(() => {
+    // A new proposal (and the accept/reject that clears one) starts collapsed.
+    setProposalDetailsOpen(false);
+  }, [aiProposal]);
+
   return (
     <div className="sql-editor-shell" data-testid="sql-editor">
       <div className="sql-editor-stack">
@@ -132,9 +142,22 @@ export function SQLEditor({
         >
           {aiProposal ? (
             <div role="status" className="sql-editor-ai-proposal">
-              <span className="sql-editor-ai-proposal-reason">
+              <span className="sql-editor-ai-proposal-reason" title={aiProposal.reason}>
                 {t("tabs.aiProposal")}: {aiProposal.reason}
               </span>
+              <button
+                type="button"
+                onClick={() => setProposalDetailsOpen((open) => !open)}
+                aria-expanded={proposalDetailsOpen}
+                className="sql-editor-tool-btn sql-editor-proposal-inspect"
+              >
+                {proposalDetailsOpen ? (
+                  <EyeOff className="w-3.5 h-3.5" />
+                ) : (
+                  <Eye className="w-3.5 h-3.5" />
+                )}
+                {t(proposalDetailsOpen ? "tabs.aiProposalHide" : "tabs.aiProposalShow")}
+              </button>
               <button
                 type="button"
                 onClick={acceptAiProposal}
@@ -149,6 +172,26 @@ export function SQLEditor({
               >
                 {t("tabs.aiProposalReject")}
               </button>
+              {proposalDetailsOpen ? (
+                <div className="sql-editor-ai-proposal-details">
+                  <div className="sql-editor-ai-proposal-block">
+                    <span className="sql-editor-ai-proposal-block-label">
+                      {t("tabs.aiProposalCurrent")}
+                    </span>
+                    <pre className="sql-editor-ai-proposal-code">
+                      {aiProposal.previousSql.trim() || "—"}
+                    </pre>
+                  </div>
+                  <div className="sql-editor-ai-proposal-block">
+                    <span className="sql-editor-ai-proposal-block-label">
+                      {t("tabs.aiProposalProposed")}
+                    </span>
+                    <pre className="sql-editor-ai-proposal-code sql-editor-ai-proposal-code-next">
+                      {aiProposal.sql}
+                    </pre>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
           <Editor

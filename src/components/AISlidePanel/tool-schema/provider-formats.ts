@@ -140,17 +140,27 @@ export interface NativeToolPayload {
  * agent loop. A `null` return is the caller's signal to keep the existing
  * streaming text path unchanged. Native calling only rides the non-streaming
  * request path, so no streaming delta accumulation is involved.
+ *
+ * `options.unattendedReadOnly` narrows the payload to the read-only tool surface
+ * for a scheduled agent task (P10) — the write tools are simply absent from the
+ * request, so the model cannot call one even by mistake.
  */
 export function buildNativeToolPayload(
   providerType: AIProviderType,
   intent: AIRequestIntent,
   engineKey?: string | null,
+  options?: { unattendedReadOnly?: boolean },
 ): NativeToolPayload | null {
   if (!NATIVE_TOOL_CALLING_ENABLED || intent !== "agent") {
     return null;
   }
 
-  return nativeToolPayloadForProvider(providerType, nativeCatalogOptionsForEngine(engineKey));
+  const engineOptions = nativeCatalogOptionsForEngine(engineKey);
+  const catalogOptions: AgentToolCatalogOptions = options?.unattendedReadOnly
+    ? { ...engineOptions, unattendedReadOnly: true }
+    : engineOptions;
+
+  return nativeToolPayloadForProvider(providerType, catalogOptions);
 }
 
 /**

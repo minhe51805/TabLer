@@ -400,6 +400,30 @@ export const tr: Record<keyof typeof en, string> = {
   "schedules.edit": "Düzenle",
   "schedules.delete": "Sil",
   "schedules.new": "Yeni zamanlama",
+  "schedules.kind": "Zamanlama türü",
+  "schedules.kindLocked":
+    "Tür kaydedildikten sonra sabitlenir; değiştirmek için zamanlamayı silip yeniden oluşturun.",
+  "schedules.kindSql": "SQL sorgusu",
+  "schedules.kindAgent": "Ajan görevi (salt okunur)",
+  "schedules.tagSql": "SQL",
+  "schedules.tagAgent": "Ajan",
+  "schedules.agentPrompt": "Ajan görevi",
+  "schedules.agentPromptPlaceholder":
+    "Örnek: 24 saatten uzun süredir “pending” durumunda bekleyen siparişleri bulun ve etkilenen müşteri hesaplarını bildirin.",
+  "schedules.agentReadOnlyHint":
+    "Uygulama açıkken gözetimsiz ve salt okunur çalışır: veriyi okuyup bulguları kaydeder, ancak veriyi değiştirmez ve soru sormaz. Sonuçlar AI panelindeki içgörülerde görünür.",
+  "schedules.agentRunning": "Şu anda çalışıyor (salt okunur).",
+  "schedules.agentWaiting": "Çalışmayı bekliyor",
+  "schedules.agentWaitConnection": "bu görevin bağlantısı etkin bağlantı olduğunda başlar.",
+  "schedules.agentWaitDatabase": "bu görevin veritabanı açıldığında başlar.",
+  "schedules.agentWaitBusy": "geçerli AI isteği bittiğinde başlar.",
+  "schedules.agentDispatchedStatus":
+    "Gönderildi — henüz sonuç bildirilmedi (uygulama kapanmış veya meşgul olabilir).",
+  "schedules.agentDispatched": "Zamanlanmış ajan görevi başladı: {{name}}",
+  "schedules.agentDispatchedHint": "Çalışma alanı boşalır boşalmaz salt okunur olarak çalışır.",
+  "schedules.agentEmptyTask": "Zamanlanmış ajan görevi atlandı: {{name}} için görev metni yok",
+  "schedules.agentNeedsHuman":
+    "Sana ihtiyaç var: görev, yalnızca bir insanın yapabileceği bir iş için reddedildi; bu yüzden bulduklarını kaydedip orada durdu.",
   "querybuilder.aggregates": "Kümeler / GROUP BY",
   "querybuilder.allRows": "tüm satırlar",
   "querybuilder.alias": "Takma ad (isteğe bağlı)",

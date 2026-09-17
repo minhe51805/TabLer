@@ -1,5 +1,10 @@
 import type { RefObject } from "react";
-import type { AIConversationMessage, AIRequestAttachment, AIRequestIntent, AIRequestMode } from "../../types";
+import type {
+  AIConversationMessage,
+  AIRequestAttachment,
+  AIRequestIntent,
+  AIRequestMode,
+} from "../../types";
 import { normalizeAIRequestError } from "../../utils/ai-request-errors";
 import { parseAIAgentToolAction } from "./ai-agent-tools";
 import {
@@ -10,6 +15,16 @@ import {
 
 /** Message used to signal that a newer AI request replaced the current one. */
 export const AI_REQUEST_REPLACED_MESSAGE = "This AI request was replaced by a newer one.";
+
+/**
+ * Per-call options for the model transport: `correlationId` scopes this run's
+ * events, `unattendedReadOnly` (P10) narrows the native tool payload to the
+ * read-only surface for a scheduled agent task.
+ */
+export interface AgentAskAIOptions {
+  correlationId?: string;
+  unattendedReadOnly?: boolean;
+}
 
 export function isSupersededAIRequestError(errorValue: unknown): boolean {
   if (errorValue instanceof Error) {
@@ -38,12 +53,18 @@ interface AgentActionRequestorDeps {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[],
     attachments?: AIRequestAttachment[],
-    options?: { correlationId?: string },
+    options?: AgentAskAIOptions,
   ) => Promise<string>;
   context: string;
   strictRecoveryContext: string | null;
   /** Monotonic id captured when generateAssist started; guards against superseded runs. */
   requestId: number;
+  /**
+   * P10: the run is an unattended scheduled agent task. Rides every model call
+   * of this run so the native tool payload is narrowed to the read-only surface
+   * no matter which call composes the action.
+   */
+  unattendedReadOnly?: boolean;
   requestIdRef: RefObject<number>;
   requestHistory: AIConversationMessage[];
   /** Image attachments for this run. They ride EVERY model call so whichever
@@ -80,11 +101,13 @@ export function createAgentActionRequestor(deps: AgentActionRequestorDeps) {
     correlationId,
     retryPolicy = DEFAULT_AGENT_RETRY_POLICY,
     random = Math.random,
+    unattendedReadOnly,
   } = deps;
 
-  const correlationOptions = correlationId !== undefined
-    ? { correlationId }
-    : undefined;
+  const correlationOptions: AgentAskAIOptions = {
+    ...(correlationId !== undefined ? { correlationId } : {}),
+    ...(unattendedReadOnly ? { unattendedReadOnly: true } : {}),
+  };
 
   const askAgentWithPolicyRetry = async (
     prompt: string,
@@ -94,7 +117,15 @@ export function createAgentActionRequestor(deps: AgentActionRequestorDeps) {
     let lastError: unknown;
     for (let retry = 0; retry <= retryPolicy.maxRetries; retry += 1) {
       try {
-        return await askAI(prompt, strictRecoveryContext || context, "panel", "agent", history, attachments, correlationOptions);
+        return await askAI(
+          prompt,
+          strictRecoveryContext || context,
+          "panel",
+          "agent",
+          history,
+          attachments,
+          correlationOptions,
+        );
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;
         lastError = errorValue;
@@ -159,8 +190,10 @@ export function createAgentActionRequestor(deps: AgentActionRequestorDeps) {
           `The previous reply was not valid (${parseDetail}). Return the same next action again as valid JSON only.`,
           'Example shape: {"action":"describe_table","message":"Need the schema first.","args":{"table":"users"}}',
           invalidSnippet ? `Previous reply for reference:\n${invalidSnippet}` : "",
-        ].filter(Boolean).join("\n"),
-        []
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        [],
       );
       if (requestId !== requestIdRef.current) {
         throw new Error(AI_REQUEST_REPLACED_MESSAGE);

@@ -482,6 +482,12 @@ export function buildAgentControllerPrompt(params: {
   workspaceBoundDatabase?: string | null;
   /** Current checklist (from update_plan), rendered near the top of the prompt. */
   planLines?: string[];
+  /**
+   * P10: the run is an unattended scheduled agent task. Narrows the text catalog
+   * to the read-only tool surface and states plainly that no human can answer,
+   * so the model reports findings instead of asking or proposing writes.
+   */
+  unattendedReadOnly?: boolean;
 }) {
   const {
     userPrompt,
@@ -502,6 +508,7 @@ export function buildAgentControllerPrompt(params: {
     knownDatabaseNames,
     workspaceBoundDatabase,
     planLines,
+    unattendedReadOnly,
   } = params;
   const databaseMentionMismatch = detectDatabaseMentionMismatch({
     userPrompt,
@@ -560,12 +567,20 @@ export function buildAgentControllerPrompt(params: {
     : formatAgentToolCatalog({
         workspaceToolsEnabled,
         availability: toolAvailability,
+        unattendedReadOnly,
       });
 
   const assembled = [
     "Work as an autonomous workspace agent.",
     `Goal type: ${assistIntent}.`,
     `Current database: ${currentDatabase || "Default"}.`,
+    unattendedReadOnly
+      ? [
+          "UNATTENDED SCHEDULED RUN: this run was started by a scheduled task, not by a person. Nobody is watching and nobody can answer a question or approve a change.",
+          "This run is READ-ONLY: it can read data and report findings, and it must never change data, propose SQL edits, or write memory/rules/skills. Finish with a concise report of what you found.",
+          "Never call ask_user (there is no one to answer) and never call preview_write, propose_seed_data, edit_query_sql, remember_term, save_memory, delete_memory, create_checkpoint or restore_checkpoint — they are refused, and a blocked step must be reported as BLOCKED, not as done.",
+        ].join("\n")
+      : "",
     databaseMentionMismatch
       ? [
           `DATABASE MISMATCH WARNING: this workspace is bound to database "${currentDatabase || "Default"}", but the user's request explicitly mentions database "${databaseMentionMismatch}".`,

@@ -32,7 +32,7 @@ import {
   type AIWorkspaceInteractionMode,
 } from "../ai-workspace-types";
 import { evaluateRunAgainstRules } from "../ai-agent-rules";
-import { type AIAgentFinishAction } from "../ai-agent-tools";
+import { type AIAgentFinishAction, type AIAgentToolName } from "../ai-agent-tools";
 import {
   buildAgentControllerPrompt,
   buildAgentPlanPrompt,
@@ -123,6 +123,12 @@ export interface AIGeneratedAssistResult {
   /** Provider-failover footer notes (short summary + full raw provider error)
    *  surfaced under the final answer with an info popover. */
   failoverNotes?: AIWorkspaceFailoverNote[];
+  /**
+   * P10: tools an unattended scheduled run tried to call but was refused. Only
+   * present for an unattended run, and read back as evidence that the run
+   * really stayed read-only (the allow-list is a claim; this is the trace).
+   */
+  unattendedBlockedTools?: AIAgentToolName[];
 }
 
 const MAX_AGENT_STEPS = 10;
@@ -384,6 +390,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         onAgentProgress?: (steps: AIWorkspaceAgentStep[]) => void;
         /** Files/images attached by the user for this turn (composer pipeline). */
         attachments?: AIAttachmentDraft[];
+        /**
+         * P10: this run was started by a scheduled agent task. Nobody is
+         * watching, so the run is confined to the read-only tool surface — the
+         * write/memory/checkpoint tools are absent from the catalog and refused
+         * by the executor — and the model is told to report instead of asking.
+         */
+        unattendedReadOnly?: boolean;
       },
     ): Promise<AIGeneratedAssistResult> => {
       const normalizedPrompt = prompt.trim();
@@ -414,6 +427,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       const requestDataReadConsent = options?.requestDataReadConsent;
       const requestDataDestructiveConsent = options?.requestDataDestructiveConsent;
       const onAgentProgress = options?.onAgentProgress;
+      // P10: an unattended scheduled run is read-only. The flag rides the
+      // request payload, the prompt catalog and the executor, so no single
+      // layer has to be trusted on its own.
+      const unattendedReadOnly = options?.unattendedReadOnly === true;
       const {
         assistIntent,
         wantsVisualization,
@@ -758,6 +775,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               availableSkills,
               agentMemoryIndex,
               queryTabs,
+              unattendedReadOnly,
             });
 
           // Model-call layer: transient retry + parse-repair (extracted).
@@ -777,6 +795,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             // Stamps every model call of this run so chain-failover events from
             // parallel non-agent requests never leak into this trace.
             correlationId: `agent-run-${requestId}`,
+            // P10: the read-only tool surface also narrows the native tool
+            // payload of every model call in this run.
+            unattendedReadOnly,
             onRetryWait: ({ delayMs, reason, retry, maxRetries }) => {
               const seconds = Math.max(1, Math.round(delayMs / 1000));
               const transientNote =
@@ -801,7 +822,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               });
             },
           });
-          const { runAgentTool } = createAgentToolExecutor({
+          const { runAgentTool, getUnattendedBlockedTools } = createAgentToolExecutor({
+            // P10: an unattended scheduled run reaches only the read tools; the
+            // executor refuses everything else by name.
+            unattendedReadOnly,
             // Fail-closed: an absent catalog means NO skill may load, otherwise
             // a model could call the skill tool for entries never vetted.
             allowedSkillNames: availableSkills?.map((entry) => entry.name) ?? [],
@@ -1627,6 +1651,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             agentWidgets: finalization.agentWidgets,
             askUserOptions,
             failoverNotes: failoverNotes.length > 0 ? failoverNotes : undefined,
+            // Read-only compliance evidence: which tools an unattended run
+            // reached for and was refused (empty = it never tried to write).
+            unattendedBlockedTools: unattendedReadOnly ? getUnattendedBlockedTools() : undefined,
           };
         }
         const finalResponse = await recoverNonAgentAssistResponse({

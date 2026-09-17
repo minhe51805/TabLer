@@ -34,6 +34,7 @@ import {
 } from "./ai-agent-grounding";
 import { mapWithConcurrency } from "./ai-async-utils";
 import { agentSqlToolBlockedMessage, type AgentToolAvailability } from "./ai-agent-engine-gates";
+import { isUnattendedAllowedTool, unattendedToolBlockReason } from "./ai-agent-unattended";
 import {
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
   AI_AGENT_DELEGATE_ANSWER_CHARS,
@@ -97,6 +98,13 @@ export type { AgentColumnStatsScope } from "./agent-tool-executor-helpers";
 
 export interface AgentToolExecutorDeps {
   connectionId: string | null;
+  /**
+   * P10 unattended read-only policy for scheduled agent tasks. When true the
+   * executor refuses every tool outside the read-only allow-list (fail-closed),
+   * independently of the catalog filter that already removed them from the
+   * request. Attended runs leave this false and keep the full tool surface.
+   */
+  unattendedReadOnly?: boolean;
   /** Names injected in this run's <available_skills> catalog. When set, the
    * skill tool refuses anything outside the list so "injected == loadable"
    * stays true even if the catalog is later filtered or capped. */
@@ -267,6 +275,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     language,
     toolAvailability,
     evaluateGuardrailRules,
+    unattendedReadOnly = false,
   } = deps;
   let lastExplorationToolKey = "";
   /** Side-analysis calls spent this run (delegate budget). */
@@ -288,6 +297,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   let checkpointCallsUsed = 0;
   /** Rollback confirmations driven this run (one per run). */
   let restoreCallsUsed = 0;
+  /**
+   * P10: tools the model attempted but the unattended read-only policy refused.
+   * Reported back with the run outcome so a scheduled task is never claimed to
+   * have done something it was blocked from doing.
+   */
+  const unattendedBlockedToolsUsed = new Set<AIAgentToolName>();
 
   /**
    * Full (untruncated) observations from this run, 1-based-indexed in call
@@ -320,6 +335,17 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       ) {
         const allowed = [...skillToolRestriction].sort().join(", ");
         return `Tool error: the active skill restricts tools to [${allowed}] (plus finish, ask_user, update_plan, read_page, skill, read_skill_resource). "${action.action}" is disabled while that skill is loaded — use an allowed tool or finish.`;
+      }
+      // P10 read-only policy, layer 3: an unattended scheduled run may only use
+      // the read tool surface. The catalog filter already keeps these out of the
+      // request (layers 1 and 2), so reaching this branch means the model named a
+      // blocked tool anyway — refuse it with a corrective observation instead of
+      // executing it, and never lean on the catalog filter being correct.
+      if (unattendedReadOnly && !isUnattendedAllowedTool(action.action)) {
+        // `action.action` also carries legacy names the allow-list cannot know;
+        // any of them is a blocked tool by definition (fail-closed).
+        unattendedBlockedToolsUsed.add(action.action as AIAgentToolName);
+        return unattendedToolBlockReason(action.action);
       }
       // Repeating an exploration call with identical arguments returns the
       // identical observation and burns a step from a tight budget. Meta actions
@@ -1864,9 +1890,10 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       if (action.action === "finish") {
         return "Tool error: finish does not execute a tool observation.";
       }
-      const availableTools = AI_AGENT_TOOL_NAMES.filter((toolName) => toolName !== "finish").join(
-        ", ",
-      );
+      const availableTools = AI_AGENT_TOOL_NAMES.filter(
+        (toolName) =>
+          toolName !== "finish" && (!unattendedReadOnly || isUnattendedAllowedTool(toolName)),
+      ).join(", ");
       return `Tool error: unknown tool "${action.action}". Available tools: ${availableTools}. Choose one of these, or return a finish action with args.response if the task is complete.`;
     } catch (errorValue) {
       if (isSupersededAIRequestError(errorValue)) {
@@ -1886,5 +1913,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     return result;
   };
 
-  return { runAgentTool };
+  /**
+   * Report of every attempt to use a blocked tool during an unattended run.
+   * Empty for a normal run, so a caller can assert read-only compliance from
+   * evidence instead of trusting the allow-list alone.
+   */
+  const getUnattendedBlockedTools = (): AIAgentToolName[] => [...unattendedBlockedToolsUsed].sort();
+
+  return { runAgentTool, getUnattendedBlockedTools };
 }

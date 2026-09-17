@@ -40,6 +40,8 @@ import {
   isRollbackCommand,
   matchSlashCommands,
   mergeSlashCommands,
+  runsSlashCommandImmediately,
+  slashCommandDraft,
   type AIDatabaseCheckpoint,
   type AISlashCommand,
   type AgentFileCommand,
@@ -1493,24 +1495,41 @@ export function AISlidePanel({
     setError,
   ]);
 
-  const runSlashCommand = useCallback(
+  /**
+   * A command picked from the "/" menu lands in the composer, it does not run:
+   * the draft becomes `/name`, the caret follows it, and the user runs it with an
+   * ordinary Enter through `handleGenerate` — the one path that expands
+   * file-backed runbooks and handles `/backup`, `/compact` and `/rollback`. That
+   * keeps arguments reachable (`/backup nightly`, `/profile orders`) and stops a
+   * mis-click from starting work the user never confirmed.
+   *
+   * `/rollback` is the exception: it opens the checkpoint picker, which is itself
+   * the confirmation step (`runsSlashCommandImmediately`).
+   */
+  const commitSlashCommand = useCallback(
     (name: string) => {
-      setPromptDraft("");
-      setSlashDismissed(false);
+      // Dismissed for the same keystroke, or the freshly inserted `/help` would be
+      // read as a search prefix and immediately re-open the menu over the caret.
+      setSlashDismissed(true);
       setSlashActiveIndex(0);
-      if (name === "compact") {
-        void handleCompactContext(false);
-        return;
-      }
-      if (name === "backup") {
-        void handleBackupCommand();
-        return;
-      }
-      if (name === "rollback") {
+      if (runsSlashCommandImmediately(name)) {
+        setPromptDraft("");
         void handleRollbackCommand();
+        return;
       }
+      const draft = slashCommandDraft(name);
+      setPromptDraft(draft);
+      // Same idiom as the panel's initial prompt: the caret must sit after the
+      // inserted command, so the next keystroke types an argument instead of
+      // being swallowed before the text.
+      window.requestAnimationFrame(() => {
+        const composer = composerTextareaRef.current;
+        if (!composer) return;
+        composer.focus();
+        composer.setSelectionRange(draft.length, draft.length);
+      });
     },
-    [handleBackupCommand, handleCompactContext, handleRollbackCommand],
+    [handleRollbackCommand],
   );
 
   // Composer edits re-arm the "/" menu (Escape dismissal lasts one keystroke).
@@ -1696,7 +1715,9 @@ export function AISlidePanel({
   const handleComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // The "/" command menu owns the keyboard while it is open: arrows move the
-      // highlight, Enter/Tab run the highlighted command, Escape dismisses.
+      // highlight, Enter/Tab park the highlighted command in the composer,
+      // Escape dismisses. Picking never runs a command — the second Enter goes
+      // through the ordinary send path.
       if (slashMenuOpen && slashMatches.length > 0) {
         const activeIndex = Math.min(slashActiveIndex, slashMatches.length - 1);
         if (event.key === "ArrowDown") {
@@ -1711,7 +1732,7 @@ export function AISlidePanel({
         }
         if (event.key === "Enter" || event.key === "Tab") {
           event.preventDefault();
-          runSlashCommand(slashMatches[activeIndex].name);
+          commitSlashCommand(slashMatches[activeIndex].name);
           return;
         }
         if (event.key === "Escape") {
@@ -1725,7 +1746,7 @@ export function AISlidePanel({
         void handleGenerate();
       }
     },
-    [handleGenerate, runSlashCommand, slashActiveIndex, slashMatches, slashMenuOpen],
+    [commitSlashCommand, handleGenerate, slashActiveIndex, slashMatches, slashMenuOpen],
   );
 
   const handleCopyBubble = useCallback(
@@ -2499,7 +2520,7 @@ export function AISlidePanel({
               activeIndex: Math.min(slashActiveIndex, slashMatches.length - 1),
             }
           : null,
-        onSelectSlashCommand: runSlashCommand,
+        onSelectSlashCommand: commitSlashCommand,
         setSessionDataReadEnabled,
         setShowThinking,
         selectAgentAutonomy: handleSelectAgentAutonomyWithSafeMode,

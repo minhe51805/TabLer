@@ -677,6 +677,10 @@ export function useSQLEditor({
     });
 
     defineTableRTheme(monaco);
+    // Must stay in sync with the <Editor theme> prop in SQLEditor.tsx: the CSS
+    // (.sql-editor-shell .monaco-editor-background) pins the editor surface to
+    // the light `--mm-surface-0`, so a dark Monaco base such as "vs-dark"
+    // renders #D4D4D4 identifiers on white — i.e. unreadable code.
     editor.updateOptions({ theme: "tabler-dark" });
 
     if (pendingRunRequestNonceRef.current !== null) {

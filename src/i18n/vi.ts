@@ -344,6 +344,13 @@ export const vi: Record<keyof typeof en, string> = {
   "tabs.deliveringRows": "Đang nhận {{count}} dòng...",
   "tabs.noSqlToExecute":
     "Chưa có gì để chạy. Hãy nhập query hoặc command trước rồi nhấn Ctrl+Enter.",
+  "tabs.aiProposal": "Đề xuất sửa của AI",
+  "tabs.aiProposalAccept": "Chấp nhận",
+  "tabs.aiProposalReject": "Từ chối",
+  "tabs.aiProposalShow": "Xem thay đổi",
+  "tabs.aiProposalHide": "Ẩn thay đổi",
+  "tabs.aiProposalCurrent": "SQL hiện tại",
+  "tabs.aiProposalProposed": "SQL đề xuất",
   "metrics.widget.openResult": "Open result in workspace",
   "metrics.widget.openSourceSql": "Open source SQL",
   "workspace.bundle.export": "Export workspace bundle",

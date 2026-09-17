@@ -345,6 +345,13 @@ export const ko: Record<keyof typeof en, string> = {
   "tabs.deliveringRows": "{{count}}개 행 수신 중...",
   "tabs.noSqlToExecute":
     "아직 실행할 항목이 없습니다. 먼저 쿼리나 명령을 입력한 다음 Ctrl+Enter을 누르세요.",
+  "tabs.aiProposal": "AI 편집 제안",
+  "tabs.aiProposalAccept": "수락",
+  "tabs.aiProposalReject": "거부",
+  "tabs.aiProposalShow": "변경 내용 보기",
+  "tabs.aiProposalHide": "변경 내용 숨기기",
+  "tabs.aiProposalCurrent": "현재 SQL",
+  "tabs.aiProposalProposed": "제안된 SQL",
   "metrics.widget.openResult": "Open result in workspace",
   "metrics.widget.openSourceSql": "Open source SQL",
   "workspace.bundle.export": "Export workspace bundle",

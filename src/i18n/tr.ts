@@ -349,6 +349,13 @@ export const tr: Record<keyof typeof en, string> = {
   "tabs.deliveringRows": "{{count}} satir aliniyor...",
   "tabs.noSqlToExecute":
     "Henuz calıstiracak bir sey yok. Once bir sorgu veya komut yazin, ardindan Ctrl+Enter'a basin.",
+  "tabs.aiProposal": "AI duzenleme onerisi",
+  "tabs.aiProposalAccept": "Kabul et",
+  "tabs.aiProposalReject": "Reddet",
+  "tabs.aiProposalShow": "Degisikligi gor",
+  "tabs.aiProposalHide": "Degisikligi gizle",
+  "tabs.aiProposalCurrent": "Mevcut SQL",
+  "tabs.aiProposalProposed": "Onerilen SQL",
   "metrics.widget.openResult": "Open result in workspace",
   "metrics.widget.openSourceSql": "Open source SQL",
   "workspace.bundle.export": "Export workspace bundle",

@@ -351,6 +351,13 @@ export const en = {
   "tabs.deliveringRows": "Receiving {{count}} rows...",
   "tabs.noSqlToExecute":
     "Nothing to run yet. Type a query or command first, then press Ctrl+Enter.",
+  "tabs.aiProposal": "AI edit proposal",
+  "tabs.aiProposalAccept": "Accept",
+  "tabs.aiProposalReject": "Reject",
+  "tabs.aiProposalShow": "View change",
+  "tabs.aiProposalHide": "Hide change",
+  "tabs.aiProposalCurrent": "Current SQL",
+  "tabs.aiProposalProposed": "Proposed SQL",
   "ai.toast.providerFailover":
     'Provider "{{failed}}" is failing — switching to provider "{{next}}", please wait.',
   "ai.failover.consentTitle": "Provider failing",

@@ -1,8 +1,10 @@
 /**
  * Composer slash commands. Typing "/" at the start of the AI composer opens a
  * filterable command menu (like the reference "COMMANDS" popover); a typed
- * command plus Enter also works without the menu. Commands are zero-arg:
- * selecting one runs it immediately instead of inserting text.
+ * command plus Enter also works without the menu. Picking a command from the
+ * menu inserts it into the composer instead of running it, so the user gets a
+ * second look and can add arguments — the exception is `/rollback`, which is
+ * its own confirmation (see `runsSlashCommandImmediately`).
  */
 
 export interface AISlashCommand {
@@ -33,6 +35,38 @@ export function isBackupCommand(text: string) {
 /** "/rollback" — opens the checkpoint picker to restore a previous /backup. */
 export function isRollbackCommand(text: string) {
   return text.trim().toLowerCase() === "/rollback";
+}
+
+/**
+ * Commands that carry their own confirmation step and therefore run the moment
+ * the menu hands them over instead of landing in the composer for a second
+ * Enter: `/rollback` opens the checkpoint picker, which *is* the confirmation.
+ *
+ * Nothing else belongs here — a command that runs work directly must never
+ * bypass the composer, or the user loses the chance to add arguments.
+ */
+const SELF_CONFIRMING_SLASH_COMMANDS = new Set(["rollback"]);
+
+/**
+ * Whether picking `name` from the menu runs it right away.
+ *
+ * Every other command is parked in the composer, so `/review-sql` shows up as
+ * `/review-sql` and the user runs it with an ordinary Enter through the normal
+ * send path (which is what expands file-backed commands and applies the
+ * native `/backup`, `/compact`, `/rollback` handling).
+ */
+export function runsSlashCommandImmediately(name: string): boolean {
+  return SELF_CONFIRMING_SLASH_COMMANDS.has(name.trim().toLowerCase());
+}
+
+/**
+ * The composer text a picked command leaves behind, e.g. `/review-sql`.
+ *
+ * Arguments stay open on purpose: `/backup nightly` and `/profile orders` are
+ * reachable from the menu only because the command is inserted first.
+ */
+export function slashCommandDraft(name: string): string {
+  return `/${name.trim()}`;
 }
 
 /** Filters the registry by the text typed after the leading "/". */

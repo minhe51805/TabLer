@@ -21262,56 +21262,231 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   gap: 6px;
 }
 
-/* Inline scaffolder (replaces the native window.prompt). The hint row spans the
-   full width under the field so the name rule is visible while typing, and it
-   turns red — not the field border alone — when the typed name is invalid. */
-.ai-skills-manager-create {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+/* The manager's own buttons rather than the shared `.toolbar-btn`: that class is
+   restyled to 20px by the workspace toolbar's dense-mode block, which made the
+   primary action here read as a disabled pill. Sized and coloured once, here. */
+.ai-skills-manager-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--mm-border);
+  border-radius: 9px;
+  background: var(--mm-surface-1);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    border-color var(--transition),
+    color var(--transition);
+}
+
+.ai-skills-manager-btn:hover:not(:disabled) {
+  border-color: var(--mm-border-strong);
+  background: var(--mm-surface-2);
+  color: var(--text-primary);
+}
+
+.ai-skills-manager-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* One primary action per surface: creating a skill, saving the editor. */
+.ai-skills-manager-btn.is-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.ai-skills-manager-btn.is-primary:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--accent-hover);
+  color: #ffffff;
+}
+
+.ai-skills-manager-btn.is-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.ai-skills-manager-btn.is-ghost:hover:not(:disabled) {
+  border-color: var(--mm-border);
+  background: var(--mm-surface-2);
+  color: var(--text-primary);
+}
+
+.ai-skills-manager-btn.is-icon {
+  width: 30px;
+  padding: 0;
+}
+
+.ai-skills-manager-btn.is-small {
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 8px;
+}
+
+/* The SKILL.md editor. It takes the whole dialog body: the roster is a list of
+   files, and authoring one needs every pixel the frame has. */
+.ai-skills-manager-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.ai-skills-manager-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--mm-border);
+}
+
+.ai-skills-manager-editor-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ai-skills-manager-editor-title {
+  color: var(--text-primary);
+  font-size: var(--mm-fs-subheading);
+  font-weight: 700;
+}
+
+.ai-skills-manager-editor-sub {
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.ai-skills-manager-editor-actions {
+  display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--mm-accent);
-  border-radius: var(--mm-radius-md);
-  background: var(--mm-surface-1);
+  flex: 0 0 auto;
 }
 
-.ai-skills-manager-create-field {
+/* Stacked fields, with the short scalars paired on one row. A flex column (not a
+   grid) so the body field can absorb the leftover height — a grid would leave the
+   spare space at the bottom instead of growing the textarea. */
+.ai-skills-manager-fields {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ai-skills-manager-field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.ai-skills-manager-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   min-width: 0;
 }
 
-.ai-skills-manager-create-field input {
+.ai-skills-manager-field.is-wide {
+  width: 100%;
+}
+
+/* The body field absorbs the leftover height — it is the one field that is
+   always longer than the frame. */
+.ai-skills-manager-field.is-grow {
   flex: 1 1 auto;
+  min-height: 140px;
+}
+
+.ai-skills-manager-field-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ai-skills-manager-field-count {
+  color: var(--text-subtle);
+  font-family: var(--mm-font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-skills-manager-field input,
+.ai-skills-manager-field textarea {
+  width: 100%;
   min-width: 0;
-  height: 32px;
   padding: 0 10px;
   border: 1px solid var(--mm-border);
   border-radius: 9px;
   background: var(--mm-surface-0);
   color: var(--text-primary);
-  font-family: var(--mm-font-mono);
+  font-family: inherit;
   font-size: var(--mm-fs-micro);
   outline: none;
 }
 
-.ai-skills-manager-create-field input:focus {
+.ai-skills-manager-field input {
+  height: 32px;
+}
+
+.ai-skills-manager-field textarea {
+  flex: 1 1 auto;
+  min-height: 108px;
+  padding: 8px 10px;
+  font-family: var(--mm-font-mono);
+  line-height: 1.6;
+  resize: none;
+}
+
+.ai-skills-manager-field input:focus,
+.ai-skills-manager-field textarea:focus {
   border-color: var(--mm-border-focus);
 }
 
-.ai-skills-manager-create-field input[aria-invalid="true"] {
+/* The name is the directory, so it is shown but not editable after creation. */
+.ai-skills-manager-field input[readonly],
+.ai-skills-manager-field textarea[readonly] {
+  background: var(--mm-surface-2);
+  color: var(--text-muted);
+}
+
+.ai-skills-manager-field input[aria-invalid="true"] {
   border-color: var(--mm-error);
 }
 
-.ai-skills-manager-create-hint {
-  grid-column: 1 / -1;
+.ai-skills-manager-field-hint {
   color: var(--text-subtle);
   font-size: var(--mm-fs-micro);
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
-.ai-skills-manager-create-hint.is-error {
+.ai-skills-manager-field-hint.is-error {
   color: var(--mm-error);
 }
 

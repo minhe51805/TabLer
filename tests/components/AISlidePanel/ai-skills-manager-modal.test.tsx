@@ -18,11 +18,26 @@ const alpha = {
   version: "1.0.0",
 };
 
+// A workspace skill lives in the user's own repository, so it is read-only in
+// the manager — the app only ever writes the global skills root.
 const beta = {
   name: "beta-skill",
   description: "Handles beta work when the user asks for beta.",
-  source: "project",
+  source: "workspace",
   version: null,
+};
+
+/** What `read_ai_skill` returns for a stored, editable skill. */
+const alphaContent = {
+  name: "alpha-skill",
+  description: alpha.description,
+  source: "global",
+  body: "# alpha-skill\n\nDo the alpha thing.",
+  version: "1.0.0",
+  license: null,
+  model: null,
+  effort: null,
+  allowedTools: ["run_readonly_sql"],
 };
 
 function renderModal(overrides: { open?: boolean; language?: string; onClose?: () => void } = {}) {
@@ -142,7 +157,7 @@ describe("AISkillsManagerModal", () => {
     await screen.findAllByText("alpha-skill");
     const search = screen.getByRole("searchbox", { name: "Search skills" });
 
-    await user.type(search, "project");
+    await user.type(search, "workspace");
     const roster = pane(".ai-skills-manager-list");
     expect(within(roster).getByText("beta-skill")).toBeInTheDocument();
     expect(within(roster).queryByText("alpha-skill")).not.toBeInTheDocument();
@@ -150,5 +165,105 @@ describe("AISkillsManagerModal", () => {
     await user.clear(search);
     await user.type(search, "nothing-matches-this");
     expect(screen.getByText('No skill matches "nothing-matches-this".')).toBeInTheDocument();
+  });
+
+  it("creates a skill from the editor form instead of a bare name field", async () => {
+    invokeMutationMock.mockImplementation((command: string) => {
+      if (command === "list_ai_skills") return Promise.resolve([]);
+      if (command === "create_ai_skill") return Promise.resolve("/data/skills/db-audit");
+      return Promise.resolve(null);
+    });
+    const user = userEvent.setup({ delay: null });
+
+    renderModal();
+    await user.click(await screen.findByRole("button", { name: "New skill" }));
+
+    // The editor replaces the roster, so the two states cannot be confused.
+    expect(screen.queryByRole("searchbox", { name: "Search skills" })).not.toBeInTheDocument();
+
+    // The button stays disabled until the name is valid — validation mirrors
+    // `validate_skill_name` in ai_skills.rs.
+    const submit = screen.getByRole("button", { name: "Create skill" });
+    expect(submit).toBeDisabled();
+    const nameField = screen.getByLabelText("Skill name");
+    await user.type(nameField, "db audit");
+    expect(screen.getByRole("alert")).toHaveTextContent("letters, digits");
+    await user.clear(nameField);
+    await user.type(nameField, "db-audit");
+    expect(submit).toBeEnabled();
+
+    // Long fields are pasted: the per-keystroke path is indistinguishable here
+    // and slow enough to time the suite out.
+    await user.click(screen.getByLabelText("Description"));
+    await user.paste("Use this when auditing a schema.");
+    await user.click(screen.getByLabelText("SKILL.md body"));
+    await user.paste("# db-audit\n\nRun EXPLAIN.");
+    await user.click(submit);
+
+    await waitFor(() =>
+      expect(invokeMutationMock).toHaveBeenCalledWith("create_ai_skill", {
+        name: "db-audit",
+        description: "Use this when auditing a schema.",
+        body: "# db-audit\n\nRun EXPLAIN.",
+      }),
+    );
+    // The catalog is re-read from disk rather than patched from local state.
+    await waitFor(() =>
+      expect(
+        invokeMutationMock.mock.calls.filter(([command]) => command === "list_ai_skills"),
+      ).toHaveLength(2),
+    );
+    expect(screen.getByRole("searchbox", { name: "Search skills" })).toBeInTheDocument();
+  });
+
+  it("loads a stored skill into the editor and saves the whole record", async () => {
+    invokeMutationMock.mockImplementation((command: string) => {
+      if (command === "list_ai_skills") return Promise.resolve([alpha]);
+      if (command === "read_ai_skill") return Promise.resolve(alphaContent);
+      if (command === "update_ai_skill") return Promise.resolve("/data/skills/alpha-skill");
+      return Promise.resolve(null);
+    });
+    const user = userEvent.setup({ delay: null });
+
+    renderModal();
+    const roster = await waitFor(() => pane(".ai-skills-manager-list"));
+    await user.click(within(roster).getByRole("button", { name: "alpha-skill" }));
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(invokeMutationMock).toHaveBeenCalledWith("read_ai_skill", { name: "alpha-skill" });
+    const body = await screen.findByLabelText("SKILL.md body");
+    expect(body).toHaveValue(alphaContent.body);
+    // The name is the directory, so it is shown but locked; the tool list is
+    // round-tripped as comma-separated text.
+    expect(screen.getByLabelText("Skill name")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Allowed tools")).toHaveValue("run_readonly_sql");
+
+    await user.clear(body);
+    await user.click(body);
+    await user.paste("# alpha-skill\n\nDo the beta thing.");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() =>
+      expect(invokeMutationMock).toHaveBeenCalledWith("update_ai_skill", {
+        name: "alpha-skill",
+        description: alpha.description,
+        body: "# alpha-skill\n\nDo the beta thing.",
+        version: "1.0.0",
+        allowedTools: ["run_readonly_sql"],
+        license: null,
+        model: null,
+        effort: null,
+      }),
+    );
+  });
+
+  it("keeps Edit disabled for a workspace skill the app must not rewrite", async () => {
+    invokeMutationMock.mockResolvedValue([beta]);
+
+    renderModal();
+    const detail = await waitFor(() => pane(".ai-skills-manager-detail-pane"));
+    await waitFor(() => expect(within(detail).getByText(beta.description)).toBeInTheDocument());
+
+    expect(within(detail).getByRole("button", { name: "Edit" })).toBeDisabled();
   });
 });

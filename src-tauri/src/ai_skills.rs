@@ -656,6 +656,206 @@ pub fn create_ai_skill(
     Ok(skill_dir.to_string_lossy().to_string())
 }
 
+/// One-line frontmatter scalar: a newline or a double quote would break the
+/// minimal reader (and its quoted-scalar path), so both collapse to spaces and
+/// runs of whitespace squeeze to one — a pasted multi-line description must not
+/// leave ragged gaps behind. An all-whitespace value is `None`, which tells the
+/// caller to keep the stored value instead of writing an empty key.
+fn sanitize_frontmatter_scalar(raw: Option<String>) -> Option<String> {
+    let value = raw
+        .unwrap_or_default()
+        .replace(['\r', '\n', '"'], " ")
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+        .chars()
+        .take(MAX_SKILL_DESCRIPTION_CHARS)
+        .collect::<String>();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+/// Normalize an `allowed-tools:` list: entries trimmed and unquoted, blanks and
+/// duplicates dropped, capped at `MAX_SKILL_ALLOWED_TOOLS` — the same cap the
+/// parser applies, so a written file always reads back unchanged.
+fn sanitize_tool_list(tools: Option<Vec<String>>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tool in tools.unwrap_or_default() {
+        let name = tool
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'')
+            .trim()
+            .to_string();
+        if name.is_empty() || out.iter().any(|existing| existing == &name) {
+            continue;
+        }
+        out.push(name);
+        if out.len() >= MAX_SKILL_ALLOWED_TOOLS {
+            break;
+        }
+    }
+    out
+}
+
+/// Render a SKILL.md the reader accepts: frontmatter, then the body verbatim — no
+/// extra heading, because the stored body already carries its own and re-adding
+/// one would duplicate it on every save.
+fn render_skill_md(
+    name: &str,
+    description: &str,
+    version: &str,
+    extra: &[(String, String)],
+    tools: &[String],
+    body: &str,
+) -> String {
+    let mut out = String::from("---\n");
+    out.push_str(&format!("name: {name}\n"));
+    out.push_str(&format!("description: {description}\n"));
+    out.push_str(&format!("version: {version}\n"));
+    for (key, value) in extra {
+        out.push_str(&format!("{key}: {value}\n"));
+    }
+    if !tools.is_empty() {
+        out.push_str(&format!("allowed-tools: [{}]\n", tools.join(", ")));
+    }
+    out.push_str("---\n\n");
+    out.push_str(body.trim_end());
+    out.push('\n');
+    out
+}
+
+/// Rewrite an existing skill's SKILL.md under an explicit skills root — split out
+/// so tests drive a temp root instead of the real data dir.
+///
+/// Deliberately narrow, because this is the only in-place write to a skill file:
+/// * it never creates — a missing or misnamed SKILL.md is an error, so a typo in
+///   the name cannot silently fork a second copy of a skill,
+/// * a file already past `MAX_SKILL_BODY_CHARS` is refused: `read_ai_skill`
+///   truncates there, so saving the form would destroy the tail,
+/// * an empty `body` keeps the stored one rather than blanking the procedure,
+/// * metadata the editor does not own (`license`/`model`/`effort`) is written back
+///   from what the caller round-tripped, so a save never drops it.
+#[allow(clippy::too_many_arguments)]
+fn update_skill_in_root(
+    skills_root: &Path,
+    name: &str,
+    description: Option<String>,
+    body: Option<&str>,
+    version: Option<String>,
+    allowed_tools: Option<Vec<String>>,
+    license: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<PathBuf, String> {
+    let name = validate_skill_name(name)?;
+    let skill_dir = skills_root.join(&name);
+    // Containment first, exactly like the read path: a symlinked skill directory
+    // must not be written through to a target outside the root.
+    let (Ok(canonical_root), Ok(canonical_dir)) =
+        (skills_root.canonicalize(), skill_dir.canonicalize())
+    else {
+        return Err(format!("Skill '{name}' was not found."));
+    };
+    if !canonical_dir.starts_with(&canonical_root) {
+        return Err(format!("Skill '{name}' was not found."));
+    }
+    let skill_md = skill_md_path(&skill_dir);
+    let Ok(raw) = std::fs::read_to_string(&skill_md) else {
+        return Err(format!("Skill '{name}' was not found."));
+    };
+    let (meta, existing_body) = parse_skill_md(&raw);
+    // Same strictness as the read path: never rewrite a file that declares a
+    // different name, or the reader would start rejecting the directory.
+    if meta.name.as_deref() != Some(name.as_str()) {
+        return Err(format!(
+            "SKILL.md does not declare name '{name}'; fix its frontmatter before editing it here."
+        ));
+    }
+    if existing_body.chars().count() > MAX_SKILL_BODY_CHARS {
+        return Err(format!(
+            "SKILL.md holds more than the {MAX_SKILL_BODY_CHARS}-character editable limit; edit the file directly so the rest is not truncated."
+        ));
+    }
+    let description = sanitize_frontmatter_scalar(description)
+        .or_else(|| meta.description.clone())
+        .unwrap_or_else(|| format!("This skill should be used when the user asks about {name}."));
+    let version = sanitize_frontmatter_scalar(version)
+        .or_else(|| meta.version.clone())
+        .unwrap_or_else(|| "0.1.0".to_string());
+    let body = match body.map(str::trim) {
+        Some(next) if !next.is_empty() => {
+            next.chars().take(MAX_SKILL_BODY_CHARS).collect::<String>()
+        }
+        _ => existing_body,
+    };
+    let mut extra: Vec<(String, String)> = Vec::new();
+    for (key, value) in [
+        (
+            "license",
+            sanitize_frontmatter_scalar(license).or_else(|| meta.license.clone()),
+        ),
+        (
+            "model",
+            sanitize_frontmatter_scalar(model).or_else(|| meta.model.clone()),
+        ),
+        (
+            "effort",
+            sanitize_frontmatter_scalar(effort).or_else(|| meta.effort.clone()),
+        ),
+    ] {
+        if let Some(value) = value {
+            extra.push((key.to_string(), value));
+        }
+    }
+    let rendered = render_skill_md(
+        &name,
+        &description,
+        &version,
+        &extra,
+        &sanitize_tool_list(allowed_tools),
+        &body,
+    );
+    std::fs::write(&skill_md, rendered).map_err(|error| error.to_string())?;
+    Ok(skill_dir)
+}
+
+/// Edit an existing **global** Agent Skill in place: description, body, version,
+/// `allowed-tools`, and the metadata keys the manager passes through untouched.
+///
+/// Workspace skills are out of scope on purpose — they are files inside the user's
+/// own repository, and the app must not rewrite project files it did not author.
+/// The manager UI keeps Edit disabled for them.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn update_ai_skill(
+    name: String,
+    description: Option<String>,
+    body: Option<String>,
+    version: Option<String>,
+    allowed_tools: Option<Vec<String>>,
+    license: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
+) -> Result<String, String> {
+    let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
+    let skill_dir = update_skill_in_root(
+        &data_dir.join("skills"),
+        &name,
+        description,
+        body.as_deref(),
+        version,
+        allowed_tools,
+        license,
+        model,
+        effort,
+    )?;
+    Ok(skill_dir.to_string_lossy().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -905,5 +1105,193 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&base);
         let _ = std::fs::remove_file(&outside);
+    }
+
+    /// Scratch root for the edit tests. Removed first so a previous failed run
+    /// cannot make the next one pass or fail spuriously.
+    fn edit_test_root(suffix: &str) -> PathBuf {
+        let base =
+            std::env::temp_dir().join(format!("tabler-skill-edit-{suffix}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    #[test]
+    fn edit_rewrites_the_record_the_reader_accepts() {
+        let base = edit_test_root("roundtrip");
+        create_skill_in_root(&base, "edit-me", Some("First".into()), None).unwrap();
+
+        update_skill_in_root(
+            &base,
+            "edit-me",
+            Some("Second".into()),
+            Some("Do X\nthen Y"),
+            Some("1.2.3".into()),
+            // Duplicates, padding and a blank entry must all collapse.
+            Some(vec![
+                "run_readonly_sql".to_string(),
+                " run_readonly_sql ".to_string(),
+                "".to_string(),
+                "describe_table".to_string(),
+            ]),
+            Some("MIT".into()),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let content =
+            read_skill_in_roots(&[(base.clone(), "test".to_string())], "edit-me").unwrap();
+        assert_eq!(content.description, "Second");
+        assert_eq!(content.version.as_deref(), Some("1.2.3"));
+        assert_eq!(content.license.as_deref(), Some("MIT"));
+        assert!(content.body.contains("Do X\nthen Y"));
+        assert_eq!(
+            content.allowed_tools,
+            vec!["run_readonly_sql".to_string(), "describe_table".to_string()]
+        );
+        // The rewritten file still satisfies discovery, so it cannot vanish from
+        // the roster after an edit.
+        let catalog = discover_ai_skills_in_roots(&[(base.clone(), "test".to_string())]);
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].description, "Second");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn edit_refuses_missing_skills_and_never_creates_one() {
+        let base = edit_test_root("missing");
+        let result = update_skill_in_root(
+            &base,
+            "ghost",
+            Some("nope".into()),
+            Some("body"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(!base.join("ghost").exists());
+        // An invalid name is rejected by the same validator the reader uses.
+        assert!(
+            update_skill_in_root(&base, "../escape", None, None, None, None, None, None, None)
+                .is_err()
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn edit_keeps_the_stored_body_when_none_is_supplied() {
+        let base = edit_test_root("keep-body");
+        create_skill_in_root(
+            &base,
+            "keep-body",
+            Some("First".into()),
+            Some("Original steps"),
+        )
+        .unwrap();
+
+        update_skill_in_root(
+            &base,
+            "keep-body",
+            Some("Retitled".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let content =
+            read_skill_in_roots(&[(base.clone(), "test".to_string())], "keep-body").unwrap();
+        // Blanking the field must not blank the procedure, and the keys the editor
+        // does not own fall back to what the file already declared.
+        assert!(content.body.contains("Original steps"));
+        assert_eq!(content.version.as_deref(), Some("0.1.0"));
+        assert_eq!(content.description, "Retitled");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn edit_refuses_a_file_past_the_editable_body_limit() {
+        let base = edit_test_root("oversized");
+        let dir = base.join("huge-skill");
+        std::fs::create_dir_all(&dir).unwrap();
+        let oversized = "x".repeat(MAX_SKILL_BODY_CHARS + 1);
+        std::fs::write(
+            skill_md_path(&dir),
+            format!("---\nname: huge-skill\ndescription: big\n---\n{oversized}"),
+        )
+        .unwrap();
+        let before = std::fs::read_to_string(skill_md_path(&dir)).unwrap();
+
+        let result = update_skill_in_root(
+            &base,
+            "huge-skill",
+            Some("sneaky".into()),
+            Some("shorter"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        // Refused, and the file is untouched: a truncated read must never be
+        // written back over content the app cannot see.
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read_to_string(skill_md_path(&dir)).unwrap(),
+            before
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn edit_refuses_a_mismatched_name_and_squashes_frontmatter_scalars() {
+        let base = edit_test_root("mismatch");
+        let dir = base.join("renamed");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            skill_md_path(&dir),
+            "---\nname: something-else\ndescription: nope\n---\nbody",
+        )
+        .unwrap();
+        assert!(update_skill_in_root(
+            &base,
+            "renamed",
+            Some("x".into()),
+            Some("y"),
+            None,
+            None,
+            None,
+            None,
+            None
+        )
+        .is_err());
+
+        // A description with a newline or a quote would break the minimal reader,
+        // so both collapse instead of being written through.
+        create_skill_in_root(&base, "squashed", None, None).unwrap();
+        update_skill_in_root(
+            &base,
+            "squashed",
+            Some("line one\nline \"two\"".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let content =
+            read_skill_in_roots(&[(base.clone(), "test".to_string())], "squashed").unwrap();
+        assert_eq!(content.description, "line one line two");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

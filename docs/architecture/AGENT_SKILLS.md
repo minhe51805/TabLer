@@ -82,6 +82,34 @@ half.
 this is the opt-in/opt-out surface for catalog token cost. Default is **enabled**, the
 same as Claude Code.
 
+### Write paths (authoring and editing)
+
+Two commands write skill files, and their scope difference is the contract, not an
+implementation detail:
+
+| Command           | Scope                      | Shape                                                                            |
+| ----------------- | -------------------------- | -------------------------------------------------------------------------------- |
+| `create_ai_skill` | global only                | scaffolds `skills/<name>/SKILL.md` + an empty `references/`                      |
+| `update_ai_skill` | global only, existing only | rewrites `description`, `version`, `body`, `allowed-tools`, passthrough metadata |
+
+`update_skill_in_root` refuses four things, each because the alternative is silent
+damage:
+
+- **creating.** A missing or misnamed `SKILL.md` is an error, so a typo in the name
+  cannot fork a second copy of a skill next to the real one.
+- **rewriting a file past `MAX_SKILL_BODY_CHARS`.** `read_ai_skill` truncates there, so
+  the editor would be saving a prefix over the whole file. The manager shows the head,
+  marks the body read-only and says to edit the file directly.
+- **an empty body.** `body: null` keeps the stored one; a form submitted without touching
+  the field must not blank the procedure.
+- **a frontmatter that declares a different name** than its directory.
+
+**Workspace skills are never written.** They are files inside the user's own repository,
+so the app must not rewrite project files it did not author; the manager keeps Edit
+disabled for them (mirrors `update_ai_skill`, which cannot reach that root at all).
+Metadata the manager does not interpret (`license`, `model`, `effort`) is round-tripped
+through the form so a save never drops it.
+
 ## 3. In-app command registry (`agent_commands.rs`)
 
 Implementation: `src-tauri/src/agent_commands.rs`. Shipped pack: `src-tauri/commands/*.md`

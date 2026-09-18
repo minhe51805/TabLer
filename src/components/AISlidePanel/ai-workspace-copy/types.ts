@@ -4,6 +4,28 @@ export interface PromptIdeaCopy {
 }
 
 export interface AIWorkspaceCopy {
+  /** Chrome for the learning-proposal cards (P9). */
+  learnings: {
+    title: string;
+    saveMemory: string;
+    saveRule: string;
+    saveSkill: string;
+    saving: string;
+    saved: string;
+    failed: string;
+    dismiss: string;
+    clearAll: string;
+  };
+  /** Chrome for the proactive insight cards (P8). */
+  insights: {
+    title: string;
+    confidence: string;
+    evidence: string;
+    useSuggestion: string;
+    dismiss: string;
+    reviewFirst: string;
+    clearAll: string;
+  };
   bubbleMeta: {
     thinking: string;
     sandboxRun: string;
@@ -61,10 +83,10 @@ export interface AIWorkspaceCopy {
     inspectOnTitle: string;
     inspectOffTitle: string;
     resizeHandleTitle: string;
-      inspectHint: string;
-      capturedLabel: string;
-      selectionReady: string;
-      kicker: string;
+    inspectHint: string;
+    capturedLabel: string;
+    selectionReady: string;
+    kicker: string;
     title: string;
     noDatabaseSelected: string;
     slashCommandsTitle: string;

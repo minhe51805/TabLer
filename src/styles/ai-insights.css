@@ -1,0 +1,132 @@
+/**
+ * Proactive insight cards (P8) — styles owned by the module that renders them
+ * (`AIAgentInsights.tsx`). The panel's data-driven findings stay visually
+ * subordinate to the conversation: a finding is an aside, not an answer, and
+ * the evidence line is always present so a card can be checked.
+ */
+
+.ai-insights-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 280px;
+  overflow: auto;
+  margin: 4px 8px 2px;
+  padding: 8px 9px;
+  border-radius: 12px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+}
+
+.ai-insights-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-insights-title {
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.ai-insights-clear {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: var(--mm-fs-micro);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.ai-insights-clear:hover {
+  color: var(--text-primary);
+}
+
+.ai-insights-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-insights-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  background: var(--mm-surface-2);
+}
+
+.ai-insights-card-title {
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ai-insights-card-detail {
+  margin: 0;
+  font-size: var(--mm-fs-micro);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.ai-insights-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--mm-fs-micro);
+  color: var(--text-muted);
+}
+
+.ai-insights-confidence {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.ai-insights-evidence {
+  display: block;
+  overflow: hidden;
+  padding: 5px 6px;
+  border-radius: 8px;
+  background: var(--mm-surface-0);
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-insights-review-warning {
+  font-size: var(--mm-fs-micro);
+  color: var(--error);
+}
+
+.ai-insights-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-insights-action {
+  border: 1px solid var(--mm-border);
+  border-radius: 8px;
+  background: var(--mm-surface-1);
+  padding: 3px 8px;
+  font-size: var(--mm-fs-micro);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.ai-insights-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

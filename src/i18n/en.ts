@@ -351,6 +351,13 @@ export const en = {
   "tabs.deliveringRows": "Receiving {{count}} rows...",
   "tabs.noSqlToExecute":
     "Nothing to run yet. Type a query or command first, then press Ctrl+Enter.",
+  "tabs.aiProposal": "AI edit proposal",
+  "tabs.aiProposalAccept": "Accept",
+  "tabs.aiProposalReject": "Reject",
+  "tabs.aiProposalShow": "View change",
+  "tabs.aiProposalHide": "Hide change",
+  "tabs.aiProposalCurrent": "Current SQL",
+  "tabs.aiProposalProposed": "Proposed SQL",
   "ai.toast.providerFailover":
     'Provider "{{failed}}" is failing — switching to provider "{{next}}", please wait.',
   "ai.failover.consentTitle": "Provider failing",
@@ -398,6 +405,30 @@ export const en = {
   "schedules.edit": "Edit",
   "schedules.delete": "Delete",
   "schedules.new": "New schedule",
+  "schedules.kind": "Schedule type",
+  "schedules.kindLocked":
+    "The type is fixed after saving — delete and recreate the schedule to change it.",
+  "schedules.kindSql": "SQL query",
+  "schedules.kindAgent": "Agent task (read-only)",
+  "schedules.tagSql": "SQL",
+  "schedules.tagAgent": "Agent",
+  "schedules.agentPrompt": "Task for the agent",
+  "schedules.agentPromptPlaceholder":
+    'e.g. Check for orders stuck in "pending" for more than 24 hours and report which customer accounts are affected.',
+  "schedules.agentReadOnlyHint":
+    "Runs unattended while the app is open, read-only: it may read data and record findings, but it never changes data and never asks a question. Results appear in the AI panel's insights.",
+  "schedules.agentRunning": "Running now (read-only).",
+  "schedules.agentWaiting": "Waiting to run",
+  "schedules.agentWaitConnection": "it starts when this task's connection is the active one.",
+  "schedules.agentWaitDatabase": "it starts when this task's database is open.",
+  "schedules.agentWaitBusy": "it starts when the current AI request finishes.",
+  "schedules.agentDispatchedStatus":
+    "Dispatched — no outcome reported back yet (the app may have been closed or busy).",
+  "schedules.agentDispatched": "Scheduled agent task started: {{name}}",
+  "schedules.agentDispatchedHint": "It runs read-only as soon as the workspace is free.",
+  "schedules.agentEmptyTask": "Scheduled agent task skipped: {{name}} has no task text",
+  "schedules.agentNeedsHuman":
+    "Needs you: the run was refused something only a person may do, so it recorded what it found and stopped there.",
   "querybuilder.aggregates": "Aggregates / GROUP BY",
   "querybuilder.allRows": "all rows",
   "querybuilder.alias": "Alias (optional)",

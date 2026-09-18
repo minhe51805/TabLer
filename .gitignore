@@ -26,7 +26,24 @@ dist-plugins/
 *.sw?
 
 xemreponay
-.claude
+# --- Agent assets -------------------------------------------------------------
+# Team-shared contract (versioned): skills, subagents, commands, guardrail rules
+# and hooks. Everything else under `.claude/` is personal state and stays local.
+# A bare `.claude` ignore cannot be re-opened by a negation, so the pattern
+# targets children and each versioned directory gets an explicit re-include pair
+# (the directory itself, then its contents).
+.claude/*
+!.claude/skills/
+!.claude/skills/**
+!.claude/agents/
+!.claude/agents/**
+!.claude/commands/
+!.claude/commands/**
+!.claude/rules/
+!.claude/rules/**
+!.claude/hooks/
+!.claude/hooks/**
+!.claude/settings.json
 .fatory
 docs/*
 !docs/screenshots/

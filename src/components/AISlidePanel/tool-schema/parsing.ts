@@ -1,4 +1,5 @@
 import { isAgentToolEnabled, type AgentToolAvailability } from "../ai-agent-engine-gates";
+import { isUnattendedAllowedTool } from "../ai-agent-unattended";
 import {
   AI_AGENT_TOOL_NAMES,
   WORKSPACE_ONLY_TOOLS,
@@ -242,12 +243,19 @@ function formatControllerArgsExample(
 export interface AgentToolCatalogOptions {
   workspaceToolsEnabled: boolean;
   availability?: Pick<AgentToolAvailability, "sqlRead" | "sqlWritePreview" | "documentPropose">;
+  /**
+   * P10: unattended agent run. The catalog is narrowed to the read-only tool
+   * surface (`ai-agent-unattended`) so a write tool never even reaches the model
+   * — the executor separately refuses it if the model invents the name.
+   */
+  unattendedReadOnly?: boolean;
 }
 
 function resolveCatalogOptions(options: boolean | AgentToolCatalogOptions): Required<
   Pick<AgentToolCatalogOptions, "workspaceToolsEnabled">
 > & {
   availability: Pick<AgentToolAvailability, "sqlRead" | "sqlWritePreview" | "documentPropose">;
+  unattendedReadOnly: boolean;
 } {
   if (typeof options === "boolean") {
     return {
@@ -255,6 +263,7 @@ function resolveCatalogOptions(options: boolean | AgentToolCatalogOptions): Requ
       // Permissive "unknown engine" defaults, matching sqlRead/sqlWritePreview:
       // real engine gating always rides nativeCatalogOptionsForEngine.
       availability: { sqlRead: true, sqlWritePreview: true, documentPropose: true },
+      unattendedReadOnly: false,
     };
   }
   return {
@@ -264,6 +273,7 @@ function resolveCatalogOptions(options: boolean | AgentToolCatalogOptions): Requ
       sqlWritePreview: true,
       documentPropose: true,
     },
+    unattendedReadOnly: options.unattendedReadOnly === true,
   };
 }
 
@@ -279,6 +289,9 @@ export function listEnabledAgentToolSpecs(
   const resolved = resolveCatalogOptions(options);
   return listAgentToolSpecs().filter((spec) => {
     if (HIDDEN_CATALOG_TOOLS.has(spec.name)) return false;
+    // P10: an unattended run only ever sees read tools. Checked before the
+    // engine gates so "blocked unattended" always wins.
+    if (resolved.unattendedReadOnly && !isUnattendedAllowedTool(spec.name)) return false;
     if (!resolved.workspaceToolsEnabled && WORKSPACE_ONLY_TOOLS.has(spec.name)) return false;
     return isAgentToolEnabled(spec.name, resolved.availability);
   });

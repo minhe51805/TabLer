@@ -7,7 +7,11 @@ import type {
   TableInfo,
   TableStructure,
 } from "../../types";
-import { appendAgentFacts, buildWorkspaceTableIdentifier } from "./ai-agent-context";
+import {
+  appendAgentFacts,
+  buildWorkspaceTableIdentifier,
+  type AgentStepEvidence,
+} from "./ai-agent-context";
 import { findAgentSchemaMatches, prioritizeSchemaScanCandidates } from "./ai-agent-schema-search";
 import {
   formatExecutionError,
@@ -30,6 +34,7 @@ import {
 } from "./ai-agent-grounding";
 import { mapWithConcurrency } from "./ai-async-utils";
 import { agentSqlToolBlockedMessage, type AgentToolAvailability } from "./ai-agent-engine-gates";
+import { isUnattendedAllowedTool, unattendedToolBlockReason } from "./ai-agent-unattended";
 import {
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
   AI_AGENT_DELEGATE_ANSWER_CHARS,
@@ -54,6 +59,13 @@ import { useSkillUsageStore } from "../../stores/skillUsageStore";
 import { useUIStore } from "../../stores/uiStore";
 import { invalidateAgentMemoryIndex } from "./hooks/use-agent-memory";
 import { invokeMutation } from "../../utils/tauri-utils";
+import {
+  formatRuleBlockMessage,
+  describeRuleVerdict,
+  isRunBlockedByRules,
+  ruleVerdictFromEngineError,
+  type AgentRuleVerdict,
+} from "./ai-agent-rules";
 import { EventCenter } from "../../stores/event-center";
 import {
   isSupersededAIRequestError,
@@ -86,6 +98,13 @@ export type { AgentColumnStatsScope } from "./agent-tool-executor-helpers";
 
 export interface AgentToolExecutorDeps {
   connectionId: string | null;
+  /**
+   * P10 unattended read-only policy for scheduled agent tasks. When true the
+   * executor refuses every tool outside the read-only allow-list (fail-closed),
+   * independently of the catalog filter that already removed them from the
+   * request. Attended runs leave this false and keep the full tool surface.
+   */
+  unattendedReadOnly?: boolean;
   /** Names injected in this run's <available_skills> catalog. When set, the
    * skill tool refuses anything outside the list so "injected == loadable"
    * stays true even if the catalog is later filtered or capped. */
@@ -185,6 +204,19 @@ export interface AgentToolExecutorDeps {
   /** UI language for the rollback dialog copy. */
   language?: string;
   toolAvailability?: AgentToolAvailability;
+  /**
+   * Evaluates candidate statements against the armed guardrail rule pack
+   * (`agent_rules.rs`). Returns the *folded* run verdict.
+   *
+   * Optional on purpose: the pure executor tests must not need a Tauri runtime,
+   * and an absent hook leaves the write path on the legacy rails exactly as
+   * before. When present, a `block` rule refuses the preview and its reason is
+   * fed back to the model as the tool result.
+   */
+  evaluateGuardrailRules?: (
+    statements: string[],
+    options: { isMutating: boolean; workspaceDir?: string | null },
+  ) => Promise<AgentRuleVerdict>;
 }
 
 /**
@@ -242,6 +274,8 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     restoreCheckpoint,
     language,
     toolAvailability,
+    evaluateGuardrailRules,
+    unattendedReadOnly = false,
   } = deps;
   let lastExplorationToolKey = "";
   /** Side-analysis calls spent this run (delegate budget). */
@@ -263,6 +297,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   let checkpointCallsUsed = 0;
   /** Rollback confirmations driven this run (one per run). */
   let restoreCallsUsed = 0;
+  /**
+   * P10: tools the model attempted but the unattended read-only policy refused.
+   * Reported back with the run outcome so a scheduled task is never claimed to
+   * have done something it was blocked from doing.
+   */
+  const unattendedBlockedToolsUsed = new Set<AIAgentToolName>();
 
   /**
    * Full (untruncated) observations from this run, 1-based-indexed in call
@@ -295,6 +335,17 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       ) {
         const allowed = [...skillToolRestriction].sort().join(", ");
         return `Tool error: the active skill restricts tools to [${allowed}] (plus finish, ask_user, update_plan, read_page, skill, read_skill_resource). "${action.action}" is disabled while that skill is loaded — use an allowed tool or finish.`;
+      }
+      // P10 read-only policy, layer 3: an unattended scheduled run may only use
+      // the read tool surface. The catalog filter already keeps these out of the
+      // request (layers 1 and 2), so reaching this branch means the model named a
+      // blocked tool anyway — refuse it with a corrective observation instead of
+      // executing it, and never lean on the catalog filter being correct.
+      if (unattendedReadOnly && !isUnattendedAllowedTool(action.action)) {
+        // `action.action` also carries legacy names the allow-list cannot know;
+        // any of them is a blocked tool by definition (fail-closed).
+        unattendedBlockedToolsUsed.add(action.action as AIAgentToolName);
+        return unattendedToolBlockReason(action.action);
       }
       // Repeating an exploration call with identical arguments returns the
       // identical observation and burns a step from a tight budget. Meta actions
@@ -698,6 +749,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         let columnStats:
           Array<{ column: string; nullRatio: number; distinctCount: number }> | undefined;
         let columnStatsScopeLabel = "";
+        let insightEvidence: AgentStepEvidence | undefined;
         if (statsScope !== "off" && statColumns.length > 0 && requestedOffset === 0) {
           if (statsScope === "whole") {
             try {
@@ -712,9 +764,8 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
                   ];
                 }),
               ];
-              const statsResult = await executeReadonlyQuery(connectionId!, [
-                `SELECT ${selectParts.join(", ")} FROM ${quotedTable}`,
-              ]);
+              const statsSql = `SELECT ${selectParts.join(", ")} FROM ${quotedTable}`;
+              const statsResult = await executeReadonlyQuery(connectionId!, [statsSql]);
               if (requestId !== requestIdRef.current) {
                 throw new Error(AI_REQUEST_REPLACED_MESSAGE);
               }
@@ -731,6 +782,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
                   };
                 });
                 columnStatsScopeLabel = " (whole table)";
+                // This aggregate is the statement the numbers above came from,
+                // so the insight engine may cite it. Sample-scoped stats carry
+                // no evidence on purpose: that read is driver-side pagination,
+                // no SQL text for it exists here, and inventing one would
+                // fabricate the proof an insight is required to show.
+                insightEvidence = { executedSql: statsSql, rowCount: total };
               }
             } catch (errorValue) {
               if (isSupersededAIRequestError(errorValue)) throw errorValue;
@@ -763,6 +820,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             rowsReturned: queryResult.rows.length,
             tables: [matchedTable],
             ...(columnStats ? { columnStats } : {}),
+            ...(insightEvidence ? { insightEvidence } : {}),
           },
         );
       }
@@ -1011,6 +1069,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
 
         return appendAgentFacts(`${summarizeAgentQueryObservation(queryResult)}${explainNote}`, {
           rowsReturned: queryResult.rows.length,
+          // The statement that ran, for the insight engine: `sql` is exactly
+          // what executeReadonlyQuery received above.
+          insightEvidence: { executedSql: sql, rowCount: queryResult.rows.length },
         });
       }
 
@@ -1067,6 +1128,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             }),
             {
               rowsReturned: queryResult.rows.length,
+              insightEvidence: { executedSql: sql, rowCount: queryResult.rows.length },
             },
           );
         } catch (errorValue) {
@@ -1211,6 +1273,39 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           }
         }
 
+        // Guardrail rules (P6.1): user-authored rules in `<workspace>/rules` and
+        // the seeded built-in pack get a say before anything is previewed. A
+        // `block` rule refuses the call and the reason travels back to the model
+        // as the tool result, so it can rewrite the statement instead of
+        // guessing. An engine failure is escalated by the helper rather than
+        // silently passed, because this is the write path.
+        // Filled by the guardrail check below: a `warn` rule's reason must reach the
+        // model rather than being discarded with the verdict.
+        let ruleCaution = "";
+        if (evaluateGuardrailRules) {
+          let verdict: AgentRuleVerdict;
+          try {
+            verdict = await evaluateGuardrailRules(statements, { isMutating: true });
+          } catch (errorValue) {
+            if (isSupersededAIRequestError(errorValue)) throw errorValue;
+            verdict = ruleVerdictFromEngineError(errorValue, true);
+          }
+          if (isRunBlockedByRules(verdict)) {
+            publishAgentProgress({
+              action: "preview_write",
+              message: `Guardrail rule refused the write preview (${verdict.matched_rules
+                .map((match) => match.name)
+                .join(", ")}).`,
+            });
+            return `Tool blocked: ${formatRuleBlockMessage(verdict)}`;
+          }
+          // A `warn` / `require_approval` rule is not a refusal, but it must not be
+          // dropped either: the contract for `warn` is "surface it to the model as a
+          // caution". A discarded verdict is exactly the failure mode this subsystem
+          // exists to prevent, so the notice travels back with the preview.
+          ruleCaution = describeRuleVerdict(verdict);
+        }
+
         if (requestDataReadConsent) {
           const approved = await requestDataReadConsent();
           if (!approved) {
@@ -1237,6 +1332,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             note: "Executed inside one transaction and ROLLED BACK. Nothing was saved. Report these effects as a PREVIEW and direct the user to apply the final SQL through the approval flow.",
             statementCount: statements.length,
             results: summary,
+            ...(ruleCaution ? { guardrailRules: ruleCaution } : {}),
           });
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
@@ -1794,9 +1890,10 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       if (action.action === "finish") {
         return "Tool error: finish does not execute a tool observation.";
       }
-      const availableTools = AI_AGENT_TOOL_NAMES.filter((toolName) => toolName !== "finish").join(
-        ", ",
-      );
+      const availableTools = AI_AGENT_TOOL_NAMES.filter(
+        (toolName) =>
+          toolName !== "finish" && (!unattendedReadOnly || isUnattendedAllowedTool(toolName)),
+      ).join(", ");
       return `Tool error: unknown tool "${action.action}". Available tools: ${availableTools}. Choose one of these, or return a finish action with args.response if the task is complete.`;
     } catch (errorValue) {
       if (isSupersededAIRequestError(errorValue)) {
@@ -1816,5 +1913,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     return result;
   };
 
-  return { runAgentTool };
+  /**
+   * Report of every attempt to use a blocked tool during an unattended run.
+   * Empty for a normal run, so a caller can assert read-only compliance from
+   * evidence instead of trusting the allow-list alone.
+   */
+  const getUnattendedBlockedTools = (): AIAgentToolName[] => [...unattendedBlockedToolsUsed].sort();
+
+  return { runAgentTool, getUnattendedBlockedTools };
 }

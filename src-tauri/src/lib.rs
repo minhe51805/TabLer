@@ -1,6 +1,9 @@
 use tauri::{Emitter, Manager};
+mod agent_commands;
 mod agent_memory;
 mod agent_memory_native;
+mod agent_rules;
+mod ai_skill_seed;
 mod ai_skills;
 mod ai_workspace_cache;
 mod ai_workspace_history;
@@ -262,6 +265,40 @@ pub fn run() {
             // Query scheduler: minute-tick loop over persisted schedules.
             spawn_scheduler(app.handle().clone());
 
+            // Built-in Agent Skill pack: install the SQL/T-SQL domain knowledge
+            // on first run (and refresh it after an upgrade) without ever
+            // clobbering a skill the user edited. Failure here must never block
+            // startup — the app works fine with zero skills installed.
+            match ai_skill_seed::seed_builtin_skills(false) {
+                Ok(report) => info!(
+                    "[TableR] Built-in skills: {} installed, {} refreshed, {} unchanged, {} user-modified",
+                    report.installed, report.refreshed, report.unchanged, report.user_modified
+                ),
+                Err(error) => error!("[TableR] Failed to seed built-in skills: {}", error),
+            }
+
+            // Built-in Agent Rule pack (guardrails): same policy as the skills —
+            // install on first run, refresh shipped content after an upgrade, and
+            // never clobber a rule the user edited. Startup must not depend on it.
+            match agent_rules::seed_builtin_rules(false) {
+                Ok(report) => info!(
+                    "[TableR] Built-in rules: {} installed, {} refreshed, {} unchanged, {} user-modified",
+                    report.installed, report.refreshed, report.unchanged, report.user_modified
+                ),
+                Err(error) => error!("[TableR] Failed to seed built-in rules: {}", error),
+            }
+
+            // Built-in slash-command pack: the composer's `/` menu is useless on a
+            // fresh install without it. Same contract as skills and rules - an
+            // edited command is never clobbered, a deleted one is restored.
+            match agent_commands::seed_builtin_commands(false) {
+                Ok(report) => info!(
+                    "[TableR] Built-in commands: {} installed, {} refreshed, {} unchanged, {} user-modified",
+                    report.installed, report.refreshed, report.unchanged, report.user_modified
+                ),
+                Err(error) => error!("[TableR] Failed to seed built-in commands: {}", error),
+            }
+
             #[cfg(target_os = "windows")]
             {
                 if let Err(error) = app.hide_menu() {
@@ -409,7 +446,23 @@ pub fn run() {
             ai_skills::read_ai_skill,
             ai_skills::read_ai_skill_resource,
             ai_skills::ai_skills_directory,
-            ai_skills::create_ai_skill, // File commands
+            ai_skills::create_ai_skill,
+            ai_skills::update_ai_skill,
+            // Built-in skill pack: seed on demand / restore shipped content.
+            ai_skill_seed::seed_ai_builtin_skills,
+            ai_skill_seed::reset_ai_builtin_skills,
+            // Built-in rule pack (guardrails): seed on demand / restore shipped content.
+            agent_commands::seed_ai_builtin_commands,
+            agent_commands::reset_ai_builtin_commands,
+            agent_commands::list_ai_commands,
+            agent_commands::resolve_ai_command,
+            agent_rules::seed_ai_builtin_rules,
+            agent_rules::reset_ai_builtin_rules,
+            // Guardrail evaluation: plan gate + rules manager.
+            agent_rules::evaluate_agent_rules,
+            agent_rules::list_agent_rules,
+            // P9 learning loop: the rule the user approved from a run finding.
+            agent_rules::save_agent_rule, // File commands
             read_sql_file,
             read_sql_file_from_path,
             read_csv_file,
@@ -428,6 +481,9 @@ pub fn run() {
             commands::schedule::list_query_schedules,
             commands::schedule::save_query_schedule,
             commands::schedule::delete_query_schedule,
+            // P10: an unattended agent task reports its real outcome back here
+            // (the backend only dispatches; it never runs the agent).
+            commands::schedule::complete_agent_schedule_run,
             // Semantic glossary commands
             get_semantic_entries,
             save_semantic_entry,

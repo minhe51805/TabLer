@@ -4,13 +4,7 @@ import { persist } from "zustand/middleware";
 const MAX_RECENT = 20;
 
 export type SwitcherItemKind =
-  | "tab"
-  | "table"
-  | "column"
-  | "schema-object"
-  | "saved-query"
-  | "history"
-  | "connection";
+  "tab" | "table" | "column" | "schema-object" | "saved-query" | "history" | "connection";
 
 export interface SwitcherItem {
   id: string;
@@ -43,14 +37,18 @@ function loadRecentIds(): string[] {
   try {
     const raw = window.localStorage.getItem("tabler.recentSwitcherItems");
     if (raw) return JSON.parse(raw);
-  } catch { /* ignore */ }
+  } catch (error) {
+    console.warn("[QuickSwitcher] Failed to load recent items:", error);
+  }
   return [];
 }
 
 function saveRecentIds(ids: string[]) {
   try {
     window.localStorage.setItem("tabler.recentSwitcherItems", JSON.stringify(ids));
-  } catch { /* ignore */ }
+  } catch (error) {
+    console.warn("[QuickSwitcher] Failed to persist recent items:", error);
+  }
 }
 
 export const useQuickSwitcherStore = create<QuickSwitcherState>()(

@@ -537,7 +537,10 @@ export const useAIStore = create<AIState>((set, get) => ({
             "AI request",
             {
               onTimeout: () =>
-                invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false),
+                invokeMutation<boolean>("cancel_ai_request", { requestId }).catch((error) => {
+                  console.warn("[AI] Failed to cancel timed-out request:", error);
+                  return false;
+                }),
             },
           );
           return {
@@ -575,7 +578,10 @@ export const useAIStore = create<AIState>((set, get) => ({
           "AI request",
           {
             onTimeout: () =>
-              invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false),
+              invokeMutation<boolean>("cancel_ai_request", { requestId }).catch((error) => {
+                console.warn("[AI] Failed to cancel timed-out request:", error);
+                return false;
+              }),
           },
         );
         if (resp.error) throw new Error(resp.error);
@@ -594,7 +600,9 @@ export const useAIStore = create<AIState>((set, get) => ({
         const canFailOver = requestError.code === "timeout" || requestError.code === "provider";
         if (!canFailOver || index === chain.length - 1) throw requestError;
         // Stop the superseded backend request before switching endpoints.
-        void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false);
+        void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch((error) => {
+          console.warn("[AI] Failed to cancel superseded request:", error);
+        });
         // Surface silent chain failovers to any listening agent run so the
         // conversation shows why a step took an extra attempt.
         window.dispatchEvent(

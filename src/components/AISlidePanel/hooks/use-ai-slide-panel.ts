@@ -65,7 +65,9 @@ import {
   AGENT_COMPACTION_KEEP_TAIL,
   AGENT_COMPACTION_TOKEN_THRESHOLD,
   DEFAULT_AGENT_TOKEN_BUDGET,
+  extractAgentUsageBreakdown,
   extractAgentUsageTokens,
+  recordSessionModelUsage,
 } from "../ai-agent-cost";
 import { isTrivialAssistIntent } from "../ai-assist-intent";
 import {
@@ -482,6 +484,17 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       if (modelUsed && modelUsed.trim()) {
         lastModelUsedRef.current = modelUsed.trim();
       }
+      // Session cost ledger: every model call funnels through here, so the
+      // header summary accumulates real usage per provider/model. The active
+      // provider is read at completion time so a mid-call failover attributes
+      // the spend to the provider that actually answered.
+      const usage = extractAgentUsageBreakdown(useAIStore.getState().streamingUsage);
+      const answeredProvider = getActiveAIProvider(useAIStore.getState().aiConfigs);
+      recordSessionModelUsage(
+        answeredProvider?.name?.trim() || answeredProvider?.provider_type || "unknown",
+        lastModelUsedRef.current ?? answeredProvider?.model ?? "unknown",
+        usage,
+      );
       return text;
     },
     [askAIWithReasoning],

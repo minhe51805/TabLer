@@ -23,7 +23,8 @@ function loadAll(): BuilderDefinition[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as BuilderDefinition[];
     return Array.isArray(parsed) ? parsed : [];
-  } catch {
+  } catch (error) {
+    console.warn("[BuilderDefs] Failed to load definitions:", error);
     return [];
   }
 }
@@ -31,8 +32,9 @@ function loadAll(): BuilderDefinition[] {
 function persistAll(definitions: BuilderDefinition[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(definitions));
-  } catch {
+  } catch (error) {
     // Storage exhaustion must not break the builder.
+    console.warn("[BuilderDefs] Failed to persist definitions:", error);
   }
 }
 

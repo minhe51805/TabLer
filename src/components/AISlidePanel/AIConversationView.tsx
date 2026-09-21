@@ -42,7 +42,11 @@ import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 import { AIThinkingTrace } from "./AIThinkingTrace";
 import { useI18n } from "../../i18n";
 import { formatPanelCopy, getAIPanelCopy, type AIPanelCopy } from "./ai-panel-copy";
-import { DEFAULT_AGENT_TOKEN_BUDGET } from "./ai-agent-cost";
+import {
+  DEFAULT_AGENT_TOKEN_BUDGET,
+  estimateUsageCostUsd,
+  formatSessionCostUsd,
+} from "./ai-agent-cost";
 
 interface AIConversationViewProps {
   bubbles: AIWorkspaceBubbleData[];
@@ -648,29 +652,32 @@ export const AIConversationView = memo(function AIConversationView({
                         copy={copy}
                       />
                     )}
-                    {bubble.status === "loading" &&
-                      hasVisibleAgentProgress &&
-                      bubble.detail?.trim() &&
-                      conversationText && (
-                        // Agent turns stream a JSON tool action, so the finish answer
-                        // is pulled from the partial JSON (aiStore) and rendered live
-                        // here under the step log — the reply fills in token by token
-                        // instead of appearing all at once when the run settles.
-                        // Gate on the streamed `detail` (not the preview fallback) so
-                        // the body stays empty between phases: the opening
-                        // acknowledgement already shows as the "plan" step, so it must
-                        // not also duplicate here once the tool loop starts.
-                        <AIWorkspaceMarkdown
-                          className="ai-workspace-chat-text"
-                          text={displayConversationText}
-                        />
-                      )}
+                    {bubble.status === "loading" && bubble.detail?.trim() && conversationText && (
+                      // Streamed answer text renders as live markdown while the
+                      // turn is still loading — the reply fills in token by
+                      // token instead of appearing all at once when the run
+                      // settles. Agent turns stream a JSON tool action, so the
+                      // finish answer is pulled from the partial JSON (aiStore)
+                      // and rendered here under the step log. Gate on the
+                      // streamed `detail` (not the preview fallback) so the
+                      // body stays empty between phases: the opening
+                      // acknowledgement already shows as the "plan" step, so
+                      // it must not also duplicate here once the tool loop
+                      // starts.
+                      <AIWorkspaceMarkdown
+                        className="ai-workspace-chat-text"
+                        text={displayConversationText}
+                      />
+                    )}
                     {bubble.status === "loading" && !hasVisibleAgentProgress ? (
                       // The live thinking trace above already carries the "model
-                      // is working" feedback while it streams reasoning, so only
-                      // fall back to the plain shimmer once real answer text lands
-                      // or when the model streams no reasoning at all.
-                      conversationText || !reasoningText ? (
+                      // is working" feedback while it streams reasoning, and once
+                      // real answer text lands the markdown block above takes
+                      // over — so the shimmer only covers the gap before the
+                      // first token (or the whole wait when the model streams
+                      // nothing at all).
+                      !(bubble.detail?.trim() && conversationText) &&
+                      (conversationText || !reasoningText) ? (
                         <div className="ai-workspace-thinking-line">
                           <span className="ai-workspace-thinking-orb" aria-hidden="true" />
                           <span className="ai-workspace-thinking-shimmer">
@@ -854,13 +861,22 @@ export const AIConversationView = memo(function AIConversationView({
                       ((bubble.tokensUsed ?? 0) > 0 || bubble.modelUsed) && (
                         // Run footer: what the turn actually cost, against the
                         // per-run token budget the runner enforces, plus the
-                        // model that answered (the fast model on trivial asks).
+                        // model that answered (the fast model on trivial asks)
+                        // and a rough list-price estimate when the model is known.
                         <div className="ai-workspace-chat-run-cost" title={panelCopy.runCost.title}>
                           {formatPanelCopy(panelCopy.runCost.label, {
                             used: (bubble.tokensUsed ?? 0).toLocaleString(),
                             budget: DEFAULT_AGENT_TOKEN_BUDGET.toLocaleString(),
                           })}
                           {bubble.modelUsed ? ` · ${bubble.modelUsed}` : ""}
+                          {(() => {
+                            const runCost = estimateUsageCostUsd(bubble.modelUsed, {
+                              promptTokens: 0,
+                              completionTokens: 0,
+                              totalTokens: bubble.tokensUsed ?? 0,
+                            });
+                            return runCost !== null ? ` · ~${formatSessionCostUsd(runCost)}` : "";
+                          })()}
                         </div>
                       )}
                   </div>

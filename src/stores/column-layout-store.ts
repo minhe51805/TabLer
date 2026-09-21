@@ -32,7 +32,8 @@ function loadCollection(): LayoutCollection {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as LayoutCollection;
     cache = parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
+  } catch (error) {
+    console.warn("[ColumnLayout] Failed to load persisted layouts:", error);
     cache = {};
   }
   return cache;
@@ -56,7 +57,9 @@ export function getColumnLayout(
   tableName: string,
   database?: string,
 ): PersistedColumnLayout {
-  return cloneLayout(loadCollection()[buildColumnLayoutScopeKey(connectionId, tableName, database)]);
+  return cloneLayout(
+    loadCollection()[buildColumnLayoutScopeKey(connectionId, tableName, database)],
+  );
 }
 
 export function saveColumnLayout(
@@ -70,8 +73,9 @@ export function saveColumnLayout(
   cache = collection;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(collection));
-  } catch {
+  } catch (error) {
     // Storage exhaustion must not make the grid unusable.
+    console.warn("[ColumnLayout] Failed to persist layout:", error);
   }
 }
 
@@ -85,12 +89,12 @@ export function clearColumnLayout(
   cache = collection;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(collection));
-  } catch {
-    // Ignore storage failures; the in-memory reset still applies.
+  } catch (error) {
+    // The in-memory reset still applies even when persistence fails.
+    console.warn("[ColumnLayout] Failed to persist layout reset:", error);
   }
 }
 
 export function resetColumnLayoutCacheForTests(): void {
   cache = null;
 }
-

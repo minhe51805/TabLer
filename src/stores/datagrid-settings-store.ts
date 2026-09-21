@@ -22,8 +22,8 @@ function loadSettings(): DataGridSettings {
     if (stored) {
       return { ...DEFAULT_SETTINGS, ...(JSON.parse(stored) as Partial<DataGridSettings>) };
     }
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[DataGridSettings] Failed to load settings:", error);
   }
   return DEFAULT_SETTINGS;
 }
@@ -31,8 +31,8 @@ function loadSettings(): DataGridSettings {
 function saveSettings(s: DataGridSettings) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[DataGridSettings] Failed to persist settings:", error);
   }
 }
 
@@ -69,10 +69,13 @@ if (typeof window !== "undefined") {
   window.addEventListener("storage", (event) => {
     if (event.key !== STORAGE_KEY || !event.newValue) return;
     try {
-      currentSettings = { ...DEFAULT_SETTINGS, ...(JSON.parse(event.newValue) as Partial<DataGridSettings>) };
+      currentSettings = {
+        ...DEFAULT_SETTINGS,
+        ...(JSON.parse(event.newValue) as Partial<DataGridSettings>),
+      };
       emitChange();
-    } catch {
-      // ignore
+    } catch (error) {
+      console.warn("[DataGridSettings] Ignoring malformed storage event payload:", error);
     }
   });
 }

@@ -77,8 +77,8 @@ function loadCustomTheme(): TablerTheme | null {
   try {
     const raw = window.localStorage.getItem(CUSTOM_THEME_STORAGE_KEY);
     if (raw) return JSON.parse(raw) as TablerTheme;
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[Theme] Failed to load custom theme:", error);
   }
   return null;
 }
@@ -86,8 +86,8 @@ function loadCustomTheme(): TablerTheme | null {
 function saveCustomTheme(theme: TablerTheme) {
   try {
     window.localStorage.setItem(CUSTOM_THEME_STORAGE_KEY, JSON.stringify(theme));
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[Theme] Failed to persist custom theme:", error);
   }
 }
 
@@ -122,9 +122,10 @@ export const useThemeStore = create<ThemeStoreState>((set, get) => ({
 
   setActiveTheme: (id: string) => {
     set({ activeThemeId: id });
-    const theme = id === "tabler-custom"
-      ? get().customTheme
-      : PRESET_THEMES.find((t) => t.id === id) ?? PRESET_THEMES[0];
+    const theme =
+      id === "tabler-custom"
+        ? get().customTheme
+        : (PRESET_THEMES.find((t) => t.id === id) ?? PRESET_THEMES[0]);
     applyThemeToDOM(theme);
   },
 
@@ -190,7 +191,8 @@ export const useThemeStore = create<ThemeStoreState>((set, get) => ({
         applyThemeToDOM(next);
       }
       return true;
-    } catch {
+    } catch (error) {
+      console.warn("[Theme] Failed to import custom theme:", error);
       return false;
     }
   },

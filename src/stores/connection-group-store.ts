@@ -9,13 +9,28 @@ export interface ConnectionGroup {
 const STORAGE_KEY = "tabler.connectionGroups";
 const COLLAPSED_KEY = "tabler.collapsedGroupIds";
 
+/** Palette offered when creating a group or recoloring one. */
+export const DEFAULT_GROUP_COLORS = [
+  "#e74c3c",
+  "#e67e22",
+  "#f1c40f",
+  "#2ecc71",
+  "#1abc9c",
+  "#3498db",
+  "#9b59b6",
+  "#e91e63",
+  "#6c7a89",
+  "#2c3e50",
+];
+
 // ─── Storage helpers ───────────────────────────────────────────────────────────
 
 function loadGroups(): ConnectionGroup[] {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
-  } catch {
+  } catch (error) {
+    console.warn("[ConnectionGroups] Failed to load groups:", error);
     return [];
   }
 }
@@ -28,7 +43,8 @@ function loadCollapsed(): Set<string> {
   try {
     const raw = window.localStorage.getItem(COLLAPSED_KEY);
     return new Set(raw ? JSON.parse(raw) : []);
-  } catch {
+  } catch (error) {
+    console.warn("[ConnectionGroups] Failed to load collapsed state:", error);
     return new Set();
   }
 }
@@ -162,7 +178,8 @@ function readAssignmentMap(key: string): AssignmentMap {
         (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0,
       ),
     );
-  } catch {
+  } catch (error) {
+    console.warn("[ConnectionGroups] Failed to read assignment map:", error);
     return {};
   }
 }
@@ -185,7 +202,10 @@ function saveTagAssignments(assignments: AssignmentMap): void {
 
 function migrateLegacyConnectionAssignments(): void {
   if (typeof window === "undefined") return;
-  if (window.localStorage.getItem(GROUP_ASSIGNMENT_KEY) || window.localStorage.getItem(TAG_ASSIGNMENT_KEY)) {
+  if (
+    window.localStorage.getItem(GROUP_ASSIGNMENT_KEY) ||
+    window.localStorage.getItem(TAG_ASSIGNMENT_KEY)
+  ) {
     return;
   }
   try {
@@ -202,14 +222,12 @@ function migrateLegacyConnectionAssignments(): void {
     }
     if (Object.keys(groups).length > 0) saveGroupAssignments(groups);
     if (Object.keys(tags).length > 0) saveTagAssignments(tags);
-  } catch {
-    // ignore corrupt legacy payloads
+  } catch (error) {
+    console.warn("[ConnectionGroups] Failed to migrate legacy assignments:", error);
   }
 }
 
-function patchLiveConnections(
-  update: (connection: ConnectionConfig) => ConnectionConfig,
-): void {
+function patchLiveConnections(update: (connection: ConnectionConfig) => ConnectionConfig): void {
   void import("./connectionStore").then(({ useConnectionStore }) => {
     const { connections } = useConnectionStore.getState();
     useConnectionStore.setState({ connections: connections.map(update) });

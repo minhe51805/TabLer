@@ -2,8 +2,9 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { QueryResult } from "../../../types";
 import type { StagedChange } from "../../../types/change-tracking";
 import { emitAppToast } from "../../../utils/app-toast";
-import { translateCurrent, type TranslationKey } from "../../../i18n";
+import { getCurrentAppLanguage, translateCurrent } from "../../../i18n";
 import { buildStableRowIdentity } from "../row-identity";
+import { getDataGridPowerCopy } from "../datagrid-power-copy";
 import type { GridSelectionState } from "../grid-selection";
 import {
   buildRangeTsv,
@@ -13,6 +14,7 @@ import {
   planClearUpdates,
   planFillDownUpdates,
   planPasteUpdates,
+  planSetValueUpdates,
   type RangeCellValue,
   type RangeColumnLike,
   type RangeUpdateContext,
@@ -84,54 +86,68 @@ export function useDataGridRangeOperations({
   }, [data, primaryKeyColumns, resolvedColumns]);
 
   /** Stage + optimistic-apply a planned batch. Returns false when nothing was staged. */
-  const commitUpdates = useCallback((plan: RangeUpdatePlan, toastKey: TranslationKey): boolean => {
-    if (!enabled || !data || !tableName || plan.updates.length === 0) return false;
+  const commitUpdates = useCallback(
+    (plan: RangeUpdatePlan, toastTitle: string): boolean => {
+      if (!enabled || !data || !tableName || plan.updates.length === 0) return false;
 
-    const changes: Array<Omit<StagedChange, "id" | "timestamp" | "sqlPreview">> = [];
-    for (const update of plan.updates) {
-      const rowValues = data.rows[update.rowIndex];
-      if (!rowValues) continue;
-      const rowKey: Record<string, unknown> = {};
-      for (const pk of buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns)) {
-        rowKey[pk.column] = pk.value;
-      }
-      changes.push({
-        type: "update",
-        tableName,
-        database,
-        rowIndex: update.rowIndex,
-        rowKey,
-        columns: { [update.colIndex]: { old: update.oldValue, new: update.nextValue } },
-        originalRow: [...rowValues] as (string | number | boolean | null)[],
-      });
-    }
-    if (changes.length === 0) return false;
-
-    stageChanges(changes);
-
-    // Same optimistic convention as commitEditingCell: grid state first,
-    // then the authoritative chunk cache, then the staged-row highlight.
-    setData((previous) => {
-      if (!previous) return previous;
-      const rows = previous.rows.map((row) => [...row]);
+      const changes: Array<Omit<StagedChange, "id" | "timestamp" | "sqlPreview">> = [];
       for (const update of plan.updates) {
-        const row = rows[update.rowIndex];
-        if (row) row[update.colIndex] = update.nextValue as GridCellValue;
+        const rowValues = data.rows[update.rowIndex];
+        if (!rowValues) continue;
+        const rowKey: Record<string, unknown> = {};
+        for (const pk of buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns)) {
+          rowKey[pk.column] = pk.value;
+        }
+        changes.push({
+          type: "update",
+          tableName,
+          database,
+          rowIndex: update.rowIndex,
+          rowKey,
+          columns: { [update.colIndex]: { old: update.oldValue, new: update.nextValue } },
+          originalRow: [...rowValues] as (string | number | boolean | null)[],
+        });
       }
-      return { ...previous, rows };
-    });
-    for (const update of plan.updates) {
-      patchLoadedTableCell(update.rowIndex, update.colIndex, update.nextValue as GridCellValue);
-    }
-    setStagedRowIndices((previous) => {
-      const next = new Set(previous);
-      for (const update of plan.updates) next.add(update.rowIndex);
-      return next;
-    });
+      if (changes.length === 0) return false;
 
-    emitAppToast({ title: translateCurrent(toastKey), tone: "success" });
-    return true;
-  }, [database, data, enabled, patchLoadedTableCell, primaryKeyColumns, resolvedColumns, setData, setStagedRowIndices, stageChanges, tableName]);
+      stageChanges(changes);
+
+      // Same optimistic convention as commitEditingCell: grid state first,
+      // then the authoritative chunk cache, then the staged-row highlight.
+      setData((previous) => {
+        if (!previous) return previous;
+        const rows = previous.rows.map((row) => [...row]);
+        for (const update of plan.updates) {
+          const row = rows[update.rowIndex];
+          if (row) row[update.colIndex] = update.nextValue as GridCellValue;
+        }
+        return { ...previous, rows };
+      });
+      for (const update of plan.updates) {
+        patchLoadedTableCell(update.rowIndex, update.colIndex, update.nextValue as GridCellValue);
+      }
+      setStagedRowIndices((previous) => {
+        const next = new Set(previous);
+        for (const update of plan.updates) next.add(update.rowIndex);
+        return next;
+      });
+
+      emitAppToast({ title: toastTitle, tone: "success" });
+      return true;
+    },
+    [
+      database,
+      data,
+      enabled,
+      patchLoadedTableCell,
+      primaryKeyColumns,
+      resolvedColumns,
+      setData,
+      setStagedRowIndices,
+      stageChanges,
+      tableName,
+    ],
+  );
 
   /** Copy the selected rectangle as TSV. Returns true when the grid owned the shortcut. */
   const handleRangeCopy = useCallback((): boolean => {
@@ -143,11 +159,14 @@ export function useDataGridRangeOperations({
     if (!range) return false;
     const tsv = buildRangeTsv(data.rows as RangeCellValue[][], range);
     if (!tsv) return false;
-    navigator.clipboard.writeText(tsv).then(() => {
-      emitAppToast({ title: translateCurrent("datagrid.rangeCopySuccess"), tone: "success" });
-    }).catch(() => {
-      setError("Could not write to the clipboard.");
-    });
+    navigator.clipboard
+      .writeText(tsv)
+      .then(() => {
+        emitAppToast({ title: translateCurrent("datagrid.rangeCopySuccess"), tone: "success" });
+      })
+      .catch(() => {
+        setError("Could not write to the clipboard.");
+      });
     return true;
   }, [data, gridSelection, resolvedColumns, setError]);
 
@@ -188,7 +207,7 @@ export function useDataGridRangeOperations({
         );
         return;
       }
-      commitUpdates(plan, "datagrid.rangePasteStaged");
+      commitUpdates(plan, translateCurrent("datagrid.rangePasteStaged"));
     })();
     return true;
   }, [buildContext, commitUpdates, data, enabled, gridSelection, setError]);
@@ -203,7 +222,10 @@ export function useDataGridRangeOperations({
       columnCount: context.columns.length,
     });
     if (!range) return false;
-    return commitUpdates(planClearUpdates(range, context), "datagrid.rangeDeleteStaged");
+    return commitUpdates(
+      planClearUpdates(range, context),
+      translateCurrent("datagrid.rangeDeleteStaged"),
+    );
   }, [buildContext, commitUpdates, enabled, gridSelection]);
 
   /**
@@ -219,13 +241,50 @@ export function useDataGridRangeOperations({
       columnCount: context.columns.length,
     });
     if (!range || !isMultiCellRange(range)) return false;
-    return commitUpdates(planFillDownUpdates(range, context), "datagrid.rangeFillStaged");
+    return commitUpdates(
+      planFillDownUpdates(range, context),
+      translateCurrent("datagrid.rangeFillStaged"),
+    );
   }, [buildContext, commitUpdates, enabled, gridSelection]);
+
+  /**
+   * Stage one value across the whole selection ("Set selected cells to…").
+   * `raw === null` stages NULL. Returns an error message for the dialog to
+   * display, or null when the batch was staged.
+   */
+  const handleRangeSetValue = useCallback(
+    (raw: string | null): string | null => {
+      const copy = getDataGridPowerCopy(getCurrentAppLanguage());
+      if (!enabled) return copy.setCells.errNotEditable;
+      const context = buildContext();
+      if (!context) return copy.setCells.errNoData;
+      const range = getPrimaryGridRange(gridSelection, {
+        rowCount: context.rows.length,
+        columnCount: context.columns.length,
+      });
+      if (!range) return copy.setCells.errNoSelection;
+      let plan: RangeUpdatePlan;
+      try {
+        plan = planSetValueUpdates(range, context, raw);
+      } catch (errorValue) {
+        return errorValue instanceof Error ? errorValue.message : String(errorValue);
+      }
+      if (plan.updates.length === 0) {
+        return copy.setCells.errNoUpdates;
+      }
+      if (!commitUpdates(plan, copy.setCells.stagedToast(plan.updates.length))) {
+        return copy.setCells.errStageFailed;
+      }
+      return null;
+    },
+    [buildContext, commitUpdates, enabled, gridSelection],
+  );
 
   return {
     handleRangeCopy,
     handleRangePaste,
     handleRangeDelete,
     handleRangeFillDown,
+    handleRangeSetValue,
   };
 }

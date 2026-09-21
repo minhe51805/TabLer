@@ -181,3 +181,21 @@ export async function exportToJSON(
     filters: [{ name: "JSON", extensions: ["json"] }],
   });
 }
+
+/**
+ * Exports row data to a Markdown table file via the native save dialog.
+ * Frontend-only format: the streaming backend export supports csv/jsonl only.
+ */
+export async function exportToMarkdown(
+  columns: string[],
+  rows: (string | number | boolean | null)[][],
+  filename?: string,
+): Promise<void> {
+  if (rows.length === 0) return;
+
+  await saveExportFile({
+    fileName: filename ?? buildExportFilename(columns[0], "md"),
+    content: buildMarkdownTableContent(columns, rows),
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+}

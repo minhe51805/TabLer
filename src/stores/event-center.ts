@@ -138,11 +138,6 @@ export const EventCenter = {
   emit<N extends EventName>(name: N, detail: EventDetail<N>): void {
     window.dispatchEvent(new CustomEvent(name, { detail }));
   },
-
-  /** Remove all listeners for a given event (useful in cleanup). */
-  removeAllListeners<N extends EventName>(name: N): void {
-    window.removeEventListener(name, () => {});
-  },
 };
 
 // ---------------------------------------------------------------------------

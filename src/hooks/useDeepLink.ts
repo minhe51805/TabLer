@@ -157,6 +157,7 @@ export function useDeepLink(isDesktopWindow: boolean) {
   useEffect(() => {
     if (!isDesktopWindow) return;
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     let handling = false;
 
     listen<string>("deep-link", async (event) => {
@@ -177,9 +178,15 @@ export function useDeepLink(isDesktopWindow: boolean) {
         handling = false;
       }
     }).then((off) => {
-      unlisten = off;
+      // The effect may have been cleaned up before Tauri resolved listen();
+      // unsubscribe immediately in that case so the handler cannot leak.
+      if (disposed) off();
+      else unlisten = off;
     });
 
-    return () => unlisten?.();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, [isDesktopWindow]);
 }

@@ -26,99 +26,112 @@ export function useKeyboardNavigation({
   onToggleGroup,
   onSearchChange,
 }: Props) {
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    const findGroupOfConnection = (connId: string): string | null => {
-      const item = flatItems.find(
-        (item) => item.type === "connection" && item.connection?.id === connId,
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      const findGroupOfConnection = (connId: string): string | null => {
+        const item = flatItems.find(
+          (item) => item.type === "connection" && item.connection?.id === connId,
+        );
+        return item?.groupId ?? null;
+      };
+
+      const scrollToConnection = (connId: string) => {
+        const el = document.querySelector(
+          `.startup-connection-row[data-conn-id="${connId}"]`,
+        ) as HTMLElement | null;
+        el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      };
+
+      const target = e.target as HTMLElement;
+      const isInputFocused =
+        target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+
+      // Escape: clear search or blur
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (isInputFocused) {
+          onSearchChange("");
+        }
+        target.blur();
+        return;
+      }
+
+      // Typing in rename/new-group inputs must not drive list navigation; the
+      // search box keeps arrow-key navigation so type→arrow→Enter still works.
+      if (isInputFocused && !target.closest(".startup-manager-search")) return;
+
+      // Build flat connection-only index
+      const connItems = flatItems
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => item.type === "connection");
+
+      const currentIdx = connItems.findIndex(
+        ({ item }) => item.connection?.id === selectedConnectionId,
       );
-      return item?.groupId ?? null;
-    };
 
-    const scrollToConnection = (connId: string) => {
-      const el = document.querySelector(
-        `.startup-connection-row[data-conn-id="${connId}"]`,
-      ) as HTMLElement | null;
-      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    };
-
-    const target = e.target as HTMLElement;
-    const isInputFocused =
-      target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
-
-    // Escape: clear search or blur
-    if (e.key === "Escape") {
-      e.preventDefault();
-      if (isInputFocused) {
-        onSearchChange("");
+      // Arrow navigation
+      if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "j")) {
+        e.preventDefault();
+        const next = currentIdx < connItems.length - 1 ? currentIdx + 1 : 0;
+        const nextConn = connItems[next].item.connection!;
+        onSelectConnection(nextConn.id);
+        scrollToConnection(nextConn.id);
+        return;
       }
-      target.blur();
-      return;
-    }
 
-    // Build flat connection-only index
-    const connItems = flatItems
-      .map((item, index) => ({ item, index }))
-      .filter(({ item }) => item.type === "connection");
-
-    if (connItems.length === 0) return;
-
-    const currentIdx = connItems.findIndex(
-      ({ item }) => item.connection?.id === selectedConnectionId,
-    );
-
-    // Arrow navigation
-    if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "j")) {
-      e.preventDefault();
-      const next = currentIdx < connItems.length - 1 ? currentIdx + 1 : 0;
-      const nextConn = connItems[next].item.connection!;
-      onSelectConnection(nextConn.id);
-      scrollToConnection(nextConn.id);
-      return;
-    }
-
-    if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "k")) {
-      e.preventDefault();
-      const prev = currentIdx > 0 ? currentIdx - 1 : connItems.length - 1;
-      const prevConn = connItems[prev].item.connection!;
-      onSelectConnection(prevConn.id);
-      scrollToConnection(prevConn.id);
-      return;
-    }
-
-    // Enter: connect
-    if (e.key === "Enter" && !isInputFocused) {
-      e.preventDefault();
-      if (selectedConnectionId) {
-        const conn = flatItems.find(
-          (item) => item.type === "connection" && item.connection?.id === selectedConnectionId,
-        )?.connection;
-        if (conn) onConnect(conn);
+      if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "k")) {
+        e.preventDefault();
+        const prev = currentIdx > 0 ? currentIdx - 1 : connItems.length - 1;
+        const prevConn = connItems[prev].item.connection!;
+        onSelectConnection(prevConn.id);
+        scrollToConnection(prevConn.id);
+        return;
       }
-      return;
-    }
 
-    // Ctrl+N: new connection
-    if (e.ctrlKey && e.key === "n") {
-      e.preventDefault();
-      onNewConnection();
-      return;
-    }
+      // Enter: connect
+      if (e.key === "Enter" && !isInputFocused) {
+        e.preventDefault();
+        if (selectedConnectionId) {
+          const conn = flatItems.find(
+            (item) => item.type === "connection" && item.connection?.id === selectedConnectionId,
+          )?.connection;
+          if (conn) onConnect(conn);
+        }
+        return;
+      }
 
-    // Ctrl+H/L: collapse/expand group
-    if (selectedConnectionId && (e.ctrlKey && e.key === "h")) {
-      e.preventDefault();
-      const groupId = findGroupOfConnection(selectedConnectionId);
-      if (groupId) onToggleGroup(groupId);
-      return;
-    }
+      // Ctrl+N: new connection
+      if (e.ctrlKey && e.key === "n") {
+        e.preventDefault();
+        onNewConnection();
+        return;
+      }
 
-    if (selectedConnectionId && (e.ctrlKey && e.key === "l")) {
-      e.preventDefault();
-      const groupId = findGroupOfConnection(selectedConnectionId);
-      if (groupId) onToggleGroup(groupId);
-      return;
-    }
-    }, [flatItems, selectedConnectionId, onSearchChange, onSelectConnection, onConnect, onNewConnection, onToggleGroup]);
+      // Ctrl+H/L: collapse/expand group
+      if (selectedConnectionId && e.ctrlKey && e.key === "h") {
+        e.preventDefault();
+        const groupId = findGroupOfConnection(selectedConnectionId);
+        if (groupId) onToggleGroup(groupId);
+        return;
+      }
+
+      if (selectedConnectionId && e.ctrlKey && e.key === "l") {
+        e.preventDefault();
+        const groupId = findGroupOfConnection(selectedConnectionId);
+        if (groupId) onToggleGroup(groupId);
+        return;
+      }
+    },
+    [
+      flatItems,
+      selectedConnectionId,
+      onSearchChange,
+      onSelectConnection,
+      onConnect,
+      onNewConnection,
+      onToggleGroup,
+    ],
+  );
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);

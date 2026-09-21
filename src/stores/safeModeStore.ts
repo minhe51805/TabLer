@@ -45,7 +45,9 @@ function syncSafeModePolicy(settings: SafeModeSettings) {
     globalLevel: settings.globalLevel,
     connectionOverrides: settings.connectionOverrides,
     productionConnectionIds,
-  }).catch(() => undefined);
+  }).catch((error) => {
+    console.warn("[SafeMode] Failed to sync policy to backend:", error);
+  });
 }
 
 export function pushSafeModePolicyToBackend() {
@@ -56,7 +58,7 @@ export function pushSafeModePolicyToBackend() {
 function hashPassword(password: string): string {
   let hash = 5381;
   for (let i = 0; i < password.length; i++) {
-    hash = ((hash << 5) + hash) + password.charCodeAt(i);
+    hash = (hash << 5) + hash + password.charCodeAt(i);
     hash = hash & hash;
   }
   return hash.toString(36);
@@ -83,11 +85,7 @@ interface SafeModeState {
   hasAdminPassword: () => boolean;
 
   /** Show a confirmation dialog for the given SQL. Returns true if confirmed. */
-  confirmSql: (
-    sql: string,
-    connectionId?: string,
-    bypassPassword?: string
-  ) => Promise<boolean>;
+  confirmSql: (sql: string, connectionId?: string, bypassPassword?: string) => Promise<boolean>;
 
   /** Check if a given password can bypass confirmation (level 4-5). */
   canBypassConfirmation: (password: string, connectionId?: string) => boolean;
@@ -103,7 +101,9 @@ export const useSafeModeStore = create<SafeModeState>((set, get) => {
       if (!connectionId) return settings.globalLevel;
       const override = settings.connectionOverrides.find((o) => o.connectionId === connectionId);
       if (override) return override.level;
-      return settings.connectionEnvironments?.[connectionId] === "production" ? 4 : settings.globalLevel;
+      return settings.connectionEnvironments?.[connectionId] === "production"
+        ? 4
+        : settings.globalLevel;
     },
 
     setGlobalLevel: (level: SafeModeLevel) => {
@@ -117,7 +117,7 @@ export const useSafeModeStore = create<SafeModeState>((set, get) => {
     setConnectionOverride: (connectionId: string, level: SafeModeLevel) => {
       set((state) => {
         const overrides = state.settings.connectionOverrides.filter(
-          (o) => o.connectionId !== connectionId
+          (o) => o.connectionId !== connectionId,
         );
         overrides.push({ connectionId, level });
         const next = { ...state.settings, connectionOverrides: overrides };
@@ -131,7 +131,7 @@ export const useSafeModeStore = create<SafeModeState>((set, get) => {
         const next = {
           ...state.settings,
           connectionOverrides: state.settings.connectionOverrides.filter(
-            (o) => o.connectionId !== connectionId
+            (o) => o.connectionId !== connectionId,
           ),
         };
         saveSettings(next);
@@ -235,10 +235,7 @@ export const useSafeModeStore = create<SafeModeState>((set, get) => {
 });
 
 /** Awaits user confirmation via window.confirm for level 3, or returns false for level 4-5 (UI must handle modal). */
-export async function promptConfirmation(
-  sql: string,
-  connectionId?: string
-): Promise<boolean> {
+export async function promptConfirmation(sql: string, connectionId?: string): Promise<boolean> {
   const { needsConfirmation, getEffectiveLevel } = useSafeModeStore.getState();
   const level = getEffectiveLevel(connectionId);
 

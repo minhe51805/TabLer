@@ -13,7 +13,10 @@ import { useI18n } from "../../i18n";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { emitAppToast } from "../../utils/app-toast";
 import {
+  assignConnectionToGroup,
   changeGroupColor,
+  createGroup,
+  DEFAULT_GROUP_COLORS,
   deleteGroup,
   getCollapsedGroupIds,
   getGroups,
@@ -241,6 +244,20 @@ export function StartupConnectionManager({
     deleteGroup(groupId);
     refreshGroups();
     setCollapsedGroupIds(getCollapsedGroupIds());
+  };
+
+  const handleAssignToGroup = (connectionId: string, groupId: string | null) => {
+    assignConnectionToGroup(connectionId, groupId);
+    // patchLiveConnections already updates the store; groups list unchanged.
+  };
+
+  const handleCreateAndAssignGroup = (connectionId: string, name: string) => {
+    const group = createGroup(
+      name,
+      DEFAULT_GROUP_COLORS[getGroups().length % DEFAULT_GROUP_COLORS.length],
+    );
+    assignConnectionToGroup(connectionId, group.id);
+    refreshGroups();
   };
 
   const handleRenameConnection = async (connection: ConnectionConfig, name: string) => {
@@ -526,6 +543,9 @@ export function StartupConnectionManager({
             onRenameGroup={handleRenameGroup}
             onChangeGroupColor={handleChangeGroupColor}
             onDeleteGroup={handleDeleteGroup}
+            onAssignToGroup={handleAssignToGroup}
+            onCreateAndAssignGroup={handleCreateAndAssignGroup}
+            groupsCopy={(STARTUP_COPY[language] ?? STARTUP_COPY.en).groups}
             listRef={listRef}
             pingResults={pingResults}
             isPingingAll={isPingingAll}

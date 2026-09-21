@@ -46,8 +46,8 @@ function loadShortcuts(): ShortcutMap {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) return JSON.parse(stored);
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[Shortcuts] Failed to load custom shortcuts:", error);
   }
   return {};
 }
@@ -55,8 +55,8 @@ function loadShortcuts(): ShortcutMap {
 function saveShortcuts(shortcuts: ShortcutMap) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(shortcuts));
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[Shortcuts] Failed to persist custom shortcuts:", error);
   }
 }
 

@@ -214,8 +214,11 @@ export const useQueryStore = create<QueryState>((set, get) => ({
             requestId,
             safeModeApprovedByUser: safety.userConfirmed === true,
           });
-        } catch {
-          result = null; // fall back below
+        } catch (progressiveError) {
+          // Progressive delivery is an optimization; fall back to the legacy
+          // path, but never drop the failure silently.
+          console.warn("[Query] Progressive execution failed, falling back:", progressiveError);
+          result = null;
         } finally {
           unlisten?.();
         }

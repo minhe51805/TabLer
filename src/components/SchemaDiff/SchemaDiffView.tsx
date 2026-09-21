@@ -7,6 +7,7 @@ import { useSchemaDiffStore } from "../../stores/schemaDiffStore";
 import { FRONTEND_TIMEOUTS } from "../../stores/connectionStoreHelpers";
 import { invokeWithTimeout } from "../../utils/tauri-utils";
 import { getSchemaDiffCopy } from "./schema-diff-copy";
+import { trackUsage } from "../../utils/usage-counter";
 
 interface ColumnChange {
   name: string;
@@ -136,6 +137,11 @@ export function SchemaDiffView() {
     window.addEventListener("open-schema-diff-palette", open);
     return () => window.removeEventListener("open-schema-diff-palette", open);
   }, [activeConnectionId]);
+
+  // Local usage counter: one count per open, not per render.
+  useEffect(() => {
+    if (isOpen) trackUsage("diff.schema");
+  }, [isOpen]);
 
   // Same-connection diffs compare two databases; load the catalog once both
   // selects settle on one connection.

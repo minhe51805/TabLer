@@ -2869,7 +2869,29 @@
     0 0 20px rgba(0, 122, 255, 0.1);
 }
 
-.startup-connection-row:focus-visible {
+/* Stretched open button: invisible, covers the card so the whole row is a
+   real focusable button. Interactive children (rename, delete, rename
+   input) sit above it via z-index; text/badges stay below so clicks on
+   them still open the connection. */
+.startup-connection-open {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.startup-connection-rename,
+.startup-connection-delete,
+.startup-connection-rename-input {
+  position: relative;
+  z-index: 2;
+}
+
+.startup-connection-row:has(.startup-connection-open:focus-visible) {
   outline: none;
   border-color: var(--mm-border);
   box-shadow:
@@ -3377,7 +3399,9 @@
 
 .startup-connection-group-count {
   font-size: var(--mm-fs-micro);
-  color: var(--accent);
+  /* Darkened accent keeps ≥4.5:1 contrast on the accent-tinted pill
+     (raw #007aff on ~#e2e9f3 was 3.28 — axe serious). */
+  color: color-mix(in srgb, var(--accent) 68%, #000);
   padding: 1px 5px;
   background: rgba(0, 122, 255, 0.08);
   border-radius: 10px;
@@ -3880,9 +3904,10 @@
   --bg-elevated: var(--mm-surface-0);
 
   --text-primary: var(--mm-dark-gray);
-  --text-secondary: var(--mm-medium-gray);
-  --text-muted: var(--mm-light-gray);
-  --text-dim: var(--mm-light-gray);
+  --text-secondary: #6e6e73;
+  /* #8E8E93 fails WCAG AA (3.04:1) on light surfaces — darken to ~5:1. */
+  --text-muted: #6e6e73;
+  --text-dim: #6e6e73;
 
   --border-color: var(--mm-border);
   --border-light: var(--mm-border);
@@ -4949,6 +4974,19 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   background: rgba(0, 122, 255, 0.08);
   border-color: rgba(0, 122, 255, 0.18);
   transform: translateY(-1px);
+}
+
+.app-help-modal-usage-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.app-help-modal-usage-empty {
+  font-size: var(--mm-fs-caption);
+  color: var(--text-tertiary, var(--text-secondary));
 }
 
 .app-help-modal-split {
@@ -14792,6 +14830,54 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   border-radius: 14px;
   background: var(--mm-surface-0);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+
+/* Model picker: wider than the settings dialog so pricing columns fit. */
+.ai-settings-model-dialog.is-picker {
+  width: min(720px, 94vw);
+}
+
+.ai-settings-model-picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-settings-model-search {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--mm-border);
+  border-radius: 9px;
+  background: var(--mm-surface-1);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+}
+
+.ai-settings-model-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ai-settings-model-free {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--fintech-green, #22c55e) 16%, transparent);
+  color: var(--fintech-green, #22c55e);
+}
+
+.ai-settings-model-pricing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  flex-shrink: 0;
+  font-size: var(--mm-fs-micro);
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .ai-settings-model-dialog-head {
@@ -33902,13 +33988,13 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   color: var(--text-secondary);
   box-shadow: none;
 }
-
 .startup-manager-search-add.primary {
   width: auto;
   min-width: 0;
   padding: 0 11px;
   border-color: var(--accent);
-  background: var(--accent);
+  /* White text on raw #007aff is 4.01:1 — darken the fill to reach AA. */
+  background: color-mix(in srgb, var(--accent) 88%, #000);
   color: #fff;
   box-shadow: none;
 }
@@ -33916,7 +34002,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 .startup-manager-search-add.primary:hover,
 .startup-manager-search-add.primary.active {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 88%, #000);
+  background: color-mix(in srgb, var(--accent) 78%, #000);
   color: #fff;
   box-shadow: none;
   transform: none;
@@ -35719,7 +35805,8 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   padding: 0 14px;
   gap: 6px;
   border: 0;
-  background: var(--accent);
+  /* White text on raw #007aff is 4.01:1 — darken the fill to reach AA. */
+  background: color-mix(in srgb, var(--accent) 88%, #000);
   color: #fff;
   box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--accent) 55%, transparent);
 }
@@ -35727,7 +35814,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 .startup-manager-search-add.primary:hover,
 .startup-manager-search-add.primary.active {
   border: 0;
-  background: var(--accent-hover);
+  background: color-mix(in srgb, var(--accent) 78%, #000);
   color: #fff;
   transform: none;
   box-shadow: 0 6px 16px -4px color-mix(in srgb, var(--accent) 60%, transparent);

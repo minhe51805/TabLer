@@ -95,7 +95,9 @@ use commands::update::{
 use commands::users_roles::{
     apply_user_role_change, get_user_role_snapshot, review_user_role_change,
 };
-use commands::window::{apply_window_profile, apply_window_profile_to_main, WindowProfile};
+use commands::window::{
+    apply_window_profile, apply_window_profile_to_main, open_external_url, WindowProfile,
+};
 use commands::workspace_sync::{pull_workspace_sync, push_workspace_sync};
 use database::manager::DatabaseManager;
 use log::{error, info};
@@ -525,6 +527,7 @@ pub fn run() {
             // Tab persistence commands
             save_tabs,
             load_tabs,
+            open_external_url,
             delete_tabs,
             // Deep link commands
             parse_deep_link,

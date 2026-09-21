@@ -62,8 +62,8 @@ export interface AIPanelCopy {
     subtitle: string;
     close: string;
     newRule: string;
-    /** Tooltip on the disabled "New rule" button when no folder is linked. */
-    noWorkspaceTitle: string;
+    /** Label for the global rules root, shown as the New-rule target when no folder is linked. */
+    globalRules: string;
     refresh: string;
     loading: string;
     empty: string;

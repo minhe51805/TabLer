@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { AppAboutModal } from "../AppAboutModal";
 import { AppPluginManagerModal } from "../AppPluginManagerModal";
 import { AppMcpIntegrationsModal } from "../AppMcpIntegrationsModal";
@@ -22,6 +22,7 @@ import { useQuerySchedulesStore } from "../../stores/query-schedules-store";
 import { ConnectionConfig } from "../../types/database";
 import { DiagnosticBundleModal } from "../DiagnosticBundleModal";
 import { ProfilerLauncher } from "../Profiler";
+import { trackUsage, type UsageFeature } from "../../utils/usage-counter";
 
 const AISettingsModal = lazy(() =>
   import("../AISettingsModal").then((module) => ({ default: module.AISettingsModal })),
@@ -98,6 +99,28 @@ export function AppGlobalModals({
     return () => setAppConfirmHostMounted(false);
   }, []);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+
+  // Local usage counters: count each modal once per open (false → true edge),
+  // never per render. Local-only — see utils/usage-counter.
+  const prevModalFlags = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    const flags: Array<[UsageFeature, boolean]> = [
+      ["modal.about", showAboutModal],
+      ["modal.aiSettings", showAISettings],
+      ["modal.pluginManager", showPluginManager],
+      ["modal.mcpIntegrations", showMcpIntegrations],
+      ["modal.userRoles", showUserRoleManagement],
+      ["modal.shortcuts", showKeyboardShortcutsModal],
+      ["modal.themeCustomizer", showThemeCustomizer],
+      ["modal.connectionExporter", showConnectionExporter],
+      ["modal.connectionImporter", showConnectionImporter],
+      ["modal.diagnostics", showDiagnostics],
+    ];
+    for (const [feature, isOpen] of flags) {
+      if (isOpen && !prevModalFlags.current[feature]) trackUsage(feature);
+      prevModalFlags.current[feature] = isOpen;
+    }
+  });
 
   return (
     <>

@@ -104,6 +104,7 @@ import {
 import { runAgentEvidenceLoop } from "../ai-agent-evidence-loop";
 import { collectRunEndInsights } from "../ai-agent-insights";
 import { proposeRunLearnings } from "../ai-agent-learning";
+import { trackUsage } from "../../../utils/usage-counter";
 
 import {
   buildRunnerInstructionForReason,
@@ -605,6 +606,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
       setIsGenerating(true);
       setError(null);
+      // Local usage counter: one count per accepted run (empty prompts and
+      // missing providers bail out above before this point).
+      trackUsage("agent.run");
       // Per-run token accounting: every model call this run makes funnels
       // through `trackedAskAI`, which adds the provider's usage payload to the
       // total the bubble footer reports. The runner keeps its own counter for

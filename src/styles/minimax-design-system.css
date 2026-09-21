@@ -32,29 +32,29 @@
   /* TableR brand color reference */
   --mm-charcoal: #000000;
   --mm-jet: #000000;
-  --mm-amber: #007AFF;
-  --mm-amber-hover: #0A6CFF;
-  --mm-stone: #3C3C43;
-  --mm-slate: #3C3C43;
-  --mm-stone-gray: #8E8E93;
+  --mm-amber: #007aff;
+  --mm-amber-hover: #0a6cff;
+  --mm-stone: #3c3c43;
+  --mm-slate: #3c3c43;
+  --mm-stone-gray: #8e8e93;
 
   /* Neutrals */
-  --mm-off-white: #F0F0F2;
-  --mm-dark-gray: #3C3C43;
-  --mm-medium-gray: #8E8E93;
-  --mm-light-gray: #8E8E93;
+  --mm-off-white: #f0f0f2;
+  --mm-dark-gray: #3c3c43;
+  --mm-medium-gray: #8e8e93;
+  --mm-light-gray: #8e8e93;
   --mm-smoke: #636366;
-  --mm-pure-white: #FFFFFF;
+  --mm-pure-white: #ffffff;
   --mm-canvas: #171717;
-  --mm-night: #1C1917;
-  --mm-dim: #181E25;
+  --mm-night: #1c1917;
+  --mm-dim: #181e25;
 
   /* Semantic */
-  --mm-success: #248A3D;
-  --mm-warning: #C55B00;
-  --mm-error: #D70015;
-  --mm-success-soft: rgba(36, 138, 61, 0.10);
-  --mm-warning-soft: rgba(197, 91, 0, 0.10);
+  --mm-success: #248a3d;
+  --mm-warning: #c55b00;
+  --mm-error: #d70015;
+  --mm-success-soft: rgba(36, 138, 61, 0.1);
+  --mm-warning-soft: rgba(197, 91, 0, 0.1);
   --mm-error-soft: rgba(215, 0, 21, 0.08);
 
   /* Accent + surface aliases — several components reference --mm-accent and
@@ -62,27 +62,26 @@
      them silently dropped its border/background (ask_user quick replies
      rendered with no visible button frame). Point them at the canonical
      brand tokens so the whole family resolves. */
-  --mm-accent: #007AFF;
-  --mm-accent-hover: #0A6CFF;
+  --mm-accent: #007aff;
+  --mm-accent-hover: #0a6cff;
   --mm-surface: var(--mm-surface-0);
 
   /* Surface */
-  --mm-surface-0: #FFFFFF;
-  --mm-surface-1: #F7F7F8;
-  --mm-surface-2: #F0F0F2;
-  --mm-surface-3: #E5E5EA;
+  --mm-surface-0: #ffffff;
+  --mm-surface-1: #f7f7f8;
+  --mm-surface-2: #f0f0f2;
+  --mm-surface-3: #e5e5ea;
 
   /* Borders */
-  --mm-border: #D8D8DC;
-  --mm-border-strong: #C7C7CC;
-  --mm-border-focus: #007AFF;
+  --mm-border: #d8d8dc;
+  --mm-border-strong: #c7c7cc;
+  --mm-border-focus: #007aff;
 
   /* Typography scale (system / Apple-native stack) */
   --mm-font-sans:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable",
-    "Segoe UI", system-ui, sans-serif;
-  --mm-font-mono:
-    ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable", "Segoe UI", system-ui,
+    sans-serif;
+  --mm-font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
   --mm-fs-micro: 11px;
   --mm-fs-caption: 12px;
@@ -129,15 +128,9 @@
 
   /* Elevation */
   --mm-shadow-flat: none;
-  --mm-shadow-1:
-    rgba(159, 159, 159, 0.30) 0 0 0 1px,
-    rgba(0, 0, 0, 0.05) 0 1px 2px 0;
-  --mm-shadow-2:
-    rgba(159, 159, 159, 0.30) 0 0 0 1px,
-    rgba(0, 0, 0, 0.08) 0 4px 6px 0;
-  --mm-shadow-3:
-    rgba(159, 159, 159, 0.30) 0 0 0 1px,
-    rgba(0, 0, 0, 0.12) 0 8px 16px 0;
+  --mm-shadow-1: rgba(159, 159, 159, 0.3) 0 0 0 1px, rgba(0, 0, 0, 0.05) 0 1px 2px 0;
+  --mm-shadow-2: rgba(159, 159, 159, 0.3) 0 0 0 1px, rgba(0, 0, 0, 0.08) 0 4px 6px 0;
+  --mm-shadow-3: rgba(159, 159, 159, 0.3) 0 0 0 1px, rgba(0, 0, 0, 0.12) 0 8px 16px 0;
   --mm-shadow-focus: rgba(0, 0, 0, 0.05) 0 0 0 3px;
 
   /* Map MiniMax tokens to existing TableR CSS variables so all components
@@ -153,8 +146,10 @@
 
   --text-primary: var(--mm-charcoal);
   --text-secondary: var(--mm-dark-gray);
-  --text-muted: var(--mm-medium-gray);
-  --text-subtle: var(--mm-light-gray);
+  /* #8E8E93 fails WCAG AA (3.04:1) on light surfaces — axe flags it as
+     serious. Darken muted/subtle to ~5:1; disabled keeps a lighter step. */
+  --text-muted: #6e6e73;
+  --text-subtle: #75757a;
   --text-disabled: var(--mm-light-gray);
   --text-inverse: var(--mm-pure-white);
 
@@ -163,17 +158,17 @@
   --border-strong: var(--mm-border-strong);
   --border: var(--mm-border);
 
-  --accent: #007AFF;
-  --accent-hover: #0A6CFF;
-  --accent-active: #0051D5;
+  --accent: #007aff;
+  --accent-hover: #0a6cff;
+  --accent-active: #0051d5;
   --accent-amber: var(--mm-amber);
   --accent-amber-hover: var(--mm-amber-hover);
-  --accent-dim: rgba(0, 122, 255, 0.10);
+  --accent-dim: rgba(0, 122, 255, 0.1);
 
   --success: var(--mm-success);
   --warning: var(--mm-warning);
   --error: var(--mm-error);
-  --info: #007AFF;
+  --info: #007aff;
 
   /* Match the existing DataGrid token names */
   --datagrid-bg: var(--mm-surface-0);
@@ -186,7 +181,7 @@
   --datagrid-modified: var(--mm-amber);
   --datagrid-inserted: var(--mm-success);
   --datagrid-deleted: var(--mm-error);
-  --datagrid-focus-border: #007AFF;
+  --datagrid-focus-border: #007aff;
 
   /* Theme shape tokens (already injected by ThemeEngine, but pinned here for
    * components that load the CSS first) */
@@ -290,8 +285,11 @@
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  transition: background-color 150ms ease, color 150ms ease,
-    border-color 150ms ease, box-shadow 150ms ease;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
 :root[data-theme-preset="tabler.minimax"] .mm-btn-primary {
@@ -305,12 +303,12 @@
 }
 
 :root[data-theme-preset="tabler.minimax"] .mm-btn-primary:hover {
-  background: #1F2937;
+  background: #1f2937;
   box-shadow: var(--mm-shadow-2);
 }
 
 :root[data-theme-preset="tabler.minimax"] .mm-btn-primary:active {
-  background: #0F1419;
+  background: #0f1419;
   box-shadow: var(--mm-shadow-3);
 }
 
@@ -427,7 +425,9 @@
   outline: none;
   width: 100%;
   height: 40px;
-  transition: border-color 150ms ease, background 150ms ease,
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
     box-shadow 150ms ease;
 }
 
@@ -565,7 +565,7 @@
 }
 
 :root[data-theme-preset="tabler.minimax"] .mm-badge-accent {
-  background: rgba(195, 125, 13, 0.10);
+  background: rgba(195, 125, 13, 0.1);
   color: var(--mm-amber);
 }
 
@@ -590,7 +590,7 @@
 }
 
 :root[data-theme-preset="tabler.minimax"] .mm-link:visited {
-  color: #6B7280;
+  color: #6b7280;
 }
 
 :root[data-theme-preset="tabler.minimax"] .mm-link-muted {
@@ -647,7 +647,9 @@
   border-bottom: 2px solid transparent;
   cursor: pointer;
   text-decoration: none;
-  transition: color 150ms ease, border-color 150ms ease;
+  transition:
+    color 150ms ease,
+    border-color 150ms ease;
 }
 
 :root[data-theme-preset="tabler.minimax"] .mm-nav-item:hover {
@@ -681,7 +683,9 @@
   border-radius: var(--mm-radius-sm);
   cursor: pointer;
   text-decoration: none;
-  transition: background 150ms ease, color 150ms ease;
+  transition:
+    background 150ms ease,
+    color 150ms ease;
 }
 
 :root[data-theme-preset="tabler.minimax"] .mm-sidebar-item:hover {
@@ -737,9 +741,7 @@
   transition: transform 200ms ease;
 }
 
-:root[data-theme-preset="tabler.minimax"]
-  .mm-collapsible.is-open
-  .mm-collapsible-arrow {
+:root[data-theme-preset="tabler.minimax"] .mm-collapsible.is-open .mm-collapsible-arrow {
   transform: rotate(180deg);
 }
 
@@ -808,7 +810,8 @@
 }
 
 /* Inputs without explicit MiniMax class — keep them readable */
-:root[data-theme-preset="tabler.minimax"] input:not([type="checkbox"]):not([type="radio"]):not(.no-mm),
+:root[data-theme-preset="tabler.minimax"]
+  input:not([type="checkbox"]):not([type="radio"]):not(.no-mm),
 :root[data-theme-preset="tabler.minimax"] textarea:not(.no-mm),
 :root[data-theme-preset="tabler.minimax"] select:not(.no-mm) {
   font-family: var(--mm-font-sans);
@@ -987,7 +990,9 @@
 :root[data-theme-preset="tabler.minimax"] .mm-btn-secondary:focus-visible,
 :root[data-theme-preset="tabler.minimax"] .mm-btn-icon:focus-visible {
   outline: none;
-  box-shadow: var(--mm-shadow-1), rgba(195, 125, 13, 0.40) 0 0 0 3px;
+  box-shadow:
+    var(--mm-shadow-1),
+    rgba(195, 125, 13, 0.4) 0 0 0 3px;
 }
 
 /* ─── 7. Responsive Behavior ─────────────────────────────────────────────── */

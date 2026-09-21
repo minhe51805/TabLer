@@ -31,9 +31,10 @@ Explain the rule for the next person who reads this file.
 
 /**
  * Guardrail rules manager: the armed pack (`list_agent_rules`) plus the files
- * that failed to load, and a "New rule" form that writes a validated .md into
- * `<linked-folder>/rules` via `write_workspace_rule` — the same directory
- * `evaluate_agent_rules` scans first for the workspace.
+ * that failed to load, and a "New rule" form that writes a validated .md via
+ * `write_workspace_rule`. The rule lands in `<linked-folder>/rules` when a
+ * folder is linked, otherwise in the global `<data_dir>/rules` — both are
+ * roots `evaluate_agent_rules` already scans.
  */
 export function AIRulesManagerModal({ open, onClose }: AIRulesManagerModalProps) {
   const { language } = useI18n();
@@ -44,8 +45,10 @@ export function AIRulesManagerModal({ open, onClose }: AIRulesManagerModalProps)
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  /** First linked folder — the workspace rules root; null disables authoring. */
+  /** First linked folder — the workspace rules root; null means global rules. */
   const [workspaceDir, setWorkspaceDir] = useState<string | null>(null);
+  /** False until the linked-folder lookup settles, so the form never flashes the wrong target. */
+  const [workspaceResolved, setWorkspaceResolved] = useState(false);
   /** Non-null while the New-rule form is open. */
   const [draft, setDraft] = useState<{ name: string; content: string } | null>(null);
   const [draftBusy, setDraftBusy] = useState(false);
@@ -66,13 +69,14 @@ export function AIRulesManagerModal({ open, onClose }: AIRulesManagerModalProps)
       setLoading(false);
     }
   }, []);
-
   useEffect(() => {
     if (!open) return;
     setNotice(null);
     setDraft(null);
+    setWorkspaceResolved(false);
     void getLinkedWorkspaceDir().then((dir) => {
       setWorkspaceDir(dir);
+      setWorkspaceResolved(true);
       void refresh(dir);
     });
   }, [open, refresh]);
@@ -120,7 +124,7 @@ export function AIRulesManagerModal({ open, onClose }: AIRulesManagerModalProps)
   }, []);
 
   const handleCreate = useCallback(async () => {
-    if (!draft || draftBusy || !workspaceDir) return;
+    if (!draft || draftBusy || !workspaceResolved) return;
     const name = draft.name.trim();
     if (!name || draftNameError) return;
     setDraftBusy(true);
@@ -131,6 +135,7 @@ export function AIRulesManagerModal({ open, onClose }: AIRulesManagerModalProps)
       const content = draft.content
         .replace(/^name:\s*.*$/m, `name: ${name}`)
         .replace(/\{name\}/g, name);
+      // null workspaceDir → the backend writes into the global rules root.
       const path = await invokeMutation<string>("write_workspace_rule", {
         workspaceDir,
         name,
@@ -144,7 +149,7 @@ export function AIRulesManagerModal({ open, onClose }: AIRulesManagerModalProps)
     } finally {
       setDraftBusy(false);
     }
-  }, [draft, draftBusy, draftNameError, workspaceDir, copy.savedAt, refresh]);
+  }, [draft, draftBusy, draftNameError, workspaceDir, workspaceResolved, copy.savedAt, refresh]);
 
   if (!open) return null;
 
@@ -193,7 +198,9 @@ export function AIRulesManagerModal({ open, onClose }: AIRulesManagerModalProps)
                 <div className="ai-skills-manager-editor-copy">
                   <span className="ai-skills-manager-editor-title">{copy.newRule}</span>
                   <span className="ai-skills-manager-editor-sub">
-                    {workspaceDir ? `${workspaceDir}/rules/${draft.name.trim() || "name"}.md` : ""}
+                    {workspaceDir
+                      ? `${workspaceDir}/rules/${draft.name.trim() || "name"}.md`
+                      : `${copy.globalRules} · ${draft.name.trim() || "name"}.md`}
                   </span>
                 </div>
                 <div className="ai-skills-manager-editor-actions">
@@ -280,8 +287,8 @@ export function AIRulesManagerModal({ open, onClose }: AIRulesManagerModalProps)
                     type="button"
                     className="ai-skills-manager-btn is-primary"
                     onClick={openCreateDraft}
-                    disabled={!workspaceDir}
-                    title={workspaceDir ? copy.newRule : copy.noWorkspaceTitle}
+                    disabled={!workspaceResolved}
+                    title={copy.newRule}
                   >
                     <Plus className="w-3.5 h-3.5" /> {copy.newRule}
                   </button>

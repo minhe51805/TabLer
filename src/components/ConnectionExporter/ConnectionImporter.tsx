@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ExportableConnection } from "../../utils/connection-export";
 import {
+  applyUiPrefs,
   importWorkspaceBundle,
   previewWorkspaceBundle,
   type BundleItemPreview,
@@ -14,7 +15,7 @@ import { useI18n } from "../../i18n";
 import { getBundleCopy } from "./bundle-copy";
 import "../../styles/lazy-overlays.css";
 
-type BundleSectionKey = "connections" | "sqlFavorites" | "schedules" | "aiProviders";
+type BundleSectionKey = "connections" | "sqlFavorites" | "schedules" | "aiProviders" | "uiPrefs";
 
 function bundleSections(preview: TeamBundlePreview): [BundleSectionKey, BundleItemPreview[]][] {
   return [
@@ -22,6 +23,7 @@ function bundleSections(preview: TeamBundlePreview): [BundleSectionKey, BundleIt
     ["sqlFavorites", preview.sqlFavorites],
     ["schedules", preview.schedules],
     ["aiProviders", preview.aiProviders],
+    ["uiPrefs", preview.uiPrefs],
   ];
 }
 
@@ -47,6 +49,8 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
     success: boolean;
     count: number;
     counts?: TeamBundleCounts;
+    /** localStorage keys actually written by the UI-prefs step. */
+    uiPrefsWritten?: number;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,6 +83,11 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
             setBundlePreview(res.preview);
             const keys = new Set<string>();
             for (const [section, items] of bundleSections(res.preview)) {
+              // UI prefs get one section-level checkbox, not per-key rows.
+              if (section === "uiPrefs") {
+                if (items.some((item) => !item.exists)) keys.add("uiPrefs");
+                continue;
+              }
               for (const item of items) {
                 if (!item.exists) keys.add(`${section}:${item.index}`);
               }
@@ -108,13 +117,17 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
         sqlFavorites: pick("sqlFavorites", bundlePreview.sqlFavorites),
         schedules: pick("schedules", bundlePreview.schedules),
         aiProviders: pick("aiProviders", bundlePreview.aiProviders),
+        uiPrefs: bundleSelected.has("uiPrefs")
+          ? bundlePreview.uiPrefs.map((item) => item.index)
+          : [],
       });
       onImport();
       const counts = res.counts;
       const total = counts
         ? counts.connections + counts.sqlFavorites + counts.schedules + counts.aiProviders
         : bundleSelected.size;
-      setResult({ success: true, count: total, counts });
+      const uiPrefsWritten = res.uiPrefs ? applyUiPrefs(res.uiPrefs) : 0;
+      setResult({ success: true, count: total, counts, uiPrefsWritten });
     } catch (e) {
       setError(`Import failed: ${e}`);
     } finally {
@@ -272,7 +285,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
               <CheckCircle2 />
               <p>
                 {result.counts
-                  ? `${bundleCopy.import.done}: ${result.counts.connections} ${bundleCopy.import.sections.connections}, ${result.counts.sqlFavorites} ${bundleCopy.import.sections.sqlFavorites}, ${result.counts.schedules} ${bundleCopy.import.sections.schedules}, ${result.counts.aiProviders} ${bundleCopy.import.sections.aiProviders}`
+                  ? `${bundleCopy.import.done}: ${result.counts.connections} ${bundleCopy.import.sections.connections}, ${result.counts.sqlFavorites} ${bundleCopy.import.sections.sqlFavorites}, ${result.counts.schedules} ${bundleCopy.import.sections.schedules}, ${result.counts.aiProviders} ${bundleCopy.import.sections.aiProviders}${result.uiPrefsWritten ? `, ${result.uiPrefsWritten} ${bundleCopy.import.uiPrefsWritten} — ${bundleCopy.import.uiPrefsRestart}` : ""}`
                   : `Successfully imported ${result.count} connection${result.count !== 1 ? "s" : ""}`}
               </p>
               <button onClick={handleClose} className="btn btn-primary">
@@ -288,8 +301,43 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
             </div>
 
             <div className="cex-preview-list">
-              {bundleSections(bundlePreview).map(([section, items]) =>
-                items.length === 0 ? null : (
+              {bundleSections(bundlePreview).map(([section, items]) => {
+                if (items.length === 0) return null;
+                // UI prefs collapse into one section-level checkbox: the
+                // backend returns only missing keys and the frontend writes
+                // them back, so per-key rows would just be noise.
+                if (section === "uiPrefs") {
+                  const existing = items.filter((item) => item.exists).length;
+                  const allExist = existing === items.length;
+                  return (
+                    <div key={section} className="cex-bundle-section">
+                      <label
+                        className={`cex-preview-card cex-bundle-item ${allExist ? "is-existing" : ""}`}
+                      >
+                        <div className="cex-preview-head">
+                          <input
+                            type="checkbox"
+                            checked={bundleSelected.has("uiPrefs")}
+                            disabled={allExist}
+                            onChange={() => toggleBundleItem("uiPrefs")}
+                          />
+                          <span className="cex-preview-name">
+                            {bundleCopy.import.sections.uiPrefs}
+                          </span>
+                          <span className="cex-preview-meta">
+                            {bundleCopy.import.uiPrefsMeta
+                              .replace("{total}", String(items.length))
+                              .replace("{existing}", String(existing))}
+                          </span>
+                          {allExist && (
+                            <span className="cex-type-pill">{bundleCopy.import.exists}</span>
+                          )}
+                        </div>
+                      </label>
+                    </div>
+                  );
+                }
+                return (
                   <div key={section} className="cex-bundle-section">
                     <span className="cex-section-label">
                       {bundleCopy.import.sections[section]} ({items.length})
@@ -323,8 +371,8 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                       );
                     })}
                   </div>
-                ),
-              )}
+                );
+              })}
               {bundleSections(bundlePreview).every(([, items]) => items.length === 0) && (
                 <p className="cex-rail-empty">{bundleCopy.import.empty}</p>
               )}

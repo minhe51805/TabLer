@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { QueryResult } from "../../types";
+import { trackUsage } from "../../utils/usage-counter";
 
 /** Rows kept in a pinned snapshot; larger results are truncated on pin. */
 export const PINNED_RESULT_ROW_LIMIT = 5000;
@@ -53,6 +54,7 @@ export const useResultDiffStore = create<ResultDiffState>((set, get) => ({
   openCompare: (current, currentLabel) => {
     const pinned = get().pinned;
     if (!pinned) return;
+    trackUsage("diff.result");
     set({ compare: { a: pinned, b: current, bLabel: currentLabel } });
   },
   closeCompare: () => set({ compare: null }),

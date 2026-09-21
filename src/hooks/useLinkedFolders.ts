@@ -9,8 +9,10 @@ export interface FileEventPayload {
 /**
  * Resolve the workspace directory for per-project agent resources (rules,
  * skills, commands): the first linked folder, or null when none is linked.
- * Linked folders are a global list, so this is a plain fetch rather than a
- * hook — call sites outside React render (agent run paths) can await it.
+ * Null is not "no rules" — callers fall back to the global `<data_dir>` roots
+ * the loaders already scan. Linked folders are a global list, so this is a
+ * plain fetch rather than a hook — call sites outside React render (agent run
+ * paths) can await it.
  */
 export async function getLinkedWorkspaceDir(): Promise<string | null> {
   try {

@@ -28,7 +28,7 @@ pub(crate) const MAX_AI_STREAM_OUTPUT_BYTES: usize = 2_097_152;
 /// of forcing manual entry. Fields the provider omits stay `None`/empty so the
 /// frontend keeps its own defaults. Field names stay snake_case to match the
 /// `AIModelSettings` wire format the frontend already consumes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FetchedModel {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -37,6 +37,23 @@ pub struct FetchedModel {
     pub max_output_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input_types: Vec<String>,
+    /// Per-token USD prices the provider advertised (OpenRouter-style
+    /// `pricing.*`); absent when the API does not publish pricing. The
+    /// picker renders them per 1M tokens and derives "free" from all-zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<FetchedModelPricing>,
+}
+
+/// Per-token USD prices as published by the provider (OpenRouter sends them
+/// as strings; parsed to f64 here so the frontend never re-parses).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FetchedModelPricing {
+    pub prompt: f64,
+    pub completion: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_cache_read: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_cache_write: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1,5 +1,5 @@
 use super::super::endpoints::ModelsListShape;
-use super::super::FetchedModel;
+use super::super::{FetchedModel, FetchedModelPricing};
 
 /// Extracts the models from a provider's "list models" response, along with any
 /// capability metadata (context window, output budget, input modalities) the
@@ -34,6 +34,7 @@ pub(crate) fn parse_models_list_response(
                         context_window: None,
                         max_output_tokens: None,
                         input_types: Vec::new(),
+                        pricing: None,
                     })
                     .collect()
             })
@@ -108,6 +109,7 @@ fn parse_openai_model_entry(entry: &serde_json::Value) -> Option<FetchedModel> {
         context_window,
         max_output_tokens,
         input_types,
+        pricing: parse_model_pricing(entry),
     })
 }
 
@@ -122,6 +124,29 @@ fn parse_gemini_model_entry(entry: &serde_json::Value) -> Option<FetchedModel> {
         context_window: model_capacity(entry, &["inputTokenLimit"]),
         max_output_tokens: model_capacity(entry, &["outputTokenLimit"]),
         input_types: Vec::new(),
+        pricing: None,
+    })
+}
+
+/// Reads OpenRouter-style `pricing.*` fields (stringified USD per token).
+/// Returns `None` when the provider publishes no pricing block so the picker
+/// can distinguish "unknown price" from "free" (all-zero).
+fn parse_model_pricing(entry: &serde_json::Value) -> Option<FetchedModelPricing> {
+    let pricing = entry.get("pricing")?;
+    let read = |key: &str| -> Option<f64> {
+        pricing.get(key).and_then(|v| {
+            v.as_str()
+                .and_then(|s| s.parse::<f64>().ok())
+                .or_else(|| v.as_f64())
+        })
+    };
+    let prompt = read("prompt")?;
+    let completion = read("completion")?;
+    Some(FetchedModelPricing {
+        prompt,
+        completion,
+        input_cache_read: read("input_cache_read"),
+        input_cache_write: read("input_cache_write"),
     })
 }
 

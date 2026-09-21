@@ -1,7 +1,11 @@
-import { useState } from "react";
-import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Package } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
 import type { ConnectionConfig } from "../../types/database";
 import { exportConnections } from "../../utils/connection-export";
+import { exportWorkspaceBundle } from "../../utils/team-bundle";
+import { useI18n } from "../../i18n";
+import { getBundleCopy } from "./bundle-copy";
 import "../../styles/lazy-overlays.css";
 
 interface ConnectionExporterProps {
@@ -10,6 +14,9 @@ interface ConnectionExporterProps {
 }
 
 export function ConnectionExporter({ connections, onClose }: ConnectionExporterProps) {
+  const { language } = useI18n();
+  const bundleCopy = useMemo(() => getBundleCopy(language), [language]);
+  const [mode, setMode] = useState<"connections" | "bundle">("connections");
   const [selected, setSelected] = useState<Set<string>>(new Set(connections.map((c) => c.id)));
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -54,9 +61,30 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
     setIsExporting(false);
 
     if (res.success) {
-      setResult({ success: true, message: `Exported ${selected.size} connection(s) to ${res.filePath}` });
+      setResult({
+        success: true,
+        message: `Exported ${selected.size} connection(s) to ${res.filePath}`,
+      });
     } else if (res.error) {
       setError(res.error);
+    }
+  };
+
+  const handleBundleExport = async () => {
+    setError(null);
+    try {
+      const path = await save({
+        defaultPath: "workspace.tabler-bundle",
+        filters: [{ name: "TableR Workspace Bundle", extensions: ["tabler-bundle"] }],
+      });
+      if (!path) return;
+      setIsExporting(true);
+      const written = await exportWorkspaceBundle(path);
+      setResult({ success: true, message: `${bundleCopy.export.done} ${written}` });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -70,8 +98,14 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
         {/* Header */}
         <div className="cex-header">
           <div className="cex-header-copy">
-            <h2 className="cex-title">Export Connections</h2>
-            <p className="cex-subtitle">Save connections as an encrypted, versioned export</p>
+            <h2 className="cex-title">
+              {mode === "bundle" ? bundleCopy.export.title : "Export Connections"}
+            </h2>
+            <p className="cex-subtitle">
+              {mode === "bundle"
+                ? bundleCopy.export.subtitle
+                : "Save connections as an encrypted, versioned export"}
+            </p>
           </div>
           <div className="cex-header-actions">
             {result ? (
@@ -81,17 +115,33 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
               </button>
             ) : (
               <>
-                <button type="button" onClick={onClose} className="cex-btn-cancel" disabled={isExporting}>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="cex-btn-cancel"
+                  disabled={isExporting}
+                >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={handleExport}
-                  disabled={isExporting || selected.size === 0 || !password}
+                  onClick={mode === "bundle" ? handleBundleExport : handleExport}
+                  disabled={
+                    isExporting || (mode === "connections" && (selected.size === 0 || !password))
+                  }
                   className="cex-btn-primary"
                 >
                   {isExporting ? (
-                    "Exporting..."
+                    mode === "bundle" ? (
+                      bundleCopy.export.working
+                    ) : (
+                      "Exporting..."
+                    )
+                  ) : mode === "bundle" ? (
+                    <>
+                      <Package className="w-4 h-4" />
+                      {bundleCopy.export.button}
+                    </>
                   ) : (
                     <>
                       <Check className="w-4 h-4" />
@@ -104,14 +154,59 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
           </div>
         </div>
 
+        {/* Mode switch */}
+        {!result && (
+          <div className="cex-mode-switch">
+            <button
+              type="button"
+              className={`cex-mode-btn ${mode === "connections" ? "is-active" : ""}`}
+              onClick={() => setMode("connections")}
+            >
+              {bundleCopy.modes.connections}
+            </button>
+            <button
+              type="button"
+              className={`cex-mode-btn ${mode === "bundle" ? "is-active" : ""}`}
+              onClick={() => setMode("bundle")}
+            >
+              <Package className="w-3.5 h-3.5" />
+              {bundleCopy.modes.bundle}
+            </button>
+          </div>
+        )}
+
         {/* Body */}
         {result ? (
           <div className="cex-body cex-body-centered">
             <div className="cex-success">
               <CheckCircle2 />
               <p>{result.message}</p>
-              <button onClick={handleClose} className="btn btn-primary">Done</button>
+              <button onClick={handleClose} className="btn btn-primary">
+                Done
+              </button>
             </div>
+          </div>
+        ) : mode === "bundle" ? (
+          <div className="cex-body cex-body-stacked">
+            <div className="cex-warning">
+              <Package className="w-4 h-4" />
+              <p>{bundleCopy.export.info}</p>
+            </div>
+            <div className="cex-bundle-includes">
+              <span className="cex-section-label">{bundleCopy.export.includes}</span>
+              <ul>
+                <li>{bundleCopy.export.connections}</li>
+                <li>{bundleCopy.export.favorites}</li>
+                <li>{bundleCopy.export.schedules}</li>
+                <li>{bundleCopy.export.aiProviders}</li>
+              </ul>
+            </div>
+            {error && (
+              <div className="cex-error">
+                <AlertCircle className="w-4 h-4" />
+                <p>{error}</p>
+              </div>
+            )}
           </div>
         ) : (
           <div className="cex-body">
@@ -139,7 +234,9 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
                         checked={selected.has(conn.id)}
                         onChange={() => toggleSelect(conn.id)}
                       />
-                      <span className="cex-rail-item-name">{conn.name || conn.host || conn.db_type}</span>
+                      <span className="cex-rail-item-name">
+                        {conn.name || conn.host || conn.db_type}
+                      </span>
                       <span className="cex-rail-item-meta">{conn.db_type}</span>
                     </label>
                   ))
@@ -149,12 +246,12 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
 
             {/* Right detail: encryption */}
             <div className="cex-detail">
-
               {/* Encryption password */}
               <div className="cex-warning">
                 <Lock className="w-4 h-4" />
                 <p>
-                  Connections will be encrypted with AES-256-GCM. Passwords are not exported — you will need to re-enter them when importing.
+                  Connections will be encrypted with AES-256-GCM. Passwords are not exported — you
+                  will need to re-enter them when importing.
                 </p>
               </div>
 

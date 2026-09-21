@@ -24,6 +24,8 @@ import {
   engineSupportsPoolSizing,
 } from "../connection-pool";
 import { resolveFieldWithMeta } from "../../../utils/env-resolve";
+import { getConnectionErrorCopy } from "../../connection-error-copy";
+import type { ConnectionTestResult } from "../connection-form-utils";
 
 export interface ConnectionDetailsStepProps {
   language: AppLanguage;
@@ -56,7 +58,7 @@ export interface ConnectionDetailsStepProps {
   passwordPlaceholder: string;
   additionalFields: Record<string, string>;
   connectionTitle: string;
-  testResult: { success: boolean; message: string } | null;
+  testResult: ConnectionTestResult | null;
   isTesting: boolean;
   isConnecting: boolean;
   isBootstrappingWorkspace: boolean;
@@ -263,6 +265,7 @@ export function ConnectionDetailsStep({
   const showCreateAndOpenAction = showBootstrapWorkflow && (!isFileEngine || bootstrapMode);
 
   const isVi = language === "vi";
+  const errorCopy = getConnectionErrorCopy(language);
   const sectionMeta: Record<
     string,
     { kicker: string; title: string; copy: string; label: string }
@@ -1184,7 +1187,19 @@ export function ConnectionDetailsStep({
 
           {testResult && (
             <div className={`connection-form-alert ${testResult.success ? "success" : "error"}`}>
-              <span className="break-words">{testResult.message}</span>
+              <span className="break-words">
+                {!testResult.success && testResult.stage ? (
+                  <span className="connection-form-alert-stage">
+                    {errorCopy.stageLabels[testResult.stage] ?? errorCopy.stageLabels.unknown}
+                  </span>
+                ) : null}
+                {testResult.message}
+                {!testResult.success && testResult.hint ? (
+                  <span className="connection-form-alert-hint">
+                    {errorCopy.hintLabel}: {testResult.hint}
+                  </span>
+                ) : null}
+              </span>
             </div>
           )}
         </div>

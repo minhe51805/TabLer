@@ -15,6 +15,8 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ConnectionConfig } from "../types/database";
 import { emitAppToast } from "../utils/app-toast";
+import { requestAppConfirmation } from "../stores/confirmStore";
+import { useI18n, type TranslationKey } from "../i18n";
 
 type ExternalAccessPolicy = "blocked" | "readOnly" | "readWrite";
 type McpPermission = "readOnly" | "readWrite" | "admin";
@@ -60,25 +62,42 @@ interface Props {
   onClose: () => void;
 }
 
-const POLICY_OPTIONS: Array<{ value: ExternalAccessPolicy; label: string; description: string }> = [
-  { value: "blocked", label: "Blocked", description: "No external MCP client can use this connection." },
-  { value: "readOnly", label: "Read only", description: "External tools may inspect metadata and run read-only queries." },
-  { value: "readWrite", label: "Read/write", description: "Reserved for future approved write tools; the current server remains read-only." },
+const POLICY_OPTIONS: Array<{
+  value: ExternalAccessPolicy;
+  labelKey: TranslationKey;
+  descriptionKey: TranslationKey;
+}> = [
+  {
+    value: "blocked",
+    labelKey: "mcp.policy.blocked.label",
+    descriptionKey: "mcp.policy.blocked.desc",
+  },
+  {
+    value: "readOnly",
+    labelKey: "mcp.policy.readOnly.label",
+    descriptionKey: "mcp.policy.readOnly.desc",
+  },
+  {
+    value: "readWrite",
+    labelKey: "mcp.policy.readWrite.label",
+    descriptionKey: "mcp.policy.readWrite.desc",
+  },
 ];
 
-const PERMISSION_OPTIONS: Array<{ value: McpPermission; label: string }> = [
-  { value: "readOnly", label: "Read only" },
-  { value: "readWrite", label: "Read/write" },
-  { value: "admin", label: "Admin" },
+const PERMISSION_OPTIONS: Array<{ value: McpPermission; labelKey: TranslationKey }> = [
+  { value: "readOnly", labelKey: "mcp.permission.readOnly" },
+  { value: "readWrite", labelKey: "mcp.permission.readWrite" },
+  { value: "admin", labelKey: "mcp.permission.admin" },
 ];
 
-function formatTimestamp(value: string | null) {
-  if (!value) return "Never";
+function formatTimestamp(value: string | null, neverLabel: string) {
+  if (!value) return neverLabel;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
 export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
+  const { t } = useI18n();
   const [selectedConnectionId, setSelectedConnectionId] = useState(connections[0]?.id ?? "");
   const [policy, setPolicy] = useState<ExternalAccessPolicy>("blocked");
   const [savedPolicy, setSavedPolicy] = useState<ExternalAccessPolicy>("blocked");
@@ -88,7 +107,7 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingPolicy, setIsSavingPolicy] = useState(false);
   const [isCreatingToken, setIsCreatingToken] = useState(false);
-  const [tokenName, setTokenName] = useState("Desktop client");
+  const [tokenName, setTokenName] = useState(() => t("mcp.defaultTokenName"));
   const [permission, setPermission] = useState<McpPermission>("readOnly");
   const [expiresAt, setExpiresAt] = useState("");
   const [allowedConnectionIds, setAllowedConnectionIds] = useState<string[]>(
@@ -124,13 +143,13 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
     } catch (error) {
       emitAppToast({
         tone: "error",
-        title: "Could not load external integrations",
+        title: t("mcp.loadFailed"),
         description: String(error),
       });
     } finally {
       setIsLoading(false);
     }
-  }, [selectedConnectionId]);
+  }, [selectedConnectionId, t]);
 
   useEffect(() => {
     void loadSecurityState();
@@ -138,7 +157,9 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
 
   useEffect(() => {
     setAllowedConnectionIds((current) => {
-      const available = current.filter((id) => connections.some((connection) => connection.id === id));
+      const available = current.filter((id) =>
+        connections.some((connection) => connection.id === id),
+      );
       return available.length > 0 || !selectedConnectionId ? available : [selectedConnectionId];
     });
   }, [connections, selectedConnectionId]);
@@ -146,10 +167,10 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
   const savePolicy = useCallback(async () => {
     if (!selectedConnectionId) return;
     if (policy !== "blocked" && policy !== savedPolicy) {
-      const phrase = policy === "readWrite" ? "ENABLE WRITE ACCESS" : "ENABLE EXTERNAL ACCESS";
-      const confirmed = window.prompt(`Type ${phrase} to enable this connection for external MCP clients.`);
+      const phrase = t(policy === "readWrite" ? "mcp.enablePhraseWrite" : "mcp.enablePhraseRead");
+      const confirmed = window.prompt(t("mcp.enablePrompt", { phrase }));
       if (confirmed !== phrase) {
-        emitAppToast({ tone: "info", title: "External access was not enabled" });
+        emitAppToast({ tone: "info", title: t("mcp.enableCancelled") });
         return;
       }
     }
@@ -159,23 +180,23 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
       setSavedPolicy(policy);
       emitAppToast({
         tone: policy === "blocked" ? "info" : "success",
-        title: policy === "blocked" ? "External access blocked" : "External access updated",
+        title: t(policy === "blocked" ? "mcp.policyBlocked" : "mcp.policyUpdated"),
         description: selectedConnection?.name ?? selectedConnectionId,
       });
     } catch (error) {
-      emitAppToast({ tone: "error", title: "Could not save access policy", description: String(error) });
+      emitAppToast({ tone: "error", title: t("mcp.policySaveFailed"), description: String(error) });
     } finally {
       setIsSavingPolicy(false);
     }
-  }, [policy, savedPolicy, selectedConnection?.name, selectedConnectionId]);
+  }, [policy, savedPolicy, selectedConnection?.name, selectedConnectionId, t]);
 
   const createToken = useCallback(async () => {
     if (!tokenName.trim()) {
-      emitAppToast({ tone: "error", title: "Name the token before creating it" });
+      emitAppToast({ tone: "error", title: t("mcp.tokenNeedsName") });
       return;
     }
     if (allowedConnectionIds.length === 0) {
-      emitAppToast({ tone: "error", title: "Allow at least one connection" });
+      emitAppToast({ tone: "error", title: t("mcp.tokenNeedsConnection") });
       return;
     }
     setIsCreatingToken(true);
@@ -188,41 +209,63 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
       });
       setIssuedToken(created.token);
       setTokens((current) => [created.summary, ...current]);
-      setTokenName("Desktop client");
+      setTokenName(t("mcp.defaultTokenName"));
       setExpiresAt("");
-      emitAppToast({ tone: "success", title: "MCP token created", description: "Copy it now. It cannot be shown again." });
+      emitAppToast({
+        tone: "success",
+        title: t("mcp.tokenCreated"),
+        description: t("mcp.tokenCreatedHint"),
+      });
       void loadSecurityState();
     } catch (error) {
-      emitAppToast({ tone: "error", title: "Could not create MCP token", description: String(error) });
+      emitAppToast({
+        tone: "error",
+        title: t("mcp.tokenCreateFailed"),
+        description: String(error),
+      });
     } finally {
       setIsCreatingToken(false);
     }
-  }, [allowedConnectionIds, expiresAt, loadSecurityState, permission, tokenName]);
+  }, [allowedConnectionIds, expiresAt, loadSecurityState, permission, t, tokenName]);
 
-  const revokeToken = useCallback(async (token: McpTokenSummary) => {
-    if (!window.confirm(`Revoke ${token.name}? Connected clients lose access immediately.`)) return;
-    setBusyTokenId(token.id);
-    try {
-      await invoke("revoke_mcp_token", { tokenId: token.id });
-      setTokens((current) => current.map((item) => (item.id === token.id ? { ...item, isActive: false } : item)));
-      emitAppToast({ tone: "success", title: "MCP token revoked", description: token.name });
-      void loadSecurityState();
-    } catch (error) {
-      emitAppToast({ tone: "error", title: "Could not revoke MCP token", description: String(error) });
-    } finally {
-      setBusyTokenId(null);
-    }
-  }, [loadSecurityState]);
+  const revokeToken = useCallback(
+    async (token: McpTokenSummary) => {
+      const approved = await requestAppConfirmation({
+        title: t("mcp.revokeTitle"),
+        message: t("mcp.revokeConfirm", { name: token.name }),
+        confirmText: t("mcp.revokeToken"),
+      });
+      if (!approved) return;
+      setBusyTokenId(token.id);
+      try {
+        await invoke("revoke_mcp_token", { tokenId: token.id });
+        setTokens((current) =>
+          current.map((item) => (item.id === token.id ? { ...item, isActive: false } : item)),
+        );
+        emitAppToast({ tone: "success", title: t("mcp.tokenRevoked"), description: token.name });
+        void loadSecurityState();
+      } catch (error) {
+        emitAppToast({
+          tone: "error",
+          title: t("mcp.tokenRevokeFailed"),
+          description: String(error),
+        });
+      } finally {
+        setBusyTokenId(null);
+      }
+    },
+    [loadSecurityState, t],
+  );
 
   const copyIssuedToken = useCallback(async () => {
     if (!issuedToken) return;
     try {
       await navigator.clipboard.writeText(issuedToken);
-      emitAppToast({ tone: "success", title: "Token copied" });
+      emitAppToast({ tone: "success", title: t("mcp.tokenCopied") });
     } catch {
-      emitAppToast({ tone: "error", title: "Clipboard access was unavailable" });
+      emitAppToast({ tone: "error", title: t("mcp.clipboardUnavailable") });
     }
-  }, [issuedToken]);
+  }, [issuedToken, t]);
 
   const toggleLocalServer = useCallback(async () => {
     setIsChangingServer(true);
@@ -232,15 +275,19 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
       setServerStatus(nextStatus);
       emitAppToast({
         tone: "success",
-        title: nextStatus.enabled ? "Local MCP server started" : "Local MCP server stopped",
-        description: nextStatus.endpoint ?? "External clients can no longer connect.",
+        title: t(nextStatus.enabled ? "mcp.serverStarted" : "mcp.serverStopped"),
+        description: nextStatus.endpoint ?? t("mcp.serverStoppedHint"),
       });
     } catch (error) {
-      emitAppToast({ tone: "error", title: "Could not update local MCP server", description: String(error) });
+      emitAppToast({
+        tone: "error",
+        title: t("mcp.serverUpdateFailed"),
+        description: String(error),
+      });
     } finally {
       setIsChangingServer(false);
     }
-  }, [serverStatus?.enabled]);
+  }, [serverStatus?.enabled, t]);
 
   const toggleAllowedConnection = (connectionId: string) => {
     setAllowedConnectionIds((current) =>
@@ -252,14 +299,22 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
 
   return (
     <div className="app-help-modal-backdrop" onClick={onClose}>
-      <div className="app-help-modal app-mcp-integrations-modal" onClick={(event) => event.stopPropagation()}>
+      <div
+        className="app-help-modal app-mcp-integrations-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="app-help-modal-header">
           <div className="app-help-modal-copy">
-            <span className="app-help-modal-kicker">External integrations</span>
-            <h3 className="app-help-modal-title">MCP access control</h3>
-            <p className="app-help-modal-description">Grant narrowly scoped access to local MCP clients. Connection access starts blocked.</p>
+            <span className="app-help-modal-kicker">{t("mcp.kicker")}</span>
+            <h3 className="app-help-modal-title">{t("mcp.title")}</h3>
+            <p className="app-help-modal-description">{t("mcp.description")}</p>
           </div>
-          <button type="button" className="app-help-modal-close" onClick={onClose} aria-label="Close">
+          <button
+            type="button"
+            className="app-help-modal-close"
+            onClick={onClose}
+            aria-label={t("common.close")}
+          >
             <X size={16} />
           </button>
         </div>
@@ -268,12 +323,12 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
           <section className="mcp-token-reveal" aria-live="polite">
             <div className="mcp-token-reveal-head">
               <KeyRound className="w-4 h-4" />
-              <strong>Copy this token now</strong>
-              <span>It is never stored as plaintext.</span>
+              <strong>{t("mcp.copyTokenNow")}</strong>
+              <span>{t("mcp.tokenNeverStored")}</span>
             </div>
             <code>{issuedToken}</code>
             <button type="button" className="btn btn-primary" onClick={copyIssuedToken}>
-              <Copy className="w-4 h-4" /> Copy token
+              <Copy className="w-4 h-4" /> {t("mcp.copyToken")}
             </button>
           </section>
         ) : null}
@@ -281,78 +336,213 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
         <section className="mcp-local-server-panel">
           <div className="mcp-local-server-copy">
             <span className={`mcp-server-indicator ${serverStatus?.enabled ? "online" : ""}`} />
-            <div><strong>Local MCP service</strong><small>{serverStatus?.enabled ? serverStatus.endpoint : "Disabled. It never listens beyond 127.0.0.1."}</small></div>
+            <div>
+              <strong>{t("mcp.localService")}</strong>
+              <small>
+                {serverStatus?.enabled ? serverStatus.endpoint : t("mcp.localServiceDisabled")}
+              </small>
+            </div>
           </div>
-          <button type="button" className={serverStatus?.enabled ? "btn btn-secondary" : "btn btn-primary"} onClick={toggleLocalServer} disabled={isChangingServer || isLoading}>
-            {isChangingServer ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
-            {serverStatus?.enabled ? "Stop service" : "Start service"}
+          <button
+            type="button"
+            className={serverStatus?.enabled ? "btn btn-secondary" : "btn btn-primary"}
+            onClick={toggleLocalServer}
+            disabled={isChangingServer || isLoading}
+          >
+            {isChangingServer ? (
+              <LoaderCircle className="w-4 h-4 animate-spin" />
+            ) : (
+              <Power className="w-4 h-4" />
+            )}
+            {serverStatus?.enabled ? t("mcp.stopService") : t("mcp.startService")}
           </button>
         </section>
 
         <div className="mcp-integrations-layout">
           <section className="mcp-integrations-section">
-            <div className="mcp-section-heading"><ShieldCheck className="w-4 h-4" /><span>Connection policy</span></div>
+            <div className="mcp-section-heading">
+              <ShieldCheck className="w-4 h-4" />
+              <span>{t("mcp.connectionPolicy")}</span>
+            </div>
             {connections.length === 0 ? (
-              <div className="app-plugin-manager-empty">Add a saved connection before enabling external access.</div>
+              <div className="app-plugin-manager-empty">{t("mcp.noConnections")}</div>
             ) : (
               <>
                 <label className="mcp-field">
-                  <span>Connection</span>
-                  <select value={selectedConnectionId} onChange={(event) => setSelectedConnectionId(event.target.value)}>
-                    {connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}
+                  <span>{t("mcp.connection")}</span>
+                  <select
+                    value={selectedConnectionId}
+                    onChange={(event) => setSelectedConnectionId(event.target.value)}
+                  >
+                    {connections.map((connection) => (
+                      <option key={connection.id} value={connection.id}>
+                        {connection.name}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <div className="mcp-policy-options">
                   {POLICY_OPTIONS.map((option) => (
-                    <label key={option.value} className={`mcp-policy-option ${policy === option.value ? "selected" : ""}`}>
-                      <input type="radio" value={option.value} checked={policy === option.value} onChange={() => setPolicy(option.value)} />
-                      <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                    <label
+                      key={option.value}
+                      className={`mcp-policy-option ${policy === option.value ? "selected" : ""}`}
+                    >
+                      <input
+                        type="radio"
+                        value={option.value}
+                        checked={policy === option.value}
+                        onChange={() => setPolicy(option.value)}
+                      />
+                      <span>
+                        <strong>{t(option.labelKey)}</strong>
+                        <small>{t(option.descriptionKey)}</small>
+                      </span>
                     </label>
                   ))}
                 </div>
-                <button type="button" className="btn btn-secondary mcp-save-policy" onClick={savePolicy} disabled={isSavingPolicy || isLoading}>
-                  {isSavingPolicy ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                  Save policy
+                <button
+                  type="button"
+                  className="btn btn-secondary mcp-save-policy"
+                  onClick={savePolicy}
+                  disabled={isSavingPolicy || isLoading}
+                >
+                  {isSavingPolicy ? (
+                    <LoaderCircle className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <ShieldCheck className="w-4 h-4" />
+                  )}
+                  {t("mcp.savePolicy")}
                 </button>
               </>
             )}
           </section>
 
           <section className="mcp-integrations-section">
-            <div className="mcp-section-heading"><KeyRound className="w-4 h-4" /><span>Create token</span></div>
+            <div className="mcp-section-heading">
+              <KeyRound className="w-4 h-4" />
+              <span>{t("mcp.createToken")}</span>
+            </div>
             <div className="mcp-token-form-grid">
-              <label className="mcp-field mcp-field-wide"><span>Name</span><input value={tokenName} maxLength={120} onChange={(event) => setTokenName(event.target.value)} /></label>
-              <label className="mcp-field"><span>Scope</span><select value={permission} onChange={(event) => setPermission(event.target.value as McpPermission)}>{PERMISSION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-              <label className="mcp-field"><span>Expires (optional)</span><input type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label>
+              <label className="mcp-field mcp-field-wide">
+                <span>{t("mcp.tokenName")}</span>
+                <input
+                  value={tokenName}
+                  maxLength={120}
+                  onChange={(event) => setTokenName(event.target.value)}
+                />
+              </label>
+              <label className="mcp-field">
+                <span>{t("mcp.tokenScope")}</span>
+                <select
+                  value={permission}
+                  onChange={(event) => setPermission(event.target.value as McpPermission)}
+                >
+                  {PERMISSION_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {t(option.labelKey)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="mcp-field">
+                <span>{t("mcp.tokenExpires")}</span>
+                <input
+                  type="datetime-local"
+                  value={expiresAt}
+                  onChange={(event) => setExpiresAt(event.target.value)}
+                />
+              </label>
             </div>
             <div className="mcp-allowlist">
-              <span>Allowed connections</span>
+              <span>{t("mcp.allowedConnections")}</span>
               {connections.map((connection) => (
                 <label key={connection.id} className="mcp-allowlist-item">
-                  <input type="checkbox" checked={allowedConnectionIds.includes(connection.id)} onChange={() => toggleAllowedConnection(connection.id)} />
+                  <input
+                    type="checkbox"
+                    checked={allowedConnectionIds.includes(connection.id)}
+                    onChange={() => toggleAllowedConnection(connection.id)}
+                  />
                   <span>{connection.name}</span>
                 </label>
               ))}
             </div>
-            <button type="button" className="btn btn-primary" onClick={createToken} disabled={isCreatingToken || connections.length === 0}>
-              {isCreatingToken ? <LoaderCircle className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
-              Create token
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={createToken}
+              disabled={isCreatingToken || connections.length === 0}
+            >
+              {isCreatingToken ? (
+                <LoaderCircle className="w-4 h-4 animate-spin" />
+              ) : (
+                <KeyRound className="w-4 h-4" />
+              )}
+              {t("mcp.createToken")}
             </button>
           </section>
         </div>
 
         <section className="mcp-integrations-section mcp-token-list-section">
           <div className="mcp-list-header">
-            <div className="mcp-section-heading"><PlugZap className="w-4 h-4" /><span>Issued tokens</span><span className="app-plugin-manager-badge accent">{tokens.length}</span></div>
-            <button type="button" className="icon-btn" title="Refresh" aria-label="Refresh" onClick={() => void loadSecurityState()} disabled={isLoading}><RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} /></button>
+            <div className="mcp-section-heading">
+              <PlugZap className="w-4 h-4" />
+              <span>{t("mcp.issuedTokens")}</span>
+              <span className="app-plugin-manager-badge accent">{tokens.length}</span>
+            </div>
+            <button
+              type="button"
+              className="icon-btn"
+              title={t("common.refresh")}
+              aria-label={t("common.refresh")}
+              onClick={() => void loadSecurityState()}
+              disabled={isLoading}
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`} />
+            </button>
           </div>
-          {tokens.length === 0 ? <div className="app-plugin-manager-empty">No MCP token has been issued.</div> : (
+          {tokens.length === 0 ? (
+            <div className="app-plugin-manager-empty">{t("mcp.noTokens")}</div>
+          ) : (
             <div className="mcp-token-list">
               {tokens.map((token) => (
                 <div key={token.id} className={`mcp-token-row ${token.isActive ? "" : "revoked"}`}>
-                  <div className="mcp-token-row-copy"><strong>{token.name}</strong><span>{token.prefix}... · {token.permission} · {token.connectionAllowlist?.length ?? "all"} connection{token.connectionAllowlist?.length === 1 ? "" : "s"}</span></div>
-                  <div className="mcp-token-row-meta"><span>{token.isActive ? "Active" : "Revoked"}</span><small>{token.expiresAt ? `Expires ${formatTimestamp(token.expiresAt)}` : "No expiry"}</small></div>
-                  {token.isActive ? <button type="button" className="app-plugin-manager-action-btn danger" title="Revoke token" aria-label={`Revoke ${token.name}`} onClick={() => void revokeToken(token)} disabled={busyTokenId === token.id}><Trash2 className="w-3.5 h-3.5" /></button> : null}
+                  <div className="mcp-token-row-copy">
+                    <strong>{token.name}</strong>
+                    <span>
+                      {token.prefix}... ·{" "}
+                      {t(`mcp.permission.${token.permission}` as TranslationKey)} ·{" "}
+                      {token.connectionAllowlist === null
+                        ? t("mcp.allConnections")
+                        : t(
+                            token.connectionAllowlist.length === 1
+                              ? "mcp.tokenConnections.one"
+                              : "mcp.tokenConnections.other",
+                            { count: token.connectionAllowlist.length },
+                          )}
+                    </span>
+                  </div>
+                  <div className="mcp-token-row-meta">
+                    <span>{t(token.isActive ? "mcp.status.active" : "mcp.status.revoked")}</span>
+                    <small>
+                      {token.expiresAt
+                        ? t("mcp.expiresAt", {
+                            time: formatTimestamp(token.expiresAt, t("mcp.never")),
+                          })
+                        : t("mcp.noExpiry")}
+                    </small>
+                  </div>
+                  {token.isActive ? (
+                    <button
+                      type="button"
+                      className="app-plugin-manager-action-btn danger"
+                      title={t("mcp.revokeToken")}
+                      aria-label={t("mcp.revokeAriaLabel", { name: token.name })}
+                      onClick={() => void revokeToken(token)}
+                      disabled={busyTokenId === token.id}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -360,10 +550,29 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
         </section>
 
         <section className="mcp-integrations-section mcp-audit-section">
-          <div className="mcp-section-heading"><ShieldAlert className="w-4 h-4" /><span>Security activity</span></div>
-          {auditEvents.length === 0 ? <div className="app-plugin-manager-empty">No external access activity recorded.</div> : (
+          <div className="mcp-section-heading">
+            <ShieldAlert className="w-4 h-4" />
+            <span>{t("mcp.securityActivity")}</span>
+          </div>
+          {auditEvents.length === 0 ? (
+            <div className="app-plugin-manager-empty">{t("mcp.noAuditEvents")}</div>
+          ) : (
             <div className="mcp-audit-list">
-              {auditEvents.slice(0, 8).map((event) => <div key={event.id} className="mcp-audit-row"><span className={event.outcome === "success" ? "success" : "denied"}>{event.outcome === "success" ? <Check className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}</span><strong>{event.category}: {event.action}</strong><small>{formatTimestamp(event.at)}</small></div>)}
+              {auditEvents.slice(0, 8).map((event) => (
+                <div key={event.id} className="mcp-audit-row">
+                  <span className={event.outcome === "success" ? "success" : "denied"}>
+                    {event.outcome === "success" ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      <ShieldAlert className="w-3.5 h-3.5" />
+                    )}
+                  </span>
+                  <strong>
+                    {event.category}: {event.action}
+                  </strong>
+                  <small>{formatTimestamp(event.at, t("mcp.never"))}</small>
+                </div>
+              ))}
             </div>
           )}
         </section>

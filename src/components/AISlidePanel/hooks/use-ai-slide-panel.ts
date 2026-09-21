@@ -130,6 +130,9 @@ export interface AIGeneratedAssistResult {
    * really stayed read-only (the allow-list is a claim; this is the trace).
    */
   unattendedBlockedTools?: AIAgentToolName[];
+  /** Cumulative model tokens the run spent across every model call (0 when the
+   *  provider reports no usage); the bubble footer shows it against the budget. */
+  tokensUsed?: number;
 }
 
 const MAX_AGENT_STEPS = 10;
@@ -421,6 +424,17 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
       setIsGenerating(true);
       setError(null);
+      // Per-run token accounting: every model call this run makes funnels
+      // through `trackedAskAI`, which adds the provider's usage payload to the
+      // total the bubble footer reports. The runner keeps its own counter for
+      // the 120k budget; this one is the honest whole-run figure (it also
+      // covers the plan turn, retries, evidence loop and finish recovery).
+      let runTokensUsed = 0;
+      const trackedAskAI: typeof askAI = async (...args) => {
+        const text = await askAI(...args);
+        runTokensUsed += extractAgentUsageTokens(useAIStore.getState().streamingUsage);
+        return text;
+      };
       const requestId = ++requestIdRef.current;
       lastReasoningRef.current = undefined;
       const requestDataReadConsent = options?.requestDataReadConsent;
@@ -777,7 +791,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           // Retry waits are published as transient "think" steps so a slow
           // rate-limited provider never looks like a frozen run.
           const { requestAgentAction } = createAgentActionRequestor({
-            askAI,
+            askAI: trackedAskAI,
             context,
             strictRecoveryContext,
             requestId,
@@ -921,7 +935,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               ]
                 .filter(Boolean)
                 .join("\n");
-              return askAI(
+              return trackedAskAI(
                 delegatePrompt,
                 strictRecoveryContext || context,
                 "panel",
@@ -956,7 +970,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               failoverNoteLines.length > 0 ? `\n\n*${failoverNoteLines.join(" ")}*` : "";
 
             try {
-              const recoveredResponse = await askAI(
+              const recoveredResponse = await trackedAskAI(
                 buildAgentFinalRecoveryPrompt({
                   userPrompt: normalizedPrompt,
                   assistIntent,
@@ -1012,7 +1026,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           if (workspaceToolsEnabled) {
             publishAgentProgress({ action: "plan", message: "" });
             try {
-              const planText = await askAI(
+              const planText = await trackedAskAI(
                 buildAgentPlanPrompt({
                   userPrompt: normalizedPrompt,
                   assistIntent,
@@ -1654,12 +1668,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             // Read-only compliance evidence: which tools an unattended run
             // reached for and was refused (empty = it never tried to write).
             unattendedBlockedTools: unattendedReadOnly ? getUnattendedBlockedTools() : undefined,
+            tokensUsed: runTokensUsed,
           };
         }
         const finalResponse = await recoverNonAgentAssistResponse({
           appLanguage,
           askAI: (requestPrompt, requestContext, requestHistory) =>
-            askAI(requestPrompt, requestContext, "panel", assistIntent, requestHistory),
+            trackedAskAI(requestPrompt, requestContext, "panel", assistIntent, requestHistory),
           availableSchemaTables,
           context,
           currentDatabase,
@@ -1688,6 +1703,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           risk: hasValidSql ? analyzeGeneratedSql(extractedSql) : undefined,
           intent: assistIntent,
           reasoning: lastReasoningRef.current,
+          tokensUsed: runTokensUsed,
         };
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) {

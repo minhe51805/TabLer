@@ -1330,6 +1330,64 @@ pub fn list_agent_rules(workspace_dir: Option<String>) -> Result<RuleEvaluation,
         report,
     })
 }
+
+/// Write a user-authored rule file into `<workspace_dir>/rules` — split from
+/// the command so tests drive a temp directory instead of a real workspace.
+fn write_workspace_rule_into(
+    workspace_dir: &Path,
+    name: &str,
+    content: &str,
+) -> Result<PathBuf, String> {
+    let name = validate_rule_name(name)?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Err("Rule content must not be empty.".to_string());
+    }
+
+    // The file must be a rule the engine can actually arm: parse it back and
+    // compile its patterns before anything touches the filesystem.
+    let parsed = parse_rule(&name, trimmed, RuleOrigin::Workspace)
+        .map_err(|error| format!("Refusing to write a rule that does not parse: {error}"))?;
+    compile_rule(parsed.clone())
+        .map_err(|error| format!("Refusing to write a rule that cannot compile: {error}"))?;
+    // A frontmatter `name:` that disagrees with the file stem would shadow a
+    // different rule in diagnostics — refuse instead of writing a confusing file.
+    if parsed.name != name {
+        return Err(format!(
+            "The frontmatter name '{}' does not match the file name '{name}'.",
+            parsed.name
+        ));
+    }
+
+    let root = workspace_dir.join(RULES_DIR_NAME);
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let path = root.join(format!("{name}.md"));
+    if path.exists() {
+        return Err(format!(
+            "A rule named '{name}' already exists in this workspace. Edit that file instead of overwriting it."
+        ));
+    }
+    std::fs::write(&path, format!("{trimmed}\n")).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+/// Write a user-authored rule file into `<workspace_dir>/rules`.
+///
+/// Unlike `save_agent_rule` (which renders a `NewRuleSpec` into the global
+/// pack), this command takes the raw Markdown the user typed and drops it into
+/// the *workspace* root — the same directory `evaluate_agent_rules` scans first
+/// for the linked folder. The content is still parsed and compiled before the
+/// write: a guardrail the engine cannot load is worse than no guardrail,
+/// because the caller believes it is protected.
+#[tauri::command]
+pub fn write_workspace_rule(
+    workspace_dir: String,
+    name: String,
+    content: String,
+) -> Result<String, String> {
+    let path = write_workspace_rule_into(Path::new(&workspace_dir), &name, &content)?;
+    Ok(path.to_string_lossy().to_string())
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1918,5 +1976,35 @@ mod tests {
             validate_rule_name(" ok-name_1 ").expect("slug"),
             "ok-name_1"
         );
+    }
+
+    #[test]
+    fn workspace_rule_written_by_the_command_is_picked_up_by_evaluation() {
+        let temp = TempRoot::new("workspace-write");
+        let workspace = temp.path().join("project");
+        let content = rule_body("no-drop-table", "(?is)\\bdrop\\s+table\\b", "block", "");
+
+        let path = write_workspace_rule_into(&workspace, "no-drop-table", &content)
+            .expect("valid rule is written");
+        assert_eq!(path, workspace.join("rules").join("no-drop-table.md"));
+
+        // The same load path `evaluate_agent_rules` uses must arm the new file.
+        let (rules, report) = load_rules_from_roots(&[workspace.join(RULES_DIR_NAME)]);
+        assert_eq!(report.errors, vec![], "written rule must load cleanly");
+        let verdict = evaluate_rules(&rules, "DROP TABLE users");
+        assert_eq!(verdict.decision, "block");
+        assert_eq!(fired(&verdict), vec!["no-drop-table".to_string()]);
+
+        // A second write must not clobber a file the user may have edited.
+        let again = write_workspace_rule_into(&workspace, "no-drop-table", &content)
+            .expect_err("must refuse to overwrite");
+        assert!(again.contains("already exists"), "got: {again}");
+
+        // A rule that cannot compile never reaches the disk.
+        let broken = rule_body("broken", "(unclosed", "warn", "");
+        let error = write_workspace_rule_into(&workspace, "broken", &broken)
+            .expect_err("invalid regex is rejected");
+        assert!(error.contains("cannot compile"), "got: {error}");
+        assert!(!workspace.join("rules").join("broken.md").exists());
     }
 }

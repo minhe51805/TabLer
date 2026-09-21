@@ -7,6 +7,24 @@ import type {
   PluginUpdateCandidate,
 } from "../types/plugin";
 
+// Mirrors DEFAULT_PLUGIN_REGISTRY_URL in src-tauri/src/commands/plugins.rs; the
+// backend falls back to the same constant when an empty value is passed.
+export const DEFAULT_PLUGIN_REGISTRY_URL =
+  "https://raw.githubusercontent.com/minhe51805/TabLer/main/plugin-registry.json";
+
+const PLUGIN_REGISTRY_URL_STORAGE_KEY = "tabler.pluginRegistryUrl.v1";
+
+function readInitialRegistryUrl(): string {
+  if (typeof window === "undefined") return DEFAULT_PLUGIN_REGISTRY_URL;
+  try {
+    return (
+      window.localStorage.getItem(PLUGIN_REGISTRY_URL_STORAGE_KEY) ?? DEFAULT_PLUGIN_REGISTRY_URL
+    );
+  } catch {
+    return DEFAULT_PLUGIN_REGISTRY_URL;
+  }
+}
+
 interface PluginStoreState {
   plugins: InstalledPluginRecord[];
   isLoading: boolean;
@@ -15,6 +33,8 @@ interface PluginStoreState {
   registryPackages: PluginRegistryPackage[];
   updates: PluginUpdateCandidate[];
   isRegistryLoading: boolean;
+  /** HTTPS catalog URL the marketplace browses; empty restores the default. */
+  registryUrl: string;
 
   loadPlugins: () => Promise<void>;
   reloadPlugins: () => Promise<void>;
@@ -25,9 +45,10 @@ interface PluginStoreState {
   setPluginEnabled: (pluginId: string, enabled: boolean) => Promise<InstalledPluginRecord | null>;
   rollbackPlugin: (pluginId: string) => Promise<InstalledPluginRecord>;
   uninstallPlugin: (pluginId: string) => Promise<boolean>;
+  setRegistryUrl: (url: string) => void;
 }
 
-export const usePluginStore = create<PluginStoreState>((set) => ({
+export const usePluginStore = create<PluginStoreState>((set, get) => ({
   plugins: [],
   isLoading: false,
   hasLoaded: false,
@@ -35,6 +56,17 @@ export const usePluginStore = create<PluginStoreState>((set) => ({
   registryPackages: [],
   updates: [],
   isRegistryLoading: false,
+  registryUrl: readInitialRegistryUrl(),
+
+  setRegistryUrl: (url: string) => {
+    const trimmed = url.trim();
+    try {
+      window.localStorage.setItem(PLUGIN_REGISTRY_URL_STORAGE_KEY, trimmed);
+    } catch {
+      // Storage unavailable (private mode); keep the in-memory value only.
+    }
+    set({ registryUrl: trimmed });
+  },
 
   loadPlugins: async () => {
     set({ isLoading: true, error: null });
@@ -84,9 +116,7 @@ export const usePluginStore = create<PluginStoreState>((set) => ({
         enabled,
       });
       set((state) => ({
-        plugins: state.plugins.map((p) =>
-          p.manifest.id === updated.manifest.id ? updated : p,
-        ),
+        plugins: state.plugins.map((p) => (p.manifest.id === updated.manifest.id ? updated : p)),
       }));
       return updated;
     } catch (e) {
@@ -98,7 +128,9 @@ export const usePluginStore = create<PluginStoreState>((set) => ({
   loadRegistry: async () => {
     set({ isRegistryLoading: true, error: null });
     try {
-      const registry = await invoke<PluginRegistryIndex>("get_plugin_registry");
+      const registry = await invoke<PluginRegistryIndex>("get_plugin_registry", {
+        registryUrl: get().registryUrl || undefined,
+      });
       set({ registryPackages: registry.packages, isRegistryLoading: false });
     } catch (error) {
       set({ error: String(error), isRegistryLoading: false });
@@ -108,7 +140,9 @@ export const usePluginStore = create<PluginStoreState>((set) => ({
   checkUpdates: async () => {
     set({ isRegistryLoading: true, error: null });
     try {
-      const updates = await invoke<PluginUpdateCandidate[]>("check_plugin_updates");
+      const updates = await invoke<PluginUpdateCandidate[]>("check_plugin_updates", {
+        registryUrl: get().registryUrl || undefined,
+      });
       set({ updates, isRegistryLoading: false });
     } catch (error) {
       set({ error: String(error), isRegistryLoading: false });
@@ -120,6 +154,7 @@ export const usePluginStore = create<PluginStoreState>((set) => ({
     try {
       const installed = await invoke<InstalledPluginRecord>("install_registry_plugin", {
         pluginId,
+        registryUrl: get().registryUrl || undefined,
       });
       set((state) => ({
         plugins: state.plugins.some((plugin) => plugin.manifest.id === installed.manifest.id)

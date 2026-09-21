@@ -1,8 +1,11 @@
 import { CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { useI18n } from "../../../i18n";
+import { getConnectionErrorCopy } from "../../connection-error-copy";
+import type { ConnectionTestResult } from "../connection-form-utils";
 import type { TestStepStrings } from "./ConnectionTestStep.types";
 
 export interface ConnectionTestStepProps {
-  testResult: { success: boolean; message: string } | null;
+  testResult: ConnectionTestResult | null;
   isTesting: boolean;
   isConnecting: boolean;
   isCreatingDatabase: boolean;
@@ -23,6 +26,9 @@ export function ConnectionTestStep({
   onConnect,
   onClose,
 }: ConnectionTestStepProps) {
+  const { language } = useI18n();
+  const errorCopy = getConnectionErrorCopy(language);
+
   return (
     <div className="connection-test-step">
       {/* Test result feedback */}
@@ -33,7 +39,19 @@ export function ConnectionTestStep({
           ) : (
             <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
           )}
-          <span className="break-words">{testResult.message}</span>
+          <span className="break-words">
+            {!testResult.success && testResult.stage ? (
+              <span className="connection-form-alert-stage">
+                {errorCopy.stageLabels[testResult.stage] ?? errorCopy.stageLabels.unknown}
+              </span>
+            ) : null}
+            {testResult.message}
+            {!testResult.success && testResult.hint ? (
+              <span className="connection-form-alert-hint">
+                {errorCopy.hintLabel}: {testResult.hint}
+              </span>
+            ) : null}
+          </span>
         </div>
       )}
 
@@ -46,8 +64,14 @@ export function ConnectionTestStep({
         </div>
 
         <div className="connection-form-footer-actions">
-          <button onClick={onClose} className="btn btn-secondary">{strings.cancel}</button>
-          <button onClick={onConnect} disabled={isConnecting || isBootstrappingWorkspace} className="btn btn-primary">
+          <button onClick={onClose} className="btn btn-secondary">
+            {strings.cancel}
+          </button>
+          <button
+            onClick={onConnect}
+            disabled={isConnecting || isBootstrappingWorkspace}
+            className="btn btn-primary"
+          >
             {isConnecting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
             {strings.connect}
           </button>

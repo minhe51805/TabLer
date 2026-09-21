@@ -1,4 +1,14 @@
-import { Check, Copy, CornerDownLeft, ExternalLink, FileText, Info, Play, RotateCcw, Sparkles } from "lucide-react";
+import {
+  Check,
+  Copy,
+  CornerDownLeft,
+  ExternalLink,
+  FileText,
+  Info,
+  Play,
+  RotateCcw,
+  Sparkles,
+} from "lucide-react";
 import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import {
@@ -20,6 +30,9 @@ import { AIAgentSteps } from "./AIAgentSteps";
 import { extractAgentRecordLinks, type AIAgentRecordLink } from "./ai-agent-record-links";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 import { AIThinkingTrace } from "./AIThinkingTrace";
+import { useI18n } from "../../i18n";
+import { formatPanelCopy, getAIPanelCopy } from "./ai-panel-copy";
+import { DEFAULT_AGENT_TOKEN_BUDGET } from "./ai-agent-cost";
 
 interface AIConversationViewProps {
   bubbles: AIWorkspaceBubbleData[];
@@ -121,7 +134,11 @@ function AIAttachmentFileChips({ attachments }: { attachments: AIWorkspaceAttach
   return (
     <div className="ai-workspace-attachment-strip">
       {files.map((attachment) => (
-        <span key={attachment.id} className="ai-workspace-attachment-strip-chip" title={attachment.name}>
+        <span
+          key={attachment.id}
+          className="ai-workspace-attachment-strip-chip"
+          title={attachment.name}
+        >
           <FileText className="w-3 h-3" />
           {attachment.name}
         </span>
@@ -272,6 +289,8 @@ export const AIConversationView = memo(function AIConversationView({
   const [viewerImage, setViewerImage] = useState<{ url: string; name: string } | null>(null);
   const [copiedBubbleId, setCopiedBubbleId] = useState<string | null>(null);
   const hasConversation = bubbles.length > 0;
+  const { language } = useI18n();
+  const panelCopy = getAIPanelCopy(language);
 
   const handleCopyClick = (bubble: AIWorkspaceBubbleData) => {
     void Promise.resolve(onCopy(bubble)).then((copied) => {
@@ -298,40 +317,52 @@ export const AIConversationView = memo(function AIConversationView({
               const reasoningText = bubble.reasoning?.trim();
               // ask_user bubbles at the tail of the thread render their
               // options as one-click reply buttons instead of plain text.
-              const askUserOptions = bubble.askUserOptions?.length
-                && bubbleIndex === bubbles.length - 1
-                && bubble.status === "ready"
-                ? bubble.askUserOptions
-                : null;
+              const askUserOptions =
+                bubble.askUserOptions?.length &&
+                bubbleIndex === bubbles.length - 1 &&
+                bubble.status === "ready"
+                  ? bubble.askUserOptions
+                  : null;
               const displayConversationText = askUserOptions
                 ? stripAskUserTrailingOptions(conversationText)
                 : conversationText;
               // Keep the agent step log available after the answer lands: it
               // collapses automatically once every step settles, so users can
               // re-open the reasoning without the toggle.
-              const hasVisibleAgentProgress = bubble.interactionMode === "agent"
-                && (bubble.agentSteps?.length ?? 0) > 0;
+              const hasVisibleAgentProgress =
+                bubble.interactionMode === "agent" && (bubble.agentSteps?.length ?? 0) > 0;
               const recordLinks = extractAgentRecordLinks(bubble.agentSteps);
-              const agentReadLiveData = bubble.interactionMode === "agent"
-                && bubble.agentSteps?.some(
+              const agentReadLiveData =
+                bubble.interactionMode === "agent" &&
+                bubble.agentSteps?.some(
                   (step) =>
-                    (step.action === "run_readonly_sql" || step.action === "sample_table_data")
-                    && step.status === "done",
+                    (step.action === "run_readonly_sql" || step.action === "sample_table_data") &&
+                    step.status === "done",
                 ) === true;
-              const canInsert = !agentReadLiveData && Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
-              const canRun = Boolean(bubble.sql)
-                && bubble.kind !== "result"
-                && !agentReadLiveData
-                && aiModeAllowsRun(bubble.interactionMode);
-              const canRetry = bubble.retryable !== false
-                && (bubble.status === "error" || bubble.status === "partial" || bubble.status === "cancelled");
-              const canCopy = bubble.status !== "loading"
-                && Boolean(bubble.sql || bubble.detail || bubble.preview);
+              const canInsert =
+                !agentReadLiveData &&
+                Boolean(bubble.sql) &&
+                aiModeAllowsInsert(bubble.interactionMode);
+              const canRun =
+                Boolean(bubble.sql) &&
+                bubble.kind !== "result" &&
+                !agentReadLiveData &&
+                aiModeAllowsRun(bubble.interactionMode);
+              const canRetry =
+                bubble.retryable !== false &&
+                (bubble.status === "error" ||
+                  bubble.status === "partial" ||
+                  bubble.status === "cancelled");
+              const canCopy =
+                bubble.status !== "loading" &&
+                Boolean(bubble.sql || bubble.detail || bubble.preview);
 
               return (
                 <article key={`chat-${bubble.id}`} className="ai-workspace-chat-turn">
                   <div className="ai-workspace-chat-turn-header">
-                    <strong className="ai-workspace-chat-turn-label">{copy.modal.originalRequest}</strong>
+                    <strong className="ai-workspace-chat-turn-label">
+                      {copy.modal.originalRequest}
+                    </strong>
                   </div>
                   {bubble.attachments && bubble.attachments.length > 0 && (
                     <AIAttachmentImages
@@ -348,8 +379,12 @@ export const AIConversationView = memo(function AIConversationView({
                     )}
                   </div>
                   <div className="ai-workspace-chat-turn-header ai-workspace-chat-turn-header--assistant">
-                    <strong className="ai-workspace-chat-turn-label">{copy.modal.assistantExplanation}</strong>
-                    <span className={`ai-workspace-chat-state ${bubble.status === "loading" ? "is-thinking" : ""}`}>
+                    <strong className="ai-workspace-chat-turn-label">
+                      {copy.modal.assistantExplanation}
+                    </strong>
+                    <span
+                      className={`ai-workspace-chat-state ${bubble.status === "loading" ? "is-thinking" : ""}`}
+                    >
                       {bubble.status === "loading" ? (
                         <>
                           <span className="ai-workspace-thinking-dots" aria-hidden="true">
@@ -359,19 +394,32 @@ export const AIConversationView = memo(function AIConversationView({
                           </span>
                           <span className="sr-only">{copy.bubbleMeta.thinking}</span>
                         </>
-                      ) : bubble.status === "partial"
-                        ? copy.bubbleStates.partialTitle
-                        : bubble.status === "cancelled"
-                          ? copy.bubbleStates.cancelledTitle
-                          : bubble.sql && !agentReadLiveData ? copy.modal.sql : copy.bubbleMeta.ready}
+                      ) : bubble.status === "partial" ? (
+                        copy.bubbleStates.partialTitle
+                      ) : bubble.status === "cancelled" ? (
+                        copy.bubbleStates.cancelledTitle
+                      ) : bubble.sql && !agentReadLiveData ? (
+                        copy.modal.sql
+                      ) : (
+                        copy.bubbleMeta.ready
+                      )}
                     </span>
                   </div>
                   <div className="ai-workspace-chat-message ai-workspace-chat-message--assistant">
                     {bubble.subtitle && bubble.subtitle !== bubble.title && (
                       <p className="ai-workspace-chat-subtitle">{bubble.subtitle}</p>
                     )}
-                    {hasVisibleAgentProgress
-                      && <AIAgentSteps steps={bubble.agentSteps ?? []} compact durationMs={bubble.settledAt ? Math.max(0, bubble.settledAt - bubble.createdAt) : undefined} />}
+                    {hasVisibleAgentProgress && (
+                      <AIAgentSteps
+                        steps={bubble.agentSteps ?? []}
+                        compact
+                        durationMs={
+                          bubble.settledAt
+                            ? Math.max(0, bubble.settledAt - bubble.createdAt)
+                            : undefined
+                        }
+                      />
+                    )}
                     {reasoningText && !hasVisibleAgentProgress && (
                       <AIThinkingTrace
                         text={reasoningText}
@@ -379,23 +427,29 @@ export const AIConversationView = memo(function AIConversationView({
                         copy={copy}
                       />
                     )}
-                    {bubble.status === "loading" && hasVisibleAgentProgress && bubble.detail?.trim() && conversationText && (
-                      // Agent turns stream a JSON tool action, so the finish answer
-                      // is pulled from the partial JSON (aiStore) and rendered live
-                      // here under the step log — the reply fills in token by token
-                      // instead of appearing all at once when the run settles.
-                      // Gate on the streamed `detail` (not the preview fallback) so
-                      // the body stays empty between phases: the opening
-                      // acknowledgement already shows as the "plan" step, so it must
-                      // not also duplicate here once the tool loop starts.
-                      <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={displayConversationText} />
-                    )}
+                    {bubble.status === "loading" &&
+                      hasVisibleAgentProgress &&
+                      bubble.detail?.trim() &&
+                      conversationText && (
+                        // Agent turns stream a JSON tool action, so the finish answer
+                        // is pulled from the partial JSON (aiStore) and rendered live
+                        // here under the step log — the reply fills in token by token
+                        // instead of appearing all at once when the run settles.
+                        // Gate on the streamed `detail` (not the preview fallback) so
+                        // the body stays empty between phases: the opening
+                        // acknowledgement already shows as the "plan" step, so it must
+                        // not also duplicate here once the tool loop starts.
+                        <AIWorkspaceMarkdown
+                          className="ai-workspace-chat-text"
+                          text={displayConversationText}
+                        />
+                      )}
                     {bubble.status === "loading" && !hasVisibleAgentProgress ? (
                       // The live thinking trace above already carries the "model
                       // is working" feedback while it streams reasoning, so only
                       // fall back to the plain shimmer once real answer text lands
                       // or when the model streams no reasoning at all.
-                      (conversationText || !reasoningText) ? (
+                      conversationText || !reasoningText ? (
                         <div className="ai-workspace-thinking-line">
                           <span className="ai-workspace-thinking-orb" aria-hidden="true" />
                           <span className="ai-workspace-thinking-shimmer">
@@ -404,8 +458,12 @@ export const AIConversationView = memo(function AIConversationView({
                         </div>
                       ) : null
                     ) : bubble.status !== "loading" ? (
-                      conversationText
-                        && <AIWorkspaceMarkdown className="ai-workspace-chat-text" text={displayConversationText} />
+                      conversationText && (
+                        <AIWorkspaceMarkdown
+                          className="ai-workspace-chat-text"
+                          text={displayConversationText}
+                        />
+                      )
                     ) : null}
                     {bubble.failoverNotes && bubble.failoverNotes.length > 0 && (
                       <AIFailoverNotes notes={bubble.failoverNotes} copy={copy} />
@@ -465,7 +523,11 @@ export const AIConversationView = memo(function AIConversationView({
                             title={copy.bubbleActions.copy}
                             aria-label={copy.bubbleActions.copy}
                           >
-                            {copiedBubbleId === bubble.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            {copiedBubbleId === bubble.id ? (
+                              <Check className="w-3.5 h-3.5" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
                           </button>
                         )}
                         {canInsert && (
@@ -479,6 +541,16 @@ export const AIConversationView = memo(function AIConversationView({
                             <CornerDownLeft className="w-3.5 h-3.5" />
                           </button>
                         )}
+                      </div>
+                    )}
+                    {bubble.status !== "loading" && (bubble.tokensUsed ?? 0) > 0 && (
+                      // Run footer: what the turn actually cost, against the
+                      // per-run token budget the runner enforces.
+                      <div className="ai-workspace-chat-run-cost" title={panelCopy.runCost.title}>
+                        {formatPanelCopy(panelCopy.runCost.label, {
+                          used: (bubble.tokensUsed ?? 0).toLocaleString(),
+                          budget: DEFAULT_AGENT_TOKEN_BUDGET.toLocaleString(),
+                        })}
                       </div>
                     )}
                   </div>
@@ -517,4 +589,4 @@ export const AIConversationView = memo(function AIConversationView({
       />
     </div>
   );
-})
+});

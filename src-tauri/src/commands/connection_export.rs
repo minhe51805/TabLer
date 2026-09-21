@@ -188,25 +188,31 @@ fn decrypt_v1(payload: EncryptedPayloadV1, password: &str) -> Result<Vec<u8>, St
 
 // ─── Serializable version of ConnectionConfig (excludes password and internal IDs) ───
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportableConnection {
-    name: String,
-    db_type: DatabaseType,
-    host: Option<String>,
-    port: Option<u16>,
-    username: Option<String>,
-    database: Option<String>,
-    file_path: Option<String>,
-    use_ssl: bool,
-    ssl_mode: Option<SslMode>,
-    ssl_ca_cert_path: Option<String>,
-    ssl_client_cert_path: Option<String>,
-    ssl_client_key_path: Option<String>,
-    ssl_skip_host_verification: Option<bool>,
-    color: Option<String>,
-    additional_fields: HashMap<String, String>,
-    startup_commands: Option<String>,
+    pub(crate) name: String,
+    pub(crate) db_type: DatabaseType,
+    pub(crate) host: Option<String>,
+    pub(crate) port: Option<u16>,
+    pub(crate) username: Option<String>,
+    pub(crate) database: Option<String>,
+    pub(crate) file_path: Option<String>,
+    pub(crate) use_ssl: bool,
+    pub(crate) ssl_mode: Option<SslMode>,
+    pub(crate) ssl_ca_cert_path: Option<String>,
+    pub(crate) ssl_client_cert_path: Option<String>,
+    pub(crate) ssl_client_key_path: Option<String>,
+    pub(crate) ssl_skip_host_verification: Option<bool>,
+    pub(crate) color: Option<String>,
+    pub(crate) additional_fields: HashMap<String, String>,
+    pub(crate) startup_commands: Option<String>,
+    /// Shell command run locally before connecting (workspace bundles carry it).
+    #[serde(default)]
+    pub(crate) pre_connect_script: Option<String>,
+    /// SSH tunnel settings with secrets stripped (password/private key/
+    /// passphrase live in the keyring and never leave the machine).
+    #[serde(default)]
+    pub(crate) ssh_config: Option<crate::ssh::ssh_tunnel::SshConfig>,
 }
 
 impl From<&ConnectionConfig> for ExportableConnection {
@@ -228,6 +234,8 @@ impl From<&ConnectionConfig> for ExportableConnection {
             color: config.color.clone(),
             additional_fields: config.additional_fields.clone(),
             startup_commands: config.startup_commands.clone(),
+            pre_connect_script: config.pre_connect_script.clone(),
+            ssh_config: config.ssh_config.clone(),
         }
     }
 }
@@ -236,7 +244,7 @@ impl ExportableConnection {
     /// Rebuild a full ConnectionConfig from an export entry. The export format
     /// never carries passwords, so the imported record starts credential-less
     /// unless the user supplied one in the import dialog.
-    fn to_connection_config(&self, password: Option<String>) -> ConnectionConfig {
+    pub(crate) fn to_connection_config(&self, password: Option<String>) -> ConnectionConfig {
         let mut config = ConnectionConfig {
             id: Uuid::new_v4().to_string(),
             name: self.name.clone(),
@@ -256,7 +264,8 @@ impl ExportableConnection {
             color: self.color.clone(),
             additional_fields: self.additional_fields.clone(),
             startup_commands: self.startup_commands.clone(),
-            ..ConnectionConfig::default()
+            pre_connect_script: self.pre_connect_script.clone(),
+            ssh_config: self.ssh_config.clone(),
         };
         config.fill_generated_name();
         config
@@ -266,7 +275,7 @@ impl ExportableConnection {
 /// Two entries describe the same connection when the id matches (re-import of
 /// an already-persisted record) or when engine + endpoint + display name all
 /// match (re-import of the same export file, which mints fresh ids).
-fn is_same_connection(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
+pub(crate) fn is_same_connection(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
     a.id == b.id
         || (a.db_type == b.db_type
             && a.name == b.name

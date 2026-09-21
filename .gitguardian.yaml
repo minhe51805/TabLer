@@ -1,10 +1,20 @@
-# GitGuardian configuration - silence false positives for legitimate code
-# These are React state variables, not leaked secrets
 version: 2
-detectors-ignore:
-  - name: "Generic Password"
-    matches-ignore:
-      - name: "password React state variable"
-        match: "password"
-      - name: "isDecrypting state variable"
-        match: "isDecrypting"
+
+secret:
+  # Test fixtures and contract data never hold real credentials.
+  ignored_paths:
+    - tests/**
+    - "**/*.test.ts"
+    - "**/*.test.tsx"
+
+  ignored_matches:
+    # Tauri updater public keys — public by design, embedded in every
+    # shipped installer so clients can verify update signatures.
+    - match: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE4RDZDMUUxQ0JDQjU5MjUKUldRbFdjdkw0Y0hXcUVKK3NVa3o2VUsvK2QrUEJYbFhjekJ0TWtYV1FQb21SU0ZWak5IcnVndnIK
+      name: updater public key (current)
+    - match: dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVGQTg4RjQxRkZGRDdGOUYKUldTZmYvMy9RWStvWDIzbkx3Z3ovMEFwSS84ODZKY2xuc0MrRDVMUkN0REVZdkYwVFViODFPTWwK
+      name: updater public key (previous)
+    # Literal fixture in workspace_bundle.rs tests asserting that
+    # passwords are stripped from exported bundles.
+    - match: super-secret
+      name: bundle test fixture password

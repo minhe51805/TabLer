@@ -14,11 +14,12 @@ import {
 } from "./utils/sql-generator";
 import { ObjectTypePicker, type WizardKind } from "./ObjectTypePicker";
 import { ColumnEditor, createEmptyColumn, type ColumnDraft } from "./ColumnEditor";
+import { useI18n, type TranslationKey } from "../../i18n";
 
-const KIND_LABELS: Record<WizardKind, string> = {
-  table: "Table",
-  view: "View",
-  trigger: "Trigger",
+const KIND_LABEL_KEYS: Record<WizardKind, TranslationKey> = {
+  table: "schemaWizard.kind.table",
+  view: "schemaWizard.kind.view",
+  trigger: "schemaWizard.kind.trigger",
 };
 
 type AutocompleteField = "name" | "schema" | null;
@@ -68,11 +69,9 @@ export function CreateSchemaObjectModal({
   onClose,
   onCreateDraft,
 }: Props) {
+  const { t } = useI18n();
   const dialect = resolveWizardDialect(dbType);
-  const {
-    askAI,
-    aiConfigs,
-  } = useAIStore(
+  const { askAI, aiConfigs } = useAIStore(
     useShallow((state) => ({
       askAI: state.askAI,
       aiConfigs: state.aiConfigs,
@@ -87,9 +86,9 @@ export function CreateSchemaObjectModal({
 
   const supportsWizard = !!dialect;
   const supportsTrigger = !!dialect && dbType !== "redshift";
-  const availableKinds = (supportsTrigger
-    ? ["table", "view", "trigger"]
-    : ["table", "view"]) as WizardKind[];
+  const availableKinds = (
+    supportsTrigger ? ["table", "view", "trigger"] : ["table", "view"]
+  ) as WizardKind[];
   const defaultSchema = dialect === "postgres" ? "public" : "";
 
   const tableOptions = useMemo(
@@ -138,9 +137,7 @@ export function CreateSchemaObjectModal({
   const [triggerTiming, setTriggerTiming] = useState("BEFORE");
   const [triggerEvent, setTriggerEvent] = useState("INSERT");
   const [triggerBody, setTriggerBody] = useState(
-    dialect === "mysql"
-      ? "SET NEW.updated_at = NOW()"
-      : "-- write trigger logic here",
+    dialect === "mysql" ? "SET NEW.updated_at = NOW()" : "-- write trigger logic here",
   );
   const [validationError, setValidationError] = useState<string | null>(null);
   const [isMiniAiOpen, setIsMiniAiOpen] = useState(false);
@@ -161,7 +158,7 @@ export function CreateSchemaObjectModal({
 
   const sqlPreview = useMemo(() => {
     if (!supportsWizard || !dialect) {
-      return { sql: "", error: "This database type does not have a create-object wizard yet." };
+      return { sql: "", error: t("schemaWizard.noWizard") };
     }
 
     if (kind === "table") {
@@ -191,6 +188,7 @@ export function CreateSchemaObjectModal({
     name,
     schema,
     supportsWizard,
+    t,
     tableColumns,
     triggerBody,
     triggerEvent,
@@ -204,9 +202,7 @@ export function CreateSchemaObjectModal({
   };
 
   const handleRemoveColumn = (columnId: string) => {
-    setTableColumns((prev) =>
-      prev.length > 1 ? prev.filter((c) => c.id !== columnId) : prev,
-    );
+    setTableColumns((prev) => (prev.length > 1 ? prev.filter((c) => c.id !== columnId) : prev));
   };
 
   const handleColumnChange = (
@@ -214,9 +210,7 @@ export function CreateSchemaObjectModal({
     field: keyof ColumnDraft,
     value: string | boolean,
   ) => {
-    setTableColumns((prev) =>
-      prev.map((c) => (c.id === columnId ? { ...c, [field]: value } : c)),
-    );
+    setTableColumns((prev) => prev.map((c) => (c.id === columnId ? { ...c, [field]: value } : c)));
   };
 
   const handleCreateDraft = () => {
@@ -224,14 +218,14 @@ export function CreateSchemaObjectModal({
       setValidationError(sqlPreview.error);
       return;
     }
-    const title = `Create ${KIND_LABELS[kind]} ${name.trim() || KIND_LABELS[kind]}`;
+    const kindLabel = t(KIND_LABEL_KEYS[kind]);
+    const title = t("schemaWizard.draftTitle", { kind: kindLabel, name: name.trim() || kindLabel });
     onCreateDraft(title, sqlPreview.sql);
     onClose();
   };
 
   const buildAiPrompt = () => {
-    const schemaHint =
-      dialect === "postgres" ? ` in schema ${schema.trim() || "public"}` : "";
+    const schemaHint = dialect === "postgres" ? ` in schema ${schema.trim() || "public"}` : "";
 
     if (kind === "table") {
       const described = tableColumns
@@ -282,15 +276,15 @@ export function CreateSchemaObjectModal({
 
   const handleGenerateAiDraft = async () => {
     if (!activeConnectionId) {
-      setAiError("Connect to a database first.");
+      setAiError(t("schemaWizard.aiErrorConnect"));
       return;
     }
     if (!activeProvider) {
-      setAiError("Enable an AI provider first in AI Settings.");
+      setAiError(t("schemaWizard.aiErrorProvider"));
       return;
     }
     if (!aiPrompt.trim()) {
-      setAiError("Describe what you want the AI to build first.");
+      setAiError(t("schemaWizard.aiErrorPrompt"));
       return;
     }
 
@@ -325,10 +319,14 @@ export function CreateSchemaObjectModal({
 
   const handleOpenAiDraft = () => {
     if (!aiResponse.trim()) {
-      setAiError("Generate SQL first.");
+      setAiError(t("schemaWizard.aiErrorGenerate"));
       return;
     }
-    const title = `AI ${KIND_LABELS[kind]} ${name.trim() || KIND_LABELS[kind]}`;
+    const aiKindLabel = t(KIND_LABEL_KEYS[kind]);
+    const title = t("schemaWizard.aiDraftTitle", {
+      kind: aiKindLabel,
+      name: name.trim() || aiKindLabel,
+    });
     onCreateDraft(title, aiResponse.trim());
     onClose();
   };
@@ -347,7 +345,9 @@ export function CreateSchemaObjectModal({
           <div className="schema-wizard-grid">
             {/* Name field */}
             <label className="field-group field-group-autocomplete">
-              <span className="field-label">{KIND_LABELS[kind]} name</span>
+              <span className="field-label">
+                {t("schemaWizard.nameLabel", { kind: t(KIND_LABEL_KEYS[kind]) })}
+              </span>
               <input
                 value={name}
                 onChange={(event) => {
@@ -362,7 +362,11 @@ export function CreateSchemaObjectModal({
                   }, 120);
                 }}
                 placeholder={
-                  kind === "table" ? "orders" : kind === "view" ? "active_orders" : "orders_set_timestamp"
+                  kind === "table"
+                    ? "orders"
+                    : kind === "view"
+                      ? "active_orders"
+                      : "orders_set_timestamp"
                 }
                 className="schema-wizard-input"
               />
@@ -390,7 +394,7 @@ export function CreateSchemaObjectModal({
             {/* Schema field (postgres only) */}
             {dialect === "postgres" && (
               <label className="field-group field-group-autocomplete">
-                <span className="field-label">Schema</span>
+                <span className="field-label">{t("schemaWizard.schemaLabel")}</span>
                 <input
                   value={schema}
                   onChange={(event) => {
@@ -445,8 +449,8 @@ export function CreateSchemaObjectModal({
             <div className="schema-wizard-section">
               <div className="schema-wizard-section-head">
                 <div>
-                  <h3>View query</h3>
-                  <p>Paste the SELECT statement that defines the view.</p>
+                  <h3>{t("schemaWizard.viewQueryTitle")}</h3>
+                  <p>{t("schemaWizard.viewQueryHint")}</p>
                 </div>
               </div>
               <textarea
@@ -466,7 +470,7 @@ export function CreateSchemaObjectModal({
             <div className="schema-wizard-section">
               <div className="schema-wizard-grid compact">
                 <label className="field-group">
-                  <span className="field-label">Target table</span>
+                  <span className="field-label">{t("schemaWizard.triggerTargetTable")}</span>
                   <select
                     value={triggerTable}
                     onChange={(event) => {
@@ -475,7 +479,7 @@ export function CreateSchemaObjectModal({
                     }}
                     className="schema-wizard-select"
                   >
-                    <option value="">Choose table...</option>
+                    <option value="">{t("schemaWizard.triggerChooseTable")}</option>
                     {tableOptions.map((table) => {
                       const qualifiedName = table.schema
                         ? `${table.schema}.${table.name}`
@@ -489,7 +493,7 @@ export function CreateSchemaObjectModal({
                   </select>
                 </label>
                 <label className="field-group">
-                  <span className="field-label">Timing</span>
+                  <span className="field-label">{t("schemaWizard.triggerTiming")}</span>
                   <select
                     value={triggerTiming}
                     onChange={(event) => {
@@ -498,12 +502,12 @@ export function CreateSchemaObjectModal({
                     }}
                     className="schema-wizard-select"
                   >
-                    <option value="BEFORE">Before</option>
-                    <option value="AFTER">After</option>
+                    <option value="BEFORE">{t("schemaWizard.timingBefore")}</option>
+                    <option value="AFTER">{t("schemaWizard.timingAfter")}</option>
                   </select>
                 </label>
                 <label className="field-group">
-                  <span className="field-label">Event</span>
+                  <span className="field-label">{t("schemaWizard.triggerEvent")}</span>
                   <select
                     value={triggerEvent}
                     onChange={(event) => {
@@ -512,22 +516,22 @@ export function CreateSchemaObjectModal({
                     }}
                     className="schema-wizard-select"
                   >
-                    <option value="INSERT">Insert</option>
-                    <option value="UPDATE">Update</option>
-                    <option value="DELETE">Delete</option>
+                    <option value="INSERT">{t("schemaWizard.eventInsert")}</option>
+                    <option value="UPDATE">{t("schemaWizard.eventUpdate")}</option>
+                    <option value="DELETE">{t("schemaWizard.eventDelete")}</option>
                   </select>
                 </label>
               </div>
 
               <div className="schema-wizard-section-head">
                 <div>
-                  <h3>Trigger body</h3>
+                  <h3>{t("schemaWizard.triggerBodyTitle")}</h3>
                   <p>
                     {dialect === "mysql"
-                      ? "Use a single statement body for MySQL/MariaDB."
+                      ? t("schemaWizard.triggerBodyMysql")
                       : dialect === "postgres"
-                        ? "Write the logic that should run inside the trigger function."
-                        : "Write one or more SQL statements for the trigger body."}
+                        ? t("schemaWizard.triggerBodyPostgres")
+                        : t("schemaWizard.triggerBodyGeneric")}
                   </p>
                 </div>
               </div>
@@ -548,17 +552,15 @@ export function CreateSchemaObjectModal({
         <aside className="schema-wizard-preview">
           <div className="schema-wizard-preview-head">
             <div>
-              <h3>SQL Draft</h3>
-              <p>Review before it lands in a query tab.</p>
+              <h3>{t("schemaWizard.previewTitle")}</h3>
+              <p>{t("schemaWizard.previewHint")}</p>
             </div>
           </div>
           <pre className="schema-wizard-preview-code">
-            <code>{sqlPreview.sql || "-- SQL preview will appear here."}</code>
+            <code>{sqlPreview.sql || t("schemaWizard.previewPlaceholder")}</code>
           </pre>
           {(validationError || sqlPreview.error) && (
-            <div className="schema-wizard-error">
-              {validationError || sqlPreview.error}
-            </div>
+            <div className="schema-wizard-error">{validationError || sqlPreview.error}</div>
           )}
         </aside>
       </div>
@@ -566,18 +568,22 @@ export function CreateSchemaObjectModal({
       <footer className="schema-wizard-footer">
         <div className="schema-wizard-footer-note">
           <Code2 className="w-4 h-4" />
-          <span>The wizard creates a SQL draft first so you can review or edit it.</span>
+          <span>{t("schemaWizard.footerNote")}</span>
         </div>
         <div className="schema-wizard-footer-actions">
-          <button type="button" className="btn btn-secondary schema-wizard-ai-btn" onClick={handleAskAI}>
+          <button
+            type="button"
+            className="btn btn-secondary schema-wizard-ai-btn"
+            onClick={handleAskAI}
+          >
             <Sparkles className="w-4 h-4" />
             AI
           </button>
           <button type="button" className="btn btn-secondary" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button type="button" className="btn btn-primary" onClick={handleCreateDraft}>
-            Open SQL Draft
+            {t("schemaWizard.openDraft")}
           </button>
         </div>
       </footer>
@@ -587,14 +593,14 @@ export function CreateSchemaObjectModal({
         <div className="schema-wizard-ai-popover">
           <div className="schema-wizard-ai-head">
             <div className="schema-wizard-ai-copy">
-              <span className="schema-wizard-ai-kicker">AI Assistant</span>
-              <strong className="schema-wizard-ai-title">Draft with AI</strong>
+              <span className="schema-wizard-ai-kicker">{t("schemaWizard.aiKicker")}</span>
+              <strong className="schema-wizard-ai-title">{t("schemaWizard.aiTitle")}</strong>
             </div>
             <button
               type="button"
               onClick={() => setIsMiniAiOpen(false)}
               className="panel-header-action"
-              title="Close AI assistant"
+              title={t("schemaWizard.aiClose")}
             >
               <X className="w-4 h-4" />
             </button>
@@ -604,15 +610,15 @@ export function CreateSchemaObjectModal({
             value={aiPrompt}
             onChange={(event) => setAiPrompt(event.target.value)}
             className="schema-wizard-ai-textarea"
-            placeholder="Ask AI to help finish this table, view, or trigger..."
+            placeholder={t("schemaWizard.aiPlaceholder")}
             spellCheck={false}
           />
 
           <div className="schema-wizard-ai-toolbar">
             <span className="schema-wizard-ai-note">
               {activeProvider
-                ? `${activeProvider.name}${activeProvider.allow_schema_context ? " | schema-aware" : " | prompt-only"}`
-                : "No AI provider enabled"}
+                ? `${activeProvider.name}${activeProvider.allow_schema_context ? ` | ${t("schemaWizard.aiSchemaAware")}` : ` | ${t("schemaWizard.aiPromptOnly")}`}`
+                : t("schemaWizard.aiNoProvider")}
             </span>
             <button
               type="button"
@@ -625,7 +631,7 @@ export function CreateSchemaObjectModal({
               ) : (
                 <Bot className="w-4 h-4" />
               )}
-              {isAiLoading ? "Thinking..." : "Generate"}
+              {isAiLoading ? t("schemaWizard.aiThinking") : t("schemaWizard.aiGenerate")}
             </button>
           </div>
 
@@ -639,11 +645,11 @@ export function CreateSchemaObjectModal({
               <div className="schema-wizard-ai-response-actions">
                 <button type="button" className="btn btn-secondary" onClick={handleCopyAiResponse}>
                   <Copy className="w-4 h-4" />
-                  Copy
+                  {t("schemaWizard.copy")}
                 </button>
                 <button type="button" className="btn btn-primary" onClick={handleOpenAiDraft}>
                   <Send className="w-4 h-4" />
-                  Open Draft
+                  {t("schemaWizard.openAiDraft")}
                 </button>
               </div>
             </div>
@@ -658,20 +664,23 @@ export function CreateSchemaObjectModal({
       <div className="schema-wizard-modal">
         <header className="schema-wizard-header">
           <div className="schema-wizard-copy">
-            <span className="panel-kicker">Schema Builder</span>
-            <h2 className="schema-wizard-title">Create database objects</h2>
-            <p className="schema-wizard-subtitle">
-              Build a table, view, or trigger from a guided form, then review the SQL draft before running it.
-            </p>
+            <span className="panel-kicker">{t("schemaWizard.kicker")}</span>
+            <h2 className="schema-wizard-title">{t("schemaWizard.title")}</h2>
+            <p className="schema-wizard-subtitle">{t("schemaWizard.subtitle")}</p>
           </div>
-          <button type="button" onClick={onClose} className="panel-header-action" title="Close">
+          <button
+            type="button"
+            onClick={onClose}
+            className="panel-header-action"
+            title={t("common.close")}
+          >
             <X className="w-4 h-4" />
           </button>
         </header>
 
         {!supportsWizard ? (
           <div className="schema-wizard-empty">
-            <p>This object wizard is not wired into {dbType} yet.</p>
+            <p>{t("schemaWizard.unsupported", { dbType })}</p>
           </div>
         ) : (
           renderWizardBody()

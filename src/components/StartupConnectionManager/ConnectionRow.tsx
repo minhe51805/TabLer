@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronRight, LoaderCircle, Pencil, Trash2 } from "lucide-react";
 import type { ConnectionPingResult, ConnectionRowProps } from "./types";
 
@@ -14,6 +14,10 @@ interface Props extends ConnectionRowProps {
   deleteLabel: string;
   onRename: (name: string) => void;
   renameLabel: string;
+  /** Right-click on the card opens the launcher context menu. */
+  onContextMenu?: (event: React.MouseEvent<HTMLDivElement>) => void;
+  /** Bumping this nonce puts the card into rename mode (context-menu Rename). */
+  renameNonce?: number;
 }
 
 export function ConnectionRow({
@@ -25,6 +29,8 @@ export function ConnectionRow({
   renameLabel,
   onMouseEnter,
   onMouseLeave,
+  onContextMenu,
+  renameNonce,
   tagName,
   tagColor,
   envBadge,
@@ -48,6 +54,15 @@ export function ConnectionRow({
 
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(connection.name);
+
+  // Context-menu "Rename" bumps renameNonce; enter rename mode on change.
+  useEffect(() => {
+    if (renameNonce) {
+      setRenameValue(connection.name);
+      setIsRenaming(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- nonce is the trigger
+  }, [renameNonce]);
 
   const commitRename = () => {
     const next = renameValue.trim();
@@ -75,7 +90,16 @@ export function ConnectionRow({
       }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onContextMenu={onContextMenu}
     >
+      {connection.color ? (
+        <span
+          className="startup-connection-accent"
+          style={{ backgroundColor: connection.color }}
+          aria-hidden="true"
+        />
+      ) : null}
+
       <div className="startup-connection-side">
         <div
           className="startup-connection-avatar"

@@ -1,6 +1,7 @@
 import { MoreHorizontal } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { useI18n } from "../../i18n";
+import { DEFAULT_GROUP_COLORS } from "../../stores/connection-group-store";
 import type { ConnectionGroup } from "./types";
 
 interface Props {
@@ -12,12 +13,6 @@ interface Props {
   onChangeColor: (color: string) => void;
   onDelete: () => void;
 }
-
-const GROUP_COLORS = [
-  "#e74c3c", "#e67e22", "#f1c40f", "#2ecc71",
-  "#1abc9c", "#3498db", "#9b59b6", "#e91e63",
-  "#6c7a89", "#2c3e50",
-];
 
 export function ConnectionGroupHeader({
   group,
@@ -73,7 +68,13 @@ export function ConnectionGroupHeader({
       >
         <span className={`startup-connection-group-chevron ${isCollapsed ? "" : "expanded"}`}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M4 2.5L7.5 6L4 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path
+              d="M4 2.5L7.5 6L4 9.5"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         </span>
         <span
@@ -89,7 +90,10 @@ export function ConnectionGroupHeader({
             onBlur={handleRenameSubmit}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleRenameSubmit();
-              if (e.key === "Escape") { setRenameValue(group.name); setIsRenaming(false); }
+              if (e.key === "Escape") {
+                setRenameValue(group.name);
+                setIsRenaming(false);
+              }
             }}
             onClick={(e) => e.stopPropagation()}
           />
@@ -103,7 +107,10 @@ export function ConnectionGroupHeader({
         <button
           type="button"
           className="startup-connection-group-menu-btn"
-          onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowMenu(!showMenu);
+          }}
           aria-label="More actions"
           title="More actions"
         >
@@ -115,18 +122,24 @@ export function ConnectionGroupHeader({
             <button
               type="button"
               className="startup-connection-group-menu-item"
-              onClick={() => { setIsRenaming(true); setShowMenu(false); }}
+              onClick={() => {
+                setIsRenaming(true);
+                setShowMenu(false);
+              }}
             >
               {t("common.rename")}
             </button>
             <div className="startup-connection-group-color-picker">
-              {GROUP_COLORS.map((c) => (
+              {DEFAULT_GROUP_COLORS.map((c) => (
                 <button
                   key={c}
                   type="button"
                   className={`startup-connection-group-color-swatch ${group.color === c ? "active" : ""}`}
                   style={{ backgroundColor: c }}
-                  onClick={() => { onChangeColor(c); setShowMenu(false); }}
+                  onClick={() => {
+                    onChangeColor(c);
+                    setShowMenu(false);
+                  }}
                   aria-label={c}
                   title={c}
                 />
@@ -135,7 +148,10 @@ export function ConnectionGroupHeader({
             <button
               type="button"
               className="startup-connection-group-menu-item danger"
-              onClick={() => { onDelete(); setShowMenu(false); }}
+              onClick={() => {
+                onDelete();
+                setShowMenu(false);
+              }}
             >
               {t("common.delete")}
             </button>

@@ -1,0 +1,27 @@
+import type { SchemaDiffCopy } from "./types";
+
+export const ZH_COPY: SchemaDiffCopy = {
+  title: "架构对比",
+  close: "关闭",
+  sourceConnection: "源连接…",
+  targetConnection: "目标连接…",
+  activeSuffix: "（当前）",
+  notConnectedSuffix: "（未连接）",
+  sourceDatabase: "源数据库（默认：当前）",
+  targetDatabase: "目标数据库（默认：当前）",
+  compare: "对比",
+  summaryAdded: (count) => `+${count} 新增`,
+  summaryRemoved: (count) => `-${count} 删除`,
+  summaryModified: (count) => `~${count} 修改`,
+  summaryUnchanged: (count) => `= ${count} 未变`,
+  truncated: "⚠ 已截断",
+  truncatedTitle: "结果已达上限",
+  groupAdded: (count) => `新增的表（${count}）`,
+  groupRemoved: (count) => `删除的表（${count}）`,
+  groupModified: (count) => `修改的表（${count}）`,
+  noDifferences: "无差异 — 两个架构完全相同。",
+  dialectLabel: "迁移方言",
+  includeDrops: "包含 DROP",
+  generateMigration: "生成迁移",
+  copyScript: "复制",
+};

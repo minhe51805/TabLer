@@ -1,0 +1,27 @@
+import type { SchemaDiffCopy } from "./types";
+
+export const TR_COPY: SchemaDiffCopy = {
+  title: "Şema Farkı",
+  close: "Kapat",
+  sourceConnection: "Kaynak bağlantı…",
+  targetConnection: "Hedef bağlantı…",
+  activeSuffix: "(etkin)",
+  notConnectedSuffix: "(bağlı değil)",
+  sourceDatabase: "Kaynak veritabanı (varsayılan: geçerli)",
+  targetDatabase: "Hedef veritabanı (varsayılan: geçerli)",
+  compare: "Karşılaştır",
+  summaryAdded: (count) => `+${count} eklendi`,
+  summaryRemoved: (count) => `-${count} kaldırıldı`,
+  summaryModified: (count) => `~${count} değiştirildi`,
+  summaryUnchanged: (count) => `= ${count} değişmedi`,
+  truncated: "⚠ kısaltıldı",
+  truncatedTitle: "Sonuç sınırlandı",
+  groupAdded: (count) => `Eklenen tablolar (${count})`,
+  groupRemoved: (count) => `Kaldırılan tablolar (${count})`,
+  groupModified: (count) => `Değiştirilen tablolar (${count})`,
+  noDifferences: "Fark yok — iki şema aynı.",
+  dialectLabel: "Geçiş lehçesi",
+  includeDrops: "DROP'ları dahil et",
+  generateMigration: "Geçiş oluştur",
+  copyScript: "Kopyala",
+};

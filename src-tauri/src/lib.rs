@@ -378,6 +378,7 @@ pub fn run() {
             import_xlsx,
             execute_sandboxed_query,
             execute_agent_readonly_query,
+            explain_agent_statement,
             preview_write_transaction,
             save_agent_trace,
             preview_database_restore,

@@ -15,14 +15,22 @@ interface RowSharedProps {
   schemaName: string;
   language: AppLanguage;
   t: TranslateFn;
-  onMixedStateToggle: (schemaName: string, itemName: string, nextState: CheckboxFilterState) => void;
+  onMixedStateToggle: (
+    schemaName: string,
+    itemName: string,
+    nextState: CheckboxFilterState,
+  ) => void;
 }
 
 // ---------------------------------------------------------------------------
 // Mixed-state checkbox SVG icon
 // ---------------------------------------------------------------------------
 
-export const MixedCheckbox = memo(function MixedCheckbox({ state, onChange, title }: {
+export const MixedCheckbox = memo(function MixedCheckbox({
+  state,
+  onChange,
+  title,
+}: {
   state: CheckboxFilterState;
   onChange: (next: CheckboxFilterState) => void;
   title?: string;
@@ -41,24 +49,73 @@ export const MixedCheckbox = memo(function MixedCheckbox({ state, onChange, titl
       title={title ?? `State: ${state}. Click to cycle.`}
       aria-label={`Filter: ${state}`}
     >
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 14 14"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
         {state === "checked" ? (
           // Checked: filled box with check
           <>
-            <rect x="0.5" y="0.5" width="13" height="13" rx="3" fill="var(--accent)" stroke="var(--accent)" strokeWidth="1" />
-            <path d="M3.5 7L5.5 9L10.5 4" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <rect
+              x="0.5"
+              y="0.5"
+              width="13"
+              height="13"
+              rx="3"
+              fill="var(--accent)"
+              stroke="var(--accent)"
+              strokeWidth="1"
+            />
+            <path
+              d="M3.5 7L5.5 9L10.5 4"
+              stroke="white"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </>
         ) : state === "unchecked" ? (
           // Unchecked: box with X
           <>
-            <rect x="0.5" y="0.5" width="13" height="13" rx="3" fill="none" stroke="var(--border)" strokeWidth="1.5" />
-            <path d="M4 4L10 10M10 4L4 10" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round" />
+            <rect
+              x="0.5"
+              y="0.5"
+              width="13"
+              height="13"
+              rx="3"
+              fill="none"
+              stroke="var(--border)"
+              strokeWidth="1.5"
+            />
+            <path
+              d="M4 4L10 10M10 4L4 10"
+              stroke="var(--text-muted)"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
           </>
         ) : (
           // Indeterminate: filled box with dash
           <>
-            <rect x="0.5" y="0.5" width="13" height="13" rx="3" fill="var(--bg-secondary)" stroke="var(--border)" strokeWidth="1.5" />
-            <path d="M3.5 7H10.5" stroke="var(--text-secondary)" strokeWidth="1.5" strokeLinecap="round" />
+            <rect
+              x="0.5"
+              y="0.5"
+              width="13"
+              height="13"
+              rx="3"
+              fill="var(--bg-secondary)"
+              stroke="var(--border)"
+              strokeWidth="1.5"
+            />
+            <path
+              d="M3.5 7H10.5"
+              stroke="var(--text-secondary)"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
           </>
         )}
       </svg>
@@ -85,6 +142,7 @@ export const TableRow = memo(function TableRow({
   table,
   itemState,
   isContextActive,
+  isSelected,
   onTableClick,
   onTableDoubleClick,
   onTableContextMenu,
@@ -93,17 +151,24 @@ export const TableRow = memo(function TableRow({
   table: SectionTable;
   itemState: CheckboxFilterState;
   isContextActive: boolean;
-  onTableClick: (table: Pick<TableInfo, "name" | "schema">) => void;
+  isSelected?: boolean;
+  onTableClick: (
+    event: React.MouseEvent | undefined,
+    table: Pick<TableInfo, "name" | "schema"> & { table_type?: string },
+  ) => void;
   onTableDoubleClick?: (table: Pick<TableInfo, "name" | "schema">) => void;
   onStructureClick: (e: React.MouseEvent, table: Pick<TableInfo, "name" | "schema">) => void;
-  onTableContextMenu: (event: React.MouseEvent, table: Pick<TableInfo, "name" | "schema" | "row_count">) => void;
+  onTableContextMenu: (
+    event: React.MouseEvent,
+    table: Pick<TableInfo, "name" | "schema" | "row_count" | "table_type">,
+  ) => void;
 } & RowSharedProps) {
   const { schemaName, language, t } = shared;
   const handleFilterChange = useItemFilterToggle(shared.onMixedStateToggle, schemaName, table.name);
 
   return (
     <div
-      className={`explorer-table-row ${isContextActive ? "context-active" : ""}`}
+      className={`explorer-table-row ${isContextActive ? "context-active" : ""} ${isSelected ? "selected" : ""}`}
       onContextMenu={(event) => onTableContextMenu(event, table)}
     >
       {/* Mixed-state checkbox */}
@@ -114,8 +179,11 @@ export const TableRow = memo(function TableRow({
       />
       <button
         data-testid={`table-${schemaName}-${table.name}`}
-        onClick={() => onTableClick(table)}
-        onDoubleClick={(e) => { e.stopPropagation(); onTableDoubleClick?.(table); }}
+        onClick={(e) => onTableClick(e, table)}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onTableDoubleClick?.(table);
+        }}
         className="explorer-table-main"
       >
         <div className="explorer-table-icon">
@@ -126,11 +194,15 @@ export const TableRow = memo(function TableRow({
           <span className="explorer-table-meta">
             {t("explorer.openDataRows")}
             {table.row_count != null
-              ? ` | ${table.row_count.toLocaleString()} ${formatCountLabel(language, table.row_count, {
-                  one: "row",
-                  other: "rows",
-                  vi: "dòng",
-                }).replace(/^\d+\s+/, "")}`
+              ? ` | ${table.row_count.toLocaleString()} ${formatCountLabel(
+                  language,
+                  table.row_count,
+                  {
+                    one: "row",
+                    other: "rows",
+                    vi: "dòng",
+                  },
+                ).replace(/^\d+\s+/, "")}`
               : ""}
           </span>
         </div>
@@ -158,7 +230,10 @@ export const ViewRow = memo(function ViewRow({
 }: {
   view: SectionView;
   itemState: CheckboxFilterState;
-  onTableClick: (table: Pick<TableInfo, "name" | "schema">) => void;
+  onTableClick: (
+    event: React.MouseEvent | undefined,
+    table: Pick<TableInfo, "name" | "schema"> & { table_type?: string },
+  ) => void;
   onTableDoubleClick?: (table: Pick<TableInfo, "name" | "schema">) => void;
   onStructureClick: (e: React.MouseEvent, table: Pick<TableInfo, "name" | "schema">) => void;
 } & RowSharedProps) {
@@ -173,8 +248,13 @@ export const ViewRow = memo(function ViewRow({
         title={`View filter: ${itemState}`}
       />
       <button
-        onClick={() => onTableClick({ name: view.name, schema: view.schema })}
-        onDoubleClick={(e) => { e.stopPropagation(); onTableDoubleClick?.({ name: view.name, schema: view.schema }); }}
+        onClick={(e) =>
+          onTableClick(e, { name: view.name, schema: view.schema, table_type: "VIEW" })
+        }
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onTableDoubleClick?.({ name: view.name, schema: view.schema });
+        }}
         className="explorer-table-main"
       >
         <div className="explorer-table-icon">
@@ -186,9 +266,7 @@ export const ViewRow = memo(function ViewRow({
         </div>
       </button>
       <button
-        onClick={(e) =>
-          onStructureClick(e, { name: view.name, schema: view.schema })
-        }
+        onClick={(e) => onStructureClick(e, { name: view.name, schema: view.schema })}
         className="explorer-structure-btn explorer-structure-btn--icon"
         title={t("explorer.viewStructure")}
         aria-label={t("explorer.viewStructure")}

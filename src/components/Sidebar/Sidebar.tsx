@@ -13,6 +13,7 @@ import {
   Check,
   Info,
   Eraser,
+  Download,
 } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useSidebar } from "./hooks/use-sidebar";
@@ -20,6 +21,9 @@ import { QueryBuilderPanel } from "../DataImport/QueryBuilderPanel";
 import { useQueryStore } from "../../stores/queryStore";
 import { DatabaseTree } from "./components/DatabaseTree";
 import { ContextMenu } from "./components/ContextMenu";
+import { GenerateTestRowsDialog } from "../GenerateTestRows/GenerateTestRowsDialog";
+import { getQualifiedTableName } from "./SidebarUtils";
+import { BulkDropTablesModal } from "./components/BulkDropTablesModal";
 import { CreateSchemaObjectModal } from "../CreateSchemaObjectModal/CreateSchemaObjectModal";
 import {
   FILTER_OPERATOR_LABELS,
@@ -69,7 +73,13 @@ const FILTER_PROPERTY_ROWS: { key: string; label: string; hint: string; placehol
   },
 ];
 
-function OperatorSelector({ value, onChange }: { value: FilterOperator; onChange: (op: FilterOperator) => void }) {
+function OperatorSelector({
+  value,
+  onChange,
+}: {
+  value: FilterOperator;
+  onChange: (op: FilterOperator) => void;
+}) {
   return (
     <select
       className="filter-operator-trigger filter-operator-select"
@@ -105,7 +115,16 @@ interface PresetMenuProps {
   triggerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete, onSaveNew, triggerRef }: PresetMenuProps) {
+function PresetMenu({
+  isOpen,
+  onClose,
+  presets,
+  activePresetId,
+  onLoad,
+  onDelete,
+  onSaveNew,
+  triggerRef,
+}: PresetMenuProps) {
   const anchorRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
@@ -119,9 +138,10 @@ function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete
     const width = 260;
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
     const panelHeight = 96 + Math.min(presets.length, 5) * 40;
-    const top = rect.bottom + panelHeight > window.innerHeight - 8
-      ? Math.max(8, rect.top - panelHeight - 6)
-      : rect.bottom + 6;
+    const top =
+      rect.bottom + panelHeight > window.innerHeight - 8
+        ? Math.max(8, rect.top - panelHeight - 6)
+        : rect.bottom + 6;
     setPosition({ top, left });
   }, [isOpen, presets.length, triggerRef]);
 
@@ -174,7 +194,10 @@ function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete
               <button
                 type="button"
                 className="filter-preset-save-btn"
-                onClick={() => { onSaveNew(); onClose(); }}
+                onClick={() => {
+                  onSaveNew();
+                  onClose();
+                }}
                 title="Save current filter as preset"
               >
                 <Save className="w-3.5 h-3.5" />
@@ -193,7 +216,10 @@ function PresetMenu({ isOpen, onClose, presets, activePresetId, onLoad, onDelete
                     <button
                       type="button"
                       className="filter-preset-item-load"
-                      onClick={() => { onLoad(preset.id); onClose(); }}
+                      onClick={() => {
+                        onLoad(preset.id);
+                        onClose();
+                      }}
                     >
                       <Bookmark className="w-3.5 h-3.5 shrink-0" />
                       <span>{preset.name}</span>
@@ -267,7 +293,9 @@ function SavePresetDialog({ isOpen, value, onChange, onSave, onCancel }: SavePre
           </label>
         </div>
         <div className="filter-save-dialog-footer">
-          <button type="button" className="filter-save-dialog-btn" onClick={onCancel}>Cancel</button>
+          <button type="button" className="filter-save-dialog-btn" onClick={onCancel}>
+            Cancel
+          </button>
           <button
             type="button"
             className="filter-save-dialog-btn is-primary"
@@ -297,7 +325,8 @@ interface FilterToolbarProps {
 }
 
 export function FilterSettingsModal({
-  conditions, setConditions,
+  conditions,
+  setConditions,
   onClear,
   onClose,
 }: FilterToolbarProps) {
@@ -314,9 +343,7 @@ export function FilterSettingsModal({
   const setConditionFor = (column: string, operator: FilterOperator, value: string) => {
     const existing = conditions.find((c) => (c.column ?? "") === column);
     if (existing) {
-      setConditions(
-        conditions.map((c) => (c.id === existing.id ? { ...c, operator, value } : c)),
-      );
+      setConditions(conditions.map((c) => (c.id === existing.id ? { ...c, operator, value } : c)));
     } else {
       setConditions([...conditions, { id: crypto.randomUUID(), column, operator, value }]);
     }
@@ -344,58 +371,66 @@ export function FilterSettingsModal({
         </div>
 
         <div className="filter-settings-body">
-      {/* Conditions grid (SSMS-style: Property | Operator | Value) */}
-      <div className="filter-section">
-        <div className="filter-conditions-grid">
-          <div className="filter-grid-row filter-grid-head">
-            <span>Property</span>
-            <span>Operator</span>
-            <span>Value</span>
-            <span aria-hidden="true" />
-          </div>
-          {FILTER_PROPERTY_ROWS.map((prop) => {
-            const cond = conditions.find((c) => (c.column ?? "") === prop.key);
-            return (
-              <div key={prop.key || "name"} className="filter-grid-row">
-                <span className="filter-grid-prop-label" title={prop.hint}>
-                  {prop.label}
-                  <Info className="filter-prop-info" />
-                </span>
-                <OperatorSelector
-                  value={cond?.operator ?? (prop.key === "create_date" ? "equals" : "contains")}
-                  onChange={(op) => setConditionFor(prop.key, op, cond?.value ?? "")}
-                />
-                {prop.key === "create_date" ? (
-                  <input
-                    type="date"
-                    className="filter-condition-value filter-grid-value filter-grid-date"
-                    value={cond?.value ?? ""}
-                    disabled={cond?.operator === "is_empty" || cond?.operator === "is_not_empty"}
-                    onChange={(e) => setConditionFor(prop.key, cond?.operator ?? "equals", e.target.value)}
-                  />
-                ) : (
-                <input
-                  type="text"
-                  className="filter-condition-value filter-grid-value"
-                  value={cond?.value ?? ""}
-                  disabled={cond?.operator === "is_empty" || cond?.operator === "is_not_empty"}
-                  onChange={(e) => setConditionFor(prop.key, cond?.operator ?? "contains", e.target.value)}
-                  placeholder={prop.placeholder}
-                />
-                )}
-                <button
-                  type="button"
-                  className="filter-condition-remove"
-                  onClick={() => removeConditionFor(prop.key)}
-                  title="Clear this condition"
-                >
-                  <Eraser className="w-3.5 h-3.5" />
-                </button>
+          {/* Conditions grid (SSMS-style: Property | Operator | Value) */}
+          <div className="filter-section">
+            <div className="filter-conditions-grid">
+              <div className="filter-grid-row filter-grid-head">
+                <span>Property</span>
+                <span>Operator</span>
+                <span>Value</span>
+                <span aria-hidden="true" />
               </div>
-            );
-          })}
-        </div>
-      </div>
+              {FILTER_PROPERTY_ROWS.map((prop) => {
+                const cond = conditions.find((c) => (c.column ?? "") === prop.key);
+                return (
+                  <div key={prop.key || "name"} className="filter-grid-row">
+                    <span className="filter-grid-prop-label" title={prop.hint}>
+                      {prop.label}
+                      <Info className="filter-prop-info" />
+                    </span>
+                    <OperatorSelector
+                      value={cond?.operator ?? (prop.key === "create_date" ? "equals" : "contains")}
+                      onChange={(op) => setConditionFor(prop.key, op, cond?.value ?? "")}
+                    />
+                    {prop.key === "create_date" ? (
+                      <input
+                        type="date"
+                        className="filter-condition-value filter-grid-value filter-grid-date"
+                        value={cond?.value ?? ""}
+                        disabled={
+                          cond?.operator === "is_empty" || cond?.operator === "is_not_empty"
+                        }
+                        onChange={(e) =>
+                          setConditionFor(prop.key, cond?.operator ?? "equals", e.target.value)
+                        }
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        className="filter-condition-value filter-grid-value"
+                        value={cond?.value ?? ""}
+                        disabled={
+                          cond?.operator === "is_empty" || cond?.operator === "is_not_empty"
+                        }
+                        onChange={(e) =>
+                          setConditionFor(prop.key, cond?.operator ?? "contains", e.target.value)
+                        }
+                        placeholder={prop.placeholder}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      className="filter-condition-remove"
+                      onClick={() => removeConditionFor(prop.key)}
+                      title="Clear this condition"
+                    >
+                      <Eraser className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
 
         <div className="filter-settings-footer">
@@ -494,6 +529,18 @@ export function Sidebar() {
     openQueryDraft,
     queryBuilderTable,
     setQueryBuilderTable,
+    selectedTableKeys,
+    selectedTables,
+    bulkCopy,
+    isBulkExporting,
+    bulkDrop,
+    clearTableSelection,
+    handleBulkExport,
+    openBulkDrop,
+    confirmBulkDrop,
+    seedRowsTarget,
+    setSeedRowsTarget,
+    closeBulkDrop,
   } = useSidebar();
   const capabilityProfile = useConnectionCapabilities(activeConnectionId);
   const canEditSchema = isCapabilitySupported(capabilityProfile?.capabilities.schemaEdit);
@@ -511,214 +558,289 @@ export function Sidebar() {
       );
     }
 
-    const hasActiveFilter = hasSearch || conditions.length > 0 || columnModeActive || mixedStateFilter.isActive;
+    const hasActiveFilter =
+      hasSearch || conditions.length > 0 || columnModeActive || mixedStateFilter.isActive;
 
     return (
       <div className="explorer-shell">
-      <div className="explorer-header">
-        <div className="explorer-header-bar">
-          <div className="explorer-header-identity">
-            <div className="explorer-header-line">
-              <span className="explorer-header-icon" aria-hidden="true">
-                <Database className="w-4 h-4" />
-              </span>
-              <h2 className="explorer-header-title">{t("explorer.title")}</h2>
+        <div className="explorer-header">
+          <div className="explorer-header-bar">
+            <div className="explorer-header-identity">
+              <div className="explorer-header-line">
+                <span className="explorer-header-icon" aria-hidden="true">
+                  <Database className="w-4 h-4" />
+                </span>
+                <h2 className="explorer-header-title">{t("explorer.title")}</h2>
+              </div>
             </div>
-          </div>
 
-          <div className="explorer-header-actions">
-            {supportsCreateWizard && canEditSchema && (
+            <div className="explorer-header-actions">
+              {supportsCreateWizard && canEditSchema && (
+                <button
+                  type="button"
+                  onClick={() => setShowCreateWizard(true)}
+                  className="explorer-header-btn explorer-header-btn--primary"
+                  title={t("explorer.createTitle")}
+                  aria-label={t("explorer.createTitle")}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              )}
+
               <button
                 type="button"
-                onClick={() => setShowCreateWizard(true)}
-                className="explorer-header-btn explorer-header-btn--primary"
-                title={t("explorer.createTitle")}
-                aria-label={t("explorer.createTitle")}
+                onClick={() => void handleRefresh()}
+                className="explorer-header-btn"
+                title={t("explorer.refreshTitle")}
+                aria-label={t("explorer.refreshTitle")}
               >
-                <Plus className="w-3.5 h-3.5" />
+                <RefreshCw className="w-3.5 h-3.5" />
               </button>
-            )}
 
-            <button
-              type="button"
-              onClick={() => void handleRefresh()}
-              className="explorer-header-btn"
-              title={t("explorer.refreshTitle")}
-              aria-label={t("explorer.refreshTitle")}
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void handleDisconnect()}
-              className="explorer-header-btn danger"
-              title={t("explorer.disconnectTitle")}
-              aria-label={t("explorer.disconnectTitle")}
-            >
-              <PlugZap className="w-3.5 h-3.5" />
-            </button>
+              <button
+                type="button"
+                onClick={() => void handleDisconnect()}
+                className="explorer-header-btn danger"
+                title={t("explorer.disconnectTitle")}
+                aria-label={t("explorer.disconnectTitle")}
+              >
+                <PlugZap className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Filter / Search bar */}
-      <div className="explorer-search-panel">
-        <div className="sidebar-search explorer-searchbar">
-          <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t("explorer.searchPlaceholder")}
-            className="sidebar-search-input"
-          />
-          {/* Filter button */}
-          <button
-            type="button"
-            className={`sidebar-filter-btn ${hasActiveFilter ? "active" : ""}`}
-            onClick={() => setFilterToolbarOpen(true)}
-            title="Advanced filter"
-          >
-            <Filter className="w-3.5 h-3.5" />
-          </button>
-          {/* Preset button */}
-          <div className="sidebar-preset-wrapper" ref={presetTriggerRef}>
-            <button
-              type="button"
-              className={`sidebar-preset-btn ${activePresetId ? "has-preset" : ""}`}
-              onClick={() => setFilterPresetMenuOpen((v) => !v)}
-              title="Filter presets"
-            >
-              <Bookmark className="w-3.5 h-3.5" />
-            </button>
-            <PresetMenu
-              isOpen={filterPresetMenuOpen}
-              triggerRef={presetTriggerRef}
-              onClose={() => setFilterPresetMenuOpen(false)}
-              presets={presets}
-              activePresetId={activePresetId}
-              onLoad={handleLoadPreset}
-              onDelete={handleDeletePreset}
-              onSaveNew={() => setSavePresetDialogOpen(true)}
+        {/* Filter / Search bar */}
+        <div className="explorer-search-panel">
+          <div className="sidebar-search explorer-searchbar">
+            <Search className="w-3.5 h-3.5 text-[var(--text-muted)] shrink-0" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t("explorer.searchPlaceholder")}
+              className="sidebar-search-input"
             />
-          </div>
-          {/* Clear filters */}
-          {hasActiveFilter && (
+            {/* Filter button */}
             <button
               type="button"
-              className="sidebar-clear-btn"
-              onClick={handleClearFilters}
-              title="Clear all filters"
+              className={`sidebar-filter-btn ${hasActiveFilter ? "active" : ""}`}
+              onClick={() => setFilterToolbarOpen(true)}
+              title="Advanced filter"
             >
-              <X className="w-3.5 h-3.5" />
+              <Filter className="w-3.5 h-3.5" />
             </button>
+            {/* Preset button */}
+            <div className="sidebar-preset-wrapper" ref={presetTriggerRef}>
+              <button
+                type="button"
+                className={`sidebar-preset-btn ${activePresetId ? "has-preset" : ""}`}
+                onClick={() => setFilterPresetMenuOpen((v) => !v)}
+                title="Filter presets"
+              >
+                <Bookmark className="w-3.5 h-3.5" />
+              </button>
+              <PresetMenu
+                isOpen={filterPresetMenuOpen}
+                triggerRef={presetTriggerRef}
+                onClose={() => setFilterPresetMenuOpen(false)}
+                presets={presets}
+                activePresetId={activePresetId}
+                onLoad={handleLoadPreset}
+                onDelete={handleDeletePreset}
+                onSaveNew={() => setSavePresetDialogOpen(true)}
+              />
+            </div>
+            {/* Clear filters */}
+            {hasActiveFilter && (
+              <button
+                type="button"
+                className="sidebar-clear-btn"
+                onClick={handleClearFilters}
+                title="Clear all filters"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Filter settings modal (SSMS-style; opened from the filter button) */}
+          {filterToolbarOpen && (
+            <FilterSettingsModal
+              conditions={conditions}
+              setConditions={setConditions}
+              onClear={handleClearFilters}
+              onClose={() => setFilterToolbarOpen(false)}
+            />
+          )}
+
+          {autocompleteItems.length > 0 && (
+            <div className="sidebar-search-autocomplete">
+              {autocompleteItems.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className="sidebar-search-autocomplete-item"
+                  onClick={() => {
+                    setSearch(item);
+                    searchInputRef.current?.focus();
+                  }}
+                >
+                  <Terminal className="w-3 h-3 shrink-0 opacity-50" />
+                  <span>{item}</span>
+                </button>
+              ))}
+            </div>
           )}
         </div>
 
-        {/* Filter settings modal (SSMS-style; opened from the filter button) */}
-        {filterToolbarOpen && (
-          <FilterSettingsModal
-            conditions={conditions}
-            setConditions={setConditions}
-            onClear={handleClearFilters}
-            onClose={() => setFilterToolbarOpen(false)}
+        {/* Save preset dialog */}
+        <SavePresetDialog
+          isOpen={savePresetDialogOpen}
+          value={presetNameInput}
+          onChange={setPresetNameInput}
+          onSave={handleSavePreset}
+          onCancel={() => {
+            setSavePresetDialogOpen(false);
+            setPresetNameInput("");
+          }}
+        />
+
+        {/* Multi-select action bar */}
+        {selectedTables.length > 0 && (
+          <div className="explorer-selection-bar">
+            <span className="explorer-selection-count">
+              {bulkCopy.selectedCount(selectedTables.length)}
+            </span>
+            <div className="explorer-selection-actions">
+              <button
+                type="button"
+                className="explorer-selection-btn"
+                disabled={isBulkExporting}
+                onClick={() => void handleBulkExport("csv")}
+                title={bulkCopy.exportCsv}
+              >
+                <Download className="w-3.5 h-3.5" />
+                CSV
+              </button>
+              <button
+                type="button"
+                className="explorer-selection-btn"
+                disabled={isBulkExporting}
+                onClick={() => void handleBulkExport("jsonl")}
+                title={bulkCopy.exportJsonl}
+              >
+                <Download className="w-3.5 h-3.5" />
+                JSONL
+              </button>
+              <button
+                type="button"
+                className="explorer-selection-btn danger"
+                disabled={isBulkExporting}
+                onClick={() => void openBulkDrop()}
+                title={bulkCopy.dropTables}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                className="explorer-selection-btn"
+                onClick={clearTableSelection}
+                title={bulkCopy.clearSelection}
+                aria-label={bulkCopy.clearSelection}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        <DatabaseTree
+          databases={databases}
+          currentDatabase={currentDatabase}
+          tables={tables}
+          schemaObjects={schemaObjects}
+          isLoadingTables={isLoadingTables}
+          expandedDbs={expandedDbs}
+          filteredSchemaSections={filteredSchemaSections}
+          activeSchemaFilter={activeSchemaFilter}
+          availableSchemaNames={availableSchemaNames}
+          schemaFilterOptions={schemaFilterOptions}
+          activeConnectionDbType={activeConnection?.db_type}
+          hasSearch={hasSearch}
+          visibleTableCount={visibleTableCount}
+          visibleObjectCount={visibleObjectCount}
+          language={language}
+          t={t}
+          onToggleDb={toggleDb}
+          onTableClick={handleTableClick}
+          onTableDoubleClick={handleTableDoubleClick}
+          onStructureClick={handleStructureClick}
+          onObjectSqlClick={handleObjectSqlClick}
+          onTableContextMenu={handleTableContextMenu}
+          onSchemaFilterChange={setActiveSchemaFilter}
+          onSchemaPickerToggle={() => setIsSchemaPickerOpen((prev) => !prev)}
+          onSchemaPickerClose={() => setIsSchemaPickerOpen(false)}
+          isSchemaPickerOpen={isSchemaPickerOpen}
+          schemaPickerRef={schemaPickerRef}
+          tableContextMenu={tableContextMenu}
+          mixedStateFilter={mixedStateFilter}
+          onMixedStateToggle={handleMixedStateToggle}
+          getMixedStateFilterForTable={getMixedStateFilterForTable}
+          selectedTableKeys={selectedTableKeys}
+        />
+
+        <ContextMenu
+          tableContextMenu={tableContextMenu}
+          tableContextMenuItems={tableContextMenuItems}
+          activeContextSubmenuKey={activeContextSubmenuKey}
+          onClose={closeTableContextMenu}
+          onSubmenuChange={setActiveContextSubmenuKey}
+        />
+
+        <BulkDropTablesModal
+          isOpen={bulkDrop !== null}
+          tables={bulkDrop?.tables ?? []}
+          isLoadingCounts={bulkDrop?.isLoadingCounts ?? false}
+          isDropping={bulkDrop?.isDropping ?? false}
+          copy={bulkCopy}
+          onConfirm={() => void confirmBulkDrop()}
+          onCancel={closeBulkDrop}
+        />
+
+        {seedRowsTarget && activeConnectionId && (
+          <GenerateTestRowsDialog
+            connectionId={activeConnectionId}
+            tableName={getQualifiedTableName(seedRowsTarget)}
+            database={currentDatabase || undefined}
+            dbType={activeConnection?.db_type}
+            onClose={() => setSeedRowsTarget(null)}
+            onStaged={() => handleTableClick(undefined, seedRowsTarget)}
           />
         )}
 
-        {autocompleteItems.length > 0 && (
-          <div className="sidebar-search-autocomplete">
-            {autocompleteItems.map((item) => (
-              <button
-                key={item}
-                type="button"
-                className="sidebar-search-autocomplete-item"
-                onClick={() => {
-                  setSearch(item);
-                  searchInputRef.current?.focus();
-                }}
-              >
-                <Terminal className="w-3 h-3 shrink-0 opacity-50" />
-                <span>{item}</span>
-              </button>
-            ))}
-          </div>
+        {showCreateWizard && activeConnection && canEditSchema && (
+          <CreateSchemaObjectModal
+            dbType={activeConnection.db_type}
+            database={currentDatabase || undefined}
+            tables={tables}
+            onClose={() => setShowCreateWizard(false)}
+            onCreateDraft={(title, sql) => {
+              if (!activeConnectionId) return;
+              addTab({
+                id: `query-${crypto.randomUUID()}`,
+                type: "query",
+                title,
+                connectionId: activeConnectionId,
+                database: currentDatabase || undefined,
+                content: sql,
+              });
+            }}
+          />
         )}
       </div>
-
-      {/* Save preset dialog */}
-      <SavePresetDialog
-        isOpen={savePresetDialogOpen}
-        value={presetNameInput}
-        onChange={setPresetNameInput}
-        onSave={handleSavePreset}
-        onCancel={() => { setSavePresetDialogOpen(false); setPresetNameInput(""); }}
-      />
-
-      <DatabaseTree
-        databases={databases}
-        currentDatabase={currentDatabase}
-        tables={tables}
-        schemaObjects={schemaObjects}
-        isLoadingTables={isLoadingTables}
-        expandedDbs={expandedDbs}
-        filteredSchemaSections={filteredSchemaSections}
-        activeSchemaFilter={activeSchemaFilter}
-        availableSchemaNames={availableSchemaNames}
-        schemaFilterOptions={schemaFilterOptions}
-        activeConnectionDbType={activeConnection?.db_type}
-        hasSearch={hasSearch}
-        visibleTableCount={visibleTableCount}
-        visibleObjectCount={visibleObjectCount}
-        language={language}
-        t={t}
-        onToggleDb={toggleDb}
-        onTableClick={handleTableClick}
-        onTableDoubleClick={handleTableDoubleClick}
-        onStructureClick={handleStructureClick}
-        onObjectSqlClick={handleObjectSqlClick}
-        onTableContextMenu={handleTableContextMenu}
-        onSchemaFilterChange={setActiveSchemaFilter}
-        onSchemaPickerToggle={() => setIsSchemaPickerOpen((prev) => !prev)}
-        onSchemaPickerClose={() => setIsSchemaPickerOpen(false)}
-        isSchemaPickerOpen={isSchemaPickerOpen}
-        schemaPickerRef={schemaPickerRef}
-        tableContextMenu={tableContextMenu}
-        mixedStateFilter={mixedStateFilter}
-        onMixedStateToggle={handleMixedStateToggle}
-        getMixedStateFilterForTable={getMixedStateFilterForTable}
-      />
-
-      <ContextMenu
-        tableContextMenu={tableContextMenu}
-        tableContextMenuItems={tableContextMenuItems}
-        activeContextSubmenuKey={activeContextSubmenuKey}
-        onClose={closeTableContextMenu}
-        onSubmenuChange={setActiveContextSubmenuKey}
-      />
-
-      {showCreateWizard && activeConnection && canEditSchema && (
-        <CreateSchemaObjectModal
-          dbType={activeConnection.db_type}
-          database={currentDatabase || undefined}
-          tables={tables}
-          onClose={() => setShowCreateWizard(false)}
-          onCreateDraft={(title, sql) => {
-            if (!activeConnectionId) return;
-            addTab({
-              id: `query-${crypto.randomUUID()}`,
-              type: "query",
-              title,
-              connectionId: activeConnectionId,
-              database: currentDatabase || undefined,
-              content: sql,
-            });
-          }}
-        />
-      )}
-    </div>
-  );
+    );
   };
 
   return (
@@ -729,7 +851,7 @@ export function Sidebar() {
           role="tab"
           aria-selected={activeSidebarTab === "database"}
           className={`sidebar-browser-tab ${activeSidebarTab === "database" ? "active" : ""}`}
-          onClick={() => setActiveSidebarTab('database')}
+          onClick={() => setActiveSidebarTab("database")}
         >
           <Database className="w-3.5 h-3.5" />
           Databases
@@ -739,14 +861,16 @@ export function Sidebar() {
           role="tab"
           aria-selected={activeSidebarTab === "linked"}
           className={`sidebar-browser-tab ${activeSidebarTab === "linked" ? "active" : ""}`}
-          onClick={() => setActiveSidebarTab('linked')}
+          onClick={() => setActiveSidebarTab("linked")}
         >
           <FolderSearch className="w-3.5 h-3.5" />
           Folders
         </button>
       </div>
       <div className="sidebar-browser-content">
-        {activeSidebarTab === "database" ? renderDatabaseExplorer() : (
+        {activeSidebarTab === "database" ? (
+          renderDatabaseExplorer()
+        ) : (
           <LinkedFoldersPanel
             activeConnectionId={activeConnectionId}
             currentDatabase={currentDatabase}
@@ -760,7 +884,9 @@ export function Sidebar() {
             tables={tables}
             dbType={activeConnection?.db_type}
             loadColumns={(tableName) =>
-              useQueryStore.getState().getTableColumnsPreview(activeConnectionId, tableName, currentDatabase || undefined)
+              useQueryStore
+                .getState()
+                .getTableColumnsPreview(activeConnectionId, tableName, currentDatabase || undefined)
             }
             onOpenInQueryTab={(sql) => openQueryDraft(`${queryBuilderTable} builder`, sql)}
             onClose={() => setQueryBuilderTable(null)}

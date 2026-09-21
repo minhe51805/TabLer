@@ -25,7 +25,9 @@ export interface ExplorerContextMenuItem {
 }
 
 export interface ContextMenuState {
-  table: Pick<TableInfo, "name" | "schema" | "row_count">;
+  table: Pick<TableInfo, "name" | "schema" | "row_count" | "table_type">;
+  /** Present when the menu targets a multi-selection of tables. */
+  tables?: Pick<TableInfo, "name" | "schema" | "row_count" | "table_type">[];
   x: number;
   y: number;
 }
@@ -51,14 +53,16 @@ export function ContextMenu({
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const submenuRef = useRef<HTMLDivElement>(null);
-  const [activeContextSubmenu, setActiveContextSubmenu] = useState<ExplorerContextMenuItem[] | null>(null);
+  const [activeContextSubmenu, setActiveContextSubmenu] = useState<
+    ExplorerContextMenuItem[] | null
+  >(null);
   /** Vertical offset of the hovered submenu trigger inside the menu, so the
    *  flyout lines up with the item ("Import ▸") instead of the menu top. */
   const [submenuOffsetTop, setSubmenuOffsetTop] = useState(28);
 
   useEffect(() => {
     const found = tableContextMenuItems.find(
-      (item) => item.key === activeContextSubmenuKey && item.children
+      (item) => item.key === activeContextSubmenuKey && item.children,
     );
     setActiveContextSubmenu(found?.children ?? null);
   }, [activeContextSubmenuKey, tableContextMenuItems]);
@@ -80,11 +84,15 @@ export function ContextMenu({
 
   const menuLeft = Math.min(
     tableContextMenu.x,
-    window.innerWidth - EXPLORER_CONTEXT_MENU_WIDTH - EXPLORER_CONTEXT_SUBMENU_WIDTH - 24
+    window.innerWidth - EXPLORER_CONTEXT_MENU_WIDTH - EXPLORER_CONTEXT_SUBMENU_WIDTH - 24,
   );
-  const menuTop = Math.min(tableContextMenu.y, window.innerHeight - EXPLORER_CONTEXT_MENU_MAX_HEIGHT);
+  const menuTop = Math.min(
+    tableContextMenu.y,
+    window.innerHeight - EXPLORER_CONTEXT_MENU_MAX_HEIGHT,
+  );
   const submenuLeft =
-    menuLeft + EXPLORER_CONTEXT_MENU_WIDTH + 8 + EXPLORER_CONTEXT_SUBMENU_WIDTH <= window.innerWidth - 12
+    menuLeft + EXPLORER_CONTEXT_MENU_WIDTH + 8 + EXPLORER_CONTEXT_SUBMENU_WIDTH <=
+    window.innerWidth - 12
       ? menuLeft + EXPLORER_CONTEXT_MENU_WIDTH + 8
       : menuLeft - EXPLORER_CONTEXT_SUBMENU_WIDTH - 8;
 
@@ -127,7 +135,7 @@ export function ContextMenu({
               <span>{item.label}</span>
               {item.children ? <ChevronRight className="w-3.5 h-3.5" /> : null}
             </button>
-          )
+          ),
         )}
       </div>
 
@@ -166,6 +174,6 @@ export function ContextMenu({
         </div>
       )}
     </>,
-    document.body
+    document.body,
   );
 }

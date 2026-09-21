@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDirectoryDialog } from "@tauri-apps/plugin-dialog";
 
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useUIStore } from "../../../stores/uiStore";
 import { useI18n } from "../../../i18n";
 import { useEvent, EventCenter } from "../../../stores/event-center";
 import { getQualifiedTableName, normalizeObjectSql, copyToClipboard } from "../SidebarUtils";
+import { getBulkActionsCopy } from "../bulk-actions-copy";
+import type { BulkDropTablePreview } from "../components/BulkDropTablesModal";
+import { getSeedRowsCopy } from "../../GenerateTestRows/seed-rows-copy";
 import {
   applyConditionsWith,
   applyCondition,
@@ -143,10 +147,24 @@ export function useSidebar() {
   const [isSchemaPickerOpen, setIsSchemaPickerOpen] = useState(false);
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [tableContextMenu, setTableContextMenu] = useState<{
-    table: Pick<TableInfo, "name" | "schema" | "row_count">;
+    table: Pick<TableInfo, "name" | "schema" | "row_count" | "table_type">;
+    /** Present when the context menu targets a multi-selection. */
+    tables?: Pick<TableInfo, "name" | "schema" | "row_count" | "table_type">[];
     x: number;
     y: number;
   } | null>(null);
+  // --- Multi-select state (Ctrl/Shift-click on table rows) ---
+  const [selectedTableKeys, setSelectedTableKeys] = useState<Set<string>>(new Set());
+  const selectionAnchorRef = useRef<string | null>(null);
+  const [isBulkExporting, setIsBulkExporting] = useState(false);
+  const [bulkDrop, setBulkDrop] = useState<{
+    tables: (BulkDropTablePreview & { table: Pick<TableInfo, "name" | "schema"> })[];
+    isLoadingCounts: boolean;
+    isDropping: boolean;
+  } | null>(null);
+  const [seedRowsTarget, setSeedRowsTarget] = useState<Pick<TableInfo, "name" | "schema"> | null>(
+    null,
+  );
   const [activeContextSubmenuKey, setActiveContextSubmenuKey] = useState<string | null>(null);
 
   // --- Filter presets state ---
@@ -249,23 +267,6 @@ export function useSidebar() {
     [activeConnectionId, expandedDbs, switchDatabase],
   );
 
-  const handleTableClick = useCallback(
-    (table: Pick<TableInfo, "name" | "schema">) => {
-      if (!activeConnectionId) return;
-      const qualifiedName = table.schema ? `${table.schema}.${table.name}` : table.name;
-      addTab({
-        id: `table-${activeConnectionId}-${currentDatabase}-${qualifiedName}`,
-        type: "table",
-        title: table.name,
-        connectionId: activeConnectionId,
-        tableName: qualifiedName,
-        database: currentDatabase || undefined,
-        isPreview: true,
-      });
-    },
-    [activeConnectionId, currentDatabase, addTab],
-  );
-
   const handleTableDoubleClick = useCallback(
     (table: Pick<TableInfo, "name" | "schema">) => {
       if (!activeConnectionId) return;
@@ -339,6 +340,11 @@ export function useSidebar() {
       });
     },
     [activeConnectionId, currentDatabase, addTab],
+  );
+
+  const handleGenerateTestRows = useCallback(
+    (table: Pick<TableInfo, "name" | "schema">) => setSeedRowsTarget(table),
+    [],
   );
 
   const handleOpenStructureDraft = useCallback(
@@ -527,16 +533,6 @@ export function useSidebar() {
     [activeConnectionId, currentDatabase, handleRefresh, t],
   );
 
-  const handleTableContextMenu = useCallback(
-    (event: React.MouseEvent, table: Pick<TableInfo, "name" | "schema" | "row_count">) => {
-      event.preventDefault();
-      event.stopPropagation();
-      setTableContextMenu({ table, x: event.clientX, y: event.clientY });
-      setActiveContextSubmenuKey(null);
-    },
-    [],
-  );
-
   // --- Filtering ---
   const filteredTables = useMemo(() => {
     if (!search.trim() && conditions.length === 0 && !columnModeActive) {
@@ -644,6 +640,211 @@ export function useSidebar() {
     if (activeSchemaFilter === "all") return schemaSections;
     return schemaSections.filter((section) => section.schemaName === activeSchemaFilter);
   }, [activeSchemaFilter, schemaSections]);
+
+  // --- Multi-select ---
+  // Visible table order (section order, then in-section order) drives
+  // Shift-click range selection.
+  const orderedVisibleTables = useMemo(
+    () => filteredSchemaSections.flatMap((section) => section.tables),
+    [filteredSchemaSections],
+  );
+  const selectedTables = useMemo(
+    () =>
+      orderedVisibleTables.filter((table) => selectedTableKeys.has(getQualifiedTableName(table))),
+    [orderedVisibleTables, selectedTableKeys],
+  );
+  const bulkCopy = useMemo(() => getBulkActionsCopy(language), [language]);
+
+  const clearTableSelection = useCallback(() => {
+    setSelectedTableKeys(new Set());
+    selectionAnchorRef.current = null;
+  }, []);
+
+  const handleTableClick = useCallback(
+    (
+      event: React.MouseEvent | undefined,
+      table: Pick<TableInfo, "name" | "schema"> & { table_type?: string },
+    ) => {
+      const isSelectableTable = table.table_type !== "VIEW";
+      const key = getQualifiedTableName(table);
+
+      // Ctrl/Cmd-click toggles membership without opening a preview tab.
+      if (isSelectableTable && (event?.ctrlKey || event?.metaKey)) {
+        setSelectedTableKeys((prev) => {
+          const next = new Set(prev);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        });
+        selectionAnchorRef.current = key;
+        return;
+      }
+
+      // Shift-click selects the visible range from the anchor to this row.
+      if (isSelectableTable && event?.shiftKey && selectionAnchorRef.current) {
+        const orderedKeys = orderedVisibleTables.map((t) => getQualifiedTableName(t));
+        const anchorIndex = orderedKeys.indexOf(selectionAnchorRef.current);
+        const targetIndex = orderedKeys.indexOf(key);
+        if (anchorIndex !== -1 && targetIndex !== -1) {
+          const [from, to] =
+            anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
+          setSelectedTableKeys(new Set(orderedKeys.slice(from, to + 1)));
+          return;
+        }
+      }
+
+      // Plain click: open the preview tab and collapse any multi-selection.
+      if (selectedTableKeys.size > 0) setSelectedTableKeys(new Set());
+      selectionAnchorRef.current = key;
+      if (!activeConnectionId) return;
+      const qualifiedName = table.schema ? `${table.schema}.${table.name}` : table.name;
+      addTab({
+        id: `table-${activeConnectionId}-${currentDatabase}-${qualifiedName}`,
+        type: "table",
+        title: table.name,
+        connectionId: activeConnectionId,
+        database: currentDatabase ?? undefined,
+        isPreview: true,
+      });
+    },
+    [activeConnectionId, currentDatabase, addTab, orderedVisibleTables, selectedTableKeys.size],
+  );
+
+  const handleBulkExport = useCallback(
+    async (format: "csv" | "jsonl") => {
+      if (!activeConnectionId || selectedTables.length === 0 || isBulkExporting) return;
+      const directory = await openDirectoryDialog({ directory: true, multiple: false });
+      if (typeof directory !== "string" || !directory) return;
+      setIsBulkExporting(true);
+      try {
+        const result = await invoke<{
+          exported: { filePath: string; rowCount: number }[];
+          failed: { table: string; error: string }[];
+          cancelled: boolean;
+        }>("export_tables_to_directory", {
+          connectionId: activeConnectionId,
+          operationId: `bulk-export-${crypto.randomUUID()}`,
+          request: {
+            tables: selectedTables.map((table) => getQualifiedTableName(table)),
+            database: currentDatabase || null,
+            format,
+            directory,
+          },
+        });
+        if (result.cancelled) {
+          emitAppToast({ tone: "info", title: bulkCopy.exportCancelled });
+        } else if (result.failed.length > 0) {
+          emitAppToast({
+            tone: "error",
+            title: bulkCopy.exportDone(result.exported.length, result.failed.length),
+            description: result.failed
+              .map((failure) => `${failure.table}: ${failure.error}`)
+              .join("\n"),
+          });
+        } else {
+          emitAppToast({
+            tone: "success",
+            title: bulkCopy.exportDone(result.exported.length, 0),
+            description: directory,
+          });
+        }
+      } catch (error) {
+        emitAppToast({
+          tone: "error",
+          title: bulkCopy.exportFailed,
+          description: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setIsBulkExporting(false);
+      }
+    },
+    [activeConnectionId, selectedTables, isBulkExporting, currentDatabase, bulkCopy],
+  );
+
+  const openBulkDrop = useCallback(async () => {
+    if (!activeConnectionId || selectedTables.length === 0 || bulkDrop) return;
+    const targets = selectedTables.map((table) => ({
+      qualifiedName: getQualifiedTableName(table),
+      rowCount: null as number | null | undefined,
+      table,
+    }));
+    setBulkDrop({ tables: targets, isLoadingCounts: true, isDropping: false });
+    // Read-only COUNT(*) previews; failures surface as "unknown" rows.
+    const counts = await Promise.all(
+      targets.map(async (target) => {
+        try {
+          return await useQueryStore
+            .getState()
+            .countRows(activeConnectionId, target.qualifiedName, currentDatabase || undefined);
+        } catch {
+          return undefined;
+        }
+      }),
+    );
+    setBulkDrop((prev) =>
+      prev
+        ? {
+            ...prev,
+            isLoadingCounts: false,
+            tables: prev.tables.map((entry, index) => ({
+              ...entry,
+              rowCount: counts[index],
+            })),
+          }
+        : prev,
+    );
+  }, [activeConnectionId, selectedTables, bulkDrop, currentDatabase]);
+
+  const confirmBulkDrop = useCallback(async () => {
+    if (!activeConnectionId || !bulkDrop || bulkDrop.isDropping) return;
+    setBulkDrop((prev) => (prev ? { ...prev, isDropping: true } : prev));
+    try {
+      // DROP goes through execute_structure_statements, which asserts Safe
+      // Mode on the backend before touching the driver.
+      const statements = bulkDrop.tables.map((entry) =>
+        buildDropScript(entry.table, dbType).replace(/;+\s*$/, ""),
+      );
+      await useQueryStore.getState().executeStructureStatements(activeConnectionId, statements);
+      emitAppToast({ tone: "success", title: bulkCopy.dropDone(bulkDrop.tables.length) });
+      setBulkDrop(null);
+      clearTableSelection();
+      await handleRefresh();
+    } catch (error) {
+      emitAppToast({
+        tone: "error",
+        title: bulkCopy.dropFailed,
+        description: error instanceof Error ? error.message : String(error),
+      });
+      setBulkDrop((prev) => (prev ? { ...prev, isDropping: false } : prev));
+    }
+  }, [activeConnectionId, bulkDrop, bulkCopy, clearTableSelection, dbType, handleRefresh]);
+
+  const closeBulkDrop = useCallback(() => {
+    setBulkDrop((prev) => (prev?.isDropping ? prev : null));
+  }, []);
+  const handleTableContextMenu = useCallback(
+    (
+      event: React.MouseEvent,
+      table: Pick<TableInfo, "name" | "schema" | "row_count" | "table_type">,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const key = getQualifiedTableName(table);
+      // Right-clicking inside a multi-selection targets the whole selection;
+      // right-clicking outside it collapses the selection (Explorer parity).
+      const targets =
+        selectedTableKeys.size > 1 && selectedTableKeys.has(key)
+          ? orderedVisibleTables.filter((t) => selectedTableKeys.has(getQualifiedTableName(t)))
+          : undefined;
+      if (!targets && selectedTableKeys.size > 0) {
+        setSelectedTableKeys(new Set());
+        selectionAnchorRef.current = key;
+      }
+      setTableContextMenu({ table, tables: targets, x: event.clientX, y: event.clientY });
+      setActiveContextSubmenuKey(null);
+    },
+    [orderedVisibleTables, selectedTableKeys],
+  );
 
   const schemaFilterOptions = useMemo(
     () => [
@@ -761,6 +962,36 @@ export function useSidebar() {
   const tableContextMenuItems = useMemo<ExplorerContextMenuItem[]>(() => {
     if (!tableContextMenu) return [];
 
+    // Multi-selection menu: bulk actions only (export + guarded drop).
+    if (tableContextMenu.tables && tableContextMenu.tables.length > 1) {
+      const count = tableContextMenu.tables.length;
+      return [
+        {
+          key: "bulk-export",
+          label: `${bulkCopy.exportTables} (${count})`,
+          children: [
+            {
+              key: "bulk-export-csv",
+              label: bulkCopy.exportCsv,
+              action: () => void handleBulkExport("csv"),
+            },
+            {
+              key: "bulk-export-jsonl",
+              label: bulkCopy.exportJsonl,
+              action: () => void handleBulkExport("jsonl"),
+            },
+          ],
+        },
+        { key: "bulk-divider", divider: true },
+        {
+          key: "bulk-drop",
+          label: `${bulkCopy.dropTables} (${count})`,
+          action: () => void openBulkDrop(),
+          danger: true,
+        },
+      ];
+    }
+
     const table = tableContextMenu.table;
     const qualifiedName = getQualifiedTableName(table);
     const isPinned = pinnedTableSet.has(qualifiedName);
@@ -838,6 +1069,11 @@ export function useSidebar() {
               ),
           },
         ],
+      },
+      {
+        key: "generate-test-rows",
+        label: getSeedRowsCopy(language).menuItem,
+        action: () => handleGenerateTestRows(table),
       },
       {
         key: "new",
@@ -997,9 +1233,21 @@ export function useSidebar() {
     handleCopyTableName,
     handleGenerateTableDocs,
     handleOpenQueryBuilder,
+    handleGenerateTestRows,
+    language,
     togglePinnedTable,
     runMaintenanceCommand,
+    bulkCopy,
+    handleBulkExport,
+    openBulkDrop,
   ]);
+
+  // Selection is scoped to the current connection + database workspace.
+  useEffect(() => {
+    setSelectedTableKeys(new Set());
+    selectionAnchorRef.current = null;
+    setBulkDrop(null);
+  }, [currentDatabase, activeConnectionId]);
 
   // --- Effects ---
   useEffect(() => {
@@ -1155,6 +1403,11 @@ export function useSidebar() {
     schemaFilterOptions,
     summaryLabel,
     hasSearch,
+    selectedTableKeys,
+    selectedTables,
+    bulkCopy,
+    isBulkExporting,
+    bulkDrop,
     visibleTableCount,
     visibleObjectCount,
     language,
@@ -1173,7 +1426,15 @@ export function useSidebar() {
     handleDisconnect,
     closeTableContextMenu,
     openQueryDraft,
+    seedRowsTarget,
+    setSeedRowsTarget,
+    handleGenerateTestRows,
     addTab,
     tableContextMenuItems,
+    clearTableSelection,
+    handleBulkExport,
+    openBulkDrop,
+    confirmBulkDrop,
+    closeBulkDrop,
   };
 }

@@ -74,6 +74,153 @@ pub struct TableDataExportResult {
     row_count: u64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkTableExportRequest {
+    /// Qualified or bare table names to export, in selection order.
+    tables: Vec<String>,
+    database: Option<String>,
+    format: String,
+    /// Directory the frontend picked once for the whole batch.
+    directory: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkTableExportFailure {
+    table: String,
+    error: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkTableExportResult {
+    /// One entry per successfully written file.
+    exported: Vec<TableDataExportResult>,
+    /// Tables that failed; the batch continues past individual failures.
+    failed: Vec<BulkTableExportFailure>,
+    cancelled: bool,
+}
+
+/// Bulk export: streams every selected table into one chosen directory using
+/// the same batching/serialization path as `export_table_data`, but skips the
+/// per-file save dialog. Existing files are never overwritten — a `-N` suffix
+/// is appended instead, matching the single-export "pick a new name" rule.
+#[tauri::command]
+pub async fn export_tables_to_directory(
+    connection_id: String,
+    request: BulkTableExportRequest,
+    operation_id: String,
+    app: AppHandle,
+    db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, TableExportCancellationState>,
+) -> Result<BulkTableExportResult, String> {
+    db_manager
+        .require_capability(&connection_id, DriverCapability::DataExport)
+        .await
+        .map_err(|e| e.to_string())?;
+    let driver = db_manager
+        .get_driver(&connection_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let (format, extension) = match request.format.as_str() {
+        "csv" => ("csv", "csv"),
+        "jsonl" => ("jsonl", "jsonl"),
+        _ => return Err("Table export format must be 'csv' or 'jsonl'.".to_string()),
+    };
+    if request.tables.is_empty() {
+        return Err("Select at least one table to export.".to_string());
+    }
+    let directory = PathBuf::from(request.directory.trim());
+    if !directory.is_dir() {
+        return Err("Choose an existing directory for the bulk export.".to_string());
+    }
+
+    let cancelled = cancellation_state.start(&operation_id)?;
+    let mut exported = Vec::new();
+    let mut failed = Vec::new();
+    let mut was_cancelled = false;
+
+    for table in &request.tables {
+        if cancelled.load(Ordering::Relaxed) {
+            was_cancelled = true;
+            break;
+        }
+        let target_path = unique_export_path(&directory, table, extension);
+        let temporary_path = temporary_export_path(&target_path);
+        let table_request = TableDataExportRequest {
+            table: table.clone(),
+            database: request.database.clone(),
+            format: format.to_string(),
+            order_by: None,
+            order_dir: None,
+            filter: None,
+        };
+        let result = stream_table_export(
+            &*driver,
+            &table_request,
+            format,
+            &temporary_path,
+            &operation_id,
+            &app,
+            cancelled.clone(),
+        )
+        .await;
+        match result {
+            Ok(row_count) => match tokio::fs::rename(&temporary_path, &target_path).await {
+                Ok(()) => exported.push(TableDataExportResult {
+                    file_path: target_path.to_string_lossy().to_string(),
+                    format: format.to_string(),
+                    row_count,
+                }),
+                Err(e) => {
+                    let _ = tokio::fs::remove_file(&temporary_path).await;
+                    failed.push(BulkTableExportFailure {
+                        table: table.clone(),
+                        error: format!("Failed to publish completed export: {e}"),
+                    });
+                }
+            },
+            Err(error) => {
+                let _ = tokio::fs::remove_file(&temporary_path).await;
+                if cancelled.load(Ordering::Relaxed) {
+                    was_cancelled = true;
+                    break;
+                }
+                failed.push(BulkTableExportFailure {
+                    table: table.clone(),
+                    error,
+                });
+            }
+        }
+    }
+
+    cancellation_state.finish(&operation_id);
+    Ok(BulkTableExportResult {
+        exported,
+        failed,
+        cancelled: was_cancelled,
+    })
+}
+
+/// Pick a non-clobbering filename inside `directory` for one exported table.
+fn unique_export_path(directory: &Path, table: &str, extension: &str) -> PathBuf {
+    let base = safe_filename(table);
+    for attempt in 0_u32..1000 {
+        let file_name = if attempt == 0 {
+            format!("{base}.{extension}")
+        } else {
+            format!("{base}-{attempt}.{extension}")
+        };
+        let candidate = directory.join(file_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // Practically unreachable; fall back to a uuid-suffixed name.
+    directory.join(format!("{base}-{}.{}", Uuid::new_v4(), extension))
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TableExportProgress {

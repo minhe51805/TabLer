@@ -12,16 +12,52 @@ import type { AIRequestAttachment } from "../types/ai";
 import type { AIWorkspaceAttachment } from "../components/AISlidePanel/ai-workspace-types";
 
 export const MAX_IMAGE_DIMENSION = 1568;
-export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_TEXT_FILE_CHARS = 200_000;
+/** At most this many images ride a single composer message. */
+export const MAX_IMAGES_PER_TURN = 4;
 const MAX_FILES_PER_TURN = 8;
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
 const TEXT_EXTENSIONS = new Set([
-  "txt", "md", "markdown", "csv", "tsv", "json", "jsonl", "yaml", "yml", "toml",
-  "sql", "log", "xml", "html", "css", "js", "jsx", "ts", "tsx", "py", "rb",
-  "go", "rs", "java", "kt", "c", "h", "cpp", "hpp", "cs", "php", "sh", "env",
-  "ini", "cfg", "conf", "diff", "patch",
+  "txt",
+  "md",
+  "markdown",
+  "csv",
+  "tsv",
+  "json",
+  "jsonl",
+  "yaml",
+  "yml",
+  "toml",
+  "sql",
+  "log",
+  "xml",
+  "html",
+  "css",
+  "js",
+  "jsx",
+  "ts",
+  "tsx",
+  "py",
+  "rb",
+  "go",
+  "rs",
+  "java",
+  "kt",
+  "c",
+  "h",
+  "cpp",
+  "hpp",
+  "cs",
+  "php",
+  "sh",
+  "env",
+  "ini",
+  "cfg",
+  "conf",
+  "diff",
+  "patch",
 ]);
 
 export interface AIAttachmentDraft extends AIWorkspaceAttachment {
@@ -101,8 +137,8 @@ async function compressImageFile(
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
   // Only preserve PNG when transparency matters; JPEG keeps payloads compact.
-  const hasAlpha = originalDataUrl.startsWith("data:image/png")
-    || originalDataUrl.startsWith("data:image/webp");
+  const hasAlpha =
+    originalDataUrl.startsWith("data:image/png") || originalDataUrl.startsWith("data:image/webp");
   const mimeType = hasAlpha ? "image/png" : "image/jpeg";
   const quality = hasAlpha ? undefined : 0.85;
   const dataUrl = canvas.toDataURL(mimeType, quality);
@@ -116,11 +152,16 @@ export async function processFilesIntoAttachmentDrafts(
 ): Promise<AIAttachmentDraft[]> {
   const drafts: AIAttachmentDraft[] = [];
   const now = Date.now();
+  let imageCount = 0;
   for (const file of files.slice(0, MAX_FILES_PER_TURN)) {
     const name = file.name || "clipboard-image";
     try {
       if (file.type.startsWith("image/") || isImageFileName(name)) {
+        // Cap images per batch; the composer enforces the same cap across
+        // already-attached drafts.
+        if (imageCount >= MAX_IMAGES_PER_TURN) continue;
         const compressed = await compressImageFile(file);
+        imageCount += 1;
         drafts.push({
           id: createAttachmentId(),
           kind: "image",

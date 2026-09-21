@@ -114,6 +114,7 @@ import {
   type SelectionContextState,
 } from "./ai-panel-selection";
 import {
+  MAX_IMAGES_PER_TURN,
   processFilesIntoAttachmentDrafts,
   type AIAttachmentDraft,
 } from "../../utils/ai-attachments";
@@ -1296,40 +1297,59 @@ export function AISlidePanel({
     ],
   );
 
-  // Image attachments require the active model to advertise image input
-  // (per-model `input_types` in the settings modal); text files always work.
+  // The active model advertises image input via per-model `input_types` in the
+  // settings modal. When it does not, images are still attached but the user
+  // gets a one-time warning that the model may not support them.
   const canAttachImages = Boolean(
     activeProvider?.model &&
     activeProvider?.model_settings?.[activeProvider.model]?.input_types?.includes("image"),
   );
+  const imageWarningModelRef = useRef<string | null>(null);
 
   const handleAddComposerAttachmentFiles = useCallback(
     async (files: File[]) => {
       const drafts = await processFilesIntoAttachmentDrafts(files);
-      // Gate images on the active model's advertised input types; text files
-      // always ride the prompt so they are never blocked.
-      const accepted = canAttachImages ? drafts : drafts.filter((draft) => draft.kind !== "image");
-      if (accepted.length === 0) {
-        if (drafts.length > 0) setError(aiCopy.attachments.imageUnsupported);
-        return;
-      }
-      if (accepted.length < drafts.length) setError(aiCopy.attachments.imageUnsupported);
+      if (drafts.length === 0) return;
+      const incomingImages = drafts.filter((draft) => draft.kind === "image").length;
+      const existingImages = composerAttachments.filter((draft) => draft.kind === "image").length;
+      const imageOverflow = incomingImages + existingImages > MAX_IMAGES_PER_TURN;
       setComposerAttachments((current) => {
         const existing = new Set(
           current.map((draft) => `${draft.kind}:${draft.name}:${draft.size}`),
         );
         const merged = [...current];
-        accepted.forEach((draft) => {
+        let imageCount = current.filter((draft) => draft.kind === "image").length;
+        drafts.forEach((draft) => {
+          if (draft.kind === "image" && imageCount >= MAX_IMAGES_PER_TURN) return;
           const key = `${draft.kind}:${draft.name}:${draft.size}`;
           if (!existing.has(key)) {
             existing.add(key);
+            if (draft.kind === "image") imageCount += 1;
             merged.push(draft);
           }
         });
         return merged;
       });
+      if (imageOverflow) {
+        setError(aiCopy.attachments.imageLimit);
+      } else if (
+        !canAttachImages &&
+        incomingImages > 0 &&
+        imageWarningModelRef.current !== (activeProvider?.model ?? "")
+      ) {
+        // Warn once per active model: the request still carries the images.
+        imageWarningModelRef.current = activeProvider?.model ?? "";
+        setError(aiCopy.attachments.imageMaybeUnsupported);
+      }
     },
-    [aiCopy.attachments.imageUnsupported, canAttachImages, setError],
+    [
+      activeProvider?.model,
+      aiCopy.attachments.imageLimit,
+      aiCopy.attachments.imageMaybeUnsupported,
+      canAttachImages,
+      composerAttachments,
+      setError,
+    ],
   );
 
   const handleRemoveComposerAttachment = useCallback((id: string) => {
@@ -2617,7 +2637,6 @@ export function AISlidePanel({
         deleteThreadPending,
         historyPanelRef,
         isAttachmentManagerOpen,
-        canAttachImages,
         composerAttachments,
         isCancelling,
         isGenerating,

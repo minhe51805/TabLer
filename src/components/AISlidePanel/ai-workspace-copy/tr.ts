@@ -239,7 +239,8 @@ export const TR_COPY: AIWorkspaceCopy = {
   },
   attachments: {
     attachButton: "Dosya veya resim ekle",
-    imageUnsupported: "Etkin model resimleri okuyamıyor. Yalnızca metin dosyaları eklendi.",
+    imageMaybeUnsupported: "Etkin model resimleri desteklemiyor olabilir.",
+    imageLimit: "Mesaj başına en fazla 4 resim eklenebilir.",
     removeAttachment: "Eki kaldır",
     managerOpen: "Ekleri yönet",
     managerTitle: "Ekler",

@@ -241,7 +241,8 @@ export const EN_COPY: AIWorkspaceCopy = {
   },
   attachments: {
     attachButton: "Attach files or images",
-    imageUnsupported: "The active model cannot read images. Only text files were attached.",
+    imageMaybeUnsupported: "The active model may not support images.",
+    imageLimit: "Up to 4 images can be attached per message.",
     removeAttachment: "Remove attachment",
     managerOpen: "Manage attachments",
     managerTitle: "Attachments",

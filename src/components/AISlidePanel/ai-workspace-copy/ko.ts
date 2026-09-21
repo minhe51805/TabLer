@@ -235,7 +235,8 @@ export const KO_COPY: AIWorkspaceCopy = {
   },
   attachments: {
     attachButton: "파일 또는 이미지 첨부",
-    imageUnsupported: "현재 모델은 이미지를 읽을 수 없습니다. 텍스트 파일만 첨부되었습니다.",
+    imageMaybeUnsupported: "현재 모델이 이미지를 지원하지 않을 수 있습니다.",
+    imageLimit: "메시지당 이미지는 최대 4개까지 첨부할 수 있습니다.",
     removeAttachment: "첨부 제거",
     managerOpen: "첨부 파일 관리",
     managerTitle: "첨부 파일",

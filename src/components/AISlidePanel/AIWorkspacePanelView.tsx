@@ -220,7 +220,6 @@ export interface AIWorkspacePanelViewModel {
   isCancelling: boolean;
   isGenerating: boolean;
   isAttachmentManagerOpen: boolean;
-  canAttachImages: boolean;
   composerAttachments: AIAttachmentDraft[];
   isHistoryOpen: boolean;
   isLongformComposer: boolean;
@@ -609,7 +608,6 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                 attachedSelectionSource={m.attachedSelection?.source}
                 hasAttachedSelectionText={Boolean(m.attachedSelection?.text.trim())}
                 attachments={m.composerAttachments}
-                canAttachImages={m.canAttachImages}
                 onAddAttachmentFiles={m.addAttachmentFiles}
                 onRemoveAttachment={m.removeAttachment}
                 onOpenAttachmentManager={m.openAttachmentManager}

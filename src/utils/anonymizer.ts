@@ -79,7 +79,7 @@ function tokenIndex(token: string, offset: number, modulo: number): number {
   return parseInt(token.slice(offset, offset + 12), 16) % modulo;
 }
 
-const FAKE_FIRST_NAMES = [
+export const FAKE_FIRST_NAMES = [
   "Aaron",
   "Abigail",
   "Ada",
@@ -298,7 +298,7 @@ const FAKE_FIRST_NAMES = [
   "Herman",
 ];
 
-const FAKE_LAST_NAMES = [
+export const FAKE_LAST_NAMES = [
   "Smith",
   "Johnson",
   "Williams",
@@ -518,7 +518,7 @@ const FAKE_LAST_NAMES = [
 ];
 
 /** Reserved-domain stems; ".invalid" is appended so mail can never be delivered. */
-const FAKE_EMAIL_DOMAINS = [
+export const FAKE_EMAIL_DOMAINS = [
   "acorn",
   "alder",
   "alpine",

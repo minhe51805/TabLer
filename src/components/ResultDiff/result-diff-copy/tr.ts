@@ -1,0 +1,28 @@
+import type { ResultDiffCopy } from "./types";
+
+export const TR_COPY: ResultDiffCopy = {
+  title: "Sonuç Karşılaştırma",
+  close: "Kapat",
+  pin: "Sabitle",
+  pinTitle: "Bu sonucu sabitleyip sonraki bir sonuçla karşılaştırın",
+  unpin: "Sabitlendi",
+  compare: "Karşılaştır",
+  compareTitle: (label) => `Bu sonucu sabitlenenle karşılaştır: ${label}`,
+  pinnedToast: "Sonuç sabitlendi — başka bir sorgu çalıştırıp Karşılaştır'ı seçin.",
+  pinnedSide: "Sabitlenen",
+  currentSide: "Geçerli",
+  matchByPk: (columns) => `Satırlar birincil anahtarla eşleşti: ${columns}`,
+  matchByIndex: "Satırlar konuma göre eşleşti (ortak birincil anahtar yok)",
+  summaryAdded: (count) => `+${count} eklendi`,
+  summaryRemoved: (count) => `-${count} kaldırıldı`,
+  summaryChanged: (count) => `~${count} değişti`,
+  summaryUnchanged: (count) => `= ${count} aynı`,
+  groupAdded: (count) => `Yalnızca geçerli sonuçta (${count})`,
+  groupRemoved: (count) => `Yalnızca sabitlenen sonuçta (${count})`,
+  groupChanged: (count) => `Değişen satırlar (${count})`,
+  columnsOnlyInPinned: (columns) => `Yalnızca sabitlenen sonuçtaki sütunlar: ${columns}`,
+  columnsOnlyInCurrent: (columns) => `Yalnızca geçerli sonuçtaki sütunlar: ${columns}`,
+  noDifferences: "Fark yok — iki sonuç aynı.",
+  pinnedTruncated: (limit) => `⚠ sabitlenen anlık görüntü ${limit} satırla sınırlı`,
+  showingFirst: (shown, total) => `${total} satırdan ilk ${shown} gösteriliyor`,
+};

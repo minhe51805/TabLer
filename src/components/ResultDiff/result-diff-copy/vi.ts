@@ -1,0 +1,28 @@
+import type { ResultDiffCopy } from "./types";
+
+export const VI_COPY: ResultDiffCopy = {
+  title: "So sánh kết quả",
+  close: "Đóng",
+  pin: "Ghim",
+  pinTitle: "Ghim kết quả này để so sánh với kết quả sau",
+  unpin: "Đã ghim",
+  compare: "So sánh",
+  compareTitle: (label) => `So sánh kết quả này với bản đã ghim: ${label}`,
+  pinnedToast: "Đã ghim kết quả — chạy truy vấn khác rồi chọn So sánh.",
+  pinnedSide: "Đã ghim",
+  currentSide: "Hiện tại",
+  matchByPk: (columns) => `Khớp hàng theo khóa chính: ${columns}`,
+  matchByIndex: "Khớp hàng theo vị trí (không có khóa chính chung)",
+  summaryAdded: (count) => `+${count} thêm`,
+  summaryRemoved: (count) => `-${count} xóa`,
+  summaryChanged: (count) => `~${count} sửa`,
+  summaryUnchanged: (count) => `= ${count} không đổi`,
+  groupAdded: (count) => `Chỉ có ở hiện tại (${count})`,
+  groupRemoved: (count) => `Chỉ có ở bản ghim (${count})`,
+  groupChanged: (count) => `Hàng thay đổi (${count})`,
+  columnsOnlyInPinned: (columns) => `Cột chỉ có ở bản ghim: ${columns}`,
+  columnsOnlyInCurrent: (columns) => `Cột chỉ có ở hiện tại: ${columns}`,
+  noDifferences: "Không có khác biệt — hai kết quả giống hệt nhau.",
+  pinnedTruncated: (limit) => `⚠ bản ghim bị giới hạn ${limit} hàng`,
+  showingFirst: (shown, total) => `Hiển thị ${shown} đầu trong ${total}`,
+};

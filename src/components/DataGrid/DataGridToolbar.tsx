@@ -39,6 +39,7 @@ import {
   buildTsvContent,
   exportToCSV,
   exportToJSON,
+  exportToMarkdown,
 } from "../../utils/export-utils";
 import { exportXLSX } from "../../utils/export-xlsx";
 import { buildMqlContent, exportToMQL } from "../../utils/export-mql";
@@ -408,6 +409,19 @@ export function DataGridToolbar({
       });
     }
   }, [canExport, dataRows, exportFilenameBase, resolvedColumns, tableName, t]);
+  const handleExportMarkdown = useCallback(() => {
+    if (!canExport) return;
+    const cols = resolvedColumns.map((c) => c.name);
+    exportToMarkdown(cols, dataRows, buildExportFilename(exportFilenameBase, "md")).catch(
+      (error) => {
+        emitAppToast({
+          title: t("datagrid.exportFailed"),
+          description: String(error),
+          tone: "error",
+        });
+      },
+    );
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
 
   const handleExportMQL = useCallback(async () => {
     if (!canExport) return;
@@ -971,6 +985,12 @@ export function DataGridToolbar({
                 run: handleExportXLSX,
               },
               {
+                label: powerCopy.copyAs.markdown,
+                hint: powerCopy.copyAs.markdownHint,
+                icon: Table2,
+                run: handleExportMarkdown,
+              },
+              {
                 label: "MQL",
                 hint: t("datagrid.exportHintMql"),
                 icon: FileCode,
@@ -1019,9 +1039,11 @@ export function DataGridToolbar({
             handleExportCSV,
             handleExportJSON,
             handleExportXLSX,
+            handleExportMarkdown,
             handleExportMQL,
             handlePluginExport,
             onExportFull,
+            powerCopy,
             tableName,
             t,
           ])}

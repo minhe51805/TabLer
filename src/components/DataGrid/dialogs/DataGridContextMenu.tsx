@@ -83,6 +83,10 @@ interface DataGridContextMenuProps {
   onDuplicateRowByIndex: (rowIndex: number) => Promise<void>;
   onOpenRowInspector: (rowIndex: number) => void;
   onColumnAutoFit: (colId: string) => void;
+  /** Cells covered by the active multi-cell selection; >1 enables bulk edit. */
+  selectedRangeCellCount?: number;
+  /** Opens the "Set selected cells to…" dialog (staged updates). */
+  onSetRangeValue?: () => void;
 
   setColumnOrder: Dispatch<SetStateAction<ColumnOrderState>>;
   setColumnPinning: Dispatch<SetStateAction<ColumnPinningState>>;
@@ -116,6 +120,8 @@ export function DataGridContextMenu({
   onDuplicateRowByIndex,
   onOpenRowInspector,
   onColumnAutoFit,
+  selectedRangeCellCount,
+  onSetRangeValue,
 
   setColumnOrder,
   setColumnPinning,
@@ -562,6 +568,17 @@ export function DataGridContextMenu({
           >
             {translateCurrent("datagrid.ctxAddRow")}
           </button>
+          {onSetRangeValue && (selectedRangeCellCount ?? 0) > 1 && (
+            <button
+              className="datagrid-context-menu-item"
+              onClick={() => {
+                onSetRangeValue();
+                onClose();
+              }}
+            >
+              {powerCopy.setCells.menuItem}
+            </button>
+          )}
           <div className="datagrid-context-menu-separator" />
           <button className="datagrid-context-menu-item" onClick={copyCellValue}>
             {translateCurrent("datagrid.ctxCopyCellValue")}

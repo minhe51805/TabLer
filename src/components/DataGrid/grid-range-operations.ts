@@ -290,6 +290,22 @@ export function planClearUpdates(range: GridRange, context: RangeUpdateContext):
 }
 
 /**
+ * Plan staging one value for every editable cell of the range ("Set selected
+ * cells to…"). `raw === null` stages NULL; otherwise the text is parsed per
+ * column type through context.parseValue, so a single invalid column refuses
+ * the whole batch (all-or-nothing, same as paste).
+ */
+export function planSetValueUpdates(
+  range: GridRange,
+  context: RangeUpdateContext,
+  raw: string | null,
+): RangeUpdatePlan {
+  return planRangeValues(range, context, (_rowIndex, _colIndex, column) =>
+    raw === null ? null : context.parseValue(raw, column),
+  );
+}
+
+/**
  * Plan a fill-down: every column copies its TOP-row value into the rows
  * below inside the range. The source row itself is never modified.
  */

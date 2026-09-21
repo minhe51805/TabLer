@@ -6,11 +6,15 @@ import {
   type SetStateAction,
 } from "react";
 import type { ColumnDetail } from "../../../types";
+import type { StagedChange } from "../../../types/change-tracking";
 import { parseEditorValue, buildRowPrimaryKeys, type ResolvedColumn } from "./useDataGrid";
 import { computeNewRowPlan, computeColumnPlan } from "./useInsertColumnPlan";
 import { type CsvFileSelection } from "../dialogs/PasteRowsDialog";
 import type { PastePreview } from "../../../utils/clipboard-parser";
 import type { QueryResult } from "../../../types";
+import { emitAppToast } from "../../../utils/app-toast";
+import { getCurrentAppLanguage } from "../../../i18n";
+import { getDataGridPowerCopy } from "../datagrid-power-copy";
 
 interface DataGridRowMutationsParams {
   tableName?: string;
@@ -34,6 +38,9 @@ interface DataGridRowMutationsParams {
   setInsertDialogError: Dispatch<SetStateAction<string | null>>;
   setIsInsertDialogOpen: Dispatch<SetStateAction<boolean>>;
   setIsSubmittingInsert: Dispatch<SetStateAction<boolean>>;
+  /** When true the insert dialog stages a queued insert instead of inserting directly. */
+  insertDialogStages: boolean;
+  setInsertDialogStages: Dispatch<SetStateAction<boolean>>;
 
   // Paste / CSV import state
   pastePreview: PastePreview | null;
@@ -98,6 +105,8 @@ interface DataGridRowMutationsParams {
   ) => Promise<unknown>;
   cancelCsvImport: (operationId: string) => Promise<boolean>;
 
+  /** Change-tracking queue: staged inserts land in the review modal. */
+  stageChange: (change: Omit<StagedChange, "id" | "timestamp" | "sqlPreview">) => void;
   invalidateTableCaches: (connectionId: string, tableName: string, database?: string) => void;
   refreshTableFromStart: () => Promise<unknown>;
 
@@ -129,6 +138,8 @@ export function useDataGridRowMutations({
   setInsertDialogError,
   setIsInsertDialogOpen,
   setIsSubmittingInsert,
+  insertDialogStages,
+  setInsertDialogStages,
 
   pastePreview,
   csvFileSelection,
@@ -160,6 +171,8 @@ export function useDataGridRowMutations({
   importCsvFileAtomically,
   cancelCsvImport,
 
+  stageChange,
+
   invalidateTableCaches,
   refreshTableFromStart,
 
@@ -172,10 +185,12 @@ export function useDataGridRowMutations({
     setInsertDraft({});
     setInsertDialogError(null);
     setIsSubmittingInsert(false);
+    setInsertDialogStages(false);
   }, [
     setInsertDialogBaseValues,
     setInsertDialogColumns,
     setInsertDialogError,
+    setInsertDialogStages,
     setInsertDraft,
     setIsInsertDialogOpen,
     setIsSubmittingInsert,
@@ -246,6 +261,48 @@ export function useDataGridRowMutations({
     ],
   );
 
+  /**
+   * Queue a row insert in the change-tracking review modal. Column keys are
+   * resolved-column indices — the store maps them to names for the SQL
+   * preview, matching the staged-update convention.
+   */
+  const stageInsertValues = useCallback(
+    (values: [string, unknown][]) => {
+      if (!tableName) return;
+      const indexByName = new Map(resolvedColumns.map((column, index) => [column.name, index]));
+      const columns: Record<string, { old: unknown; new: unknown }> = {};
+      const originalRow: (string | number | boolean | null)[] = resolvedColumns.map(() => null);
+      for (const [name, value] of values) {
+        const colIndex = indexByName.get(name);
+        if (colIndex === undefined) continue;
+        columns[colIndex] = { old: null, new: value };
+        originalRow[colIndex] = value as string | number | boolean | null;
+      }
+      if (Object.keys(columns).length === 0) {
+        emitAppToast({
+          title: getDataGridPowerCopy(getCurrentAppLanguage()).duplicate.nothingToDuplicate,
+          tone: "info",
+        });
+        return;
+      }
+      stageChange({
+        type: "insert",
+        tableName,
+        database,
+        // No source row exists — inserts have no grid row to highlight.
+        rowIndex: -1,
+        rowKey: {},
+        columns,
+        originalRow,
+      });
+      emitAppToast({
+        title: getDataGridPowerCopy(getCurrentAppLanguage()).duplicate.stagedToast,
+        tone: "success",
+      });
+    },
+    [database, resolvedColumns, stageChange, tableName],
+  );
+
   const handleInsertRow = useCallback(async () => {
     if (!tableName || structureColumns.length === 0) {
       return;
@@ -254,6 +311,7 @@ export function useDataGridRowMutations({
     const { baseValues, promptColumns } = analyzeInsertPlan();
 
     if (promptColumns.length > 0) {
+      setInsertDialogStages(false);
       setInsertDialogColumns(promptColumns);
       setInsertDialogBaseValues(baseValues);
       setInsertDraft(Object.fromEntries(promptColumns.map((column) => [column.name, ""])));
@@ -275,6 +333,7 @@ export function useDataGridRowMutations({
     setInsertDialogBaseValues,
     setInsertDialogColumns,
     setInsertDialogError,
+    setInsertDialogStages,
     setInsertDraft,
     setIsInsertDialogOpen,
     structureColumns.length,
@@ -326,6 +385,15 @@ export function useDataGridRowMutations({
       }
 
       setInsertDialogError(null);
+
+      // Duplicate-row flow: queue the insert in the review modal instead of
+      // executing it immediately.
+      if (insertDialogStages) {
+        stageInsertValues(nextValues);
+        closeInsertDialog();
+        return;
+      }
+
       setIsSubmittingInsert(true);
 
       try {
@@ -342,10 +410,12 @@ export function useDataGridRowMutations({
       closeInsertDialog,
       insertDialogBaseValues,
       insertDialogColumns,
+      insertDialogStages,
       insertDraft,
       performInsertRow,
       setInsertDialogError,
       setIsSubmittingInsert,
+      stageInsertValues,
     ],
   );
 
@@ -455,16 +525,27 @@ export function useDataGridRowMutations({
     }
   }, [cancelCsvImport, csvImportOperationIdRef, isCancellingPaste, setError, setIsCancellingPaste]);
 
-  // ---- Duplicate flows (insert dialog prefilled from an existing row)
-  const handleDuplicateRowByIndex = useCallback(
-    async (rowIndex: number) => {
-      if (!tableName || structureColumns.length === 0) return;
+  // ---- Duplicate flows (staged insert in the review queue)
 
-      const sourceRow = data?.rows[rowIndex];
-      if (!sourceRow) return;
+  /**
+   * Stage a copy of `sourceRow` as an insert. Auto-generated PKs and columns
+   * with database defaults are excluded so the database assigns them; when a
+   * column still needs a user value (non-auto PK, non-nullable NULL source)
+   * the insert dialog opens in stage mode so the result still lands in the
+   * review modal.
+   */
+  const stageDuplicateRow = useCallback(
+    (sourceRow: unknown[]) => {
+      if (!tableName || structureColumns.length === 0) return;
 
       const { baseValues, promptColumns } = computeColumnPlan(structureColumns, sourceRow);
 
+      if (promptColumns.length === 0) {
+        stageInsertValues(baseValues);
+        return;
+      }
+
+      setInsertDialogStages(true);
       setInsertDialogColumns(promptColumns);
       setInsertDialogBaseValues(baseValues);
       setInsertDraft(
@@ -482,13 +563,23 @@ export function useDataGridRowMutations({
     [
       tableName,
       structureColumns,
-      data?.rows,
+      stageInsertValues,
+      setInsertDialogStages,
       setInsertDialogColumns,
       setInsertDialogBaseValues,
       setInsertDraft,
       setInsertDialogError,
       setIsInsertDialogOpen,
     ],
+  );
+
+  const handleDuplicateRowByIndex = useCallback(
+    async (rowIndex: number) => {
+      const sourceRow = data?.rows[rowIndex];
+      if (!sourceRow) return;
+      stageDuplicateRow(sourceRow);
+    },
+    [data?.rows, stageDuplicateRow],
   );
 
   /** Delete all selected rows after confirmation. */
@@ -599,38 +690,13 @@ export function useDataGridRowMutations({
   ]);
 
   const handleDuplicateRow = useCallback(async () => {
-    if (!tableName || structureColumns.length === 0 || selectedRows.size === 0) return;
+    if (selectedRows.size === 0) return;
 
     const firstSelectedIndex = Math.min(...Array.from(selectedRows));
     const sourceRow = data?.rows[firstSelectedIndex];
     if (!sourceRow) return;
-
-    const { baseValues, promptColumns } = computeColumnPlan(structureColumns, sourceRow ?? null);
-
-    setInsertDialogColumns(promptColumns);
-    setInsertDialogBaseValues(baseValues);
-    setInsertDraft(
-      Object.fromEntries(
-        promptColumns.map((column) => {
-          const colIdx = structureColumns.indexOf(column);
-          const val = sourceRow ? sourceRow[colIdx] : null;
-          return [column.name, val !== null ? String(val) : ""];
-        }),
-      ),
-    );
-    setInsertDialogError(null);
-    setIsInsertDialogOpen(true);
-  }, [
-    tableName,
-    structureColumns,
-    selectedRows,
-    data?.rows,
-    setInsertDialogColumns,
-    setInsertDialogBaseValues,
-    setInsertDraft,
-    setInsertDialogError,
-    setIsInsertDialogOpen,
-  ]);
+    stageDuplicateRow(sourceRow);
+  }, [selectedRows, data?.rows, stageDuplicateRow]);
 
   return {
     closeInsertDialog,

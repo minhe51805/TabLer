@@ -61,6 +61,7 @@ import {
   selectGridCell,
   type GridSelectionModifiers,
 } from "./grid-selection";
+import { getPrimaryGridRange, isMultiCellRange } from "./grid-range-operations";
 import { buildStableRowIdentity } from "./row-identity";
 import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
 import { useAppLayoutStore } from "../../stores/appLayoutStore";
@@ -82,6 +83,7 @@ import { useDataGridTableExport } from "./hooks/useDataGridTableExport";
 import { PasteRowsDialog } from "./dialogs/PasteRowsDialog";
 import { buildRowFocusFilter } from "./row-focus";
 import { InsertRowDialog } from "./dialogs/InsertRowDialog";
+import { SetRangeValueDialog } from "./dialogs/SetRangeValueDialog";
 import { FkPreviewPopover } from "./dialogs/FkPreviewPopover";
 import { DataGridContextMenu } from "./dialogs/DataGridContextMenu";
 import { ColumnStatsPopover, type ColumnStats } from "./dialogs/ColumnStatsPopover";
@@ -156,6 +158,8 @@ export function DataGrid({
     stageChanges,
     unstageChange,
     undoLast,
+    openPreview,
+    closePreview,
     redoLast,
     setColumnNameMap,
     setDbType,
@@ -203,6 +207,14 @@ export function DataGrid({
   const [insertDraft, setInsertDraft] = useState<Record<string, string>>({});
   const [insertDialogError, setInsertDialogError] = useState<string | null>(null);
   const [isSubmittingInsert, setIsSubmittingInsert] = useState(false);
+  /** When true the insert dialog stages a queued insert (duplicate-row flow). */
+  const [insertDialogStages, setInsertDialogStages] = useState(false);
+  /** "Set selected cells to…" bulk-edit dialog state. */
+  const [setRangeDialog, setSetRangeDialog] = useState<{
+    open: boolean;
+    cellCount: number;
+    error: string | null;
+  }>({ open: false, cellCount: 0, error: null });
   /** Paste dialog state */
   const [isPasteDialogOpen, setIsPasteDialogOpen] = useState(false);
   const [pastePreview, setPastePreview] = useState<PastePreview | null>(null);
@@ -703,6 +715,8 @@ export function DataGrid({
       setError,
       unstageChange,
       applyTableUpdatesAtomically,
+      closePreview,
+      insertTableRowsAtomically,
       invalidateTableCaches,
       refreshTableFromStart,
       dataGridInstanceIdRef,
@@ -1234,21 +1248,41 @@ export function DataGrid({
       editorRef,
     });
 
-  const { handleRangeCopy, handleRangePaste, handleRangeDelete, handleRangeFillDown } =
-    useDataGridRangeOperations({
-      gridSelection,
-      data,
-      resolvedColumns,
-      primaryKeyColumns,
-      tableName,
-      database: database || undefined,
-      enabled: canAttemptInlineEdit,
-      stageChanges,
-      setData,
-      setStagedRowIndices,
-      patchLoadedTableCell,
-      setError,
+  const {
+    handleRangeCopy,
+    handleRangePaste,
+    handleRangeDelete,
+    handleRangeFillDown,
+    handleRangeSetValue,
+  } = useDataGridRangeOperations({
+    gridSelection,
+    data,
+    resolvedColumns,
+    primaryKeyColumns,
+    tableName,
+    database: database || undefined,
+    enabled: canAttemptInlineEdit,
+    stageChanges,
+    setData,
+    setStagedRowIndices,
+    patchLoadedTableCell,
+    setError,
+  });
+
+  /** Cells covered by the active selection — gates the bulk-edit menu item. */
+  const selectedRangeCellCount = useMemo(() => {
+    if (!data || resolvedColumns.length === 0) return 0;
+    const range = getPrimaryGridRange(gridSelection, {
+      rowCount: data.rows.length,
+      columnCount: resolvedColumns.length,
     });
+    if (!range || !isMultiCellRange(range)) return 0;
+    return (range.endRow - range.startRow + 1) * (range.endCol - range.startCol + 1);
+  }, [data, gridSelection, resolvedColumns.length]);
+
+  const handleOpenSetRangeDialog = useCallback(() => {
+    setSetRangeDialog({ open: true, cellCount: selectedRangeCellCount, error: null });
+  }, [selectedRangeCellCount]);
 
   // Range editing keys (copy / paste / fill / clear). Kept separate from the
   // early selection-key effect because these depend on the staged-edit gate,
@@ -1314,6 +1348,8 @@ export function DataGrid({
     setInsertDialogError,
     setIsInsertDialogOpen,
     setIsSubmittingInsert,
+    insertDialogStages,
+    setInsertDialogStages,
 
     pastePreview,
     isSubmittingPaste,
@@ -1344,6 +1380,8 @@ export function DataGrid({
     insertTableRowsAtomically,
     importCsvFileAtomically,
     cancelCsvImport,
+
+    stageChange,
 
     invalidateTableCaches,
     refreshTableFromStart,
@@ -1381,6 +1419,20 @@ export function DataGrid({
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [closeInsertDialog, isInsertDialogOpen]);
+
+  useEffect(() => {
+    if (!setRangeDialog.open) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSetRangeDialog((previous) => ({ ...previous, open: false }));
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [setRangeDialog.open]);
 
   useEffect(() => {
     if (!isPasteDialogOpen) return;
@@ -1872,7 +1924,7 @@ export function DataGrid({
           autoRefreshBusy={isReloadingData || isLoading}
           undoableChanges={undoableChanges}
           stagedChangeCount={tableName ? getChangeCount(tableName) : 0}
-          onApplyChanges={applyStagedChanges}
+          onApplyChanges={openPreview}
           onDiscardChanges={discardStagedChanges}
           sortColumn={sortColumn}
           sortDir={sortDir}
@@ -2228,6 +2280,8 @@ export function DataGrid({
               onDuplicateRowByIndex={handleDuplicateRowByIndex}
               onOpenRowInspector={handleOpenRowInspector}
               onColumnAutoFit={handleColumnAutoFit}
+              selectedRangeCellCount={selectedRangeCellCount}
+              onSetRangeValue={canAttemptInlineEdit ? handleOpenSetRangeDialog : undefined}
               setColumnOrder={setColumnOrder}
               setColumnPinning={setColumnPinning}
               setColumnSizes={setColumnSizes}
@@ -2263,6 +2317,22 @@ export function DataGrid({
           (footerPortalTarget ? createPortal(gridFooter, footerPortalTarget) : gridFooter)}
       </div>
       {insertDialogModal}
+
+      {/* "Set selected cells to…" bulk-edit dialog */}
+      {setRangeDialog.open && typeof document !== "undefined"
+        ? createPortal(
+            <SetRangeValueDialog
+              cellCount={setRangeDialog.cellCount}
+              error={setRangeDialog.error}
+              onClose={() => setSetRangeDialog((previous) => ({ ...previous, open: false }))}
+              onSubmit={handleRangeSetValue}
+              onError={(message) =>
+                setSetRangeDialog((previous) => ({ ...previous, error: message }))
+              }
+            />,
+            document.body,
+          )
+        : null}
 
       {/* Change Tracking Preview Modal */}
       {stagedChangeCount > 0 && typeof document !== "undefined"

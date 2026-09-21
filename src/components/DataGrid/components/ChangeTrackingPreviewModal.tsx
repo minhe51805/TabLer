@@ -19,7 +19,8 @@ export function ChangeTrackingPreviewModal({
   onDiscard,
   isApplying = false,
 }: Props) {
-  const { stagedChanges, isPreviewOpen, selectedChangeId, selectChange } = useChangeTrackingStore();
+  const { stagedChanges, isPreviewOpen, selectedChangeId, selectChange, closePreview } =
+    useChangeTrackingStore();
 
   const tableChanges = stagedChanges.filter(
     (c) => c.tableName === tableName && c.database === database,
@@ -37,7 +38,7 @@ export function ChangeTrackingPreviewModal({
   };
 
   return (
-    <div className="change-tracking-modal-backdrop" onClick={onDiscard}>
+    <div className="change-tracking-modal-backdrop" onClick={closePreview}>
       <div
         className="change-tracking-modal"
         onClick={(e) => e.stopPropagation()}
@@ -56,12 +57,7 @@ export function ChangeTrackingPreviewModal({
               Review the SQL that will be executed before applying changes
             </p>
           </div>
-          <button
-            type="button"
-            className="ct-modal-close"
-            onClick={onDiscard}
-            aria-label="Close preview"
-          >
+          <button type="button" className="ct-modal-close" onClick={closePreview}>
             <X className="!w-4 !h-4" />
           </button>
         </div>
@@ -92,12 +88,7 @@ export function ChangeTrackingPreviewModal({
           <div className="ct-sql-preview">
             <div className="ct-sql-preview-header">
               <span className="ct-sql-preview-label">SQL to execute</span>
-              <button
-                type="button"
-                className="ct-copy-btn"
-                onClick={copySql}
-                title="Copy all SQL"
-              >
+              <button type="button" className="ct-copy-btn" onClick={copySql} title="Copy all SQL">
                 <Copy className="!w-3 !h-3" />
                 <span>Copy all</span>
               </button>
@@ -118,20 +109,22 @@ export function ChangeTrackingPreviewModal({
                 <div className="ct-diff-header">
                   <span className="ct-diff-title">Cell changes</span>
                 </div>
-                {Object.entries(selectedChange.columns).map(([colName, { old: oldVal, new: newVal }]) => (
-                  <div key={colName} className="ct-diff-row">
-                    <span className="ct-diff-col">{colName}</span>
-                    <div className="ct-diff-values">
-                      <span className="ct-diff-old" title="Old value">
-                        {String(oldVal ?? "NULL")}
-                      </span>
-                      <span className="ct-diff-arrow">→</span>
-                      <span className="ct-diff-new" title="New value">
-                        {String(newVal ?? "NULL")}
-                      </span>
+                {Object.entries(selectedChange.columns).map(
+                  ([colName, { old: oldVal, new: newVal }]) => (
+                    <div key={colName} className="ct-diff-row">
+                      <span className="ct-diff-col">{colName}</span>
+                      <div className="ct-diff-values">
+                        <span className="ct-diff-old" title="Old value">
+                          {String(oldVal ?? "NULL")}
+                        </span>
+                        <span className="ct-diff-arrow">→</span>
+                        <span className="ct-diff-new" title="New value">
+                          {String(newVal ?? "NULL")}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ),
+                )}
               </div>
             )}
           </div>
@@ -167,7 +160,9 @@ export function ChangeTrackingPreviewModal({
               ) : (
                 <>
                   <Check className="!w-3.5 !h-3.5" />
-                  <span>Apply {tableChanges.length} Change{tableChanges.length !== 1 ? "s" : ""}</span>
+                  <span>
+                    Apply {tableChanges.length} Change{tableChanges.length !== 1 ? "s" : ""}
+                  </span>
                 </>
               )}
             </button>

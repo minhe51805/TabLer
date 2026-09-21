@@ -474,3 +474,34 @@ export function validateAIAgentReadonlySql(sql: string) {
 
   return statements;
 }
+
+/** How confidently a statement can be dry-run through `EXPLAIN <stmt>`. */
+export type AgentExplainableKind = "dml" | "ddl" | "none";
+
+const EXPLAINABLE_DML_PREFIXES = [
+  "SELECT",
+  "WITH",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "REPLACE",
+  "MERGE",
+] as const;
+
+const EXPLAINABLE_DDL_PREFIXES = ["CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME"] as const;
+
+/**
+ * Classifies whether `EXPLAIN <statement>` is worth attempting for a proposed
+ * write. DML is explainable on every SQL engine, so an EXPLAIN failure there
+ * means the statement itself is broken. DDL is best-effort — Postgres cannot
+ * EXPLAIN CREATE/ALTER while SQLite can — so a failure only means the engine
+ * declined to plan it. Anything else (session control, VACUUM, CALL, …) is
+ * not explainable at all.
+ */
+export function classifyAgentExplainableStatement(statement: string): AgentExplainableKind {
+  const normalized = normalizeStatementForGuard(statement);
+  if (!normalized) return "none";
+  if (EXPLAINABLE_DML_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return "dml";
+  if (EXPLAINABLE_DDL_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return "ddl";
+  return "none";
+}

@@ -47,10 +47,12 @@ import {
   AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS,
   AI_AGENT_SEED_DOCUMENT_LIMIT,
   validateAIAgentReadonlySql,
+  classifyAgentExplainableStatement,
   type AIAgentToolAction,
   type AIAgentToolName,
   AI_AGENT_TOOL_NAMES,
 } from "./ai-agent-tools";
+import type { AiProposalExplainResult } from "../../stores/event-center";
 import { getAdminQueryPreset, type AdminQueryKind } from "../../utils/admin-query-presets";
 import { generateInsertSql } from "../../utils/sql-generator";
 import { saveSemanticGlossaryEntry } from "../../utils/semantic-glossary";
@@ -58,6 +60,7 @@ import { requestAICheckpointPick } from "./ai-checkpoint-picker";
 import { useSkillUsageStore } from "../../stores/skillUsageStore";
 import { useUIStore } from "../../stores/uiStore";
 import { invalidateAgentMemoryIndex } from "./hooks/use-agent-memory";
+import { invalidateAgentSchemaSummary, isSchemaAffectingAgentAction } from "./ai-schema-summary";
 import { invokeMutation } from "../../utils/tauri-utils";
 import {
   formatRuleBlockMessage,
@@ -71,6 +74,7 @@ import {
   isSupersededAIRequestError,
   AI_REQUEST_REPLACED_MESSAGE,
 } from "./ai-agent-action-requestor";
+import type { AIWorkspaceRunTraceEntry } from "./ai-workspace-types";
 
 const MAX_AGENT_SCHEMA_SCAN_TABLES = 120;
 
@@ -179,6 +183,12 @@ export interface AgentToolExecutorDeps {
     results: Array<{ affected_rows: number; rows: unknown[][]; truncated?: boolean }>;
   }>;
   /**
+   * Non-executing EXPLAIN dry-run for mutating edit_query_sql proposals
+   * (backend `explain_agent_statement`). Optional so pure executor tests need
+   * no Tauri runtime; when absent the proposal ships without a plan line.
+   */
+  explainStatement?: (connectionId: string, sql: string) => Promise<QueryResult>;
+  /**
    * Creates a local database checkpoint (schema+data snapshot file). The
    * database itself is only read; safety comes from the user-facing
    * /rollback confirmation flow. Optional for tests.
@@ -244,6 +254,49 @@ const SKILL_RESTRICTION_ESSENTIAL_TOOLS = new Set<AIAgentToolName>([
   "read_skill_resource",
 ]);
 
+/** One-line "key=value" args summary for the run-details audit trail. SQL
+ *  bodies are skipped here — they render in the entry's own SQL block. */
+function summarizeToolCallArgs(action: AIAgentToolAction): string {
+  const args = action.args;
+  if (!args || typeof args !== "object") return "";
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+    if (key === "sql" || key === "statements") continue;
+    if (value === undefined || value === null) continue;
+    let text: string;
+    if (typeof value === "string") {
+      text = value.replace(/\s+/g, " ").trim();
+    } else {
+      try {
+        text = JSON.stringify(value);
+      } catch {
+        continue;
+      }
+    }
+    if (!text) continue;
+    if (text.length > 48) text = `${text.slice(0, 45)}…`;
+    parts.push(`${key}=${text}`);
+    if (parts.join(", ").length > 160) break;
+  }
+  const summary = parts.join(", ");
+  return summary.length > 180 ? `${summary.slice(0, 177)}…` : summary;
+}
+
+/** SQL a tool call carried in its args: a single `sql` string or the
+ *  `statements` array preview_write submits. */
+function extractToolCallSql(action: AIAgentToolAction): string | null {
+  const args = action.args as Record<string, unknown> | undefined;
+  if (!args || typeof args !== "object") return null;
+  if (typeof args.sql === "string" && args.sql.trim()) return args.sql.trim();
+  if (Array.isArray(args.statements)) {
+    const statements = args.statements
+      .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
+      .map((value) => value.trim());
+    if (statements.length > 0) return statements.join("\n");
+  }
+  return null;
+}
+
 export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const {
     connectionId,
@@ -269,6 +322,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     executeReadonlyQuery,
     executeParameterizedReadonlyQuery,
     previewWriteTransaction,
+    explainStatement,
     createCheckpoint,
     listCheckpoints,
     restoreCheckpoint,
@@ -315,6 +369,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   // smoke-tested through preview_write's rollback transaction.
   const previewedMutatingStatements = new Set<string>();
   let pendingFullObservation: string | null = null;
+  /** Audit trail: one entry per dispatched tool call, in call order. */
+  const runTrace: AIWorkspaceRunTraceEntry[] = [];
+  /** SQL a tool built internally (find_value, run_preset) — set right before
+   *  the statement executes so the trace can show it even when args carry
+   *  no SQL of their own. */
+  let pendingToolSql: string | null = null;
 
   /** Archives the full observation and returns the truncated trace version. */
   const stringifyAgentObservation = (data: unknown) => {
@@ -928,6 +988,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           }
         }
         try {
+          pendingToolSql = preset.content;
           const queryResult = await executeReadonlyQuery(connectionId!, [preset.content]);
           if (requestId !== requestIdRef.current) {
             throw new Error(AI_REQUEST_REPLACED_MESSAGE);
@@ -1194,6 +1255,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             : `SELECT * FROM ${quotedTable} WHERE ${quotedColumn} = :value LIMIT ${requestedLimit}`;
 
         try {
+          pendingToolSql = sql;
           const queryResult = await executeParameterizedReadonlyQuery(connectionId!, sql, [
             binding,
           ]);
@@ -1709,6 +1771,32 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         if (mutating && !previewedMutatingStatements.has(normalizeStatementForGuard(sql))) {
           return "Tool error: this proposal contains mutating SQL that was not previewed in this run. Call preview_write with the exact statement first, then re-issue edit_query_sql.";
         }
+        // Dry-run EXPLAIN: a mutating proposal carries its plan (or its
+        // syntax error) on the review card so the user sees it BEFORE
+        // accepting. The statement is planned, never executed — the backend
+        // wraps it as `EXPLAIN <stmt>` server-side. DML is explainable on
+        // every engine, so a failure there means broken SQL; DDL is
+        // best-effort and a failure only means the engine declined to plan it.
+        let proposalExplain: AiProposalExplainResult | undefined;
+        if (mutating && explainStatement && connectionId) {
+          const explainable = classifyAgentExplainableStatement(sql);
+          if (explainable !== "none") {
+            try {
+              const plan = await explainStatement(connectionId, sql);
+              const summary = summarizeAgentExplainPlanStructured(plan, dbType);
+              proposalExplain = { status: "ok", summary: summary || undefined };
+            } catch (errorValue) {
+              if (isSupersededAIRequestError(errorValue)) throw errorValue;
+              proposalExplain = {
+                status: explainable === "dml" ? "error" : "unsupported",
+                error: formatExecutionError(errorValue),
+              };
+            }
+            if (requestId !== requestIdRef.current) {
+              throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+            }
+          }
+        }
         if (!target) {
           if (!createIfMissing) {
             return "Tool error: no open query tab matched. Pass the exact tabId of an open query tab, or set args.createIfMissing: true to open a new AI Query tab with this SQL.";
@@ -1718,25 +1806,47 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           if (!created) {
             return "Tool error: could not open a new AI Query tab (no active connection?).";
           }
-          return [
-            `No query tab was open — created a new AI Query tab "${title}" pre-filled with the proposed SQL.`,
-            mutating
-              ? "It is NOT auto-run: review the tab and press Run (Safe Mode will confirm)."
-              : "It auto-runs the read-only statement.",
-          ].join(" ");
+          const explainNote =
+            proposalExplain?.status === "error"
+              ? ` Warning: the EXPLAIN dry-run failed — the statement is likely broken: ${proposalExplain.error}`
+              : proposalExplain?.status === "unsupported"
+                ? ` Note: this engine could not EXPLAIN the statement (${proposalExplain.error}).`
+                : "";
+          return (
+            [
+              `No query tab was open — created a new AI Query tab "${title}" pre-filled with the proposed SQL.`,
+              mutating
+                ? "It is NOT auto-run: review the tab and press Run (Safe Mode will confirm)."
+                : "It auto-runs the read-only statement.",
+            ].join(" ") + explainNote
+          );
         }
 
         const reasonLine = reason || "Corrected SQL proposal from the agent.";
         // Proposal only: the tab renders Accept/Reject. The agent never
         // writes editor content directly and never executes the proposal.
-        EventCenter.emit("ai-edit-query-sql", { tabId: rawTabId, sql, reason: reasonLine });
+        EventCenter.emit("ai-edit-query-sql", {
+          tabId: rawTabId,
+          sql,
+          reason: reasonLine,
+          ...(proposalExplain ? { explain: proposalExplain } : {}),
+        });
         return [
           `Proposal sent to query tab "${target.title}" — waiting for the user to accept or reject it in the tab.`,
           `Fix: ${reasonLine}`,
           mutating
             ? "Reminder: on accept the tab content changes only; the user still runs it (an auto-checkpoint is captured first)."
             : "On accept the tab content changes only; the user still runs it.",
-        ].join("\n");
+          proposalExplain?.status === "error"
+            ? `EXPLAIN dry-run failed (shown on the card): ${proposalExplain.error}`
+            : proposalExplain?.status === "unsupported"
+              ? `This engine could not EXPLAIN the statement (shown on the card): ${proposalExplain.error}`
+              : proposalExplain?.status === "ok"
+                ? "EXPLAIN dry-run succeeded — the plan is shown on the proposal card."
+                : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
       }
 
       if (action.action === "delete_memory") {
@@ -1905,13 +2015,49 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
 
   const runAgentTool = async (action: AIAgentToolAction): Promise<string> => {
     pendingFullObservation = null;
-    const result = await dispatchAgentTool(action);
-    observationArchive.push({
-      action: action.action,
-      full: pendingFullObservation ?? result,
-    });
-    return result;
+    pendingToolSql = null;
+    const startedAt = performance.now();
+    try {
+      const result = await dispatchAgentTool(action);
+      observationArchive.push({
+        action: action.action,
+        full: pendingFullObservation ?? result,
+      });
+      runTrace.push({
+        tool: action.action,
+        argsSummary: summarizeToolCallArgs(action),
+        ms: Math.max(0, Math.round(performance.now() - startedAt)),
+        ok: !result.startsWith("Tool error") && !result.startsWith("Tool blocked"),
+        sql: extractToolCallSql(action) ?? pendingToolSql ?? undefined,
+      });
+      // Schema-affecting calls (write previews, user-applied SQL proposals,
+      // checkpoint restores) can change what the auto-injected schema summary
+      // describes — drop the cached summary so the next run refetches instead
+      // of serving a pre-change catalog inside the TTL window.
+      if (
+        isSchemaAffectingAgentAction(action.action) &&
+        !result.startsWith("Tool error") &&
+        !result.startsWith("Tool blocked")
+      ) {
+        invalidateAgentSchemaSummary(connectionId ?? undefined);
+      }
+      return result;
+    } catch (errorValue) {
+      // A thrown dispatch (e.g. superseded request) still belongs in the audit
+      // trail: the run died mid-call and the trace must not pretend otherwise.
+      runTrace.push({
+        tool: action.action,
+        argsSummary: summarizeToolCallArgs(action),
+        ms: Math.max(0, Math.round(performance.now() - startedAt)),
+        ok: false,
+        sql: extractToolCallSql(action) ?? pendingToolSql ?? undefined,
+      });
+      throw errorValue;
+    }
   };
+
+  /** Copy of the run's tool-call audit trail, in execution order. */
+  const getRunTrace = (): AIWorkspaceRunTraceEntry[] => runTrace.map((entry) => ({ ...entry }));
 
   /**
    * Report of every attempt to use a blocked tool during an unattended run.
@@ -1920,5 +2066,5 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
    */
   const getUnattendedBlockedTools = (): AIAgentToolName[] => [...unattendedBlockedToolsUsed].sort();
 
-  return { runAgentTool, getUnattendedBlockedTools };
+  return { runAgentTool, getUnattendedBlockedTools, getRunTrace };
 }

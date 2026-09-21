@@ -21,9 +21,17 @@ import {
 import { registerInlineAICompletionProvider } from "../SQLEditorAICompletion";
 import { registerSchemaCompletionProvider, defineTableRTheme } from "../SQLEditorMonacoSetup";
 import { formatSql } from "../../../utils/sql-formatter";
-import { parseExplainOutput, buildExplainQuery, type ParsedExplainPlan } from "../../../utils/explain-parser";
-import { extractNamedSqlParameters, toQueryParameters, type SqlParameterDraft } from "../../../utils/sql-parameters";
-import { EventCenter } from "../../../stores/event-center";
+import {
+  parseExplainOutput,
+  buildExplainQuery,
+  type ParsedExplainPlan,
+} from "../../../utils/explain-parser";
+import {
+  extractNamedSqlParameters,
+  toQueryParameters,
+  type SqlParameterDraft,
+} from "../../../utils/sql-parameters";
+import { EventCenter, type AiProposalExplainResult } from "../../../stores/event-center";
 import { captureAgentEditedRunCheckpoint } from "../agent-edit-safety";
 
 export interface QueryChromeState {
@@ -32,6 +40,8 @@ export interface QueryChromeState {
   rowCount?: number;
   affectedRows?: number;
   queryCount?: number;
+  /** True when the last result was served from the local result cache. */
+  cached?: boolean;
 }
 
 export interface QueryEditorSessionState {
@@ -99,6 +109,8 @@ export function useSQLEditor({
     sql: string;
     reason: string;
     previousSql: string;
+    /** Non-executing EXPLAIN dry-run attached to mutating proposals. */
+    explain?: AiProposalExplainResult;
   } | null>(null);
   const agentEditedRef = useRef(false);
   const applyingProposalRef = useRef(false);
@@ -106,8 +118,12 @@ export function useSQLEditor({
   const contentDraftRef = useRef(initialContent);
   const onChromeChangeRef = useRef(onChromeChange);
   const onStateChangeRef = useRef(onStateChange);
-  const inlineCompletionCacheRef = useRef<{ key: string; value: string; timestamp: number } | null>(null);
-  const inlineCompletionInFlightRef = useRef<{ key: string; promise: Promise<string> } | null>(null);
+  const inlineCompletionCacheRef = useRef<{ key: string; value: string; timestamp: number } | null>(
+    null,
+  );
+  const inlineCompletionInFlightRef = useRef<{ key: string; promise: Promise<string> } | null>(
+    null,
+  );
   const lastInlineCompletionAtRef = useRef(0);
   const dailyInlineCompletionRef = useRef({ count: 0, date: new Date().toDateString() });
   const lastRunRequestNonceRef = useRef(0);
@@ -127,11 +143,13 @@ export function useSQLEditor({
     return initialRowCount > 0;
   });
   const [resultViewMode, setResultViewMode] = useState<"table" | "chart">(
-    () => initialState?.resultViewMode ?? "table"
+    () => initialState?.resultViewMode ?? "table",
   );
   const [isBatchExecuting, setIsBatchExecuting] = useState(false);
   const [isExecutingCurrent, setIsExecutingCurrent] = useState(false);
-  const [explainPlan, setExplainPlan] = useState<ParsedExplainPlan | undefined>(() => initialState?.explainPlan);
+  const [explainPlan, setExplainPlan] = useState<ParsedExplainPlan | undefined>(
+    () => initialState?.explainPlan,
+  );
   /** SQL text the current explainPlan was generated from (for index proposals). */
   const [explainSourceSql, setExplainSourceSql] = useState<string | undefined>(undefined);
   const [isRunningExplain, setIsRunningExplain] = useState(false);
@@ -154,7 +172,7 @@ export function useSQLEditor({
   const schedulePersistedContent = useCallback(
     (value: string) => {
       if (!tabId) return;
-    contentDraftRef.current = value;
+      contentDraftRef.current = value;
       try {
         window.localStorage.setItem(
           `tabler.editor-draft.${connectionId}.${tabId}`,
@@ -171,7 +189,7 @@ export function useSQLEditor({
         updateTab(tabId, { content: value });
       }, 180);
     },
-    [connectionId, tabId, updateTab]
+    [connectionId, tabId, updateTab],
   );
 
   const acceptAiProposal = useCallback(() => {
@@ -236,6 +254,7 @@ export function useSQLEditor({
         sql: event.detail.sql,
         reason: event.detail.reason,
         previousSql: currentSql,
+        explain: event.detail.explain,
       });
     });
   }, [tabId]);
@@ -249,8 +268,7 @@ export function useSQLEditor({
     // statements (levels <= 3) run without the confirmation dialog. Regular
     // tabs and other connections keep the confirmation.
     const fullAutonomyPreApproved =
-      tabSource === "ai" &&
-      useAIAutonomyStore.getState().getAutonomy(connectionId) === "full";
+      tabSource === "ai" && useAIAutonomyStore.getState().getAutonomy(connectionId) === "full";
 
     const selection = editor.getSelection();
     let sql = "";
@@ -275,8 +293,7 @@ export function useSQLEditor({
       const checkpoint = await captureAgentEditedRunCheckpoint({
         connectionId,
         database: storeState.currentDatabase || null,
-        dbType:
-          storeState.connections.find((c) => c.id === connectionId)?.db_type ?? "sqlite",
+        dbType: storeState.connections.find((c) => c.id === connectionId)?.db_type ?? "sqlite",
       });
       agentEditedRef.current = false;
       setNotice(
@@ -304,12 +321,26 @@ export function useSQLEditor({
         setResult(queryResult);
         if (queryResult.rows.length > 0) setShowResultsPane(true);
         setQueryCount((count) => count + 1);
-        void saveQueryEntry(commandText, connectionId, Number(queryResult.execution_time_ms), queryResult.rows.length || undefined, undefined, useConnectionStore.getState().currentDatabase || undefined);
+        void saveQueryEntry(
+          commandText,
+          connectionId,
+          Number(queryResult.execution_time_ms),
+          queryResult.rows.length || undefined,
+          undefined,
+          useConnectionStore.getState().currentDatabase || undefined,
+        );
       } catch (error) {
         const errorMessage = formatExecutionError(error);
         setError(errorMessage);
         setResult(null);
-        void saveQueryEntry(commandText, connectionId, 0, undefined, errorMessage, useConnectionStore.getState().currentDatabase || undefined);
+        void saveQueryEntry(
+          commandText,
+          connectionId,
+          0,
+          undefined,
+          errorMessage,
+          useConnectionStore.getState().currentDatabase || undefined,
+        );
       } finally {
         setIsExecutingCurrent(false);
         setIsBatchExecuting(false);
@@ -342,7 +373,7 @@ export function useSQLEditor({
           Number(queryResult.execution_time_ms),
           queryResult.rows.length || undefined,
           undefined,
-          useConnectionStore.getState().currentDatabase || undefined
+          useConnectionStore.getState().currentDatabase || undefined,
         );
       } catch (e) {
         const errorMessage = formatExecutionError(e);
@@ -356,7 +387,7 @@ export function useSQLEditor({
           0,
           undefined,
           errorMessage,
-          useConnectionStore.getState().currentDatabase || undefined
+          useConnectionStore.getState().currentDatabase || undefined,
         );
       } finally {
         setIsExecutingCurrent(false);
@@ -402,7 +433,7 @@ export function useSQLEditor({
 
     if (statementsToExecute.some(isSessionSwitchStatement)) {
       setError(
-        "Sandbox gateway does not allow session-switch statements like USE, ATTACH, or SET search_path. Choose the active database from the app UI first, then run the query."
+        "Sandbox gateway does not allow session-switch statements like USE, ATTACH, or SET search_path. Choose the active database from the app UI first, then run the query.",
       );
       setResult(null);
       return;
@@ -442,7 +473,7 @@ export function useSQLEditor({
         Number(queryResult.execution_time_ms),
         queryResult.rows.length || undefined,
         undefined,
-        activeDatabase || undefined
+        activeDatabase || undefined,
       );
 
       if (hasMutatingStatements) {
@@ -458,8 +489,12 @@ export function useSQLEditor({
         });
         window.dispatchEvent(
           new CustomEvent("table-data-updated", {
-            detail: { connectionId, database: useConnectionStore.getState().currentDatabase || undefined, invalidateStructure },
-          })
+            detail: {
+              connectionId,
+              database: useConnectionStore.getState().currentDatabase || undefined,
+              invalidateStructure,
+            },
+          }),
         );
       }
     } catch (e) {
@@ -475,13 +510,23 @@ export function useSQLEditor({
         0,
         undefined,
         errorMessage,
-        useConnectionStore.getState().currentDatabase || undefined
+        useConnectionStore.getState().currentDatabase || undefined,
       );
     } finally {
       setIsExecutingCurrent(false);
       setIsBatchExecuting(false);
     }
-  }, [connectionId, executeParameterizedQuery, executeQuery, executeSandboxQuery, isBatchExecuting, saveQueryEntry, switchDatabase, tabSource, usesDirectExecution]);
+  }, [
+    connectionId,
+    executeParameterizedQuery,
+    executeQuery,
+    executeSandboxQuery,
+    isBatchExecuting,
+    saveQueryEntry,
+    switchDatabase,
+    tabSource,
+    usesDirectExecution,
+  ]);
 
   /** Formats the selected text (or entire editor content) using the connection's SQL dialect. */
   const handleFormatSql = useCallback(() => {
@@ -499,11 +544,15 @@ export function useSQLEditor({
     }
     if (!sql.trim()) return;
 
-    const dbType = useConnectionStore.getState().connections.find((c) => c.id === connectionId)?.db_type;
+    const dbType = useConnectionStore
+      .getState()
+      .connections.find((c) => c.id === connectionId)?.db_type;
     const formatted = formatSql(sql, dbType);
 
     if (selection && !selection.isEmpty()) {
-      editor.executeEdits("format-sql", [{ range: selection, text: formatted, forceMoveMarkers: true }]);
+      editor.executeEdits("format-sql", [
+        { range: selection, text: formatted, forceMoveMarkers: true },
+      ]);
     } else {
       editor.setValue(formatted);
       schedulePersistedContent(formatted);
@@ -511,69 +560,72 @@ export function useSQLEditor({
   }, [connectionId, queryProfile.supportsFormatting, schedulePersistedContent]);
 
   /** Executes EXPLAIN [ANALYZE] on the current editor content and parses the plan. */
-  const handleExplain = useCallback(async (analyze = false) => {
-    const editor = editorRef.current;
-    if (!editor) return;
+  const handleExplain = useCallback(
+    async (analyze = false) => {
+      const editor = editorRef.current;
+      if (!editor) return;
 
-    const selection = editor.getSelection();
-    let sql = "";
-    if (selection && !selection.isEmpty()) {
-      sql = editor.getModel()?.getValueInRange(selection) || "";
-    } else {
-      sql = editor.getValue();
-    }
-    if (!sql.trim()) {
-      setError("Nothing to explain. Write a SELECT or DML statement first.");
-      return;
-    }
+      const selection = editor.getSelection();
+      let sql = "";
+      if (selection && !selection.isEmpty()) {
+        sql = editor.getModel()?.getValueInRange(selection) || "";
+      } else {
+        sql = editor.getValue();
+      }
+      if (!sql.trim()) {
+        setError("Nothing to explain. Write a SELECT or DML statement first.");
+        return;
+      }
 
-    const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
-    const dbType = conn?.db_type ?? "sqlite";
+      const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
+      const dbType = conn?.db_type ?? "sqlite";
 
-    setIsRunningExplain(true);
-    setExplainPlan(undefined);
+      setIsRunningExplain(true);
+      setExplainPlan(undefined);
 
-    try {
-      const explainQuery = buildExplainQuery(sql.trim(), dbType, analyze);
-      const queryResult = await executeQuery(connectionId, explainQuery);
+      try {
+        const explainQuery = buildExplainQuery(sql.trim(), dbType, analyze);
+        const queryResult = await executeQuery(connectionId, explainQuery);
 
-      // Parse the result — EXPLAIN returns rows with columns
-      let rawOutput: unknown = null;
-      if (queryResult.rows.length === 1 && queryResult.columns.length === 1) {
-        // Common: single row, single text/JSON column
-        rawOutput = queryResult.rows[0][0];
-      } else if (queryResult.rows.length > 0) {
-        // Multiple rows or columns — reconstruct
-        rawOutput = queryResult.rows.map((row) => {
-          const obj: Record<string, unknown> = {};
-          queryResult.columns.forEach((col, i) => {
-            obj[col.name] = row[i];
+        // Parse the result — EXPLAIN returns rows with columns
+        let rawOutput: unknown = null;
+        if (queryResult.rows.length === 1 && queryResult.columns.length === 1) {
+          // Common: single row, single text/JSON column
+          rawOutput = queryResult.rows[0][0];
+        } else if (queryResult.rows.length > 0) {
+          // Multiple rows or columns — reconstruct
+          rawOutput = queryResult.rows.map((row) => {
+            const obj: Record<string, unknown> = {};
+            queryResult.columns.forEach((col, i) => {
+              obj[col.name] = row[i];
+            });
+            return obj;
           });
-          return obj;
-        });
-        if (queryResult.rows.length === 1) {
-          rawOutput = (rawOutput as Record<string, unknown>[])[0];
+          if (queryResult.rows.length === 1) {
+            rawOutput = (rawOutput as Record<string, unknown>[])[0];
+          }
         }
-      }
 
-      // If raw output is a string (plain text format), try to parse as JSON
-      if (typeof rawOutput === "string") {
-        try {
-          rawOutput = JSON.parse(rawOutput);
-        } catch {
-          // Keep as-is (text format)
+        // If raw output is a string (plain text format), try to parse as JSON
+        if (typeof rawOutput === "string") {
+          try {
+            rawOutput = JSON.parse(rawOutput);
+          } catch {
+            // Keep as-is (text format)
+          }
         }
-      }
 
-      const plan = parseExplainOutput(dbType, rawOutput);
-      setExplainPlan(plan);
-      setExplainSourceSql(sql.trim());
-    } catch (e) {
-      setError(`EXPLAIN failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setIsRunningExplain(false);
-    }
-  }, [connectionId, executeQuery]);
+        const plan = parseExplainOutput(dbType, rawOutput);
+        setExplainPlan(plan);
+        setExplainSourceSql(sql.trim());
+      } catch (e) {
+        setError(`EXPLAIN failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setIsRunningExplain(false);
+      }
+    },
+    [connectionId, executeQuery],
+  );
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
@@ -618,31 +670,39 @@ export function useSQLEditor({
       inlineCompletionCacheRef,
       inlineCompletionInFlightRef,
       lastInlineCompletionAtRef,
-      dailyInlineCompletionRef
+      dailyInlineCompletionRef,
     );
 
     completionDisposableRef.current?.dispose();
-    completionDisposableRef.current = queryProfile.surface === "sql"
-      ? registerSchemaCompletionProvider(monaco, {
-          getTables: () => useConnectionStore.getState().tables,
-          getTableStructure: (tableName: string) =>
-            useQueryStore.getState().getTableStructure(
-              connectionId,
-              tableName,
-              useConnectionStore.getState().currentDatabase ?? undefined
-            ),
-          dbType,
-        })
-      : null;
+    completionDisposableRef.current =
+      queryProfile.surface === "sql"
+        ? registerSchemaCompletionProvider(monaco, {
+            getTables: () => useConnectionStore.getState().tables,
+            getTableStructure: (tableName: string) =>
+              useQueryStore
+                .getState()
+                .getTableStructure(
+                  connectionId,
+                  tableName,
+                  useConnectionStore.getState().currentDatabase ?? undefined,
+                ),
+            dbType,
+          })
+        : null;
 
     // Warm the structure cache in the background: without this, the FIRST
     // completion request fired one metadata query per table in parallel and
     // stalled the editor (and the connection pool) for seconds.
-    const completionProvider = completionDisposableRef.current as
-      | { dispose: () => void; prefetchStructures?: () => Promise<void> }
-      | null;
+    const completionProvider = completionDisposableRef.current as {
+      dispose: () => void;
+      prefetchStructures?: () => Promise<void>;
+    } | null;
     const prefetchKey = `${connectionId ?? ""}|${dbType ?? ""}`;
-    if (completionProvider?.prefetchStructures && connectionId && !structurePrefetchKeysRef.current.has(prefetchKey)) {
+    if (
+      completionProvider?.prefetchStructures &&
+      connectionId &&
+      !structurePrefetchKeysRef.current.has(prefetchKey)
+    ) {
       structurePrefetchKeysRef.current.add(prefetchKey);
       void completionProvider.prefetchStructures();
     }
@@ -662,9 +722,10 @@ export function useSQLEditor({
           });
         }, 180);
       }
-      const text = currentSelection && !currentSelection.isEmpty()
-        ? editor.getModel()?.getValueInRange(currentSelection) || ""
-        : "";
+      const text =
+        currentSelection && !currentSelection.isEmpty()
+          ? editor.getModel()?.getValueInRange(currentSelection) || ""
+          : "";
       window.dispatchEvent(
         new CustomEvent("ai-selection-context", {
           detail: {
@@ -672,7 +733,7 @@ export function useSQLEditor({
             source: "SQL editor selection",
             tabId,
           },
-        })
+        }),
       );
     });
 
@@ -728,27 +789,53 @@ export function useSQLEditor({
       rowCount: result?.rows.length,
       affectedRows: result?.affected_rows,
       queryCount: queryCount || undefined,
+      cached: result?.cached === true,
     });
   }, [isBatchExecuting, isExecutingCurrent, queryCount, result]);
 
   useEffect(() => {
     if (!result || result.execution_time_ms < 0) return;
-    const activityLabel = result.rows.length > 0
-      ? usesDirectExecution ? "Command" : "Query"
-      : result.affected_rows > 0
-        ? result.sandboxed ? "Sandbox" : "Write"
-        : usesDirectExecution ? "Command" : "Run";
+    const activityLabel =
+      result.rows.length > 0
+        ? usesDirectExecution
+          ? "Command"
+          : "Query"
+        : result.affected_rows > 0
+          ? result.sandboxed
+            ? "Sandbox"
+            : "Write"
+          : usesDirectExecution
+            ? "Command"
+            : "Run";
     window.dispatchEvent(
       new CustomEvent("workspace-activity", {
         detail: { connectionId, label: activityLabel, durationMs: result.execution_time_ms },
-      })
+      }),
     );
   }, [connectionId, result, usesDirectExecution]);
 
   useEffect(() => {
     if (!onStateChangeRef.current) return;
-    onStateChangeRef.current({ result, error, notice, queryCount, editorHeight, showResultsPane, resultViewMode, explainPlan });
-  }, [editorHeight, error, explainPlan, notice, queryCount, result, resultViewMode, showResultsPane]);
+    onStateChangeRef.current({
+      result,
+      error,
+      notice,
+      queryCount,
+      editorHeight,
+      showResultsPane,
+      resultViewMode,
+      explainPlan,
+    });
+  }, [
+    editorHeight,
+    error,
+    explainPlan,
+    notice,
+    queryCount,
+    result,
+    resultViewMode,
+    showResultsPane,
+  ]);
 
   useEffect(() => {
     const onInsertSQLFromAI = (e: Event) => {
@@ -762,16 +849,18 @@ export function useSQLEditor({
         } else {
           const position = editor.getPosition();
           if (position) {
-            editor.executeEdits("ai", [{
-              range: {
-                startLineNumber: position.lineNumber,
-                startColumn: position.column,
-                endLineNumber: position.lineNumber,
-                endColumn: position.column,
+            editor.executeEdits("ai", [
+              {
+                range: {
+                  startLineNumber: position.lineNumber,
+                  startColumn: position.column,
+                  endLineNumber: position.lineNumber,
+                  endColumn: position.column,
+                },
+                text: sql,
+                forceMoveMarkers: true,
               },
-              text: sql,
-              forceMoveMarkers: true,
-            }]);
+            ]);
           }
         }
       }
@@ -815,29 +904,32 @@ export function useSQLEditor({
     return () => window.removeEventListener("toggle-query-results-pane", handleToggleResultsPane);
   }, [tabId]);
 
-  const handleSplitDrag = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const container = splitRef.current?.parentElement;
-    if (!container) return;
-    const startY = e.clientY;
-    const startH = editorHeight;
-    const containerH = container.getBoundingClientRect().height;
-    const onMove = (ev: MouseEvent) => {
-      const delta = ev.clientY - startY;
-      const pct = startH + (delta / containerH) * 100;
-      setEditorHeight(Math.min(80, Math.max(18, pct)));
-    };
-    const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, [editorHeight]);
+  const handleSplitDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const container = splitRef.current?.parentElement;
+      if (!container) return;
+      const startY = e.clientY;
+      const startH = editorHeight;
+      const containerH = container.getBoundingClientRect().height;
+      const onMove = (ev: MouseEvent) => {
+        const delta = ev.clientY - startY;
+        const pct = startH + (delta / containerH) * 100;
+        setEditorHeight(Math.min(80, Math.max(18, pct)));
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.body.style.cursor = "row-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    },
+    [editorHeight],
+  );
 
   return {
     result,

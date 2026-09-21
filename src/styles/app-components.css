@@ -21245,6 +21245,130 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   text-overflow: ellipsis;
 }
 
+/* Run details: collapsible per-run audit trail (tool calls + SQL + timing). */
+.ai-run-details {
+  margin: 6px 0 2px;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-0);
+  padding: 8px 10px;
+}
+
+.ai-run-details-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ai-run-details-head:hover {
+  color: var(--text-primary);
+}
+
+.ai-run-details-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+}
+
+.ai-run-details-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-run-details-call {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--mm-surface-1);
+}
+
+.ai-run-details-call-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-run-details-tool {
+  flex-shrink: 0;
+  font-family: "IBM Plex Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ai-run-details-args {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "IBM Plex Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.ai-run-details-ms {
+  flex-shrink: 0;
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.ai-run-details-status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.ai-run-details-status--ok {
+  color: var(--mm-success, #30a46c);
+}
+
+.ai-run-details-status--fail {
+  color: var(--mm-danger, #e5484d);
+}
+
+.ai-run-details-sql-label {
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  color: var(--text-tertiary, var(--text-secondary));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ai-run-details-total {
+  margin-top: 8px;
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  color: var(--text-tertiary, var(--text-secondary));
+  text-align: right;
+}
+
 .ai-workspace-modal-btn {
   display: inline-flex;
   align-items: center;
@@ -26330,6 +26454,30 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   min-width: 0;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+/* EXPLAIN dry-run line on the proposal banner: takes the full row so the plan
+   digest (or the pre-accept syntax error) never squeezes the reason text. */
+.sql-editor-ai-proposal-explain {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mm-fs-micro);
+  color: var(--text-secondary);
+}
+
+.sql-editor-ai-proposal-explain-ok {
+  color: var(--mm-success);
+}
+
+.sql-editor-ai-proposal-explain-error {
+  color: var(--mm-error);
+}
+
+.sql-editor-ai-proposal-explain-unsupported {
+  color: var(--mm-warning);
 }
 
 .sql-editor-ai-proposal > .sql-editor-tool-btn {

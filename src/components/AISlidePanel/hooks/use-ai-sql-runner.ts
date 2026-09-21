@@ -20,6 +20,7 @@ import { invokeMutation } from "../../../utils/tauri-utils";
 import { requestAISqlConfirmation } from "../ai-sql-confirm";
 import { summarizeRunResult } from "../ai-sql-response";
 import type { AIWorkspaceAgentAutonomy } from "../ai-workspace-types";
+import { getLinkedWorkspaceDir } from "../../../hooks/useLinkedFolders";
 
 /** Label baked into the automatic pre-write checkpoint file name. */
 const AUTO_CHECKPOINT_LABEL = "auto-before-agent-write";
@@ -136,6 +137,9 @@ export function useAISqlRunner({
         // while doing nothing — a discarded verdict is worse than no verdict.
         const ruleVerdict = await evaluateRunAgainstRules(statements, {
           isMutating: hasMutatingStatements,
+          // Per-project rules live in <linked-folder>/rules; without the
+          // workspace dir the engine only ever sees builtin/global rules.
+          workspaceDir: await getLinkedWorkspaceDir(),
           invoke: (command, args) => invokeMutation(command, args ?? {}),
         });
         if (isRunBlockedByRules(ruleVerdict)) {

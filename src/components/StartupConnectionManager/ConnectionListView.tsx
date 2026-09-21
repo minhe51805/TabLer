@@ -1,6 +1,21 @@
-import { Database, FolderOpen, LayoutGrid, LayoutList, Plus, Search } from "lucide-react";
+import {
+  Database,
+  FolderOpen,
+  LayoutGrid,
+  LayoutList,
+  Loader2,
+  Plus,
+  Search,
+  Sparkles,
+} from "lucide-react";
 import { useI18n } from "../../i18n";
-import type { ConnectionConfig, ConnectionGroup, ConnectionLayoutMode, ConnectionTag } from "./types";
+import type {
+  ConnectionConfig,
+  ConnectionGroup,
+  ConnectionLayoutMode,
+  ConnectionTag,
+} from "./types";
+import type { StartupCopy } from "./startup-copy";
 import {
   buildDatabaseLabel,
   buildEndpointLabel,
@@ -34,6 +49,12 @@ interface Props {
   onLeaveHover: () => void;
   onNewConnection: () => void;
   onOpenDatabaseFile: () => void;
+  /** Show the first-run "sample database" card (only when the saved list is
+   *  truly empty — not merely filtered to zero). */
+  showSampleCard: boolean;
+  sampleCopy: StartupCopy["sampleCard"];
+  isCreatingSample: boolean;
+  onCreateSample: () => void;
   onToggleGroup: (groupId: string) => void;
   onRenameGroup: (groupId: string, name: string) => void;
   onChangeGroupColor: (groupId: string, color: string) => void;
@@ -62,6 +83,10 @@ export function ConnectionListView({
   onLeaveHover,
   onNewConnection,
   onOpenDatabaseFile,
+  showSampleCard,
+  sampleCopy,
+  isCreatingSample,
+  onCreateSample,
   onToggleGroup,
   onRenameGroup,
   onChangeGroupColor,
@@ -104,7 +129,11 @@ export function ConnectionListView({
           </span>
         </div>
 
-        <div className="startup-manager-action-group" role="group" aria-label={t("common.connections")}>
+        <div
+          className="startup-manager-action-group"
+          role="group"
+          aria-label={t("common.connections")}
+        >
           <button
             type="button"
             className="startup-manager-search-add primary"
@@ -172,6 +201,27 @@ export function ConnectionListView({
               <Database className="w-8 h-8 opacity-35" />
               <strong>{t("startup.manager.noConnections")}</strong>
               <p>{t("startup.manager.noConnectionsDescription")}</p>
+              {showSampleCard ? (
+                <button
+                  type="button"
+                  className="startup-manager-sample-card"
+                  onClick={onCreateSample}
+                  disabled={isCreatingSample || isConnecting}
+                >
+                  {isCreatingSample ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
+                  <span className="startup-manager-sample-card-copy">
+                    <strong>{sampleCopy.title}</strong>
+                    <span>{sampleCopy.description}</span>
+                  </span>
+                  <span className="startup-manager-sample-card-action">
+                    {isCreatingSample ? sampleCopy.creating : sampleCopy.action}
+                  </span>
+                </button>
+              ) : null}
             </div>
           ) : (
             flatItems.map((item) => {
@@ -222,7 +272,12 @@ export function ConnectionListView({
                           ? t("common.connected")
                           : t("common.saved"),
                     dbInfo: getDbInfo(conn.db_type),
-                    endpointLabel: buildEndpointLabel(conn.db_type, conn.host, conn.port, conn.file_path),
+                    endpointLabel: buildEndpointLabel(
+                      conn.db_type,
+                      conn.host,
+                      conn.port,
+                      conn.file_path,
+                    ),
                     databaseLabel: buildDatabaseLabel(conn.db_type, conn.database, conn.username),
                     engineLabel: conn.db_type.toUpperCase(),
                     secondaryBadgeLabel: buildSecondaryBadgeLabel(conn.db_type, !!conn.use_ssl),

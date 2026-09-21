@@ -146,16 +146,17 @@ pub async fn connect_database(
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
     cancellation_state: State<'_, ConnectionAttemptCancellationState>,
-) -> Result<String, String> {
+) -> Result<String, ConnectionErrorInfo> {
     config.resolve_env_vars();
     config.fill_generated_name();
     // Validate connection config before attempting to connect
-    config
-        .validate()
-        .map_err(|e| format!("Invalid connection config: {}", e))?;
+    config.validate().map_err(|e| {
+        ConnectionErrorInfo::unclassified(format!("Invalid connection config: {}", e))
+    })?;
     connection_rate_limiter
         .check(&connection_rate_limit_key(&config))
-        .await?;
+        .await
+        .map_err(ConnectionErrorInfo::unclassified)?;
 
     let request_id = request_id
         .as_deref()
@@ -167,10 +168,14 @@ pub async fn connect_database(
         cancellation_state.register(request_id, token.clone()).await;
     }
     let connect_result = tokio::select! {
-        _ = token.cancelled() => Err("Connection attempt cancelled.".to_string()),
+        _ = token.cancelled() => Err(ConnectionErrorInfo::unclassified("Connection attempt cancelled.")),
         result = timeout(CONNECTION_TIMEOUT, db_manager.connect(&config)) => result
-            .map_err(|_| "Connection attempt timed out after 45 seconds.".to_string())
-            .and_then(|result| result.map_err(|error| format_connection_runtime_error(&config, error))),
+            .map_err(|_| ConnectionErrorInfo {
+                stage: "timeout".to_string(),
+                message: "Connection attempt timed out after 45 seconds.".to_string(),
+                hint: "Check that the server is reachable and not overloaded, then retry.".to_string(),
+            })
+            .and_then(|result| result.map_err(|error| connection_error_info(&config, error))),
     };
     if let Some(request_id) = request_id.as_deref() {
         cancellation_state.finish(request_id).await;
@@ -194,10 +199,10 @@ pub async fn connect_database(
                 Err(_) => " Cleanup timed out.".to_string(),
             };
 
-        return Err(format!(
+        return Err(ConnectionErrorInfo::unclassified(format!(
             "Failed to save the connection profile. The live connection was rolled back.{}",
             disconnect_message
-        ));
+        )));
     }
 
     Ok(config.id.clone())
@@ -220,16 +225,17 @@ pub async fn test_connection(
     request_id: Option<String>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
     cancellation_state: State<'_, ConnectionAttemptCancellationState>,
-) -> Result<String, String> {
+) -> Result<String, ConnectionErrorInfo> {
     config.resolve_env_vars();
     config.fill_generated_name();
     // Validate connection config before testing
-    config
-        .validate()
-        .map_err(|e| format!("Invalid connection config: {}", e))?;
+    config.validate().map_err(|e| {
+        ConnectionErrorInfo::unclassified(format!("Invalid connection config: {}", e))
+    })?;
     connection_rate_limiter
         .check(&format!("test|{}", connection_rate_limit_key(&config)))
-        .await?;
+        .await
+        .map_err(ConnectionErrorInfo::unclassified)?;
 
     let temp_manager = DatabaseManager::new();
     let request_id = request_id
@@ -242,10 +248,14 @@ pub async fn test_connection(
         cancellation_state.register(request_id, token.clone()).await;
     }
     let test_result = tokio::select! {
-        _ = token.cancelled() => Err("Connection test cancelled.".to_string()),
+        _ = token.cancelled() => Err(ConnectionErrorInfo::unclassified("Connection test cancelled.")),
         result = timeout(CONNECTION_TIMEOUT, temp_manager.connect(&config)) => result
-            .map_err(|_| "Connection test timed out after 45 seconds.".to_string())
-            .and_then(|result| result.map_err(|error| format_connection_runtime_error(&config, error))),
+            .map_err(|_| ConnectionErrorInfo {
+                stage: "timeout".to_string(),
+                message: "Connection test timed out after 45 seconds.".to_string(),
+                hint: "Check that the server is reachable and not overloaded, then retry.".to_string(),
+            })
+            .and_then(|result| result.map_err(|error| connection_error_info(&config, error))),
     };
     if let Some(request_id) = request_id.as_deref() {
         cancellation_state.finish(request_id).await;
@@ -253,8 +263,12 @@ pub async fn test_connection(
     test_result?;
     timeout(DISCONNECT_TIMEOUT, temp_manager.disconnect(&config.id))
         .await
-        .map_err(|_| "Connection test cleanup timed out after 15 seconds.".to_string())?
-        .map_err(|_| "Connection test cleanup failed. Please try again.".to_string())?;
+        .map_err(|_| {
+            ConnectionErrorInfo::unclassified("Connection test cleanup timed out after 15 seconds.")
+        })?
+        .map_err(|_| {
+            ConnectionErrorInfo::unclassified("Connection test cleanup failed. Please try again.")
+        })?;
     Ok("Connection successful".to_string())
 }
 
@@ -426,7 +440,7 @@ pub async fn connect_saved_connection(
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
     cancellation_state: State<'_, ConnectionAttemptCancellationState>,
-) -> Result<String, String> {
+) -> Result<String, ConnectionErrorInfo> {
     let storage = conn_storage.inner().clone();
     let requested_connection_id = connection_id.clone();
     let mut config = run_blocking_storage_task(move || {
@@ -434,11 +448,13 @@ pub async fn connect_saved_connection(
             .load_connection_by_id(&requested_connection_id)
             .map_err(|_| "Failed to load the saved connection profile.".to_string())
     })
-    .await?;
+    .await
+    .map_err(ConnectionErrorInfo::unclassified)?;
     config.resolve_env_vars();
     connection_rate_limiter
         .check(&format!("saved|{}", connection_rate_limit_key(&config)))
-        .await?;
+        .await
+        .map_err(ConnectionErrorInfo::unclassified)?;
 
     let request_id = request_id
         .as_deref()
@@ -450,10 +466,14 @@ pub async fn connect_saved_connection(
         cancellation_state.register(request_id, token.clone()).await;
     }
     let connect_result = tokio::select! {
-        _ = token.cancelled() => Err("Connection attempt cancelled.".to_string()),
+        _ = token.cancelled() => Err(ConnectionErrorInfo::unclassified("Connection attempt cancelled.")),
         result = timeout(CONNECTION_TIMEOUT, db_manager.connect(&config)) => result
-            .map_err(|_| "Connection attempt timed out after 45 seconds.".to_string())
-            .and_then(|result| result.map_err(|e| format_connection_runtime_error(&config, e))),
+            .map_err(|_| ConnectionErrorInfo {
+                stage: "timeout".to_string(),
+                message: "Connection attempt timed out after 45 seconds.".to_string(),
+                hint: "Check that the server is reachable and not overloaded, then retry.".to_string(),
+            })
+            .and_then(|result| result.map_err(|e| connection_error_info(&config, e))),
     };
     if let Some(request_id) = request_id.as_deref() {
         cancellation_state.finish(request_id).await;

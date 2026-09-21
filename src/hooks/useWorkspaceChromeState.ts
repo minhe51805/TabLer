@@ -3,6 +3,7 @@ import { getLastPathSegment } from "../utils/path-utils";
 import { getQueryProfile } from "../utils/query-profile";
 import type { ConnectionConfig, Tab } from "../types/database";
 import type { WorkspaceActivityState } from "../types/app-types";
+import type { ConnectionErrorDetails } from "../utils/connection-error";
 
 interface WorkspaceChromeStateInputs {
   isRecoverableErrorDelayActive: boolean;
@@ -12,7 +13,7 @@ interface WorkspaceChromeStateInputs {
   activeConn: ConnectionConfig | undefined;
   connectedIds: Set<string>;
   forceLauncherVisible: boolean;
-  connectError: { id: string; message: string } | null;
+  connectError: ({ id: string } & ConnectionErrorDetails) | null;
   showStartupConnectionManager: boolean;
   activeTab: Tab | null;
   workspaceActivityByConnection: Record<string, WorkspaceActivityState>;
@@ -39,12 +40,32 @@ interface WorkspaceChromeStateInputs {
  */
 export function useWorkspaceChromeState(inputs: WorkspaceChromeStateInputs) {
   const {
-    isRecoverableErrorDelayActive, isConnecting, connectionFormIntent, activeConnectionId,
-    activeConn, connectedIds, forceLauncherVisible, connectError, showStartupConnectionManager, activeTab,
-    workspaceActivityByConnection, currentDatabase, showAISettings, showAboutModal,
-    showPluginManager, showMcpIntegrations, showUserRoleManagement, showKeyboardShortcutsModal,
-    showThemeCustomizer, showConnectionExporter, showConnectionImporter, isCommandPaletteOpen,
-    isQuickSwitcherOpen, showAISlidePanel, isConnected, tabs,
+    isRecoverableErrorDelayActive,
+    isConnecting,
+    connectionFormIntent,
+    activeConnectionId,
+    activeConn,
+    connectedIds,
+    forceLauncherVisible,
+    connectError,
+    showStartupConnectionManager,
+    activeTab,
+    workspaceActivityByConnection,
+    currentDatabase,
+    showAISettings,
+    showAboutModal,
+    showPluginManager,
+    showMcpIntegrations,
+    showUserRoleManagement,
+    showKeyboardShortcutsModal,
+    showThemeCustomizer,
+    showConnectionExporter,
+    showConnectionImporter,
+    isCommandPaletteOpen,
+    isQuickSwitcherOpen,
+    showAISlidePanel,
+    isConnected,
+    tabs,
   } = inputs;
 
   // A saved-connection attempt that just failed keeps its identity as
@@ -67,12 +88,19 @@ export function useWorkspaceChromeState(inputs: WorkspaceChromeStateInputs) {
     (forceLauncherVisible ||
       (!isRecoverableErrorDelayActive &&
         (shouldForceStartupLauncher ||
-          (!isConnected && !isConnecting && (showStartupConnectionManager || !!connectionFormIntent)))));
+          (!isConnected &&
+            !isConnecting &&
+            (showStartupConnectionManager || !!connectionFormIntent)))));
   const isMetricsWorkspace = activeTab?.type === "metrics";
-  const activeWorkspaceActivity =
-    activeConnectionId ? workspaceActivityByConnection[activeConnectionId] ?? null : null;
+  const activeWorkspaceActivity = activeConnectionId
+    ? (workspaceActivityByConnection[activeConnectionId] ?? null)
+    : null;
   const activeQueryProfile = getQueryProfile(activeConn?.db_type);
-  const supportsSqlFileActions = !!(activeConnectionId && activeConn && activeQueryProfile.surface === "sql");
+  const supportsSqlFileActions = !!(
+    activeConnectionId &&
+    activeConn &&
+    activeQueryProfile.surface === "sql"
+  );
   const queryTabCount = tabs.filter(
     (tab) => tab.type === "query" && tab.connectionId === activeConnectionId,
   ).length;
@@ -96,16 +124,24 @@ export function useWorkspaceChromeState(inputs: WorkspaceChromeStateInputs) {
     showConnectionImporter ||
     isCommandPaletteOpen ||
     isQuickSwitcherOpen;
-  const {
-    hasMountedAIWorkspace: hasMountedAISlidePanel,
-    hasMountedGlobalModals,
-  } = useDeferredAppSurfaces(showAISlidePanel, shouldMountGlobalModalsNow);
+  const { hasMountedAIWorkspace: hasMountedAISlidePanel, hasMountedGlobalModals } =
+    useDeferredAppSurfaces(showAISlidePanel, shouldMountGlobalModalsNow);
   const shouldRenderGlobalModals = hasMountedGlobalModals || shouldMountGlobalModalsNow;
 
   return {
-    shouldForceStartupLauncher, showStartupShell, isMetricsWorkspace, activeWorkspaceActivity,
-    activeQueryProfile, supportsSqlFileActions, queryTabCount, activeDatabaseLabel,
-    titlebarContextTitle, titlebarContextLabel, shouldMountGlobalModalsNow,
-    hasMountedAISlidePanel, hasMountedGlobalModals, shouldRenderGlobalModals,
+    shouldForceStartupLauncher,
+    showStartupShell,
+    isMetricsWorkspace,
+    activeWorkspaceActivity,
+    activeQueryProfile,
+    supportsSqlFileActions,
+    queryTabCount,
+    activeDatabaseLabel,
+    titlebarContextTitle,
+    titlebarContextLabel,
+    shouldMountGlobalModalsNow,
+    hasMountedAISlidePanel,
+    hasMountedGlobalModals,
+    shouldRenderGlobalModals,
   };
 }

@@ -34,6 +34,7 @@ import { ConnectionListView } from "./ConnectionListView";
 import { StartupBrandingPanel } from "./StartupBrandingPanel";
 import { HoverPopover } from "./HoverPopover";
 import { AppUpdateButton } from "./AppUpdateButton";
+import { STARTUP_COPY } from "./startup-copy";
 
 interface Props {
   onNewConnection: () => void;
@@ -51,7 +52,11 @@ function getInitialLayoutMode(): ConnectionLayoutMode {
 
 // ─── Orchestrator ─────────────────────────────────────────────────────────────
 
-export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, windowControls }: Props) {
+export function StartupConnectionManager({
+  onNewConnection,
+  onOpenDatabaseFile,
+  windowControls,
+}: Props) {
   const { t, language } = useI18n();
   const isDesktopWindow = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   const {
@@ -62,7 +67,9 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
     loadSavedConnections,
     connectSavedConnection,
     disconnectFromDatabase,
-    deleteSavedConnection, renameSavedConnection,
+    deleteSavedConnection,
+    renameSavedConnection,
+    createSampleDatabase,
     fetchDatabases,
     fetchTables,
   } = useConnectionStore(
@@ -76,6 +83,7 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
       disconnectFromDatabase: state.disconnectFromDatabase,
       deleteSavedConnection: state.deleteSavedConnection,
       renameSavedConnection: state.renameSavedConnection,
+      createSampleDatabase: state.createSampleDatabase,
       fetchDatabases: state.fetchDatabases,
       fetchTables: state.fetchTables,
     })),
@@ -85,7 +93,9 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
 
   const [groups, setGroups] = useState<ConnectionGroup[]>(() => getGroups());
   const [tags] = useState<ConnectionTag[]>(() => getTags());
-  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => getCollapsedGroupIds());
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() =>
+    getCollapsedGroupIds(),
+  );
 
   const refreshGroups = () => setGroups(getGroups());
 
@@ -94,8 +104,11 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
   const [search, setSearch] = useState("");
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [layoutMode, setLayoutMode] = useState<ConnectionLayoutMode>(getInitialLayoutMode);
+  const [isCreatingSample, setIsCreatingSample] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
-  const [pendingDeleteConnection, setPendingDeleteConnection] = useState<ConnectionConfig | null>(null);
+  const [pendingDeleteConnection, setPendingDeleteConnection] = useState<ConnectionConfig | null>(
+    null,
+  );
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // ── Derived Data ───────────────────────────────────────────────────────────
@@ -118,7 +131,14 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
     const needle = search.trim().toLocaleLowerCase();
     if (!needle) return sortedConnections;
     return sortedConnections.filter((conn) => {
-      const haystack = [conn.name, conn.host, conn.database, conn.username, conn.file_path, conn.db_type]
+      const haystack = [
+        conn.name,
+        conn.host,
+        conn.database,
+        conn.username,
+        conn.file_path,
+        conn.db_type,
+      ]
         .filter(Boolean)
         .join(" ")
         .toLocaleLowerCase();
@@ -162,7 +182,9 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
     const focusConnectionCard = (connectionId: string, behavior: ScrollBehavior = "smooth") => {
       setSelectedConnectionId(connectionId);
       window.requestAnimationFrame(() => {
-        const card = listRef.current?.querySelector<HTMLElement>(`[data-conn-id="${connectionId}"]`);
+        const card = listRef.current?.querySelector<HTMLElement>(
+          `[data-conn-id="${connectionId}"]`,
+        );
         card?.scrollIntoView({ block: "nearest", behavior });
       });
     };
@@ -230,7 +252,6 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
     }
   };
 
-
   // ── Connection Handlers ─────────────────────────────────────────────────────
 
   const handleOpenConnection = async (connection: ConnectionConfig) => {
@@ -260,6 +281,22 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
     await connectSavedConnection(connection.id);
   };
 
+  // First-run convenience: build the bundled SQLite demo, save it, and connect.
+  const handleCreateSample = async () => {
+    if (isCreatingSample || isConnecting) return;
+    setIsCreatingSample(true);
+    try {
+      const config = await createSampleDatabase();
+      setSelectedConnectionId(config.id);
+      // connectSavedConnection owns its error surface (WorkspaceConnecting).
+      void connectSavedConnection(config.id);
+    } catch (error) {
+      emitAppToast({ tone: "error", title: String(error) });
+    } finally {
+      setIsCreatingSample(false);
+    }
+  };
+
   const handleDeleteConnection = (connection: ConnectionConfig) => {
     setPendingDeleteConnection(connection);
   };
@@ -284,7 +321,9 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
 
     await deleteSavedConnection(connection.id);
 
-    const stillExists = useConnectionStore.getState().connections.some((item) => item.id === connection.id);
+    const stillExists = useConnectionStore
+      .getState()
+      .connections.some((item) => item.id === connection.id);
     if (stillExists) return;
 
     emitAppToast({
@@ -330,14 +369,26 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
 
     return {
       connection: conn,
-      statusLabel: isActive ? t("common.active") : isConnected ? t("common.connected") : t("common.saved"),
+      statusLabel: isActive
+        ? t("common.active")
+        : isConnected
+          ? t("common.connected")
+          : t("common.saved"),
       endpointLabel: buildEndpointLabel(conn.db_type, conn.host, conn.port, conn.file_path),
       databaseLabel: buildDatabaseLabel(conn.db_type, conn.database, conn.username),
       style: { top, left },
       isActive,
       isConnected,
     };
-  }, [activeConnectionId, connectedIds, connections, filteredConnections, hoverPreview, layoutMode, t]);
+  }, [
+    activeConnectionId,
+    connectedIds,
+    connections,
+    filteredConnections,
+    hoverPreview,
+    layoutMode,
+    t,
+  ]);
 
   const pendingDeleteLabel =
     pendingDeleteConnection?.name ||
@@ -432,6 +483,12 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
             onLeaveHover={() => setHoverPreview(null)}
             onNewConnection={onNewConnection}
             onOpenDatabaseFile={onOpenDatabaseFile}
+            showSampleCard={connections.length === 0 && search.trim() === ""}
+            sampleCopy={(STARTUP_COPY[language] ?? STARTUP_COPY.en).sampleCard}
+            isCreatingSample={isCreatingSample}
+            onCreateSample={() => {
+              void handleCreateSample();
+            }}
             onToggleGroup={handleToggleGroup}
             onRenameGroup={handleRenameGroup}
             onChangeGroupColor={handleChangeGroupColor}
@@ -460,12 +517,8 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
                     <TriangleAlert className="w-4 h-4" />
                   </div>
                   <div className="startup-manager-confirm-copy">
-                    <span className="startup-manager-kicker">
-                      {t("connections.delete")}
-                    </span>
-                    <strong id="startup-delete-connection-title">
-                      {deleteConnectionTitle}
-                    </strong>
+                    <span className="startup-manager-kicker">{t("connections.delete")}</span>
+                    <strong id="startup-delete-connection-title">{deleteConnectionTitle}</strong>
                   </div>
                 </div>
 
@@ -485,14 +538,10 @@ export function StartupConnectionManager({ onNewConnection, onOpenDatabaseFile, 
                   <strong className="startup-manager-confirm-value">{pendingDeleteLabel}</strong>
                 </div>
 
-                <p className="startup-manager-confirm-description">
-                  {deleteConnectionDescription}
-                </p>
+                <p className="startup-manager-confirm-description">{deleteConnectionDescription}</p>
 
                 {connectedIds.has(pendingDeleteConnection.id) ? (
-                  <p className="startup-manager-confirm-note">
-                    {deleteConnectionDisconnectHint}
-                  </p>
+                  <p className="startup-manager-confirm-note">{deleteConnectionDisconnectHint}</p>
                 ) : null}
               </div>
 

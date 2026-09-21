@@ -6,12 +6,28 @@
 import { getDatabaseEngine } from "./engine-registry";
 import type { ConnectionConfig } from "../../types";
 import type { DatabaseType } from "../../types/database";
+import type { ConnectionErrorStage } from "../../utils/connection-error";
+
+/** Result of a test/connect attempt shown in the form alert. `stage`/`hint`
+ *  come from the backend's classified connection error when available. */
+export interface ConnectionTestResult {
+  success: boolean;
+  message: string;
+  stage?: ConnectionErrorStage;
+  hint?: string;
+}
 
 export type BootstrapPreset = "none" | "starter_core" | "starter_commerce";
 
 const COLORS = [
-  "#f38ba8", "#c49a78", "#b8ab86", "#7fb07f",
-  "#6a8fc8", "#9b86c9", "#c49fbf", "#7fb7b7",
+  "#f38ba8",
+  "#c49a78",
+  "#b8ab86",
+  "#7fb07f",
+  "#6a8fc8",
+  "#9b86c9",
+  "#c49fbf",
+  "#7fb7b7",
 ];
 
 export function getBootstrapPresetSql(preset: BootstrapPreset, dbType: DatabaseType) {
@@ -122,7 +138,12 @@ export function getBootstrapPresetSql(preset: BootstrapPreset, dbType: DatabaseT
 
 export function isLocalHost(host?: string) {
   const normalized = (host || "").trim().toLowerCase();
-  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1" || normalized === "[::1]";
+  return (
+    normalized === "127.0.0.1" ||
+    normalized === "localhost" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
 }
 
 export function createConnectionDraft(dbType: DatabaseType): ConnectionConfig {

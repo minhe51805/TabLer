@@ -161,7 +161,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
     sqlConfirmBatchLabel: "本次运行包含 {count} 条语句。",
     autonomyFullConfirmTitle: "启用完全访问？",
     autonomyFullConfirmBody:
-      "AI 代理将自动运行它准备的所有 SQL，不再事先询问。写入和架构操作在执行前仍会请求确认。",
+      "AI 代理将自动运行读取操作和工具调用，不再事先询问。写入和架构操作在执行前仍需要你的确认。",
     autonomyFullConfirmAllow: "启用完全访问",
     promptIdeas: [
       {

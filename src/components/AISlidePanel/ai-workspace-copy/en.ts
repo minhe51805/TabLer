@@ -168,7 +168,7 @@ export const EN_COPY: AIWorkspaceCopy = {
     sqlConfirmBatchLabel: "{count} statements in this run.",
     autonomyFullConfirmTitle: "Enable full access?",
     autonomyFullConfirmBody:
-      "The agent will auto-run every SQL it prepares without asking first. Write and schema operations still confirm before executing.",
+      "The agent runs reads and tool calls without asking first. Write and schema operations still require your confirmation before executing.",
     autonomyFullConfirmAllow: "Enable full access",
     promptIdeas: [
       {

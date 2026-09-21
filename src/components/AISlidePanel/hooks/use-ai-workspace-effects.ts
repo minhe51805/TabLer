@@ -3,7 +3,17 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect } from "react";
 import { invokeMutation } from "../../../utils/tauri-utils";
-import { AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS, AI_WORKSPACE_HISTORY_VERSION, createChatThread, hasPersistedAIWorkspaceStateData, loadLegacyPersistedAIWorkspaceState, prunePersistedAIWorkspaceState, sanitizePersistedAIWorkspaceState, type PersistedAIWorkspaceState } from "../ai-conversation-state";
+import { denyPendingAIFailoverConsent } from "../../../utils/ai-failover-consent";
+import {
+  AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS,
+  AI_WORKSPACE_HISTORY_VERSION,
+  createChatThread,
+  hasPersistedAIWorkspaceStateData,
+  loadLegacyPersistedAIWorkspaceState,
+  prunePersistedAIWorkspaceState,
+  sanitizePersistedAIWorkspaceState,
+  type PersistedAIWorkspaceState,
+} from "../ai-conversation-state";
 
 /** Attachment rows were created up to moments before their chat bubble; allow
  *  small clock/serialization skew when matching them back together. */
@@ -32,7 +42,9 @@ async function recoverStrippedAttachmentMetadata(state: PersistedAIWorkspaceStat
     const rows = await invokeMutation<OrphanAttachmentRow[]>("list_ai_attachments", {});
     if (!Array.isArray(rows) || rows.length === 0) return;
     const referencedIds = new Set(
-      state.bubbles.flatMap((bubble) => (bubble.attachments ?? []).map((attachment) => attachment.id)),
+      state.bubbles.flatMap((bubble) =>
+        (bubble.attachments ?? []).map((attachment) => attachment.id),
+      ),
     );
     const orphans = rows
       .filter((row) => row && row.id && !referencedIds.has(row.id))
@@ -40,10 +52,12 @@ async function recoverStrippedAttachmentMetadata(state: PersistedAIWorkspaceStat
     let recovered = 0;
     for (const row of orphans) {
       const target = state.bubbles
-        .filter((bubble) =>
-          bubble.threadId === row.threadId
-          && bubble.createdAt >= row.createdAt - ATTACHMENT_RECOVERY_SKEW_MS
-          && !(bubble.attachments ?? []).some((attachment) => attachment.id === row.id))
+        .filter(
+          (bubble) =>
+            bubble.threadId === row.threadId &&
+            bubble.createdAt >= row.createdAt - ATTACHMENT_RECOVERY_SKEW_MS &&
+            !(bubble.attachments ?? []).some((attachment) => attachment.id === row.id),
+        )
         .sort((left, right) => left.createdAt - right.createdAt)[0];
       if (!target) continue;
       target.attachments = [
@@ -68,7 +82,58 @@ async function recoverStrippedAttachmentMetadata(state: PersistedAIWorkspaceStat
 }
 
 export function useAIWorkspaceEffects(options: Record<string, any>) {
-  const { historyHydrated, isOpen, setChatThreads, setBubbles, setWorkspaceInteractionModes, setActiveThreadIdsByWorkspace, currentWorkspaceKey, initialThreadRef, activeThreadId, setActiveThreadId, setHistoryHydrated, hasConversation, scrollChatToLatest, currentThread, isGenerating, latestConversationBubbleId, latestConversationBubbleSnapshot, chatThreadRef, setIsHistoryOpen, isOpenRef, openSessionRef, visualizationApprovalScopeRef, setIsSessionDataReadEnabled, visualizationConsentResolverRef, setVisualizationConsentPending, destructiveConsentResolverRef, setDestructiveConsentPending, isHistoryOpen, historyPanelRef, aiConfigs, loadAIConfigs, workspaceThreads, recentWorkspaceThreads, activeThreadIdsByWorkspace, lastWorkspaceKeyRef, setAttachedSelection, setPromptDraft, setError, initialPromptNonce, initialPrompt, composerTextareaRef, initialAttachmentNonce, initialAttachment, onClose, historySaveTimerRef, bubbleDismissTimersRef, bubbles, chatThreads, workspaceInteractionModes, persistHistoryState } = options;
+  const {
+    historyHydrated,
+    isOpen,
+    setChatThreads,
+    setBubbles,
+    setWorkspaceInteractionModes,
+    setActiveThreadIdsByWorkspace,
+    currentWorkspaceKey,
+    initialThreadRef,
+    activeThreadId,
+    setActiveThreadId,
+    setHistoryHydrated,
+    hasConversation,
+    scrollChatToLatest,
+    currentThread,
+    isGenerating,
+    latestConversationBubbleId,
+    latestConversationBubbleSnapshot,
+    chatThreadRef,
+    setIsHistoryOpen,
+    isOpenRef,
+    openSessionRef,
+    visualizationApprovalScopeRef,
+    setIsSessionDataReadEnabled,
+    visualizationConsentResolverRef,
+    setVisualizationConsentPending,
+    destructiveConsentResolverRef,
+    setDestructiveConsentPending,
+    isHistoryOpen,
+    historyPanelRef,
+    aiConfigs,
+    loadAIConfigs,
+    workspaceThreads,
+    recentWorkspaceThreads,
+    activeThreadIdsByWorkspace,
+    lastWorkspaceKeyRef,
+    setAttachedSelection,
+    setPromptDraft,
+    setError,
+    initialPromptNonce,
+    initialPrompt,
+    composerTextareaRef,
+    initialAttachmentNonce,
+    initialAttachment,
+    onClose,
+    historySaveTimerRef,
+    bubbleDismissTimersRef,
+    bubbles,
+    chatThreads,
+    workspaceInteractionModes,
+    persistHistoryState,
+  } = options;
   useEffect(() => {
     if (historyHydrated || !isOpen) return;
 
@@ -102,12 +167,15 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
         setActiveThreadIdsByWorkspace(persistedState.activeThreadIds);
 
         const workspaceThreadsForCurrentKey = persistedState.threads.filter(
-          (thread: any) => thread.workspaceKey === currentWorkspaceKey
+          (thread: any) => thread.workspaceKey === currentWorkspaceKey,
         );
         const preferredThreadId = persistedState.activeThreadIds[currentWorkspaceKey];
         const nextThreadId =
-          workspaceThreadsForCurrentKey.find((thread: any) => thread.id === preferredThreadId)?.id ??
-          [...workspaceThreadsForCurrentKey].sort((left: any, right: any) => right.updatedAt - left.updatedAt)[0]?.id ??
+          workspaceThreadsForCurrentKey.find((thread: any) => thread.id === preferredThreadId)
+            ?.id ??
+          [...workspaceThreadsForCurrentKey].sort(
+            (left: any, right: any) => right.updatedAt - left.updatedAt,
+          )[0]?.id ??
           initialThreadRef.current?.id ??
           activeThreadId;
 
@@ -186,6 +254,10 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
         destructiveConsentResolverRef.current = null;
       }
       setDestructiveConsentPending(null);
+      // A failover consent left pending while the panel closes would never
+      // resolve, starving the run that asked for it — deny it like the other
+      // pending consents above (without persisting a decision).
+      denyPendingAIFailoverConsent();
       setIsSessionDataReadEnabled(false);
     }
   }, [isOpen]);
@@ -232,11 +304,11 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
 
     if (workspaceThreads.length === 0) {
       const nextThread = createChatThread(1, currentWorkspaceKey);
-      setChatThreads((current: any) => (
+      setChatThreads((current: any) =>
         current.some((thread: any) => thread.workspaceKey === currentWorkspaceKey)
           ? current
-          : [...current, nextThread]
-      ));
+          : [...current, nextThread],
+      );
       setActiveThreadId(nextThread.id);
       setActiveThreadIdsByWorkspace((current: any) => ({
         ...current,
@@ -263,18 +335,25 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
     if (nextActiveThread && nextActiveThread.id !== activeThreadId) {
       setActiveThreadId(nextActiveThread.id);
     }
-  }, [activeThreadId, activeThreadIdsByWorkspace, currentWorkspaceKey, historyHydrated, recentWorkspaceThreads, workspaceThreads]);
+  }, [
+    activeThreadId,
+    activeThreadIdsByWorkspace,
+    currentWorkspaceKey,
+    historyHydrated,
+    recentWorkspaceThreads,
+    workspaceThreads,
+  ]);
 
   useEffect(() => {
     if (!currentThread?.id) return;
-    setActiveThreadIdsByWorkspace((current: any) => (
+    setActiveThreadIdsByWorkspace((current: any) =>
       current[currentWorkspaceKey] === currentThread.id
         ? current
         : {
             ...current,
             [currentWorkspaceKey]: currentThread.id,
-          }
-    ));
+          },
+    );
   }, [currentThread?.id, currentWorkspaceKey]);
 
   useEffect(() => {
@@ -363,7 +442,9 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
       const remainingMs = Math.max(0, bubble.autoDismissAt - Date.now());
       const timerId = window.setTimeout(() => {
         bubbleDismissTimersRef.current.delete(bubble.id);
-        setBubbles((current: any) => current.filter((currentBubble: any) => currentBubble.id !== bubble.id));
+        setBubbles((current: any) =>
+          current.filter((currentBubble: any) => currentBubble.id !== bubble.id),
+        );
       }, remainingMs);
 
       bubbleDismissTimersRef.current.set(bubble.id, timerId);
@@ -408,6 +489,4 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
     persistHistoryState,
     workspaceInteractionModes,
   ]);
-
-
 }

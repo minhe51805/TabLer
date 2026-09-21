@@ -1,7 +1,4 @@
-import {
-  isHighRiskStatement,
-  isMutatingStatement,
-} from "../SQLEditor/SQLEditorUtils";
+import { isHighRiskStatement, isMutatingStatement } from "../SQLEditor/SQLEditorUtils";
 import { isBlockedAtLevel, type SafeModeLevel } from "../../types/safe-mode";
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import type { AIWorkspaceAgentAutonomy } from "./ai-workspace-types";
@@ -44,7 +41,14 @@ export function getAISqlConfirmationRequirement(
   statements: string[],
   autonomy?: AIWorkspaceAgentAutonomy,
 ): AISqlConfirmationRequirement {
-  if (autonomy === "full") return null;
+  // "full" autonomy removes per-read prompts only; statements that mutate or
+  // are high-risk still require explicit confirmation — that is the contract
+  // the autonomy dialog promises.
+  if (autonomy === "full") {
+    if (statements.some(isHighRiskStatement)) return "high-risk";
+    if (statements.some(isMutatingStatement)) return "mutation";
+    return null;
+  }
   if (statements.some(isHighRiskStatement)) return "high-risk";
   if (statements.some(isMutatingStatement)) return "mutation";
   return null;

@@ -2402,32 +2402,6 @@ export function AISlidePanel({
     },
     [language],
   );
-  // Choosing "Full access" is a standing human approval — auto-disable Safe
-  // Mode (levels 1-3 only; Strict/Paranoid and production-marked setups stay).
-  const handleSelectAgentAutonomyWithSafeMode = useCallback(
-    (autonomy: Parameters<typeof handleSelectAgentAutonomy>[0]) => {
-      handleSelectAgentAutonomy(autonomy);
-      if (autonomy !== "full") return;
-      const store = useSafeModeStore.getState();
-      const level = store.settings.globalLevel;
-      if (level === 0 || level >= 4) return;
-      const hasProduction = Object.values(store.settings.connectionEnvironments ?? {}).some(
-        (env) => env === "production",
-      );
-      if (hasProduction) return;
-      store.setGlobalLevel(0);
-      const vi = language === "vi";
-      emitAppToast({
-        tone: "success",
-        title: vi ? "Đã tắt Safe Mode" : "Safe Mode disabled",
-        description: vi
-          ? "Toàn quyền: agent chạy ghi không bị chặn. DROP/TRUNCATE vẫn cấm."
-          : "Full access: the agent writes unblocked. DROP/TRUNCATE stay blocked.",
-        durationMs: 8000,
-      });
-    },
-    [handleSelectAgentAutonomy, language],
-  );
   if (!isOpen) return null;
   const visibleError = error && error !== AI_REQUEST_REPLACED_MESSAGE ? error : null;
 
@@ -2523,7 +2497,7 @@ export function AISlidePanel({
         onSelectSlashCommand: commitSlashCommand,
         setSessionDataReadEnabled,
         setShowThinking,
-        selectAgentAutonomy: handleSelectAgentAutonomyWithSafeMode,
+        selectAgentAutonomy: handleSelectAgentAutonomy,
         selectInteractionMode: handleSelectInteractionMode,
         activateProvider: (id, model) => {
           const wasRunning = isRunning || isGenerating;

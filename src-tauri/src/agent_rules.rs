@@ -533,6 +533,51 @@ fn leading_keyword(statement: &str) -> String {
     String::new()
 }
 
+/// Keywords that always mean the statement mutates data, schema, or server
+/// state. Shared by the leading-keyword match and the EXPLAIN ANALYZE
+/// re-classification so both agree on what counts as a write.
+fn is_write_keyword(keyword: &str) -> bool {
+    matches!(
+        keyword,
+        "insert"
+            | "update"
+            | "delete"
+            | "truncate"
+            | "drop"
+            | "alter"
+            | "create"
+            | "replace"
+            | "merge"
+            | "grant"
+            | "revoke"
+            | "comment"
+            | "exec"
+            | "execute"
+            | "call"
+            | "vacuum"
+            | "reindex"
+            | "refresh"
+            | "rename"
+            | "upsert"
+            | "begin"
+            | "commit"
+            | "rollback"
+            | "savepoint"
+            | "set"
+            | "use"
+            | "copy"
+            | "load"
+            | "import"
+            | "analyze"
+            | "lock"
+            | "unlock"
+            | "do"
+            | "attach"
+            | "detach"
+            | "pragma"
+    )
+}
+
 /// Split a script into individual statements, then classify the whole script.
 ///
 /// The input is reduced to a skeleton first, so a `;` or a `DELETE` inside a
@@ -549,15 +594,76 @@ pub fn classify_sql_event(statement: &str) -> SqlEvent {
             continue;
         }
 
-        match leading_keyword(piece).as_str() {
-            "select" | "with" | "show" | "explain" | "describe" | "declare" | "values" => {
+        let keyword = leading_keyword(piece);
+        match keyword.as_str() {
+            "explain" => {
+                // EXPLAIN ANALYZE executes the wrapped statement; a plain
+                // EXPLAIN only plans it. Re-classify the wrapped verb.
+                let tokens: Vec<String> = piece
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .filter(|w| !w.is_empty())
+                    .map(|w| w.to_ascii_lowercase())
+                    .collect();
+                let analyzes = tokens.iter().any(|t| t == "analyze" || t == "analyse");
+                if analyzes {
+                    match tokens
+                        .iter()
+                        .find(|t| {
+                            !matches!(
+                                t.as_str(),
+                                "explain"
+                                    | "analyze"
+                                    | "analyse"
+                                    | "verbose"
+                                    | "format"
+                                    | "buffers"
+                                    | "wal"
+                                    | "timing"
+                                    | "summary"
+                                    | "memory"
+                                    | "serialize"
+                                    | "settings"
+                                    | "generic_plan"
+                                    | "true"
+                                    | "false"
+                                    | "on"
+                                    | "off"
+                                    | "text"
+                                    | "xml"
+                                    | "json"
+                                    | "yaml"
+                            )
+                        })
+                        .map(String::as_str)
+                    {
+                        Some(inner) if is_write_keyword(inner) => return SqlEvent::Write,
+                        _ => saw_read = true,
+                    }
+                } else {
+                    saw_read = true;
+                }
+            }
+            "select" | "with" | "values" => {
+                // SELECT ... INTO creates a table; WITH bodies can carry DML.
+                let mutating = piece
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .filter(|w| !w.is_empty())
+                    .map(|w| w.to_ascii_lowercase())
+                    .any(|w| {
+                        matches!(
+                            w.as_str(),
+                            "into" | "insert" | "update" | "delete" | "merge" | "replace"
+                        )
+                    });
+                if mutating {
+                    return SqlEvent::Write;
+                }
                 saw_read = true;
             }
-            "insert" | "update" | "delete" | "truncate" | "drop" | "alter" | "create"
-            | "replace" | "merge" | "grant" | "revoke" | "comment" | "exec" | "execute"
-            | "call" | "vacuum" | "reindex" | "refresh" | "rename" | "upsert" | "begin"
-            | "commit" | "rollback" | "savepoint" | "set" | "use" | "copy" | "load" | "import"
-            | "analyze" => {
+            "show" | "describe" | "declare" => {
+                saw_read = true;
+            }
+            _ if is_write_keyword(&keyword) => {
                 return SqlEvent::Write;
             }
             "" => {}

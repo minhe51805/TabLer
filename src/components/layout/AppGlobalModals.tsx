@@ -17,7 +17,9 @@ import { ConnectionConfig } from "../../types/database";
 import { DiagnosticBundleModal } from "../DiagnosticBundleModal";
 import { ProfilerLauncher } from "../Profiler";
 
-const AISettingsModal = lazy(() => import("../AISettingsModal").then((module) => ({ default: module.AISettingsModal })));
+const AISettingsModal = lazy(() =>
+  import("../AISettingsModal").then((module) => ({ default: module.AISettingsModal })),
+);
 
 export interface AppGlobalModalsProps {
   showAISettings: boolean;
@@ -38,7 +40,7 @@ export interface AppGlobalModalsProps {
   setShowConnectionExporter: (show: boolean) => void;
   showConnectionImporter: boolean;
   setShowConnectionImporter: (show: boolean) => void;
-  
+
   // Dependencies needed by command palette and others
   connections: ConnectionConfig[];
   activeConnectionId: string | null;
@@ -70,7 +72,7 @@ export function AppGlobalModals({
   setShowConnectionExporter,
   showConnectionImporter,
   setShowConnectionImporter,
-  
+
   connections,
   activeConnectionId,
   handleToggleSidebar,
@@ -97,12 +99,8 @@ export function AppGlobalModals({
           onOpenDiagnostics={() => setShowDiagnostics(true)}
         />
       )}
-      {showDiagnostics && (
-        <DiagnosticBundleModal onClose={() => setShowDiagnostics(false)} />
-      )}
-      {showPluginManager && (
-        <AppPluginManagerModal onClose={() => setShowPluginManager(false)} />
-      )}
+      {showDiagnostics && <DiagnosticBundleModal onClose={() => setShowDiagnostics(false)} />}
+      {showPluginManager && <AppPluginManagerModal onClose={() => setShowPluginManager(false)} />}
       {showMcpIntegrations && (
         <AppMcpIntegrationsModal
           connections={connections}
@@ -111,16 +109,16 @@ export function AppGlobalModals({
       )}
       {showUserRoleManagement && activeConnectionId && (
         <AppUserRolesModal
-          connection={connections.find((connection) => connection.id === activeConnectionId) ?? null}
+          connection={
+            connections.find((connection) => connection.id === activeConnectionId) ?? null
+          }
           onClose={() => setShowUserRoleManagement(false)}
         />
       )}
       {showKeyboardShortcutsModal && (
         <AppShortcutsModal onClose={() => setShowKeyboardShortcutsModal(false)} />
       )}
-      {showThemeCustomizer && (
-        <ThemeCustomizer onClose={() => setShowThemeCustomizer(false)} />
-      )}
+      {showThemeCustomizer && <ThemeCustomizer onClose={() => setShowThemeCustomizer(false)} />}
       <CommandPalette
         onToggleSidebar={handleToggleSidebar}
         onToggleTerminal={() => setShowTerminalPanel((v) => !v)}
@@ -159,7 +157,7 @@ export function AppGlobalModals({
       )}
       {showConnectionImporter && (
         <ConnectionImporter
-          onImport={(_imported) => {
+          onImport={() => {
             void useConnectionStore.getState().loadSavedConnections();
           }}
           onClose={() => setShowConnectionImporter(false)}

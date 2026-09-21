@@ -168,7 +168,7 @@ export const TR_COPY: AIWorkspaceCopy = {
     sqlConfirmBatchLabel: "Bu çalıştırmada {count} ifade var.",
     autonomyFullConfirmTitle: "Tam erişim etkinleştirilsin mi?",
     autonomyFullConfirmBody:
-      "Ajan hazırladığı tüm SQL'leri sormadan otomatik çalıştırır. Yazma ve şema işlemleri yine de çalıştırmadan önce onay ister.",
+      "Ajan okuma işlemlerini ve araç çağrılarını sormadan otomatik çalıştırır. Yazma ve şema işlemleri çalıştırılmadan önce yine onay ister.",
     autonomyFullConfirmAllow: "Tam erişimi etkinleştir",
     promptIdeas: [
       {

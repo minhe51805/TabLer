@@ -1,4 +1,5 @@
 import type { ConnectionConfig } from "../../types";
+import { normalizedStatementIsDisguisedWrite } from "../../utils/sqlStatements";
 
 const INLINE_COMPLETION_CACHE_MS = 120_000;
 const INLINE_COMPLETION_MIN_INTERVAL_MS = 2_000;
@@ -6,13 +7,52 @@ const INLINE_COMPLETION_TABLE_LIMIT = 40;
 const MAX_DAILY_INLINE_COMPLETIONS = 100;
 
 const PROTECTED_RUN_MUTATING_PREFIXES = [
-  "INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE",
-  "CREATE", "ALTER", "DROP", "TRUNCATE", "GRANT", "REVOKE", "COMMENT", "RENAME",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "REPLACE",
+  "MERGE",
+  "CREATE",
+  "ALTER",
+  "DROP",
+  "TRUNCATE",
+  "GRANT",
+  "REVOKE",
+  "COMMENT",
+  "RENAME",
+  "COPY",
+  "VACUUM",
+  "CALL",
+  "DO ",
+  "LOCK",
+  "UNLOCK",
+  "LOAD",
+  "EXECUTE",
+  "EXEC",
+  "ANALYZE",
+  "REINDEX",
+  "REFRESH",
+  "NOTIFY",
+  "DISCARD",
+  "FLUSH",
+  "KILL",
+  "INSTALL",
+  "IMPORT",
+  "EXPORT",
+  "BACKUP",
+  "RESTORE",
+  "CHECKPOINT",
 ] as const;
 
 const PROTECTED_RUN_SESSION_PREFIXES = [
-  "USE", "SET SEARCH_PATH", "ATTACH", "DETACH", "SET ROLE",
-  "SET SESSION", "SET NAMES", "SET CHARACTER SET",
+  "USE",
+  "SET SEARCH_PATH",
+  "ATTACH",
+  "DETACH",
+  "SET ROLE",
+  "SET SESSION",
+  "SET NAMES",
+  "SET CHARACTER SET",
 ] as const;
 
 export function formatExecutionError(error: unknown) {
@@ -48,7 +88,7 @@ export function stripIdentifierWrapper(identifier: string) {
   const trimmed = identifier.trim();
   if (
     (trimmed.startsWith("`") && trimmed.endsWith("`")) ||
-    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
     (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
     (trimmed.startsWith("[") && trimmed.endsWith("]"))
   ) {
@@ -58,33 +98,50 @@ export function stripIdentifierWrapper(identifier: string) {
 }
 
 export function extractLeadingUseDirective(
-  sql: string
+  sql: string,
 ): { database: string; remainingSql: string } | { error: string } | null {
   const trimmed = stripLeadingSqlNoise(sql).trimStart();
   if (!/^USE\s+/i.test(trimmed)) return null;
 
   const newlineIndex = trimmed.indexOf("\n");
   const semicolonIndex = trimmed.indexOf(";");
-  const endsAtSemicolon = semicolonIndex !== -1 && (newlineIndex === -1 || semicolonIndex < newlineIndex);
+  const endsAtSemicolon =
+    semicolonIndex !== -1 && (newlineIndex === -1 || semicolonIndex < newlineIndex);
 
   const directive = endsAtSemicolon
     ? trimmed.slice(0, semicolonIndex + 1)
-    : newlineIndex === -1 ? trimmed : trimmed.slice(0, newlineIndex);
+    : newlineIndex === -1
+      ? trimmed
+      : trimmed.slice(0, newlineIndex);
   const remainingSql = endsAtSemicolon
     ? trimmed.slice(semicolonIndex + 1)
-    : newlineIndex === -1 ? "" : trimmed.slice(newlineIndex + 1);
+    : newlineIndex === -1
+      ? ""
+      : trimmed.slice(newlineIndex + 1);
 
-  const rawTarget = directive.replace(/^USE\s+/i, "").replace(/;$/, "").trim();
+  const rawTarget = directive
+    .replace(/^USE\s+/i, "")
+    .replace(/;$/, "")
+    .trim();
   if (!rawTarget) {
-    return { error: "Sandbox gateway found an empty USE statement. Choose the active database from the UI or provide a database name." };
+    return {
+      error:
+        "Sandbox gateway found an empty USE statement. Choose the active database from the UI or provide a database name.",
+    };
   }
 
   const normalizedTarget = stripIdentifierWrapper(rawTarget);
   if (/\s/.test(normalizedTarget)) {
-    return { error: "Sandbox gateway could not understand the USE directive. Use `USE <database>` on its own line before the rest of the SQL." };
+    return {
+      error:
+        "Sandbox gateway could not understand the USE directive. Use `USE <database>` on its own line before the rest of the SQL.",
+    };
   }
   if (normalizedTarget.includes(".")) {
-    return { error: "Sandbox gateway only accepts USE <database>. Choose the database from the UI, or run the write against a fully qualified table like `INSERT INTO db.table ...`." };
+    return {
+      error:
+        "Sandbox gateway only accepts USE <database>. Choose the database from the UI, or run the write against a fully qualified table like `INSERT INTO db.table ...`.",
+    };
   }
 
   return { database: normalizedTarget, remainingSql };
@@ -98,10 +155,7 @@ export function isSessionSwitchStatement(statement: string) {
 export function isMutatingStatement(statement: string) {
   const normalized = normalizeStatementForGuard(statement);
   if (!normalized) return false;
-  if (normalized.startsWith("WITH")) {
-    // Match DML inside CTEs even when glued to punctuation: `(DELETE FROM ...`.
-    return /\b(INSERT|UPDATE|DELETE|MERGE)\b/.test(normalized);
-  }
+  if (normalizedStatementIsDisguisedWrite(normalized)) return true;
   return PROTECTED_RUN_MUTATING_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
@@ -143,4 +197,9 @@ export function normalizeInlineSuggestion(rawSuggestion: string, textUntilPositi
   return suggestion;
 }
 
-export { INLINE_COMPLETION_CACHE_MS, INLINE_COMPLETION_MIN_INTERVAL_MS, INLINE_COMPLETION_TABLE_LIMIT, MAX_DAILY_INLINE_COMPLETIONS };
+export {
+  INLINE_COMPLETION_CACHE_MS,
+  INLINE_COMPLETION_MIN_INTERVAL_MS,
+  INLINE_COMPLETION_TABLE_LIMIT,
+  MAX_DAILY_INLINE_COMPLETIONS,
+};

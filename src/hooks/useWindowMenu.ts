@@ -9,6 +9,7 @@
 import { useMemo } from "react";
 import { useI18n, type AppLanguagePreference } from "../i18n";
 import { useEditorPreferencesStore } from "../stores/editorPreferencesStore";
+import { useAppLayoutStore } from "../stores/appLayoutStore";
 import { useTheme, ThemeEngine } from "../stores/useTheme";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 import type { WindowMenuSectionKey, WindowMenuItem } from "../types/app-types";
@@ -77,12 +78,16 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
   // Option A: MiniMax is the single global look. The theme menu simply lists
   // whatever ThemeEngine exposes (MiniMax + any user-imported themes); the old
   // dark-preset allow-list was removed since those presets were retired.
-  const themeMenuOptions = useMemo(
-    () => ThemeEngine.getAvailableThemes(),
-    []
-  );
+  const themeMenuOptions = useMemo(() => ThemeEngine.getAvailableThemes(), []);
 
-  const { isConnected, supportsSqlFileActions, activeTabType, uiFontScale, languagePreference, connectionsCount } = state;
+  const {
+    isConnected,
+    supportsSqlFileActions,
+    activeTabType,
+    uiFontScale,
+    languagePreference,
+    connectionsCount,
+  } = state;
   const capabilityProfile = useConnectionCapabilities(state.activeConnectionId);
   const canExport = isCapabilitySupported(capabilityProfile?.capabilities.dataExport);
   const canRestore = isCapabilitySupported(capabilityProfile?.capabilities.backupRestore);
@@ -91,47 +96,139 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
   const closeMenu = actions.onWindowMenuClose;
 
   const themeMenuLabel =
-    language === "vi" ? "Giao diện" :
-    language === "zh" ? "主题" :
-    language === "tr" ? "Tema" :
-    language === "ko" ? "테마" :
-    "Theme";
+    language === "vi"
+      ? "Giao diện"
+      : language === "zh"
+        ? "主题"
+        : language === "tr"
+          ? "Tema"
+          : language === "ko"
+            ? "테마"
+            : "Theme";
 
   const toggleTerminalLabel =
-    language === "vi" ? "Bật/tắt terminal" :
-    language === "zh" ? "切换终端" :
-    language === "tr" ? "Terminali aç/kapa" :
-    language === "ko" ? "터미널 전환" :
-    "Toggle Terminal";
+    language === "vi"
+      ? "Bật/tắt terminal"
+      : language === "zh"
+        ? "切换终端"
+        : language === "tr"
+          ? "Terminali aç/kapa"
+          : language === "ko"
+            ? "터미널 전환"
+            : "Toggle Terminal";
 
-  const menuSections = useMemo<{ key: WindowMenuSectionKey; label: string; items: WindowMenuItem[] }[]>(
+  const menuSections = useMemo<
+    { key: WindowMenuSectionKey; label: string; items: WindowMenuItem[] }[]
+  >(
     () => [
       {
         key: "file",
         label: t("menu.section.file"),
         items: [
-          { label: t("menu.item.newQuery"), action: () => { actions.onNewQuery(); closeMenu(); }, disabled: !isConnected },
-          { label: t("menu.item.openDatabaseFile"), action: () => { actions.onOpenDatabaseFile(); closeMenu(); }, shortcut: "Ctrl+Shift+O" },
-          { label: t("menu.item.openSqlFile"), action: () => { actions.onImportSqlFile(); closeMenu(); }, shortcut: "Ctrl+O", disabled: !supportsSqlFileActions },
-          { label: t("menu.item.importSqlIntoDatabase"), action: () => { actions.onImportSqlIntoCurrentDatabase(); closeMenu(); }, disabled: !supportsSqlFileActions || !canRestore },
-          { label: t("menu.item.exportDatabase"), action: () => { actions.onExportDatabase(); closeMenu(); }, disabled: !isConnected || !canExport },
+          {
+            label: t("menu.item.newQuery"),
+            action: () => {
+              actions.onNewQuery();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
+          {
+            label: t("menu.item.openDatabaseFile"),
+            action: () => {
+              actions.onOpenDatabaseFile();
+              closeMenu();
+            },
+            shortcut: "Ctrl+Shift+O",
+          },
+          {
+            label: t("menu.item.openSqlFile"),
+            action: () => {
+              actions.onImportSqlFile();
+              closeMenu();
+            },
+            shortcut: "Ctrl+O",
+            disabled: !supportsSqlFileActions,
+          },
+          {
+            label: t("menu.item.importSqlIntoDatabase"),
+            action: () => {
+              actions.onImportSqlIntoCurrentDatabase();
+              closeMenu();
+            },
+            disabled: !supportsSqlFileActions || !canRestore,
+          },
+          {
+            label: t("menu.item.exportDatabase"),
+            action: () => {
+              actions.onExportDatabase();
+              closeMenu();
+            },
+            disabled: !isConnected || !canExport,
+          },
           { divider: true },
-          { label: t("menu.item.exportConnections"), action: () => { actions.onOpenConnectionExporter(); closeMenu(); }, disabled: connectionsCount === 0 },
-          { label: t("menu.item.importConnections"), action: () => { actions.onOpenConnectionImporter(); closeMenu(); } },
+          {
+            label: t("menu.item.exportConnections"),
+            action: () => {
+              actions.onOpenConnectionExporter();
+              closeMenu();
+            },
+            disabled: connectionsCount === 0,
+          },
+          {
+            label: t("menu.item.importConnections"),
+            action: () => {
+              actions.onOpenConnectionImporter();
+              closeMenu();
+            },
+          },
           { divider: true },
-          { label: t("menu.item.openSqlFavorites"), action: () => { actions.onToggleQueryHistory(); closeMenu(); }, shortcut: "Ctrl+Shift+S" },
+          {
+            label: t("menu.item.openSqlFavorites"),
+            action: () => {
+              useAppLayoutStore.getState().setShowSQLFavorites((v) => !v);
+              closeMenu();
+            },
+            shortcut: "Ctrl+Shift+S",
+          },
           { divider: true },
-          { label: t("menu.item.openMetrics"), action: () => { actions.onOpenMetricsBoard(); closeMenu(); }, disabled: !isConnected },
+          {
+            label: t("menu.item.openMetrics"),
+            action: () => {
+              actions.onOpenMetricsBoard();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
           { divider: true },
-          { label: t("menu.item.exit"), action: () => { actions.onCloseWindow(); closeMenu(); } },
+          {
+            label: t("menu.item.exit"),
+            action: () => {
+              actions.onCloseWindow();
+              closeMenu();
+            },
+          },
         ],
       },
       {
         key: "edit",
         label: t("menu.section.edit"),
         items: [
-          { label: t("menu.item.aiSettings"), action: () => { actions.onOpenAISettings(); closeMenu(); } },
-          { label: t("menu.item.askAI"), action: () => { actions.onOpenAISlidePanel(); closeMenu(); }, disabled: !isConnected },
+          {
+            label: t("menu.item.aiSettings"),
+            action: () => {
+              actions.onOpenAISettings();
+              closeMenu();
+            },
+          },
+          {
+            label: t("menu.item.askAI"),
+            action: () => {
+              actions.onOpenAISlidePanel();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
         ],
       },
       {
@@ -146,15 +243,27 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
             min: UI_FONT_SCALE_MIN,
             max: UI_FONT_SCALE_MAX,
             step: UI_FONT_SCALE_STEP,
-            onValueChange: (v) => { actions.onSetFontSize(v); closeMenu(); },
-            onDecrease: () => { actions.onDecreaseFontSize(); closeMenu(); },
-            onIncrease: () => { actions.onIncreaseFontSize(); closeMenu(); },
+            onValueChange: (v) => {
+              actions.onSetFontSize(v);
+              closeMenu();
+            },
+            onDecrease: () => {
+              actions.onDecreaseFontSize();
+              closeMenu();
+            },
+            onIncrease: () => {
+              actions.onIncreaseFontSize();
+              closeMenu();
+            },
           },
           { divider: true },
           {
             key: "toggle-vim-mode",
             label: t("menu.item.toggleVimMode"),
-            action: () => { useEditorPreferencesStore.getState().toggleVimMode(); closeMenu(); },
+            action: () => {
+              useEditorPreferencesStore.getState().toggleVimMode();
+              closeMenu();
+            },
             selected: vimModeEnabled,
             shortcut: "Ctrl Shift V",
           },
@@ -163,11 +272,52 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
             key: "toggle-sidebars",
             label: t("menu.item.toggleSidebars"),
             children: [
-              { key: "toggle-left-sidebar", label: t("menu.item.toggleLeftSidebar"), action: () => { actions.onToggleSidebar(); closeMenu(); }, shortcut: "Ctrl 0" },
-              { key: "toggle-right-sidebar", label: t("menu.item.toggleRightSidebar"), action: () => { actions.onToggleRightSidebar(); closeMenu(); }, shortcut: "Ctrl Space" },
-              { key: "toggle-bottom-sidebar", label: t("menu.item.toggleBottomSidebar"), action: () => { actions.onToggleBottomSidebar(); closeMenu(); }, shortcut: "Ctrl Shift C" },
-              { key: "toggle-terminal-panel", label: toggleTerminalLabel, action: () => { actions.onToggleTerminalPanel(); closeMenu(); }, shortcut: "Ctrl `" },
-              { key: "toggle-query-results-pane", label: t("menu.item.toggleQueryResultsPane"), action: () => { actions.onToggleQueryResultsPane(); closeMenu(); }, disabled: activeTabType !== "query", shortcut: "Ctrl Shift `" },
+              {
+                key: "toggle-left-sidebar",
+                label: t("menu.item.toggleLeftSidebar"),
+                action: () => {
+                  actions.onToggleSidebar();
+                  closeMenu();
+                },
+                shortcut: "Ctrl 0",
+              },
+              {
+                key: "toggle-right-sidebar",
+                label: t("menu.item.toggleRightSidebar"),
+                action: () => {
+                  actions.onToggleRightSidebar();
+                  closeMenu();
+                },
+                shortcut: "Ctrl Space",
+              },
+              {
+                key: "toggle-bottom-sidebar",
+                label: t("menu.item.toggleBottomSidebar"),
+                action: () => {
+                  actions.onToggleBottomSidebar();
+                  closeMenu();
+                },
+                shortcut: "Ctrl Shift C",
+              },
+              {
+                key: "toggle-terminal-panel",
+                label: toggleTerminalLabel,
+                action: () => {
+                  actions.onToggleTerminalPanel();
+                  closeMenu();
+                },
+                shortcut: "Ctrl `",
+              },
+              {
+                key: "toggle-query-results-pane",
+                label: t("menu.item.toggleQueryResultsPane"),
+                action: () => {
+                  actions.onToggleQueryResultsPane();
+                  closeMenu();
+                },
+                disabled: activeTabType !== "query",
+                shortcut: "Ctrl Shift `",
+              },
             ],
           },
           {
@@ -176,7 +326,10 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
             children: themeMenuOptions.map((option) => ({
               key: option.id,
               label: option.name,
-              action: () => { actions.onActivateTheme(option.id); closeMenu(); },
+              action: () => {
+                actions.onActivateTheme(option.id);
+                closeMenu();
+              },
               selected: activeTheme.id === option.id,
             })),
           },
@@ -186,67 +339,219 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
         key: "tools",
         label: t("menu.section.tools"),
         items: [
-          { label: t("menu.item.userManagement"), action: () => { actions.onOpenUserManagement(); closeMenu(); }, disabled: !isConnected || !canAdminister },
-          { label: t("menu.item.processList"), action: () => { actions.onOpenProcessList(); closeMenu(); }, disabled: !isConnected || !canAdminister, shortcut: "Ctrl ." },
+          {
+            label: t("menu.item.userManagement"),
+            action: () => {
+              actions.onOpenUserManagement();
+              closeMenu();
+            },
+            disabled: !isConnected || !canAdminister,
+          },
+          {
+            label: t("menu.item.processList"),
+            action: () => {
+              actions.onOpenProcessList();
+              closeMenu();
+            },
+            disabled: !isConnected || !canAdminister,
+            shortcut: "Ctrl .",
+          },
           { divider: true },
-          { label: t("menu.item.searchInDatabase"), action: () => { actions.onSearchInDatabase(); closeMenu(); }, disabled: !isConnected },
+          {
+            label: t("menu.item.searchInDatabase"),
+            action: () => {
+              actions.onSearchInDatabase();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
           { divider: true },
-          { label: t("menu.item.refreshWorkspace"), action: () => { actions.onRefreshWorkspace(); closeMenu(); }, disabled: !isConnected },
-          { label: t("menu.item.focusExplorerSearch"), action: () => { actions.onFocusExplorerSearch(); closeMenu(); }, disabled: !isConnected },
+          {
+            label: t("menu.item.refreshWorkspace"),
+            action: () => {
+              actions.onRefreshWorkspace();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
+          {
+            label: t("menu.item.focusExplorerSearch"),
+            action: () => {
+              actions.onFocusExplorerSearch();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
         ],
       },
       {
         key: "connection",
         label: t("menu.section.connection"),
         items: [
-          { label: t("menu.item.openExplorer"), action: () => { actions.onShowDatabaseWorkspace(); closeMenu(); }, disabled: !isConnected },
-          { label: t("menu.item.openMetrics"), action: () => { actions.onOpenMetricsBoard(); closeMenu(); }, disabled: !isConnected },
+          {
+            label: t("menu.item.openExplorer"),
+            action: () => {
+              actions.onShowDatabaseWorkspace();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
+          {
+            label: t("menu.item.openMetrics"),
+            action: () => {
+              actions.onOpenMetricsBoard();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
         ],
       },
       {
         key: "plugins",
         label: t("menu.section.plugins"),
         items: [
-          { label: t("menu.item.askAI"), action: () => { actions.onOpenAISlidePanel(); closeMenu(); }, disabled: !isConnected },
-          { label: t("menu.item.pluginManager"), action: () => { actions.onOpenPluginManager(); closeMenu(); } },
-          { label: t("menu.item.externalIntegrations"), action: () => { actions.onOpenMcpIntegrations(); closeMenu(); } },
+          {
+            label: t("menu.item.askAI"),
+            action: () => {
+              actions.onOpenAISlidePanel();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
+          {
+            label: t("menu.item.pluginManager"),
+            action: () => {
+              actions.onOpenPluginManager();
+              closeMenu();
+            },
+          },
+          {
+            label: t("menu.item.externalIntegrations"),
+            action: () => {
+              actions.onOpenMcpIntegrations();
+              closeMenu();
+            },
+          },
         ],
       },
       {
         key: "navigate",
         label: t("menu.section.navigate"),
         items: [
-          { label: t("menu.item.explorer"), action: () => { actions.onShowDatabaseWorkspace(); closeMenu(); }, disabled: !isConnected },
-          { label: t("menu.item.metrics"), action: () => { actions.onOpenMetricsBoard(); closeMenu(); }, disabled: !isConnected },
-          { label: t("menu.item.queryHistory"), action: () => { actions.onToggleQueryHistory(); closeMenu(); }, shortcut: "Ctrl+H" },
+          {
+            label: t("menu.item.explorer"),
+            action: () => {
+              actions.onShowDatabaseWorkspace();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
+          {
+            label: t("menu.item.metrics"),
+            action: () => {
+              actions.onOpenMetricsBoard();
+              closeMenu();
+            },
+            disabled: !isConnected,
+          },
+          {
+            label: t("menu.item.queryHistory"),
+            action: () => {
+              actions.onToggleQueryHistory();
+              closeMenu();
+            },
+            shortcut: "Ctrl+H",
+          },
         ],
       },
       {
         key: "language",
         label: t("menu.section.language"),
         items: [
-          { label: t("common.auto"), action: () => { actions.onChangeLanguage("auto"); }, selected: languagePreference === "auto" },
-          { label: t("common.englishUs"), action: () => { actions.onChangeLanguage("en"); }, selected: languagePreference === "en" },
-          { label: t("common.vietnamese"), action: () => { actions.onChangeLanguage("vi"); }, selected: languagePreference === "vi" },
-          { label: t("common.chineseSimplified"), action: () => { actions.onChangeLanguage("zh"); }, selected: languagePreference === "zh" },
-          { label: t("common.turkish"), action: () => { actions.onChangeLanguage("tr"); }, selected: languagePreference === "tr" },
-          { label: t("common.korean"), action: () => { actions.onChangeLanguage("ko"); }, selected: languagePreference === "ko" },
+          {
+            label: t("common.auto"),
+            action: () => {
+              actions.onChangeLanguage("auto");
+            },
+            selected: languagePreference === "auto",
+          },
+          {
+            label: t("common.englishUs"),
+            action: () => {
+              actions.onChangeLanguage("en");
+            },
+            selected: languagePreference === "en",
+          },
+          {
+            label: t("common.vietnamese"),
+            action: () => {
+              actions.onChangeLanguage("vi");
+            },
+            selected: languagePreference === "vi",
+          },
+          {
+            label: t("common.chineseSimplified"),
+            action: () => {
+              actions.onChangeLanguage("zh");
+            },
+            selected: languagePreference === "zh",
+          },
+          {
+            label: t("common.turkish"),
+            action: () => {
+              actions.onChangeLanguage("tr");
+            },
+            selected: languagePreference === "tr",
+          },
+          {
+            label: t("common.korean"),
+            action: () => {
+              actions.onChangeLanguage("ko");
+            },
+            selected: languagePreference === "ko",
+          },
         ],
       },
       {
         key: "help",
         label: t("menu.section.help"),
         items: [
-          { label: t("menu.item.aboutTableR"), action: () => { actions.onOpenAboutModal(); closeMenu(); } },
-          { label: t("menu.item.keyboardShortcuts"), action: () => { actions.onOpenKeyboardShortcuts(); closeMenu(); } },
+          {
+            label: t("menu.item.aboutTableR"),
+            action: () => {
+              actions.onOpenAboutModal();
+              closeMenu();
+            },
+          },
+          {
+            label: t("menu.item.keyboardShortcuts"),
+            action: () => {
+              actions.onOpenKeyboardShortcuts();
+              closeMenu();
+            },
+          },
         ],
       },
     ],
     [
-      t, isConnected, supportsSqlFileActions, connectionsCount, uiFontScale, vimModeEnabled,
-      themeMenuLabel, toggleTerminalLabel, themeMenuOptions, activeTheme.id,
-      languagePreference, activeTabType, actions, closeMenu, canExport, canRestore, canAdminister,
-    ]
+      t,
+      isConnected,
+      supportsSqlFileActions,
+      connectionsCount,
+      uiFontScale,
+      vimModeEnabled,
+      themeMenuLabel,
+      toggleTerminalLabel,
+      themeMenuOptions,
+      activeTheme.id,
+      languagePreference,
+      activeTabType,
+      actions,
+      closeMenu,
+      canExport,
+      canRestore,
+      canAdminister,
+    ],
   );
 
   return { menuSections };

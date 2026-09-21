@@ -2,12 +2,11 @@ import { useState } from "react";
 import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, FileUp } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { ConnectionConfig } from "../../types/database";
-import { exportableToConnectionConfig, type ExportableConnection } from "../../utils/connection-export";
+import type { ExportableConnection } from "../../utils/connection-export";
 import "../../styles/lazy-overlays.css";
 
 interface ConnectionImporterProps {
-  onImport: (connections: ConnectionConfig[]) => void;
+  onImport: () => void;
   onClose: () => void;
 }
 
@@ -65,22 +64,21 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
   };
 
   const handleImport = async () => {
-    if (!previewConnections) return;
+    if (!previewConnections || !filePath) return;
     setIsLoading(true);
     setError(null);
     try {
-      const toImport = previewConnections
-        .filter((_, i) => selectedForImport.has(i))
-        .map((ec, i) => {
-          const config = exportableToConnectionConfig(ec, passwords[i] || "");
-          return {
-            ...config,
-            id: crypto.randomUUID(),
-          } as ConnectionConfig;
-        });
+      // Re-run the command with the selection so the backend persists the
+      // chosen entries through ConnectionStorage (secrets go to the keyring).
+      await invoke<ExportableConnection[]>("import_connections_from_file", {
+        filePath,
+        password,
+        selectedIndices: [...selectedForImport],
+        passwords,
+      });
 
-      onImport(toImport);
-      setResult({ success: true, count: toImport.length });
+      onImport();
+      setResult({ success: true, count: selectedForImport.size });
     } catch (e) {
       setError(`Import failed: ${e}`);
     } finally {
@@ -116,7 +114,12 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
               </button>
             ) : (
               <>
-                <button type="button" onClick={onClose} className="cex-btn-cancel" disabled={isLoading || isDecrypting}>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="cex-btn-cancel"
+                  disabled={isLoading || isDecrypting}
+                >
                   Cancel
                 </button>
                 {previewConnections ? (
@@ -131,7 +134,8 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                     ) : (
                       <>
                         <Check className="w-4 h-4" />
-                        Import {selectedForImport.size} Connection{selectedForImport.size !== 1 ? "s" : ""}
+                        Import {selectedForImport.size} Connection
+                        {selectedForImport.size !== 1 ? "s" : ""}
                       </>
                     )}
                   </button>
@@ -158,112 +162,128 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
               <p>
                 Successfully imported {result.count} connection{result.count !== 1 ? "s" : ""}
               </p>
-              <button onClick={handleClose} className="btn btn-primary">Done</button>
+              <button onClick={handleClose} className="btn btn-primary">
+                Done
+              </button>
             </div>
           </div>
         ) : previewConnections ? (
           <div className="cex-body cex-body-stacked">
-                  {/* Password per connection */}
-                  <div className="cex-warning">
-                    <Lock className="w-4 h-4" />
-                    <p>
-                      Passwords were not exported. Enter the database password for each connection you want to import.
-                    </p>
-                  </div>
+            {/* Password per connection */}
+            <div className="cex-warning">
+              <Lock className="w-4 h-4" />
+              <p>
+                Passwords were not exported. Enter the database password for each connection you
+                want to import.
+              </p>
+            </div>
 
-                  {/* Password list */}
-                  <div className="cex-preview-list">
-                    {previewConnections.map((conn, i) => (
-                      <div key={i} className="cex-preview-card">
-                        <div className="cex-preview-head">
-                          <input
-                            type="checkbox"
-                            checked={selectedForImport.has(i)}
-                            onChange={() => toggleSelect(i)}
-                          />
-                          <span className="cex-preview-name">{conn.name || conn.host || conn.dbType}</span>
-                          <span className="cex-type-pill">{conn.dbType}</span>
-                          {conn.host && (
-                            <span className="cex-preview-meta">{conn.host}:{conn.port || ""}</span>
-                          )}
-                        </div>
-                        <div className="cex-preview-password">
-                          <input
-                            type={showPassword ? "text" : "password"}
-                            value={passwords[i] || ""}
-                            onChange={(e) => setPasswords((p) => ({ ...p, [i]: e.target.value }))}
-                            placeholder="Database password (optional)"
-                            className="input flex-1"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowPassword(!showPassword)}
-                            className="cex-mini-toggle"
-                          >
-                            {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+            {/* Password list */}
+            <div className="cex-preview-list">
+              {previewConnections.map((conn, i) => (
+                <div key={i} className="cex-preview-card">
+                  <div className="cex-preview-head">
+                    <input
+                      type="checkbox"
+                      checked={selectedForImport.has(i)}
+                      onChange={() => toggleSelect(i)}
+                    />
+                    <span className="cex-preview-name">
+                      {conn.name || conn.host || conn.dbType}
+                    </span>
+                    <span className="cex-type-pill">{conn.dbType}</span>
+                    {conn.host && (
+                      <span className="cex-preview-meta">
+                        {conn.host}:{conn.port || ""}
+                      </span>
+                    )}
                   </div>
+                  <div className="cex-preview-password">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={passwords[i] || ""}
+                      onChange={(e) => setPasswords((p) => ({ ...p, [i]: e.target.value }))}
+                      placeholder="Database password (optional)"
+                      className="input flex-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="cex-mini-toggle"
+                    >
+                      {showPassword ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
 
-                  {error && (
-                    <div className="cex-error">
-                      <AlertCircle className="w-4 h-4" />
-                      <p>{error}</p>
-                    </div>
-                  )}
+            {error && (
+              <div className="cex-error">
+                <AlertCircle className="w-4 h-4" />
+                <p>{error}</p>
+              </div>
+            )}
           </div>
         ) : (
           <div className="cex-body cex-body-stacked">
             <>
-                  {/* File picker */}
-                  <span className="cex-section-label">Source file</span>
-                  <div
-                    className="cex-dropzone"
-                    onClick={handlePickFile}
-                  >
-                    <FileUp />
-                    <p className="cex-dropzone-title">
-                      {filePath ? filePath.split(/[/\\]/).pop() : "Click to select a .tabler-connections file"}
-                    </p>
-                    <p className="cex-dropzone-hint">TableR Connection File (*.tabler-connections)</p>
+              {/* File picker */}
+              <span className="cex-section-label">Source file</span>
+              <div className="cex-dropzone" onClick={handlePickFile}>
+                <FileUp />
+                <p className="cex-dropzone-title">
+                  {filePath
+                    ? filePath.split(/[/\\]/).pop()
+                    : "Click to select a .tabler-connections file"}
+                </p>
+                <p className="cex-dropzone-hint">TableR Connection File (*.tabler-connections)</p>
+              </div>
+
+              {filePath && (
+                <div className="cex-fieldset">
+                  <div className="connection-form-field">
+                    <label className="form-label uppercase tracking-wide">
+                      Decryption Password <span className="text-red-400">*</span>
+                    </label>
+                    <div className="connection-form-password">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void handleDecrypt();
+                        }}
+                        placeholder="Enter the export password"
+                        className="input h-11 pr-11"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="connection-form-password-toggle"
+                      >
+                        {showPassword ? (
+                          <EyeOff className="w-4 h-4" />
+                        ) : (
+                          <Eye className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
                   </div>
+                </div>
+              )}
 
-                  {filePath && (
-                    <div className="cex-fieldset">
-                      <div className="connection-form-field">
-                        <label className="form-label uppercase tracking-wide">
-                          Decryption Password <span className="text-red-400">*</span>
-                        </label>
-                        <div className="connection-form-password">
-                          <input
-                            type={showPassword ? "text" : "password"}
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") void handleDecrypt(); }}
-                            placeholder="Enter the export password"
-                            className="input h-11 pr-11"
-                            autoFocus
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowPassword(!showPassword)}
-                            className="connection-form-password-toggle"
-                          >
-                            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {error && (
-                    <div className="cex-error">
-                      <AlertCircle className="w-4 h-4" />
-                      <p>{error}</p>
-                    </div>
-                  )}
+              {error && (
+                <div className="cex-error">
+                  <AlertCircle className="w-4 h-4" />
+                  <p>{error}</p>
+                </div>
+              )}
             </>
           </div>
         )}

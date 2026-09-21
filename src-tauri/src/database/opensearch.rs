@@ -2,12 +2,13 @@ use super::driver::DatabaseDriver;
 use super::models::*;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use futures_util::StreamExt;
+use futures_util::{stream, Stream, StreamExt, TryStreamExt};
 use reqwest::{Client, Method, Url};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
@@ -287,6 +288,24 @@ impl OpenSearchDriver {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let truncated = response
+            .pointer("/hits/total/value")
+            .and_then(Value::as_u64)
+            .is_some_and(|total| total > hits.len().min(MAX_RESULT_ROWS) as u64);
+        Ok(Self::hits_to_result(
+            hits,
+            started.elapsed().as_millis(),
+            query_label,
+            truncated,
+        ))
+    }
+
+    fn hits_to_result(
+        hits: Vec<Value>,
+        elapsed: u128,
+        query_label: String,
+        truncated: bool,
+    ) -> QueryResult {
         let mut names = BTreeSet::new();
         names.extend([
             "_index".to_string(),
@@ -318,11 +337,7 @@ impl OpenSearchDriver {
                     .collect()
             })
             .collect::<Vec<_>>();
-        let truncated = response
-            .pointer("/hits/total/value")
-            .and_then(Value::as_u64)
-            .is_some_and(|total| total > rows.len() as u64);
-        Ok(QueryResult {
+        QueryResult {
             columns: names
                 .into_iter()
                 .map(|name| ColumnInfo {
@@ -336,11 +351,11 @@ impl OpenSearchDriver {
                 .collect(),
             rows,
             affected_rows: 0,
-            execution_time_ms: started.elapsed().as_millis(),
+            execution_time_ms: elapsed,
             query: query_label,
             sandboxed: true,
             truncated,
-        })
+        }
     }
 
     fn readonly_error() -> anyhow::Error {
@@ -528,6 +543,133 @@ impl DatabaseDriver for OpenSearchDriver {
             .get("count")
             .and_then(Value::as_i64)
             .ok_or_else(|| anyhow!("OpenSearch count response is invalid"))
+    }
+
+    fn export_table_rows<'a>(
+        &'a self,
+        table: &'a str,
+        _database: Option<&'a str>,
+        batch_size: u64,
+        order_by: Option<&'a str>,
+        order_dir: Option<&'a str>,
+        filter: Option<&'a str>,
+    ) -> Pin<Box<dyn Stream<Item = Result<QueryResult>> + Send + 'a>> {
+        // Deep paging via `from` is capped at 10k rows, so exports use the
+        // scroll API instead; each scroll page becomes one batch.
+        let page_size = batch_size.max(1).min(MAX_RESULT_ROWS as u64);
+        let setup = async move {
+            let index = Self::validate_index(table)?.to_string();
+            let mut body = json!({
+                "size": page_size,
+                "query": { "match_all": {} }
+            });
+            if let Some(filter) = filter.map(str::trim).filter(|value| !value.is_empty()) {
+                if filter.len() > 4096 {
+                    return Err(anyhow!("OpenSearch filter exceeds the driver limit"));
+                }
+                body["query"] = json!({ "query_string": { "query": filter } });
+            }
+            if let Some(field) = order_by.map(str::trim).filter(|value| !value.is_empty()) {
+                if field.len() > 255
+                    || !field
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+                {
+                    return Err(anyhow!("OpenSearch sort field is invalid"));
+                }
+                let direction = if order_dir.is_some_and(|value| value.eq_ignore_ascii_case("desc"))
+                {
+                    "desc"
+                } else {
+                    "asc"
+                };
+                let mut sort = Map::new();
+                sort.insert(field.to_string(), json!({ "order": direction }));
+                body["sort"] = Value::Array(vec![Value::Object(sort)]);
+            } else {
+                // `_doc` is the cheapest scroll order when the caller does not
+                // request a specific one.
+                body["sort"] = json!(["_doc"]);
+            }
+            Self::validate_search_body(&body)?;
+            Ok((index, body))
+        };
+
+        enum ScrollState {
+            Start,
+            Scroll(String),
+            Done,
+        }
+
+        stream::once(setup)
+            .map_ok(move |(index, body)| {
+                stream::try_unfold(
+                    (ScrollState::Start, index, body),
+                    move |(state, index, body)| async move {
+                        let response = match &state {
+                            ScrollState::Done => return Ok(None),
+                            ScrollState::Start => {
+                                self.send_json(
+                                    Method::POST,
+                                    &format!("/{index}/_search?scroll=2m"),
+                                    Some(&body),
+                                )
+                                .await?
+                            }
+                            ScrollState::Scroll(scroll_id) => {
+                                self.send_json(
+                                    Method::POST,
+                                    "/_search/scroll",
+                                    Some(&json!({
+                                        "scroll": "2m",
+                                        "scroll_id": scroll_id,
+                                    })),
+                                )
+                                .await?
+                            }
+                        };
+                        let hits = response
+                            .pointer("/hits/hits")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default();
+                        let scroll_id = response
+                            .get("_scroll_id")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        if hits.is_empty() {
+                            if let Some(scroll_id) = scroll_id {
+                                let _ = self
+                                    .send_json(
+                                        Method::DELETE,
+                                        "/_search/scroll",
+                                        Some(&json!({ "scroll_id": [scroll_id] })),
+                                    )
+                                    .await;
+                            }
+                            return Ok(None);
+                        }
+                        let result = Self::hits_to_result(
+                            hits,
+                            0,
+                            format!("Export index {index}"),
+                            false,
+                        );
+                        let next = match scroll_id {
+                            Some(scroll_id) => ScrollState::Scroll(scroll_id),
+                            None => {
+                                log::warn!(
+                                    "OpenSearch export of '{index}' stopped early: the server did not return a scroll id"
+                                );
+                                ScrollState::Done
+                            }
+                        };
+                        Ok(Some((result, (next, index, body))))
+                    },
+                )
+            })
+            .try_flatten()
+            .boxed()
     }
 
     async fn count_null_values(

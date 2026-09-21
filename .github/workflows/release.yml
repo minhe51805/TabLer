@@ -237,6 +237,26 @@ jobs:
             printf 'APPLE_TEAM_ID=%s\n' "$APPLE_TEAM_ID_SECRET"
           } >> "$GITHUB_ENV"
 
+      - name: Load release notes for tag
+        shell: bash
+        run: |
+          # Tags may carry a letter suffix (v0.1.6a) while notes are named by base version (v0.1.6.md).
+          notes_file="docs/releases/${RELEASE_TAG}.md"
+          if [ ! -f "$notes_file" ]; then
+            base_tag="$(printf '%s' "$RELEASE_TAG" | sed -E 's/^(v[0-9]+(\.[0-9]+)*).*/\1/')"
+            notes_file="docs/releases/${base_tag}.md"
+          fi
+          if [ ! -f "$notes_file" ]; then
+            echo "::error::Release notes file not found for tag ${RELEASE_TAG} (expected docs/releases/${RELEASE_TAG}.md or docs/releases/${base_tag}.md)."
+            exit 1
+          fi
+          echo "Using release notes: $notes_file"
+          {
+            echo "RELEASE_BODY<<TABLER_RELEASE_BODY_EOF"
+            cat "$notes_file"
+            echo "TABLER_RELEASE_BODY_EOF"
+          } >> "$GITHUB_ENV"
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v1
         env:
@@ -250,10 +270,7 @@ jobs:
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: "TableR ${{ env.RELEASE_TAG }}"
-          releaseBody: |
-            TableR v0.1.5d focuses on dependable grid editing, streaming data movement, parser-backed SQL safety, recoverable connections, grounded AI, qualified workspace navigation, and release hardening.
-
-            Download only the installer for your operating system from Assets. The macOS build is currently unsigned and not notarized; Gatekeeper may require Open Anyway in Privacy & Security on first launch.
+          releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

@@ -32,6 +32,7 @@ import {
   type AIWorkspaceInteractionMode,
 } from "../ai-workspace-types";
 import { evaluateRunAgainstRules } from "../ai-agent-rules";
+import { getLinkedWorkspaceDir } from "../../../hooks/useLinkedFolders";
 import { type AIAgentFinishAction, type AIAgentToolName } from "../ai-agent-tools";
 import {
   buildAgentControllerPrompt,
@@ -188,16 +189,14 @@ function formatProviderFollowUpNote(
 /** Rate limits need a longer cooldown than blips; one patient retry still beats failing the run. */
 
 export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
-  const { askAIWithReasoning, cancelAIRequest, aiConfigs, requestPhase, saveAIConfigs } =
-    useAIStore(
-      useShallow((state) => ({
-        askAIWithReasoning: state.askAIWithReasoning,
-        cancelAIRequest: state.cancelAIRequest,
-        aiConfigs: state.aiConfigs,
-        requestPhase: state.requestPhase,
-        saveAIConfigs: state.saveAIConfigs,
-      })),
-    );
+  const { askAIWithReasoning, cancelAIRequest, aiConfigs, requestPhase } = useAIStore(
+    useShallow((state) => ({
+      askAIWithReasoning: state.askAIWithReasoning,
+      cancelAIRequest: state.cancelAIRequest,
+      aiConfigs: state.aiConfigs,
+      requestPhase: state.requestPhase,
+    })),
+  );
   const {
     tables,
     fetchTables,
@@ -462,16 +461,12 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         let schemaSharingEnabled = effectiveProvider.allow_schema_context;
 
         if (needsWorkspaceContext && modeUsesSchemaContext && !schemaSharingEnabled) {
-          const nextConfigs = aiConfigs.map((config) =>
-            config.id === effectiveProvider.id ? { ...config, allow_schema_context: true } : config,
-          );
-
-          const { aiConfigs: savedConfigs } = await saveAIConfigs(nextConfigs, {}, []);
-          effectiveProvider = getActiveAIProvider(savedConfigs) ?? {
-            ...effectiveProvider,
-            allow_schema_context: true,
-          };
-          schemaSharingEnabled = effectiveProvider.allow_schema_context;
+          // The user turned schema sharing off for this provider — never flip
+          // it back on silently. Surface the choice instead of deciding for them.
+          const message =
+            'Schema sharing is off for the active AI provider. Enable "Allow schema context" in AI settings, or ask without workspace context.';
+          setError(message);
+          throw new Error(message);
         }
 
         const schemaContextEnabled =
@@ -873,10 +868,15 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             // verdict. Passing the invoke wrapper here — instead of importing
             // Tauri inside the executor — is what keeps the executor's pure
             // decision table unit-testable without a runtime.
-            evaluateGuardrailRules: (statements, options) =>
+            evaluateGuardrailRules: async (statements, options) =>
               evaluateRunAgainstRules(statements, {
                 isMutating: options.isMutating,
-                workspaceDir: options.workspaceDir ?? null,
+                // Callers may pin a workspace explicitly; otherwise fall back
+                // to the first linked folder so <workspace>/rules/*.md load.
+                workspaceDir:
+                  options.workspaceDir !== undefined
+                    ? options.workspaceDir
+                    : await getLinkedWorkspaceDir(),
                 // `invokeMutation` requires an args bag; the rule payload always
                 // has one, but the shared InvokeFn type allows `undefined`.
                 invoke: (command, args) => invokeMutation(command, args ?? {}),
@@ -1706,7 +1706,6 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     [
       activeDbType,
       activeProvider,
-      aiConfigs,
       askAI,
       cancelAIRequest,
       connectionId,
@@ -1722,7 +1721,6 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       listCheckpoints,
       previewWriteTransaction,
       restoreCheckpoint,
-      saveAIConfigs,
     ],
   );
 

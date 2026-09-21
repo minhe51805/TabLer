@@ -19,7 +19,7 @@ async function maskOne(
 describe("anonymizer strategies", () => {
   it("hashes deterministically and never leaks the original value", async () => {
     const masked = await maskOne("alice@example.com", "hash");
-    expect(masked).toMatch(/^hashed_[0-9a-f]{8}$/);
+    expect(masked).toMatch(/^hashed_[0-9a-f]{24,}$/);
     expect(String(masked)).not.toContain("alice");
 
     const again = await maskOne("alice@example.com", "hash");
@@ -38,7 +38,7 @@ describe("anonymizer strategies", () => {
 
   it("produces deterministic fake emails on the reserved domain", async () => {
     const email = await maskOne("alice@example.com", "fake-email");
-    expect(email).toMatch(/^user[0-9a-f]{8}@example\.invalid$/);
+    expect(email).toMatch(/^user[0-9a-f]{16}@[a-z]+\.invalid$/);
     expect(email).toBe(await maskOne("alice@example.com", "fake-email"));
     // A different original never collides onto the same fake at the same salt.
     expect(email).not.toBe(await maskOne("bob@example.com", "fake-email"));
@@ -50,9 +50,9 @@ describe("anonymizer strategies", () => {
     expect(name).toBe(await maskOne("Alice Smith", "fake-name"));
   });
 
-  it("produces fictional 555-01xx phone numbers", async () => {
+  it("produces fictional area-555-01xx phone numbers", async () => {
     const phone = await maskOne("+84 912 345 678", "fake-phone");
-    expect(phone).toMatch(/^555-01\d\d$/);
+    expect(phone).toMatch(/^\d{3}-555-01\d{2}$/);
     expect(phone).toBe(await maskOne("+84 912 345 678", "fake-phone"));
   });
 
@@ -81,7 +81,7 @@ describe("anonymizeRows", () => {
     const masked = await anonymizeRows(rows, strategies, "salt");
     expect(masked[0][0]).toBe(1);
     expect(masked[0][3]).toBe("public-a");
-    expect(masked[1][1]).toMatch(/^user[0-9a-f]{8}@example\.invalid$/);
+    expect(masked[1][1]).toMatch(/^user[0-9a-f]{16}@[a-z]+\.invalid$/);
     expect(masked[1][2]).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
     // Originals intact.
     expect(rows[0][1]).toBe("alice@example.com");

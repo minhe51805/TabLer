@@ -110,14 +110,17 @@ describe("useAISqlRunner Safe Mode pre-approval", () => {
     );
   });
 
-  it("full autonomy pre-approves without showing any dialog", async () => {
-    // Requirement is null (full autonomy replaces the per-run dialog), and
-    // the run still carries the standing-approval flag for Safe Mode.
+  it("full autonomy still confirms mutations through the review dialog", async () => {
+    // The standing grant covers reads; a write under "full" shows the same
+    // confirmation dialog and is pre-approved for Safe Mode once accepted.
+    requestAISqlConfirmationMock.mockResolvedValue(true);
     const { result, executeSandboxQuery } = setupRunner();
     await act(async () => {
       await result.current.runSql("UPDATE users SET x = 1", { agentAutonomy: "full" });
     });
-    expect(requestAISqlConfirmationMock).not.toHaveBeenCalled();
+    expect(requestAISqlConfirmationMock).toHaveBeenCalledWith("high-risk", [
+      "UPDATE users SET x = 1",
+    ]);
     expect(executeSandboxQuery).toHaveBeenCalledWith(
       "conn-1",
       ["UPDATE users SET x = 1"],
@@ -142,6 +145,7 @@ describe("useAISqlRunner Safe Mode pre-approval", () => {
 describe("useAISqlRunner auto-checkpoint safety net", () => {
   beforeEach(() => {
     requestAISqlConfirmationMock.mockReset();
+    requestAISqlConfirmationMock.mockResolvedValue(true);
     resetRuleEngine();
     invokeWithTimeoutMock.mockReset();
     invokeWithTimeoutMock.mockResolvedValue({ fileName: "ck.sql", tables: 2, rows: 5 });

@@ -1,6 +1,8 @@
 use super::models::*;
 use anyhow::Result;
 use async_trait::async_trait;
+use futures_util::{stream, Stream, StreamExt};
+use std::pin::Pin;
 use std::sync::{atomic::AtomicBool, Arc};
 
 /// Core database driver trait.
@@ -109,6 +111,53 @@ pub trait DatabaseDriver: Send + Sync {
         order_dir: Option<&str>,
         filter: Option<&str>,
     ) -> Result<QueryResult>;
+
+    /// Stream every row of a table for export, in bounded batches.
+    ///
+    /// Unlike [`Self::get_table_data`], which is capped for interactive
+    /// browsing, this must keep paginating until the table is exhausted.
+    /// The default implementation walks `get_table_data` with offset paging;
+    /// drivers whose browse path caps or rejects large offsets (Cassandra,
+    /// MongoDB, ClickHouse, OpenSearch) override it with native paging.
+    /// `batch_size` is a hint; implementations may emit smaller batches.
+    fn export_table_rows<'a>(
+        &'a self,
+        table: &'a str,
+        database: Option<&'a str>,
+        batch_size: u64,
+        order_by: Option<&'a str>,
+        order_dir: Option<&'a str>,
+        filter: Option<&'a str>,
+    ) -> Pin<Box<dyn Stream<Item = Result<QueryResult>> + Send + 'a>> {
+        let batch_size = batch_size.max(1);
+        stream::try_unfold((0_u64, false), move |(offset, prev_truncated)| async move {
+            let batch = self
+                .get_table_data(
+                    table, database, offset, batch_size, order_by, order_dir, filter,
+                )
+                .await?;
+            let fetched = batch.rows.len() as u64;
+            if fetched == 0 {
+                if prev_truncated {
+                    // The previous page was capped below the requested batch
+                    // size, so the export would silently drop rows.
+                    log::warn!(
+                        "Table export of '{table}' may be incomplete: the driver truncated a page"
+                    );
+                }
+                return Ok(None);
+            }
+            let last_page = fetched < batch_size;
+            let truncated = batch.truncated;
+            if last_page && truncated {
+                log::warn!(
+                    "Table export of '{table}' may be incomplete: the driver truncated a page"
+                );
+            }
+            Ok(Some((batch, (offset + fetched, truncated))))
+        })
+        .boxed()
+    }
 
     /// Count rows in a table
     async fn count_rows(&self, table: &str, database: Option<&str>) -> Result<i64>;

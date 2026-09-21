@@ -13,7 +13,8 @@ import {
   type ColumnFilter,
 } from "../../../types/filter-presets";
 import type { FilterPresetsStore } from "../../../stores/filterPresetsStore";
-
+import { requestAppConfirmation } from "../../../stores/confirmStore";
+import { translateCurrent } from "../../../i18n";
 
 interface UseTableFilterActionsParams {
   // Presets
@@ -100,30 +101,67 @@ export function useTableFilterActions({
     });
     setSavePresetDialogOpen(false);
     setPresetNameInput("");
-  }, [presetNameInput, presetsStore, search, activeSchemaFilter, columnModeActive, columnPattern, columnOperator, conditions, conditionLogic, tableOperator, schemaOperator, setSavePresetDialogOpen, setPresetNameInput]);
+  }, [
+    presetNameInput,
+    presetsStore,
+    search,
+    activeSchemaFilter,
+    columnModeActive,
+    columnPattern,
+    columnOperator,
+    conditions,
+    conditionLogic,
+    tableOperator,
+    schemaOperator,
+    setSavePresetDialogOpen,
+    setPresetNameInput,
+  ]);
 
-  const handleLoadPreset = useCallback((presetId: string) => {
-    const preset = presetsStore.getPreset(presetId);
-    if (!preset) return;
-    setSearch(preset.tableFilter);
-    setActiveSchemaFilter(preset.schemaFilter);
-    setTableOperator(preset.tableOperator ?? DEFAULT_FILTER_OPERATOR);
-    setSchemaOperator(preset.schemaOperator ?? DEFAULT_FILTER_OPERATOR);
-    setColumnModeActive(preset.columnMode ?? false);
-    if (preset.columnFilter) {
-      setColumnPattern(preset.columnFilter.pattern);
-      setColumnOperator(preset.columnFilter.operator);
-    }
-    setConditions(preset.conditions ?? []);
-    setConditionLogic(preset.conditionLogic ?? "AND");
-    presetsStore.setActivePreset(presetId);
-    setFilterPresetMenuOpen(false);
-  }, [presetsStore, setActiveSchemaFilter, setColumnModeActive, setColumnOperator, setColumnPattern, setConditionLogic, setConditions, setFilterPresetMenuOpen, setSchemaOperator, setSearch, setTableOperator]);
+  const handleLoadPreset = useCallback(
+    (presetId: string) => {
+      const preset = presetsStore.getPreset(presetId);
+      if (!preset) return;
+      setSearch(preset.tableFilter);
+      setActiveSchemaFilter(preset.schemaFilter);
+      setTableOperator(preset.tableOperator ?? DEFAULT_FILTER_OPERATOR);
+      setSchemaOperator(preset.schemaOperator ?? DEFAULT_FILTER_OPERATOR);
+      setColumnModeActive(preset.columnMode ?? false);
+      if (preset.columnFilter) {
+        setColumnPattern(preset.columnFilter.pattern);
+        setColumnOperator(preset.columnFilter.operator);
+      }
+      setConditions(preset.conditions ?? []);
+      setConditionLogic(preset.conditionLogic ?? "AND");
+      presetsStore.setActivePreset(presetId);
+      setFilterPresetMenuOpen(false);
+    },
+    [
+      presetsStore,
+      setActiveSchemaFilter,
+      setColumnModeActive,
+      setColumnOperator,
+      setColumnPattern,
+      setConditionLogic,
+      setConditions,
+      setFilterPresetMenuOpen,
+      setSchemaOperator,
+      setSearch,
+      setTableOperator,
+    ],
+  );
 
-  const handleDeletePreset = useCallback((presetId: string) => {
-    if (!window.confirm("Delete this filter preset?")) return;
-    presetsStore.deletePreset(presetId);
-  }, [presetsStore]);
+  const handleDeletePreset = useCallback(
+    async (presetId: string) => {
+      const approved = await requestAppConfirmation({
+        title: translateCurrent("confirm.deletePresetTitle"),
+        message: translateCurrent("confirm.deletePresetMessage"),
+        confirmText: translateCurrent("common.delete"),
+      });
+      if (!approved) return;
+      presetsStore.deletePreset(presetId);
+    },
+    [presetsStore],
+  );
 
   const handleClearFilters = useCallback(() => {
     setSearch("");
@@ -137,67 +175,80 @@ export function useTableFilterActions({
     setMixedStateFilter(EMPTY_MIXED_FILTER);
     mixedFilterRef.current = EMPTY_MIXED_FILTER;
     tableFilterStateRef.current = {};
-  }, [mixedFilterRef, setActiveSchemaFilter, setColumnModeActive, setColumnPattern, setConditionLogic, setConditions, setMixedStateFilter, setSchemaOperator, setSearch, setTableOperator, tableFilterStateRef]);
+  }, [
+    mixedFilterRef,
+    setActiveSchemaFilter,
+    setColumnModeActive,
+    setColumnPattern,
+    setConditionLogic,
+    setConditions,
+    setMixedStateFilter,
+    setSchemaOperator,
+    setSearch,
+    setTableOperator,
+    tableFilterStateRef,
+  ]);
 
-  const handleMixedStateToggle = useCallback((
-    schemaName: string,
-    itemName: string,
-    newState: CheckboxFilterState,
-  ) => {
-    setMixedStateFilter((prev) => {
-      const next: MixedStateFilter = {
-        checkedItems: { ...prev.checkedItems },
-        uncheckedItems: { ...prev.uncheckedItems },
+  const handleMixedStateToggle = useCallback(
+    (schemaName: string, itemName: string, newState: CheckboxFilterState) => {
+      setMixedStateFilter((prev) => {
+        const next: MixedStateFilter = {
+          checkedItems: { ...prev.checkedItems },
+          uncheckedItems: { ...prev.uncheckedItems },
+          isActive: true,
+        };
+        const schemaChecked = new Set(prev.checkedItems[schemaName] ?? []);
+        const schemaUnchecked = new Set(prev.uncheckedItems[schemaName] ?? []);
+
+        if (newState === "indeterminate") {
+          schemaChecked.delete(itemName);
+          schemaUnchecked.delete(itemName);
+        } else if (newState === "checked") {
+          schemaChecked.add(itemName);
+          schemaUnchecked.delete(itemName);
+        } else {
+          schemaChecked.delete(itemName);
+          schemaUnchecked.add(itemName);
+        }
+
+        if (schemaChecked.size > 0) {
+          next.checkedItems[schemaName] = schemaChecked;
+        }
+        if (schemaUnchecked.size > 0) {
+          next.uncheckedItems[schemaName] = schemaUnchecked;
+        }
+
+        // If nothing is filtered, deactivate
+        const hasAnyFilter =
+          Object.values(next.checkedItems).some((s) => s.size > 0) ||
+          Object.values(next.uncheckedItems).some((s) => s.size > 0);
+        next.isActive = hasAnyFilter;
+
+        return next;
+      });
+      mixedFilterRef.current = {
+        ...mixedStateFilter,
         isActive: true,
       };
-      const schemaChecked = new Set(prev.checkedItems[schemaName] ?? []);
-      const schemaUnchecked = new Set(prev.uncheckedItems[schemaName] ?? []);
+    },
+    [mixedFilterRef, mixedStateFilter, setMixedStateFilter],
+  );
 
-      if (newState === "indeterminate") {
-        schemaChecked.delete(itemName);
-        schemaUnchecked.delete(itemName);
-      } else if (newState === "checked") {
-        schemaChecked.add(itemName);
-        schemaUnchecked.delete(itemName);
-      } else {
-        schemaChecked.delete(itemName);
-        schemaUnchecked.add(itemName);
-      }
+  const getMixedStateFilterForTable = useCallback(
+    (tableName: string, schemaName: string) => {
+      const key = `${schemaName}|${tableName}`;
+      return tableFilterStateRef.current[key] ?? mixedFilterRef.current;
+    },
+    [mixedFilterRef, tableFilterStateRef],
+  );
 
-      if (schemaChecked.size > 0) {
-        next.checkedItems[schemaName] = schemaChecked;
-      }
-      if (schemaUnchecked.size > 0) {
-        next.uncheckedItems[schemaName] = schemaUnchecked;
-      }
-
-      // If nothing is filtered, deactivate
-      const hasAnyFilter =
-        Object.values(next.checkedItems).some((s) => s.size > 0) ||
-        Object.values(next.uncheckedItems).some((s) => s.size > 0);
-      next.isActive = hasAnyFilter;
-
-      return next;
-    });
-    mixedFilterRef.current = {
-      ...mixedStateFilter,
-      isActive: true,
-    };
-  }, [mixedFilterRef, mixedStateFilter, setMixedStateFilter]);
-
-  const getMixedStateFilterForTable = useCallback((tableName: string, schemaName: string) => {
-    const key = `${schemaName}|${tableName}`;
-    return tableFilterStateRef.current[key] ?? mixedFilterRef.current;
-  }, [mixedFilterRef, tableFilterStateRef]);
-
-  const persistMixedStateForTable = useCallback((
-    tableName: string,
-    schemaName: string,
-    filter: MixedStateFilter,
-  ) => {
-    const key = `${schemaName}|${tableName}`;
-    tableFilterStateRef.current[key] = filter;
-  }, [tableFilterStateRef]);
+  const persistMixedStateForTable = useCallback(
+    (tableName: string, schemaName: string, filter: MixedStateFilter) => {
+      const key = `${schemaName}|${tableName}`;
+      tableFilterStateRef.current[key] = filter;
+    },
+    [tableFilterStateRef],
+  );
 
   return {
     handleSavePreset,

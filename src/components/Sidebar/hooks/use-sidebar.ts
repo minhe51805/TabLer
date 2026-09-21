@@ -6,11 +6,7 @@ import { useConnectionStore } from "../../../stores/connectionStore";
 import { useUIStore } from "../../../stores/uiStore";
 import { useI18n } from "../../../i18n";
 import { useEvent, EventCenter } from "../../../stores/event-center";
-import {
-  getQualifiedTableName,
-  normalizeObjectSql,
-  copyToClipboard,
-} from "../SidebarUtils";
+import { getQualifiedTableName, normalizeObjectSql, copyToClipboard } from "../SidebarUtils";
 import {
   applyConditionsWith,
   applyCondition,
@@ -41,11 +37,9 @@ import {
   DEFAULT_FILTER_OPERATOR,
 } from "../../../types/filter-presets";
 import { useFilterPresetsStore } from "../../../stores/filterPresetsStore";
-import {
-  useDbVisibilityStore,
-  filterVisibleDatabases,
-} from "../../../stores/dbVisibilityStore";
+import { useDbVisibilityStore, filterVisibleDatabases } from "../../../stores/dbVisibilityStore";
 import { useTableFilterActions } from "./useTableFilterActions";
+import { requestAppConfirmation } from "../../../stores/confirmStore";
 
 export type CheckboxFilterState = "checked" | "unchecked" | "indeterminate";
 
@@ -138,7 +132,7 @@ export function useSidebar() {
       fetchTables: state.fetchTables,
       fetchSchemaObjects: state.fetchSchemaObjects,
       switchDatabase: state.switchDatabase,
-    }))
+    })),
   );
   const addTab = useUIStore((state) => state.addTab);
 
@@ -164,7 +158,9 @@ export function useSidebar() {
   const [schemaOperator, setSchemaOperator] = useState<FilterOperator>(DEFAULT_FILTER_OPERATOR);
   const [columnModeActive, setColumnModeActive] = useState(false);
   const [columnPattern, setColumnPattern] = useState("");
-  const [columnOperator, setColumnOperator] = useState<"name_contains" | "name_equals" | "name_matches_regex">("name_contains");
+  const [columnOperator, setColumnOperator] = useState<
+    "name_contains" | "name_equals" | "name_matches_regex"
+  >("name_contains");
   const [conditions, setConditions] = useState<FilterCondition[]>([]);
   const [conditionLogic, setConditionLogic] = useState<"AND" | "OR">("AND");
 
@@ -198,7 +194,7 @@ export function useSidebar() {
   const supportsCreateWizard =
     !!activeConnection &&
     ["postgresql", "greenplum", "cockroachdb", "redshift", "mysql", "mariadb", "sqlite"].includes(
-      activeConnection.db_type
+      activeConnection.db_type,
     );
   const tableWorkspaceKey =
     activeConnectionId && currentDatabase ? `${activeConnectionId}|${currentDatabase}` : "";
@@ -216,7 +212,7 @@ export function useSidebar() {
   useEffect(() => {
     if (!activeConnectionId || !currentDatabase) return;
     if (schemaObjects.length > 0 || isLoadingSchemaObjects) return;
-    
+
     const isConnected = useConnectionStore.getState().connectedIds.has(activeConnectionId);
     if (!isConnected) return;
 
@@ -368,40 +364,49 @@ export function useSidebar() {
   /** Generate a Markdown schema book for this table through the save dialog. */
   const [queryBuilderTable, setQueryBuilderTable] = useState<string | null>(null);
   const queryStore = useQueryStore.getState();
-  const handleOpenQueryBuilder = useCallback(async (tableName: string) => {
-    try {
-      await queryStore.getTableColumnsPreview(activeConnectionId ?? "", tableName, currentDatabase || undefined);
-    } catch {
-      // Column loading is best-effort; the panel shows an empty list.
-    }
-    setQueryBuilderTable(tableName);
-  }, [activeConnectionId, currentDatabase, queryStore]);
+  const handleOpenQueryBuilder = useCallback(
+    async (tableName: string) => {
+      try {
+        await queryStore.getTableColumnsPreview(
+          activeConnectionId ?? "",
+          tableName,
+          currentDatabase || undefined,
+        );
+      } catch {
+        // Column loading is best-effort; the panel shows an empty list.
+      }
+      setQueryBuilderTable(tableName);
+    },
+    [activeConnectionId, currentDatabase, queryStore],
+  );
 
-  const handleGenerateTableDocs = useCallback(async (table: Pick<TableInfo, "name" | "schema">) => {
-    if (!activeConnectionId) return;
-    try {
-      const saved = await saveDatabaseDocs(
-        activeConnectionId,
-        currentDatabase || table.name,
-        "markdown",
-        [table.name],
-      );
-      if (saved !== null) {
+  const handleGenerateTableDocs = useCallback(
+    async (table: Pick<TableInfo, "name" | "schema">) => {
+      if (!activeConnectionId) return;
+      try {
+        const saved = await saveDatabaseDocs(
+          activeConnectionId,
+          currentDatabase || table.name,
+          "markdown",
+          [table.name],
+        );
+        if (saved !== null) {
+          emitAppToast({
+            title: t("explorer.context.docsSaved"),
+            description: saved,
+            tone: "success",
+          });
+        }
+      } catch (error) {
         emitAppToast({
-          title: t("explorer.context.docsSaved"),
-          description: saved,
-          tone: "success",
+          title: t("explorer.context.docsFailed"),
+          description: error instanceof Error ? error.message : String(error),
+          tone: "error",
         });
       }
-    } catch (error) {
-      emitAppToast({
-        title: t("explorer.context.docsFailed"),
-        description: error instanceof Error ? error.message : String(error),
-        tone: "error",
-      });
-    }
-  }, [activeConnectionId, currentDatabase, t]);
-
+    },
+    [activeConnectionId, currentDatabase, t],
+  );
 
   const handleRefresh = useCallback(async () => {
     if (!activeConnectionId) return;
@@ -412,13 +417,25 @@ export function useSidebar() {
         fetchSchemaObjects(activeConnectionId, currentDatabase),
       ]);
     }
-    EventCenter.emit("workspace-refresh", { connectionId: activeConnectionId, database: currentDatabase || undefined });
+    EventCenter.emit("workspace-refresh", {
+      connectionId: activeConnectionId,
+      database: currentDatabase || undefined,
+    });
   }, [activeConnectionId, currentDatabase, fetchDatabases, fetchTables, fetchSchemaObjects]);
 
   const handleDisconnect = useCallback(async () => {
     if (!activeConnectionId) return;
+    const connectionName =
+      useConnectionStore.getState().connections.find((c) => c.id === activeConnectionId)?.name ??
+      activeConnectionId;
+    const approved = await requestAppConfirmation({
+      title: t("confirm.disconnectTitle"),
+      message: t("confirm.disconnectMessage", { name: connectionName }),
+      confirmText: t("explorer.disconnect"),
+    });
+    if (!approved) return;
     await disconnectFromDatabase(activeConnectionId);
-  }, [activeConnectionId, disconnectFromDatabase]);
+  }, [activeConnectionId, disconnectFromDatabase, t]);
 
   // --- Filter preset actions ---
 
@@ -467,46 +484,51 @@ export function useSidebar() {
     setActiveContextSubmenuKey(null);
   }, []);
 
-  const runMaintenanceCommand = useCallback(async (command: string, tableName: string) => {
-    if (!activeConnectionId) return;
-    try {
-      const preview = await invoke<{ sql: string; requiresConfirmation: boolean }>("preview_maintenance_command", {
-        connectionId: activeConnectionId,
-        command,
-        table: tableName,
-        database: currentDatabase || undefined,
-      });
-      const approved = window.confirm(
-        `Review maintenance command before execution:\n\n${preview.sql}\n\nRun this command on ${tableName}?`,
-      );
-      if (!approved) return;
-      await invoke("run_maintenance_command", {
-        connectionId: activeConnectionId,
-        command,
-        table: tableName,
-        database: currentDatabase || undefined,
-      });
-      emitAppToast({
-        tone: "success",
-        title: `${command.toUpperCase()} completed`,
-        description: `Maintenance command ${command.toUpperCase()} ran successfully on ${tableName}.`,
-      });
-      // Refresh workspace after maintenance
-      await handleRefresh();
-    } catch (err) {
-      emitAppToast({
-        tone: "error",
-        title: `${command.toUpperCase()} failed`,
-        description: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }, [activeConnectionId, currentDatabase, handleRefresh]);
+  const runMaintenanceCommand = useCallback(
+    async (command: string, tableName: string) => {
+      if (!activeConnectionId) return;
+      try {
+        const preview = await invoke<{ sql: string; requiresConfirmation: boolean }>(
+          "preview_maintenance_command",
+          {
+            connectionId: activeConnectionId,
+            command,
+            table: tableName,
+            database: currentDatabase || undefined,
+          },
+        );
+        const approved = await requestAppConfirmation({
+          title: t("confirm.maintenanceTitle"),
+          message: t("confirm.maintenanceMessage", { sql: preview.sql, table: tableName }),
+          confirmText: t("common.confirm"),
+        });
+        if (!approved) return;
+        await invoke("run_maintenance_command", {
+          connectionId: activeConnectionId,
+          command,
+          table: tableName,
+          database: currentDatabase || undefined,
+        });
+        emitAppToast({
+          tone: "success",
+          title: `${command.toUpperCase()} completed`,
+          description: `Maintenance command ${command.toUpperCase()} ran successfully on ${tableName}.`,
+        });
+        // Refresh workspace after maintenance
+        await handleRefresh();
+      } catch (err) {
+        emitAppToast({
+          tone: "error",
+          title: `${command.toUpperCase()} failed`,
+          description: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [activeConnectionId, currentDatabase, handleRefresh, t],
+  );
 
   const handleTableContextMenu = useCallback(
-    (
-      event: React.MouseEvent,
-      table: Pick<TableInfo, "name" | "schema" | "row_count">,
-    ) => {
+    (event: React.MouseEvent, table: Pick<TableInfo, "name" | "schema" | "row_count">) => {
       event.preventDefault();
       event.stopPropagation();
       setTableContextMenu({ table, x: event.clientX, y: event.clientY });
@@ -544,7 +566,9 @@ export function useSidebar() {
       }
       // Apply search filter if search text exists
       if (search.trim()) {
-        if (!applyCondition(qualifiedName, { id: "0", operator: tableOperator, value: search.trim() })) {
+        if (
+          !applyCondition(qualifiedName, { id: "0", operator: tableOperator, value: search.trim() })
+        ) {
           return false;
         }
       }
@@ -583,7 +607,11 @@ export function useSidebar() {
 
       // Apply search filter if search text exists
       if (search.trim()) {
-        const filterCond: FilterCondition = { id: "0", operator: tableOperator, value: search.trim() };
+        const filterCond: FilterCondition = {
+          id: "0",
+          operator: tableOperator,
+          value: search.trim(),
+        };
         const matchName = applyCondition(qualifiedName, filterCond);
         const matchRelated = relatedTable && applyCondition(relatedTable, filterCond);
         const matchType = applyCondition(typeName, filterCond);
@@ -624,7 +652,7 @@ export function useSidebar() {
         label: t("explorer.allSchemas"),
         count: schemaSections.reduce(
           (total, section) => total + section.tables.length + explorerSectionObjectCount(section),
-          0
+          0,
         ),
       },
       ...schemaSections.map((section) => ({
@@ -636,30 +664,93 @@ export function useSidebar() {
     [schemaSections, t],
   );
 
-  const { summaryLabel, visibleTableCount, visibleObjectCount } = useExplorerSummary(filteredSchemaSections, language);
+  const { summaryLabel, visibleTableCount, visibleObjectCount } = useExplorerSummary(
+    filteredSchemaSections,
+    language,
+  );
   const hasSearch = search.trim().length > 0;
 
   // --- SQL keyword autocomplete suggestions ---
   const autocompleteItems = useMemo<string[]>(() => {
     const keywords = [
       // Clauses
-      "WHERE", "AND", "OR", "NOT", "IN", "NOT IN", "BETWEEN", "LIKE", "ILIKE",
-      "ORDER BY", "GROUP BY", "HAVING", "LIMIT", "OFFSET",
-      "SELECT", "FROM", "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "FULL OUTER JOIN",
-      "CROSS JOIN", "ON", "USING",
-      "INSERT INTO", "VALUES", "UPDATE", "SET", "DELETE FROM",
-      "CREATE TABLE", "ALTER TABLE", "DROP TABLE", "TRUNCATE",
-      "CREATE INDEX", "DROP INDEX",
-      "DISTINCT", "ALL", "AS", "CASE", "WHEN", "THEN", "ELSE", "END",
-      "UNION", "UNION ALL", "EXCEPT", "INTERSECT",
-      "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "NULLIF",
-      "NOW()", "CURRENT_DATE", "CURRENT_TIMESTAMP",
-      "TRUE", "FALSE", "NULL",
+      "WHERE",
+      "AND",
+      "OR",
+      "NOT",
+      "IN",
+      "NOT IN",
+      "BETWEEN",
+      "LIKE",
+      "ILIKE",
+      "ORDER BY",
+      "GROUP BY",
+      "HAVING",
+      "LIMIT",
+      "OFFSET",
+      "SELECT",
+      "FROM",
+      "JOIN",
+      "LEFT JOIN",
+      "RIGHT JOIN",
+      "INNER JOIN",
+      "FULL OUTER JOIN",
+      "CROSS JOIN",
+      "ON",
+      "USING",
+      "INSERT INTO",
+      "VALUES",
+      "UPDATE",
+      "SET",
+      "DELETE FROM",
+      "CREATE TABLE",
+      "ALTER TABLE",
+      "DROP TABLE",
+      "TRUNCATE",
+      "CREATE INDEX",
+      "DROP INDEX",
+      "DISTINCT",
+      "ALL",
+      "AS",
+      "CASE",
+      "WHEN",
+      "THEN",
+      "ELSE",
+      "END",
+      "UNION",
+      "UNION ALL",
+      "EXCEPT",
+      "INTERSECT",
+      "COUNT",
+      "SUM",
+      "AVG",
+      "MIN",
+      "MAX",
+      "COALESCE",
+      "NULLIF",
+      "NOW()",
+      "CURRENT_DATE",
+      "CURRENT_TIMESTAMP",
+      "TRUE",
+      "FALSE",
+      "NULL",
       // Aggregate with ALL
-      "COUNT(*)", "COUNT(DISTINCT", "SUM(", "AVG(", "MAX(", "MIN(",
+      "COUNT(*)",
+      "COUNT(DISTINCT",
+      "SUM(",
+      "AVG(",
+      "MAX(",
+      "MIN(",
       // Window-like
-      "OVER", "PARTITION BY", "ROW_NUMBER()", "RANK()", "DENSE_RANK()",
-      "LEAD(", "LAG(", "FIRST_VALUE(", "LAST_VALUE(",
+      "OVER",
+      "PARTITION BY",
+      "ROW_NUMBER()",
+      "RANK()",
+      "DENSE_RANK()",
+      "LEAD(",
+      "LAG(",
+      "FIRST_VALUE(",
+      "LAST_VALUE(",
     ];
     if (!search.trim()) return [];
     const needle = search.toLowerCase();
@@ -734,7 +825,8 @@ export function useSidebar() {
           {
             key: "import-insert",
             label: t("explorer.context.importInsert"),
-            action: () => openQueryDraft(`${table.name} insert`, buildInsertTemplate(table, dbType)),
+            action: () =>
+              openQueryDraft(`${table.name} insert`, buildInsertTemplate(table, dbType)),
           },
           {
             key: "import-guide",
@@ -742,7 +834,7 @@ export function useSidebar() {
             action: () =>
               openQueryDraft(
                 `${table.name} import`,
-                `-- Import guide for ${qualifiedName}\n-- Paste your INSERT statements or load a .sql file here.\n\n${buildInsertTemplate(table, dbType)}`
+                `-- Import guide for ${qualifiedName}\n-- Paste your INSERT statements or load a .sql file here.\n\n${buildInsertTemplate(table, dbType)}`,
               ),
           },
         ],
@@ -795,44 +887,83 @@ export function useSidebar() {
         label: "Maintenance",
         children: [
           // VACUUM: PostgreSQL, SQLite
-          ...(["postgresql", "greenplum", "cockroachdb", "redshift", "vertica", "sqlite", "libsql", "cloudflare_d1"].includes(dbType || "")
-            ? [{
-                key: "maintenance-vacuum",
-                label: "VACUUM",
-                action: () => void runMaintenanceCommand("vacuum", table.name),
-              }]
+          ...([
+            "postgresql",
+            "greenplum",
+            "cockroachdb",
+            "redshift",
+            "vertica",
+            "sqlite",
+            "libsql",
+            "cloudflare_d1",
+          ].includes(dbType || "")
+            ? [
+                {
+                  key: "maintenance-vacuum",
+                  label: "VACUUM",
+                  action: () => void runMaintenanceCommand("vacuum", table.name),
+                },
+              ]
             : []),
           // ANALYZE: PostgreSQL, MySQL, SQLite
-          ...(["postgresql", "greenplum", "cockroachdb", "redshift", "vertica", "mysql", "mariadb", "sqlite", "libsql", "cloudflare_d1"].includes(dbType || "")
-            ? [{
-                key: "maintenance-analyze",
-                label: "ANALYZE",
-                action: () => void runMaintenanceCommand("analyze", table.name),
-              }]
+          ...([
+            "postgresql",
+            "greenplum",
+            "cockroachdb",
+            "redshift",
+            "vertica",
+            "mysql",
+            "mariadb",
+            "sqlite",
+            "libsql",
+            "cloudflare_d1",
+          ].includes(dbType || "")
+            ? [
+                {
+                  key: "maintenance-analyze",
+                  label: "ANALYZE",
+                  action: () => void runMaintenanceCommand("analyze", table.name),
+                },
+              ]
             : []),
           // OPTIMIZE TABLE: MySQL, ClickHouse
           ...(["mysql", "mariadb", "clickhouse"].includes(dbType || "")
-            ? [{
-                key: "maintenance-optimize",
-                label: "OPTIMIZE TABLE",
-                action: () => void runMaintenanceCommand("optimize", table.name),
-              }]
+            ? [
+                {
+                  key: "maintenance-optimize",
+                  label: "OPTIMIZE TABLE",
+                  action: () => void runMaintenanceCommand("optimize", table.name),
+                },
+              ]
             : []),
           // REINDEX: PostgreSQL, SQLite
-          ...(["postgresql", "greenplum", "cockroachdb", "redshift", "vertica", "sqlite", "libsql", "cloudflare_d1"].includes(dbType || "")
-            ? [{
-                key: "maintenance-reindex",
-                label: "REINDEX",
-                action: () => void runMaintenanceCommand("reindex", table.name),
-              }]
+          ...([
+            "postgresql",
+            "greenplum",
+            "cockroachdb",
+            "redshift",
+            "vertica",
+            "sqlite",
+            "libsql",
+            "cloudflare_d1",
+          ].includes(dbType || "")
+            ? [
+                {
+                  key: "maintenance-reindex",
+                  label: "REINDEX",
+                  action: () => void runMaintenanceCommand("reindex", table.name),
+                },
+              ]
             : []),
           // CHECK TABLE: MySQL, PostgreSQL
           ...(["mysql", "mariadb", "postgresql", "greenplum", "cockroachdb"].includes(dbType || "")
-            ? [{
-                key: "maintenance-check",
-                label: "CHECK TABLE",
-                action: () => void runMaintenanceCommand("check_table", table.name),
-              }]
+            ? [
+                {
+                  key: "maintenance-check",
+                  label: "CHECK TABLE",
+                  action: () => void runMaintenanceCommand("check_table", table.name),
+                },
+              ]
             : []),
         ],
       },
@@ -855,7 +986,20 @@ export function useSidebar() {
         danger: true,
       },
     ];
-  }, [tableContextMenu, pinnedTableSet, t, dbType, handleOpenTableInNewTab, handleOpenStructureDraft, openQueryDraft, handleCopyTableName, handleGenerateTableDocs, handleOpenQueryBuilder, togglePinnedTable, runMaintenanceCommand]);
+  }, [
+    tableContextMenu,
+    pinnedTableSet,
+    t,
+    dbType,
+    handleOpenTableInNewTab,
+    handleOpenStructureDraft,
+    openQueryDraft,
+    handleCopyTableName,
+    handleGenerateTableDocs,
+    handleOpenQueryBuilder,
+    togglePinnedTable,
+    runMaintenanceCommand,
+  ]);
 
   // --- Effects ---
   useEffect(() => {
@@ -920,7 +1064,7 @@ export function useSidebar() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(
       EXPLORER_PINNED_TABLES_STORAGE_KEY,
-      JSON.stringify(pinnedTablesByWorkspace)
+      JSON.stringify(pinnedTablesByWorkspace),
     );
   }, [pinnedTablesByWorkspace]);
 

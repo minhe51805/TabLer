@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { AppAboutModal } from "../AppAboutModal";
 import { AppPluginManagerModal } from "../AppPluginManagerModal";
 import { AppMcpIntegrationsModal } from "../AppMcpIntegrationsModal";
@@ -11,8 +11,13 @@ import { SchemaDiffView } from "../SchemaDiff/SchemaDiffView";
 import { ImportWizard } from "../DataImport/ImportWizard";
 import { ThemeCustomizer } from "../ThemeCustomizer/ThemeCustomizer";
 import { SafeModeConfirmDialog } from "../SafeMode/SafeModeConfirmDialog";
+import { ConfirmDialog } from "../ConfirmDialog";
+import { useConfirmStore, setAppConfirmHostMounted } from "../../stores/confirmStore";
+import { useI18n } from "../../i18n";
 import { ConnectionExporter, ConnectionImporter } from "../ConnectionExporter";
 import { useConnectionStore } from "../../stores/connectionStore";
+import { useSqlFavoritesStore } from "../../stores/sql-favorites-store";
+import { useQuerySchedulesStore } from "../../stores/query-schedules-store";
 import { ConnectionConfig } from "../../types/database";
 import { DiagnosticBundleModal } from "../DiagnosticBundleModal";
 import { ProfilerLauncher } from "../Profiler";
@@ -83,6 +88,14 @@ export function AppGlobalModals({
   handleOpenThemeCustomizer,
   setShowAISlidePanel,
 }: AppGlobalModalsProps) {
+  const pendingConfirm = useConfirmStore((state) => state.pending);
+  const respondConfirm = useConfirmStore((state) => state.respond);
+  const { t } = useI18n();
+
+  useEffect(() => {
+    setAppConfirmHostMounted(true);
+    return () => setAppConfirmHostMounted(false);
+  }, []);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   return (
@@ -149,6 +162,15 @@ export function AppGlobalModals({
       <SchemaDiffView />
       <ImportWizard />
       <SafeModeConfirmDialog />
+      <ConfirmDialog
+        isOpen={pendingConfirm !== null}
+        title={pendingConfirm?.title ?? ""}
+        message={pendingConfirm?.message ?? ""}
+        confirmText={pendingConfirm?.confirmText ?? t("common.confirm")}
+        cancelText={pendingConfirm?.cancelText ?? t("common.cancel")}
+        onConfirm={() => respondConfirm(true)}
+        onCancel={() => respondConfirm(false)}
+      />
       {showConnectionExporter && (
         <ConnectionExporter
           connections={connections}
@@ -159,6 +181,9 @@ export function AppGlobalModals({
         <ConnectionImporter
           onImport={() => {
             void useConnectionStore.getState().loadSavedConnections();
+            // Bundle imports can also add favorites and schedules.
+            void useSqlFavoritesStore.getState().loadFavorites();
+            void useQuerySchedulesStore.getState().loadSchedules();
           }}
           onClose={() => setShowConnectionImporter(false)}
         />

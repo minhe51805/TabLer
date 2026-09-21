@@ -145,16 +145,16 @@ pub fn complete_agent_schedule_run(
     Ok(())
 }
 
-/// Readonly guard: only a leading SELECT or WITH is schedulable. Multiple
-/// statements are refused outright — a trailing destructive statement must
-/// never ride along a SELECT.
+/// Readonly guard: a schedule is only allowed when the canonical classifier
+/// proves the whole input is a single read-only statement with no filesystem
+/// capability. The old leading-keyword check let `SELECT ... INTO` and
+/// mutating CTEs ride the scheduler.
 fn is_readonly_schedulable(sql: &str) -> bool {
-    let trimmed = sql.trim().trim_end_matches(';').trim();
-    if trimmed.contains(';') {
-        return false;
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    lower.starts_with("select") || lower.starts_with("with")
+    let decision = crate::utils::sql::classify_sql(sql);
+    decision.parse_error.is_none()
+        && !decision.filesystem_access
+        && decision.statements.len() == 1
+        && decision.read_only
 }
 
 /// Runs one SQL schedule and persists the outcome. Failures are recorded on the

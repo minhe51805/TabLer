@@ -108,3 +108,48 @@ export function splitSqlStatements(sql: string) {
 
   return statements;
 }
+
+/// SQLite pragma functions that only read — `PRAGMA name(arg)` for these is a
+/// read, any other call form is treated as a write. Mirrors the backend
+/// allowlist in `utils::sql::ast_statement_kind`.
+const READONLY_PRAGMA_NAMES: Record<string, true> = {
+  TABLE_INFO: true,
+  TABLE_XINFO: true,
+  INDEX_INFO: true,
+  INDEX_LIST: true,
+  INDEX_XINFO: true,
+  FOREIGN_KEY_LIST: true,
+  DATABASE_LIST: true,
+  COMPILE_OPTIONS: true,
+  INTEGRITY_CHECK: true,
+  QUICK_CHECK: true,
+  FOREIGN_KEY_CHECK: true,
+  COLLATION_LIST: true,
+  FUNCTION_LIST: true,
+  MODULE_LIST: true,
+  PRAGMA_LIST: true,
+  TABLE_LIST: true,
+};
+
+/// True when a statement whose leading keyword looks read-only (SELECT /
+/// EXPLAIN / WITH / PRAGMA) actually mutates: `SELECT ... INTO`, a
+/// data-modifying CTE body, `EXPLAIN ANALYZE <write>`, or `PRAGMA name = v`.
+/// Operates on already-normalized text (uppercased, whitespace-collapsed).
+export function normalizedStatementIsDisguisedWrite(normalized: string): boolean {
+  if (!normalized) return false;
+  if (normalized.startsWith("WITH")) {
+    return /\b(INSERT|UPDATE|DELETE|MERGE)\b/.test(normalized);
+  }
+  if (normalized.startsWith("SELECT")) {
+    return /\bINTO\b/.test(normalized);
+  }
+  if (normalized.startsWith("PRAGMA")) {
+    // `PRAGMA name = v` assigns; `name(v)` is a write unless it is one of the
+    // known read-only pragma functions (mirrors the backend allowlist).
+    if (/=/.test(normalized)) return true;
+    const callMatch = normalized.match(/^PRAGMA\s+(?:\w+\.)?(\w+)\s*\(/);
+    if (!callMatch) return false;
+    return !READONLY_PRAGMA_NAMES[callMatch[1]];
+  }
+  return false;
+}

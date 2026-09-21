@@ -5,6 +5,14 @@ export const TR_PANEL_COPY: AIPanelCopy = {
     label: "{used} / {budget} token",
     title: "Bu çalıştırmada kullanılan model tokeni (çalıştırma başına bütçeye göre).",
   },
+  runDetails: {
+    label: "Çalıştırma detayları",
+    callCount: "{count} araç çağrısı",
+    total: "Toplam {duration}",
+    ok: "ok",
+    failed: "hata",
+    sqlLabel: "Çalıştırılan SQL",
+  },
   rules: {
     title: "Koruma kuralları",
     subtitle:

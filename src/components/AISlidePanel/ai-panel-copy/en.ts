@@ -5,6 +5,14 @@ export const EN_PANEL_COPY: AIPanelCopy = {
     label: "{used} / {budget} tokens",
     title: "Model tokens this run used, against the per-run budget.",
   },
+  runDetails: {
+    label: "Run details",
+    callCount: "{count} tool calls",
+    total: "Total {duration}",
+    ok: "ok",
+    failed: "failed",
+    sqlLabel: "SQL executed",
+  },
   rules: {
     title: "Guardrail rules",
     subtitle:

@@ -5,6 +5,14 @@ export const VI_PANEL_COPY: AIPanelCopy = {
     label: "{used} / {budget} token",
     title: "Số token model đã dùng trong lượt chạy này, so với ngân sách mỗi lượt.",
   },
+  runDetails: {
+    label: "Chi tiết lượt chạy",
+    callCount: "{count} lần gọi tool",
+    total: "Tổng {duration}",
+    ok: "ok",
+    failed: "lỗi",
+    sqlLabel: "SQL đã chạy",
+  },
   rules: {
     title: "Quy tắc guardrail",
     subtitle:

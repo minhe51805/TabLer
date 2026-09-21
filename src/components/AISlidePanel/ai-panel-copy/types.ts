@@ -11,6 +11,21 @@ export interface AIPanelCopy {
     label: string;
     title: string;
   };
+  /** Collapsible "Run details" audit section on a finished agent run. */
+  runDetails: {
+    /** Section toggle label. */
+    label: string;
+    /** e.g. "{count} tool calls" */
+    callCount: string;
+    /** e.g. "Total {duration}" */
+    total: string;
+    /** Per-call status chip for a successful tool call. */
+    ok: string;
+    /** Per-call status chip for a failed/blocked tool call. */
+    failed: string;
+    /** Caption above the SQL a tool call executed. */
+    sqlLabel: string;
+  };
   /** Guardrail rules manager modal. */
   rules: {
     title: string;

@@ -1,10 +1,15 @@
 import {
+  AlertCircle,
   Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Copy,
   CornerDownLeft,
   ExternalLink,
   FileText,
   Info,
+  ListTree,
   Play,
   RotateCcw,
   Sparkles,
@@ -17,6 +22,7 @@ import {
   type AIWorkspaceAttachment,
   type AIWorkspaceBubbleData,
   type AIWorkspaceFailoverNote,
+  type AIWorkspaceRunTraceEntry,
 } from "./ai-workspace-types";
 import {
   getBubbleConversationText,
@@ -182,6 +188,106 @@ function AIFailoverNotes({
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** "320ms" / "1.2s" / "1m 12s" for per-call and total durations. */
+function formatRunDetailMs(ms: number): string {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) {
+    const rounded = Math.round(totalSeconds * 10) / 10;
+    return `${rounded}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+/** Collapsible audit trail of a finished agent run: every tool call in order
+ *  (name, args summary, duration, ok/fail) plus the SQL each call executed.
+ *  Hidden entirely when the run recorded no tool calls. */
+function AIRunDetails({ trace, totalMs }: { trace: AIWorkspaceRunTraceEntry[]; totalMs?: number }) {
+  const { language } = useI18n();
+  const panelCopy = getAIPanelCopy(language);
+  const [expanded, setExpanded] = useState(false);
+  if (trace.length === 0) return null;
+  const showTotal = totalMs !== undefined && totalMs > 0;
+  return (
+    <div className={`ai-run-details ${expanded ? "" : "is-collapsed"}`}>
+      <button
+        type="button"
+        className="ai-run-details-head"
+        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={expanded}
+      >
+        <ListTree className="w-3.5 h-3.5" />
+        <span>{panelCopy.runDetails.label}</span>
+        <span className="ai-run-details-head-right">
+          <span>
+            {formatPanelCopy(panelCopy.runDetails.callCount, {
+              count: String(trace.length),
+            })}
+          </span>
+          {showTotal && (
+            <span>
+              {formatPanelCopy(panelCopy.runDetails.total, {
+                duration: formatRunDetailMs(totalMs as number),
+              })}
+            </span>
+          )}
+          {expanded ? (
+            <ChevronDown className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5" />
+          )}
+        </span>
+      </button>
+      {expanded && (
+        <>
+          <ol className="ai-run-details-list">
+            {trace.map((entry, index) => (
+              <li key={`${index}-${entry.tool}`} className="ai-run-details-call">
+                <div className="ai-run-details-call-line">
+                  <span className="ai-run-details-tool">{entry.tool}</span>
+                  {entry.argsSummary && (
+                    <span className="ai-run-details-args" title={entry.argsSummary}>
+                      {entry.argsSummary}
+                    </span>
+                  )}
+                  <span className="ai-run-details-ms">{formatRunDetailMs(entry.ms)}</span>
+                  <span
+                    className={`ai-run-details-status ai-run-details-status--${entry.ok ? "ok" : "fail"}`}
+                  >
+                    {entry.ok ? (
+                      <CheckCircle2 className="w-3 h-3" />
+                    ) : (
+                      <AlertCircle className="w-3 h-3" />
+                    )}
+                    {entry.ok ? panelCopy.runDetails.ok : panelCopy.runDetails.failed}
+                  </span>
+                </div>
+                {entry.sql && (
+                  <>
+                    <span className="ai-run-details-sql-label">
+                      {panelCopy.runDetails.sqlLabel}
+                    </span>
+                    <AIWorkspaceSqlBlock code={entry.sql} />
+                  </>
+                )}
+              </li>
+            ))}
+          </ol>
+          {showTotal && (
+            <div className="ai-run-details-total">
+              {formatPanelCopy(panelCopy.runDetails.total, {
+                duration: formatRunDetailMs(totalMs as number),
+              })}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -493,6 +599,18 @@ export const AIConversationView = memo(function AIConversationView({
                     {bubble.sql && bubble.status !== "error" && (
                       <AIWorkspaceSqlBlock code={bubble.sql} />
                     )}
+                    {bubble.status !== "loading" && (bubble.runTrace?.length ?? 0) > 0 && (
+                      // Audit trail: the executor recorded every tool call of
+                      // this run; collapsed by default, expand for the trace.
+                      <AIRunDetails
+                        trace={bubble.runTrace ?? []}
+                        totalMs={
+                          bubble.settledAt
+                            ? Math.max(0, bubble.settledAt - bubble.createdAt)
+                            : undefined
+                        }
+                      />
+                    )}
                     {(canInsert || canRun || canRetry || canCopy) && (
                       <div className="ai-workspace-chat-actions">
                         {canRetry && (
@@ -543,16 +661,19 @@ export const AIConversationView = memo(function AIConversationView({
                         )}
                       </div>
                     )}
-                    {bubble.status !== "loading" && (bubble.tokensUsed ?? 0) > 0 && (
-                      // Run footer: what the turn actually cost, against the
-                      // per-run token budget the runner enforces.
-                      <div className="ai-workspace-chat-run-cost" title={panelCopy.runCost.title}>
-                        {formatPanelCopy(panelCopy.runCost.label, {
-                          used: (bubble.tokensUsed ?? 0).toLocaleString(),
-                          budget: DEFAULT_AGENT_TOKEN_BUDGET.toLocaleString(),
-                        })}
-                      </div>
-                    )}
+                    {bubble.status !== "loading" &&
+                      ((bubble.tokensUsed ?? 0) > 0 || bubble.modelUsed) && (
+                        // Run footer: what the turn actually cost, against the
+                        // per-run token budget the runner enforces, plus the
+                        // model that answered (the fast model on trivial asks).
+                        <div className="ai-workspace-chat-run-cost" title={panelCopy.runCost.title}>
+                          {formatPanelCopy(panelCopy.runCost.label, {
+                            used: (bubble.tokensUsed ?? 0).toLocaleString(),
+                            budget: DEFAULT_AGENT_TOKEN_BUDGET.toLocaleString(),
+                          })}
+                          {bubble.modelUsed ? ` · ${bubble.modelUsed}` : ""}
+                        </div>
+                      )}
                   </div>
                 </article>
               );

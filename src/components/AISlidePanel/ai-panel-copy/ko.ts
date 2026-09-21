@@ -5,6 +5,14 @@ export const KO_PANEL_COPY: AIPanelCopy = {
     label: "{used} / {budget} 토큰",
     title: "이번 실행에서 사용한 모델 토큰 수 (실행당 예산 대비).",
   },
+  runDetails: {
+    label: "실행 상세",
+    callCount: "도구 호출 {count}회",
+    total: "총 {duration}",
+    ok: "성공",
+    failed: "실패",
+    sqlLabel: "실행된 SQL",
+  },
   rules: {
     title: "가드레일 규칙",
     subtitle:

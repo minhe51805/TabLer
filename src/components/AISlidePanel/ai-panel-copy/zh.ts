@@ -5,6 +5,14 @@ export const ZH_PANEL_COPY: AIPanelCopy = {
     label: "{used} / {budget} tokens",
     title: "本次运行消耗的模型 token 数(相对每次运行的预算)。",
   },
+  runDetails: {
+    label: "运行详情",
+    callCount: "{count} 次工具调用",
+    total: "总计 {duration}",
+    ok: "成功",
+    failed: "失败",
+    sqlLabel: "执行的 SQL",
+  },
   rules: {
     title: "护栏规则",
     subtitle: "<workspace>/rules 中的 Markdown 规则和内置规则包会审查代理执行的每条语句。",

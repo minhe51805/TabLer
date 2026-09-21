@@ -41,13 +41,14 @@ export function useProgressiveQuery() {
   const [state, setState] = useState<ProgressiveQueryState>(INITIAL_STATE);
   const [isRunning, setIsRunning] = useState(false);
   const activeRequestIdRef = useRef<string | null>(null);
+  const activeConnectionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let unlisten: UnlistenFn | null = null;
     let disposed = false;
     void listen<QueryRowBatchEvent>("query-row-batch", (event) => {
       const batch = event.payload;
-      if (batch.connectionId !== activeRequestIdRef.current?.split("::")[0]) return;
+      if (batch.connectionId !== activeConnectionIdRef.current) return;
       setState((current) => ({
         columns: batch.columns.length > 0 ? batch.columns : current.columns,
         rows: [...current.rows, ...batch.rows],
@@ -65,41 +66,46 @@ export function useProgressiveQuery() {
     };
   }, []);
 
-  const run = useCallback(
-    async (connectionId: string, sql: string, chunkSize?: number) => {
-      const requestId = `${connectionId}::${crypto.randomUUID()}`;
-      activeRequestIdRef.current = requestId;
-      setState({ ...INITIAL_STATE, requestId, done: false });
-      setIsRunning(true);
-      try {
-        const result = await invoke<QueryResult>("execute_query_progressive", {
-          connectionId,
-          sql,
-          chunkSize: chunkSize ?? null,
-          requestId,
-        });
-        // The command resolves with the complete result; reconcile in case any
-        // batch event was dropped by the transport.
-        setState({
-          columns: result.columns,
-          rows: result.rows.map((row: unknown[]) => row),
-          totalRows: result.rows.length,
-          done: true,
-          requestId,
-        });
-        return result;
-      } finally {
-        setIsRunning(false);
-        activeRequestIdRef.current = null;
-      }
-    },
-    [],
-  );
+  const run = useCallback(async (connectionId: string, sql: string, chunkSize?: number) => {
+    const requestId = `${connectionId}::${crypto.randomUUID()}`;
+    activeRequestIdRef.current = requestId;
+    activeConnectionIdRef.current = connectionId;
+    setState({ ...INITIAL_STATE, requestId, done: false });
+    setIsRunning(true);
+    try {
+      const result = await invoke<QueryResult>("execute_query_progressive", {
+        connectionId,
+        sql,
+        chunkSize: chunkSize ?? null,
+        requestId,
+      });
+      // The command resolves with the complete result; reconcile in case any
+      // batch event was dropped by the transport.
+      setState({
+        columns: result.columns,
+        rows: result.rows.map((row: unknown[]) => row),
+        totalRows: result.rows.length,
+        done: true,
+        requestId,
+      });
+      return result;
+    } finally {
+      setIsRunning(false);
+      activeRequestIdRef.current = null;
+      activeConnectionIdRef.current = null;
+    }
+  }, []);
 
   const cancel = useCallback(async () => {
-    const requestId = activeRequestIdRef.current?.split("::")[1];
+    const requestId = activeRequestIdRef.current;
     if (!requestId) return false;
-    return invoke<boolean>("cancel_query", { requestId });
+    // The backend registered the full "connectionId::uuid" id — send it
+    // verbatim along with the connection id so server-side cancellation
+    // (KILL QUERY / pg_cancel_backend) can actually fire.
+    return invoke<boolean>("cancel_query", {
+      requestId,
+      connectionId: activeConnectionIdRef.current,
+    });
   }, []);
 
   return { state, isRunning, run, cancel };

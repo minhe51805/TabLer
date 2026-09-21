@@ -182,8 +182,13 @@ export function parseRangePasteMatrix(text: string): string[][] | null {
     value += char;
   }
 
-  row.push(value);
-  matrix.push(row);
+  // A trailing line break terminates the last row instead of starting a new
+  // one — only flush the pending row when it actually holds content, so
+  // clipboard text ending in a newline does not produce a phantom empty row.
+  if (row.length > 0 || value.length > 0) {
+    row.push(value);
+    matrix.push(row);
+  }
   return matrix;
 }
 
@@ -259,7 +264,11 @@ export function planPasteUpdates(
   const lastRow = anchor.row + matrix.length - 1;
   const lastCol = anchor.col + requestedColumns - 1;
   if (lastRow > context.rows.length - 1 || lastCol > context.columns.length - 1) {
-    return { updates: [], skippedCells: 0, refused: { requestedRows: matrix.length, requestedColumns } };
+    return {
+      updates: [],
+      skippedCells: 0,
+      refused: { requestedRows: matrix.length, requestedColumns },
+    };
   }
 
   return planRangeValues(
@@ -276,10 +285,7 @@ export function planPasteUpdates(
 }
 
 /** Plan staging NULL for every editable cell of the range. */
-export function planClearUpdates(
-  range: GridRange,
-  context: RangeUpdateContext,
-): RangeUpdatePlan {
+export function planClearUpdates(range: GridRange, context: RangeUpdateContext): RangeUpdatePlan {
   return planRangeValues(range, context, () => null);
 }
 

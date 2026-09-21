@@ -13,6 +13,24 @@ export const EN_PANEL_COPY: AIPanelCopy = {
     failed: "failed",
     sqlLabel: "SQL executed",
   },
+  responseActions: {
+    regenerate: "Regenerate",
+    regenerating: "Regenerating…",
+    regenerateFailed: "Regenerate failed — kept the previous answer",
+    helpful: "Helpful",
+    notHelpful: "Not helpful",
+    feedbackTitle: "What was wrong?",
+    feedbackPlaceholder: "Optional: tell the agent what to do differently…",
+    feedbackSubmit: "Send feedback",
+    feedbackSaved: "Feedback saved",
+    feedbackFailed: "Could not save feedback",
+    feedbackReasons: {
+      wrongSql: "Wrong SQL",
+      misunderstood: "Misunderstood the request",
+      tooSlow: "Too slow",
+      other: "Other",
+    },
+  },
   rules: {
     title: "Guardrail rules",
     subtitle:

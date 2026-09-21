@@ -13,6 +13,24 @@ export const KO_PANEL_COPY: AIPanelCopy = {
     failed: "실패",
     sqlLabel: "실행된 SQL",
   },
+  responseActions: {
+    regenerate: "다시 생성",
+    regenerating: "다시 생성 중…",
+    regenerateFailed: "다시 생성 실패 — 이전 답변을 유지합니다",
+    helpful: "도움 됨",
+    notHelpful: "도움 안 됨",
+    feedbackTitle: "무엇이 잘못됐나요?",
+    feedbackPlaceholder: "선택 사항: 에이전트가 다르게 해야 할 점을 알려주세요…",
+    feedbackSubmit: "피드백 보내기",
+    feedbackSaved: "피드백을 저장했습니다",
+    feedbackFailed: "피드백을 저장하지 못했습니다",
+    feedbackReasons: {
+      wrongSql: "SQL이 틀림",
+      misunderstood: "요청을 잘못 이해함",
+      tooSlow: "너무 느림",
+      other: "기타",
+    },
+  },
   rules: {
     title: "가드레일 규칙",
     subtitle:

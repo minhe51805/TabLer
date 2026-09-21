@@ -13,6 +13,24 @@ export const TR_PANEL_COPY: AIPanelCopy = {
     failed: "hata",
     sqlLabel: "Çalıştırılan SQL",
   },
+  responseActions: {
+    regenerate: "Yeniden üret",
+    regenerating: "Yeniden üretiliyor…",
+    regenerateFailed: "Yeniden üretme başarısız — önceki yanıt korundu",
+    helpful: "Yararlı",
+    notHelpful: "Yararlı değil",
+    feedbackTitle: "Ne yanlıştı?",
+    feedbackPlaceholder: "İsteğe bağlı: ajanın neyi farklı yapması gerektiğini yazın…",
+    feedbackSubmit: "Geri bildirim gönder",
+    feedbackSaved: "Geri bildirim kaydedildi",
+    feedbackFailed: "Geri bildirim kaydedilemedi",
+    feedbackReasons: {
+      wrongSql: "Yanlış SQL",
+      misunderstood: "İstek yanlış anlaşıldı",
+      tooSlow: "Çok yavaş",
+      other: "Diğer",
+    },
+  },
   rules: {
     title: "Koruma kuralları",
     subtitle:

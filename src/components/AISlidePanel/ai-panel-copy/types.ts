@@ -26,6 +26,36 @@ export interface AIPanelCopy {
     /** Caption above the SQL a tool call executed. */
     sqlLabel: string;
   };
+  /** Per-response controls on a finished assistant turn: regenerate + 👍/👎. */
+  responseActions: {
+    /** Regenerate button label + tooltip. */
+    regenerate: string;
+    /** Tooltip while a regenerate run is in flight. */
+    regenerating: string;
+    /** Toast title when the regenerated run fails and the old answer stays. */
+    regenerateFailed: string;
+    /** 👍 tooltip. */
+    helpful: string;
+    /** 👎 tooltip. */
+    notHelpful: string;
+    /** 👎 popover heading ("what was wrong?"). */
+    feedbackTitle: string;
+    /** 👎 popover free-text placeholder. */
+    feedbackPlaceholder: string;
+    /** 👎 popover submit button. */
+    feedbackSubmit: string;
+    /** Toast title after 👎 feedback was saved to agent memory. */
+    feedbackSaved: string;
+    /** Toast title when saving feedback failed. */
+    feedbackFailed: string;
+    /** Preset reason chips inside the 👎 popover. */
+    feedbackReasons: {
+      wrongSql: string;
+      misunderstood: string;
+      tooSlow: string;
+      other: string;
+    };
+  };
   /** Guardrail rules manager modal. */
   rules: {
     title: string;

@@ -73,6 +73,9 @@ export type AIWorkspaceAgentActionName =
   | "restore_checkpoint"
   | "delegate"
   | "read_page"
+  // One step carrying several tool calls: read-only sub-calls run in
+  // parallel, mutating ones serialize in order (ai-agent-tool-executor).
+  | "batch"
   // Anthropic's native memory tool (memory_20250818) surfaces in the agent
   // trace like any other action; it is Anthropic-only and has no catalog spec.
   | "memory"
@@ -106,6 +109,18 @@ export interface AIWorkspaceRunTraceEntry {
   ok: boolean;
   /** SQL the call ran or produced, when the tool carries one. */
   sql?: string;
+}
+
+/** User feedback recorded on a finished assistant turn via the 👍/👎 buttons.
+ *  Persisted with the bubble so the chosen sentiment survives reloads; the
+ *  reasons/comment also feed the learning loop as a memory entry. */
+export interface AIWorkspaceBubbleFeedback {
+  sentiment: "up" | "down";
+  /** Preset chips the user picked for a 👎 (e.g. "wrong-sql"). */
+  reasons?: string[];
+  /** Free-text "what was wrong?" note for a 👎. */
+  comment?: string;
+  recordedAt: number;
 }
 
 export interface AIWorkspaceBubbleData {
@@ -167,6 +182,9 @@ export interface AIWorkspaceBubbleData {
    *  summary, duration, ok/fail, SQL). Powers the collapsible "Run details"
    *  section; undefined for non-agent turns and runs that called no tools. */
   runTrace?: AIWorkspaceRunTraceEntry[];
+  /** 👍/👎 the user left on this answer; keeps the buttons' active state
+   *  across reloads and is mirrored into agent memory for the learning loop. */
+  feedback?: AIWorkspaceBubbleFeedback;
 }
 
 /** One provider-failover footer note: a short localized summary plus the full

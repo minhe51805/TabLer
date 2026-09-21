@@ -41,6 +41,7 @@ import type { SelectionContextState } from "./ai-panel-selection";
 import type {
   AIWorkspaceAgentAutonomy,
   AIWorkspaceBubbleData,
+  AIWorkspaceBubbleFeedback,
   AIWorkspaceInteractionMode,
 } from "./ai-workspace-types";
 import type { SandboxPolicy } from "./ai-execution-policy";
@@ -141,6 +142,13 @@ export interface AIWorkspacePanelViewModel {
   addAttachmentFiles: (files: File[]) => void;
   removeAttachment: (id: string) => void;
   retryBubble: (bubble: AIWorkspaceBubbleData) => void;
+  /** Re-runs a finished bubble's prompt in place (same chat slot). */
+  regenerateBubble: (bubble: AIWorkspaceBubbleData) => void;
+  /** Records 👍/👎 on a finished answer into the learning loop. */
+  submitBubbleFeedback: (
+    bubble: AIWorkspaceBubbleData,
+    feedback: AIWorkspaceBubbleFeedback,
+  ) => void;
   runBubble: (bubble: AIWorkspaceBubbleData) => void;
   openAgentRecord: (link: AIAgentRecordLink) => void;
   copyBubble: (bubble: AIWorkspaceBubbleData) => Promise<boolean>;
@@ -426,6 +434,8 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                 onInsert={m.insertBubble}
                 onRun={m.runBubble}
                 onRetry={m.retryBubble}
+                onRegenerate={m.regenerateBubble}
+                onFeedback={m.submitBubbleFeedback}
                 onCopy={m.copyBubble}
                 onOpenRecord={m.openAgentRecord}
                 onUseSuggestion={handleUseSuggestion}

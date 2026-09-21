@@ -13,6 +13,24 @@ export const VI_PANEL_COPY: AIPanelCopy = {
     failed: "lỗi",
     sqlLabel: "SQL đã chạy",
   },
+  responseActions: {
+    regenerate: "Tạo lại",
+    regenerating: "Đang tạo lại…",
+    regenerateFailed: "Tạo lại thất bại — giữ nguyên câu trả lời cũ",
+    helpful: "Hữu ích",
+    notHelpful: "Chưa hữu ích",
+    feedbackTitle: "Có gì chưa đúng?",
+    feedbackPlaceholder: "Không bắt buộc: nói cho agent biết cần làm khác gì…",
+    feedbackSubmit: "Gửi phản hồi",
+    feedbackSaved: "Đã lưu phản hồi",
+    feedbackFailed: "Không lưu được phản hồi",
+    feedbackReasons: {
+      wrongSql: "SQL sai",
+      misunderstood: "Hiểu sai yêu cầu",
+      tooSlow: "Quá chậm",
+      other: "Khác",
+    },
+  },
   rules: {
     title: "Quy tắc guardrail",
     subtitle:

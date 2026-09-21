@@ -35,6 +35,7 @@ import { invokeMutation } from "../../utils/tauri-utils";
 import {
   buildComposerCommandContext,
   describeMissingCommandContext,
+  describeMissingCommandContextItems,
   findFileCommandName,
   isBackupCommand,
   isRollbackCommand,
@@ -56,7 +57,7 @@ import { useAIDashboardBubbleUpdates } from "./hooks/use-ai-dashboard-bubble-upd
 import { useAIWorkspaceEffects } from "./hooks/use-ai-workspace-effects";
 import { useAIPanelPreferences } from "./hooks/use-ai-panel-preferences";
 import { AI_REQUEST_REPLACED_MESSAGE } from "./ai-agent-action-requestor";
-import { useAISlidePanel } from "./hooks/use-ai-slide-panel";
+import { resolveEditorAssistPrompt, useAISlidePanel } from "./hooks/use-ai-slide-panel";
 import { useAgentScheduleRunner } from "./hooks/use-agent-schedule-runner";
 import {
   approveDataRead,
@@ -1359,6 +1360,9 @@ export function AISlidePanel({
           { name: "backup", description: aiCopy.composer.slashBackupDescription },
           { name: "rollback", description: aiCopy.composer.slashRollbackDescription },
           { name: "compact", description: aiCopy.composer.slashCompactDescription },
+          { name: "explain", description: aiCopy.composer.slashExplainDescription },
+          { name: "optimize", description: aiCopy.composer.slashOptimizeDescription },
+          { name: "fix", description: aiCopy.composer.slashFixDescription },
         ],
         fileCommands,
         (name) => useCommandPrefsStore.getState().isEnabled(name),
@@ -1563,6 +1567,30 @@ export function AISlidePanel({
       // ordinary prompt — so it inherits the whole agent loop (guardrail rules,
       // verification, cost accounting) instead of opening a second execution path.
       let promptToRun = normalizedPrompt;
+      // Editor-assist commands (/explain, /optimize, /fix): the composer keeps
+      // the short `/name` draft while the model receives the expanded prompt —
+      // active editor SQL, the last recorded error, or an EXPLAIN plan plus
+      // index-advisor proposals. Native commands resolve before the file-backed
+      // registry so a runbook can never shadow them.
+      const editorAssist = await resolveEditorAssistPrompt({
+        commandLine: normalizedPrompt,
+        connectionId,
+        dbType: activeConnectionDbType,
+        databaseLabel: currentDatabase || null,
+        attachedSql: attachedSelection?.text ?? null,
+      });
+      if (editorAssist) {
+        promptToRun = editorAssist.prompt;
+        const missingContextNote = describeMissingCommandContextItems(editorAssist.missingContext);
+        if (missingContextNote) {
+          emitAppToast({
+            tone: "info",
+            title: `/${editorAssist.command}`,
+            description: missingContextNote,
+            durationMs: 8000,
+          });
+        }
+      }
       if (findFileCommandName(normalizedPrompt, fileCommands)) {
         try {
           const connectionName = useConnectionStore
@@ -1644,6 +1672,7 @@ export function AISlidePanel({
     },
     [
       activeChatWorkspace,
+      activeConnectionDbType,
       activeInteractionMode,
       activeThreadBubbles,
       aiCopy.composer.selectionReady,

@@ -93,6 +93,10 @@ export const TR_COPY: AIWorkspaceCopy = {
     slashBackupDescription: "Mevcut veritabanı için geri yükleme kontrol noktası oluşturun.",
     slashCompactDescription: "Mevcut konuşmayı isteğe bağlı talimatlarla sıkıştırın.",
     slashRollbackDescription: "Veritabanını önceki bir /backup kontrol noktasına geri yükleyin.",
+    slashExplainDescription: "Aktif editör sekmesindeki SQL'i açıklayın.",
+    slashOptimizeDescription:
+      "Editör SQL'i için EXPLAIN çalıştırıp index veya yeniden yazım önerin.",
+    slashFixDescription: "Son kaydedilen sorgu hatasını kullanarak editör SQL'ini düzeltin.",
     checkpointTitle: "Veritabanını geri al",
     checkpointEmpty: "Henüz kontrol noktası yok — önce /backup çalıştırın.",
     checkpointHint: "Geri yüklenecek kontrol noktasını seçin. Mevcut verinin üzerine yazılacak.",

@@ -77,6 +77,41 @@ export function matchSlashCommands(query: string, commands: AISlashCommand[]): A
 }
 
 // ---------------------------------------------------------------------------
+// Editor-assist commands (/explain, /optimize, /fix)
+// ---------------------------------------------------------------------------
+
+/**
+ * Native commands that act on the SQL sitting in the active editor tab.
+ *
+ * They park in the composer like every other command (`/explain` stays
+ * `/explain` until Enter), but on send they are expanded into a contextual
+ * prompt — the editor SQL, the last recorded query error, or an EXPLAIN plan
+ * — by `resolveEditorAssistPrompt` in `use-ai-slide-panel.ts`. The composer
+ * keeps showing the short command while the model receives the full context.
+ */
+export type EditorAssistCommand = "explain" | "optimize" | "fix";
+
+const EDITOR_ASSIST_COMMANDS: Record<EditorAssistCommand, true> = {
+  explain: true,
+  optimize: true,
+  fix: true,
+};
+
+/**
+ * Parse `/explain`, `/optimize`, or `/fix` (with optional trailing hint text),
+ * or return `null` for anything else. The name is lowercased by
+ * `parseSlashCommandLine`, so `/FIX` still resolves.
+ */
+export function parseEditorAssistCommand(
+  text: string,
+): { command: EditorAssistCommand; arguments: string } | null {
+  const parsed = parseSlashCommandLine(text);
+  if (!parsed) return null;
+  if (!EDITOR_ASSIST_COMMANDS[parsed.name as EditorAssistCommand]) return null;
+  return { command: parsed.name as EditorAssistCommand, arguments: parsed.arguments };
+}
+
+// ---------------------------------------------------------------------------
 // File-backed commands (the runbook registry in `agent_commands.rs`)
 // ---------------------------------------------------------------------------
 
@@ -210,9 +245,13 @@ export function buildComposerCommandContext(
  * The note shown when the app could not supply context a command asked for, so
  * the user knows the agent will ask instead of quietly guessing.
  */
-export function describeMissingCommandContext(resolved: ResolvedFileCommand): string {
-  if (resolved.missingContext.length === 0) return "";
-  return `The command asked for ${resolved.missingContext.join(
+export function describeMissingCommandContextItems(missingContext: readonly string[]): string {
+  if (missingContext.length === 0) return "";
+  return `The command asked for ${missingContext.join(
     ", ",
   )}, which the app could not supply — the agent will ask for it.`;
+}
+
+export function describeMissingCommandContext(resolved: ResolvedFileCommand): string {
+  return describeMissingCommandContextItems(resolved.missingContext);
 }

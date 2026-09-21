@@ -31,7 +31,7 @@ export type ShortcutAction =
 export interface ShortcutBinding {
   action: ShortcutAction;
   label: string;
-  defaultKey: string;  // e.g. "Ctrl+N"
+  defaultKey: string; // e.g. "Ctrl+N"
   currentKey: string;
   category: "general" | "navigation" | "query" | "editing";
 }
@@ -61,22 +61,118 @@ function saveShortcuts(shortcuts: ShortcutMap) {
 }
 
 const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
-  { action: "new-query", label: "New query", defaultKey: "Ctrl+N", currentKey: "Ctrl+N", category: "query" },
-  { action: "toggle-sidebar", label: "Toggle sidebar", defaultKey: "Ctrl+B", currentKey: "Ctrl+B", category: "navigation" },
-  { action: "toggle-ai-panel", label: "Toggle AI panel", defaultKey: "Ctrl+P", currentKey: "Ctrl+P", category: "navigation" },
-  { action: "toggle-terminal", label: "Toggle terminal", defaultKey: "Ctrl+`", currentKey: "Ctrl+`", category: "navigation" },
-  { action: "run-query", label: "Run query", defaultKey: "Ctrl+Enter", currentKey: "Ctrl+Enter", category: "query" },
-  { action: "font-increase", label: "Increase font size", defaultKey: "Ctrl++", currentKey: "Ctrl++", category: "general" },
-  { action: "font-decrease", label: "Decrease font size", defaultKey: "Ctrl+-", currentKey: "Ctrl+-", category: "general" },
-  { action: "font-reset", label: "Reset font size", defaultKey: "Ctrl+0", currentKey: "Ctrl+0", category: "general" },
-  { action: "toggle-results", label: "Toggle results panel", defaultKey: "Ctrl+Shift+`", currentKey: "Ctrl+Shift+`", category: "general" },
-  { action: "toggle-right-sidebar", label: "Toggle right sidebar", defaultKey: "Ctrl+Space", currentKey: "Ctrl+Space", category: "navigation" },
-  { action: "open-sql-file", label: "Open SQL file", defaultKey: "Ctrl+O", currentKey: "Ctrl+O", category: "query" },
-  { action: "open-sql-favorites", label: "SQL Favorites", defaultKey: "Ctrl+Shift+S", currentKey: "Ctrl+Shift+S", category: "query" },
-  { action: "open-query-history", label: "Query History", defaultKey: "Ctrl+H", currentKey: "Ctrl+H", category: "query" },
-  { action: "open-keyboard-shortcuts", label: "Keyboard Shortcuts", defaultKey: "Ctrl+Shift+/", currentKey: "Ctrl+Shift+/", category: "general" },
-  { action: "open-database-file", label: "Open Database File", defaultKey: "Ctrl+Shift+O", currentKey: "Ctrl+Shift+O", category: "query" },
-  { action: "duplicate-row", label: "Duplicate row", defaultKey: "Ctrl+D", currentKey: "Ctrl+D", category: "editing" },
+  {
+    action: "new-query",
+    label: "New query",
+    defaultKey: "Ctrl+N",
+    currentKey: "Ctrl+N",
+    category: "query",
+  },
+  {
+    action: "toggle-sidebar",
+    label: "Toggle sidebar",
+    defaultKey: "Ctrl+B",
+    currentKey: "Ctrl+B",
+    category: "navigation",
+  },
+  {
+    action: "toggle-ai-panel",
+    label: "Toggle AI panel",
+    defaultKey: "Ctrl+P",
+    currentKey: "Ctrl+P",
+    category: "navigation",
+  },
+  {
+    action: "toggle-terminal",
+    label: "Toggle terminal",
+    defaultKey: "Ctrl+`",
+    currentKey: "Ctrl+`",
+    category: "navigation",
+  },
+  {
+    action: "run-query",
+    label: "Run query",
+    defaultKey: "Ctrl+Enter",
+    currentKey: "Ctrl+Enter",
+    category: "query",
+  },
+  {
+    action: "font-increase",
+    label: "Increase font size",
+    defaultKey: "Ctrl++",
+    currentKey: "Ctrl++",
+    category: "general",
+  },
+  {
+    action: "font-decrease",
+    label: "Decrease font size",
+    defaultKey: "Ctrl+-",
+    currentKey: "Ctrl+-",
+    category: "general",
+  },
+  {
+    action: "font-reset",
+    label: "Reset font size",
+    defaultKey: "Ctrl+0",
+    currentKey: "Ctrl+0",
+    category: "general",
+  },
+  {
+    action: "toggle-results",
+    label: "Toggle results panel",
+    defaultKey: "Ctrl+Shift+`",
+    currentKey: "Ctrl+Shift+`",
+    category: "general",
+  },
+  {
+    action: "toggle-right-sidebar",
+    label: "Toggle right sidebar",
+    defaultKey: "Ctrl+Space",
+    currentKey: "Ctrl+Space",
+    category: "navigation",
+  },
+  {
+    action: "open-sql-file",
+    label: "Open SQL file",
+    defaultKey: "Ctrl+O",
+    currentKey: "Ctrl+O",
+    category: "query",
+  },
+  {
+    action: "open-sql-favorites",
+    label: "SQL Favorites",
+    defaultKey: "Ctrl+Shift+S",
+    currentKey: "Ctrl+Shift+S",
+    category: "query",
+  },
+  {
+    action: "open-query-history",
+    label: "Query History",
+    defaultKey: "Ctrl+H",
+    currentKey: "Ctrl+H",
+    category: "query",
+  },
+  {
+    action: "open-keyboard-shortcuts",
+    label: "Keyboard Shortcuts",
+    defaultKey: "Ctrl+/",
+    currentKey: "Ctrl+/",
+    category: "general",
+  },
+  {
+    action: "open-database-file",
+    label: "Open Database File",
+    defaultKey: "Ctrl+Shift+O",
+    currentKey: "Ctrl+Shift+O",
+    category: "query",
+  },
+  {
+    action: "duplicate-row",
+    label: "Duplicate row",
+    defaultKey: "Ctrl+D",
+    currentKey: "Ctrl+D",
+    category: "editing",
+  },
 ];
 
 // Singleton state
@@ -141,7 +237,11 @@ export function rebindShortcut(
 
   // Check for conflicts (skip the specified action — useful for override)
   for (const s of shortcuts) {
-    if (s.action !== action && s.action !== skipConflictCheck && normalizeKey(s.currentKey) === normalized) {
+    if (
+      s.action !== action &&
+      s.action !== skipConflictCheck &&
+      normalizeKey(s.currentKey) === normalized
+    ) {
       return { success: false, conflict: { action: s.action, label: s.label } };
     }
   }

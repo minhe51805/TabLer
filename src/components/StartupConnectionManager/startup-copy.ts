@@ -12,6 +12,14 @@ export interface StartupCopy {
     action: string;
     creating: string;
   };
+  pingAll: {
+    /** Toolbar button that probes every saved connection. */
+    action: string;
+    /** Badge tooltip when the probe succeeded. */
+    reachable: string;
+    /** Badge label/tooltip when the probe failed. */
+    unreachable: string;
+  };
 }
 
 const EN_COPY: StartupCopy = {
@@ -22,6 +30,11 @@ const EN_COPY: StartupCopy = {
     action: "Create & connect",
     creating: "Creating sample…",
   },
+  pingAll: {
+    action: "Ping all",
+    reachable: "Reachable",
+    unreachable: "Unreachable",
+  },
 };
 
 const VI_COPY: StartupCopy = {
@@ -31,6 +44,11 @@ const VI_COPY: StartupCopy = {
     action: "Tạo & kết nối",
     creating: "Đang tạo mẫu…",
   },
+  pingAll: {
+    action: "Ping tất cả",
+    reachable: "Kết nối được",
+    unreachable: "Không kết nối được",
+  },
 };
 
 const ZH_COPY: StartupCopy = {
@@ -39,6 +57,11 @@ const ZH_COPY: StartupCopy = {
     description: "在本地创建一个包含 customers、products 和 orders 的 SQLite 演示库，无需服务器。",
     action: "创建并连接",
     creating: "正在创建示例…",
+  },
+  pingAll: {
+    action: "全部 Ping",
+    reachable: "可连接",
+    unreachable: "无法连接",
   },
 };
 
@@ -50,6 +73,11 @@ const TR_COPY: StartupCopy = {
     action: "Oluştur ve bağlan",
     creating: "Örnek oluşturuluyor…",
   },
+  pingAll: {
+    action: "Tümünü ping'le",
+    reachable: "Ulaşılabilir",
+    unreachable: "Ulaşılamıyor",
+  },
 };
 
 const KO_COPY: StartupCopy = {
@@ -59,6 +87,11 @@ const KO_COPY: StartupCopy = {
       "customers, products, orders가 포함된 로컬 SQLite 데모를 만듭니다. 서버가 필요 없습니다.",
     action: "생성 후 연결",
     creating: "샘플 생성 중…",
+  },
+  pingAll: {
+    action: "모두 핑",
+    reachable: "연결 가능",
+    unreachable: "연결 불가",
   },
 };
 

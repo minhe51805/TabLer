@@ -8,8 +8,7 @@ export { type ConnectionTag } from "../../stores/connection-tag-store";
 
 export type ConnectionLayoutMode = "stacked" | "grid";
 
-export const STARTUP_CONNECTION_LAYOUT_STORAGE_KEY =
-  "tabler.startup-connection-layout";
+export const STARTUP_CONNECTION_LAYOUT_STORAGE_KEY = "tabler.startup-connection-layout";
 
 // ─── App Info ─────────────────────────────────────────────────────────────────
 
@@ -32,7 +31,10 @@ const ENV_PATTERNS: Array<{ pattern: RegExp; env: ConnectionEnvironment }> = [
   { pattern: /\bssh\b/i, env: "ssh" },
 ];
 
-export function detectEnvironment(host?: string | null, name?: string | null): ConnectionEnvironment {
+export function detectEnvironment(
+  host?: string | null,
+  name?: string | null,
+): ConnectionEnvironment {
   const text = [name, host].filter(Boolean).join(" ");
   if (!text) return null;
 
@@ -46,7 +48,10 @@ export function detectEnvironment(host?: string | null, name?: string | null): C
   return null;
 }
 
-export function getEnvironmentBadge(env: ConnectionEnvironment, labels: { prod: string; staging: string; local: string; ssh: string }): EnvironmentBadge | null {
+export function getEnvironmentBadge(
+  env: ConnectionEnvironment,
+  labels: { prod: string; staging: string; local: string; ssh: string },
+): EnvironmentBadge | null {
   if (!env) return null;
   const badgeColors: Record<string, string> = {
     prod: "var(--danger, #e74c3c)",
@@ -111,6 +116,15 @@ export interface ConnectionRowData {
   secondaryBadgeLabel: string | null;
 }
 
+// ─── Ping All ─────────────────────────────────────────────────────────────────
+
+/** Result of a "ping all" probe for one saved connection. */
+export interface ConnectionPingResult {
+  ok: boolean;
+  /** Round-trip latency of the test_connection call; null when it failed. */
+  latencyMs: number | null;
+}
+
 // ─── Hover Popover Data ────────────────────────────────────────────────────────
 
 export interface HoverPopoverData {
@@ -166,9 +180,7 @@ export function getLastPathSegment(value?: string | null): string {
 }
 
 export function getDbInfo(dbType: string): DbLabel {
-  return (
-    DB_LABELS[dbType] || { abbr: "??", color: "var(--text-muted)" }
-  );
+  return DB_LABELS[dbType] || { abbr: "??", color: "var(--text-muted)" };
 }
 
 export function buildEndpointLabel(

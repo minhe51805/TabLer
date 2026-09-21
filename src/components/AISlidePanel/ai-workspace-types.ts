@@ -24,7 +24,9 @@ export function aiModeAllowsRun(mode: AIWorkspaceInteractionMode) {
   return mode === "agent";
 }
 
-export function getDefaultAIWorkspaceInteractionMode(schemaContextAllowed?: boolean | null): AIWorkspaceInteractionMode {
+export function getDefaultAIWorkspaceInteractionMode(
+  schemaContextAllowed?: boolean | null,
+): AIWorkspaceInteractionMode {
   return schemaContextAllowed ? "edit" : "prompt";
 }
 
@@ -138,6 +140,9 @@ export interface AIWorkspaceBubbleData {
    *  provider error revealed on demand via an info popover, so the long payload
    *  never floods the answer body. */
   failoverNotes?: AIWorkspaceFailoverNote[];
+  /** Cumulative model tokens this run spent (0 when the provider reports no
+   *  usage); surfaced as the run footer next to the per-run budget. */
+  tokensUsed?: number;
 }
 
 /** One provider-failover footer note: a short localized summary plus the full

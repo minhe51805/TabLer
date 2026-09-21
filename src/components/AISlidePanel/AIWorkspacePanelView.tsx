@@ -6,6 +6,7 @@ import {
   Pencil,
   RotateCcw,
   Trash2,
+  ShieldCheck,
   Wand2,
   X,
 } from "lucide-react";
@@ -32,6 +33,7 @@ import { AIConversationView } from "./AIConversationView";
 import { AIWorkspaceSwitcher } from "./AIWorkspaceSwitcher";
 import { AIWorkspaceChatActionModal } from "./AIWorkspaceChatActionModal";
 import { AISkillsManagerModal } from "./AISkillsManagerModal";
+import { AIRulesManagerModal } from "./AIRulesManagerModal";
 import type { AIAgentRecordLink } from "./ai-agent-record-links";
 import { AIAttachmentManager } from "./AIAttachmentManager";
 import type { AIAttachmentDraft } from "../../utils/ai-attachments";
@@ -170,6 +172,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
   // instead of starting a thread immediately.
   const [isChatActionModalOpen, setChatActionModalOpen] = useState(false);
   const [isSkillsModalOpen, setSkillsModalOpen] = useState(false);
+  const [isRulesModalOpen, setRulesModalOpen] = useState(false);
   // Escalating to "full" run access is a risky switch, so it asks first.
   const [isFullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const handleSelectAgentAutonomy = useCallback(
@@ -254,6 +257,14 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                     title={m.language === "vi" ? "Quản lý Agent Skills" : "Agent Skills"}
                   >
                     <Wand2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="toolbar-btn icon-only"
+                    onClick={() => setRulesModalOpen(true)}
+                    title={m.language === "vi" ? "Quy tắc guardrail" : "Guardrail rules"}
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"
@@ -554,6 +565,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
         language={m.language}
         onClose={() => setSkillsModalOpen(false)}
       />
+      <AIRulesManagerModal open={isRulesModalOpen} onClose={() => setRulesModalOpen(false)} />
     </div>
   );
 }

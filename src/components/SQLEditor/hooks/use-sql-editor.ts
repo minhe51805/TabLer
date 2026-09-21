@@ -20,6 +20,8 @@ import {
 } from "../SQLEditorUtils";
 import { registerInlineAICompletionProvider } from "../SQLEditorAICompletion";
 import { registerSchemaCompletionProvider, defineTableRTheme } from "../SQLEditorMonacoSetup";
+import { registerSqlFavoriteSnippetsProvider } from "../sql-snippets";
+import { registerInlineAiEdit } from "../inline-ai-controller";
 import { formatSql } from "../../../utils/sql-formatter";
 import {
   parseExplainOutput,
@@ -99,6 +101,8 @@ export function useSQLEditor({
   const splitRef = useRef<HTMLDivElement>(null);
   const inlineCompletionDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const completionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const favoritesCompletionDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const inlineAiEditDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const structurePrefetchKeysRef = useRef<Set<string>>(new Set());
   const selectionContextDisposableRef = useRef<{ dispose: () => void } | null>(null);
   const contentPersistTimerRef = useRef<number | null>(null);
@@ -690,6 +694,20 @@ export function useSQLEditor({
           })
         : null;
 
+    // "@" trigger: saved SQL favorites as insertable snippets.
+    favoritesCompletionDisposableRef.current?.dispose();
+    favoritesCompletionDisposableRef.current =
+      queryProfile.surface === "sql" ? registerSqlFavoriteSnippetsProvider(monaco) : null;
+
+    // Ctrl+K inline AI edit: instruction → rewrite → diff preview with
+    // accept/reject. SQL surface only — command surfaces (Redis) have no
+    // statement semantics to target.
+    inlineAiEditDisposableRef.current?.dispose();
+    inlineAiEditDisposableRef.current =
+      queryProfile.surface === "sql"
+        ? registerInlineAiEdit(editor, monaco, { connectionId, dbType })
+        : null;
+
     // Warm the structure cache in the background: without this, the FIRST
     // completion request fired one metadata query per table in parallel and
     // stalled the editor (and the connection pool) for seconds.
@@ -889,6 +907,8 @@ export function useSQLEditor({
       vimModeRef.current?.dispose();
       inlineCompletionDisposableRef.current?.dispose();
       completionDisposableRef.current?.dispose();
+      favoritesCompletionDisposableRef.current?.dispose();
+      inlineAiEditDisposableRef.current?.dispose();
       selectionContextDisposableRef.current?.dispose();
       editorRef.current = null;
     };

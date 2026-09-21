@@ -1,6 +1,12 @@
 @keyframes qs-slide-in {
-  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .qs-backdrop {
@@ -21,7 +27,9 @@
   background: var(--mm-surface-0);
   border: 1px solid rgba(0, 122, 255, 0.4);
   border-radius: 10px;
-  box-shadow: var(--mm-shadow-3), rgba(0, 122, 255, 0.1) 0 0 0 1px;
+  box-shadow:
+    var(--mm-shadow-3),
+    rgba(0, 122, 255, 0.1) 0 0 0 1px;
   overflow: hidden;
   animation: qs-slide-in 0.15s ease;
 }
@@ -49,7 +57,9 @@
   background: var(--mm-surface-0);
   border: 1px solid rgba(0, 122, 255, 0.4);
   border-radius: 10px;
-  box-shadow: var(--mm-shadow-3), rgba(0, 122, 255, 0.1) 0 0 0 1px;
+  box-shadow:
+    var(--mm-shadow-3),
+    rgba(0, 122, 255, 0.1) 0 0 0 1px;
   overflow: hidden;
   animation: qs-slide-in 0.15s ease;
 }
@@ -219,13 +229,21 @@
 }
 
 @keyframes ri-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes ri-slide-in {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 
 .ri-overlay {
@@ -316,7 +334,10 @@
   font-size: var(--mm-fs-caption);
   font-weight: 600;
   cursor: pointer;
-  transition: background 120ms, border-color 120ms, color 120ms;
+  transition:
+    background 120ms,
+    border-color 120ms,
+    color 120ms;
 }
 
 .ri-action-btn:hover {
@@ -336,7 +357,10 @@
   border: 1px solid transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 120ms, color 120ms, border-color 120ms;
+  transition:
+    background 120ms,
+    color 120ms,
+    border-color 120ms;
 }
 
 .ri-close-btn:hover {
@@ -366,7 +390,9 @@
   font-size: var(--mm-fs-small);
   font-weight: 600;
   cursor: pointer;
-  transition: color 120ms, border-color 120ms;
+  transition:
+    color 120ms,
+    border-color 120ms;
   margin-bottom: -1px;
 }
 
@@ -586,7 +612,9 @@
   border: 1px solid transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 120ms, color 120ms;
+  transition:
+    background 120ms,
+    color 120ms;
 }
 
 .ri-field-action-btn:hover {
@@ -674,7 +702,9 @@
   font-weight: 600;
   cursor: pointer;
   width: fit-content;
-  transition: background 120ms, color 120ms;
+  transition:
+    background 120ms,
+    color 120ms;
 }
 
 .ri-json-toggle:hover {
@@ -767,13 +797,21 @@
 }
 
 @keyframes qh-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes qh-slide-in {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 
 .qh-overlay {
@@ -832,7 +870,9 @@
   color: var(--text-muted);
   cursor: pointer;
   border-radius: 6px;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
 .qh-header-btn {
@@ -944,7 +984,10 @@
   color: var(--text-muted);
   font-size: var(--mm-fs-micro);
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
 }
 
 .qh-toolbar-btn:hover:not(:disabled) {
@@ -1049,7 +1092,10 @@
   background: var(--bg-secondary);
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
   flex-shrink: 0;
 }
 
@@ -1076,7 +1122,9 @@
   border: 1px solid var(--border-subtle);
   background: var(--bg-tertiary);
   cursor: default;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
 }
 
 .qh-entry:hover {
@@ -1173,7 +1221,10 @@
   color: var(--text-muted);
   cursor: pointer;
   border-radius: 6px;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
 }
 
 .qh-action-btn:hover {
@@ -1204,13 +1255,21 @@
 }
 
 @keyframes fav-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes fav-slide-in {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 
 .fav-overlay {
@@ -1288,7 +1347,9 @@
   color: var(--text-muted);
   cursor: pointer;
   border-radius: 6px;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
 .fav-close-btn:hover {
@@ -1380,7 +1441,9 @@
   border-radius: 10px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-tertiary);
-  transition: border-color 120ms ease, background 120ms ease;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
 }
 
 .fav-entry:hover {
@@ -1422,6 +1485,26 @@
   border: 1px solid var(--border-subtle);
 }
 
+/* Missed-run observability: the banner above the list and the per-schedule
+   "missed" tag share the amber warning tone. */
+.schedules-missed-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 0 0 8px;
+  border: 1px solid var(--mm-border);
+  border-radius: 6px;
+  background: var(--mm-surface-2);
+  color: var(--fintech-amber);
+}
+
+.fav-tag.schedules-tag-missed {
+  color: var(--fintech-amber);
+  border-color: var(--mm-border);
+}
+
 .fav-entry-desc {
   color: var(--text-muted);
   font-size: var(--mm-fs-micro);
@@ -1457,7 +1540,10 @@
   color: var(--text-muted);
   cursor: pointer;
   border-radius: 6px;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
 }
 
 .fav-action-btn:hover {
@@ -1551,7 +1637,9 @@
   cursor: pointer;
   border-radius: 7px;
   font-size: var(--mm-fs-caption);
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
 .fav-form-cancel:hover {
@@ -1940,7 +2028,9 @@
   border-radius: 9px;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: background var(--transition), border-color var(--transition);
+  transition:
+    background var(--transition),
+    border-color var(--transition);
 }
 
 .cex-rail-item:hover {
@@ -2105,7 +2195,9 @@
   border-radius: 12px;
   cursor: pointer;
   text-align: center;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 
 .cex-dropzone:hover {
@@ -2212,4 +2304,68 @@
 .cex-mini-toggle:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+/* Workspace bundle mode (ConnectionExporter "Full workspace bundle" + importer checklist) */
+
+.cex-mode-switch {
+  display: flex;
+  gap: 4px;
+  padding: 0 22px 10px;
+  flex-shrink: 0;
+}
+
+.cex-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-0);
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.cex-mode-btn:hover {
+  background: var(--mm-surface-2);
+  color: var(--text-primary);
+}
+
+.cex-mode-btn.is-active {
+  background: var(--accent-dim, rgba(0, 122, 255, 0.1));
+  border-color: rgba(0, 122, 255, 0.35);
+  color: var(--accent);
+}
+
+.cex-bundle-includes ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  font-size: var(--mm-fs-caption);
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.cex-bundle-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cex-bundle-item {
+  cursor: pointer;
+}
+
+.cex-bundle-item.is-existing {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.cex-pill-warn {
+  background: rgba(245, 158, 11, 0.15);
+  color: #b45309;
 }

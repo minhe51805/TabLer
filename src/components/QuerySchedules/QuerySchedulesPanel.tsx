@@ -10,6 +10,8 @@ import {
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useAppLayoutStore } from "../../stores/appLayoutStore";
 import { emitAppToast } from "../../utils/app-toast";
+import { requestAppConfirmation } from "../../stores/confirmStore";
+import { getScheduleCopy } from "./schedule-copy";
 import "../../styles/lazy-overlays.css";
 
 const MINUTE_OPTIONS = [5, 15, 30, 60, 180, 360, 720, 1440];
@@ -44,9 +46,16 @@ function waitReasonLabelKey(reason: AgentTaskWaitReason): TranslationKey {
 }
 
 export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const { t } = useI18n();
-  const { schedules, isLoading, loadSchedules, saveSchedule, deleteSchedule } =
-    useQuerySchedulesStore();
+  const { t, language } = useI18n();
+  const copy = getScheduleCopy(language);
+  const {
+    schedules,
+    isLoading,
+    loadSchedules,
+    saveSchedule,
+    deleteSchedule,
+    acknowledgeMissedRuns,
+  } = useQuerySchedulesStore();
   const agentRuns = useAgentScheduleStore((state) => state.runs);
   const connections = useConnectionStore((state) => state.connections);
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId);
@@ -65,6 +74,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
     database: string;
     intervalMinutes: number;
     enabled: boolean;
+    catchUpPolicy: "skip" | "run_once";
   }>({
     open: false,
     kind: "sql",
@@ -75,6 +85,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
     database: "",
     intervalMinutes: 60,
     enabled: true,
+    catchUpPolicy: "skip",
   });
   // The kind is fixed once a schedule exists: a row is either a statement the
   // backend runs or a task the app runs, and converting one into the other would
@@ -112,6 +123,9 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
     [editor],
   );
 
+  // Occurrences that elapsed while the app was closed, summed across schedules.
+  const missedTotal = schedules.reduce((sum, s) => sum + (s.missedCount ?? 0), 0);
+
   const handleSave = async () => {
     if (!canSave) return;
     try {
@@ -124,6 +138,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
         connectionId: editor.connectionId,
         database: editor.database.trim() || null,
         intervalSeconds: editor.intervalMinutes * 60,
+        catchUpPolicy: editor.catchUpPolicy,
         enabled: editor.enabled,
       });
       emitAppToast({ title: t("schedules.saved"), tone: "success" });
@@ -137,6 +152,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
         database: "",
         intervalMinutes: 60,
         enabled: true,
+        catchUpPolicy: "skip",
       });
     } catch (error) {
       emitAppToast({
@@ -148,6 +164,13 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
   };
 
   const handleDelete = async (id: string) => {
+    const schedule = schedules.find((item) => item.id === id);
+    const approved = await requestAppConfirmation({
+      title: t("confirm.deleteScheduleTitle"),
+      message: t("confirm.deleteScheduleMessage", { name: schedule?.name ?? id }),
+      confirmText: t("schedules.delete"),
+    });
+    if (!approved) return;
     try {
       await deleteSchedule(id);
     } catch (error) {
@@ -177,6 +200,21 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Occurrences that elapsed while the app was closed are recorded at
+            boot; the badge stays until the user acknowledges it. */}
+        {missedTotal > 0 && (
+          <div className="fav-entry-desc schedules-missed-banner" role="status">
+            <span>{copy.missedBanner(missedTotal)}</span>
+            <button
+              type="button"
+              className="fav-action-btn"
+              onClick={() => void acknowledgeMissedRuns()}
+            >
+              {copy.missedDismiss}
+            </button>
+          </div>
+        )}
 
         {editor.open ? (
           <div className="fav-form">
@@ -285,6 +323,22 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
               </select>
             </div>
             <div className="fav-form-field">
+              <label className="fav-form-label">{copy.catchUp}</label>
+              <select
+                className="fav-form-input"
+                value={editor.catchUpPolicy}
+                onChange={(event) =>
+                  setEditor((current) => ({
+                    ...current,
+                    catchUpPolicy: event.target.value as "skip" | "run_once",
+                  }))
+                }
+              >
+                <option value="skip">{copy.catchUpSkip}</option>
+                <option value="run_once">{copy.catchUpRunOnce}</option>
+              </select>
+            </div>
+            <div className="fav-form-field">
               <label className="fav-form-label">
                 <input
                   type="checkbox"
@@ -340,9 +394,11 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                   ? "?"
                   : schedule.lastStatus === "dispatched"
                     ? "…"
-                    : schedule.lastStatus
-                      ? "✓"
-                      : "new";
+                    : schedule.lastStatus === "missed"
+                      ? copy.statusMissed
+                      : schedule.lastStatus
+                        ? "✓"
+                        : "new";
             return (
               <div
                 key={schedule.id}
@@ -413,6 +469,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                         database: schedule.database ?? "",
                         intervalMinutes: Math.max(1, Math.round(schedule.intervalSeconds / 60)),
                         enabled: schedule.enabled,
+                        catchUpPolicy: schedule.catchUpPolicy ?? "skip",
                       })
                     }
                   >
@@ -448,6 +505,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                   database: currentDatabase ?? "",
                   intervalMinutes: 60,
                   enabled: true,
+                  catchUpPolicy: "skip",
                 })
               }
             >

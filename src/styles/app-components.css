@@ -2757,6 +2757,70 @@
   line-height: 1.5;
 }
 
+/* First-run "Try a sample database" card inside the empty launcher state. */
+.startup-manager-sample-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 340px;
+  margin-top: 4px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--mm-border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--mm-surface-2));
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    transform 140ms ease;
+}
+
+.startup-manager-sample-card:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--mm-border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--mm-surface-2));
+  transform: translateY(-1px);
+}
+
+.startup-manager-sample-card:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.startup-manager-sample-card > svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.startup-manager-sample-card-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.startup-manager-sample-card-copy strong {
+  font-size: var(--mm-fs-caption);
+  color: var(--text);
+}
+
+.startup-manager-sample-card-copy span {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.startup-manager-sample-card-action {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
 .startup-connection-row {
   position: relative;
   width: 100%;
@@ -5088,6 +5152,31 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   gap: 6px;
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.app-plugin-manager-registry-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.app-plugin-manager-registry-field input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: var(--mm-fs-micro);
+}
+
+.app-plugin-manager-registry-field small {
+  color: var(--text-muted);
 }
 
 .app-help-modal-tag.permission {
@@ -8135,6 +8224,36 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Failure stage badge + actionable hint shown under the error message once a
+ * connect attempt is classified (dns/tcp/tls/auth/database/timeout/driver). */
+.workspace-connecting-stage {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #ef4444 35%, transparent);
+  background: color-mix(in srgb, #ef4444 10%, transparent);
+  color: #ef4444;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.workspace-connecting-hint {
+  margin: 0;
+  max-width: 300px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.workspace-connecting-hint strong {
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -13341,6 +13460,29 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   background: rgba(0, 122, 255, 0.18);
 }
 
+/* Classified failure stage chip + hint inside the connection form alert. */
+.connection-form-alert-stage {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #ef4444 35%, transparent);
+  background: color-mix(in srgb, #ef4444 10%, transparent);
+  color: #ef4444;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+
+.connection-form-alert-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
 .connection-form-toggle-thumb {
   width: 20px;
   height: 20px;
@@ -17241,6 +17383,39 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   background: rgba(0, 122, 255, 0.1);
 }
 
+/* Streaming table export: indeterminate bar (total row count is unknown while
+   batches stream in); the export button label carries the live row count. */
+.datagrid-export-progress {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 72px;
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--mm-surface-2);
+  border: 1px solid var(--mm-border);
+}
+
+.datagrid-export-progress-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  border-radius: 999px;
+  background: var(--accent-hover);
+  animation: datagrid-export-progress-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes datagrid-export-progress-slide {
+  0% {
+    left: -40%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
 .datagrid-footer-pill.warning {
   color: var(--text-primary);
   border-color: var(--mm-border);
@@ -20385,6 +20560,16 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Run footer: tokens spent vs the per-run budget, quiet caption under the
+   assistant turn's actions. */
+.ai-workspace-chat-run-cost {
+  margin-top: 6px;
+  color: var(--text-muted, #8f99ab);
+  font-size: var(--mm-fs-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
 }
 
 .ai-workspace-agent-record-link:hover {
@@ -29320,6 +29505,8 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   color: var(--text-secondary);
   line-height: 1.5;
   margin: 0;
+  /* Multi-line messages (e.g. SQL previews) keep their line breaks. */
+  white-space: pre-line;
 }
 
 .confirm-dialog-actions {

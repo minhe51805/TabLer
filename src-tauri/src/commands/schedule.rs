@@ -18,9 +18,10 @@
 
 use crate::database::manager::DatabaseManager;
 use crate::storage::schedule_storage::{
-    apply_agent_run_outcome, mark_agent_task_dispatched, normalize_schedule_kind, QuerySchedule,
-    ScheduleRunOutcome, ScheduleStorage, MAX_PERSISTED_ERROR_CHARS, SCHEDULE_KIND_AGENT,
-    SCHEDULE_KIND_SQL, SCHEDULE_STATUS_ERROR, SCHEDULE_STATUS_OK,
+    apply_agent_run_outcome, mark_agent_task_dispatched, mark_schedule_missed,
+    normalize_catch_up_policy, normalize_schedule_kind, QuerySchedule, ScheduleRunOutcome,
+    ScheduleStorage, MAX_PERSISTED_ERROR_CHARS, SCHEDULE_KIND_AGENT, SCHEDULE_KIND_SQL,
+    SCHEDULE_STATUS_ERROR, SCHEDULE_STATUS_OK,
 };
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
@@ -36,7 +37,7 @@ pub fn list_query_schedules() -> Result<Vec<QuerySchedule>, String> {
 }
 
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // invoke params arrive flat; grouping would break the JS API
 pub fn save_query_schedule(
     id: Option<String>,
     name: String,
@@ -47,9 +48,11 @@ pub fn save_query_schedule(
     enabled: bool,
     kind: Option<String>,
     prompt: Option<String>,
+    catch_up_policy: Option<String>,
 ) -> Result<QuerySchedule, String> {
     let mut storage = ScheduleStorage::new()?;
     let kind = normalize_schedule_kind(kind.as_deref())?;
+    let catch_up_policy = normalize_catch_up_policy(catch_up_policy.as_deref())?;
     let (sql, prompt) = match kind {
         SCHEDULE_KIND_AGENT => {
             let task = prompt.unwrap_or_default().trim().to_string();
@@ -80,9 +83,11 @@ pub fn save_query_schedule(
                 existing.last_rows,
                 existing.last_error,
                 existing.last_summary,
+                existing.missed_count,
+                existing.next_due_at,
             )
         })
-        .unwrap_or((None, None, None, None, None));
+        .unwrap_or((None, None, None, None, None, 0, None));
     storage.save(QuerySchedule {
         id: id.unwrap_or_default(),
         name,
@@ -98,6 +103,9 @@ pub fn save_query_schedule(
         last_rows: history.2,
         last_error: history.3,
         last_summary: history.4,
+        catch_up_policy: catch_up_policy.to_string(),
+        missed_count: history.5,
+        next_due_at: history.6,
         created_at: String::new(),
         updated_at: String::new(),
     })
@@ -107,6 +115,14 @@ pub fn save_query_schedule(
 pub fn delete_query_schedule(id: String) -> Result<(), String> {
     let mut storage = ScheduleStorage::new()?;
     storage.delete(&id)
+}
+
+/// Clears the "runs missed while the app was closed" counters once the UI has
+/// shown them. Returns how many schedules were cleared.
+#[tauri::command]
+pub fn acknowledge_missed_schedule_runs() -> Result<u64, String> {
+    let mut storage = ScheduleStorage::new()?;
+    storage.acknowledge_missed()
 }
 
 /// Reports the outcome of an unattended agent task back onto its schedule row.
@@ -211,6 +227,8 @@ async fn run_schedule(
             schedule.last_error = Some(message);
         }
     }
+    // A real run happened: any skip-override on the next boundary is spent.
+    schedule.next_due_at = None;
 
     let _ = app.emit(
         "schedule-fired",
@@ -308,9 +326,48 @@ async fn run_due_schedules(app: &AppHandle, db_manager: &DatabaseManager) {
     }
 }
 
+/// Boot-time reconciliation: every occurrence that elapsed while the app was
+/// closed is recorded as `missed` on its schedule, then the catch-up policy
+/// decides what happens next — `skip` resumes on the next future boundary,
+/// `run_once` leaves the schedule due so the immediate first tick fires a
+/// single catch-up run. Returns the total missed occurrences recorded.
+///
+/// Runs inside the scheduler task (not setup) so a slow disk never delays app
+/// startup; the `schedules-missed` event reaches the frontend for the badge.
+fn reconcile_missed_schedules(app: &AppHandle) -> u64 {
+    let Ok(mut storage) = ScheduleStorage::new() else {
+        return 0;
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut total_missed = 0_u64;
+    for mut schedule in storage.get_all() {
+        let missed = schedule.missed_occurrences(now);
+        if missed == 0 {
+            continue;
+        }
+        mark_schedule_missed(&mut schedule, missed);
+        total_missed = total_missed.saturating_add(missed);
+        if let Err(error) = storage.save(schedule) {
+            log::warn!("[Scheduler] failed to record missed runs: {error}");
+        }
+    }
+    if total_missed > 0 {
+        let _ = app.emit("schedules-missed", json!({ "missedRuns": total_missed }));
+    }
+    total_missed
+}
+
 /// Spawns the minute-tick scheduler loop (called once from app setup).
 pub fn spawn_scheduler(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        // Before the first tick: account for everything that elapsed while the
+        // app was closed, then run what is due — that first pass is also what
+        // executes `run_once` catch-ups exactly once.
+        reconcile_missed_schedules(&app);
+        {
+            let db_manager = app.state::<DatabaseManager>();
+            run_due_schedules(&app, &db_manager).await;
+        }
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(SCHEDULER_TICK_MILLIS)).await;
             // The manager state is fetched per tick: a State borrow cannot

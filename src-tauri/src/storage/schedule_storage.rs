@@ -21,6 +21,16 @@ pub const SCHEDULE_STATUS_ERROR: &str = "error";
 /// distinct from "error" so the UI can say "needs you" instead of "failed", and
 /// distinct from "ok" because a question is not a result.
 pub const SCHEDULE_STATUS_NEEDS_HUMAN: &str = "needs_human";
+/// Status written at boot when one or more occurrences elapsed while the app
+/// was closed. Distinct from "error" (nothing ran, so nothing failed) and from
+/// "ok" (no result exists). The next real run or dispatch overwrites it.
+pub const SCHEDULE_STATUS_MISSED: &str = "missed";
+/// Catch-up policy: occurrences missed while the app was closed are skipped —
+/// the schedule resumes on its next future boundary.
+pub const CATCH_UP_SKIP: &str = "skip";
+/// Catch-up policy: one catch-up run fires on the next boot, no matter how
+/// many occurrences were missed.
+pub const CATCH_UP_RUN_ONCE: &str = "run_once";
 /// Persisted error/report lengths, clamped so one broken run cannot bloat the
 /// schedules file with a full stack trace or a whole model answer.
 pub const MAX_PERSISTED_ERROR_CHARS: usize = 500;
@@ -28,6 +38,10 @@ pub const MAX_PERSISTED_SUMMARY_CHARS: usize = 400;
 
 fn default_schedule_kind() -> String {
     SCHEDULE_KIND_SQL.to_string()
+}
+
+fn default_catch_up_policy() -> String {
+    CATCH_UP_SKIP.to_string()
 }
 
 /// Truncates on a char boundary (never mid-codepoint) for safe UI display.
@@ -76,13 +90,33 @@ pub struct QuerySchedule {
     /// leaves behind something readable in the UI.
     #[serde(default)]
     pub last_summary: Option<String>,
+    /// What to do about occurrences that elapsed while the app was closed:
+    /// `"skip"` (default) resumes on the next future boundary; `"run_once"`
+    /// fires a single catch-up run on the next boot.
+    #[serde(default = "default_catch_up_policy")]
+    pub catch_up_policy: String,
+    /// Occurrences that elapsed while the app was closed, accumulated until the
+    /// UI acknowledges them. Drives the "N runs missed" badge.
+    #[serde(default)]
+    pub missed_count: u64,
+    /// Explicit override for the next due time (millis epoch). Set by missed-run
+    /// reconciliation so a `skip` schedule resumes on its next boundary without
+    /// rewriting `last_ran_at` — which must keep meaning "last actual run".
+    /// Cleared by every real run/dispatch.
+    #[serde(default)]
+    pub next_due_at: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
 
 impl QuerySchedule {
     /// Millis epoch when the next run is due (absent last_ran_at = overdue).
+    /// An explicit `next_due_at` — set when missed occurrences were skipped —
+    /// wins over the interval-derived boundary.
     pub fn due_at(&self) -> i64 {
+        if let Some(next_due_at) = self.next_due_at {
+            return next_due_at;
+        }
         match self.last_ran_at {
             Some(ran_at) => ran_at + (self.interval_seconds.saturating_mul(1_000)) as i64,
             None => 0,
@@ -96,6 +130,25 @@ impl QuerySchedule {
     /// True when this schedule is a frontend-run read-only agent task.
     pub fn is_agent_task(&self) -> bool {
         self.kind == SCHEDULE_KIND_AGENT
+    }
+
+    /// Occurrences that elapsed while the app was closed: how many interval
+    /// boundaries between `due_at()` and `now` were never observed. A schedule
+    /// that never ran has no cadence to miss, so it reports 0 — its first run
+    /// is simply due, not missed.
+    pub fn missed_occurrences(&self, now_millis: i64) -> u64 {
+        if !self.enabled || self.last_ran_at.is_none() {
+            return 0;
+        }
+        let interval_millis = self.interval_seconds.saturating_mul(1_000);
+        if interval_millis == 0 {
+            return 0;
+        }
+        let due_at = self.due_at();
+        if now_millis < due_at {
+            return 0;
+        }
+        ((now_millis - due_at) / interval_millis as i64 + 1) as u64
     }
 }
 
@@ -118,15 +171,59 @@ pub fn normalize_schedule_kind(kind: Option<&str>) -> Result<&'static str, Strin
     ))
 }
 
+/// Normalizes a caller-supplied catch-up policy. Unknown values are refused —
+/// like `kind`, a typo must never silently change what happens to missed runs.
+pub fn normalize_catch_up_policy(policy: Option<&str>) -> Result<&'static str, String> {
+    let normalized = policy.unwrap_or(CATCH_UP_SKIP).trim().to_ascii_lowercase();
+    if normalized.is_empty() || normalized == CATCH_UP_SKIP {
+        return Ok(CATCH_UP_SKIP);
+    }
+    if normalized == CATCH_UP_RUN_ONCE {
+        return Ok(CATCH_UP_RUN_ONCE);
+    }
+    Err(format!(
+        "Unknown catch-up policy \"{normalized}\": expected \"{CATCH_UP_SKIP}\" or \"{CATCH_UP_RUN_ONCE}\"."
+    ))
+}
+
+/// Records that `missed` occurrences elapsed while the app was closed.
+///
+/// `last_ran_at` deliberately stays untouched — it means "last actual run" —
+/// so the policy decides what happens next:
+///
+/// * `skip`: `next_due_at` is moved to the first boundary after `now`, so the
+///   schedule resumes on cadence instead of firing a stale run at boot.
+/// * `run_once`: `next_due_at` stays unset, leaving the schedule due so the
+///   scheduler fires exactly one catch-up run on the next tick.
+///
+/// Status becomes `missed` and stale error/report fields are cleared: a missed
+/// occurrence produced neither, and an old error must not read as this event's.
+pub fn mark_schedule_missed(schedule: &mut QuerySchedule, missed: u64) {
+    schedule.missed_count = schedule.missed_count.saturating_add(missed);
+    schedule.last_status = Some(SCHEDULE_STATUS_MISSED.to_string());
+    schedule.last_rows = None;
+    schedule.last_error = None;
+    schedule.last_summary = None;
+    if schedule.catch_up_policy == CATCH_UP_RUN_ONCE {
+        schedule.next_due_at = None;
+    } else {
+        let interval_millis = schedule.interval_seconds.saturating_mul(1_000) as i64;
+        schedule.next_due_at =
+            Some(schedule.due_at() + interval_millis.saturating_mul(missed as i64));
+    }
+}
+
 /// Records that an agent task was handed to the frontend. Stale report/error
 /// fields are cleared so a previous run's outcome can never be read as this
-/// dispatch's result.
+/// dispatch's result, and any `next_due_at` override is dropped — a dispatch
+/// is a run, so cadence resumes from it.
 pub fn mark_agent_task_dispatched(schedule: &mut QuerySchedule, now_millis: i64) {
     schedule.last_ran_at = Some(now_millis);
     schedule.last_status = Some(SCHEDULE_STATUS_DISPATCHED.to_string());
     schedule.last_rows = None;
     schedule.last_error = None;
     schedule.last_summary = None;
+    schedule.next_due_at = None;
 }
 
 /// The outcome an agent task reported back: the only statuses a completion may
@@ -180,6 +277,7 @@ pub fn apply_agent_run_outcome(
     schedule.last_summary = summary
         .map(|text| clamp_persisted_text(text.trim(), MAX_PERSISTED_SUMMARY_CHARS))
         .filter(|text| !text.is_empty());
+    schedule.next_due_at = None;
 }
 
 /// In-memory cache of schedules, keyed by ID (same shape as sql_favorites).
@@ -192,6 +290,10 @@ pub struct ScheduleStorage {
 impl ScheduleStorage {
     pub fn new() -> Result<Self, String> {
         let data_dir = crate::utils::paths::resolve_data_dir().map_err(|e| e.to_string())?;
+        Self::from_data_dir(data_dir)
+    }
+
+    pub(crate) fn from_data_dir(data_dir: PathBuf) -> Result<Self, String> {
         fs::create_dir_all(&data_dir)
             .map_err(|e| format!("Failed to create data directory: {e}"))?;
         let file_path = data_dir.join("query_schedules.json");
@@ -244,17 +346,33 @@ impl ScheduleStorage {
         self.persist()?;
         Ok(())
     }
+
+    /// Clears every schedule's `missed_count` — the UI acknowledged the "runs
+    /// missed while closed" badge. Returns how many rows were cleared.
+    pub fn acknowledge_missed(&mut self) -> Result<u64, String> {
+        let mut cleared = 0_u64;
+        for schedule in self.cache.values_mut() {
+            if schedule.missed_count > 0 {
+                schedule.missed_count = 0;
+                cleared += 1;
+            }
+        }
+        if cleared > 0 {
+            self.persist()?;
+        }
+        Ok(cleared)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         apply_agent_run_outcome, clamp_persisted_text, mark_agent_task_dispatched,
-        normalize_schedule_kind, QuerySchedule, ScheduleRunOutcome, MAX_PERSISTED_SUMMARY_CHARS,
+        mark_schedule_missed, normalize_catch_up_policy, normalize_schedule_kind, QuerySchedule,
+        ScheduleRunOutcome, CATCH_UP_RUN_ONCE, CATCH_UP_SKIP, MAX_PERSISTED_SUMMARY_CHARS,
         SCHEDULE_KIND_AGENT, SCHEDULE_KIND_SQL, SCHEDULE_STATUS_DISPATCHED, SCHEDULE_STATUS_ERROR,
-        SCHEDULE_STATUS_NEEDS_HUMAN, SCHEDULE_STATUS_OK,
+        SCHEDULE_STATUS_MISSED, SCHEDULE_STATUS_NEEDS_HUMAN, SCHEDULE_STATUS_OK,
     };
-
     fn schedule(interval_seconds: u64, last_ran_at: Option<i64>, enabled: bool) -> QuerySchedule {
         QuerySchedule {
             id: "s1".into(),
@@ -271,6 +389,9 @@ mod tests {
             last_rows: None,
             last_error: None,
             last_summary: None,
+            catch_up_policy: CATCH_UP_SKIP.into(),
+            missed_count: 0,
+            next_due_at: None,
             created_at: String::new(),
             updated_at: String::new(),
         }
@@ -414,5 +535,61 @@ mod tests {
         let clamped = clamp_persisted_text(&text, 3);
         assert_eq!(clamped, "ẩnẩ");
         assert_eq!(clamped.chars().count(), 3);
+    }
+
+    #[test]
+    fn missed_occurrences_counts_elapsed_boundaries_only() {
+        // Ran at t=0 with a 60s interval: boundaries at 60s, 120s, 180s.
+        let s = schedule(60, Some(0), true);
+        assert_eq!(s.missed_occurrences(59_999), 0);
+        assert_eq!(s.missed_occurrences(60_000), 1);
+        assert_eq!(s.missed_occurrences(179_999), 2);
+        assert_eq!(s.missed_occurrences(180_000), 3);
+        // Never ran → first run is due, not missed. Disabled → nothing missed.
+        assert_eq!(schedule(60, None, true).missed_occurrences(i64::MAX), 0);
+        assert_eq!(schedule(60, Some(0), false).missed_occurrences(i64::MAX), 0);
+    }
+
+    #[test]
+    fn skip_policy_marks_missed_and_resumes_on_the_next_boundary() {
+        let mut s = schedule(60, Some(0), true);
+        // Two boundaries elapsed while closed (60s, 120s); now = 150s.
+        let missed = s.missed_occurrences(150_000);
+        mark_schedule_missed(&mut s, missed);
+        assert_eq!(s.missed_count, 2);
+        assert_eq!(s.last_status.as_deref(), Some(SCHEDULE_STATUS_MISSED));
+        // The next boundary after now is 180s — due_at honors the override and
+        // last_ran_at still means "last actual run".
+        assert_eq!(s.last_ran_at, Some(0));
+        assert_eq!(s.next_due_at, Some(180_000));
+        assert!(!s.is_due(150_000));
+        assert!(s.is_due(180_000));
+    }
+
+    #[test]
+    fn run_once_policy_stays_due_for_a_single_catch_up() {
+        let mut s = schedule(60, Some(0), true);
+        s.catch_up_policy = CATCH_UP_RUN_ONCE.into();
+        let missed = s.missed_occurrences(150_000);
+        mark_schedule_missed(&mut s, missed);
+        assert_eq!(s.missed_count, 2);
+        assert!(s.next_due_at.is_none());
+        // Still due at the original boundary → the scheduler fires one
+        // catch-up run, after which the run clears the override state.
+        assert!(s.is_due(150_000));
+        mark_agent_task_dispatched(&mut s, 160_000);
+        assert!(s.next_due_at.is_none());
+        assert!(!s.is_due(160_000));
+    }
+
+    #[test]
+    fn unknown_catch_up_policies_are_refused() {
+        assert_eq!(normalize_catch_up_policy(None).unwrap(), CATCH_UP_SKIP);
+        assert_eq!(normalize_catch_up_policy(Some(" ")).unwrap(), CATCH_UP_SKIP);
+        assert_eq!(
+            normalize_catch_up_policy(Some("Run_Once")).unwrap(),
+            CATCH_UP_RUN_ONCE
+        );
+        assert!(normalize_catch_up_policy(Some("always")).is_err());
     }
 }

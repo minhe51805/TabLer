@@ -458,6 +458,7 @@ pub fn run() {
             agent_commands::seed_ai_builtin_commands,
             agent_commands::reset_ai_builtin_commands,
             agent_commands::list_ai_commands,
+            agent_commands::list_user_slash_commands,
             agent_commands::resolve_ai_command,
             agent_rules::seed_ai_builtin_rules,
             agent_rules::reset_ai_builtin_rules,

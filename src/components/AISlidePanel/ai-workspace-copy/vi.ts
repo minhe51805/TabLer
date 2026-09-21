@@ -94,6 +94,7 @@ export const VI_COPY: AIWorkspaceCopy = {
     slashExplainDescription: "Giải thích SQL trong tab editor đang mở.",
     slashOptimizeDescription: "Chạy EXPLAIN cho SQL trong editor và đề xuất index hoặc viết lại.",
     slashFixDescription: "Sửa SQL trong editor dựa trên lỗi query gần nhất.",
+    slashCustomBadge: "tùy chỉnh",
     checkpointTitle: "Rollback database",
     checkpointEmpty: "Chưa có điểm khôi phục nào — chạy /backup để tạo.",
     checkpointHint: "Chọn một điểm khôi phục. Dữ liệu hiện tại sẽ bị ghi đè.",

@@ -97,6 +97,7 @@ export const TR_COPY: AIWorkspaceCopy = {
     slashOptimizeDescription:
       "Editör SQL'i için EXPLAIN çalıştırıp index veya yeniden yazım önerin.",
     slashFixDescription: "Son kaydedilen sorgu hatasını kullanarak editör SQL'ini düzeltin.",
+    slashCustomBadge: "özel",
     checkpointTitle: "Veritabanını geri al",
     checkpointEmpty: "Henüz kontrol noktası yok — önce /backup çalıştırın.",
     checkpointHint: "Geri yüklenecek kontrol noktasını seçin. Mevcut verinin üzerine yazılacak.",

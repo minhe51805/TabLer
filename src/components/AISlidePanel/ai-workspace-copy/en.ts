@@ -96,6 +96,7 @@ export const EN_COPY: AIWorkspaceCopy = {
     slashExplainDescription: "Explain the SQL in the active editor tab.",
     slashOptimizeDescription: "EXPLAIN the editor SQL and propose indexes or a rewrite.",
     slashFixDescription: "Fix the editor SQL using the last recorded query error.",
+    slashCustomBadge: "custom",
     checkpointTitle: "Rollback database",
     checkpointEmpty: "No checkpoints yet — run /backup to create one.",
     checkpointHint: "Pick a checkpoint to restore. The current data will be overwritten.",

@@ -98,6 +98,7 @@ export interface AIWorkspaceCopy {
     slashExplainDescription: string;
     slashOptimizeDescription: string;
     slashFixDescription: string;
+    slashCustomBadge: string;
     checkpointTitle: string;
     checkpointEmpty: string;
     checkpointHint: string;

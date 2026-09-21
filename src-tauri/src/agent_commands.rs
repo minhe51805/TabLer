@@ -4,9 +4,10 @@
 //! contract, same "a broken file is reported, never silently ignored" rule.
 //!
 //! A command is a Markdown runbook with frontmatter. Typing `/profile orders`
-//! resolves the `profile` command, substitutes `$ARGUMENTS`, and prepends the
-//! requested app context (`inject:`) as facts, so the agent starts from reality
-//! instead of asking for it.
+//! resolves the `profile` command, substitutes the argument placeholder
+//! (`$ARGUMENTS`, or the `{{input}}` alias used by simple user templates), and
+//! prepends the requested app context (`inject:`) as facts, so the agent starts
+//! from reality instead of asking for it.
 //!
 //! Two deliberate departures from `claude-code`:
 //!
@@ -101,7 +102,7 @@ pub struct AgentCommand {
     /// App context keys to prepend as facts. Always a subset of
     /// `INJECTABLE_CONTEXT_KEYS`.
     pub inject: Vec<String>,
-    /// Body below the frontmatter, with `$ARGUMENTS` left in place.
+    /// Body below the frontmatter, with `$ARGUMENTS`/`{{input}}` left in place.
     pub body: String,
     /// Absolute path, for the manager UI.
     pub path: String,
@@ -357,7 +358,7 @@ pub fn parse_command(
     })
 }
 
-/// Substitutes `$ARGUMENTS` and prepends the injected facts.
+/// Substitutes `$ARGUMENTS` (and the `{{input}}` alias) and prepends the injected facts.
 ///
 /// The injected block is emitted **before** the runbook body, and it is fenced
 /// as observed facts so the model cannot mistake an empty value for permission
@@ -404,13 +405,18 @@ pub fn render_command(
     }
 }
 
-/// Replaces every `$ARGUMENTS` occurrence.
+/// Replaces every `$ARGUMENTS` and `{{input}}` occurrence.
+///
+/// `{{input}}` is the placeholder simple user templates use (`name` +
+/// `description` frontmatter, body with `{{input}}`); `$ARGUMENTS` is the
+/// runbook-pack spelling. Both mean "the text typed after the command name".
 ///
 /// Deliberately a plain literal replace, not a regex: argument text is user
 /// input, and a pattern-based substitution would let it be interpreted.
 fn substitute_arguments(body: &str, arguments: &str) -> String {
     let trimmed = arguments.trim();
     body.replace("$ARGUMENTS", trimmed)
+        .replace("{{input}}", trimmed)
 }
 // ---------------------------------------------------------------------------
 // Discovery
@@ -847,6 +853,24 @@ pub fn list_ai_commands(workspace_dir: Option<String>) -> Result<CommandRegistry
     })
 }
 
+/// The composer's `/` menu registry: every command under `<data_dir>/commands`
+/// — the seeded pack plus the user's own `.md` files — with load health so a
+/// broken file surfaces as a warning instead of a silent absence.
+///
+/// Same payload as `list_ai_commands`, minus the workspace root: the composer
+/// has no workspace context, so user commands live in the data dir only.
+#[tauri::command]
+#[allow(dead_code)] // registered in lib.rs alongside the other command handlers
+pub fn list_user_slash_commands() -> Result<CommandRegistry, String> {
+    let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
+    let (commands, report) = load_commands(None, &data_dir);
+
+    Ok(CommandRegistry {
+        commands: commands.iter().map(AgentCommand::summary).collect(),
+        report,
+    })
+}
+
 /// Turn `/name arguments` into the prompt the agent actually receives.
 ///
 /// The frontend supplies `context` because only it knows the live UI state; this
@@ -1046,6 +1070,26 @@ mod tests {
         assert!(resolved
             .prompt
             .contains("Context unavailable right now: active_tab_sql"));
+    }
+
+    #[test]
+    fn render_command_substitutes_the_input_placeholder_alias() {
+        // Simple user templates spell the placeholder `{{input}}`; it must
+        // expand exactly like `$ARGUMENTS`, including multiple occurrences.
+        let command = parse_command(
+            "demo",
+            &command_file("demo", "", "Summarize {{input}}.\nThen rate {{input}}."),
+            Path::new("demo.md"),
+            CommandOrigin::Global,
+        )
+        .expect("parses");
+
+        let resolved = render_command(&command, "  orders  ", &context(&[]));
+
+        assert!(resolved
+            .prompt
+            .contains("Summarize orders.\nThen rate orders."));
+        assert!(!resolved.prompt.contains("{{input}}"));
     }
 
     #[test]

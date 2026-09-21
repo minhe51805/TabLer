@@ -64,9 +64,9 @@ describe('picking a command from the "/" menu', () => {
     expect(runsSlashCommandImmediately("help")).toBe(false);
   });
 
-  it("parks the command in the composer with no arguments appended", () => {
-    expect(slashCommandDraft("review-sql")).toBe("/review-sql");
-    expect(slashCommandDraft("  profile  ")).toBe("/profile");
+  it("parks the command in the composer ready for arguments", () => {
+    expect(slashCommandDraft("review-sql")).toBe("/review-sql ");
+    expect(slashCommandDraft("  profile  ")).toBe("/profile ");
   });
 
   it("hands the send path a draft it recognises as that very command", () => {

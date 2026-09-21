@@ -95,6 +95,7 @@ export const KO_COPY: AIWorkspaceCopy = {
     slashExplainDescription: "활성 에디터 탭의 SQL을 설명합니다.",
     slashOptimizeDescription: "에디터 SQL에 EXPLAIN을 실행하고 인덱스나 재작성을 제안합니다.",
     slashFixDescription: "마지막으로 기록된 쿼리 오류를 사용해 에디터 SQL을 수정합니다.",
+    slashCustomBadge: "사용자 정의",
     checkpointTitle: "데이터베이스 롤백",
     checkpointEmpty: "체크포인트가 없습니다 — /backup으로 먼저 만들어 주세요.",
     checkpointHint: "복원할 체크포인트를 선택하세요. 현재 데이터가 덮어써집니다.",

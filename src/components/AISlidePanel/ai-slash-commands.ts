@@ -12,6 +12,11 @@ export interface AISlashCommand {
   name: string;
   /** Localized one-line description shown in the menu. */
   description: string;
+  /**
+   * Small label rendered after the name (e.g. the localized "custom" badge on
+   * user-authored command files). Absent on native and built-in commands.
+   */
+  badge?: string;
 }
 
 /** A stored DB checkpoint row (matches the Rust DatabaseCheckpoint payload). */
@@ -60,13 +65,15 @@ export function runsSlashCommandImmediately(name: string): boolean {
 }
 
 /**
- * The composer text a picked command leaves behind, e.g. `/review-sql`.
+ * The composer text a picked command leaves behind, e.g. `/review-sql `.
  *
- * Arguments stay open on purpose: `/backup nightly` and `/profile orders` are
- * reachable from the menu only because the command is inserted first.
+ * The trailing space is deliberate: the caret lands after it, so the next
+ * keystroke starts the argument (`/profile orders`) instead of gluing onto the
+ * command name. `handleGenerate` trims before parsing, so the space never
+ * reaches the resolver.
  */
 export function slashCommandDraft(name: string): string {
-  return `/${name.trim()}`;
+  return `/${name.trim()} `;
 }
 
 /** Filters the registry by the text typed after the leading "/". */
@@ -178,12 +185,15 @@ export function findFileCommandName(
  * Native wins on a name collision because those three are implemented in the
  * app itself; a file command with the same name would silently replace a
  * working feature with a prompt. `isEnabled` applies the user's per-command
- * opt-out so disabling a command hides it everywhere.
+ * opt-out so disabling a command hides it everywhere. `customBadge` is the
+ * localized label stamped on user-authored files (origins `global` and
+ * `workspace`); the untouched built-in pack stays unbadged.
  */
 export function mergeSlashCommands(
   native: readonly AISlashCommand[],
   fileCommands: readonly AgentFileCommand[],
   isEnabled?: (name: string) => boolean,
+  customBadge?: string,
 ): AISlashCommand[] {
   const merged: AISlashCommand[] = [...native];
   const taken = new Set(native.map((command) => command.name.toLowerCase()));
@@ -198,6 +208,7 @@ export function mergeSlashCommands(
       description: command.argumentHint
         ? `${command.description} ${command.argumentHint}`.trim()
         : command.description,
+      badge: command.origin === "builtin" ? undefined : customBadge,
     });
   }
 

@@ -104,6 +104,24 @@
   color: var(--text-primary);
 }
 
+/* "custom" badge on user-authored command files — small, quiet, never wraps. */
+.ai-slash-menu-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--mm-border) 45%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
+.ai-slash-menu-item.is-active .ai-slash-menu-badge {
+  color: var(--text-secondary);
+}
+
 .ai-slash-menu-description {
   min-width: 0;
   overflow: hidden;

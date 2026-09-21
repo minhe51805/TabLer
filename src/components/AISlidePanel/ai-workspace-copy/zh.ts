@@ -94,6 +94,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
     slashExplainDescription: "解释当前编辑器标签页中的 SQL。",
     slashOptimizeDescription: "对编辑器中的 SQL 运行 EXPLAIN 并提出索引或重写建议。",
     slashFixDescription: "根据最近记录的查询错误修复编辑器中的 SQL。",
+    slashCustomBadge: "自定义",
     checkpointTitle: "回滚数据库",
     checkpointEmpty: "还没有检查点 — 先运行 /backup 创建一个。",
     checkpointHint: "选择要还原的检查点。当前数据将被覆盖。",

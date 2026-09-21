@@ -5,8 +5,10 @@ use crate::database::models::*;
 use crate::database::query_common::MAX_QUERY_RESULT_ROWS;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use futures_util::{stream, Stream, StreamExt, TryStreamExt};
 use mongodb::bson::{doc, Bson, Document};
 use serde_json::Value as JsonValue;
+use std::pin::Pin;
 use std::time::Instant;
 
 #[async_trait]
@@ -456,6 +458,51 @@ impl DatabaseDriver for MongoDbDriver {
             0,
             truncated,
         ))
+    }
+
+    fn export_table_rows<'a>(
+        &'a self,
+        table: &'a str,
+        database: Option<&'a str>,
+        batch_size: u64,
+        order_by: Option<&'a str>,
+        order_dir: Option<&'a str>,
+        filter: Option<&'a str>,
+    ) -> Pin<Box<dyn Stream<Item = Result<QueryResult>> + Send + 'a>> {
+        let batch_size = usize::try_from(batch_size.max(1)).unwrap_or(usize::MAX);
+        let setup = async move {
+            let collection = self.collection_handle(table, database).await?;
+            let filter_document = Self::parse_filter_document(filter)?;
+            let mut action = collection.find(filter_document);
+            if let Some(sort_document) = Self::build_sort_document(order_by, order_dir) {
+                action = action.sort(sort_document);
+            }
+            // One server cursor streams the whole collection; the interactive
+            // row cap does not apply to exports.
+            let cursor = action
+                .await
+                .with_context(|| format!("Failed to export MongoDB collection {table}"))?;
+            let query_label = format!("MongoDB collection export: {table}");
+
+            Ok::<_, anyhow::Error>(stream::try_unfold(cursor, move |mut cursor| {
+                let query_label = query_label.clone();
+                async move {
+                    let mut documents = Vec::new();
+                    while documents.len() < batch_size {
+                        let Some(document) = cursor.try_next().await? else {
+                            break;
+                        };
+                        documents.push(document);
+                    }
+                    if documents.is_empty() {
+                        return Ok(None);
+                    }
+                    let result = Self::documents_to_result(documents, 0, query_label, 0, false);
+                    Ok(Some((result, cursor)))
+                }
+            }))
+        };
+        stream::once(setup).try_flatten().boxed()
     }
 
     async fn count_rows(&self, table: &str, database: Option<&str>) -> Result<i64> {

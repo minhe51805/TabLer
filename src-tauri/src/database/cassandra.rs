@@ -8,12 +8,15 @@ use super::safety::{
 use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use futures_util::{stream, Stream, StreamExt, TryStreamExt};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::metadata::{ColumnKind, Table};
+use scylla::statement::Statement;
 use scylla::value::{CqlValue, Row as ScyllaRow};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::BTreeSet;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Instant;
 
@@ -672,6 +675,98 @@ impl DatabaseDriver for CassandraDriver {
         result.rows = trimmed_rows;
         result.truncated = result.truncated || has_more;
         Ok(result)
+    }
+
+    fn export_table_rows<'a>(
+        &'a self,
+        table: &'a str,
+        database: Option<&'a str>,
+        batch_size: u64,
+        order_by: Option<&'a str>,
+        order_dir: Option<&'a str>,
+        filter: Option<&'a str>,
+    ) -> Pin<Box<dyn Stream<Item = Result<QueryResult>> + Send + 'a>> {
+        let batch_size = usize::try_from(batch_size.max(1)).unwrap_or(usize::MAX);
+        let setup = async move {
+            let (_, _, qualified_table) = self.resolve_table_target(table, database)?;
+            let mut query = format!("SELECT * FROM {qualified_table}");
+
+            if let Some(filter_clause) = sanitize_cassandra_filter_clause(filter)? {
+                query.push_str(&format!(" WHERE {filter_clause}"));
+                query.push_str(" ALLOW FILTERING");
+            }
+
+            if let Some(order_column) = order_by {
+                let direction = normalize_order_dir(order_dir)?;
+                query.push_str(&format!(
+                    " ORDER BY {} {}",
+                    quote_cassandra_order_by(order_column)?,
+                    direction
+                ));
+            }
+
+            // CQL has no OFFSET; page through the whole result set natively so
+            // exports are not bounded by the interactive row cap.
+            let page_size = i32::try_from(batch_size).unwrap_or(i32::MAX);
+            let statement = Statement::new(query.clone()).with_page_size(page_size);
+            let pager = self
+                .session
+                .query_iter(statement, &[])
+                .await
+                .with_context(|| format!("Cassandra export query failed: {query}"))?;
+            let columns = pager
+                .column_specs()
+                .as_slice()
+                .iter()
+                .map(|spec| ColumnInfo {
+                    name: spec.name().to_string(),
+                    data_type: format!("{:?}", spec.typ()),
+                    is_nullable: true,
+                    is_primary_key: false,
+                    max_length: None,
+                    default_value: None,
+                })
+                .collect::<Vec<_>>();
+            let rows = pager
+                .rows_stream::<ScyllaRow>()
+                .context("Failed to deserialize Cassandra export rows")?;
+            Ok::<_, anyhow::Error>(stream::try_unfold(
+                (columns, rows, query),
+                move |(columns, mut rows, query)| async move {
+                    let mut batch = Vec::new();
+                    while batch.len() < batch_size {
+                        let Some(row) = rows.next().await else {
+                            break;
+                        };
+                        let row = row.context("Failed to deserialize a Cassandra row")?;
+                        batch.push(
+                            row.columns
+                                .into_iter()
+                                .map(|value| {
+                                    value
+                                        .map(Self::cql_value_to_json)
+                                        .unwrap_or(JsonValue::Null)
+                                })
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                    if batch.is_empty() {
+                        return Ok(None);
+                    }
+                    let result = QueryResult {
+                        columns: columns.clone(),
+                        rows: batch,
+                        affected_rows: 0,
+                        execution_time_ms: 0,
+                        query: query.clone(),
+                        sandboxed: false,
+                        truncated: false,
+                    };
+                    Ok(Some((result, (columns, rows, query))))
+                },
+            ))
+        };
+        stream::once(setup).try_flatten().boxed()
     }
 
     async fn count_rows(&self, table: &str, database: Option<&str>) -> Result<i64> {

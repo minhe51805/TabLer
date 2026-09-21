@@ -8,9 +8,11 @@ use super::safety::{
 use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
+use futures_util::{stream, Stream, StreamExt};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -213,6 +215,7 @@ impl ClickHouseDriver {
         query: String,
         affected_rows: u64,
         sandboxed: bool,
+        row_cap: usize,
     ) -> QueryResult {
         let mut truncated = false;
         let columns = result
@@ -230,7 +233,7 @@ impl ClickHouseDriver {
 
         let mut rows = Vec::new();
         for row in result.data {
-            if rows.len() == MAX_QUERY_RESULT_ROWS {
+            if rows.len() == row_cap {
                 truncated = true;
                 break;
             }
@@ -477,6 +480,7 @@ impl DatabaseDriver for ClickHouseDriver {
                 sql.to_string(),
                 0,
                 false,
+                MAX_QUERY_RESULT_ROWS,
             ));
         }
 
@@ -495,6 +499,7 @@ impl DatabaseDriver for ClickHouseDriver {
                     sql.to_string(),
                     total_affected,
                     false,
+                    MAX_QUERY_RESULT_ROWS,
                 ));
             } else {
                 self.post_query(statement, Some(&database)).await?;
@@ -550,6 +555,49 @@ impl DatabaseDriver for ClickHouseDriver {
 
         sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
         self.execute_query(&sql).await
+    }
+
+    fn export_table_rows<'a>(
+        &'a self,
+        table: &'a str,
+        database: Option<&'a str>,
+        batch_size: u64,
+        order_by: Option<&'a str>,
+        order_dir: Option<&'a str>,
+        filter: Option<&'a str>,
+    ) -> Pin<Box<dyn Stream<Item = Result<QueryResult>> + Send + 'a>> {
+        let batch_size = batch_size.max(1);
+        stream::try_unfold(0_u64, move |offset| async move {
+            let db = self.current_database_name(database);
+            let mut sql = format!(
+                "SELECT * FROM {}",
+                Self::qualify_table_name(table, Some(&db))?
+            );
+
+            if let Some(filter_clause) = sanitize_clickhouse_filter_clause(filter)? {
+                sql.push_str(&format!(" WHERE {filter_clause}"));
+            }
+
+            if let Some(order_by) = order_by {
+                let direction = normalize_order_dir(order_dir)?;
+                sql.push_str(&format!(
+                    " ORDER BY {} {}",
+                    quote_clickhouse_order_by(order_by)?,
+                    direction
+                ));
+            }
+
+            // Export pages walk LIMIT/OFFSET without the interactive row cap.
+            sql.push_str(&format!(" LIMIT {batch_size} OFFSET {offset}"));
+            let result = self.query_json(&sql, Some(&db)).await?;
+            let result = Self::build_result_from_json(result, 0, sql, 0, false, usize::MAX);
+            let fetched = result.rows.len() as u64;
+            if fetched == 0 {
+                return Ok(None);
+            }
+            Ok(Some((result, offset + fetched)))
+        })
+        .boxed()
     }
 
     async fn count_rows(&self, table: &str, database: Option<&str>) -> Result<i64> {

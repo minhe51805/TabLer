@@ -1,6 +1,7 @@
 use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryResult;
+use futures_util::TryStreamExt;
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -167,30 +168,27 @@ async fn stream_table_export(
     let mut file = tokio::fs::File::create(temporary_path)
         .await
         .map_err(|e| format!("Failed to create temporary export file: {e}"))?;
-    let mut offset = 0_u64;
     let mut wrote_header = false;
+    let mut exported_rows = 0_u64;
+    let mut batches = driver.export_table_rows(
+        &request.table,
+        request.database.as_deref(),
+        EXPORT_BATCH_SIZE,
+        request.order_by.as_deref(),
+        request.order_dir.as_deref(),
+        request.filter.as_deref(),
+    );
 
-    loop {
+    while let Some(batch) = timeout(EXPORT_BATCH_TIMEOUT, batches.try_next())
+        .await
+        .map_err(|_| "Loading the next export batch timed out after 5 minutes.".to_string())?
+        .map_err(|e| e.to_string())?
+    {
         if cancelled.load(Ordering::Relaxed) {
             return Err("Table export cancelled; incomplete output was removed.".to_string());
         }
-        let batch = timeout(
-            EXPORT_BATCH_TIMEOUT,
-            driver.get_table_data(
-                &request.table,
-                request.database.as_deref(),
-                offset,
-                EXPORT_BATCH_SIZE,
-                request.order_by.as_deref(),
-                request.order_dir.as_deref(),
-                request.filter.as_deref(),
-            ),
-        )
-        .await
-        .map_err(|_| "Loading the next export batch timed out after 5 minutes.".to_string())?
-        .map_err(|e| e.to_string())?;
         if batch.rows.is_empty() {
-            break;
+            continue;
         }
         let bytes = if format == "csv" {
             serialize_csv_batch(&batch, !wrote_header)?
@@ -201,17 +199,14 @@ async fn stream_table_export(
             .await
             .map_err(|e| format!("Failed to write export batch: {e}"))?;
         wrote_header = true;
-        offset += batch.rows.len() as u64;
+        exported_rows += batch.rows.len() as u64;
         let _ = app.emit(
             "table-export-progress",
             TableExportProgress {
                 operation_id: operation_id.to_string(),
-                exported_rows: offset,
+                exported_rows,
             },
         );
-        if batch.rows.len() < EXPORT_BATCH_SIZE as usize {
-            break;
-        }
     }
     file.flush()
         .await
@@ -219,7 +214,7 @@ async fn stream_table_export(
     file.sync_all()
         .await
         .map_err(|e| format!("Failed to sync export file: {e}"))?;
-    Ok(offset)
+    Ok(exported_rows)
 }
 
 fn serialize_csv_batch(result: &QueryResult, include_header: bool) -> Result<Vec<u8>, String> {

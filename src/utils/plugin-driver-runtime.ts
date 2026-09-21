@@ -5,9 +5,7 @@ export interface RuntimePluginDriver extends PluginDriverContribution {
   pluginName: string;
 }
 
-export function getEnabledPluginDrivers(
-  plugins: InstalledPluginRecord[],
-): RuntimePluginDriver[] {
+export function getEnabledPluginDrivers(plugins: InstalledPluginRecord[]): RuntimePluginDriver[] {
   return plugins.flatMap((plugin) => {
     if (!plugin.enabled || !plugin.verified || plugin.validationError) return [];
     if (!plugin.manifest.capabilities.includes("database")) return [];
@@ -38,10 +36,7 @@ export function isPluginHttpProtocol(key: string): key is PluginHttpProtocol {
   return (PLUGIN_HTTP_PROTOCOLS as readonly string[]).includes(key);
 }
 
-export function findStableDriverForProtocol(
-  plugins: InstalledPluginRecord[],
-  protocol: string,
-) {
+export function findStableDriverForProtocol(plugins: InstalledPluginRecord[], protocol: string) {
   return getEnabledPluginDrivers(plugins).find(
     (driver) =>
       driver.protocol === protocol &&
@@ -92,9 +87,7 @@ export function hasInstalledPluginHttpDriver(
     (plugin) =>
       plugin.manifest.capabilities.includes("database") &&
       plugin.manifest.contributes.drivers.some(
-        (driver) =>
-          driver.protocol === protocol &&
-          driver.runtime === "declarative-http-v1",
+        (driver) => driver.protocol === protocol && driver.runtime === "declarative-http-v1",
       ),
   );
 }
@@ -128,12 +121,7 @@ export function resolvePluginHttpAvailabilityMap(
  * `get_native_driver_availability` command reports which are actually compiled
  * in; the connection picker gates on that instead of failing at connect time.
  */
-export const PLUGIN_NATIVE_PROTOCOLS = [
-  "duckdb",
-  "cassandra",
-  "redis",
-  "libsql",
-] as const;
+export const PLUGIN_NATIVE_PROTOCOLS = ["duckdb", "cassandra", "redis", "libsql"] as const;
 
 export type PluginNativeProtocol = (typeof PLUGIN_NATIVE_PROTOCOLS)[number];
 
@@ -165,10 +153,7 @@ export function isNativeDriverAvailable(
  * a lean build that installs a sidecar plugin should be able to connect through
  * it regardless of maturity label.
  */
-export function findSidecarDriverForProtocol(
-  plugins: InstalledPluginRecord[],
-  protocol: string,
-) {
+export function findSidecarDriverForProtocol(plugins: InstalledPluginRecord[], protocol: string) {
   return getEnabledPluginDrivers(plugins).find(
     (driver) =>
       driver.protocol === protocol &&
@@ -206,17 +191,26 @@ export function isNativeEngineConnectable(
 
 /**
  * Engines shipped with the app and usable WITHOUT installing any plugin. This
- * is the product-level source of truth for "works out of the box". EVERY other
- * engine is plugin-gated: it only becomes connectable once a matching driver
- * plugin is installed and enabled. Keeping the set here (instead of a flag
- * duplicated per surface) is what stops an engine from ever being presented as
- * "ready here / needs-a-plugin there".
+ * is the product-level source of truth for "works out of the box" and mirrors
+ * the `DriverDistribution::Builtin` set in capabilities.rs: the five wire
+ * drivers the product always ships (MySQL, PostgreSQL, SQLite, SQL Server,
+ * MongoDB) plus every engine that reuses one of those compiled drivers
+ * (MariaDB -> MySQL wire; CockroachDB/Greenplum/Redshift/Vertica -> PostgreSQL
+ * wire). EVERY other engine is plugin-gated: it only becomes connectable once
+ * a matching driver plugin is installed and enabled. Keeping the set here
+ * (instead of a flag duplicated per surface) is what stops an engine from ever
+ * being presented as "ready here / needs-a-plugin there".
  */
 export const BUILTIN_ENGINE_KEYS = [
   "mysql",
+  "mariadb",
   "sqlite",
   "mssql",
   "postgresql",
+  "cockroachdb",
+  "greenplum",
+  "redshift",
+  "vertica",
   "mongodb",
   "redis",
   "duckdb",
@@ -242,9 +236,7 @@ export function hasInstalledPluginDriver(
   return plugins.some(
     (plugin) =>
       plugin.manifest.capabilities.includes("database") &&
-      plugin.manifest.contributes.drivers.some(
-        (driver) => driver.protocol === protocol,
-      ),
+      plugin.manifest.contributes.drivers.some((driver) => driver.protocol === protocol),
   );
 }
 
@@ -287,9 +279,7 @@ export function resolveEnginePluginAvailability(
  *    "active" | "installed" | "roadmap" so an installed-but-disabled bundle is
  *    shown as "needs enabling", never as a not-installed roadmap engine.
  */
-export function applyEngineRuntimeAvailability<
-  T extends { key: string; supported: boolean },
->(
+export function applyEngineRuntimeAvailability<T extends { key: string; supported: boolean }>(
   engines: readonly T[],
   plugins: InstalledPluginRecord[],
   nativeDriverAvailability?: Record<string, boolean>,
@@ -302,11 +292,7 @@ export function applyEngineRuntimeAvailability<
           ...engine,
           supported:
             engine.supported &&
-            isNativeEngineConnectable(
-              nativeDriverAvailability,
-              sidecarDrivers,
-              engine.key,
-            ),
+            isNativeEngineConnectable(nativeDriverAvailability, sidecarDrivers, engine.key),
         };
       }
       return engine;

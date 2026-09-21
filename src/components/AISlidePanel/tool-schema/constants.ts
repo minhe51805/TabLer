@@ -30,6 +30,7 @@ export const AI_AGENT_TOOL_NAMES = [
   "read_skill_resource",
   "delegate",
   "read_page",
+  "batch",
   "finish",
 ] as const;
 
@@ -65,6 +66,8 @@ export const AI_AGENT_DELEGATE_MAX_CALLS = 2;
 export const AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT = 4;
 /** Max characters of the delegate sub-analysis answer surfaced as an observation. */
 export const AI_AGENT_DELEGATE_ANSWER_CHARS = 1500;
+/** Max tool calls accepted in one batch action. */
+export const AI_AGENT_BATCH_CALL_LIMIT = 6;
 
 export const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "create_checkpoint",
@@ -87,6 +90,7 @@ export const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "save_memory",
   "edit_query_sql",
   "delete_memory",
+  "batch",
 ]);
 
 /** Minimal JSON Schema subset used for tool parameters (Draft 2020-12 compatible). */

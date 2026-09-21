@@ -10,6 +10,7 @@ import type {
 import {
   appendAgentFacts,
   buildWorkspaceTableIdentifier,
+  canonicalizeAgentArgs,
   type AgentStepEvidence,
 } from "./ai-agent-context";
 import { findAgentSchemaMatches, prioritizeSchemaScanCandidates } from "./ai-agent-schema-search";
@@ -36,6 +37,7 @@ import { mapWithConcurrency } from "./ai-async-utils";
 import { agentSqlToolBlockedMessage, type AgentToolAvailability } from "./ai-agent-engine-gates";
 import { isUnattendedAllowedTool, unattendedToolBlockReason } from "./ai-agent-unattended";
 import {
+  AI_AGENT_BATCH_CALL_LIMIT,
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
   AI_AGENT_DELEGATE_ANSWER_CHARS,
   AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT,
@@ -49,6 +51,8 @@ import {
   validateAIAgentReadonlySql,
   classifyAgentExplainableStatement,
   type AIAgentToolAction,
+  type AIAgentBatchArgs,
+  type AIAgentBatchCall,
   type AIAgentToolName,
   AI_AGENT_TOOL_NAMES,
 } from "./ai-agent-tools";
@@ -80,14 +84,17 @@ const MAX_AGENT_SCHEMA_SCAN_TABLES = 120;
 
 import {
   agentQueryTimeoutHint,
-  analyzeAgentSqlForAgent,
+  agentSqlErrorHint,
   agentSqlQuoteIdentifier,
+  agentToolError,
+  analyzeAgentSqlForAgent,
   coerceAgentQueryParameter,
   computeSampleColumnStats,
+  isRetryableAgentToolError,
   normalizeAgentPlanSteps,
   resolveColumnStatsScope,
+  suggestAgentTableNames,
 } from "./agent-tool-executor-helpers";
-
 // Back-compat: these pure helpers were public on this module before the split
 // (and are covered by the golden-set eval), so keep re-exporting them here.
 export {
@@ -368,22 +375,131 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   // edit_query_sql gate only accepts proposals for statements the agent has
   // smoke-tested through preview_write's rollback transaction.
   const previewedMutatingStatements = new Set<string>();
-  let pendingFullObservation: string | null = null;
   /** Audit trail: one entry per dispatched tool call, in call order. */
   const runTrace: AIWorkspaceRunTraceEntry[] = [];
-  /** SQL a tool built internally (find_value, run_preset) — set right before
-   *  the statement executes so the trace can show it even when args carry
-   *  no SQL of their own. */
-  let pendingToolSql: string | null = null;
+
+  /**
+   * Per-call mutable slot: the full (untruncated) observation a call produced
+   * and any SQL it built internally (find_value, run_preset). Lives in a frame
+   * object instead of closure variables so parallel batch sub-calls can never
+   * overwrite each other's pending state.
+   */
+  interface AgentToolCallFrame {
+    full: string | null;
+    sql: string | null;
+  }
 
   /** Archives the full observation and returns the truncated trace version. */
-  const stringifyAgentObservation = (data: unknown) => {
+  const stringifyAgentObservation = (frame: AgentToolCallFrame, data: unknown) => {
     const full = stringifyAgentObservationFull(data);
-    pendingFullObservation = full;
+    frame.full = full;
     return truncateAgentObservation(full);
   };
 
-  const dispatchAgentTool = async (action: AIAgentToolAction): Promise<string> => {
+  /**
+   * Per-run result cache for deterministic read tools: an identical
+   * (tool, canonical args) call returns the archived observation instead of
+   * burning a backend round-trip and a step. Only read tools are cached —
+   * anything that can change state (or prompt the user) always re-runs.
+   */
+  const CACHEABLE_AGENT_TOOLS = new Set<string>([
+    "list_tables",
+    "search_schema",
+    "list_schema_objects",
+    "describe_table",
+    "describe_tables",
+    "run_readonly_sql",
+    "run_parameterized_sql",
+    "find_value",
+    "check_sql",
+    "run_preset",
+    "read_memory",
+    "read_skill_resource",
+  ]);
+  /** Calls whose success can make cached reads stale (schema or memory writes). */
+  const CACHE_INVALIDATING_AGENT_TOOLS = new Set<string>([
+    "preview_write",
+    "edit_query_sql",
+    "propose_seed_data",
+    "restore_checkpoint",
+    "save_memory",
+    "delete_memory",
+  ]);
+  const toolResultCache = new Map<string, { trace: string; full: string }>();
+  const agentToolCacheKey = (action: AIAgentToolAction) =>
+    CACHEABLE_AGENT_TOOLS.has(action.action)
+      ? `${action.action}:${canonicalizeAgentArgs(action.args ?? {})}`
+      : null;
+
+  /** "Did you mean" hint for a table name that matched nothing in the schema. */
+  const tableNotFoundHint = (requested: string): string | undefined => {
+    const suggestions = suggestAgentTableNames(requested, availableSchemaTables);
+    return suggestions.length > 0
+      ? `Did you mean: ${suggestions.join(", ")}? Re-run with an exact name from list_tables.`
+      : "Call list_tables (optionally with args.pattern) to see the exact table names, then retry.";
+  };
+
+  /**
+   * Tools a batch may run concurrently: pure reads with no user prompt and no
+   * run-state mutation. Consent-gated reads (sample_table_data, find_value)
+   * stay serial — two parallel consent dialogs would race.
+   */
+  const BATCH_PARALLEL_TOOLS = new Set<string>([
+    "list_tables",
+    "search_schema",
+    "list_schema_objects",
+    "describe_table",
+    "describe_tables",
+    "run_readonly_sql",
+    "run_parameterized_sql",
+    "check_sql",
+    "run_preset",
+    "read_memory",
+    "read_skill_resource",
+  ]);
+  /** Tools that can never ride a batch: loop mechanics and user-facing turns. */
+  const BATCH_FORBIDDEN_TOOLS = new Set<string>([
+    "batch",
+    "finish",
+    "ask_user",
+    "update_plan",
+    "delegate",
+    "skill",
+    "read_page",
+  ]);
+
+  /**
+   * Best-effort pre-write checkpoint: the first mutating preview_write /
+   * edit_query_sql of a run snapshots the database under the "agent-pre-write"
+   * label so a bad proposal is one /rollback away from undone. Runs once per
+   * run; a failure warns inside the tool observation but never blocks.
+   */
+  let preWriteCheckpoint: { attempted: boolean; note: string } = {
+    attempted: false,
+    note: "",
+  };
+  const ensurePreWriteCheckpoint = async (): Promise<string> => {
+    if (preWriteCheckpoint.attempted) return preWriteCheckpoint.note;
+    preWriteCheckpoint.attempted = true;
+    if (typeof createCheckpoint !== "function" || !connectionId) {
+      preWriteCheckpoint.note =
+        "Pre-write checkpoint unavailable in this context — proceeding without a snapshot.";
+      return preWriteCheckpoint.note;
+    }
+    try {
+      const result = await createCheckpoint("agent-pre-write");
+      preWriteCheckpoint.note = `Pre-write checkpoint saved (${result.tableCount} tables, ${result.rowCount} rows, label "agent-pre-write") — restorable via /rollback.`;
+    } catch (errorValue) {
+      if (isSupersededAIRequestError(errorValue)) throw errorValue;
+      preWriteCheckpoint.note = `Pre-write checkpoint failed (${formatExecutionError(errorValue)}) — proceeding without a snapshot.`;
+    }
+    return preWriteCheckpoint.note;
+  };
+
+  const dispatchAgentTool = async (
+    action: AIAgentToolAction,
+    frame: AgentToolCallFrame,
+  ): Promise<string> => {
     try {
       // allowed-tools guardrail: a loaded skill may confine the run to a declared
       // tool set. Essential meta/answer tools are always exempt so the agent can
@@ -394,7 +510,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         !SKILL_RESTRICTION_ESSENTIAL_TOOLS.has(action.action as AIAgentToolName)
       ) {
         const allowed = [...skillToolRestriction].sort().join(", ");
-        return `Tool error: the active skill restricts tools to [${allowed}] (plus finish, ask_user, update_plan, read_page, skill, read_skill_resource). "${action.action}" is disabled while that skill is loaded — use an allowed tool or finish.`;
+        return agentToolError(
+          `the active skill restricts tools to [${allowed}] (plus finish, ask_user, update_plan, read_page, skill, read_skill_resource). "${action.action}" is disabled while that skill is loaded — use an allowed tool or finish.`,
+        );
       }
       // P10 read-only policy, layer 3: an unattended scheduled run may only use
       // the read tool surface. The catalog filter already keeps these out of the
@@ -433,15 +551,33 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         lastExplorationToolKey = explorationKey;
       }
 
+      // Per-run result cache: an identical read call returns the archived
+      // observation instead of re-hitting the backend. Checked after the
+      // policy guards so a cached result can never bypass a restriction that
+      // was armed after the original call ran.
+      const cacheKey = agentToolCacheKey(action);
+      if (cacheKey) {
+        const cached = toolResultCache.get(cacheKey);
+        if (cached) {
+          frame.full = cached.full;
+          return `${cached.trace}\n[cached — identical ${action.action} call already ran in this run]`;
+        }
+      }
+
       if (action.action === "update_plan") {
         const plan = normalizeAgentPlanSteps(action.args?.steps, AI_AGENT_PLAN_STEP_LIMIT);
         if (plan.length === 0) {
-          return "Tool error: update_plan requires args.steps — a non-empty array of { title, status? } entries.";
+          return agentToolError(
+            "update_plan requires args.steps — a non-empty array of { title, status? } entries.",
+            {
+              hint: 'Send args.steps like [{"title":"Locate the orders table","status":"in_progress"}].',
+            },
+          );
         }
         onAgentPlanUpdate?.(plan);
         const done = plan.filter((step) => step.status === "done").length;
         const inProgress = plan.filter((step) => step.status === "in_progress").length;
-        return stringifyAgentObservation({
+        return stringifyAgentObservation(frame, {
           planUpdated: true,
           steps: plan.length,
           done,
@@ -455,7 +591,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const instruction =
           typeof action.args?.instruction === "string" ? action.args.instruction.trim() : "";
         if (!instruction) {
-          return "Tool error: delegate requires args.instruction — a self-contained side question.";
+          return agentToolError(
+            "delegate requires args.instruction — a self-contained side question.",
+            {
+              hint: "Send args.instruction as a complete question, optionally with args.focusTables.",
+            },
+          );
         }
         if (!delegateSubAnalysis) {
           return "Tool notice: delegate is unavailable in this run — answer from the evidence you already have.";
@@ -519,7 +660,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           return true;
         });
 
-        return stringifyAgentObservation({
+        return stringifyAgentObservation(frame, {
           database: currentDatabase || "Default",
           catalogTables: latestTables.length,
           filtered: schemaFilter || patternFilter ? true : undefined,
@@ -543,7 +684,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       if (action.action === "search_schema") {
         const query = typeof action.args?.query === "string" ? action.args.query.trim() : "";
         if (!query) {
-          return "Tool error: search_schema requires args.query.";
+          return agentToolError("search_schema requires args.query.", {
+            hint: 'Send args.query with the column name or concept to locate, e.g. {"query":"email"}.',
+          });
         }
 
         // Column-scanning every table means hundreds of metadata queries
@@ -588,7 +731,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         }
 
         const matches = findAgentSchemaMatches(query, scanned);
-        return stringifyAgentObservation({
+        return stringifyAgentObservation(frame, {
           query,
           catalogTables: catalogEntries.length,
           tablesScanned: scanned.length,
@@ -625,13 +768,19 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           ),
         ].slice(0, AI_AGENT_BATCH_DESCRIBE_LIMIT);
         if (names.length === 0) {
-          return "Tool error: describe_table requires args.table or a non-empty args.tables array.";
+          return agentToolError(
+            "describe_table requires args.table or a non-empty args.tables array.",
+            { hint: "Send args.table as one exact name, or args.tables as an array of names." },
+          );
         }
 
         if (names.length === 1) {
           const matchedTable = findMatchingTableName(names[0], availableSchemaTables);
           if (!matchedTable) {
-            return `Tool error: Table "${names[0]}" is not present in the current workspace schema.`;
+            return agentToolError(
+              `Table "${names[0]}" is not present in the current workspace schema.`,
+              { hint: tableNotFoundHint(names[0]) },
+            );
           }
 
           const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
@@ -685,7 +834,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           }
         }
 
-        return stringifyAgentObservation({
+        return stringifyAgentObservation(frame, {
           described: sections.length,
           tables: sections.join("\n\n"),
         });
@@ -707,7 +856,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           ),
         ].slice(0, AI_AGENT_BATCH_DESCRIBE_LIMIT);
         if (names.length === 0) {
-          return "Tool error: describe_tables requires a non-empty args.tables array.";
+          return agentToolError("describe_tables requires a non-empty args.tables array.", {
+            hint: "Send args.tables as an array of exact table names.",
+          });
         }
 
         const sections: string[] = [];
@@ -742,7 +893,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           }
         }
 
-        return stringifyAgentObservation({
+        return stringifyAgentObservation(frame, {
           described: sections.length,
           tables: sections.join("\n\n"),
         });
@@ -752,12 +903,17 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const requestedTable =
           typeof action.args?.table === "string" ? action.args.table.trim() : "";
         if (!requestedTable) {
-          return "Tool error: sample_table_data requires args.table.";
+          return agentToolError("sample_table_data requires args.table.", {
+            hint: "Send args.table as one exact table name from list_tables.",
+          });
         }
 
         const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
         if (!matchedTable) {
-          return `Tool error: Table "${requestedTable}" is not present in the current workspace schema.`;
+          return agentToolError(
+            `Table "${requestedTable}" is not present in the current workspace schema.`,
+            { hint: tableNotFoundHint(requestedTable) },
+          );
         }
 
         if (requestDataReadConsent) {
@@ -938,7 +1094,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
                   )
                 : undefined,
           });
-          return stringifyAgentObservation({
+          return stringifyAgentObservation(frame, {
             objectType: objectType ?? "all",
             objectCount: filtered.length,
             truncated: filtered.length > limitFilter ? true : undefined,
@@ -953,7 +1109,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           });
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: could not list schema objects: ${formatExecutionError(errorValue)}`;
+          return agentToolError(
+            `could not list schema objects: ${formatExecutionError(errorValue)}`,
+            {
+              retryable: isRetryableAgentToolError(errorValue),
+            },
+          );
         }
       }
       if (action.action === "run_preset") {
@@ -963,7 +1124,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const wantsList = action.args?.list === true || typeof action.args?.presetId !== "string";
         const presetKinds: AdminQueryKind[] = ["process-list", "user-management"];
         if (wantsList) {
-          return stringifyAgentObservation({
+          return stringifyAgentObservation(frame, {
             engine: toolAvailability?.engineLabel ?? "current engine",
             availablePresets: presetKinds.map((kind) => ({
               presetId: kind,
@@ -988,33 +1149,45 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           }
         }
         try {
-          pendingToolSql = preset.content;
+          frame.sql = preset.content;
           const queryResult = await executeReadonlyQuery(connectionId!, [preset.content]);
           if (requestId !== requestIdRef.current) {
             throw new Error(AI_REQUEST_REPLACED_MESSAGE);
           }
-          return stringifyAgentObservation({
+          return stringifyAgentObservation(frame, {
             presetId,
             note: "Executed a pre-vetted operational preset (not model-written SQL).",
             result: summarizeAgentQueryObservation(queryResult),
           });
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: preset "${presetId}" failed: ${formatExecutionError(errorValue)}`;
+          return agentToolError(
+            `preset "${presetId}" failed: ${formatExecutionError(errorValue)}`,
+            {
+              hint: agentSqlErrorHint(errorValue),
+              retryable: isRetryableAgentToolError(errorValue),
+            },
+          );
         }
       }
 
       if (action.action === "read_page") {
         const total = observationArchive.length;
         if (total === 0) {
-          return "Tool error: read_page has nothing to page through - no tool observations exist in this run yet.";
+          return agentToolError(
+            "read_page has nothing to page through - no tool observations exist in this run yet.",
+            { hint: "Run a real tool first; read_page only re-reads earlier observations." },
+          );
         }
         const requestedRef =
           typeof action.args?.ref === "number" && Number.isFinite(action.args.ref)
             ? Math.floor(action.args.ref)
             : total;
         if (requestedRef < 1 || requestedRef > total) {
-          return `Tool error: read_page args.ref must be between 1 and ${total} (this run produced ${total} observation(s)).`;
+          return agentToolError(
+            `read_page args.ref must be between 1 and ${total} (this run produced ${total} observation(s)).`,
+            { hint: `Pick args.ref in [1, ${total}] or omit it for the latest observation.` },
+          );
         }
         const entry = observationArchive[requestedRef - 1];
         const offset =
@@ -1052,7 +1225,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         }
         const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
         if (!sql) {
-          return "Tool error: run_readonly_sql requires args.sql.";
+          return agentToolError("run_readonly_sql requires args.sql.", {
+            hint: 'Send args.sql as a single read-only statement, e.g. {"sql":"SELECT ... LIMIT 50"}.',
+          });
         }
 
         // First-line defense: reject mutations/session SQL before any backend
@@ -1062,7 +1237,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           validateAIAgentReadonlySql(sql);
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: ${errorValue instanceof Error ? errorValue.message : String(errorValue)}`;
+          return agentToolError(
+            errorValue instanceof Error ? errorValue.message : String(errorValue),
+            {
+              hint: "Only SELECT/SHOW/EXPLAIN/DESCRIBE/WITH/read-only PRAGMA statements are allowed.",
+            },
+          );
         }
 
         // System catalogs have engine-specific columns and are the #1 source of
@@ -1122,7 +1302,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
           // A timed-out query is actionable feedback, not a dead end: tell
           // the model exactly how to shrink the statement.
-          return `Tool error: readonly query failed: ${formatExecutionError(errorValue)}${agentQueryTimeoutHint(errorValue)}`;
+          return agentToolError(`readonly query failed: ${formatExecutionError(errorValue)}`, {
+            hint:
+              agentSqlErrorHint(errorValue) ??
+              (agentQueryTimeoutHint(errorValue).trim() || undefined),
+            retryable: isRetryableAgentToolError(errorValue),
+          });
         }
         if (requestId !== requestIdRef.current) {
           throw new Error(AI_REQUEST_REPLACED_MESSAGE);
@@ -1142,7 +1327,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         }
         const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
         if (!sql) {
-          return "Tool error: run_parameterized_sql requires args.sql.";
+          return agentToolError("run_parameterized_sql requires args.sql.", {
+            hint: "Send args.sql with :name placeholders plus args.parameters bindings.",
+          });
         }
         const rawParameters = Array.isArray(action.args?.parameters) ? action.args.parameters : [];
         const parameters: Array<{ name: string; value: unknown; dataType: QueryParameterType }> =
@@ -1152,12 +1339,19 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           const record = item as Record<string, unknown>;
           const name = typeof record.name === "string" ? record.name.trim() : "";
           if (!name || !("value" in record)) {
-            return 'Tool error: every parameters[] entry requires a non-empty "name" and a "value".';
+            return agentToolError(
+              'every parameters[] entry requires a non-empty "name" and a "value".',
+              {
+                hint: 'Each entry: {"name":"status","value":"active"} — referenced in SQL as :status.',
+              },
+            );
           }
           parameters.push(coerceAgentQueryParameter(name, record.value, record.dataType));
         }
         if (parameters.length === 0) {
-          return 'Tool error: run_parameterized_sql requires bindings like [{"name":"status","value":"active"}]. Reference them in SQL as :name.';
+          return agentToolError(
+            'run_parameterized_sql requires bindings like [{"name":"status","value":"active"}]. Reference them in SQL as :name.',
+          );
         }
 
         const guard = analyzeAgentSqlForAgent(sql, availableSchemaTables, inspectedAgentTables);
@@ -1182,7 +1376,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             throw new Error(AI_REQUEST_REPLACED_MESSAGE);
           }
           return appendAgentFacts(
-            stringifyAgentObservation({
+            stringifyAgentObservation(frame, {
               parameterized: true,
               parameterCount: parameters.length,
               result: summarizeAgentQueryObservation(queryResult),
@@ -1194,7 +1388,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           );
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: parameterized query failed: ${formatExecutionError(errorValue)}${agentQueryTimeoutHint(errorValue)}`;
+          return agentToolError(`parameterized query failed: ${formatExecutionError(errorValue)}`, {
+            hint:
+              agentSqlErrorHint(errorValue) ??
+              (agentQueryTimeoutHint(errorValue).trim() || undefined),
+            retryable: isRetryableAgentToolError(errorValue),
+          });
         }
       }
 
@@ -1207,15 +1406,22 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const requestedColumn =
           typeof action.args?.column === "string" ? action.args.column.trim() : "";
         if (!requestedTable || !requestedColumn) {
-          return "Tool error: find_value requires args.table and args.column.";
+          return agentToolError("find_value requires args.table and args.column.", {
+            hint: "Send args.table (verified name), args.column (verified column) and args.value.",
+          });
         }
         if (!("value" in (action.args ?? {}))) {
-          return "Tool error: find_value requires args.value.";
+          return agentToolError("find_value requires args.value.", {
+            hint: "Send args.value — the exact value to match; numbers may be unquoted.",
+          });
         }
 
         const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
         if (!matchedTable) {
-          return `Tool error: Table "${requestedTable}" is not present in the current workspace schema.`;
+          return agentToolError(
+            `Table "${requestedTable}" is not present in the current workspace schema.`,
+            { hint: tableNotFoundHint(requestedTable) },
+          );
         }
 
         // Verify the column against the real structure so a hallucinated column
@@ -1232,7 +1438,10 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           (column) => column.name.toLowerCase() === requestedColumn.toLowerCase(),
         );
         if (!matchedColumn) {
-          return `Tool error: Column "${requestedColumn}" does not exist on ${matchedTable}. Available columns: ${columns.map((column) => column.name).join(", ")}.`;
+          return agentToolError(
+            `Column "${requestedColumn}" does not exist on ${matchedTable}. Available columns: ${columns.map((column) => column.name).join(", ")}.`,
+            { hint: "Use one of the listed column names exactly." },
+          );
         }
 
         if (requestDataReadConsent) {
@@ -1255,7 +1464,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             : `SELECT * FROM ${quotedTable} WHERE ${quotedColumn} = :value LIMIT ${requestedLimit}`;
 
         try {
-          pendingToolSql = sql;
+          frame.sql = sql;
           const queryResult = await executeParameterizedReadonlyQuery(connectionId!, sql, [
             binding,
           ]);
@@ -1263,7 +1472,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             throw new Error(AI_REQUEST_REPLACED_MESSAGE);
           }
           inspectedAgentTables.add(matchedTable);
-          return stringifyAgentObservation({
+          return stringifyAgentObservation(frame, {
             table: matchedTable,
             column: matchedColumn.name,
             value: binding.value,
@@ -1272,7 +1481,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           });
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: find_value failed: ${formatExecutionError(errorValue)}${agentQueryTimeoutHint(errorValue)}`;
+          return agentToolError(`find_value failed: ${formatExecutionError(errorValue)}`, {
+            hint:
+              agentSqlErrorHint(errorValue) ??
+              (agentQueryTimeoutHint(errorValue).trim() || undefined),
+            retryable: isRetryableAgentToolError(errorValue),
+          });
         }
       }
 
@@ -1282,7 +1496,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         }
         const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
         if (!sql) {
-          return "Tool error: check_sql requires args.sql.";
+          return agentToolError("check_sql requires args.sql.", {
+            hint: "Send args.sql as the single statement to validate.",
+          });
         }
         const analysis = analyzeAgentSqlForAgent(sql, availableSchemaTables, inspectedAgentTables);
         const unboundedSelect =
@@ -1290,7 +1506,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           /^(SELECT|WITH)\b/i.test(sql) &&
           !/\bLIMIT\s+\d/i.test(sql) &&
           !/^EXPLAIN\b/i.test(sql);
-        return stringifyAgentObservation({
+        return stringifyAgentObservation(frame, {
           ok: analysis.ok && !unboundedSelect,
           sql: redactAgentSqlLiterals(sql),
           issues: analysis.ok ? [] : [analysis.error],
@@ -1318,7 +1534,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           .map((value) => value.trim())
           .filter(Boolean);
         if (statements.length === 0) {
-          return "Tool error: preview_write requires a non-empty args.statements array.";
+          return agentToolError("preview_write requires a non-empty args.statements array.", {
+            hint: "Send args.statements like [\"UPDATE orders SET status = 'x' WHERE id = 1\"].",
+          });
         }
 
         // Safety rails: at least one real change, no session switching,
@@ -1327,7 +1545,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           (statement) => isMutatingStatement(statement) || isHighRiskStatement(statement),
         ).length;
         if (mutatingCount === 0) {
-          return "Tool error: preview_write requires at least one INSERT/UPDATE/DELETE/ALTER/CREATE statement. Use run_readonly_sql for reads.";
+          return agentToolError(
+            "preview_write requires at least one INSERT/UPDATE/DELETE/ALTER/CREATE statement. Use run_readonly_sql for reads.",
+          );
         }
         for (const statement of statements) {
           if (isSessionSwitchStatement(statement)) {
@@ -1375,6 +1595,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           }
         }
 
+        // Pre-write safety net: snapshot the database under the
+        // "agent-pre-write" label before the first mutating preview of the
+        // run. Best-effort — a failure warns inside the observation but never
+        // blocks the preview itself.
+        const preWriteNote = await ensurePreWriteCheckpoint();
+
         try {
           const preview = await previewWriteTransaction(connectionId!, statements);
           for (const statement of statements) {
@@ -1388,42 +1614,50 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             returnedRows: result.rows.length,
             truncated: result.truncated || undefined,
           }));
-          return stringifyAgentObservation({
+          return stringifyAgentObservation(frame, {
             rolledBack: true,
             persisted: false,
             note: "Executed inside one transaction and ROLLED BACK. Nothing was saved. Report these effects as a PREVIEW and direct the user to apply the final SQL through the approval flow.",
             statementCount: statements.length,
             results: summary,
             ...(ruleCaution ? { guardrailRules: ruleCaution } : {}),
+            preWriteCheckpoint: preWriteNote,
           });
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: ${formatExecutionError(errorValue)}`;
+          return agentToolError(formatExecutionError(errorValue), {
+            hint: agentSqlErrorHint(errorValue),
+            retryable: isRetryableAgentToolError(errorValue),
+          });
         }
       }
-
       if (action.action === "create_checkpoint") {
         if (checkpointCallsUsed >= 3) {
-          return "Tool error: create_checkpoint budget exhausted for this run (3 snapshots max). The user can always create one manually with /backup.";
+          return agentToolError(
+            "create_checkpoint budget exhausted for this run (3 snapshots max). The user can always create one manually with /backup.",
+          );
         }
         checkpointCallsUsed += 1;
         if (typeof createCheckpoint !== "function") {
-          return "Tool error: create_checkpoint is unavailable in this context.";
+          return agentToolError("create_checkpoint is unavailable in this context.");
         }
         const label = typeof action.args?.label === "string" ? action.args.label.trim() : "";
         try {
           const result = await createCheckpoint(label || null);
           return `Checkpoint created: ${result.tableCount} tables, ${result.rowCount} rows saved locally (label: "${result.label}"). The user can restore it with the /rollback command — suggest that command if an upcoming or just-executed change looks wrong.`;
         } catch (errorValue) {
-          return `Tool error: create_checkpoint failed. ${
-            errorValue instanceof Error ? errorValue.message : String(errorValue)
-          }`;
+          return agentToolError(
+            `create_checkpoint failed. ${errorValue instanceof Error ? errorValue.message : String(errorValue)}`,
+            { retryable: isRetryableAgentToolError(errorValue) },
+          );
         }
       }
 
       if (action.action === "restore_checkpoint") {
         if (restoreCallsUsed >= 1) {
-          return "Tool error: restore_checkpoint budget exhausted for this run (1 rollback max). The user can always run /rollback manually.";
+          return agentToolError(
+            "restore_checkpoint budget exhausted for this run (1 rollback max). The user can always run /rollback manually.",
+          );
         }
         restoreCallsUsed += 1;
         if (
@@ -1432,7 +1666,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           typeof listCheckpoints !== "function" ||
           typeof restoreCheckpoint !== "function"
         ) {
-          return "Tool error: restore_checkpoint is unavailable in this context.";
+          return agentToolError("restore_checkpoint is unavailable in this context.");
         }
         const hint =
           typeof action.args?.label_hint === "string"
@@ -1465,9 +1699,10 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           await restoreCheckpoint(connectionId, fileName, dbType);
           return `Database restored to checkpoint "${chosen.label}". Remind the user to reopen tables if a stale view remains, and continue follow-up work on the restored data.`;
         } catch (errorValue) {
-          return `Tool error: rollback failed. ${
-            errorValue instanceof Error ? errorValue.message : String(errorValue)
-          }`;
+          return agentToolError(
+            `rollback failed. ${errorValue instanceof Error ? errorValue.message : String(errorValue)}`,
+            { retryable: isRetryableAgentToolError(errorValue) },
+          );
         }
       }
 
@@ -1476,7 +1711,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const definition =
           typeof action.args?.definition === "string" ? action.args.definition.trim() : "";
         if (!term || !definition) {
-          return "Tool error: remember_term requires args.term and args.definition.";
+          return agentToolError("remember_term requires args.term and args.definition.", {
+            hint: 'Send args.term and args.definition (optionally args.kind: "term"|"metric"|"relationship"|"alias").',
+          });
         }
         try {
           await saveSemanticGlossaryEntry({
@@ -1487,25 +1724,38 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             kind: action.args?.kind,
             source: "agent",
           });
-          return stringifyAgentObservation({
+          return stringifyAgentObservation(frame, {
             saved: term,
             definition,
             note: "Saved to the business glossary; future runs for this database will see it automatically.",
           });
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: could not save the glossary entry: ${formatExecutionError(errorValue)}`;
+          return agentToolError(
+            `could not save the glossary entry: ${formatExecutionError(errorValue)}`,
+            {
+              retryable: isRetryableAgentToolError(errorValue),
+            },
+          );
         }
       }
 
       if (action.action === "skill") {
         const skillName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
         if (!skillName) {
-          return "Tool error: skill requires args.name taken from the <available_skills> list.";
+          return agentToolError(
+            "skill requires args.name taken from the <available_skills> list.",
+            {
+              hint: "Send args.name exactly as listed in <available_skills>.",
+            },
+          );
         }
         // Fail-closed: only names injected in this run's catalog may load.
         if (!allowedSkillNames?.includes(skillName)) {
-          return `Tool error: skill "${skillName}" is not in the injected <available_skills> catalog. Pick one of the listed skills.`;
+          return agentToolError(
+            `skill "${skillName}" is not in the injected <available_skills> catalog. Pick one of the listed skills.`,
+            { hint: `Available skills: ${(allowedSkillNames ?? []).join(", ") || "none"}.` },
+          );
         }
         try {
           const content = await invokeMutation<{
@@ -1573,7 +1823,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
             .join("\n");
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: could not load skill "${skillName}": ${formatExecutionError(errorValue)}`;
+          return agentToolError(
+            `could not load skill "${skillName}": ${formatExecutionError(errorValue)}`,
+            {
+              retryable: isRetryableAgentToolError(errorValue),
+            },
+          );
         }
       }
 
@@ -1581,16 +1836,29 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const skillName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
         const resourcePath = typeof action.args?.path === "string" ? action.args.path.trim() : "";
         if (!skillName || !resourcePath) {
-          return "Tool error: read_skill_resource requires args.name and args.path taken from a loaded skill's Bundled resources list.";
+          return agentToolError(
+            "read_skill_resource requires args.name and args.path taken from a loaded skill's Bundled resources list.",
+            {
+              hint: "Send args.name (a skill loaded this run) and args.path (one of its listed resources).",
+            },
+          );
         }
         // Fail-closed: the skill must have been loaded this run and the path must
         // be one it listed — mirrors the skill tool's injected-catalog guarantee.
         const known = loadedSkillResources.get(skillName);
         if (!known) {
-          return `Tool error: skill "${skillName}" is not loaded this run. Call the skill tool first, then read one of its listed resources.`;
+          return agentToolError(
+            `skill "${skillName}" is not loaded this run. Call the skill tool first, then read one of its listed resources.`,
+            {
+              hint: `Loaded skills this run: ${[...loadedSkillResources.keys()].join(", ") || "none"}.`,
+            },
+          );
         }
         if (!known.has(resourcePath)) {
-          return `Tool error: "${resourcePath}" is not a listed resource of skill "${skillName}". Pick a path from that skill's Bundled resources list.`;
+          return agentToolError(
+            `"${resourcePath}" is not a listed resource of skill "${skillName}". Pick a path from that skill's Bundled resources list.`,
+            { hint: `Listed resources: ${[...known].join(", ") || "none"}.` },
+          );
         }
         try {
           const resource = await invokeMutation<{
@@ -1617,7 +1885,10 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           );
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: could not load resource "${resourcePath}" of skill "${skillName}": ${formatExecutionError(errorValue)}`;
+          return agentToolError(
+            `could not load resource "${resourcePath}" of skill "${skillName}": ${formatExecutionError(errorValue)}`,
+            { retryable: isRetryableAgentToolError(errorValue) },
+          );
         }
       }
 
@@ -1638,28 +1909,44 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const collection =
           typeof action.args?.collection === "string" ? action.args.collection.trim() : "";
         if (!collection) {
-          return "Tool error: propose_seed_data requires args.collection — the exact table or collection name to fill.";
+          return agentToolError(
+            "propose_seed_data requires args.collection — the exact table or collection name to fill.",
+            {
+              hint: 'Send args.collection like "products" plus args.documents (array of objects).',
+            },
+          );
         }
         // Keep the name one bare identifier so it rides db.<name> shell syntax and
         // quoted SQL identifiers safely — no schema/db prefix, whitespace or dots.
         if (/[\s.$"']/.test(collection) || collection.startsWith("system.")) {
-          return "Tool error: args.collection must be a plain table or collection name (no schema/db prefix, no whitespace, dots, quotes, or $ signs).";
+          return agentToolError(
+            "args.collection must be a plain table or collection name (no schema/db prefix, no whitespace, dots, quotes, or $ signs).",
+          );
         }
         const rawDocuments = action.args?.documents;
         if (!Array.isArray(rawDocuments) || rawDocuments.length === 0) {
-          return "Tool error: propose_seed_data requires a non-empty args.documents array of objects.";
+          return agentToolError(
+            "propose_seed_data requires a non-empty args.documents array of objects.",
+            {
+              hint: 'Send args.documents like [{"name":"A","price":9.99}].',
+            },
+          );
         }
         if (rawDocuments.length > AI_AGENT_SEED_DOCUMENT_LIMIT) {
-          return `Tool error: args.documents exceeds the ${AI_AGENT_SEED_DOCUMENT_LIMIT}-document cap. Send the most representative documents.`;
+          return agentToolError(
+            `args.documents exceeds the ${AI_AGENT_SEED_DOCUMENT_LIMIT}-document cap. Send the most representative documents.`,
+          );
         }
         const documents: Array<Record<string, unknown>> = [];
         for (const entry of rawDocuments) {
           if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-            return "Tool error: every args.documents entry must be an object ({field: value}). Strings and arrays are not valid documents.";
+            return agentToolError(
+              "every args.documents entry must be an object ({field: value}). Strings and arrays are not valid documents.",
+            );
           }
           const record = entry as Record<string, unknown>;
           if (Object.keys(record).length === 0) {
-            return "Tool error: every args.documents entry must contain at least one field.";
+            return agentToolError("every args.documents entry must contain at least one field.");
           }
           documents.push(record);
         }
@@ -1728,9 +2015,11 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const title = `Query ${collection}`;
         const created = openQueryTab?.({ sql: seedScript, title, autoRun: false });
         if (!created) {
-          return "Tool error: could not open a new AI Query tab (no active connection?).";
+          return agentToolError("could not open a new AI Query tab (no active connection?).", {
+            retryable: true,
+          });
         }
-        return stringifyAgentObservation({
+        return stringifyAgentObservation(frame, {
           collection,
           documentCount: documents.length,
           tabTitle: title,
@@ -1749,10 +2038,14 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const createIfMissing =
           rawCreateIfMissing === true || rawCreateIfMissing === "true" || rawCreateIfMissing === 1;
         if (!sql) {
-          return "Tool error: edit_query_sql requires args.sql.";
+          return agentToolError("edit_query_sql requires args.sql.", {
+            hint: "Send args.sql as the full proposed statement plus args.reason explaining the change.",
+          });
         }
         if (sql.includes("…[TRUNCATED")) {
-          return "Tool error: do not echo the truncation marker from the context. Propose only content you have actually seen; explain anything outside your view in args.reason.";
+          return agentToolError(
+            "do not echo the truncation marker from the context. Propose only content you have actually seen; explain anything outside your view in args.reason.",
+          );
         }
         // The tab must exist, be a query tab, and belong to THIS run's
         // connection — the agent must not reach into another connection's
@@ -1760,17 +2053,33 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const { tabs } = useUIStore.getState();
         const target = rawTabId ? tabs.find((tab) => tab.id === rawTabId) : undefined;
         if (rawTabId && (!target || target.type !== "query")) {
-          return "Tool error: edit_query_sql needs the exact tabId of an open query tab (see the Query tabs list in the context).";
+          return agentToolError(
+            "edit_query_sql needs the exact tabId of an open query tab (see the Query tabs list in the context).",
+            {
+              hint: "Copy the tabId verbatim from the Query tabs list, or omit it and set args.createIfMissing: true.",
+            },
+          );
         }
         if (target && target.connectionId !== connectionId) {
-          return `Tool error: query tab "${target.title}" belongs to another connection — edit_query_sql cannot reach across connections.`;
+          return agentToolError(
+            `query tab "${target.title}" belongs to another connection — edit_query_sql cannot reach across connections.`,
+          );
         }
         // Smoke-test gate: a mutating proposal that was never previewed in
         // THIS run is rejected. Reads go through the sandbox naturally.
         const mutating = isMutatingStatement(sql) || isHighRiskStatement(sql);
         if (mutating && !previewedMutatingStatements.has(normalizeStatementForGuard(sql))) {
-          return "Tool error: this proposal contains mutating SQL that was not previewed in this run. Call preview_write with the exact statement first, then re-issue edit_query_sql.";
+          return agentToolError(
+            "this proposal contains mutating SQL that was not previewed in this run. Call preview_write with the exact statement first, then re-issue edit_query_sql.",
+            {
+              hint: "preview_write runs the statement in a rolled-back transaction — it is safe and required once per mutating statement.",
+            },
+          );
         }
+        // Pre-write safety net: a mutating proposal that passed the preview
+        // gate snapshots the database under "agent-pre-write" before the
+        // proposal is emitted. Best-effort — a failure warns, never blocks.
+        const preWriteNote = mutating ? await ensurePreWriteCheckpoint() : "";
         // Dry-run EXPLAIN: a mutating proposal carries its plan (or its
         // syntax error) on the review card so the user sees it BEFORE
         // accepting. The statement is planned, never executed — the backend
@@ -1799,12 +2108,16 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         }
         if (!target) {
           if (!createIfMissing) {
-            return "Tool error: no open query tab matched. Pass the exact tabId of an open query tab, or set args.createIfMissing: true to open a new AI Query tab with this SQL.";
+            return agentToolError(
+              "no open query tab matched. Pass the exact tabId of an open query tab, or set args.createIfMissing: true to open a new AI Query tab with this SQL.",
+            );
           }
           const title = (reason || "AI query proposal").slice(0, 60);
           const created = openQueryTab?.({ sql, title, autoRun: !mutating });
           if (!created) {
-            return "Tool error: could not open a new AI Query tab (no active connection?).";
+            return agentToolError("could not open a new AI Query tab (no active connection?).", {
+              retryable: true,
+            });
           }
           const explainNote =
             proposalExplain?.status === "error"
@@ -1818,7 +2131,9 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
               mutating
                 ? "It is NOT auto-run: review the tab and press Run (Safe Mode will confirm)."
                 : "It auto-runs the read-only statement.",
-            ].join(" ") + explainNote
+            ].join(" ") +
+            explainNote +
+            (preWriteNote ? ` ${preWriteNote}` : "")
           );
         }
 
@@ -1844,6 +2159,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
               : proposalExplain?.status === "ok"
                 ? "EXPLAIN dry-run succeeded — the plan is shown on the proposal card."
                 : "",
+          preWriteNote || "",
         ]
           .filter(Boolean)
           .join("\n");
@@ -1852,10 +2168,15 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       if (action.action === "delete_memory") {
         const memoryName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
         if (!memoryName) {
-          return "Tool error: delete_memory requires args.name taken from the <agent_memory> index.";
+          return agentToolError(
+            "delete_memory requires args.name taken from the <agent_memory> index.",
+            {
+              hint: "Send args.name exactly as listed in <agent_memory>.",
+            },
+          );
         }
         if (!memoryScope?.connectionId) {
-          return "Tool error: delete_memory requires an active connection scope.";
+          return agentToolError("delete_memory requires an active connection scope.");
         }
         // Destructive and irreversible: this must be a per-call dialog that
         // ALWAYS asks. It deliberately does NOT reuse requestDataReadConsent —
@@ -1891,14 +2212,24 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           return `Memory "${memoryName}" permanently deleted from this scope. The freed slot is available to the next save_memory.`;
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: could not delete memory "${memoryName}": ${formatExecutionError(errorValue)}`;
+          return agentToolError(
+            `could not delete memory "${memoryName}": ${formatExecutionError(errorValue)}`,
+            {
+              retryable: isRetryableAgentToolError(errorValue),
+            },
+          );
         }
       }
 
       if (action.action === "read_memory") {
         const memoryName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
         if (!memoryName) {
-          return "Tool error: read_memory requires args.name taken from the <agent_memory> index.";
+          return agentToolError(
+            "read_memory requires args.name taken from the <agent_memory> index.",
+            {
+              hint: "Send args.name exactly as listed in <agent_memory>.",
+            },
+          );
         }
         try {
           const content = await invokeMutation<{ name: string; body: string; updatedAt?: string }>(
@@ -1922,7 +2253,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           ].join("\n");
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: could not load memory "${memoryName}": ${formatExecutionError(errorValue)}`;
+          return agentToolError(
+            `could not load memory "${memoryName}": ${formatExecutionError(errorValue)}`,
+            {
+              retryable: isRetryableAgentToolError(errorValue),
+            },
+          );
         }
       }
 
@@ -1932,7 +2268,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         const memoryDescription =
           typeof action.args?.description === "string" ? action.args.description.trim() : "";
         if (!memoryName || !memoryBody) {
-          return "Tool error: save_memory requires non-empty args.name (short slug) and args.body (the fact worth remembering).";
+          return agentToolError(
+            "save_memory requires non-empty args.name (short slug) and args.body (the fact worth remembering).",
+            {
+              hint: 'Send args.name like "revenue-metric" and args.body with the fact. Never store credentials.',
+            },
+          );
         }
         try {
           const saved = await invokeMutation<{ name: string; updatedAt: string }>(
@@ -1956,7 +2297,12 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           return `Memory "${saved.name}" saved for this connection/database scope${saved.updatedAt ? ` at ${saved.updatedAt}` : ""}. Future runs in this scope will see it in their <agent_memory> index. Never store credentials in memory.`;
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: could not save memory "${memoryName}": ${formatExecutionError(errorValue)}`;
+          return agentToolError(
+            `could not save memory "${memoryName}": ${formatExecutionError(errorValue)}`,
+            {
+              retryable: isRetryableAgentToolError(errorValue),
+            },
+          );
         }
       }
 
@@ -1990,55 +2336,75 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           return result;
         } catch (errorValue) {
           if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Tool error: memory ${memoryArgs.command} failed: ${formatExecutionError(errorValue)}`;
+          return agentToolError(
+            `memory ${memoryArgs.command} failed: ${formatExecutionError(errorValue)}`,
+            {
+              retryable: isRetryableAgentToolError(errorValue),
+            },
+          );
         }
       }
 
       // Unknown action: never say "finish" here — the model needs the list of
       // valid tools to self-correct (a bare "unknown tool" makes small models
-      // conclude the deployment is broken instead of retrying).
       if (action.action === "finish") {
-        return "Tool error: finish does not execute a tool observation.";
+        return agentToolError("finish does not execute a tool observation.");
       }
       const availableTools = AI_AGENT_TOOL_NAMES.filter(
         (toolName) =>
           toolName !== "finish" && (!unattendedReadOnly || isUnattendedAllowedTool(toolName)),
       ).join(", ");
-      return `Tool error: unknown tool "${action.action}". Available tools: ${availableTools}. Choose one of these, or return a finish action with args.response if the task is complete.`;
+      return agentToolError(
+        `unknown tool "${action.action}". Available tools: ${availableTools}. Choose one of these, or return a finish action with args.response if the task is complete.`,
+      );
     } catch (errorValue) {
       if (isSupersededAIRequestError(errorValue)) {
         throw errorValue;
       }
-      return `Tool error: ${formatExecutionError(errorValue)}`;
+      return agentToolError(formatExecutionError(errorValue), {
+        hint: agentSqlErrorHint(errorValue),
+        retryable: isRetryableAgentToolError(errorValue),
+      });
     }
   };
 
-  const runAgentTool = async (action: AIAgentToolAction): Promise<string> => {
-    pendingFullObservation = null;
-    pendingToolSql = null;
+  /**
+   * Executes one tool call end-to-end: fresh frame, dispatch, archive, audit
+   * trace, per-run cache store, and schema-summary invalidation. Shared by
+   * single actions and batch sub-calls so both paths keep identical
+   * bookkeeping.
+   */
+  const runSingleToolCall = async (action: AIAgentToolAction): Promise<string> => {
+    const frame: AgentToolCallFrame = { full: null, sql: null };
     const startedAt = performance.now();
     try {
-      const result = await dispatchAgentTool(action);
+      const result = await dispatchAgentTool(action, frame);
       observationArchive.push({
         action: action.action,
-        full: pendingFullObservation ?? result,
+        full: frame.full ?? result,
       });
+      const ok = !result.startsWith("Tool error") && !result.startsWith("Tool blocked");
       runTrace.push({
-        tool: action.action,
+        tool: action.action as AIWorkspaceRunTraceEntry["tool"],
         argsSummary: summarizeToolCallArgs(action),
         ms: Math.max(0, Math.round(performance.now() - startedAt)),
-        ok: !result.startsWith("Tool error") && !result.startsWith("Tool blocked"),
-        sql: extractToolCallSql(action) ?? pendingToolSql ?? undefined,
+        ok,
+        sql: extractToolCallSql(action) ?? frame.sql ?? undefined,
       });
+      const cacheKey = agentToolCacheKey(action);
+      if (cacheKey && ok) {
+        toolResultCache.set(cacheKey, { trace: result, full: frame.full ?? result });
+      }
+      // A successful state-changing call can stale every cached read from
+      // earlier in the run — drop the whole per-run cache.
+      if (ok && CACHE_INVALIDATING_AGENT_TOOLS.has(action.action)) {
+        toolResultCache.clear();
+      }
       // Schema-affecting calls (write previews, user-applied SQL proposals,
       // checkpoint restores) can change what the auto-injected schema summary
       // describes — drop the cached summary so the next run refetches instead
       // of serving a pre-change catalog inside the TTL window.
-      if (
-        isSchemaAffectingAgentAction(action.action) &&
-        !result.startsWith("Tool error") &&
-        !result.startsWith("Tool blocked")
-      ) {
+      if (isSchemaAffectingAgentAction(action.action) && ok) {
         invalidateAgentSchemaSummary(connectionId ?? undefined);
       }
       return result;
@@ -2046,14 +2412,117 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       // A thrown dispatch (e.g. superseded request) still belongs in the audit
       // trail: the run died mid-call and the trace must not pretend otherwise.
       runTrace.push({
-        tool: action.action,
+        tool: action.action as AIWorkspaceRunTraceEntry["tool"],
         argsSummary: summarizeToolCallArgs(action),
         ms: Math.max(0, Math.round(performance.now() - startedAt)),
         ok: false,
-        sql: extractToolCallSql(action) ?? pendingToolSql ?? undefined,
+        sql: extractToolCallSql(action) ?? frame.sql ?? undefined,
       });
       throw errorValue;
     }
+  };
+
+  /**
+   * Executes a `batch` action: consecutive read-only sub-calls run
+   * concurrently (Promise.allSettled), mutating/ordering-sensitive and
+   * user-facing calls serialize in array order. Results are reported in the
+   * original call order regardless of execution interleaving.
+   */
+  const runBatchAction = async (action: AIAgentToolAction): Promise<string> => {
+    const batchStartedAt = performance.now();
+    const rawCalls = Array.isArray((action.args as AIAgentBatchArgs | undefined)?.calls)
+      ? (action.args as AIAgentBatchArgs).calls
+      : [];
+    if (rawCalls.length === 0) {
+      return agentToolError("batch requires a non-empty args.calls array.", {
+        hint: 'Send args.calls like [{"action":"describe_table","args":{"table":"orders"}}].',
+      });
+    }
+    if (rawCalls.length > AI_AGENT_BATCH_CALL_LIMIT) {
+      return agentToolError(
+        `batch accepts at most ${AI_AGENT_BATCH_CALL_LIMIT} calls per step — split the rest into the next step.`,
+      );
+    }
+    const calls = rawCalls.map((raw: unknown): AIAgentBatchCall => {
+      const entry = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+      return {
+        action: typeof entry.action === "string" ? entry.action.trim() : "",
+        args:
+          entry.args && typeof entry.args === "object" && !Array.isArray(entry.args)
+            ? (entry.args as Record<string, unknown>)
+            : {},
+      };
+    });
+
+    const runOne = async (call: AIAgentBatchCall): Promise<string> => {
+      if (!call.action || !(AI_AGENT_TOOL_NAMES as readonly string[]).includes(call.action)) {
+        return agentToolError(
+          `batch call has unknown or missing action "${call.action || "(empty)"}".`,
+          { hint: `Use one of: ${AI_AGENT_TOOL_NAMES.join(", ")}.` },
+        );
+      }
+      if (BATCH_FORBIDDEN_TOOLS.has(call.action)) {
+        return agentToolError(`"${call.action}" cannot ride a batch — send it as its own step.`);
+      }
+      return runSingleToolCall({
+        action: call.action,
+        args: call.args,
+        message: "",
+      } as AIAgentToolAction);
+    };
+
+    const results = new Array<string>(calls.length);
+    let index = 0;
+    while (index < calls.length) {
+      const call = calls[index];
+      if (BATCH_PARALLEL_TOOLS.has(call.action)) {
+        // Gather the run of consecutive parallel-eligible calls and execute
+        // them together; allSettled keeps one failure from cancelling siblings.
+        let end = index + 1;
+        while (end < calls.length && BATCH_PARALLEL_TOOLS.has(calls[end].action)) {
+          end += 1;
+        }
+        const settled = await Promise.allSettled(
+          calls.slice(index, end).map((entry: AIAgentBatchCall) => runOne(entry)),
+        );
+        settled.forEach((outcome: PromiseSettledResult<string>, offset: number) => {
+          if (outcome.status === "fulfilled") {
+            results[index + offset] = outcome.value;
+          } else {
+            if (isSupersededAIRequestError(outcome.reason)) throw outcome.reason;
+            results[index + offset] = agentToolError(formatExecutionError(outcome.reason));
+          }
+        });
+        index = end;
+      } else {
+        results[index] = await runOne(call);
+        index += 1;
+      }
+    }
+
+    const full = results
+      .map(
+        (result, callIndex) =>
+          `--- call ${callIndex + 1}: ${calls[callIndex].action} ---\n${result}`,
+      )
+      .join("\n\n");
+    observationArchive.push({ action: "batch", full });
+    runTrace.push({
+      tool: "batch",
+      argsSummary: `${calls.length} calls`,
+      ms: Math.max(0, Math.round(performance.now() - batchStartedAt)),
+      ok: results.every(
+        (result) => !result.startsWith("Tool error") && !result.startsWith("Tool blocked"),
+      ),
+    });
+    return truncateAgentObservation(full);
+  };
+
+  const runAgentTool = async (action: AIAgentToolAction): Promise<string> => {
+    if (action.action === "batch") {
+      return runBatchAction(action);
+    }
+    return runSingleToolCall(action);
   };
 
   /** Copy of the run's tool-call audit trail, in execution order. */

@@ -1,5 +1,6 @@
 import {
   AI_AGENT_ASK_USER_OPTIONS_LIMIT,
+  AI_AGENT_BATCH_CALL_LIMIT,
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
   AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT,
   AI_AGENT_PLAN_STEP_LIMIT,
@@ -25,6 +26,15 @@ function objectSchema(
     additionalProperties,
   };
 }
+
+/**
+ * Shared failure contract appended to tool descriptions so the model knows the
+ * shape of a failed call: `Tool error: <message> {"error","hint","retryable"}`.
+ * `hint` carries the corrective action (closest table names, SQL error
+ * position); `retryable` tells whether re-issuing the same call can succeed.
+ */
+const TOOL_ERROR_SHAPE_NOTE =
+  ' On failure the observation is `Tool error: <message> {"error","hint","retryable"}` — follow `hint` and only retry when `retryable` is true.';
 
 /**
  * Declarative tool specs keyed by action name. The Record<AIAgentToolName, ...>
@@ -90,7 +100,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   list_tables: {
     name: "list_tables",
     description:
-      "List catalog tables with optional filters. Each entry carries a rowCount, so this is the only source of row counts.",
+      "List catalog tables with optional filters. Each entry carries a rowCount, so this is the only source of row counts." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         schema: { type: "string", description: "Optional exact schema filter." },
@@ -115,7 +126,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   search_schema: {
     name: "search_schema",
     description:
-      "Find where a column or concept lives across the catalog when the user names a field but not the exact table.",
+      "Find where a column or concept lives across the catalog when the user names a field but not the exact table." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       { query: { type: "string", description: "Column name or concept to locate." } },
       ["query"],
@@ -125,7 +137,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   list_schema_objects: {
     name: "list_schema_objects",
     description:
-      "List database views, triggers, and stored routines, optionally with their SQL definition. A view definition is verified business logic (how revenue is actually computed, which statuses are filtered) written by the database owners — prefer reading it over guessing column semantics. Definitions are redacted and truncated; page through with repeated calls if needed.",
+      "List database views, triggers, and stored routines, optionally with their SQL definition. A view definition is verified business logic (how revenue is actually computed, which statuses are filtered) written by the database owners — prefer reading it over guessing column semantics. Definitions are redacted and truncated; page through with repeated calls if needed." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         objectType: {
@@ -155,7 +168,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
     description:
       "Inspect the exact columns of one or more verified tables before reading rows. Pass a single `table`, or a `tables` array (up to " +
       String(AI_AGENT_BATCH_DESCRIBE_LIMIT) +
-      ") to batch several tables into one call.",
+      ") to batch several tables into one call." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         table: {
@@ -196,7 +210,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   sample_table_data: {
     name: "sample_table_data",
     description:
-      "Return a few live rows from one verified table without writing SQL. Does not require describe_table first.",
+      "Return a few live rows from one verified table without writing SQL. Does not require describe_table first." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         table: { type: "string", description: "Exact table name or identifier." },
@@ -225,7 +240,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   run_readonly_sql: {
     name: "run_readonly_sql",
     description:
-      "Run a read-only observation query (SELECT, SHOW, EXPLAIN, DESCRIBE, WITH, or read-only PRAGMA). Never query system catalogs.",
+      "Run a read-only observation query (SELECT, SHOW, EXPLAIN, DESCRIBE, WITH, or read-only PRAGMA). Never query system catalogs." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         sql: {
@@ -239,7 +255,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   run_parameterized_sql: {
     name: "run_parameterized_sql",
     description:
-      "Run a read-only SELECT with named parameter bindings (:name) instead of splicing literals into SQL. Prefer this over run_readonly_sql whenever a value comes from the user - it is injection-safe and passes sandbox validation.",
+      "Run a read-only SELECT with named parameter bindings (:name) instead of splicing literals into SQL. Prefer this over run_readonly_sql whenever a value comes from the user - it is injection-safe and passes sandbox validation." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         sql: {
@@ -260,7 +277,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   find_value: {
     name: "find_value",
     description:
-      "Look up rows in a verified table by one column value, executed as a parameterized query. Cheaper and safer than writing SQL for exact-match lookups.",
+      "Look up rows in a verified table by one column value, executed as a parameterized query. Cheaper and safer than writing SQL for exact-match lookups." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         table: { type: "string", description: "Table name verified by describe_table." },
@@ -282,7 +300,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   check_sql: {
     name: "check_sql",
     description:
-      "Pre-flight your proposed SQL without executing it: verifies read-only shape, table visibility, and schema grounding. Use before finish when you did not run the exact SQL earlier.",
+      "Pre-flight your proposed SQL without executing it: verifies read-only shape, table visibility, and schema grounding. Use before finish when you did not run the exact SQL earlier." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       { sql: { type: "string", description: "A single SQL statement to validate." } },
       ["sql"],
@@ -292,7 +311,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   run_preset: {
     name: "run_preset",
     description:
-      "Run a pre-vetted operational query written per engine: process-list shows currently running queries/sessions; user-management lists database users and roles. These are the ONLY sanctioned way to inspect server state — catalog SQL like pg_stat_activity remains blocked in run_readonly_sql on purpose.",
+      "Run a pre-vetted operational query written per engine: process-list shows currently running queries/sessions; user-management lists database users and roles. These are the ONLY sanctioned way to inspect server state — catalog SQL like pg_stat_activity remains blocked in run_readonly_sql on purpose." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         presetId: {
@@ -313,7 +333,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   preview_write: {
     name: "preview_write",
     description:
-      "Preview mutating statements inside one transaction that always rolls back. Nothing is persisted; the human applies the final SQL through the approval flow.",
+      "Preview mutating statements inside one transaction that always rolls back. Nothing is persisted; the human applies the final SQL through the approval flow." +
+      TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         statements: {
@@ -571,6 +592,27 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
       [],
     ),
   },
+
+  batch: {
+    name: "batch",
+    description:
+      `Run several independent tool calls in ONE step (up to ${AI_AGENT_BATCH_CALL_LIMIT}). Read-only calls (list_tables, search_schema, list_schema_objects, describe_table, sample_table_data, run_readonly_sql, run_parameterized_sql, find_value, check_sql, run_preset, read_memory, read_skill_resource) execute in parallel; write/proposal calls (preview_write, edit_query_sql, propose_seed_data, create_checkpoint, restore_checkpoint, remember_term, save_memory, delete_memory) run one at a time in array order. Results come back in the same order as args.calls. finish, ask_user, update_plan, delegate, skill and nested batch are not allowed inside a batch.` +
+      TOOL_ERROR_SHAPE_NOTE,
+    parameters: objectSchema(
+      {
+        calls: {
+          type: "array",
+          minItems: 2,
+          maxItems: AI_AGENT_BATCH_CALL_LIMIT,
+          items: { type: "object" },
+          description:
+            'Tool calls as {"action":"<tool name>","args":{…}} objects — same names and args as calling the tools directly.',
+        },
+      },
+      ["calls"],
+    ),
+  },
+
   finish: {
     name: "finish",
     description:

@@ -121,7 +121,7 @@ describe("exploration de-dup guard", () => {
     expect(second).toContain("Tool notice: identical list_tables call repeated");
   });
 
-  it("does not de-duplicate run_readonly_sql or sample_table_data", async () => {
+  it("serves identical read calls from the per-run cache", async () => {
     const deps = mkDeps();
     const exec = createAgentToolExecutor(deps);
     deps.inspectedAgentTables.add("public.users");
@@ -134,11 +134,9 @@ describe("exploration de-dup guard", () => {
       args: { sql: "select * from users limit 1" },
     } as AIAgentToolAction);
     expect(a).not.toContain("Tool notice:");
-    expect(b).not.toContain("Tool notice:");
-    expect(deps.getTableData ?? deps.executeReadonlyQuery).toBeDefined();
-    expect(
-      (deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.length,
-    ).toBeGreaterThanOrEqual(2);
+    // The second identical call is answered from the per-run tool cache.
+    expect(b).toContain("[cached");
+    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
   });
 });
 
@@ -180,7 +178,7 @@ describe("list_tables", () => {
 describe("search_schema", () => {
   it("requires args.query", async () => {
     const obs = await run(mkDeps(), { action: "search_schema", args: {} } as AIAgentToolAction);
-    expect(obs).toBe("Tool error: search_schema requires args.query.");
+    expect(obs).toContain("Tool error: search_schema requires args.query.");
   });
 
   it("scans previews and reports matches for a column query", async () => {
@@ -347,7 +345,7 @@ describe("run_readonly_sql", () => {
       action: "run_readonly_sql",
       args: {},
     } as AIAgentToolAction);
-    expect(obs).toBe("Tool error: run_readonly_sql requires args.sql.");
+    expect(obs).toContain("Tool error: run_readonly_sql requires args.sql.");
   });
 
   it("blocks SQL referencing unknown tables", async () => {

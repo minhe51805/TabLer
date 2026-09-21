@@ -50,6 +50,9 @@ export const UNATTENDED_READ_ONLY_TOOLS: readonly AIAgentToolName[] = [
   "read_skill_resource",
   "delegate",
   "read_page",
+  // batch itself is allowed: every sub-call is re-checked against this same
+  // allow-list inside the executor, so a write tool in a batch is still refused.
+  "batch",
   "finish",
 ];
 

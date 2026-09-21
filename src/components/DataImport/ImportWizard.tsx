@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FileJson, FileSpreadsheet, Loader2, Play, Table, X } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useConnectionStore } from "../../stores/connectionStore";
+import { consumePendingCsvDrop } from "../../hooks/useCsvFileDrop";
 import { invokeMutation, invokeWithTimeout } from "../../utils/tauri-utils";
 
 type ImportFormat = "csv" | "json" | "xlsx";
@@ -76,20 +77,7 @@ export function ImportWizard() {
     return () => unlisten?.();
   }, []);
 
-  useEffect(() => {
-    const open = () => {
-      setIsOpen(true);
-      setPreview(null);
-      setTargetTable("");
-      setTargetColumns([]);
-      setSummary(null);
-      setError(null);
-    };
-    window.addEventListener("open-data-import-palette", open);
-    return () => window.removeEventListener("open-data-import-palette", open);
-  }, []);
-
-  const pickFile = useCallback(async (chosen: ImportFormat) => {
+  const pickFile = useCallback(async (chosen: ImportFormat, path?: string) => {
     setIsBusy(true);
     setError(null);
     try {
@@ -99,7 +87,10 @@ export function ImportWizard() {
           : chosen === "json"
             ? "preview_import_json"
             : "preview_import_xlsx";
-      const result = await invokeMutation<ImportPreview>(command, { sampleRows: 20 });
+      // Only the CSV preview accepts a pre-resolved path (file drops); the
+      // other formats still open their picker.
+      const args = chosen === "csv" && path ? { path, sampleRows: 20 } : { sampleRows: 20 };
+      const result = await invokeMutation<ImportPreview>(command, args);
       setFormat(chosen);
       setPreview(result);
       setTargetColumns(
@@ -118,6 +109,33 @@ export function ImportWizard() {
       setIsBusy(false);
     }
   }, []);
+
+  useEffect(() => {
+    const open = (event: Event) => {
+      setIsOpen(true);
+      setPreview(null);
+      setTargetTable("");
+      setTargetColumns([]);
+      setSummary(null);
+      setError(null);
+      // A dropped file carries its path in the event detail; the pending-drop
+      // stash covers drops that landed while this wizard was unmounted.
+      const pending = consumePendingCsvDrop();
+      const path = (event as CustomEvent<{ path?: string }>).detail?.path ?? pending;
+      if (path) void pickFile("csv", path);
+    };
+    window.addEventListener("open-data-import-palette", open);
+    return () => window.removeEventListener("open-data-import-palette", open);
+  }, [pickFile]);
+
+  // Drain a CSV dropped before the wizard was mounted (lazy global modals).
+  useEffect(() => {
+    const pending = consumePendingCsvDrop();
+    if (pending) {
+      setIsOpen(true);
+      void pickFile("csv", pending);
+    }
+  }, [pickFile]);
 
   const switchSheet = useCallback(
     async (nextSheet: string) => {

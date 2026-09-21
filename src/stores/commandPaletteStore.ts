@@ -12,6 +12,7 @@ export interface Command {
 }
 
 export type CommandCategory =
+  | "Recent"
   | "File"
   | "Edit"
   | "View"

@@ -54,7 +54,29 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
     window.dispatchEvent(new CustomEvent("font-scale-changed", { detail: { scale: next } }));
   };
 
+  // Recent connections: last 5 successfully connected saved connections,
+  // newest first. Enter/click reconnects via the saved-connection path.
+  const { connections, recentConnectionIds } = useConnectionStore.getState();
+  const recentConnectionCommands: Command[] = recentConnectionIds
+    .map((id) => connections.find((conn) => conn.id === id))
+    .filter((conn) => conn !== undefined)
+    .map((conn) => ({
+      id: `recent.connect-${conn.id}`,
+      label: `Reconnect: ${conn.name || conn.host || conn.id}`,
+      category: "Recent" as const,
+      action: makeAction(
+        `recent.connect-${conn.id}`,
+        () => {
+          void useConnectionStore.getState().connectSavedConnection(conn.id);
+        },
+        ctx,
+      ),
+    }));
+
   return [
+    // ── Recent ────────────────────────────────────────────────────────────────
+    ...recentConnectionCommands,
+
     // ── File ──────────────────────────────────────────────────────────────────
     {
       id: "file.new-query",

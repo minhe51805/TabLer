@@ -23,6 +23,8 @@ import {
   Timer,
   ArrowUpDown,
   ShieldCheck,
+  PanelRight,
+  Table2,
 } from "lucide-react";
 import { DataGridAnonymizerModal } from "./dialogs/DataGridAnonymizerModal";
 import { DataGridChartModal } from "./DataGridChartModal";
@@ -33,12 +35,14 @@ import { createPortal } from "react-dom";
 import {
   buildCsvContent,
   buildJsonContent,
+  buildMarkdownTableContent,
   buildTsvContent,
   exportToCSV,
   exportToJSON,
 } from "../../utils/export-utils";
 import { exportXLSX } from "../../utils/export-xlsx";
 import { buildMqlContent, exportToMQL } from "../../utils/export-mql";
+import { generateInsertSql } from "../../utils/sql-generator";
 import { serializePluginFormat } from "../../utils/plugin-format-runtime";
 import { emitAppToast } from "../../utils/app-toast";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
@@ -49,7 +53,11 @@ import {
   getEnabledPluginFormats,
   type RuntimePluginFormat,
 } from "../../utils/plugin-format-runtime";
+import type { QueryResult } from "../../types";
 import type { ResolvedColumn } from "./hooks/useDataGrid";
+import type { DatabaseType } from "../../types/database";
+import { getDataGridPowerCopy } from "./datagrid-power-copy";
+import { ResultDiffControls } from "../ResultDiff/ResultDiffControls";
 
 interface DataGridToolbarProps {
   viewMode?: "table" | "chart";
@@ -117,6 +125,14 @@ interface DataGridToolbarProps {
   autoRefreshPaused?: boolean;
   /** Skip a tick while a refresh is already in flight. */
   autoRefreshBusy?: boolean;
+  /** Full result shown in the grid — feeds the pin/compare result-diff control. */
+  diffResult?: QueryResult | null;
+  /** Dialect for INSERT copy generation. */
+  dbType?: DatabaseType;
+  /** Toggle the row-detail inspector for the active/selected row. */
+  onToggleRowInspector?: () => void;
+  /** True while the row inspector panel is open (button active state). */
+  rowInspectorOpen?: boolean;
 }
 
 function buildExportFilename(tableName: string | undefined, extension: string): string {
@@ -176,6 +192,10 @@ export function DataGridToolbar({
   autoRefreshTick,
   autoRefreshPaused = false,
   autoRefreshBusy = false,
+  diffResult = null,
+  dbType,
+  onToggleRowInspector,
+  rowInspectorOpen = false,
 }: DataGridToolbarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -195,6 +215,7 @@ export function DataGridToolbar({
   const { settings, updateSettings } = useDataGridSettings();
   const { t, language } = useI18n();
   const chartCopy = getDataGridChartCopy(language);
+  const powerCopy = getDataGridPowerCopy(language);
 
   /** True when at least one column can feed a numeric Y axis. */
   const hasNumericColumn = useMemo(
@@ -458,6 +479,16 @@ export function DataGridToolbar({
     const cols = resolvedColumns.map((c) => c.name);
     void copyText(buildTsvContent(cols, dataRows), "TSV");
   }, [copyText, dataRows, resolvedColumns]);
+  const handleCopyMarkdown = useCallback(() => {
+    const cols = resolvedColumns.map((c) => c.name);
+    void copyText(buildMarkdownTableContent(cols, dataRows), "Markdown");
+  }, [copyText, dataRows, resolvedColumns]);
+
+  const handleCopyInsert = useCallback(() => {
+    if (!tableName) return;
+    const cols = resolvedColumns.map((c) => c.name);
+    void copyText(generateInsertSql(tableName, cols, dataRows, dbType), "INSERT");
+  }, [copyText, dataRows, dbType, resolvedColumns, tableName]);
 
   const handleCopyJSON = useCallback(() => {
     const cols = resolvedColumns.map((c) => c.name);
@@ -844,6 +875,18 @@ export function DataGridToolbar({
               <span>{chartCopy.chart.title}</span>
             </button>
           )}
+          {onToggleRowInspector && (
+            <button
+              type="button"
+              className={`datagrid-footer-action datagrid-icon-action${rowInspectorOpen ? " active" : ""}`}
+              onClick={onToggleRowInspector}
+              title={powerCopy.rowInspector.button}
+              aria-label={powerCopy.rowInspector.button}
+              aria-pressed={rowInspectorOpen}
+            >
+              <PanelRight className="!w-3.5 !h-3.5" />
+            </button>
+          )}
           {useMemo(() => {
             if (!showRefreshMenu || !refreshBtnRef.current) return null;
             const rect = refreshBtnRef.current.getBoundingClientRect();
@@ -1012,6 +1055,22 @@ export function DataGridToolbar({
                 icon: FileJson,
                 run: handleCopyJSON,
               },
+              {
+                label: powerCopy.copyAs.markdown,
+                hint: powerCopy.copyAs.markdownHint,
+                icon: Table2,
+                run: handleCopyMarkdown,
+              },
+              ...(tableName
+                ? [
+                    {
+                      label: powerCopy.copyAs.insert,
+                      hint: powerCopy.copyAs.insertHint,
+                      icon: FileCode,
+                      run: handleCopyInsert,
+                    },
+                  ]
+                : []),
               { label: "MQL", hint: t("datagrid.copyHintMql"), icon: FileCode, run: handleCopyMQL },
               {
                 label: t("datagrid.anonymizer.title"),
@@ -1062,8 +1121,12 @@ export function DataGridToolbar({
             handleCopyCSV,
             handleCopyTSV,
             handleCopyJSON,
+            handleCopyMarkdown,
+            handleCopyInsert,
             handleCopyMQL,
             handleCopyPlugin,
+            powerCopy,
+            tableName,
             t,
           ])}
 
@@ -1149,6 +1212,11 @@ export function DataGridToolbar({
               </button>
             </span>
           )}
+
+          <ResultDiffControls
+            result={diffResult}
+            label={tableName ?? externalResult?.query ?? "result"}
+          />
 
           <span
             ref={settingsBtnRef}

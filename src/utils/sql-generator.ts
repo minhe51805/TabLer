@@ -52,6 +52,19 @@ function getQuoteFn(dbType: DatabaseType | undefined): QuoteFn {
   }
 }
 
+/**
+ * Quotes a possibly qualified identifier ("schema.table") for the dialect —
+ * each dot-separated part is quoted individually. Use this for table names;
+ * bare column names can go through the per-dialect quote directly.
+ */
+export function quoteIdentifier(name: string, dbType?: DatabaseType): string {
+  const quote = getQuoteFn(dbType);
+  return name
+    .split(".")
+    .map((part) => quote(part))
+    .join(".");
+}
+
 /** Converts a cell value to a SQL literal string. */
 function cellToSql(value: unknown, dbType: DatabaseType | undefined): string {
   if (value === null || value === undefined) return "NULL";
@@ -103,7 +116,7 @@ export function generateInsertSql(
 
   for (const row of rows) {
     const vals = row.map((v) => cellToSql(v, dbType)).join(", ");
-    lines.push(`INSERT INTO ${quote(tableName)} (${colList}) VALUES (${vals});`);
+    lines.push(`INSERT INTO ${quoteIdentifier(tableName, dbType)} (${colList}) VALUES (${vals});`);
   }
 
   return lines.join("\n");
@@ -146,7 +159,7 @@ export function generateUpdateSql(
     if (sets.length === 0 || whereParts.length === 0) continue;
 
     lines.push(
-      `UPDATE ${quote(tableName)} SET ${sets.join(", ")} WHERE ${whereParts.join(" AND ")};`,
+      `UPDATE ${quoteIdentifier(tableName, dbType)} SET ${sets.join(", ")} WHERE ${whereParts.join(" AND ")};`,
     );
   }
 
@@ -186,7 +199,7 @@ export function generateInsertSqlParameterized(
   const colList = columns.map(quote).join(", ");
   const placeholders = columns.map((col) => `$.${col}`).join(", ");
 
-  return `INSERT INTO ${quote(tableName)} (${colList}) VALUES (${placeholders});`;
+  return `INSERT INTO ${quoteIdentifier(tableName, dbType)} (${colList}) VALUES (${placeholders});`;
 }
 
 /**
@@ -213,7 +226,7 @@ export function generateUpdateSqlParameterized(
 
   if (sets.length === 0) return "";
 
-  return `UPDATE ${quote(tableName)} SET ${sets} WHERE ${whereParts};`;
+  return `UPDATE ${quoteIdentifier(tableName, dbType)} SET ${sets} WHERE ${whereParts};`;
 }
 
 /**
@@ -230,5 +243,5 @@ export function generateDeleteSqlParameterized(
   const quote = getQuoteFn(dbType);
   const whereParts = primaryKeyColumns.map((col) => `${quote(col)} = $.${col}`).join(" AND ");
 
-  return `DELETE FROM ${quote(tableName)} WHERE ${whereParts};`;
+  return `DELETE FROM ${quoteIdentifier(tableName, dbType)} WHERE ${whereParts};`;
 }

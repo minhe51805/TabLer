@@ -1,5 +1,7 @@
 /** Safe mode protection levels for query execution. */
 
+import { normalizedStatementIsDisguisedWrite } from "../utils/sqlStatements";
+
 export type SafeModeLevel = 0 | 1 | 2 | 3 | 4 | 5;
 export type ConnectionEnvironment = "development" | "staging" | "production" | "unknown";
 
@@ -18,7 +20,8 @@ export const SAFE_MODE_LABELS: Record<SafeModeLevel, { label: string; descriptio
   },
   1: {
     label: "Read Only",
-    description: "Only SELECT, SHOW, EXPLAIN, WITH queries are allowed. All write operations are blocked.",
+    description:
+      "Only SELECT, SHOW, EXPLAIN, WITH queries are allowed. All write operations are blocked.",
   },
   2: {
     label: "Low Risk",
@@ -26,15 +29,18 @@ export const SAFE_MODE_LABELS: Record<SafeModeLevel, { label: string; descriptio
   },
   3: {
     label: "Standard",
-    description: "INSERT, UPDATE, DELETE require confirmation. DROP, TRUNCATE, ALTER (except RENAME), CREATE TABLE are blocked.",
+    description:
+      "INSERT, UPDATE, DELETE require confirmation. DROP, TRUNCATE, ALTER (except RENAME), CREATE TABLE are blocked.",
   },
   4: {
     label: "Strict",
-    description: "Confirmation required for ALL writes: INSERT, UPDATE, DELETE, ALTER, CREATE, DROP, TRUNCATE, GRANT, REVOKE.",
+    description:
+      "Confirmation required for ALL writes: INSERT, UPDATE, DELETE, ALTER, CREATE, DROP, TRUNCATE, GRANT, REVOKE.",
   },
   5: {
     label: "Paranoid",
-    description: "Confirmation required for SELECT and ALL writes. Full SQL preview + estimated affected rows shown before execution.",
+    description:
+      "Confirmation required for SELECT and ALL writes. Full SQL preview + estimated affected rows shown before execution.",
   },
 };
 
@@ -49,11 +55,7 @@ export const ALWAYS_BLOCKED_PATTERNS = [
 ];
 
 /** Statements requiring confirmation at level 3+. */
-export const LEVEL3_CONFIRM_PATTERNS = [
-  /^\s*INSERT\s+/i,
-  /^\s*UPDATE\s+/i,
-  /^\s*DELETE\s+/i,
-];
+export const LEVEL3_CONFIRM_PATTERNS = [/^\s*INSERT\s+/i, /^\s*UPDATE\s+/i, /^\s*DELETE\s+/i];
 
 /** Statements requiring confirmation at level 4+. */
 export const LEVEL4_CONFIRM_PATTERNS = [
@@ -72,6 +74,14 @@ export const RENAME_COLUMN_PATTERN = /^\s*ALTER\s+TABLE\s+\S+\s+RENAME\s+COLUMN\
 export function classifyStatement(sql: string): StatementRiskType {
   const trimmed = sql.trim();
 
+  // SELECT ... INTO, EXPLAIN ANALYZE <write>, and mutating CTEs wear a read's
+  // leading keyword — defer to the mutating-statement check before trusting it.
+  if (
+    /^\s*(SELECT|EXPLAIN|WITH|PRAGMA)\s*/i.test(trimmed) &&
+    normalizedStatementIsDisguisedWrite(trimmed.replace(/\s+/g, " ").trim().toUpperCase())
+  ) {
+    return "ddl";
+  }
   if (/^\s*(SELECT|SHOW|EXPLAIN|WITH|DESCRIBE|DESC)\s+/i.test(trimmed)) {
     return "read";
   }
@@ -88,8 +98,8 @@ export function classifyStatement(sql: string): StatementRiskType {
   ) {
     return "ddl";
   }
-
-  return "read";
+  // Fail closed: anything unrecognized is not a read.
+  return "ddl";
 }
 
 /** Check if a statement is always blocked at a given level. */
@@ -101,17 +111,26 @@ export function isBlockedAtLevel(level: SafeModeLevel, sql: string): boolean {
       return false;
 
     case 1: {
-      // Read only: block everything except SELECT family
+      // Read only: block everything except SELECT family — and even a
+      // SELECT/EXPLAIN/WITH is blocked when it actually mutates (SELECT INTO,
+      // EXPLAIN ANALYZE <write>, data-modifying CTE).
       const readPattern = /^\s*(SELECT|SHOW|EXPLAIN|WITH|DESCRIBE|DESC)\s+/i;
-      return !readPattern.test(trimmed);
+      return (
+        !readPattern.test(trimmed) ||
+        normalizedStatementIsDisguisedWrite(trimmed.replace(/\s+/g, " ").trim().toUpperCase())
+      );
     }
 
     case 2: {
       // Low risk: allow SELECT + INSERT only
       const allowed = /^\s*(SELECT|SHOW|EXPLAIN|WITH|DESCRIBE|DESC|INSERT)\s+/i;
-      return !allowed.test(trimmed);
+      if (!allowed.test(trimmed)) return true;
+      // A disguised write is not "low risk" just because it starts with SELECT.
+      return (
+        /^\s*(SELECT|EXPLAIN|WITH)\s+/i.test(trimmed) &&
+        normalizedStatementIsDisguisedWrite(trimmed.replace(/\s+/g, " ").trim().toUpperCase())
+      );
     }
-
     case 3: {
       // Standard: block DROP, TRUNCATE, CREATE TABLE, ALTER (except RENAME COLUMN)
       for (const pattern of ALWAYS_BLOCKED_PATTERNS) {

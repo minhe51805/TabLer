@@ -43,56 +43,203 @@ pub struct SqlSafetyDecision {
     pub filesystem_access: bool,
 }
 
-fn canonical_statement_kind(statement: &str) -> SqlStatementKind {
-    let normalized = statement
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_uppercase();
-    let first = normalized.split_whitespace().next().unwrap_or_default();
-    let tokens = normalized
-        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
-    let contains_write = tokens.iter().any(|token| {
-        matches!(
-            *token,
-            "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "REPLACE" | "COPY"
-        )
-    });
-
-    match first {
-        "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "VALUES" => SqlStatementKind::Read,
-        "EXPLAIN" => {
-            if contains_write {
-                SqlStatementKind::Write
+/// Classifies a parsed statement by its real effect instead of its leading
+/// keyword. The old first-keyword check let `SELECT ... INTO`, `COPY` file
+/// transfers, `EXPLAIN ANALYZE <write>`, and data-modifying CTEs pass as
+/// reads; walking the AST closes that hole for every consumer of
+/// [`SqlSafetyDecision::read_only`].
+fn ast_statement_kind(statement: &sqlparser::ast::Statement) -> SqlStatementKind {
+    use sqlparser::ast::Statement as S;
+    match statement {
+        S::Query(query) => ast_query_kind(query),
+        S::ExplainTable { .. } => SqlStatementKind::Read,
+        S::Explain {
+            analyze,
+            statement,
+            options,
+            ..
+        } => {
+            // EXPLAIN ANALYZE executes the wrapped statement; a plain EXPLAIN
+            // only plans it, but a read-only surface must not plan writes
+            // either — both inherit the wrapped kind when it is not a read.
+            let executes = *analyze
+                || options.as_ref().is_some_and(|opts| {
+                    opts.iter()
+                        .any(|opt| opt.name.value.eq_ignore_ascii_case("analyze"))
+                });
+            let inner = ast_statement_kind(statement);
+            if executes || inner != SqlStatementKind::Read {
+                inner
             } else {
                 SqlStatementKind::Read
             }
         }
-        "WITH" => {
-            if contains_write {
-                SqlStatementKind::Write
-            } else {
-                SqlStatementKind::Read
-            }
-        }
-        "PRAGMA" => {
-            if normalized.contains('=') {
+        S::Insert(_)
+        | S::Update { .. }
+        | S::Delete(_)
+        | S::Merge { .. }
+        | S::Copy { .. }
+        | S::CopyIntoSnowflake { .. }
+        | S::LoadData { .. }
+        | S::Unload { .. }
+        | S::LockTables { .. }
+        | S::UnlockTables
+        | S::OptimizeTable { .. }
+        | S::Msck { .. }
+        | S::Analyze { .. }
+        | S::Truncate { .. }
+        | S::Install { .. }
+        | S::Load { .. }
+        | S::Directory { .. }
+        | S::List(_)
+        | S::Remove(_)
+        | S::Cache { .. }
+        | S::UNCache { .. }
+        | S::Call(_)
+        | S::Execute { .. }
+        | S::Flush { .. } => SqlStatementKind::Write,
+        S::CreateView { .. }
+        | S::CreateTable(_)
+        | S::CreateVirtualTable { .. }
+        | S::CreateIndex(_)
+        | S::CreateRole { .. }
+        | S::CreateSecret { .. }
+        | S::CreateServer(_)
+        | S::CreatePolicy { .. }
+        | S::CreateConnector(_)
+        | S::AlterTable { .. }
+        | S::AlterIndex { .. }
+        | S::AlterView { .. }
+        | S::AlterType(_)
+        | S::AlterRole { .. }
+        | S::AlterPolicy { .. }
+        | S::AlterConnector { .. }
+        | S::AttachDatabase { .. }
+        | S::AttachDuckDBDatabase { .. }
+        | S::DetachDuckDBDatabase { .. }
+        | S::Drop { .. }
+        | S::DropFunction { .. }
+        | S::DropDomain(_)
+        | S::DropProcedure { .. }
+        | S::DropSecret { .. }
+        | S::DropPolicy { .. }
+        | S::DropConnector { .. }
+        | S::CreateExtension { .. }
+        | S::DropExtension { .. }
+        | S::CreateSchema { .. }
+        | S::CreateDatabase { .. }
+        | S::CreateFunction(_)
+        | S::CreateTrigger { .. }
+        | S::DropTrigger { .. }
+        | S::CreateProcedure { .. }
+        | S::CreateMacro { .. }
+        | S::CreateStage { .. }
+        | S::CreateSequence { .. }
+        | S::CreateDomain(_)
+        | S::CreateType { .. }
+        | S::RenameTable(_)
+        | S::Comment { .. } => SqlStatementKind::Schema,
+        S::Set(_)
+        | S::Use(_)
+        | S::Grant { .. }
+        | S::Deny(_)
+        | S::Revoke { .. }
+        | S::AlterSession { .. }
+        | S::Prepare { .. }
+        | S::Deallocate { .. }
+        | S::Declare { .. }
+        | S::Fetch { .. }
+        | S::Open(_)
+        | S::Close { .. }
+        | S::Discard { .. }
+        | S::LISTEN { .. }
+        | S::UNLISTEN { .. }
+        | S::NOTIFY { .. } => SqlStatementKind::Session,
+        S::StartTransaction { .. }
+        | S::Commit { .. }
+        | S::Rollback { .. }
+        | S::Savepoint { .. }
+        | S::ReleaseSavepoint { .. } => SqlStatementKind::Transaction,
+        S::Pragma { name, value, is_eq } => {
+            // `PRAGMA name` reads; `name = v` assigns; `name(v)` is ambiguous —
+            // only the known read-only pragma functions stay reads.
+            const READONLY_PRAGMAS: &[&str] = &[
+                "table_info",
+                "table_xinfo",
+                "index_info",
+                "index_list",
+                "index_xinfo",
+                "foreign_key_list",
+                "database_list",
+                "compile_options",
+                "integrity_check",
+                "quick_check",
+                "foreign_key_check",
+                "collation_list",
+                "function_list",
+                "module_list",
+                "pragma_list",
+                "table_list",
+            ];
+            let pragma_name = name.to_string().to_ascii_lowercase();
+            if *is_eq || (value.is_some() && !READONLY_PRAGMAS.contains(&pragma_name.as_str())) {
                 SqlStatementKind::Session
             } else {
                 SqlStatementKind::Read
             }
         }
-        "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "REPLACE" | "COPY" => SqlStatementKind::Write,
-        "CREATE" | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" | "COMMENT" => SqlStatementKind::Schema,
-        "GRANT" | "REVOKE" | "USE" | "ATTACH" | "DETACH" | "SET" | "RESET" => {
-            SqlStatementKind::Session
-        }
-        "BEGIN" | "START" | "COMMIT" | "ROLLBACK" | "SAVEPOINT" | "RELEASE" => {
-            SqlStatementKind::Transaction
-        }
+        S::ShowFunctions { .. }
+        | S::ShowVariable { .. }
+        | S::ShowStatus { .. }
+        | S::ShowVariables { .. }
+        | S::ShowCreate { .. }
+        | S::ShowColumns { .. }
+        | S::ShowDatabases { .. }
+        | S::ShowSchemas { .. }
+        | S::ShowObjects(_)
+        | S::ShowTables { .. }
+        | S::ShowViews { .. }
+        | S::ShowCollation { .. } => SqlStatementKind::Read,
         _ => SqlStatementKind::Unknown,
+    }
+}
+
+/// Kind of a `SELECT`-shaped [`sqlparser::ast::Query`]. `SELECT ... INTO`
+/// creates a table and data-modifying CTE bodies (`WITH x AS (DELETE …)`)
+/// write even though the outer statement reads.
+fn ast_query_kind(query: &sqlparser::ast::Query) -> SqlStatementKind {
+    if let Some(with) = &query.with {
+        for cte in &with.cte_tables {
+            if ast_query_kind(&cte.query) != SqlStatementKind::Read {
+                return SqlStatementKind::Write;
+            }
+        }
+    }
+    ast_set_expr_kind(&query.body)
+}
+
+fn ast_set_expr_kind(body: &sqlparser::ast::SetExpr) -> SqlStatementKind {
+    use sqlparser::ast::SetExpr as E;
+    match body {
+        E::Select(select) => {
+            if select.into.is_some() {
+                SqlStatementKind::Write
+            } else {
+                SqlStatementKind::Read
+            }
+        }
+        E::Query(query) => ast_query_kind(query),
+        E::SetOperation { left, right, .. } => {
+            if ast_set_expr_kind(left) == SqlStatementKind::Read
+                && ast_set_expr_kind(right) == SqlStatementKind::Read
+            {
+                SqlStatementKind::Read
+            } else {
+                SqlStatementKind::Write
+            }
+        }
+        E::Values(_) | E::Table(_) => SqlStatementKind::Read,
+        E::Insert(_) | E::Update(_) | E::Delete(_) => SqlStatementKind::Write,
     }
 }
 
@@ -229,6 +376,16 @@ pub fn detect_dangerous_capability(
     if normalized.contains("LOAD DATA") && normalized.contains("INFILE") {
         return Some("reads a server-side file via LOAD DATA INFILE".to_string());
     }
+    if normalized.contains("COPY")
+        && (normalized.contains(" TO '") || normalized.contains(" FROM '"))
+    {
+        return Some(
+            "reads or writes a server-side file via COPY ... TO/FROM '<path>'".to_string(),
+        );
+    }
+    if normalized.starts_with("UNLOAD") && normalized.contains(" TO '") {
+        return Some("writes query results to external storage via UNLOAD ... TO".to_string());
+    }
 
     // Function-call-style capabilities.
     for name in DANGEROUS_SQL_FUNCTIONS {
@@ -281,10 +438,9 @@ fn classify_sql_dialect_inner(sql: &str, database_type: Option<DatabaseType>) ->
             let statements = parsed
                 .into_iter()
                 .map(|statement| {
-                    let canonical = statement.to_string();
-                    let kind = canonical_statement_kind(&canonical);
+                    let kind = ast_statement_kind(&statement);
                     SqlStatementDecision {
-                        sql: canonical,
+                        sql: statement.to_string(),
                         kind,
                         read_only: kind == SqlStatementKind::Read,
                     }
@@ -769,5 +925,60 @@ mod tests {
         let clean =
             classify_sql_with_dialect("SELECT id FROM users", Some(DatabaseType::PostgreSQL));
         assert!(!clean.filesystem_access);
+    }
+
+    #[test]
+    fn classifier_rejects_select_into_as_read_only() {
+        for sql in [
+            "SELECT * INTO backup FROM users",
+            "SELECT id INTO TEMP t FROM users",
+        ] {
+            let decision = classify_sql(sql);
+            assert!(!decision.read_only, "SELECT INTO leaked as read: {sql}");
+            assert_eq!(decision.statements[0].kind, SqlStatementKind::Write);
+        }
+    }
+
+    #[test]
+    fn classifier_rejects_explain_analyze_writes() {
+        let analyzed = classify_sql("EXPLAIN ANALYZE DELETE FROM users");
+        assert!(!analyzed.read_only);
+        assert_eq!(analyzed.statements[0].kind, SqlStatementKind::Write);
+
+        // A plain EXPLAIN of a write is still not a read on a read-only surface.
+        let planned = classify_sql("EXPLAIN INSERT INTO users VALUES (1)");
+        assert!(!planned.read_only);
+
+        // EXPLAIN ANALYZE of a real read stays a read.
+        let read = classify_sql("EXPLAIN ANALYZE SELECT * FROM users");
+        assert!(read.read_only);
+    }
+
+    #[test]
+    fn classifier_rejects_utility_writes() {
+        for sql in [
+            "COPY users TO '/tmp/u.csv'",
+            "VACUUM users",
+            "CALL rebuild_index()",
+            "DO $$ BEGIN DELETE FROM users; END $$",
+            "LOCK TABLE users IN EXCLUSIVE MODE",
+            "PRAGMA journal_mode = WAL",
+        ] {
+            let decision = classify_sql(sql);
+            assert!(!decision.read_only, "utility write leaked as read: {sql}");
+        }
+        // Bare read pragmas stay reads; `PRAGMA name(arg)` with an identifier
+        // arg does not parse under sqlparser and falls back to Unknown — the
+        // same fail-closed outcome as before this change.
+        assert!(classify_sql("PRAGMA table_info").read_only);
+    }
+
+    #[test]
+    fn dangerous_capability_flags_copy_file_paths_and_unload() {
+        assert!(detect_dangerous_capability("COPY users TO '/tmp/u.csv'", None).is_some());
+        assert!(detect_dangerous_capability("COPY users FROM '/etc/passwd'", None).is_some());
+        assert!(
+            detect_dangerous_capability("UNLOAD (SELECT * FROM t) TO 's3://b/'", None).is_some()
+        );
     }
 }

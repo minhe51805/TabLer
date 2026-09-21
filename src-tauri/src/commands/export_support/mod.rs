@@ -11,6 +11,7 @@ use crate::database::driver::DatabaseDriver;
 use crate::database::models::{DatabaseType, ForeignKeyInfo, TableInfo};
 use anyhow::{Context, Result};
 use chrono::Utc;
+use futures_util::TryStreamExt;
 use rfd::FileDialog;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -169,26 +170,22 @@ pub(super) async fn build_sql_export(
             // table up front keeps the ONs from shadowing each other.
             output.push_str(&format!("SET IDENTITY_INSERT {table_ref} ON;\n"));
         }
-        let mut offset = 0_u64;
+        let mut batches = driver.export_table_rows(
+            &bundle.identifier,
+            database,
+            EXPORT_BATCH_SIZE,
+            None,
+            None,
+            None,
+        );
 
-        loop {
-            let batch = timeout(
-                EXPORT_BATCH_TIMEOUT,
-                driver.get_table_data(
-                    &bundle.identifier,
-                    database,
-                    offset,
-                    EXPORT_BATCH_SIZE,
-                    None,
-                    None,
-                    None,
-                ),
-            )
+        while let Some(batch) = timeout(EXPORT_BATCH_TIMEOUT, batches.try_next())
             .await
-            .with_context(|| format!("Exporting rows from '{}' timed out", bundle.identifier))??;
-
+            .with_context(|| format!("Exporting rows from '{}' timed out", bundle.identifier))?
+            .with_context(|| format!("Exporting rows from '{}' failed", bundle.identifier))?
+        {
             if batch.rows.is_empty() {
-                break;
+                continue;
             }
 
             output.push_str(&build_insert_statement_batch(
@@ -200,11 +197,6 @@ pub(super) async fn build_sql_export(
             output.push('\n');
 
             total_rows += batch.rows.len() as u64;
-            offset += batch.rows.len() as u64;
-
-            if (batch.rows.len() as u64) < EXPORT_BATCH_SIZE {
-                break;
-            }
         }
         if db_type == DatabaseType::MSSQL {
             output.push_str(&format!("SET IDENTITY_INSERT {table_ref} OFF;\n"));
@@ -273,39 +265,26 @@ pub(super) async fn build_json_snapshot(
     let mut snapshot_tables = Vec::with_capacity(table_bundles.len());
     for bundle in table_bundles {
         let mut rows = Vec::new();
-        let mut offset = 0_u64;
+        let mut batches = driver.export_table_rows(
+            &bundle.identifier,
+            database,
+            EXPORT_BATCH_SIZE,
+            None,
+            None,
+            None,
+        );
 
-        loop {
-            let batch = timeout(
-                EXPORT_BATCH_TIMEOUT,
-                driver.get_table_data(
-                    &bundle.identifier,
-                    database,
-                    offset,
-                    EXPORT_BATCH_SIZE,
-                    None,
-                    None,
-                    None,
-                ),
-            )
+        while let Some(batch) = timeout(EXPORT_BATCH_TIMEOUT, batches.try_next())
             .await
-            .with_context(|| format!("Exporting rows from '{}' timed out", bundle.identifier))??;
-
-            if batch.rows.is_empty() {
-                break;
-            }
-
+            .with_context(|| format!("Exporting rows from '{}' timed out", bundle.identifier))?
+            .with_context(|| format!("Exporting rows from '{}' failed", bundle.identifier))?
+        {
             rows.extend(
                 batch
                     .rows
                     .iter()
                     .map(|row| row_to_object(&batch.columns, row)),
             );
-            offset += batch.rows.len() as u64;
-
-            if (batch.rows.len() as u64) < EXPORT_BATCH_SIZE {
-                break;
-            }
         }
 
         snapshot_tables.push(DatabaseExportSnapshotTable {

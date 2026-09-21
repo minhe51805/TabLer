@@ -49,3 +49,15 @@ export function resolveAIFailoverConsent(approved: boolean): void {
   pendingResolver = null;
   resolver?.(approved);
 }
+
+/**
+ * Resolves a pending consent request as denied WITHOUT remembering the
+ * decision — closing the panel is not a user choice, so the question may be
+ * asked again later. Releases callers (e.g. scheduled runs) that would
+ * otherwise wait forever on a dialog nobody can see.
+ */
+export function denyPendingAIFailoverConsent(): void {
+  const resolver = pendingResolver;
+  pendingResolver = null;
+  resolver?.(false);
+}

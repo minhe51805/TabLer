@@ -2,6 +2,7 @@
 //! File format: { version: "1", salt: base64, iv: base64, data: base64 }
 
 use crate::database::models::{ConnectionConfig, DatabaseType, SslMode};
+use crate::storage::connection_storage::ConnectionStorage;
 use aes_gcm::{
     aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce,
@@ -13,6 +14,8 @@ use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
+use tauri::State;
+use uuid::Uuid;
 
 const PBKDF2_V1_ITERATIONS: u32 = 100_000;
 const PBKDF2_V2_ITERATIONS: u32 = 600_000;
@@ -229,6 +232,84 @@ impl From<&ConnectionConfig> for ExportableConnection {
     }
 }
 
+impl ExportableConnection {
+    /// Rebuild a full ConnectionConfig from an export entry. The export format
+    /// never carries passwords, so the imported record starts credential-less
+    /// unless the user supplied one in the import dialog.
+    fn to_connection_config(&self, password: Option<String>) -> ConnectionConfig {
+        let mut config = ConnectionConfig {
+            id: Uuid::new_v4().to_string(),
+            name: self.name.clone(),
+            db_type: self.db_type,
+            host: self.host.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            password,
+            database: self.database.clone(),
+            file_path: self.file_path.clone(),
+            use_ssl: self.use_ssl,
+            ssl_mode: self.ssl_mode,
+            ssl_ca_cert_path: self.ssl_ca_cert_path.clone(),
+            ssl_client_cert_path: self.ssl_client_cert_path.clone(),
+            ssl_client_key_path: self.ssl_client_key_path.clone(),
+            ssl_skip_host_verification: self.ssl_skip_host_verification,
+            color: self.color.clone(),
+            additional_fields: self.additional_fields.clone(),
+            startup_commands: self.startup_commands.clone(),
+            ..ConnectionConfig::default()
+        };
+        config.fill_generated_name();
+        config
+    }
+}
+
+/// Two entries describe the same connection when the id matches (re-import of
+/// an already-persisted record) or when engine + endpoint + display name all
+/// match (re-import of the same export file, which mints fresh ids).
+fn is_same_connection(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
+    a.id == b.id
+        || (a.db_type == b.db_type
+            && a.name == b.name
+            && a.host == b.host
+            && a.port == b.port
+            && a.file_path == b.file_path)
+}
+
+/// Persist imported configs through the same ConnectionStorage path that
+/// `connect_database` uses, skipping entries that already exist.
+fn persist_imported_connections(
+    storage: &ConnectionStorage,
+    imported: &[ExportableConnection],
+    selected_indices: &[usize],
+    passwords: &HashMap<usize, String>,
+) -> Result<(), String> {
+    let existing = storage
+        .load_connections()
+        .map_err(|error| format!("Failed to load saved connections: {error}"))?;
+    for &index in selected_indices {
+        let Some(exportable) = imported.get(index) else {
+            continue;
+        };
+        let password = passwords
+            .get(&index)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let config = exportable.to_connection_config(password);
+        if existing
+            .iter()
+            .any(|saved| is_same_connection(saved, &config))
+        {
+            continue;
+        }
+        storage
+            .save_connection(&config)
+            .map_err(|error| format!("Failed to save the imported connection: {error}"))?;
+    }
+    Ok(())
+}
+
 /// Export selected connections to an encrypted, versioned .tabler-connections file.
 #[tauri::command]
 pub fn export_connections_to_file(
@@ -292,17 +373,34 @@ pub fn export_connections_to_file(
 }
 
 /// Imports v2 connection exports and transparently migrates legacy v1 files.
+/// When `selected_indices` is provided, those entries are persisted through
+/// ConnectionStorage (the same path `connect_database` saves through) and any
+/// per-entry passwords typed into the import dialog are stored in the keyring.
+/// Without it the command is a pure preview: decrypt and return, save nothing.
 #[tauri::command]
 pub fn import_connections_from_file(
     file_path: String,
     password: String,
+    selected_indices: Option<Vec<usize>>,
+    passwords: Option<HashMap<usize, String>>,
+    conn_storage: State<'_, ConnectionStorage>,
 ) -> Result<Vec<ExportableConnection>, String> {
     let encrypted =
         std::fs::read_to_string(&file_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
     let decrypted = decrypt_connections(&encrypted, &password)?;
+    let connections = parse_decrypted_connections(&decrypted)?;
 
-    parse_decrypted_connections(&decrypted)
+    if let Some(indices) = selected_indices {
+        persist_imported_connections(
+            &conn_storage,
+            &connections,
+            &indices,
+            &passwords.unwrap_or_default(),
+        )?;
+    }
+
+    Ok(connections)
 }
 
 fn parse_decrypted_connections(decrypted: &str) -> Result<Vec<ExportableConnection>, String> {

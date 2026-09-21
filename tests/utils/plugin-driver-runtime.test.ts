@@ -56,9 +56,7 @@ describe("plugin driver runtime", () => {
     expect(findStableOpenSearchDriver([plugin()])?.pluginId).toBe("opensearch-driver");
     expect(findStableOpenSearchDriver([plugin({ enabled: false })])).toBeUndefined();
     expect(findStableOpenSearchDriver([plugin({ verified: false })])).toBeUndefined();
-    expect(
-      findStableOpenSearchDriver([plugin({ validationError: "tampered" })]),
-    ).toBeUndefined();
+    expect(findStableOpenSearchDriver([plugin({ validationError: "tampered" })])).toBeUndefined();
   });
 
   it("rejects a contribution on the wrong runtime", () => {
@@ -123,8 +121,12 @@ describe("native sidecar driver gating (Phase 4f)", () => {
     expect(findSidecarDriverForProtocol([sidecarPlugin()], "redis")?.pluginId).toBe(
       "redis-sidecar-driver",
     );
-    expect(findSidecarDriverForProtocol([sidecarPlugin({ enabled: false })], "redis")).toBeUndefined();
-    expect(findSidecarDriverForProtocol([sidecarPlugin({ verified: false })], "redis")).toBeUndefined();
+    expect(
+      findSidecarDriverForProtocol([sidecarPlugin({ enabled: false })], "redis"),
+    ).toBeUndefined();
+    expect(
+      findSidecarDriverForProtocol([sidecarPlugin({ verified: false })], "redis"),
+    ).toBeUndefined();
     expect(
       findSidecarDriverForProtocol([sidecarPlugin({ validationError: "tampered" })], "redis"),
     ).toBeUndefined();
@@ -294,7 +296,7 @@ describe("applyEngineRuntimeAvailability (shared picker / plugin-manager truth)"
   });
 });
 
-describe("builtin-7 vs plugin-gated engine classification", () => {
+describe("builtin-12 vs plugin-gated engine classification", () => {
   const engine = (key: string, supported: boolean) => ({ key, label: key, supported });
 
   function cassandraSidecarPlugin(): InstalledPluginRecord {
@@ -313,17 +315,23 @@ describe("builtin-7 vs plugin-gated engine classification", () => {
     return record;
   }
 
-  it("ships exactly the seven default engines", () => {
-    expect([...BUILTIN_ENGINE_KEYS].sort()).toEqual(
-      ["duckdb", "mongodb", "mssql", "mysql", "postgresql", "redis", "sqlite"],
-    );
+  it("ships exactly the twelve default engines", () => {
+    expect([...BUILTIN_ENGINE_KEYS].sort()).toEqual([
+      "cockroachdb",
+      "duckdb",
+      "greenplum",
+      "mariadb",
+      "mongodb",
+      "mssql",
+      "mysql",
+      "postgresql",
+      "redis",
+      "redshift",
+      "sqlite",
+      "vertica",
+    ]);
     for (const key of BUILTIN_ENGINE_KEYS) expect(isBuiltinEngine(key)).toBe(true);
     for (const key of [
-      "mariadb",
-      "cockroachdb",
-      "greenplum",
-      "redshift",
-      "vertica",
       "cassandra",
       "libsql",
       "clickhouse",
@@ -346,18 +354,16 @@ describe("builtin-7 vs plugin-gated engine classification", () => {
   });
 
   it("gates every non-builtin engine behind an installed plugin", () => {
-    // A SQL-family engine that has no plugin can never leave roadmap.
+    // MariaDB is compiled into the backend (MySQL driver) — it is builtin now,
+    // not roadmap-gated.
     const mariadb = applyEngineRuntimeAvailability([engine("mariadb", true)], []);
-    expect(mariadb[0].supported).toBe(false);
-    expect(mariadb[0].pluginHttpState).toBe("roadmap");
+    expect(mariadb[0].supported).toBe(true);
 
     // A native engine that used to be built-in is now plugin-gated: even a
     // compiled build no longer makes it connectable without its plugin.
-    const cassandraNoPlugin = applyEngineRuntimeAvailability(
-      [engine("cassandra", true)],
-      [],
-      { cassandra: true },
-    );
+    const cassandraNoPlugin = applyEngineRuntimeAvailability([engine("cassandra", true)], [], {
+      cassandra: true,
+    });
     expect(cassandraNoPlugin[0].supported).toBe(false);
     expect(cassandraNoPlugin[0].pluginHttpState).toBe("roadmap");
 

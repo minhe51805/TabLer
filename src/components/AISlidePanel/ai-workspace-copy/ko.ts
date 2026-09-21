@@ -166,7 +166,7 @@ export const KO_COPY: AIWorkspaceCopy = {
     sqlConfirmBatchLabel: "이 실행에는 {count}개의 문이 있습니다.",
     autonomyFullConfirmTitle: "전체 권한을 활성화할까요?",
     autonomyFullConfirmBody:
-      "에이전트가 준비한 모든 SQL을 묻지 않고 자동 실행합니다. 쓰기 및 스키마 작업은 실행 전에 확인을 요청합니다.",
+      "에이전트가 읽기와 도구 호출을 묻지 않고 자동 실행합니다. 쓰기 및 스키마 작업은 실행 전에 확인이 필요합니다.",
     autonomyFullConfirmAllow: "전체 권한 사용",
     promptIdeas: [
       {

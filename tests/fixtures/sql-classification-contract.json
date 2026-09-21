@@ -12,8 +12,15 @@
     { "sql": "ALTER TABLE t ADD COLUMN c INT", "readOnly": false },
     { "sql": "DROP TABLE t", "readOnly": false },
     { "sql": "TRUNCATE TABLE t", "readOnly": false },
+    { "sql": "SELECT * INTO backup FROM users", "readOnly": false },
+    { "sql": "COPY users TO '/tmp/u.csv'", "readOnly": false },
+    { "sql": "VACUUM users", "readOnly": false },
+    { "sql": "PRAGMA journal_mode = WAL", "readOnly": false },
     { "sql": "USE analytics", "readOnly": false },
     { "sql": "SET ROLE admin", "readOnly": false },
-    { "sql": "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed", "readOnly": false }
+    {
+      "sql": "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed",
+      "readOnly": false
+    }
   ]
 }

@@ -34,10 +34,9 @@ describe("AI SQL execution policy", () => {
   });
 
   it("allows read-only statements without a mutation confirmation", () => {
-    expect(getAISqlConfirmationRequirement([
-      "SELECT * FROM users",
-      "EXPLAIN SELECT * FROM orders",
-    ])).toBeNull();
+    expect(
+      getAISqlConfirmationRequirement(["SELECT * FROM users", "EXPLAIN SELECT * FROM orders"]),
+    ).toBeNull();
   });
 
   it.each([
@@ -60,25 +59,36 @@ describe("AI SQL execution policy", () => {
   });
 
   it("uses the strictest requirement across a statement batch", () => {
-    expect(getAISqlConfirmationRequirement([
-      "SELECT * FROM users",
-      "UPDATE users SET active = 1 WHERE id = 1",
-      "DROP TABLE legacy_users",
-    ])).toBe("high-risk");
+    expect(
+      getAISqlConfirmationRequirement([
+        "SELECT * FROM users",
+        "UPDATE users SET active = 1 WHERE id = 1",
+        "DROP TABLE legacy_users",
+      ]),
+    ).toBe("high-risk");
   });
 
-  it("full autonomy replaces the per-run confirmation with the standing grant", () => {
-    expect(getAISqlConfirmationRequirement([
-      "UPDATE users SET active = 1 WHERE id = 1",
-      "DROP TABLE legacy_users",
-    ], "full")).toBeNull();
+  it("full autonomy still confirms mutations and high-risk statements", () => {
+    // The standing grant covers reads and tool calls only — the autonomy
+    // dialog promises writes keep their confirmation.
+    expect(
+      getAISqlConfirmationRequirement(
+        ["UPDATE users SET active = 1 WHERE id = 1", "DROP TABLE legacy_users"],
+        "full",
+      ),
+    ).toBe("high-risk");
+    expect(
+      getAISqlConfirmationRequirement(["UPDATE users SET active = 1 WHERE id = 1"], "full"),
+    ).toBe("mutation");
+    // Reads skip the dialog under full autonomy.
+    expect(getAISqlConfirmationRequirement(["SELECT * FROM users"], "full")).toBeNull();
     // Other autonomy levels keep the dialog.
-    expect(getAISqlConfirmationRequirement([
-      "UPDATE users SET active = 1 WHERE id = 1",
-    ], "review")).toBe("mutation");
-    expect(getAISqlConfirmationRequirement([
-      "UPDATE users SET active = 1 WHERE id = 1",
-    ])).toBe("mutation");
+    expect(
+      getAISqlConfirmationRequirement(["UPDATE users SET active = 1 WHERE id = 1"], "review"),
+    ).toBe("mutation");
+    expect(getAISqlConfirmationRequirement(["UPDATE users SET active = 1 WHERE id = 1"])).toBe(
+      "mutation",
+    );
   });
 });
 
@@ -100,13 +110,12 @@ describe("classifyAgentRun — single source for the safety nets", () => {
     expect(run.preApproved).toBe(true);
   });
 
-  it("full + UPDATE: willMutate + standing pre-approval without any dialog", () => {
-    // P1 regression: full autonomy mutations must still be classified as
-    // mutating so the auto-checkpoint / explorer invalidation / rollback
-    // hint all fire even though no dialog is shown.
+  it("full + UPDATE: willMutate + dialog + pre-approval via the dialog", () => {
+    // Full autonomy no longer skips the write confirmation; the dialog itself
+    // is what marks the run pre-approved for Safe Mode.
     const run = classifyAgentRun(["UPDATE users SET x = 1"], "full");
-    expect(run.requirement).toBeNull();
-    expect(run.needsDialog).toBe(false);
+    expect(run.requirement).toBe("high-risk");
+    expect(run.needsDialog).toBe(true);
     expect(run.willMutate).toBe(true);
     expect(run.preApproved).toBe(true);
   });

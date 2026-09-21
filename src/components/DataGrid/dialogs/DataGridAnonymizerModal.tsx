@@ -6,6 +6,7 @@ import { emitAppToast } from "../../../utils/app-toast";
 import {
   anonymizeRows,
   assertNoPrimaryKeyStrategies,
+  generateSalt,
   type AnonymizerStrategy,
   type AnonymizerValue,
 } from "../../../utils/anonymizer";
@@ -34,12 +35,22 @@ const STRATEGIES: Array<{ value: AnonymizerStrategy | "none"; labelKey: Translat
  * masked TSV to the clipboard. Primary-key columns refuse strategies —
  * masked keys would break row identity (see assertNoPrimaryKeyStrategies).
  */
-export function DataGridAnonymizerModal({ columns, dataRows, onClose }: DataGridAnonymizerModalProps) {
+export function DataGridAnonymizerModal({
+  columns,
+  dataRows,
+  onClose,
+}: DataGridAnonymizerModalProps) {
   const { t } = useI18n();
-  const [strategyByIndex, setStrategyByIndex] = useState<Record<number, AnonymizerStrategy | "none">>({});
+  const [strategyByIndex, setStrategyByIndex] = useState<
+    Record<number, AnonymizerStrategy | "none">
+  >({});
   const [salt, setSalt] = useState("");
+  // Random salt used when the field is left empty — shown below so the user
+  // can copy it and reproduce the same masks later.
+  const [generatedSalt] = useState(generateSalt);
   const [previewRows, setPreviewRows] = useState<AnonymizerValue[][]>([]);
   const [isCopying, setIsCopying] = useState(false);
+  const effectiveSalt = salt.trim() === "" ? generatedSalt : salt;
 
   const activeStrategies = useMemo(() => {
     const map = new Map<number, AnonymizerStrategy>();
@@ -54,7 +65,7 @@ export function DataGridAnonymizerModal({ columns, dataRows, onClose }: DataGrid
   // Live preview of the first rows with the current strategy set.
   useEffect(() => {
     let cancelled = false;
-    anonymizeRows(dataRows.slice(0, 5), activeStrategies, salt)
+    anonymizeRows(dataRows.slice(0, 5), activeStrategies, effectiveSalt)
       .then((rows) => {
         if (!cancelled) setPreviewRows(rows);
       })
@@ -64,7 +75,7 @@ export function DataGridAnonymizerModal({ columns, dataRows, onClose }: DataGrid
     return () => {
       cancelled = true;
     };
-  }, [activeStrategies, dataRows, salt]);
+  }, [activeStrategies, dataRows, effectiveSalt]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -80,7 +91,7 @@ export function DataGridAnonymizerModal({ columns, dataRows, onClose }: DataGrid
         columns.flatMap((column, index) => (column.is_primary_key ? [index] : [])),
         activeStrategies,
       );
-      const masked = await anonymizeRows(dataRows, activeStrategies, salt);
+      const masked = await anonymizeRows(dataRows, activeStrategies, effectiveSalt);
       const tsv = buildTsvContent(
         columns.map((column) => column.name),
         masked,
@@ -127,6 +138,7 @@ export function DataGridAnonymizerModal({ columns, dataRows, onClose }: DataGrid
           <>
             <div className="schema-diff-summary">
               <span>{t("datagrid.anonymizer.rowCount", { count: dataRows.length })}</span>
+              <span>{t("datagrid.anonymizer.loadedRowsOnly")}</span>
               <span>{t("datagrid.anonymizer.saltHint")}</span>
             </div>
 
@@ -138,6 +150,11 @@ export function DataGridAnonymizerModal({ columns, dataRows, onClose }: DataGrid
                 aria-label={t("datagrid.anonymizer.saltPlaceholder")}
               />
             </div>
+            {salt.trim() === "" && (
+              <div className="schema-diff-summary">
+                <span>{t("datagrid.anonymizer.generatedSalt", { salt: generatedSalt })}</span>
+              </div>
+            )}
 
             <div className="qs-list schema-diff-results">
               <div className="qs-item static global-search-match-kind">

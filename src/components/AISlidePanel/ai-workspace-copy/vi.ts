@@ -164,7 +164,7 @@ export const VI_COPY: AIWorkspaceCopy = {
     sqlConfirmBatchLabel: "{count} câu lệnh trong lượt chạy này.",
     autonomyFullConfirmTitle: "Bật toàn quyền?",
     autonomyFullConfirmBody:
-      "Agent sẽ tự chạy mọi câu SQL nó chuẩn bị mà không hỏi trước. Thao tác ghi và đổi schema vẫn sẽ hỏi xác nhận trước khi thực thi.",
+      "Agent sẽ tự chạy các lệnh đọc và tool call mà không hỏi trước. Thao tác ghi và đổi schema vẫn cần bạn xác nhận trước khi thực thi.",
     autonomyFullConfirmAllow: "Bật toàn quyền",
     promptIdeas: [
       {

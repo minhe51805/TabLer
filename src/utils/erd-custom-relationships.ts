@@ -1,12 +1,8 @@
 import type { ERRelationship } from "../types";
 
-export const ERD_CUSTOM_RELATIONSHIPS_STORAGE_KEY =
-  "tabler.erd.customRelationships.v1";
+export const ERD_CUSTOM_RELATIONSHIPS_STORAGE_KEY = "tabler.erd.customRelationships.v1";
 
-export function getERDRelationshipScopeKey(
-  connectionId: string,
-  database?: string,
-) {
+export function getERDRelationshipScopeKey(connectionId: string, database?: string) {
   return `${connectionId}|${database || ""}`;
 }
 
@@ -17,15 +13,13 @@ export function readCustomERDRelationships(
   if (typeof window === "undefined") return [];
 
   try {
-    const raw = window.localStorage.getItem(
-      ERD_CUSTOM_RELATIONSHIPS_STORAGE_KEY,
-    );
+    const raw = window.localStorage.getItem(ERD_CUSTOM_RELATIONSHIPS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Record<string, ERRelationship[]>;
-    const relationships =
-      parsed?.[getERDRelationshipScopeKey(connectionId, database)];
+    const relationships = parsed?.[getERDRelationshipScopeKey(connectionId, database)];
     return Array.isArray(relationships) ? relationships : [];
-  } catch {
+  } catch (error) {
+    console.warn("[ERD] Failed to load custom relationships:", error);
     return [];
   }
 }
@@ -38,18 +32,12 @@ export function writeCustomERDRelationships(
   if (typeof window === "undefined") return;
 
   try {
-    const raw = window.localStorage.getItem(
-      ERD_CUSTOM_RELATIONSHIPS_STORAGE_KEY,
-    );
-    const parsed = raw
-      ? (JSON.parse(raw) as Record<string, ERRelationship[]>)
-      : {};
+    const raw = window.localStorage.getItem(ERD_CUSTOM_RELATIONSHIPS_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, ERRelationship[]>) : {};
     parsed[getERDRelationshipScopeKey(connectionId, database)] = relationships;
-    window.localStorage.setItem(
-      ERD_CUSTOM_RELATIONSHIPS_STORAGE_KEY,
-      JSON.stringify(parsed),
-    );
-  } catch {
+    window.localStorage.setItem(ERD_CUSTOM_RELATIONSHIPS_STORAGE_KEY, JSON.stringify(parsed));
+  } catch (error) {
     // The active ER diagram remains usable when local persistence is unavailable.
+    console.warn("[ERD] Failed to persist custom relationships:", error);
   }
 }

@@ -42,11 +42,27 @@ export function useRecoverableConnectionError({
   const setForceLauncherVisible = useAppLayoutStore((state) => state.setForceLauncherVisible);
 
   useEffect(() => {
+    // A pending recovery timer must be cancelled whenever the error resolves
+    // or a fresh connect starts — otherwise it fires later and rips the user
+    // back to the launcher mid-work.
+    const cancelPendingRecovery = () => {
+      if (timeoutRef.current !== null) {
+        window.clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+        recoveredErrorRef.current = null;
+        setIsDelayActive(false);
+      }
+    };
     if (!error) {
+      cancelPendingRecovery();
       if (!isDelayActive) recoveredErrorRef.current = null;
       return;
     }
-    if (!isRecoverableConnectionError(error) || isConnecting) return;
+    if (!isRecoverableConnectionError(error)) return;
+    if (isConnecting) {
+      cancelPendingRecovery();
+      return;
+    }
     if (isDelayActive || timeoutRef.current !== null || recoveredErrorRef.current === error) return;
 
     recoveredErrorRef.current = error;

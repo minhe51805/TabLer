@@ -10,13 +10,18 @@ function loadTags(): ConnectionTag[] {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
-  } catch {
+  } catch (error) {
+    console.warn("[ConnectionTags] Failed to load tags:", error);
     return [];
   }
 }
 
 function saveTags(tags: ConnectionTag[]): void {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tags));
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tags));
+  } catch (error) {
+    console.warn("[ConnectionTags] Failed to persist tags:", error);
+  }
 }
 
 export function getTags(): ConnectionTag[] {

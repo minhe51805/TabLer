@@ -9,7 +9,8 @@ export function getAIFailoverConsent(): AIFailoverConsent {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     return raw === "approved" || raw === "declined" ? raw : "unset";
-  } catch {
+  } catch (error) {
+    console.warn("[AI] Failed to read failover consent:", error);
     return "unset";
   }
 }
@@ -17,9 +18,10 @@ export function getAIFailoverConsent(): AIFailoverConsent {
 export function setAIFailoverConsent(value: "approved" | "declined"): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, value);
-  } catch {
+  } catch (error) {
     // Storage can be unavailable (private mode); the decision then simply
     // lives for the current session via the pending resolver.
+    console.warn("[AI] Failed to persist failover consent:", error);
   }
   window.dispatchEvent(new CustomEvent("ai-failover-consent-change"));
 }

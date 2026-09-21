@@ -15,7 +15,8 @@ function viewportWidth(): number {
 
 export function clampAIPanelWidth(width: number, viewWidth = viewportWidth()): number {
   if (!Number.isFinite(width)) return AI_PANEL_DEFAULT_WIDTH;
-  const reserved = viewWidth <= OVERLAY_BREAKPOINT ? OVERLAY_RESERVED_WIDTH : DESKTOP_RESERVED_WIDTH;
+  const reserved =
+    viewWidth <= OVERLAY_BREAKPOINT ? OVERLAY_RESERVED_WIDTH : DESKTOP_RESERVED_WIDTH;
   const maxForViewport = Math.max(AI_PANEL_MIN_WIDTH, viewWidth - reserved);
   const maxWidth = Math.min(AI_PANEL_MAX_WIDTH, maxForViewport);
   return Math.max(AI_PANEL_MIN_WIDTH, Math.min(maxWidth, Math.round(width)));
@@ -29,7 +30,8 @@ export function readStoredAIPanelWidth(): number {
     const parsed = Number(raw);
     if (!Number.isFinite(parsed)) return AI_PANEL_DEFAULT_WIDTH;
     return clampAIPanelWidth(parsed);
-  } catch {
+  } catch (error) {
+    console.warn("[AIPanel] Failed to read stored width:", error);
     return AI_PANEL_DEFAULT_WIDTH;
   }
 }
@@ -39,8 +41,8 @@ export function persistAIPanelWidth(width: number): number {
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(AI_PANEL_WIDTH_STORAGE_KEY, String(next));
-    } catch {
-      /* ignore quota / private mode */
+    } catch (error) {
+      console.warn("[AIPanel] Failed to persist width:", error);
     }
   }
   return next;

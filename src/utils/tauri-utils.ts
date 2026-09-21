@@ -33,7 +33,7 @@ export async function saveExportFile(options: {
   const isBinary = typeof contentBase64 === "string";
   return invokeMutation<string | null>("save_export_file", {
     fileName,
-    content: isBinary ? "" : content ?? "",
+    content: isBinary ? "" : (content ?? ""),
     encoding: isBinary ? "base64" : "utf8",
     contentBase64: contentBase64 ?? null,
     filters: filters ?? null,
@@ -65,17 +65,27 @@ export function invokeWithTimeout<T>(
       action();
     };
     const timer = window.setTimeout(() => {
-      void Promise.resolve(options?.onTimeout?.()).catch(() => undefined).finally(() => {
-        finish(() => {
-          reject(new TauriTimeoutError(
-            `${label} timed out after ${Math.round(timeoutMs / 1000)}s. The request was cancelled and can be retried.`,
-          ));
+      void Promise.resolve(options?.onTimeout?.())
+        .catch((error) => {
+          console.warn(`[Tauri] onTimeout callback for "${label}" failed:`, error);
+        })
+        .finally(() => {
+          finish(() => {
+            reject(
+              new TauriTimeoutError(
+                `${label} timed out after ${Math.round(timeoutMs / 1000)}s. The request was cancelled and can be retried.`,
+              ),
+            );
+          });
         });
-      });
     }, timeoutMs);
     invoke<T>(command, args).then(
-      (value) => { finish(() => resolve(value)); },
-      (error) => { finish(() => reject(error)); }
+      (value) => {
+        finish(() => resolve(value));
+      },
+      (error) => {
+        finish(() => reject(error));
+      },
     );
   });
 }

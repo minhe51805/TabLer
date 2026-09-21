@@ -6,7 +6,7 @@ const capabilityCache = new Map<string, DriverCapabilityProfile>();
 
 export function useConnectionCapabilities(connectionId: string | null | undefined) {
   const [profile, setProfile] = useState<DriverCapabilityProfile | null>(() =>
-    connectionId ? capabilityCache.get(connectionId) ?? null : null,
+    connectionId ? (capabilityCache.get(connectionId) ?? null) : null,
   );
 
   useEffect(() => {
@@ -27,12 +27,15 @@ export function useConnectionCapabilities(connectionId: string | null | undefine
       { connectionId },
       10_000,
       "Loading database capabilities",
-    ).then((nextProfile) => {
-      capabilityCache.set(connectionId, nextProfile);
-      if (!cancelled) setProfile(nextProfile);
-    }).catch(() => {
-      if (!cancelled) setProfile(null);
-    });
+    )
+      .then((nextProfile) => {
+        capabilityCache.set(connectionId, nextProfile);
+        if (!cancelled) setProfile(nextProfile);
+      })
+      .catch((error) => {
+        console.warn("[Capabilities] Failed to load driver capabilities:", error);
+        if (!cancelled) setProfile(null);
+      });
 
     return () => {
       cancelled = true;

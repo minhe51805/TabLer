@@ -277,7 +277,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       const requestId = activeConnectRequestId;
       activeConnectRequestId = null;
       if (requestId) {
-        void invokeMutation("cancel_connection_attempt", { requestId }).catch(() => {});
+        void invokeMutation("cancel_connection_attempt", { requestId }).catch((error) => {
+          console.warn("[Connection] Failed to cancel connection attempt:", error);
+        });
       }
       set({ isConnecting: false, connectError: null });
     },

@@ -10,7 +10,7 @@ import {
   type ColumnPinningState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useI18n, translateCurrent } from "../../i18n";
+import { useI18n, translateCurrent, getCurrentAppLanguage } from "../../i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Copy, Loader2, X } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
@@ -31,6 +31,7 @@ import { invokeMutation } from "../../utils/tauri-utils";
 import { emitAppToast } from "../../utils/app-toast";
 import { lazy, Suspense } from "react";
 import "./DataChart.css";
+import { getDataGridChartCopy } from "./datagrid-chart-copy";
 
 const DataChart = lazy(() => import("./DataChart").then((m) => ({ default: m.DataChart })));
 import {
@@ -476,6 +477,49 @@ export function DataGrid({
           },
     );
   }, [isReloadingData, refreshTableFromStart]);
+
+  // ── Auto-refresh ──────────────────────────────────────────────────────────
+  // Interval in ms; 0 = off. The countdown itself lives in the toolbar so the
+  // 1s ticks don't re-render the whole grid.
+  const [autoRefreshMs, setAutoRefreshMs] = useState(0);
+  const autoRefreshInFlightRef = useRef(false);
+
+  /** Auto-refresh only re-runs read-only statements — a mutating query would
+      otherwise trip the Safe Mode confirm dialog on every tick. */
+  const canAutoRefresh =
+    Boolean(tableName && !externalResult) ||
+    Boolean(
+      externalResult?.query &&
+      /^(select|with|show|explain|describe|desc|table|values)\b/i.test(externalResult.query.trim()),
+    );
+
+  const handleAutoRefreshTick = useCallback(async () => {
+    if (autoRefreshInFlightRef.current || !isMountedRef.current) return;
+    autoRefreshInFlightRef.current = true;
+    try {
+      if (externalResult) {
+        // Query-result grid: re-run the SQL that produced this result.
+        const sql = externalResult.query?.trim();
+        if (!sql) return;
+        const result = await invokeMutation<QueryResult>("execute_query", {
+          connectionId,
+          sql,
+          requestId: crypto.randomUUID(),
+          safeModeApprovedByUser: false,
+        });
+        if (result && isMountedRef.current) {
+          setData(result);
+          setTotalRows(result.rows.length);
+        }
+      } else {
+        await refreshTableFromStart();
+      }
+    } catch (error) {
+      devLogError("Auto-refresh failed", error);
+    } finally {
+      autoRefreshInFlightRef.current = false;
+    }
+  }, [connectionId, externalResult, refreshTableFromStart]);
 
   const undoableChanges = history.length;
   const redoableChanges = future.length;
@@ -1603,6 +1647,18 @@ export function DataGrid({
   const stagedChangeCount = stagedChanges.filter(
     (c) => c.tableName === tableName && c.database === database,
   ).length;
+
+  // Stop auto-refresh the moment the grid enters edit mode: a silent refetch
+  // would clobber an in-progress cell edit or staged changes.
+  useEffect(() => {
+    if (autoRefreshMs > 0 && (editingCell !== null || stagedChangeCount > 0)) {
+      setAutoRefreshMs(0);
+      emitAppToast({
+        title: getDataGridChartCopy(getCurrentAppLanguage()).autoRefresh.stoppedForEdit,
+        tone: "info",
+      });
+    }
+  }, [autoRefreshMs, editingCell, stagedChangeCount]);
   const visibleRowCount = tableData.length;
   const insertDialogModal =
     isInsertDialogOpen && typeof document !== "undefined"
@@ -1727,6 +1783,11 @@ export function DataGrid({
           structureStatus={structureStatus}
           resolvedColumns={resolvedColumns}
           dataRows={tableData}
+          autoRefreshMs={autoRefreshMs}
+          onAutoRefreshMsChange={canAutoRefresh ? setAutoRefreshMs : undefined}
+          autoRefreshTick={canAutoRefresh ? handleAutoRefreshTick : undefined}
+          autoRefreshPaused={!isActive}
+          autoRefreshBusy={isReloadingData || isLoading}
           undoableChanges={undoableChanges}
           stagedChangeCount={tableName ? getChangeCount(tableName) : 0}
           onApplyChanges={applyStagedChanges}

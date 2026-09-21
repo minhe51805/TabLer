@@ -112,7 +112,11 @@
   border: 1px solid transparent;
   border-radius: calc(var(--radius-sm) - 1px);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.1s ease;
   white-space: nowrap;
 }
 
@@ -281,6 +285,23 @@
   line-height: 1.4;
 }
 
+/* ─── Chart-this modal ────────────────────────────────────────────────────── */
+
+.datagrid-chart-modal {
+  width: min(860px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+}
+
+.datagrid-chart-modal .datagrid-chart-modal-body {
+  flex: 1 1 0;
+  min-height: 380px;
+  height: auto;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
 
 /* ??? Responsive ???????????????????????????????????????????????????????????? */
 

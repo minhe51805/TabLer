@@ -21,6 +21,14 @@ export interface FetchedModel {
   context_window?: number | null;
   max_output_tokens?: number | null;
   input_types?: string[];
+  /** Per-token USD prices the provider published (OpenRouter-style);
+   *  absent when the API does not expose pricing. */
+  pricing?: {
+    prompt: number;
+    completion: number;
+    input_cache_read?: number | null;
+    input_cache_write?: number | null;
+  } | null;
 }
 
 export interface AIProviderConfig {

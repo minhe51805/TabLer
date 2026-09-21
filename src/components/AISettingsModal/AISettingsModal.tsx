@@ -30,6 +30,29 @@ function formatContextTokens(tokens: number): string {
   return `${tokens} ctx`;
 }
 
+/** Per-token USD price rendered per 1M tokens, e.g. 0.00000015 -> "$0.15/M". */
+function formatPricePerMillion(perToken: number): string {
+  const perMillion = perToken * 1_000_000;
+  if (perMillion === 0) return "$0";
+  if (perMillion < 0.01) return `$${perMillion.toPrecision(2)}`;
+  if (perMillion < 100) return `$${perMillion.toFixed(2)}`;
+  return `$${Math.round(perMillion)}`;
+}
+
+/** A model counts as free when the provider publishes all-zero pricing, or
+ *  when its id carries the conventional ":free" suffix (OpenRouter). */
+function isFreeModel(model: FetchedModel): boolean {
+  if (model.id.toLowerCase().endsWith(":free")) return true;
+  const pricing = model.pricing;
+  if (!pricing) return false;
+  return (
+    pricing.prompt === 0 &&
+    pricing.completion === 0 &&
+    (pricing.input_cache_read ?? 0) === 0 &&
+    (pricing.input_cache_write ?? 0) === 0
+  );
+}
+
 interface Props {
   onClose: () => void;
 }
@@ -68,6 +91,9 @@ export function AISettingsModal({ onClose }: Props) {
     selected: string[];
     active: string;
   } | null>(null);
+  // Picker-local filters: substring search + free-only toggle.
+  const [modelPickerQuery, setModelPickerQuery] = useState("");
+  const [modelPickerFreeOnly, setModelPickerFreeOnly] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [connectionCheckStatus, setConnectionCheckStatus] = useState<
     "idle" | "checking" | "ok" | "error"
@@ -416,6 +442,8 @@ export function AISettingsModal({ onClose }: Props) {
         selected: defaultActive ? [defaultActive] : [],
         active: defaultActive,
       });
+      setModelPickerQuery("");
+      setModelPickerFreeOnly(false);
     } catch (error) {
       setFetchModelsError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1278,7 +1306,7 @@ export function AISettingsModal({ onClose }: Props) {
                         role="dialog"
                         aria-label="Select models to add"
                       >
-                        <div className="ai-settings-model-dialog">
+                        <div className="ai-settings-model-dialog is-picker">
                           <div className="ai-settings-model-dialog-head">
                             <span className="ai-settings-model-dialog-title">
                               Select models ({modelPicker.selected.length}/
@@ -1296,56 +1324,125 @@ export function AISettingsModal({ onClose }: Props) {
                           <p className="ai-settings-model-empty">
                             Tick the models to add, then choose one to set as active.
                           </p>
+                          <div className="ai-settings-model-picker-toolbar">
+                            <input
+                              type="search"
+                              className="ai-settings-model-search"
+                              placeholder="Search models…"
+                              value={modelPickerQuery}
+                              autoFocus
+                              onChange={(event) => setModelPickerQuery(event.target.value)}
+                            />
+                            <button
+                              type="button"
+                              className={`ai-settings-type-chip ${modelPickerFreeOnly ? "is-on" : ""}`}
+                              title="Show only models the provider lists as free"
+                              onClick={() => setModelPickerFreeOnly((current) => !current)}
+                            >
+                              <span className="ai-settings-type-check">
+                                {modelPickerFreeOnly ? <Check className="w-3 h-3" /> : null}
+                              </span>
+                              Free only
+                            </button>
+                          </div>
                           <div className="ai-settings-model-list">
-                            {modelPicker.models.map((model) => {
-                              const isSelected = modelPicker.selected.includes(model.id);
-                              const inCatalog = activeConfigModels.some(
-                                (entry) => entry.toLowerCase() === model.id.toLowerCase(),
+                            {(() => {
+                              const query = modelPickerQuery.trim().toLowerCase();
+                              const visible = modelPicker.models.filter(
+                                (model) =>
+                                  (!query || model.id.toLowerCase().includes(query)) &&
+                                  (!modelPickerFreeOnly || isFreeModel(model)),
                               );
-                              const isActive = modelPicker.active === model.id;
-                              return (
-                                <div key={model.id} className="ai-settings-model-row">
-                                  <button
-                                    type="button"
-                                    className={`ai-settings-type-chip ${isSelected ? "is-on" : ""}`}
-                                    title={isSelected ? "Unselect" : "Select"}
-                                    onClick={() => toggleModelPickerSelection(model.id)}
-                                  >
-                                    <span className="ai-settings-type-check">
-                                      {isSelected ? <Check className="w-3 h-3" /> : null}
-                                    </span>
-                                  </button>
-                                  <span
-                                    className={`ai-settings-model-name ${isActive ? "is-active" : ""}`}
-                                  >
-                                    {model.id}
-                                  </span>
-                                  {model.context_window != null ? (
-                                    <span
-                                      className="ai-settings-model-inactive"
-                                      title="Detected context window (auto-filled on add)"
+                              if (visible.length === 0) {
+                                return (
+                                  <p className="ai-settings-model-empty">
+                                    No models match the current filters.
+                                  </p>
+                                );
+                              }
+                              return visible.map((model) => {
+                                const isSelected = modelPicker.selected.includes(model.id);
+                                const inCatalog = activeConfigModels.some(
+                                  (entry) => entry.toLowerCase() === model.id.toLowerCase(),
+                                );
+                                const isActive = modelPicker.active === model.id;
+                                const free = isFreeModel(model);
+                                return (
+                                  <div key={model.id} className="ai-settings-model-row">
+                                    <button
+                                      type="button"
+                                      className={`ai-settings-type-chip ${isSelected ? "is-on" : ""}`}
+                                      title={isSelected ? "Unselect" : "Select"}
+                                      onClick={() => toggleModelPickerSelection(model.id)}
                                     >
-                                      {formatContextTokens(model.context_window)}
+                                      <span className="ai-settings-type-check">
+                                        {isSelected ? <Check className="w-3 h-3" /> : null}
+                                      </span>
+                                    </button>
+                                    <span
+                                      className={`ai-settings-model-name ${isActive ? "is-active" : ""}`}
+                                      title={model.id}
+                                    >
+                                      {model.id}
                                     </span>
-                                  ) : null}
-                                  {inCatalog ? (
-                                    <span className="ai-settings-model-inactive">In catalog</span>
-                                  ) : null}
-                                  {isActive ? (
-                                    <span className="ai-settings-model-active">Active</span>
-                                  ) : null}
-                                  <button
-                                    type="button"
-                                    className="ai-settings-model-state-btn"
-                                    title="Set as the active model"
-                                    disabled={isActive}
-                                    onClick={() => setModelPickerActive(model.id)}
-                                  >
-                                    {isActive ? "Active" : "Set active"}
-                                  </button>
-                                </div>
-                              );
-                            })}
+                                    {free ? (
+                                      <span className="ai-settings-model-free">Free</span>
+                                    ) : null}
+                                    {model.context_window != null ? (
+                                      <span
+                                        className="ai-settings-model-inactive"
+                                        title="Detected context window (auto-filled on add)"
+                                      >
+                                        {formatContextTokens(model.context_window)}
+                                      </span>
+                                    ) : null}
+                                    {model.pricing && !free ? (
+                                      <span
+                                        className="ai-settings-model-pricing"
+                                        title={
+                                          `Input ${formatPricePerMillion(model.pricing.prompt)}/M tokens` +
+                                          ` · Output ${formatPricePerMillion(model.pricing.completion)}/M` +
+                                          (model.pricing.input_cache_read != null
+                                            ? ` · Cache read ${formatPricePerMillion(model.pricing.input_cache_read)}/M`
+                                            : "") +
+                                          (model.pricing.input_cache_write != null
+                                            ? ` · Cache write ${formatPricePerMillion(model.pricing.input_cache_write)}/M`
+                                            : "")
+                                        }
+                                      >
+                                        <span>
+                                          {formatPricePerMillion(model.pricing.prompt)}/M in
+                                        </span>
+                                        <span>
+                                          {formatPricePerMillion(model.pricing.completion)}/M out
+                                        </span>
+                                        {model.pricing.input_cache_read != null ? (
+                                          <span>
+                                            {formatPricePerMillion(model.pricing.input_cache_read)}
+                                            /M cache
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                    ) : null}
+                                    {inCatalog ? (
+                                      <span className="ai-settings-model-inactive">In catalog</span>
+                                    ) : null}
+                                    {isActive ? (
+                                      <span className="ai-settings-model-active">Active</span>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      className="ai-settings-model-state-btn"
+                                      title="Set as the active model"
+                                      disabled={isActive}
+                                      onClick={() => setModelPickerActive(model.id)}
+                                    >
+                                      {isActive ? "Active" : "Set active"}
+                                    </button>
+                                  </div>
+                                );
+                              });
+                            })()}
                           </div>
                           <div className="ai-settings-model-dialog-actions">
                             <button

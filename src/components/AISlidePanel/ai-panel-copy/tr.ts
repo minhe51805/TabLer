@@ -37,8 +37,7 @@ export const TR_PANEL_COPY: AIPanelCopy = {
       "<workspace>/rules içindeki Markdown kuralları ve yerleşik paket, ajanın çalıştırdığı her ifadeyi denetler.",
     close: "Kapat",
     newRule: "Yeni kural",
-    noWorkspaceTitle:
-      "Önce bu çalışma alanına bir klasör bağlayın — çalışma alanı kuralları <klasör>/rules içinde yaşar.",
+    globalRules: "Genel kurallar",
     refresh: "Listeyi yenile",
     loading: "Yükleniyor…",
     empty: "Etkin kural yok.",

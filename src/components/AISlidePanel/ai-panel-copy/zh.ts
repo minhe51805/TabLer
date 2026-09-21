@@ -36,7 +36,7 @@ export const ZH_PANEL_COPY: AIPanelCopy = {
     subtitle: "<workspace>/rules 中的 Markdown 规则和内置规则包会审查代理执行的每条语句。",
     close: "关闭",
     newRule: "新建规则",
-    noWorkspaceTitle: "请先为此工作区链接一个文件夹 —— 工作区规则保存在 <文件夹>/rules 中。",
+    globalRules: "全局规则",
     refresh: "刷新列表",
     loading: "加载中…",
     empty: "暂无启用的规则。",

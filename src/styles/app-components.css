@@ -3904,9 +3904,10 @@
   --bg-elevated: var(--mm-surface-0);
 
   --text-primary: var(--mm-dark-gray);
-  --text-secondary: var(--mm-medium-gray);
-  --text-muted: var(--mm-light-gray);
-  --text-dim: var(--mm-light-gray);
+  --text-secondary: #6e6e73;
+  /* #8E8E93 fails WCAG AA (3.04:1) on light surfaces — darken to ~5:1. */
+  --text-muted: #6e6e73;
+  --text-dim: #6e6e73;
 
   --border-color: var(--mm-border);
   --border-light: var(--mm-border);
@@ -33987,13 +33988,13 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   color: var(--text-secondary);
   box-shadow: none;
 }
-
 .startup-manager-search-add.primary {
   width: auto;
   min-width: 0;
   padding: 0 11px;
   border-color: var(--accent);
-  background: var(--accent);
+  /* White text on raw #007aff is 4.01:1 — darken the fill to reach AA. */
+  background: color-mix(in srgb, var(--accent) 88%, #000);
   color: #fff;
   box-shadow: none;
 }
@@ -34001,7 +34002,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 .startup-manager-search-add.primary:hover,
 .startup-manager-search-add.primary.active {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 88%, #000);
+  background: color-mix(in srgb, var(--accent) 78%, #000);
   color: #fff;
   box-shadow: none;
   transform: none;
@@ -35804,7 +35805,8 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   padding: 0 14px;
   gap: 6px;
   border: 0;
-  background: var(--accent);
+  /* White text on raw #007aff is 4.01:1 — darken the fill to reach AA. */
+  background: color-mix(in srgb, var(--accent) 88%, #000);
   color: #fff;
   box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--accent) 55%, transparent);
 }
@@ -35812,7 +35814,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 .startup-manager-search-add.primary:hover,
 .startup-manager-search-add.primary.active {
   border: 0;
-  background: var(--accent-hover);
+  background: color-mix(in srgb, var(--accent) 78%, #000);
   color: #fff;
   transform: none;
   box-shadow: 0 6px 16px -4px color-mix(in srgb, var(--accent) 60%, transparent);

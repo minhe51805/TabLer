@@ -433,6 +433,7 @@ mod tests {
             additional_fields: HashMap::new(),
             startup_commands: None,
             pre_connect_script: None,
+            query_timeout_seconds: None,
             ssh_config: None,
         }
     }
@@ -483,6 +484,7 @@ mod tests {
             additional_fields: HashMap::new(),
             startup_commands: None,
             pre_connect_script: None,
+            query_timeout_seconds: None,
             ssh_config: None,
         };
 
@@ -516,6 +518,7 @@ mod tests {
             additional_fields,
             startup_commands: None,
             pre_connect_script: None,
+            query_timeout_seconds: None,
             ssh_config: None,
         };
 
@@ -548,6 +551,7 @@ mod tests {
             additional_fields,
             startup_commands: None,
             pre_connect_script: None,
+            query_timeout_seconds: None,
             ssh_config: None,
         };
 
@@ -581,6 +585,7 @@ mod tests {
             additional_fields,
             startup_commands: None,
             pre_connect_script: None,
+            query_timeout_seconds: None,
             ssh_config: None,
         };
 

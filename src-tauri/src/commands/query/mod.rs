@@ -95,9 +95,15 @@ pub async fn execute_query(
         .connection_database_type(&connection_id)
         .await
         .ok();
+    // Per-connection `query_timeout_seconds` replaces the classified default
+    // window; an explicit per-query `timeout_ms` still wins over both.
+    let connection_timeout = db_manager.connection_query_timeout(&connection_id).await;
     let timeout_window = crate::config::resolve_query_timeout(
         timeout_ms,
-        timeout_for_statements(statements.iter().map(String::as_str), db_type),
+        crate::config::resolve_connection_query_timeout(
+            connection_timeout,
+            timeout_for_statements(statements.iter().map(String::as_str), db_type),
+        ),
     );
     let request_id = request_id
         .as_deref()
@@ -241,7 +247,14 @@ pub async fn execute_query_progressive(
             driver.execute_query(&sql).await
         }
     };
-    let result = timeout(crate::config::read_only_query_timeout(), exec).await;
+    let result = timeout(
+        crate::config::resolve_connection_query_timeout(
+            db_manager.connection_query_timeout(&connection_id).await,
+            crate::config::read_only_query_timeout(),
+        ),
+        exec,
+    )
+    .await;
     let mut result = match result {
         Ok(inner) => inner.map_err(format_query_runtime_error)?,
         Err(_) => {
@@ -348,8 +361,10 @@ pub async fn execute_parameterized_query(
             .register(request_id, cancellation_token.clone())
             .await;
     }
-    let timeout_window =
-        timeout_for_statements(std::iter::once(compiled.sql.as_str()), Some(database_type));
+    let timeout_window = crate::config::resolve_connection_query_timeout(
+        db_manager.connection_query_timeout(&connection_id).await,
+        timeout_for_statements(std::iter::once(compiled.sql.as_str()), Some(database_type)),
+    );
     let exec = async {
         if let Some(ref id) = request_id {
             driver
@@ -566,7 +581,10 @@ async fn run_sandboxed_statements(
         );
         formatted
     })?;
-    let timeout_window = timeout_for_statements(statements.iter().map(String::as_str), db_type);
+    let timeout_window = crate::config::resolve_connection_query_timeout(
+        db_manager.connection_query_timeout(connection_id).await,
+        timeout_for_statements(statements.iter().map(String::as_str), db_type),
+    );
     let combined_query = statements.join(";\n");
     let request_id = request_id
         .as_deref()

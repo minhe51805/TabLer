@@ -24,6 +24,7 @@ export interface ExportableConnection {
   groupId?: string;
   tagId?: string;
   startupCommands?: string;
+  queryTimeoutSeconds?: number;
 }
 
 export interface ExportResult {
@@ -43,7 +44,7 @@ export interface ImportResult {
  */
 export async function exportConnections(
   connections: ConnectionConfig[],
-  password: string
+  password: string,
 ): Promise<ExportResult> {
   // Strip password and internal ID before sending to backend
   const sanitized = connections.map((c) => ({
@@ -66,6 +67,7 @@ export async function exportConnections(
     group_id: c.groupId,
     tag_id: c.tagId,
     startup_commands: c.startupCommands,
+    query_timeout_seconds: c.query_timeout_seconds,
   }));
 
   try {
@@ -86,10 +88,7 @@ export async function exportConnections(
 /**
  * Import connections from an encrypted TableR connection file.
  */
-export async function importConnections(
-  filePath: string,
-  password: string
-): Promise<ImportResult> {
+export async function importConnections(filePath: string, password: string): Promise<ImportResult> {
   try {
     const connections = await invoke<ExportableConnection[]>("import_connections_from_file", {
       filePath,
@@ -108,7 +107,7 @@ export async function importConnections(
 /** Convert exported connection back to ConnectionConfig format. */
 export function exportableToConnectionConfig(
   ec: ExportableConnection,
-  password: string
+  password: string,
 ): Omit<ConnectionConfig, "id"> & { password?: string } {
   return {
     name: ec.name,
@@ -130,5 +129,6 @@ export function exportableToConnectionConfig(
     groupId: ec.groupId,
     tagId: ec.tagId,
     startupCommands: ec.startupCommands,
+    query_timeout_seconds: ec.queryTimeoutSeconds,
   };
 }

@@ -63,6 +63,7 @@ mod mssql_parse_tests {
             additional_fields,
             startup_commands: None,
             pre_connect_script: None,
+            query_timeout_seconds: None,
             ssh_config: None,
         }
     }
@@ -147,6 +148,7 @@ mod mssql_live_diagnostics {
                 additional_fields: HashMap::new(),
                 startup_commands: None,
                 pre_connect_script: None,
+                query_timeout_seconds: None,
                 ssh_config: None,
             };
             mutate(&mut config);
@@ -482,6 +484,7 @@ fn config_defaults() -> ConnectionConfig {
         additional_fields: HashMap::new(),
         startup_commands: None,
         pre_connect_script: None,
+        query_timeout_seconds: None,
         ssh_config: None,
     }
 }

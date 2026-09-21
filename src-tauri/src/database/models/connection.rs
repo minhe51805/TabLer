@@ -58,6 +58,11 @@ pub struct ConnectionConfig {
     /// SQL commands to execute after connecting.
     #[serde(default, alias = "startupCommands")]
     pub startup_commands: Option<String>,
+    /// Per-connection wall-clock ceiling for query execution, in seconds.
+    /// `None` keeps the classified defaults (read-only vs mutating); a set
+    /// value is clamped to 1s–600s by `config::resolve_connection_query_timeout`.
+    #[serde(default)]
+    pub query_timeout_seconds: Option<u64>,
     /// SSH connection config
     pub ssh_config: Option<crate::ssh::ssh_tunnel::SshConfig>,
 }
@@ -96,6 +101,7 @@ impl Default for ConnectionConfig {
             additional_fields: HashMap::new(),
             pre_connect_script: None,
             startup_commands: None,
+            query_timeout_seconds: None,
             ssh_config: None,
         }
     }

@@ -23,6 +23,15 @@ const TABLE_QUERY_TIMEOUT: Duration = Duration::from_secs(120);
 const TABLE_METADATA_TIMEOUT: Duration = Duration::from_secs(60);
 const CSV_FILE_IMPORT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
+/// Per-connection query timeout for table-browsing commands: the connection's
+/// `query_timeout_seconds` override when set, otherwise the 120s default.
+async fn table_query_timeout(db_manager: &DatabaseManager, connection_id: &str) -> Duration {
+    crate::config::resolve_connection_query_timeout(
+        db_manager.connection_query_timeout(connection_id).await,
+        TABLE_QUERY_TIMEOUT,
+    )
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CsvImportProgress {
@@ -167,8 +176,9 @@ pub async fn get_table_data(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
+    let window = table_query_timeout(db_manager.inner(), &connection_id).await;
     timeout(
-        TABLE_QUERY_TIMEOUT,
+        window,
         driver.get_table_data(
             &table,
             database.as_deref(),
@@ -180,7 +190,12 @@ pub async fn get_table_data(
         ),
     )
     .await
-    .map_err(|_| "Loading table data timed out after 120 seconds.".to_string())?
+    .map_err(|_| {
+        format!(
+            "Loading table data timed out after {} seconds.",
+            window.as_secs()
+        )
+    })?
     .map_err(|e| e.to_string())
 }
 
@@ -239,9 +254,15 @@ pub async fn update_table_cell(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    timeout(TABLE_QUERY_TIMEOUT, driver.update_table_cell(&request))
+    let window = table_query_timeout(db_manager.inner(), &connection_id).await;
+    timeout(window, driver.update_table_cell(&request))
         .await
-        .map_err(|_| "Inline update timed out after 120 seconds.".to_string())?
+        .map_err(|_| {
+            format!(
+                "Inline update timed out after {} seconds.",
+                window.as_secs()
+            )
+        })?
         .map_err(|e| e.to_string())
 }
 
@@ -262,13 +283,16 @@ pub async fn apply_table_updates_atomically(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    timeout(
-        TABLE_QUERY_TIMEOUT,
-        driver.apply_table_updates_atomically(&updates),
-    )
-    .await
-    .map_err(|_| "Applying the edit queue timed out after 120 seconds.".to_string())?
-    .map_err(|e| e.to_string())
+    let window = table_query_timeout(db_manager.inner(), &connection_id).await;
+    timeout(window, driver.apply_table_updates_atomically(&updates))
+        .await
+        .map_err(|_| {
+            format!(
+                "Applying the edit queue timed out after {} seconds.",
+                window.as_secs()
+            )
+        })?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -285,9 +309,10 @@ pub async fn delete_table_rows(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    timeout(TABLE_QUERY_TIMEOUT, driver.delete_table_rows(&request))
+    let window = table_query_timeout(db_manager.inner(), &connection_id).await;
+    timeout(window, driver.delete_table_rows(&request))
         .await
-        .map_err(|_| "Row deletion timed out after 120 seconds.".to_string())?
+        .map_err(|_| format!("Row deletion timed out after {} seconds.", window.as_secs()))?
         .map_err(|e| e.to_string())
 }
 
@@ -305,9 +330,15 @@ pub async fn insert_table_row(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    timeout(TABLE_QUERY_TIMEOUT, driver.insert_table_row(&request))
+    let window = table_query_timeout(db_manager.inner(), &connection_id).await;
+    timeout(window, driver.insert_table_row(&request))
         .await
-        .map_err(|_| "Row insertion timed out after 120 seconds.".to_string())?
+        .map_err(|_| {
+            format!(
+                "Row insertion timed out after {} seconds.",
+                window.as_secs()
+            )
+        })?
         .map_err(|e| e.to_string())
 }
 
@@ -329,13 +360,16 @@ pub async fn execute_structure_statements(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    timeout(
-        TABLE_QUERY_TIMEOUT,
-        driver.execute_structure_statements(&statements),
-    )
-    .await
-    .map_err(|_| "Applying structure changes timed out after 120 seconds.".to_string())?
-    .map_err(|e| e.to_string())
+    let window = table_query_timeout(db_manager.inner(), &connection_id).await;
+    timeout(window, driver.execute_structure_statements(&statements))
+        .await
+        .map_err(|_| {
+            format!(
+                "Applying structure changes timed out after {} seconds.",
+                window.as_secs()
+            )
+        })?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -391,14 +425,18 @@ pub async fn insert_table_rows_atomically(
         .await
         .map_err(|e| e.to_string())?;
     let cancelled = cancellation_state.start(&operation_id)?;
+    let window = table_query_timeout(db_manager.inner(), &connection_id).await;
     let result = match timeout(
-        TABLE_QUERY_TIMEOUT,
+        window,
         driver.insert_table_rows_atomically(&requests, cancelled),
     )
     .await
     {
         Ok(result) => result.map_err(|e| e.to_string()),
-        Err(_) => Err("CSV import timed out after 120 seconds.".to_string()),
+        Err(_) => Err(format!(
+            "CSV import timed out after {} seconds.",
+            window.as_secs()
+        )),
     };
     cancellation_state.finish(&operation_id);
     result

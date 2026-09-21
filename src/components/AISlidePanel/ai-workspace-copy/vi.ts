@@ -236,7 +236,8 @@ export const VI_COPY: AIWorkspaceCopy = {
   },
   attachments: {
     attachButton: "Đính kèm tệp hoặc ảnh",
-    imageUnsupported: "Model hiện tại không đọc được ảnh. Chỉ tệp văn bản được đính kèm.",
+    imageMaybeUnsupported: "Model hiện tại có thể không hỗ trợ hình ảnh.",
+    imageLimit: "Mỗi tin nhắn chỉ đính kèm tối đa 4 hình ảnh.",
     removeAttachment: "Gỡ đính kèm",
     managerOpen: "Quản lý tệp đính kèm",
     managerTitle: "Tệp đính kèm",

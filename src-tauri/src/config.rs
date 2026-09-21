@@ -131,6 +131,24 @@ pub fn resolve_query_timeout(timeout_ms: Option<u64>, default_window: Duration) 
     }
 }
 
+/// Pure resolver for a per-connection query timeout (the `query_timeout_seconds`
+/// field on `ConnectionConfig`): when the connection supplies a positive number
+/// of seconds, clamp it to the same `[MIN_QUERY_TIMEOUT_MS, MAX_QUERY_TIMEOUT_MS]`
+/// window a per-query override gets; otherwise fall back to the classified
+/// `default_window`. `None`/`Some(0)` leave behaviour unchanged.
+pub fn resolve_connection_query_timeout(
+    timeout_seconds: Option<u64>,
+    default_window: Duration,
+) -> Duration {
+    match timeout_seconds.filter(|&secs| secs > 0) {
+        Some(secs) => Duration::from_millis(
+            secs.saturating_mul(1_000)
+                .clamp(MIN_QUERY_TIMEOUT_MS, MAX_QUERY_TIMEOUT_MS),
+        ),
+        None => default_window,
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Sandbox result caps for AI-agent reads (D10)
 // ─────────────────────────────────────────────────────────────────────────
@@ -223,6 +241,28 @@ mod tests {
         );
         assert_eq!(MIN_QUERY_TIMEOUT_MS, 1_000);
         assert_eq!(MAX_QUERY_TIMEOUT_MS, 600_000);
+    }
+
+    #[test]
+    fn connection_query_timeout_falls_back_when_absent_or_zero() {
+        let default = Duration::from_secs(180);
+        assert_eq!(resolve_connection_query_timeout(None, default), default);
+        assert_eq!(resolve_connection_query_timeout(Some(0), default), default);
+    }
+
+    #[test]
+    fn connection_query_timeout_uses_seconds_and_clamps_to_bounds() {
+        let default = Duration::from_secs(180);
+        assert_eq!(
+            resolve_connection_query_timeout(Some(5), default),
+            Duration::from_secs(5)
+        );
+        // Above the 10-minute ceiling clamps down; a saturating multiply keeps
+        // u64::MAX from overflowing.
+        assert_eq!(
+            resolve_connection_query_timeout(Some(u64::MAX), default),
+            Duration::from_millis(MAX_QUERY_TIMEOUT_MS)
+        );
     }
 
     #[test]

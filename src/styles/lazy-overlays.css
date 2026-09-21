@@ -1468,6 +1468,12 @@
   padding: 0 16px;
 }
 
+/* Inline "new folder" row at the top of the favorites list — reuses the
+   startup-connection-context-new-group layout, just needs list spacing. */
+.fav-folder-create {
+  margin-bottom: 4px;
+}
+
 .fav-entry {
   padding: 10px 12px;
   border-radius: 10px;

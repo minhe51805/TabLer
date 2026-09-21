@@ -1,17 +1,20 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Database, Folder, FolderOpen, ChevronDown, ChevronRight, Loader2, Filter } from "lucide-react";
+import {
+  Database,
+  Folder,
+  FolderOpen,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Filter,
+} from "lucide-react";
 import type { DatabaseInfo, SchemaObjectInfo, TableInfo } from "../../../types";
 import type { AppLanguage } from "../../../i18n";
 import { getQualifiedTableName } from "../SidebarUtils";
 import type { ExplorerSchemaSection } from "../hooks/useTreeState";
 import type { MixedStateFilter, CheckboxFilterState } from "../hooks/use-sidebar";
-import {
-  MixedCheckbox,
-  StaticObjectRow,
-  TableRow,
-  ViewRow,
-} from "./DatabaseTreeItems";
+import { MixedCheckbox, StaticObjectRow, TableRow, ViewRow } from "./DatabaseTreeItems";
 import {
   estimateExplorerItemSize,
   EXPLORER_FOLDER_LABEL_KEYS,
@@ -40,14 +43,23 @@ interface DatabaseTreeProps {
   visibleObjectCount: number;
   language: AppLanguage;
 
-  t: (key: import("../../../i18n").TranslationKey, opts?: Record<string, string | number>) => string;
+  t: (
+    key: import("../../../i18n").TranslationKey,
+    opts?: Record<string, string | number>,
+  ) => string;
   // Interactions
   onToggleDb: (db: DatabaseInfo) => void;
-  onTableClick: (table: Pick<TableInfo, "name" | "schema">) => void;
+  onTableClick: (
+    event: React.MouseEvent | undefined,
+    table: Pick<TableInfo, "name" | "schema"> & { table_type?: string },
+  ) => void;
   onTableDoubleClick?: (table: Pick<TableInfo, "name" | "schema">) => void;
   onStructureClick: (e: React.MouseEvent, table: Pick<TableInfo, "name" | "schema">) => void;
   onObjectSqlClick: (e: React.MouseEvent, object: SchemaObjectInfo) => void;
-  onTableContextMenu: (event: React.MouseEvent, table: Pick<TableInfo, "name" | "schema" | "row_count">) => void;
+  onTableContextMenu: (
+    event: React.MouseEvent,
+    table: Pick<TableInfo, "name" | "schema" | "row_count" | "table_type">,
+  ) => void;
   onSchemaFilterChange: (schema: string) => void;
   onSchemaPickerToggle: () => void;
   onSchemaPickerClose: () => void;
@@ -56,8 +68,14 @@ interface DatabaseTreeProps {
   tableContextMenu?: { table: Pick<TableInfo, "name" | "schema"> } | null;
   // Mixed-state filter props
   mixedStateFilter: MixedStateFilter;
-  onMixedStateToggle: (schemaName: string, itemName: string, nextState: CheckboxFilterState) => void;
+  onMixedStateToggle: (
+    schemaName: string,
+    itemName: string,
+    nextState: CheckboxFilterState,
+  ) => void;
   getMixedStateFilterForTable: (tableName: string, schemaName: string) => MixedStateFilter;
+  /** Qualified names of the multi-selected tables (Ctrl/Shift-click). */
+  selectedTableKeys?: ReadonlySet<string>;
 }
 
 function getLastPathSegment(value?: string | null) {
@@ -66,8 +84,6 @@ function getLastPathSegment(value?: string | null) {
   const parts = normalized.split("/").filter(Boolean);
   return parts[parts.length - 1] || value;
 }
-
-
 
 // ---------------------------------------------------------------------------
 // Virtualized schema rows (freeze-audit P1)
@@ -87,6 +103,7 @@ interface VirtualizedSchemaRowsProps {
   onStructureClick: DatabaseTreeProps["onStructureClick"];
   onObjectSqlClick: DatabaseTreeProps["onObjectSqlClick"];
   onTableContextMenu: DatabaseTreeProps["onTableContextMenu"];
+  selectedTableKeys?: ReadonlySet<string>;
   contextQualifiedName: string | null;
   language: AppLanguage;
   /** Explorer-folder keys currently expanded (see explorerFolderKey). */
@@ -96,7 +113,10 @@ interface VirtualizedSchemaRowsProps {
   forceExpandFolders: boolean;
   /** SSMS-parity: always render Synonyms/Sequences folders even when empty. */
   showSystemFolders: boolean;
-  t: (key: import("../../../i18n").TranslationKey, opts?: Record<string, string | number>) => string;
+  t: (
+    key: import("../../../i18n").TranslationKey,
+    opts?: Record<string, string | number>,
+  ) => string;
 }
 
 const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
@@ -111,6 +131,7 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
   onStructureClick,
   onObjectSqlClick,
   onTableContextMenu,
+  selectedTableKeys,
   contextQualifiedName,
   language,
   expandedFolders,
@@ -137,7 +158,10 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
     const container = containerRef.current;
     const scroller = getScrollElement();
     if (!container || !scroller) return;
-    const offset = container.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    const offset =
+      container.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop;
     setScrollMargin((previous) => (Math.abs(previous - offset) > 1 ? offset : previous));
   }, [flatItems, getScrollElement, layoutKey]);
 
@@ -153,133 +177,153 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
     getItemKey: (index) => flatItems[index].key,
   });
 
-  const renderItem = useCallback((item: ExplorerFlatItem) => {
-    switch (item.kind) {
-      case "schema-head": {
-        const groupState = getSchemaGroupFilterState(item.schemaName, mixedStateFilter);
-        return (
-          <div className="explorer-schema-head explorer-virtual-schema-head">
-            <MixedCheckbox
-              state={groupState}
-              onChange={(next) => {
-                for (const table of item.tables) {
-                  onMixedStateToggle(item.schemaName, table.name, next);
+  const renderItem = useCallback(
+    (item: ExplorerFlatItem) => {
+      switch (item.kind) {
+        case "schema-head": {
+          const groupState = getSchemaGroupFilterState(item.schemaName, mixedStateFilter);
+          return (
+            <div className="explorer-schema-head explorer-virtual-schema-head">
+              <MixedCheckbox
+                state={groupState}
+                onChange={(next) => {
+                  for (const table of item.tables) {
+                    onMixedStateToggle(item.schemaName, table.name, next);
+                  }
+                }}
+                title={`Schema filter: ${item.schemaName}`}
+              />
+              <span className="explorer-schema-name">{item.schemaName}</span>
+              <span className="explorer-schema-count">{item.count}</span>
+            </div>
+          );
+        }
+        case "folder":
+          return (
+            <button
+              type="button"
+              className={`explorer-folder-row ${item.expanded ? "open" : ""}`}
+              style={{ paddingLeft: 4 + item.depth * 14 }}
+              onClick={() => onToggleFolder(item.key)}
+              aria-expanded={item.expanded}
+            >
+              {item.expanded ? (
+                <ChevronDown className="explorer-folder-chevron" />
+              ) : (
+                <ChevronRight className="explorer-folder-chevron" />
+              )}
+              {item.expanded ? (
+                <FolderOpen className="explorer-folder-icon" />
+              ) : (
+                <Folder className="explorer-folder-icon" />
+              )}
+              <span className="explorer-folder-label">
+                {t(
+                  EXPLORER_FOLDER_LABEL_KEYS[item.folder] as import("../../../i18n").TranslationKey,
+                )}
+              </span>
+              <span className="explorer-folder-count">{item.count}</span>
+            </button>
+          );
+        case "empty-folder":
+          return (
+            <div className="explorer-empty-folder-row" style={{ paddingLeft: 8 + item.depth * 14 }}>
+              <Folder className="explorer-empty-folder-icon" />
+              <span>{t("explorer.noItems")}</span>
+            </div>
+          );
+        case "table": {
+          const tableFilter = getMixedStateFilterForTable(item.table.name, item.schemaName);
+          const itemState = getItemFilterState(item.table.name, item.schemaName, tableFilter);
+          const isContextActive =
+            contextQualifiedName !== null &&
+            contextQualifiedName === getQualifiedTableName(item.table);
+          return (
+            <div style={{ paddingLeft: item.depth * 12 }}>
+              <TableRow
+                table={item.table}
+                itemState={itemState}
+                isContextActive={isContextActive}
+                isSelected={selectedTableKeys?.has(getQualifiedTableName(item.table)) ?? false}
+                onTableClick={onTableClick}
+                onTableDoubleClick={onTableDoubleClick}
+                onStructureClick={onStructureClick}
+                onTableContextMenu={onTableContextMenu}
+                schemaName={item.schemaName}
+                language={language}
+                t={t}
+                onMixedStateToggle={onMixedStateToggle}
+              />
+            </div>
+          );
+        }
+        case "view": {
+          const tableFilter = getMixedStateFilterForTable(item.view.name, item.schemaName);
+          const itemState = getItemFilterState(item.view.name, item.schemaName, tableFilter);
+          return (
+            <div style={{ paddingLeft: item.depth * 12 }}>
+              <ViewRow
+                view={item.view}
+                itemState={itemState}
+                onTableClick={onTableClick}
+                onTableDoubleClick={onTableDoubleClick}
+                onStructureClick={onStructureClick}
+                schemaName={item.schemaName}
+                language={language}
+                t={t}
+                onMixedStateToggle={onMixedStateToggle}
+              />
+            </div>
+          );
+        }
+        case "object": {
+          const isTriggerLike = item.group === "triggers" || item.group === "database-triggers";
+          const isTypeLike =
+            item.group === "system-types" ||
+            item.group === "user-defined-types" ||
+            item.group === "user-table-types" ||
+            item.group === "clr-types" ||
+            item.group === "xml-schema-collections" ||
+            item.group === "assemblies";
+          return (
+            <div style={{ paddingLeft: item.depth * 12 }}>
+              <StaticObjectRow
+                object={item.object}
+                metaText={
+                  isTriggerLike
+                    ? item.object.related_table ||
+                      (item.group === "triggers" ? t("explorer.triggersGroup") : "")
+                    : isTypeLike
+                      ? ""
+                      : item.object.object_type
                 }
-              }}
-              title={`Schema filter: ${item.schemaName}`}
-            />
-            <span className="explorer-schema-name">{item.schemaName}</span>
-            <span className="explorer-schema-count">{item.count}</span>
-          </div>
-        );
+                icon={isTriggerLike ? "GitBranch" : "FileCode"}
+                onObjectSqlClick={onObjectSqlClick}
+                t={t}
+              />
+            </div>
+          );
+        }
+        default:
+          return null;
       }
-      case "folder":
-        return (
-          <button
-            type="button"
-            className={`explorer-folder-row ${item.expanded ? "open" : ""}`}
-            style={{ paddingLeft: 4 + item.depth * 14 }}
-            onClick={() => onToggleFolder(item.key)}
-            aria-expanded={item.expanded}
-          >
-            {item.expanded ? (
-              <ChevronDown className="explorer-folder-chevron" />
-            ) : (
-              <ChevronRight className="explorer-folder-chevron" />
-            )}
-            {item.expanded ? (
-              <FolderOpen className="explorer-folder-icon" />
-            ) : (
-              <Folder className="explorer-folder-icon" />
-            )}
-            <span className="explorer-folder-label">
-              {t(EXPLORER_FOLDER_LABEL_KEYS[item.folder] as import("../../../i18n").TranslationKey)}
-            </span>
-            <span className="explorer-folder-count">{item.count}</span>
-          </button>
-        );
-      case "empty-folder":
-        return (
-          <div
-            className="explorer-empty-folder-row"
-            style={{ paddingLeft: 8 + item.depth * 14 }}
-          >
-            <Folder className="explorer-empty-folder-icon" />
-            <span>{t("explorer.noItems")}</span>
-          </div>
-        );
-      case "table": {
-        const tableFilter = getMixedStateFilterForTable(item.table.name, item.schemaName);
-        const itemState = getItemFilterState(item.table.name, item.schemaName, tableFilter);
-        const isContextActive =
-          contextQualifiedName !== null &&
-          contextQualifiedName === getQualifiedTableName(item.table);
-        return (
-          <div style={{ paddingLeft: item.depth * 12 }}>
-            <TableRow
-              table={item.table}
-              itemState={itemState}
-              isContextActive={isContextActive}
-              onTableClick={onTableClick}
-              onTableDoubleClick={onTableDoubleClick}
-              onStructureClick={onStructureClick}
-              onTableContextMenu={onTableContextMenu}
-              schemaName={item.schemaName}
-              language={language}
-              t={t}
-              onMixedStateToggle={onMixedStateToggle}
-            />
-          </div>
-        );
-      }
-      case "view": {
-        const tableFilter = getMixedStateFilterForTable(item.view.name, item.schemaName);
-        const itemState = getItemFilterState(item.view.name, item.schemaName, tableFilter);
-        return (
-          <div style={{ paddingLeft: item.depth * 12 }}>
-            <ViewRow
-              view={item.view}
-              itemState={itemState}
-              onTableClick={onTableClick}
-              onTableDoubleClick={onTableDoubleClick}
-              onStructureClick={onStructureClick}
-              schemaName={item.schemaName}
-              language={language}
-              t={t}
-              onMixedStateToggle={onMixedStateToggle}
-            />
-          </div>
-        );
-      }
-      case "object": {
-        const isTriggerLike = item.group === "triggers" || item.group === "database-triggers";
-        const isTypeLike =
-          item.group === "system-types" ||
-          item.group === "user-defined-types" ||
-          item.group === "user-table-types" ||
-          item.group === "clr-types" ||
-          item.group === "xml-schema-collections" ||
-          item.group === "assemblies";
-        return (
-          <div style={{ paddingLeft: item.depth * 12 }}>
-            <StaticObjectRow
-              object={item.object}
-              metaText={isTriggerLike
-                ? item.object.related_table || (item.group === "triggers" ? t("explorer.triggersGroup") : "")
-                : isTypeLike
-                  ? ""
-                  : item.object.object_type}
-              icon={isTriggerLike ? "GitBranch" : "FileCode"}
-              onObjectSqlClick={onObjectSqlClick}
-              t={t}
-            />
-          </div>
-        );
-      }
-      default:
-        return null;
-    }
-  }, [contextQualifiedName, getMixedStateFilterForTable, language, mixedStateFilter, onMixedStateToggle, onObjectSqlClick, onStructureClick, onTableClick, onTableContextMenu, onTableDoubleClick, onToggleFolder, t]);
+    },
+    [
+      contextQualifiedName,
+      getMixedStateFilterForTable,
+      language,
+      mixedStateFilter,
+      onMixedStateToggle,
+      onObjectSqlClick,
+      onStructureClick,
+      onTableClick,
+      onTableContextMenu,
+      onTableDoubleClick,
+      onToggleFolder,
+      selectedTableKeys,
+      t,
+    ],
+  );
 
   return (
     <div
@@ -293,7 +337,9 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
           data-index={virtualItem.index}
           ref={virtualizer.measureElement}
           className="explorer-virtual-row"
-          style={{ transform: `translateY(${virtualItem.start - virtualizer.options.scrollMargin}px)` }}
+          style={{
+            transform: `translateY(${virtualItem.start - virtualizer.options.scrollMargin}px)`,
+          }}
         >
           {renderItem(flatItems[virtualItem.index])}
         </div>
@@ -333,6 +379,7 @@ export function DatabaseTree({
   schemaPickerRef,
   tableContextMenu,
   mixedStateFilter,
+  selectedTableKeys,
   onMixedStateToggle,
   getMixedStateFilterForTable,
 }: DatabaseTreeProps) {
@@ -362,7 +409,13 @@ export function DatabaseTree({
   const layoutKey = useMemo(
     () =>
       `${currentDatabase ?? ""}|${[...expandedDbs].sort().join(",")}|${activeSchemaFilter}|${availableSchemaNames.length}|${[...expandedFolders].sort().join(",")}`,
-    [activeSchemaFilter, availableSchemaNames.length, currentDatabase, expandedDbs, expandedFolders],
+    [
+      activeSchemaFilter,
+      availableSchemaNames.length,
+      currentDatabase,
+      expandedDbs,
+      expandedFolders,
+    ],
   );
   const getScrollElement = useCallback(() => explorerScrollRef.current, []);
 
@@ -376,10 +429,7 @@ export function DatabaseTree({
           activeConnectionDbType === "sqlite" ? getLastPathSegment(db.name) : db.name;
 
         return (
-          <section
-            key={db.name}
-            className={`explorer-db-section ${isCurrent ? "active" : ""}`}
-          >
+          <section key={db.name} className={`explorer-db-section ${isCurrent ? "active" : ""}`}>
             <button
               data-testid={isCurrent ? "database-current" : undefined}
               onClick={() => onToggleDb(db)}
@@ -395,13 +445,15 @@ export function DatabaseTree({
               </div>
               <div className="explorer-db-copy">
                 <div className="explorer-db-title-row">
-                  <span className="explorer-db-name" title={db.name}>{displayDatabaseName}</span>
-                </div>
-                  <span className="explorer-db-meta">
-                    {isCurrent
-                      ? t("explorer.tablesReady", { count: tableCount ?? 0 })
-                      : t("explorer.switchWorkspace")}
+                  <span className="explorer-db-name" title={db.name}>
+                    {displayDatabaseName}
                   </span>
+                </div>
+                <span className="explorer-db-meta">
+                  {isCurrent
+                    ? t("explorer.tablesReady", { count: tableCount ?? 0 })
+                    : t("explorer.switchWorkspace")}
+                </span>
               </div>
               <div className="explorer-db-badges">
                 <span className={`explorer-db-count ${tableCount == null ? "pending" : ""}`}>
@@ -423,9 +475,13 @@ export function DatabaseTree({
                         onClick={onSchemaPickerToggle}
                       >
                         <span className="explorer-schema-picker-value">
-                          {activeSchemaFilter === "all" ? t("explorer.allSchemas") : activeSchemaFilter}
+                          {activeSchemaFilter === "all"
+                            ? t("explorer.allSchemas")
+                            : activeSchemaFilter}
                         </span>
-                        <ChevronDown className={`w-3.5 h-3.5 explorer-schema-picker-chevron ${isSchemaPickerOpen ? "open" : ""}`} />
+                        <ChevronDown
+                          className={`w-3.5 h-3.5 explorer-schema-picker-chevron ${isSchemaPickerOpen ? "open" : ""}`}
+                        />
                       </button>
 
                       {isSchemaPickerOpen && (
@@ -440,8 +496,12 @@ export function DatabaseTree({
                                 onSchemaPickerClose();
                               }}
                             >
-                              <span className="explorer-schema-picker-option-label">{option.label}</span>
-                              <span className="explorer-schema-picker-option-count">{option.count}</span>
+                              <span className="explorer-schema-picker-option-label">
+                                {option.label}
+                              </span>
+                              <span className="explorer-schema-picker-option-count">
+                                {option.count}
+                              </span>
                             </button>
                           ))}
                         </div>
@@ -480,6 +540,7 @@ export function DatabaseTree({
                     onTableClick={onTableClick}
                     onTableDoubleClick={onTableDoubleClick}
                     onStructureClick={onStructureClick}
+                    selectedTableKeys={selectedTableKeys}
                     onObjectSqlClick={onObjectSqlClick}
                     onTableContextMenu={onTableContextMenu}
                     contextQualifiedName={contextQualifiedName}
@@ -497,7 +558,9 @@ export function DatabaseTree({
         );
       })}
 
-      {databases.length === 0 && <div className="explorer-empty">{t("explorer.noObjectsFound")}</div>}
+      {databases.length === 0 && (
+        <div className="explorer-empty">{t("explorer.noObjectsFound")}</div>
+      )}
     </div>
   );
 }

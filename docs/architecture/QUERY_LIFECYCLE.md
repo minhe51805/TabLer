@@ -19,6 +19,15 @@ How TableR runs, times out, and cancels a SQL statement.
 
 A mixed batch does **not** get the read-only window.
 
+A connection can override the classified window with `query_timeout_seconds`
+(connection form → Advanced → "Query timeout"). The value is captured at
+connect time in `DatabaseManager::connection_query_timeouts` and resolved via
+`config::resolve_connection_query_timeout` (clamped to 1s–600s) in
+`execute_query`, `execute_query_progressive`, `execute_parameterized_query`,
+the sandboxed/agent paths, and the table-browsing commands (`table.rs`, whose
+default is 120s). An explicit per-query `timeout_ms` still wins over the
+per-connection value; unset keeps the classified defaults above.
+
 ## Cancel
 
 1. UI calls `cancel_query` with `{ requestId, connectionId }`.

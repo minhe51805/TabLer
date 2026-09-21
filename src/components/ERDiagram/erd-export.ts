@@ -20,24 +20,17 @@ const DIAGRAM_EXPORT_PADDING = 40;
 const DIAGRAM_EXPORT_SCALE = 2;
 
 /**
- * Canvas rendering and diagram export (PNG / draw.io XML) for the ER editor.
- * Pure subsystem: no React state, no store access.
+ * Canvas/SVG rendering and diagram export (PNG / SVG / draw.io XML) for the
+ * ER editor. Pure subsystem: no React state, no store access.
  */
 
-function truncateCanvasText(
-  context: CanvasRenderingContext2D,
-  value: string,
-  maxWidth: number,
-) {
+function truncateCanvasText(context: CanvasRenderingContext2D, value: string, maxWidth: number) {
   if (context.measureText(value).width <= maxWidth) return value;
 
   const ellipsis = "...";
   let next = value;
 
-  while (
-    next.length > 0 &&
-    context.measureText(`${next}${ellipsis}`).width > maxWidth
-  ) {
+  while (next.length > 0 && context.measureText(`${next}${ellipsis}`).width > maxWidth) {
     next = next.slice(0, -1);
   }
 
@@ -143,16 +136,8 @@ function buildExportEdgeLayout(
   };
   const sourceSide = pickDiagramAnchorSide(sourceCenter, bendPoint);
   const targetSide = pickDiagramAnchorSide(targetCenter, bendPoint);
-  const sourcePoint = getDiagramNodeAnchorPoint(
-    sourceFrame,
-    sourceSide,
-    edgeData.sourceColumn,
-  );
-  const targetPoint = getDiagramNodeAnchorPoint(
-    targetFrame,
-    targetSide,
-    edgeData.targetColumn,
-  );
+  const sourcePoint = getDiagramNodeAnchorPoint(sourceFrame, sourceSide, edgeData.sourceColumn);
+  const targetPoint = getDiagramNodeAnchorPoint(targetFrame, targetSide, edgeData.targetColumn);
   const points = buildDiagramEdgePoints(
     sourcePoint,
     sourceSide,
@@ -185,10 +170,7 @@ export function buildERDiagramExportSnapshot(
       x: node.position.x,
       y: node.position.y,
       width: DIAGRAM_NODE_WIDTH,
-      height: estimateDiagramNodeHeight(
-        data.columns.length,
-        Boolean(data.isExpanded),
-      ),
+      height: estimateDiagramNodeHeight(data.columns.length, Boolean(data.isExpanded)),
       data,
     } satisfies ExportNodeLayout;
   });
@@ -200,10 +182,7 @@ export function buildERDiagramExportSnapshot(
     .map((edge) => buildExportEdgeLayout(edge, nodeMap))
     .filter((edge): edge is ExportEdgeLayout => Boolean(edge));
 
-  const edgePoints = exportEdges.flatMap((edge) => [
-    ...edge.points,
-    edge.bendPoint,
-  ]);
+  const edgePoints = exportEdges.flatMap((edge) => [...edge.points, edge.bendPoint]);
   const minX = Math.min(
     ...exportNodes.map((node) => node.x),
     ...edgePoints.map((point) => point.x),
@@ -220,14 +199,8 @@ export function buildERDiagramExportSnapshot(
     ...exportNodes.map((node) => node.y + node.height),
     ...edgePoints.map((point) => point.y),
   );
-  const exportWidth = Math.max(
-    320,
-    Math.ceil(maxX - minX + DIAGRAM_EXPORT_PADDING * 2),
-  );
-  const exportHeight = Math.max(
-    220,
-    Math.ceil(maxY - minY + DIAGRAM_EXPORT_PADDING * 2),
-  );
+  const exportWidth = Math.max(320, Math.ceil(maxX - minX + DIAGRAM_EXPORT_PADDING * 2));
+  const exportHeight = Math.max(220, Math.ceil(maxY - minY + DIAGRAM_EXPORT_PADDING * 2));
   const offsetX = DIAGRAM_EXPORT_PADDING - minX;
   const offsetY = DIAGRAM_EXPORT_PADDING - minY;
 
@@ -252,14 +225,8 @@ function escapeXml(value: string) {
 
 function formatDrawioNodeValue(node: ExportNodeLayout) {
   const isExpanded = Boolean(node.data.isExpanded);
-  const visibleColumns = getVisibleDiagramColumns(
-    node.data.columns,
-    isExpanded,
-  );
-  const hiddenCount = Math.max(
-    0,
-    node.data.columns.length - visibleColumns.length,
-  );
+  const visibleColumns = getVisibleDiagramColumns(node.data.columns, isExpanded);
+  const hiddenCount = Math.max(0, node.data.columns.length - visibleColumns.length);
   const lines = [
     node.data.label,
     ...visibleColumns.map((column) => {
@@ -366,13 +333,7 @@ function drawCardinalityMarkerOnCanvas(
   marker.circles.forEach((circle) => {
     context.beginPath();
     context.fillStyle = "#060810";
-    context.arc(
-      circle.center.x,
-      circle.center.y,
-      circle.radius,
-      0,
-      Math.PI * 2,
-    );
+    context.arc(circle.center.x, circle.center.y, circle.radius, 0, Math.PI * 2);
     context.fill();
     context.stroke();
   });
@@ -393,12 +354,7 @@ export function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
 
   context.scale(DIAGRAM_EXPORT_SCALE, DIAGRAM_EXPORT_SCALE);
 
-  const backgroundGradient = context.createLinearGradient(
-    0,
-    0,
-    0,
-    snapshot.height,
-  );
+  const backgroundGradient = context.createLinearGradient(0, 0, 0, snapshot.height);
   backgroundGradient.addColorStop(0, "#080b10");
   backgroundGradient.addColorStop(1, "#060810");
   context.fillStyle = backgroundGradient;
@@ -504,24 +460,14 @@ export function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
     context.fillStyle = "#d8e2f1";
     context.textAlign = "center";
     context.textBaseline = "middle";
-    context.fillText(
-      label,
-      labelX + labelWidth / 2,
-      labelY + labelHeight / 2 + 0.5,
-    );
+    context.fillText(label, labelX + labelWidth / 2, labelY + labelHeight / 2 + 0.5);
     context.restore();
   });
 
   snapshot.nodes.forEach((node) => {
     const isExpanded = Boolean(node.data.isExpanded);
-    const visibleColumns = getVisibleDiagramColumns(
-      node.data.columns,
-      isExpanded,
-    );
-    const hiddenCount = Math.max(
-      0,
-      node.data.columns.length - visibleColumns.length,
-    );
+    const visibleColumns = getVisibleDiagramColumns(node.data.columns, isExpanded);
+    const hiddenCount = Math.max(0, node.data.columns.length - visibleColumns.length);
     const x = node.x + snapshot.offsetX;
     const y = node.y + snapshot.offsetY;
     const width = node.width;
@@ -585,11 +531,7 @@ export function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
 
     context.fillStyle = "#eef3fb";
     context.font = '700 11px "Segoe UI", sans-serif';
-    context.fillText(
-      truncateCanvasText(context, node.data.label, width - 42),
-      x + 22,
-      y + 18,
-    );
+    context.fillText(truncateCanvasText(context, node.data.label, width - 42), x + 22, y + 18);
 
     const pills = [`${node.data.columns.length} cols`];
     if (hasFiniteRowCount(node.data.rowCount)) {
@@ -647,20 +589,12 @@ export function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
 
       context.fillStyle = "#eef3fb";
       context.font = '600 8px "Segoe UI", sans-serif';
-      context.fillText(
-        truncateCanvasText(context, column.name, width - 78),
-        x + 46,
-        rowY + 8,
-      );
+      context.fillText(truncateCanvasText(context, column.name, width - 78), x + 46, rowY + 8);
 
       context.fillStyle = "#c3cede";
       context.font = '400 7px "Segoe UI", sans-serif';
       const detail = `${column.data_type}${column.is_nullable ? " / nullable" : ""}`;
-      context.fillText(
-        truncateCanvasText(context, detail, width - 78),
-        x + 46,
-        rowY + 15,
-      );
+      context.fillText(truncateCanvasText(context, detail, width - 78), x + 46, rowY + 15);
 
       rowY += DIAGRAM_NODE_ROW_HEIGHT + DIAGRAM_NODE_ROW_GAP;
     });
@@ -721,9 +655,394 @@ export function renderERDiagramCanvas(nodes: Node[], edges: Edge[]) {
   return canvas;
 }
 
+const SVG_EXPORT_FONT_FAMILY = "Segoe UI, sans-serif";
+
+let exportMeasureContext: CanvasRenderingContext2D | null | undefined;
+
+/** Shared canvas context used only to measure text for SVG export layout. */
+function getExportMeasureContext() {
+  if (exportMeasureContext === undefined) {
+    exportMeasureContext = document.createElement("canvas").getContext("2d");
+  }
+  return exportMeasureContext;
+}
+
+function truncateExportText(value: string, maxWidth: number, font: string) {
+  const context = getExportMeasureContext();
+  if (!context) return value;
+  context.font = font;
+  return truncateCanvasText(context, value, maxWidth);
+}
+
+function measureExportText(value: string, font: string) {
+  const context = getExportMeasureContext();
+  if (!context) return value.length * 6;
+  context.font = font;
+  return context.measureText(value).width;
+}
+
+function formatSvgNumber(value: number) {
+  return String(Math.round(value * 100) / 100);
+}
+
+interface SvgTextOptions {
+  fill: string;
+  fontSize: number;
+  fontWeight?: number;
+  anchor?: "start" | "middle";
+  baseline?: "top" | "middle";
+}
+
+function buildSvgText(x: number, y: number, value: string, options: SvgTextOptions) {
+  const attributes = [
+    `x="${formatSvgNumber(x)}"`,
+    `y="${formatSvgNumber(y)}"`,
+    `fill="${options.fill}"`,
+    `font-family="${SVG_EXPORT_FONT_FAMILY}"`,
+    `font-size="${options.fontSize}"`,
+  ];
+  if (options.fontWeight) {
+    attributes.push(`font-weight="${options.fontWeight}"`);
+  }
+  if (options.anchor === "middle") attributes.push('text-anchor="middle"');
+  attributes.push(
+    `dominant-baseline="${options.baseline === "middle" ? "central" : "text-before-edge"}"`,
+  );
+  return `<text ${attributes.join(" ")}>${escapeXml(value)}</text>`;
+}
+
+interface SvgRectOptions {
+  fill: string;
+  radius?: number;
+  stroke?: string;
+  strokeWidth?: number;
+  extra?: string;
+}
+
+function buildSvgRect(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  options: SvgRectOptions,
+) {
+  const attributes = [
+    `x="${formatSvgNumber(x)}"`,
+    `y="${formatSvgNumber(y)}"`,
+    `width="${formatSvgNumber(width)}"`,
+    `height="${formatSvgNumber(height)}"`,
+    `fill="${options.fill}"`,
+  ];
+  if (options.radius) {
+    attributes.push(`rx="${formatSvgNumber(options.radius)}"`);
+  }
+  if (options.stroke) {
+    attributes.push(`stroke="${options.stroke}"`, `stroke-width="${options.strokeWidth ?? 1}"`);
+  }
+  if (options.extra) attributes.push(options.extra);
+  return `<rect ${attributes.join(" ")} />`;
+}
+
+function buildSvgCardinalityMarker(
+  anchor: DiagramPoint,
+  awayPoint: DiagramPoint,
+  cardinality: ERCardinalityEndpoint | undefined,
+  strokeColor: string,
+) {
+  const marker = buildERCardinalityMarker(cardinality, anchor, awayPoint);
+  if (!marker) return "";
+
+  const lines = marker.lines
+    .map(
+      (line) =>
+        `<line x1="${formatSvgNumber(line.from.x)}" y1="${formatSvgNumber(line.from.y)}" x2="${formatSvgNumber(line.to.x)}" y2="${formatSvgNumber(line.to.y)}" />`,
+    )
+    .join("");
+  const circles = marker.circles
+    .map(
+      (circle) =>
+        `<circle cx="${formatSvgNumber(circle.center.x)}" cy="${formatSvgNumber(circle.center.y)}" r="${formatSvgNumber(circle.radius)}" fill="#060810" />`,
+    )
+    .join("");
+
+  return `<g fill="none" stroke="${strokeColor}" stroke-width="1.5" stroke-linecap="round">${lines}${circles}</g>`;
+}
+
+/**
+ * Renders the same export snapshot as renderERDiagramCanvas into a standalone
+ * vector SVG document (2x default size via width/height vs viewBox).
+ */
+export function buildERDiagramSvg(nodes: Node[], edges: Edge[]) {
+  const snapshot = buildERDiagramExportSnapshot(nodes, edges);
+  if (!snapshot) return null;
+
+  const { width, height, offsetX, offsetY } = snapshot;
+
+  const defs: string[] = [
+    `<linearGradient id="erd-bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#080b10" /><stop offset="1" stop-color="#060810" /></linearGradient>`,
+    `<radialGradient id="erd-glow-top" gradientUnits="userSpaceOnUse" cx="${formatSvgNumber(width * 0.2)}" cy="${formatSvgNumber(height * 0.12)}" r="${formatSvgNumber(width * 0.34)}"><stop offset="0" stop-color="#22d3ee" stop-opacity="0.12" /><stop offset="1" stop-color="#22d3ee" stop-opacity="0" /></radialGradient>`,
+    `<radialGradient id="erd-glow-bottom" gradientUnits="userSpaceOnUse" cx="${formatSvgNumber(width * 0.82)}" cy="${formatSvgNumber(height * 0.84)}" r="${formatSvgNumber(width * 0.28)}"><stop offset="0" stop-color="#10b981" stop-opacity="0.1" /><stop offset="1" stop-color="#10b981" stop-opacity="0" /></radialGradient>`,
+    `<pattern id="erd-dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect x="12" y="12" width="1.2" height="1.2" fill="rgba(255, 255, 255, 0.05)" /></pattern>`,
+    `<filter id="erd-edge-glow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#22d3ee" flood-opacity="0.18" /></filter>`,
+    `<filter id="erd-node-shadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="0" stdDeviation="9" flood-color="#000000" flood-opacity="0.28" /></filter>`,
+  ];
+
+  const edgeMarkup = snapshot.edges
+    .map((edge) => {
+      const strokeColor = "#22d3ee";
+      const parts: string[] = [];
+      const path = edge.points
+        .map(
+          (point, index) =>
+            `${index === 0 ? "M" : "L"}${formatSvgNumber(point.x + offsetX)} ${formatSvgNumber(point.y + offsetY)}`,
+        )
+        .join(" ");
+      parts.push(
+        `<path d="${path}" fill="none" stroke="${strokeColor}" stroke-width="1.7" filter="url(#erd-edge-glow)" />`,
+      );
+
+      if (edge.points.length >= 2) {
+        parts.push(
+          buildSvgCardinalityMarker(
+            {
+              x: edge.points[0].x + offsetX,
+              y: edge.points[0].y + offsetY,
+            },
+            {
+              x: edge.points[1].x + offsetX,
+              y: edge.points[1].y + offsetY,
+            },
+            edge.sourceCardinality,
+            strokeColor,
+          ),
+          buildSvgCardinalityMarker(
+            {
+              x: edge.points[edge.points.length - 1].x + offsetX,
+              y: edge.points[edge.points.length - 1].y + offsetY,
+            },
+            {
+              x: edge.points[edge.points.length - 2].x + offsetX,
+              y: edge.points[edge.points.length - 2].y + offsetY,
+            },
+            edge.targetCardinality,
+            strokeColor,
+          ),
+        );
+      }
+
+      const labelFont = '700 9px "Segoe UI", sans-serif';
+      const label = truncateExportText(edge.label, 128, labelFont);
+      const labelWidth = Math.min(136, measureExportText(label, labelFont) + 14);
+      const labelHeight = 18;
+      const labelX = edge.bendPoint.x + offsetX - labelWidth / 2;
+      const labelY = edge.bendPoint.y + offsetY - labelHeight / 2;
+      parts.push(
+        buildSvgRect(labelX, labelY, labelWidth, labelHeight, {
+          fill: "rgba(8, 11, 16, 0.94)",
+          radius: 9,
+          stroke: "rgba(34, 211, 238, 0.18)",
+        }),
+        buildSvgText(labelX + labelWidth / 2, labelY + labelHeight / 2 + 0.5, label, {
+          fill: "#d8e2f1",
+          fontSize: 9,
+          fontWeight: 700,
+          anchor: "middle",
+          baseline: "middle",
+        }),
+      );
+
+      return `<g>${parts.join("")}</g>`;
+    })
+    .join("");
+
+  const nodeMarkup = snapshot.nodes
+    .map((node, nodeIndex) => {
+      const isExpanded = Boolean(node.data.isExpanded);
+      const visibleColumns = getVisibleDiagramColumns(node.data.columns, isExpanded);
+      const hiddenCount = Math.max(0, node.data.columns.length - visibleColumns.length);
+      const x = node.x + offsetX;
+      const y = node.y + offsetY;
+      const nodeWidth = node.width;
+      const nodeHeight = node.height;
+      const accent = node.data.color;
+      const headerHeight = DIAGRAM_NODE_HEADER_HEIGHT;
+      const clipId = `erd-clip-${nodeIndex}`;
+      const accentId = `erd-accent-${nodeIndex}`;
+
+      defs.push(
+        `<clipPath id="${clipId}"><rect x="${formatSvgNumber(x)}" y="${formatSvgNumber(y)}" width="${formatSvgNumber(nodeWidth)}" height="${formatSvgNumber(nodeHeight)}" rx="12" /></clipPath>`,
+        `<radialGradient id="${accentId}" gradientUnits="userSpaceOnUse" cx="${formatSvgNumber(x + nodeWidth - 30)}" cy="${formatSvgNumber(y + 14)}" r="54"><stop offset="0" stop-color="${accent}" stop-opacity="0.19" /><stop offset="1" stop-color="${accent}" stop-opacity="0" /></radialGradient>`,
+      );
+
+      const parts: string[] = [];
+      parts.push(
+        buildSvgRect(x, y, nodeWidth, nodeHeight, {
+          fill: "rgba(12, 16, 24, 0.98)",
+          radius: 12,
+          stroke: "rgba(122, 147, 198, 0.16)",
+          extra: 'filter="url(#erd-node-shadow)"',
+        }),
+        `<g clip-path="url(#${clipId})">`,
+        buildSvgRect(x, y, nodeWidth, headerHeight, {
+          fill: "rgba(255, 255, 255, 0.035)",
+        }),
+        buildSvgRect(x, y, nodeWidth, 3, { fill: accent }),
+        buildSvgRect(x, y, nodeWidth, headerHeight + 20, {
+          fill: `url(#${accentId})`,
+        }),
+        "</g>",
+        `<line x1="${formatSvgNumber(x)}" y1="${formatSvgNumber(y + headerHeight)}" x2="${formatSvgNumber(x + nodeWidth)}" y2="${formatSvgNumber(y + headerHeight)}" stroke="rgba(122, 147, 198, 0.12)" />`,
+        `<circle cx="${formatSvgNumber(x + 12)}" cy="${formatSvgNumber(y + 14)}" r="4" fill="${accent}" />`,
+        buildSvgText(x + 22, y + 9, "TABLE", {
+          fill: "#8f99ab",
+          fontSize: 7,
+          fontWeight: 800,
+        }),
+        buildSvgText(
+          x + 22,
+          y + 18,
+          truncateExportText(node.data.label, nodeWidth - 42, '700 11px "Segoe UI", sans-serif'),
+          { fill: "#eef3fb", fontSize: 11, fontWeight: 700 },
+        ),
+      );
+
+      const pills = [`${node.data.columns.length} cols`];
+      if (hasFiniteRowCount(node.data.rowCount)) {
+        pills.push(`${formatCompactCount(node.data.rowCount)} rows`);
+      }
+
+      const pillFont = '700 8px "Segoe UI", sans-serif';
+      let pillX = x + 10;
+      pills.forEach((pill) => {
+        const pillWidth = measureExportText(pill, pillFont) + 12;
+        parts.push(
+          buildSvgRect(pillX, y + 31, pillWidth, 14, {
+            fill: "rgba(255, 255, 255, 0.04)",
+            radius: 7,
+            stroke: "rgba(122, 147, 198, 0.14)",
+          }),
+          buildSvgText(pillX + 6, y + 38, pill, {
+            fill: "#c3cede",
+            fontSize: 8,
+            fontWeight: 700,
+            baseline: "middle",
+          }),
+        );
+        pillX += pillWidth + 6;
+      });
+
+      let rowY = y + headerHeight + 8;
+      visibleColumns.forEach((column) => {
+        const isPrimary = column.is_primary_key;
+        parts.push(
+          buildSvgRect(x + 7, rowY, nodeWidth - 14, 22, {
+            fill: isPrimary ? "rgba(34, 211, 238, 0.08)" : "rgba(255, 255, 255, 0.03)",
+            radius: 8,
+            stroke: isPrimary ? "rgba(34, 211, 238, 0.16)" : undefined,
+          }),
+          buildSvgRect(x + 12, rowY + 3, isPrimary ? 26 : 28, 12, {
+            fill: isPrimary ? "rgba(34, 211, 238, 0.1)" : "rgba(255, 255, 255, 0.04)",
+            radius: 6,
+            stroke: isPrimary ? "rgba(34, 211, 238, 0.22)" : "rgba(122, 147, 198, 0.14)",
+          }),
+          buildSvgText(x + 18, rowY + 9.5, isPrimary ? "PK" : "COL", {
+            fill: isPrimary ? "#22d3ee" : "#8f99ab",
+            fontSize: 6,
+            fontWeight: 800,
+            baseline: "middle",
+          }),
+          buildSvgText(
+            x + 46,
+            rowY + 8,
+            truncateExportText(column.name, nodeWidth - 78, '600 8px "Segoe UI", sans-serif'),
+            {
+              fill: "#eef3fb",
+              fontSize: 8,
+              fontWeight: 600,
+              baseline: "middle",
+            },
+          ),
+          buildSvgText(
+            x + 46,
+            rowY + 15,
+            truncateExportText(
+              `${column.data_type}${column.is_nullable ? " / nullable" : ""}`,
+              nodeWidth - 78,
+              '400 7px "Segoe UI", sans-serif',
+            ),
+            { fill: "#c3cede", fontSize: 7, baseline: "middle" },
+          ),
+        );
+
+        rowY += DIAGRAM_NODE_ROW_HEIGHT + DIAGRAM_NODE_ROW_GAP;
+      });
+
+      if (node.data.columns.length > visibleColumns.length || isExpanded) {
+        parts.push(
+          `<line x1="${formatSvgNumber(x + 8)}" y1="${formatSvgNumber(rowY + 2)}" x2="${formatSvgNumber(x + nodeWidth - 8)}" y2="${formatSvgNumber(rowY + 2)}" stroke="rgba(122, 147, 198, 0.12)" />`,
+        );
+
+        if (isExpanded) {
+          parts.push(
+            buildSvgRect(x + nodeWidth / 2 - 34, rowY + 6, 28, 14, {
+              fill: "rgba(34, 211, 238, 0.08)",
+              radius: 7,
+              stroke: "rgba(34, 211, 238, 0.16)",
+            }),
+            buildSvgText(x + nodeWidth / 2 - 20, rowY + 13, "less", {
+              fill: "#c3cede",
+              fontSize: 7,
+              fontWeight: 700,
+              anchor: "middle",
+              baseline: "middle",
+            }),
+            buildSvgText(x + nodeWidth / 2 - 2, rowY + 13, "show less", {
+              fill: "#8f99ab",
+              fontSize: 7,
+              fontWeight: 700,
+              baseline: "middle",
+            }),
+          );
+        } else {
+          parts.push(
+            buildSvgRect(x + nodeWidth / 2 - 34, rowY + 6, 28, 14, {
+              fill: "rgba(255, 255, 255, 0.04)",
+              radius: 7,
+              stroke: "rgba(122, 147, 198, 0.14)",
+            }),
+            buildSvgText(x + nodeWidth / 2 - 20, rowY + 13, `+${hiddenCount}`, {
+              fill: "#c3cede",
+              fontSize: 8,
+              fontWeight: 700,
+              anchor: "middle",
+              baseline: "middle",
+            }),
+            buildSvgText(x + nodeWidth / 2 - 2, rowY + 13, "more columns", {
+              fill: "#8f99ab",
+              fontSize: 7,
+              fontWeight: 700,
+              baseline: "middle",
+            }),
+          );
+        }
+      }
+
+      return `<g>${parts.join("")}</g>`;
+    })
+    .join("");
+
+  const background =
+    '<rect width="100%" height="100%" fill="url(#erd-bg)" />' +
+    '<rect width="100%" height="100%" fill="url(#erd-glow-top)" />' +
+    '<rect width="100%" height="100%" fill="url(#erd-glow-bottom)" />' +
+    '<rect width="100%" height="100%" fill="url(#erd-dots)" />';
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${snapshot.width * DIAGRAM_EXPORT_SCALE}" height="${snapshot.height * DIAGRAM_EXPORT_SCALE}" viewBox="0 0 ${snapshot.width} ${snapshot.height}"><defs>${defs.join("")}</defs>${background}${edgeMarkup}${nodeMarkup}</svg>`;
+}
+
 function formatCompactCount(value: number) {
-  if (value >= 1_000_000) return ;
-  if (value >= 1_000) return ;
+  if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
   return String(value);
 }
 

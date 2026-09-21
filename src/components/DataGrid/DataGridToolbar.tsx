@@ -23,10 +23,13 @@ import {
   Timer,
   ArrowUpDown,
   ShieldCheck,
+  Dices,
   PanelRight,
   Table2,
 } from "lucide-react";
 import { DataGridAnonymizerModal } from "./dialogs/DataGridAnonymizerModal";
+import { GenerateTestRowsDialog } from "../GenerateTestRows/GenerateTestRowsDialog";
+import { getSeedRowsCopy } from "../GenerateTestRows/seed-rows-copy";
 import { DataGridChartModal } from "./DataGridChartModal";
 import { getDataGridChartCopy } from "./datagrid-chart-copy";
 import { isNumericColumn } from "./chart-utils";
@@ -202,6 +205,7 @@ export function DataGridToolbar({
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
   const [showAnonymizer, setShowAnonymizer] = useState(false);
+  const [showSeedRows, setShowSeedRows] = useState(false);
   const [showSqlMenu, setShowSqlMenu] = useState(false);
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showRefreshMenu, setShowRefreshMenu] = useState(false);
@@ -569,6 +573,20 @@ export function DataGridToolbar({
               >
                 <Plus className="!w-3.5 !h-3.5" />
                 <span>{t("datagrid.insertRow")}</span>
+              </button>
+            </span>
+          )}
+
+          {isTableEditable && structureStatus === "ready" && tableName && (
+            <span className="popover-container" data-popover={getSeedRowsCopy(language).menuItem}>
+              <button
+                type="button"
+                className="datagrid-footer-action"
+                onClick={() => setShowSeedRows(true)}
+                title={getSeedRowsCopy(language).menuItem}
+              >
+                <Dices className="!w-3.5 !h-3.5" />
+                <span>{getSeedRowsCopy(language).menuItem}</span>
               </button>
             </span>
           )}
@@ -1359,6 +1377,15 @@ export function DataGridToolbar({
           columns={resolvedColumns}
           dataRows={dataRows}
           onClose={() => setShowAnonymizer(false)}
+        />
+      )}
+      {showSeedRows && tableName && (
+        <GenerateTestRowsDialog
+          tableName={tableName}
+          database={database}
+          dbType={dbType}
+          columns={resolvedColumns}
+          onClose={() => setShowSeedRows(false)}
         />
       )}
       {showChartModal && (

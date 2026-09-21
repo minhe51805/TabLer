@@ -87,6 +87,8 @@ interface DataGridContextMenuProps {
   selectedRangeCellCount?: number;
   /** Opens the "Set selected cells to…" dialog (staged updates). */
   onSetRangeValue?: () => void;
+  /** Remaining px budget for pinning; non-positive disables pin actions. */
+  pinBudgetPx?: number;
 
   setColumnOrder: Dispatch<SetStateAction<ColumnOrderState>>;
   setColumnPinning: Dispatch<SetStateAction<ColumnPinningState>>;
@@ -122,6 +124,7 @@ export function DataGridContextMenu({
   onColumnAutoFit,
   selectedRangeCellCount,
   onSetRangeValue,
+  pinBudgetPx,
 
   setColumnOrder,
   setColumnPinning,
@@ -389,33 +392,48 @@ export function DataGridContextMenu({
           </button>
           {contextMenu.colName !== "_row_num" && (
             <>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  table.getColumn(contextMenu.colName!)?.pin("left");
-                  onClose();
-                }}
-              >
-                {translateCurrent("datagrid.ctxPinLeft")}
-              </button>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  table.getColumn(contextMenu.colName!)?.pin("right");
-                  onClose();
-                }}
-              >
-                {translateCurrent("datagrid.ctxPinRight")}
-              </button>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  table.getColumn(contextMenu.colName!)?.pin(false);
-                  onClose();
-                }}
-              >
-                {translateCurrent("datagrid.ctxUnpin")}
-              </button>
+              {(() => {
+                const contextColumn = table.getColumn(contextMenu.colName!);
+                const isPinned = contextColumn?.getIsPinned();
+                const pinDisabled =
+                  (contextColumn?.getSize() ?? 0) > (pinBudgetPx ?? Number.MAX_SAFE_INTEGER);
+                return isPinned ? (
+                  <button
+                    className="datagrid-context-menu-item"
+                    onClick={() => {
+                      contextColumn?.pin(false);
+                      onClose();
+                    }}
+                  >
+                    {translateCurrent("datagrid.ctxUnpin")}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      className="datagrid-context-menu-item"
+                      disabled={pinDisabled}
+                      title={pinDisabled ? powerCopy.pinning.limitToast : undefined}
+                      onClick={() => {
+                        contextColumn?.pin("left");
+                        onClose();
+                      }}
+                    >
+                      {translateCurrent("datagrid.ctxPinLeft")}
+                    </button>
+                    <button
+                      className="datagrid-context-menu-item"
+                      disabled={pinDisabled}
+                      title={pinDisabled ? powerCopy.pinning.limitToast : undefined}
+                      onClick={() => {
+                        contextColumn?.pin("right");
+                        onClose();
+                      }}
+                    >
+                      {translateCurrent("datagrid.ctxPinRight")}
+                    </button>
+                  </>
+                );
+              })()}
               <button
                 className="datagrid-context-menu-item"
                 onClick={() => {

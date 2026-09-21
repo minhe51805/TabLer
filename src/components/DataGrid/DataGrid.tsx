@@ -33,6 +33,7 @@ import { emitAppToast } from "../../utils/app-toast";
 import { lazy, Suspense } from "react";
 import "./DataChart.css";
 import { getDataGridChartCopy } from "./datagrid-chart-copy";
+import { getDataGridPowerCopy } from "./datagrid-power-copy";
 
 const DataChart = lazy(() => import("./DataChart").then((m) => ({ default: m.DataChart })));
 import {
@@ -89,6 +90,11 @@ import { DataGridContextMenu } from "./dialogs/DataGridContextMenu";
 import { ColumnStatsPopover, type ColumnStats } from "./dialogs/ColumnStatsPopover";
 import { hasNumericValues } from "./chart-utils";
 import type { ColumnDisplayFormat } from "./editors";
+
+/** Minimum width that must remain for scrollable (unpinned) columns. Pinning
+ *  that would leave less than this is refused so the grid never becomes a
+ *  wall of frozen columns. */
+const MIN_UNPINNED_VIEWPORT_PX = 160;
 
 interface Props {
   connectionId: string;
@@ -1682,7 +1688,28 @@ export function DataGrid({
     },
     onColumnOrderChange: setColumnOrder,
     onColumnVisibilityChange: setColumnVisibility,
-    onColumnPinningChange: setColumnPinning,
+    onColumnPinningChange: (updater) => {
+      setColumnPinning((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        // Pin budget: pinned columns must leave a scrollable sliver, otherwise
+        // the whole viewport freezes and horizontal scrolling becomes useless.
+        const viewportWidth = tableWrapRef.current?.clientWidth ?? 0;
+        if (viewportWidth > 0) {
+          const pinnedTotal = [...(next.left ?? []), ...(next.right ?? [])].reduce(
+            (total, id) => total + (table.getColumn(id)?.getSize() ?? 0),
+            0,
+          );
+          if (pinnedTotal > viewportWidth - MIN_UNPINNED_VIEWPORT_PX) {
+            emitAppToast({
+              title: getDataGridPowerCopy(getCurrentAppLanguage()).pinning.limitToast,
+              tone: "info",
+            });
+            return prev;
+          }
+        }
+        return next;
+      });
+    },
     onColumnSizingChange: (updater) => {
       setColumnSizes((prev) => {
         const next = typeof updater === "function" ? updater(prev) : updater;
@@ -1756,6 +1783,24 @@ export function DataGrid({
       background: "var(--bg-primary)",
     };
   };
+  /** Class list for a pinned column cell: marks the pinned side and flags the
+   *  outermost pinned column so CSS can draw the freeze divider/shadow. */
+  const pinnedColumnClasses = (column: (typeof leftPinnedColumns)[number]) => {
+    const pinned = column.getIsPinned();
+    if (!pinned) return [] as string[];
+    const classes = ["datagrid-pinned", `datagrid-pinned-${pinned}`];
+    if (pinned === "left" && leftPinnedColumns[leftPinnedColumns.length - 1]?.id === column.id) {
+      classes.push("datagrid-pinned-boundary");
+    }
+    if (pinned === "right" && rightPinnedColumns[0]?.id === column.id) {
+      classes.push("datagrid-pinned-boundary");
+    }
+    return classes;
+  };
+  /** Remaining pin budget in px: viewport minus already-pinned columns minus
+   *  the reserved scrollable sliver. Non-positive disables further pinning. */
+  const pinBudgetPx =
+    (tableWrapRef.current?.clientWidth ?? 0) - pinnedWidth - MIN_UNPINNED_VIEWPORT_PX;
 
   useEffect(() => {
     if (!tableName || externalResult || isLoading || !hasMoreTableRows || virtualRows.length === 0)
@@ -2002,8 +2047,11 @@ export function DataGrid({
                       const width = columnSizes[column.id] ?? column.getSize();
                       return (
                         <th
-                          key={header.id}
-                          className={`datagrid-th${column.id === "_row_num" ? " datagrid-th-index" : ""}`}
+                          className={[
+                            "datagrid-th",
+                            column.id === "_row_num" ? "datagrid-th-index" : "",
+                            ...pinnedColumnClasses(column),
+                          ].join(" ")}
                           data-col-id={column.id}
                           style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
                         >
@@ -2067,8 +2115,7 @@ export function DataGrid({
                       const width = columnSizes[column.id] ?? column.getSize();
                       return (
                         <th
-                          key={header.id}
-                          className="datagrid-th"
+                          className={["datagrid-th", ...pinnedColumnClasses(column)].join(" ")}
                           data-col-id={column.id}
                           style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
                         >
@@ -2166,6 +2213,7 @@ export function DataGrid({
                             className={[
                               "datagrid-td",
                               column.id === "_row_num" ? "datagrid-td-index" : "",
+                              ...pinnedColumnClasses(column),
                               stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
                             ].join(" ")}
                             data-col-id={column.id}
@@ -2221,6 +2269,7 @@ export function DataGrid({
                             key={cell.id}
                             className={[
                               "datagrid-td",
+                              ...pinnedColumnClasses(column),
                               stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
                             ].join(" ")}
                             style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
@@ -2287,6 +2336,7 @@ export function DataGrid({
               setColumnSizes={setColumnSizes}
               setColumnVisibility={setColumnVisibility}
               setFilterDraft={setFilterDraft}
+              pinBudgetPx={pinBudgetPx}
               setTableFilter={setTableFilter}
               setSortColumn={setSortColumn}
               setSortDir={setSortDir}

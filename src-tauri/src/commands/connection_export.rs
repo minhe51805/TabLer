@@ -213,6 +213,11 @@ pub struct ExportableConnection {
     /// passphrase live in the keyring and never leave the machine).
     #[serde(default)]
     pub(crate) ssh_config: Option<crate::ssh::ssh_tunnel::SshConfig>,
+    /// Per-connection query timeout override (seconds); `None` keeps the
+    /// classified defaults. `#[serde(default)]` keeps older export files
+    /// importable.
+    #[serde(default)]
+    pub(crate) query_timeout_seconds: Option<u64>,
 }
 
 impl From<&ConnectionConfig> for ExportableConnection {
@@ -236,6 +241,7 @@ impl From<&ConnectionConfig> for ExportableConnection {
             startup_commands: config.startup_commands.clone(),
             pre_connect_script: config.pre_connect_script.clone(),
             ssh_config: config.ssh_config.clone(),
+            query_timeout_seconds: config.query_timeout_seconds,
         }
     }
 }
@@ -265,6 +271,7 @@ impl ExportableConnection {
             additional_fields: self.additional_fields.clone(),
             startup_commands: self.startup_commands.clone(),
             pre_connect_script: self.pre_connect_script.clone(),
+            query_timeout_seconds: self.query_timeout_seconds,
             ssh_config: self.ssh_config.clone(),
         };
         config.fill_generated_name();

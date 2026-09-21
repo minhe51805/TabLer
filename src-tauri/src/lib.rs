@@ -52,7 +52,10 @@ use commands::ai_checkpoints::{
 };
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
-use commands::data_export::{cancel_table_export, export_table_data, TableExportCancellationState};
+use commands::data_export::{
+    cancel_table_export, export_table_data, export_tables_to_directory,
+    TableExportCancellationState,
+};
 use commands::data_import::{
     import_csv, import_json, import_xlsx, preview_import_csv, preview_import_json,
     preview_import_xlsx,
@@ -405,6 +408,7 @@ pub fn run() {
             import_csv_file_atomically,
             cancel_csv_import,
             export_table_data,
+            export_tables_to_directory,
             cancel_table_export,
             execute_structure_statements,
             get_foreign_key_lookup_values,

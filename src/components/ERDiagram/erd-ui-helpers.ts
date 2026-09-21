@@ -4,15 +4,15 @@
  */
 
 import type { ColumnDetail, ERRelationship, TableSchema } from "../../types/database";
-import { readCustomERDRelationships, writeCustomERDRelationships } from "../../utils/erd-custom-relationships";
+import {
+  readCustomERDRelationships,
+  writeCustomERDRelationships,
+} from "../../utils/erd-custom-relationships";
 import { getRelationshipSignature } from "./erd-graph";
 import type { ERDSelectOption } from "./ERDCompactSelect";
 import type { PendingRelationshipDraft } from "./ERDiagram";
 
-export function readCustomRelationships(
-  connectionId: string,
-  database?: string,
-): ERRelationship[] {
+export function readCustomRelationships(connectionId: string, database?: string): ERRelationship[] {
   return readCustomERDRelationships(connectionId, database);
 }
 
@@ -39,22 +39,15 @@ export function getPreferredRelationshipDraft(
   targetTable: TableSchema,
 ): Pick<PendingRelationshipDraft, "sourceColumn" | "targetColumn"> {
   const preferredSource =
-    sourceTable.columns.find((column) => column.is_primary_key) ||
-    sourceTable.columns[0];
+    sourceTable.columns.find((column) => column.is_primary_key) || sourceTable.columns[0];
   const preferredNames = new Set(
-    [
-      preferredSource?.name,
-      `${sourceTable.name}_id`,
-      `${sourceTable.name.replace(/\s+/g, "_")}_id`,
-    ]
+    [preferredSource?.name, `${sourceTable.name}_id`, `${sourceTable.name.replace(/\s+/g, "_")}_id`]
       .filter(Boolean)
       .map((value) => value.toLowerCase()),
   );
 
   const preferredTarget =
-    targetTable.columns.find((column) =>
-      preferredNames.has(column.name.toLowerCase()),
-    ) ||
+    targetTable.columns.find((column) => preferredNames.has(column.name.toLowerCase())) ||
     targetTable.columns.find((column) => !column.is_primary_key) ||
     targetTable.columns[0];
 
@@ -88,6 +81,13 @@ export function sanitizeFileName(value: string) {
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+/** Builds `<db>-erd-<YYYY-MM-DD>.<ext>` download names for diagram exports. */
+export function buildERDiagramExportFileName(databaseLabel: string | undefined, extension: string) {
+  const base = sanitizeFileName(databaseLabel || "er-diagram") || "er-diagram";
+  const date = new Date().toISOString().slice(0, 10);
+  return `${base}-erd-${date}.${extension}`;
 }
 
 export function getQualifiedTableName(table: Pick<TableSchema, "name" | "schema">) {

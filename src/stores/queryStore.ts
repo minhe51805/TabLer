@@ -1,8 +1,21 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
-import type { ColumnDetail, QueryParameter, QueryResult, TableCellUpdateRequest, TableRowDeleteRequest, TableStructure } from "../types";
+import type {
+  ColumnDetail,
+  QueryParameter,
+  QueryResult,
+  TableCellUpdateRequest,
+  TableRowDeleteRequest,
+  TableStructure,
+} from "../types";
 import { assertQueryAllowed } from "../utils/safe-mode-query-guard";
+import { notifyQueryDone } from "../utils/query-notify";
+import {
+  getCachedQueryResult,
+  invalidateQueryResultCache,
+  setCachedQueryResult,
+} from "../utils/query-result-cache";
 import { getOrLoadTableColumns, getOrLoadTableStructure } from "../utils/schema-cache";
 import { useConnectionStore } from "./connectionStore";
 import {
@@ -38,16 +51,16 @@ export interface QueryState {
     requireReadOnly?: boolean,
     options?: { userInitiated?: boolean; preApproved?: boolean },
   ) => Promise<QueryResult>;
-  executeAgentReadonlyQuery: (
-    connectionId: string,
-    statements: string[],
-  ) => Promise<QueryResult>;
+  executeAgentReadonlyQuery: (connectionId: string, statements: string[]) => Promise<QueryResult>;
   executeAgentParameterizedQuery: (
     connectionId: string,
     sql: string,
     parameters: QueryParameter[],
   ) => Promise<QueryResult>;
-  previewWriteTransaction: (connectionId: string, statements: string[]) => Promise<{
+  previewWriteTransaction: (
+    connectionId: string,
+    statements: string[],
+  ) => Promise<{
     results: QueryResult[];
     rolledBack: boolean;
   }>;
@@ -61,14 +74,30 @@ export interface QueryState {
       orderBy?: string;
       orderDir?: string;
       filter?: string;
-    }
+    },
   ) => Promise<QueryResult>;
-  getTableStructure: (connectionId: string, table: string, database?: string) => Promise<TableStructure>;
-  getTableColumnsPreview: (connectionId: string, table: string, database?: string) => Promise<ColumnDetail[]>;
+  getTableStructure: (
+    connectionId: string,
+    table: string,
+    database?: string,
+  ) => Promise<TableStructure>;
+  getTableColumnsPreview: (
+    connectionId: string,
+    table: string,
+    database?: string,
+  ) => Promise<ColumnDetail[]>;
   countRows: (connectionId: string, table: string, database?: string) => Promise<number>;
-  countTableNullValues: (connectionId: string, table: string, column: string, database?: string) => Promise<number>;
+  countTableNullValues: (
+    connectionId: string,
+    table: string,
+    column: string,
+    database?: string,
+  ) => Promise<number>;
   updateTableCell: (connectionId: string, request: TableCellUpdateRequest) => Promise<number>;
-  applyTableUpdatesAtomically: (connectionId: string, updates: TableCellUpdateRequest[]) => Promise<number>;
+  applyTableUpdatesAtomically: (
+    connectionId: string,
+    updates: TableCellUpdateRequest[],
+  ) => Promise<number>;
   deleteTableRows: (connectionId: string, request: TableRowDeleteRequest) => Promise<number>;
   insertTableRow: (
     connectionId: string,
@@ -143,6 +172,11 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   },
 
   executeQuery: async (connectionId: string, sql: string, options?: { preApproved?: boolean }) => {
+    // Repeat read-only runs within the cache TTL return instantly — before the
+    // Safe Mode guard, so a cached hit never re-prompts a confirmation.
+    const database = useConnectionStore.getState().currentDatabase;
+    const cached = getCachedQueryResult(connectionId, sql, database);
+    if (cached) return cached;
     // The editor's Run button is a human decision: a Safe Mode block becomes
     // an interactive confirmation instead of a dead end — unless the AI tab
     // carries the standing full-autonomy grant (`preApproved`). All other
@@ -157,6 +191,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       activeQueryRequestId: requestId,
       activeQueryConnectionId: connectionId,
     });
+    const startedAt = Date.now();
     try {
       let result: QueryResult | null = null;
       let unlisten: UnlistenFn | null = null;
@@ -165,10 +200,13 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         // progress; the command still resolves with the complete result and
         // any failure falls back to the legacy path transparently.
         try {
-          unlisten = await listen<{ connectionId: string; rows: unknown[][]; totalRows: number }>("query-row-batch", (event) => {
-            if (event.payload.connectionId !== connectionId) return;
-            set({ progressiveRowCount: event.payload.totalRows });
-          });
+          unlisten = await listen<{ connectionId: string; rows: unknown[][]; totalRows: number }>(
+            "query-row-batch",
+            (event) => {
+              if (event.payload.connectionId !== connectionId) return;
+              set({ progressiveRowCount: event.payload.totalRows });
+            },
+          );
           result = await invokeMutation<QueryResult>("execute_query_progressive", {
             connectionId,
             sql,
@@ -194,14 +232,35 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
-      set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
-        : state);
+      if (safety.readOnly) {
+        setCachedQueryResult(connectionId, sql, database, result);
+      } else {
+        // A committed write can change what any cached read on this
+        // connection would return — drop them all.
+        invalidateQueryResultCache(connectionId);
+      }
+      void notifyQueryDone({
+        durationMs: Date.now() - startedAt,
+        rowCount: result.rows.length,
+      });
+      set((state) =>
+        state.activeQueryRequestId === requestId
+          ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+          : state,
+      );
       return result;
     } catch (e) {
-      set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null, progressiveRowCount: null }
-        : state);
+      void notifyQueryDone({ durationMs: Date.now() - startedAt, error: e });
+      set((state) =>
+        state.activeQueryRequestId === requestId
+          ? {
+              isExecutingQuery: false,
+              activeQueryRequestId: null,
+              activeQueryConnectionId: null,
+              progressiveRowCount: null,
+            }
+          : state,
+      );
       throw e;
     }
   },
@@ -219,43 +278,58 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     requireReadOnly = false,
     options?: { userInitiated?: boolean; preApproved?: boolean },
   ) => {
-    const safety = await assertQueryAllowed(statements.join(";\n"), connectionId, options);
+    // Same instant-repeat behaviour as executeQuery: the joined statements are
+    // the cache key, so identical batches hit within the TTL.
+    const database = useConnectionStore.getState().currentDatabase;
+    const cacheSql = statements.join(";\n");
+    const cached = getCachedQueryResult(connectionId, cacheSql, database);
+    if (cached) return cached;
+    const safety = await assertQueryAllowed(cacheSql, connectionId, options);
     const requestId = crypto.randomUUID();
     set({
       isExecutingQuery: true,
       activeQueryRequestId: requestId,
       activeQueryConnectionId: connectionId,
     });
+    const startedAt = Date.now();
     try {
-      const result = await invokeAIWorkspaceToolMutation(
-        "execute_sandboxed_query",
-        {
-          connectionId,
-          statements,
-          requireReadOnly,
-          requestId,
-          safeModeApprovedByUser: safety.userConfirmed === true,
-        },
-      );
+      const result = await invokeAIWorkspaceToolMutation("execute_sandboxed_query", {
+        connectionId,
+        statements,
+        requireReadOnly,
+        requestId,
+        safeModeApprovedByUser: safety.userConfirmed === true,
+      });
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
-      set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
-        : state);
+      if (safety.readOnly) {
+        setCachedQueryResult(connectionId, cacheSql, database, result);
+      } else {
+        invalidateQueryResultCache(connectionId);
+      }
+      void notifyQueryDone({
+        durationMs: Date.now() - startedAt,
+        rowCount: result.rows.length,
+      });
+      set((state) =>
+        state.activeQueryRequestId === requestId
+          ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+          : state,
+      );
       return result;
     } catch (e) {
-      set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
-        : state);
+      void notifyQueryDone({ durationMs: Date.now() - startedAt, error: e });
+      set((state) =>
+        state.activeQueryRequestId === requestId
+          ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+          : state,
+      );
       throw e;
     }
   },
 
-  executeAgentReadonlyQuery: async (
-    connectionId: string,
-    statements: string[],
-  ) => {
+  executeAgentReadonlyQuery: async (connectionId: string, statements: string[]) => {
     // Read-only is enforced by the backend `execute_agent_readonly_query`
     // command, which pins the boundary server-side. We still run the local
     // safe-mode guard first so blocked policies fail fast with a clear message.
@@ -267,21 +341,26 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       activeQueryConnectionId: connectionId,
     });
     try {
-      const result = await invokeAIWorkspaceToolMutation(
-        "execute_agent_readonly_query",
-        { connectionId, statements, requestId },
-      );
+      const result = await invokeAIWorkspaceToolMutation("execute_agent_readonly_query", {
+        connectionId,
+        statements,
+        requestId,
+      });
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
-      set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
-        : state);
+      set((state) =>
+        state.activeQueryRequestId === requestId
+          ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+          : state,
+      );
       return result;
     } catch (e) {
-      set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
-        : state);
+      set((state) =>
+        state.activeQueryRequestId === requestId
+          ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+          : state,
+      );
       throw e;
     }
   },
@@ -302,21 +381,27 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       activeQueryConnectionId: connectionId,
     });
     try {
-      const result = await invokeAIWorkspaceToolMutation(
-        "execute_agent_parameterized_query",
-        { connectionId, sql, parameters, requestId },
-      );
+      const result = await invokeAIWorkspaceToolMutation("execute_agent_parameterized_query", {
+        connectionId,
+        sql,
+        parameters,
+        requestId,
+      });
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
-      set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
-        : state);
+      set((state) =>
+        state.activeQueryRequestId === requestId
+          ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+          : state,
+      );
       return result;
     } catch (e) {
-      set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
-        : state);
+      set((state) =>
+        state.activeQueryRequestId === requestId
+          ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+          : state,
+      );
       throw e;
     }
   },
@@ -324,10 +409,10 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   previewWriteTransaction: async (connectionId, statements) => {
     set({ isExecutingQuery: true });
     try {
-      return await invokeAIWorkspaceToolMutation(
-        "preview_write_transaction",
-        { connectionId, statements },
-      );
+      return await invokeAIWorkspaceToolMutation("preview_write_transaction", {
+        connectionId,
+        statements,
+      });
     } finally {
       set({ isExecutingQuery: false });
     }
@@ -347,15 +432,13 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         filter: opts.filter || null,
       },
       30_000,
-      "Loading table data"
+      "Loading table data",
     );
   },
 
   getTableStructure: async (connectionId, table, database) =>
-    getOrLoadTableStructure(
-      { connectionId, database },
-      table,
-      () => invokeAIWorkspaceToolWithTimeout(
+    getOrLoadTableStructure({ connectionId, database }, table, () =>
+      invokeAIWorkspaceToolWithTimeout(
         "get_table_structure",
         { connectionId, table, database: database || null },
         15_000,
@@ -364,10 +447,8 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     ),
 
   getTableColumnsPreview: async (connectionId, table, database) =>
-    getOrLoadTableColumns(
-      { connectionId, database },
-      table,
-      () => invokeWithTimeout<ColumnDetail[]>(
+    getOrLoadTableColumns({ connectionId, database }, table, () =>
+      invokeWithTimeout<ColumnDetail[]>(
         "get_table_columns_preview",
         { connectionId, table, database: database || null },
         15_000,
@@ -380,7 +461,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       "count_table_rows",
       { connectionId, table, database: database || null },
       10_000,
-      "Counting table rows"
+      "Counting table rows",
     ),
 
   countTableNullValues: async (connectionId, table, column, database) =>
@@ -388,39 +469,51 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       "count_table_null_values",
       { connectionId, table, column, database: database || null },
       10_000,
-      "Counting NULL values"
+      "Counting NULL values",
     ),
 
-  updateTableCell: async (connectionId, request) =>
-    invokeMutation<number>("update_table_cell", {
+  updateTableCell: async (connectionId, request) => {
+    const affected = await invokeMutation<number>("update_table_cell", {
       connectionId,
       request: { ...request, database: request.database || null },
-    }),
+    });
+    invalidateQueryResultCache(connectionId);
+    return affected;
+  },
 
-  deleteTableRows: async (connectionId, request) =>
-    invokeMutation<number>("delete_table_rows", {
+  deleteTableRows: async (connectionId, request) => {
+    const affected = await invokeMutation<number>("delete_table_rows", {
       connectionId,
       request: { ...request, database: request.database || null },
-    }),
+    });
+    invalidateQueryResultCache(connectionId);
+    return affected;
+  },
 
-  applyTableUpdatesAtomically: async (connectionId, updates) =>
-    invokeMutation<number>("apply_table_updates_atomically", {
+  applyTableUpdatesAtomically: async (connectionId, updates) => {
+    const affected = await invokeMutation<number>("apply_table_updates_atomically", {
       connectionId,
       updates: updates.map((request) => ({ ...request, database: request.database || null })),
-    }),
+    });
+    invalidateQueryResultCache(connectionId);
+    return affected;
+  },
 
-  insertTableRow: async (connectionId, request) =>
-    invokeMutation<number>("insert_table_row", {
+  insertTableRow: async (connectionId, request) => {
+    const affected = await invokeMutation<number>("insert_table_row", {
       connectionId,
       request: {
         table: request.table,
         database: request.database || null,
         values: request.values,
       },
-    }),
+    });
+    invalidateQueryResultCache(connectionId);
+    return affected;
+  },
 
-  insertTableRowsAtomically: async (connectionId, requests, operationId) =>
-    invokeMutation<number>("insert_table_rows_atomically", {
+  insertTableRowsAtomically: async (connectionId, requests, operationId) => {
+    const affected = await invokeMutation<number>("insert_table_rows_atomically", {
       connectionId,
       operationId,
       requests: requests.map((request) => ({
@@ -428,17 +521,23 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         database: request.database || null,
         values: request.values,
       })),
-    }),
+    });
+    invalidateQueryResultCache(connectionId);
+    return affected;
+  },
 
-  importCsvFileAtomically: async (connectionId, request, operationId) =>
-    invokeMutation<number>("import_csv_file_atomically", {
+  importCsvFileAtomically: async (connectionId, request, operationId) => {
+    const affected = await invokeMutation<number>("import_csv_file_atomically", {
       connectionId,
       operationId,
       request: {
         ...request,
         database: request.database || null,
       },
-    }),
+    });
+    invalidateQueryResultCache(connectionId);
+    return affected;
+  },
 
   cancelCsvImport: async (operationId) =>
     invokeMutation<boolean>("cancel_csv_import", { operationId }),
@@ -460,8 +559,12 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     invokeMutation<boolean>("cancel_table_export", { operationId }),
 
   executeStructureStatements: async (connectionId, statements) => {
-    const affectedRows = await invokeMutation<number>("execute_structure_statements", { connectionId, statements });
+    const affectedRows = await invokeMutation<number>("execute_structure_statements", {
+      connectionId,
+      statements,
+    });
     useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
+    invalidateQueryResultCache(connectionId);
     return affectedRows;
   },
 
@@ -476,6 +579,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       activeQueryRequestId: requestId,
       activeQueryConnectionId: connectionId,
     });
+    const startedAt = Date.now();
     try {
       const result = await invokeMutation<QueryResult>("execute_parameterized_query", {
         connectionId,
@@ -487,14 +591,26 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
-      set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
-        : state);
+      // Not cached: the key would need the parameter values, and a wrong-key
+      // hit is worse than no cache.
+      if (!safety.readOnly) invalidateQueryResultCache(connectionId);
+      void notifyQueryDone({
+        durationMs: Date.now() - startedAt,
+        rowCount: result.rows.length,
+      });
+      set((state) =>
+        state.activeQueryRequestId === requestId
+          ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+          : state,
+      );
       return result;
     } catch (error) {
-      set((state) => state.activeQueryRequestId === requestId
-        ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
-        : state);
+      void notifyQueryDone({ durationMs: Date.now() - startedAt, error });
+      set((state) =>
+        state.activeQueryRequestId === requestId
+          ? { isExecutingQuery: false, activeQueryRequestId: null, activeQueryConnectionId: null }
+          : state,
+      );
       throw error;
     }
   },

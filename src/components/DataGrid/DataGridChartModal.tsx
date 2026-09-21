@@ -16,6 +16,7 @@ import {
 } from "./chart-utils";
 import { EmptyState } from "./chart-primitives";
 import { ChartCanvas } from "./chart-series";
+import { trackUsage } from "../../utils/usage-counter";
 
 interface DataGridChartModalProps {
   resolvedColumns: ResolvedColumn[];
@@ -69,6 +70,11 @@ export function DataGridChartModal({ resolvedColumns, rows, onClose }: DataGridC
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
+
+  // Local usage counter: the modal mounts once per open.
+  useEffect(() => {
+    trackUsage("chart.open");
+  }, []);
 
   const selectedXColumn = useMemo(
     () => resolvedColumns.find((column) => column.name === selectedX) ?? xAxisColumns[0],

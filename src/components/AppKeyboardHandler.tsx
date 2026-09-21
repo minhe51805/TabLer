@@ -55,12 +55,13 @@ export function AppKeyboardHandler({
         return;
       }
 
-      // Shortcuts overlay: F1 anywhere; Ctrl+/ (and Ctrl+Shift+/) outside the
-      // Monaco editor so the editor keeps its own Ctrl+/ line-comment binding.
-      // The CommandPalette owns the "open-keyboard-shortcuts-palette" listener
-      // and forwards it to the shortcuts modal.
+      // Shortcuts overlay: F1 outside the Monaco editor (Monaco keeps its own
+      // F1 command palette); Ctrl+/ (and Ctrl+Shift+/) outside Monaco so the
+      // editor keeps its own Ctrl+/ line-comment binding. The CommandPalette
+      // owns the "open-keyboard-shortcuts-palette" listener and forwards it to
+      // the shortcuts modal.
       if (
-        (e.key === "F1" && !metaPressed && !e.altKey && !e.shiftKey) ||
+        (e.key === "F1" && !metaPressed && !e.altKey && !e.shiftKey && !isMonacoTarget) ||
         (metaPressed && e.code === "Slash" && !isMonacoTarget)
       ) {
         e.preventDefault();

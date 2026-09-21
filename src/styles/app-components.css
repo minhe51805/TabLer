@@ -4951,6 +4951,19 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   transform: translateY(-1px);
 }
 
+.app-help-modal-usage-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.app-help-modal-usage-empty {
+  font-size: var(--mm-fs-caption);
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
 .app-help-modal-split {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

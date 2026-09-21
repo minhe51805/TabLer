@@ -14,6 +14,7 @@ import { getQueryProfile } from "../utils/query-profile";
 import { splitSqlStatements } from "../utils/sqlStatements";
 import { assertStatementsAllowed } from "../utils/safe-mode-query-guard";
 import { invokeMutation } from "../utils/tauri-utils";
+import { invalidateQueryResultCache } from "../utils/query-result-cache";
 
 interface RestorePreview {
   statement_count: number;
@@ -77,7 +78,8 @@ export function useDatabaseFileActions(language: string) {
     if (getQueryProfile(activeConnection.db_type).surface !== "sql") {
       emitAppToast({
         tone: "info",
-        title: language === "vi" ? "Engine hien tai khong dung tep .sql" : "SQL files are not used here",
+        title:
+          language === "vi" ? "Engine hien tai khong dung tep .sql" : "SQL files are not used here",
         description:
           language === "vi"
             ? "Engine hien tai dung command surface, khong mo tep .sql theo kieu query."
@@ -132,7 +134,10 @@ export function useDatabaseFileActions(language: string) {
     if (getQueryProfile(activeConnection.db_type).surface !== "sql") {
       emitAppToast({
         tone: "info",
-        title: language === "vi" ? "Engine hien tai khong ho tro import SQL" : "SQL import is not available here",
+        title:
+          language === "vi"
+            ? "Engine hien tai khong ho tro import SQL"
+            : "SQL import is not available here",
         description:
           language === "vi"
             ? "Engine hien tai dung command surface, khong import tep .sql theo kieu SQL database."
@@ -173,7 +178,14 @@ export function useDatabaseFileActions(language: string) {
         `Restore preview\n\nFile: ${fileName}\nStatements: ${preview.statement_count}\nSchema changes: ${preview.schema_change_count}\nData changes: ${preview.data_change_count}\nDestructive statements: ${preview.destructive_statement_count}\nMode: ${preview.transactional ? "transactional" : "best effort"}${preview.warning ? `\n\nWarning: ${preview.warning}` : ""}\n\nThe restore will run against ${activeConnection.name || currentDatabase || activeConnection.db_type}. Continue?`,
       );
       if (!approved) {
-        emitAppToast({ tone: "info", title: language === "vi" ? "Da huy restore" : "Restore cancelled", description: language === "vi" ? "Khong co cau lenh nao duoc chay." : "No restore statements were executed." });
+        emitAppToast({
+          tone: "info",
+          title: language === "vi" ? "Da huy restore" : "Restore cancelled",
+          description:
+            language === "vi"
+              ? "Khong co cau lenh nao duoc chay."
+              : "No restore statements were executed.",
+        });
         return;
       }
 
@@ -182,6 +194,7 @@ export function useDatabaseFileActions(language: string) {
         sql,
         dbType: activeConnection.db_type,
       });
+      invalidateQueryResultCache(activeConnectionId);
       await refreshWorkspace();
       window.dispatchEvent(
         new CustomEvent("workspace-activity", {
@@ -227,8 +240,7 @@ export function useDatabaseFileActions(language: string) {
 
       const normalizedPath = normalizeDatabaseFilePath(filePath);
       const existingConnection = connections.find(
-        (connection) =>
-          normalizeDatabaseFilePath(connection.file_path || "") === normalizedPath,
+        (connection) => normalizeDatabaseFilePath(connection.file_path || "") === normalizedPath,
       );
       if (existingConnection) {
         window.dispatchEvent(
@@ -268,7 +280,10 @@ export function useDatabaseFileActions(language: string) {
       if (!nextConfig) {
         emitAppToast({
           tone: "error",
-          title: language === "vi" ? "Khong nhan dien duoc tep database" : "Database file type not recognized",
+          title:
+            language === "vi"
+              ? "Khong nhan dien duoc tep database"
+              : "Database file type not recognized",
           description:
             language === "vi"
               ? "TableR hien chi mo truc tiep tep SQLite va DuckDB o launcher."

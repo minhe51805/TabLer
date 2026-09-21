@@ -3,6 +3,7 @@ import {
   extractJsonObjectCandidate,
   repairTruncatedJson,
   sanitizeJsonStringLiterals,
+  stripOptionalCodeFence,
 } from "./json-repair";
 import {
   isHighRiskStatement,
@@ -18,6 +19,7 @@ import {
 
 export {
   AI_AGENT_ASK_USER_OPTIONS_LIMIT,
+  AI_AGENT_BATCH_CALL_LIMIT,
   AI_AGENT_BATCH_DESCRIBE_LIMIT,
   AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS,
   AI_AGENT_DELEGATE_ANSWER_CHARS,
@@ -303,6 +305,22 @@ export type AIAgentProposeSeedDataAction = AIAgentToolActionBase<
   AIAgentProposeSeedDataArgs
 >;
 
+/**
+ * One step that carries several tool calls. Read-only sub-calls run in
+ * parallel inside the executor; mutating/ordering-sensitive ones serialize in
+ * array order. Sub-call args are validated per tool at dispatch time.
+ */
+export interface AIAgentBatchCall {
+  action: string;
+  args?: Record<string, unknown>;
+}
+
+export interface AIAgentBatchArgs extends Record<string, unknown> {
+  calls: AIAgentBatchCall[];
+}
+
+export type AIAgentBatchAction = AIAgentToolActionBase<"batch", AIAgentBatchArgs>;
+
 export type AIAgentToolAction =
   | AIAgentAskUserAction
   | AIAgentUpdatePlanAction
@@ -331,6 +349,7 @@ export type AIAgentToolAction =
   | AIAgentRestoreCheckpointAction
   | AIAgentDelegateAction
   | AIAgentReadPageAction
+  | AIAgentBatchAction
   | AIAgentFinishAction;
 
 function isAIAgentToolName(value: unknown): value is AIAgentToolName {
@@ -355,6 +374,25 @@ function parseNativeMemoryToolArgs(args: Record<string, unknown>): AIAgentMemory
 }
 
 export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
+  // Bare-array shorthand: a reply that is a JSON array of {"action","args"}
+  // objects is a batch of independent tool calls. Checked before the object
+  // candidate extraction, which would otherwise slice from the first "{".
+  const stripped = stripOptionalCodeFence(rawResponse);
+  if (stripped.startsWith("[")) {
+    let calls: unknown = null;
+    try {
+      calls = JSON.parse(repairTruncatedJson(sanitizeJsonStringLiterals(stripped)));
+    } catch {
+      calls = null;
+    }
+    if (Array.isArray(calls) && calls.length > 0) {
+      return {
+        action: "batch",
+        args: { calls: calls as AIAgentBatchCall[] },
+        message: "",
+      };
+    }
+  }
   const candidate = extractJsonObjectCandidate(rawResponse);
   const sanitizedCandidate = sanitizeJsonStringLiterals(candidate);
   let parsed: { action?: unknown; args?: unknown; message?: unknown } | null = null;
@@ -473,4 +511,35 @@ export function validateAIAgentReadonlySql(sql: string) {
   }
 
   return statements;
+}
+
+/** How confidently a statement can be dry-run through `EXPLAIN <stmt>`. */
+export type AgentExplainableKind = "dml" | "ddl" | "none";
+
+const EXPLAINABLE_DML_PREFIXES = [
+  "SELECT",
+  "WITH",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "REPLACE",
+  "MERGE",
+] as const;
+
+const EXPLAINABLE_DDL_PREFIXES = ["CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME"] as const;
+
+/**
+ * Classifies whether `EXPLAIN <statement>` is worth attempting for a proposed
+ * write. DML is explainable on every SQL engine, so an EXPLAIN failure there
+ * means the statement itself is broken. DDL is best-effort — Postgres cannot
+ * EXPLAIN CREATE/ALTER while SQLite can — so a failure only means the engine
+ * declined to plan it. Anything else (session control, VACUUM, CALL, …) is
+ * not explainable at all.
+ */
+export function classifyAgentExplainableStatement(statement: string): AgentExplainableKind {
+  const normalized = normalizeStatementForGuard(statement);
+  if (!normalized) return "none";
+  if (EXPLAINABLE_DML_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return "dml";
+  if (EXPLAINABLE_DDL_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return "ddl";
+  return "none";
 }

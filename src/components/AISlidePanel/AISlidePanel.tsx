@@ -35,6 +35,7 @@ import { invokeMutation } from "../../utils/tauri-utils";
 import {
   buildComposerCommandContext,
   describeMissingCommandContext,
+  describeMissingCommandContextItems,
   findFileCommandName,
   isBackupCommand,
   isRollbackCommand,
@@ -56,7 +57,7 @@ import { useAIDashboardBubbleUpdates } from "./hooks/use-ai-dashboard-bubble-upd
 import { useAIWorkspaceEffects } from "./hooks/use-ai-workspace-effects";
 import { useAIPanelPreferences } from "./hooks/use-ai-panel-preferences";
 import { AI_REQUEST_REPLACED_MESSAGE } from "./ai-agent-action-requestor";
-import { useAISlidePanel } from "./hooks/use-ai-slide-panel";
+import { resolveEditorAssistPrompt, useAISlidePanel } from "./hooks/use-ai-slide-panel";
 import { useAgentScheduleRunner } from "./hooks/use-agent-schedule-runner";
 import {
   approveDataRead,
@@ -72,9 +73,17 @@ import {
   DEFAULT_AI_WORKSPACE_AGENT_AUTONOMY,
   type AIWorkspaceAgentAutonomy,
   type AIWorkspaceBubbleData,
+  type AIWorkspaceBubbleFeedback,
   type AIWorkspaceInteractionMode,
 } from "./ai-workspace-types";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
+import { getAIPanelCopy } from "./ai-panel-copy";
+import {
+  applyLearningProposal,
+  buildLearningSlug,
+  type LearningProposal,
+} from "./ai-agent-learning";
+import { invalidateAgentMemoryIndex } from "./hooks/use-agent-memory";
 import {
   buildWorkspaceOverviewChartSql,
   isDashboardSelectionSource,
@@ -88,6 +97,7 @@ import {
   buildAIWorkspaceKey,
   estimateConversationFootprint,
   buildConversationHistoryMessages,
+  getBubbleConversationText,
   createAIWorkspaceId,
   createChatThread,
   prunePersistedAIWorkspaceState,
@@ -1336,11 +1346,17 @@ export function AISlidePanel({
     let cancelled = false;
     void (async () => {
       try {
-        const registry = await invokeMutation<{ commands: AgentFileCommand[] }>(
-          "list_ai_commands",
-          {},
-        );
-        if (!cancelled) setFileCommands(registry.commands ?? []);
+        const registry = await invokeMutation<{
+          commands: AgentFileCommand[];
+          report?: { errors?: { path: string; reason: string }[] };
+        }>("list_user_slash_commands", {});
+        if (cancelled) return;
+        setFileCommands(registry.commands ?? []);
+        // A file that failed to parse is skipped by the loader; warn so "the
+        // command is not in the menu" is diagnosable instead of silent.
+        for (const error of registry.report?.errors ?? []) {
+          console.warn(`[AIWorkspace] skipped slash command ${error.path}: ${error.reason}`);
+        }
       } catch (error) {
         // A missing registry must never break the composer: the native commands
         // still work and plain prompts still go through untouched.
@@ -1359,9 +1375,13 @@ export function AISlidePanel({
           { name: "backup", description: aiCopy.composer.slashBackupDescription },
           { name: "rollback", description: aiCopy.composer.slashRollbackDescription },
           { name: "compact", description: aiCopy.composer.slashCompactDescription },
+          { name: "explain", description: aiCopy.composer.slashExplainDescription },
+          { name: "optimize", description: aiCopy.composer.slashOptimizeDescription },
+          { name: "fix", description: aiCopy.composer.slashFixDescription },
         ],
         fileCommands,
         (name) => useCommandPrefsStore.getState().isEnabled(name),
+        aiCopy.composer.slashCustomBadge,
       ),
     [aiCopy, fileCommands],
   );
@@ -1563,6 +1583,30 @@ export function AISlidePanel({
       // ordinary prompt — so it inherits the whole agent loop (guardrail rules,
       // verification, cost accounting) instead of opening a second execution path.
       let promptToRun = normalizedPrompt;
+      // Editor-assist commands (/explain, /optimize, /fix): the composer keeps
+      // the short `/name` draft while the model receives the expanded prompt —
+      // active editor SQL, the last recorded error, or an EXPLAIN plan plus
+      // index-advisor proposals. Native commands resolve before the file-backed
+      // registry so a runbook can never shadow them.
+      const editorAssist = await resolveEditorAssistPrompt({
+        commandLine: normalizedPrompt,
+        connectionId,
+        dbType: activeConnectionDbType,
+        databaseLabel: currentDatabase || null,
+        attachedSql: attachedSelection?.text ?? null,
+      });
+      if (editorAssist) {
+        promptToRun = editorAssist.prompt;
+        const missingContextNote = describeMissingCommandContextItems(editorAssist.missingContext);
+        if (missingContextNote) {
+          emitAppToast({
+            tone: "info",
+            title: `/${editorAssist.command}`,
+            description: missingContextNote,
+            durationMs: 8000,
+          });
+        }
+      }
       if (findFileCommandName(normalizedPrompt, fileCommands)) {
         try {
           const connectionName = useConnectionStore
@@ -1644,6 +1688,7 @@ export function AISlidePanel({
     },
     [
       activeChatWorkspace,
+      activeConnectionDbType,
       activeInteractionMode,
       activeThreadBubbles,
       aiCopy.composer.selectionReady,
@@ -1710,6 +1755,145 @@ export function AISlidePanel({
       });
     },
     [bubbles, createAssistantBubble, historyBudget, isGenerating, workspaceContextMessages],
+  );
+
+  // Regenerate: re-run the prompt that produced a finished bubble and swap the
+  // new answer into the same chat slot. Unlike Retry (which appends a fresh
+  // turn for failed runs), this keeps the conversation shape unchanged — and
+  // the generation hook restores the old answer untouched when the run fails.
+  const handleRegenerateBubble = useCallback(
+    async (bubble: AIWorkspaceBubbleData) => {
+      if (isGenerating) return;
+      const retryHistory = buildConversationHistoryMessages(
+        bubbles.filter(
+          (currentBubble) =>
+            currentBubble.threadId === bubble.threadId &&
+            currentBubble.id !== bubble.id &&
+            !currentBubble.compactedAt,
+        ),
+        historyBudget,
+      );
+      // Re-attach the turn's files: persisted attachments only carry metadata,
+      // so the bytes are fetched back into drafts for the model call.
+      let regenAttachments: AIAttachmentDraft[] | undefined;
+      if (bubble.attachments && bubble.attachments.length > 0) {
+        const rows = await invokeMutation<{ id: string; mimeType: string; data: string }[]>(
+          "get_ai_attachment_data",
+          { ids: bubble.attachments.map((attachment) => attachment.id) },
+        ).catch(() => [] as { id: string; mimeType: string; data: string }[]);
+        const dataById: Record<string, string> = Object.fromEntries(
+          rows.map((row) => [row.id, row.data]),
+        );
+        regenAttachments = bubble.attachments.map((attachment) => ({
+          ...attachment,
+          ...(attachment.kind === "image"
+            ? {
+                dataUrl: `data:${attachment.mimeType};base64,${dataById[attachment.id] ?? ""}`,
+              }
+            : { textContent: dataById[attachment.id] ?? "" }),
+        }));
+      }
+      setActiveThreadId(bubble.threadId);
+      const result = await createAssistantBubble(bubble.prompt, {
+        mode: "compose",
+        displayPrompt: bubble.promptSummary,
+        userPrompt: bubble.prompt,
+        history: [...workspaceContextMessages, ...retryHistory],
+        threadId: bubble.threadId,
+        workspaceKey: bubble.workspaceKey,
+        interactionMode: bubble.interactionMode,
+        attachments: regenAttachments,
+        replaceBubble: bubble,
+      });
+      if (result && !result.success && !result.cancelled) {
+        emitAppToast({
+          tone: "error",
+          title: getAIPanelCopy(language).responseActions.regenerateFailed,
+          durationMs: 4000,
+        });
+      }
+    },
+    [
+      bubbles,
+      createAssistantBubble,
+      historyBudget,
+      isGenerating,
+      language,
+      workspaceContextMessages,
+    ],
+  );
+
+  // 👍/👎 on a finished answer: the sentiment is stored on the bubble (so the
+  // buttons stay marked across reloads) and mirrored into agent memory through
+  // the learning loop's writer, so future runs see the verdict in their index.
+  const handleBubbleFeedback = useCallback(
+    (bubble: AIWorkspaceBubbleData, feedback: AIWorkspaceBubbleFeedback) => {
+      setBubbles((current) =>
+        current.map((currentBubble) =>
+          currentBubble.id === bubble.id ? { ...currentBubble, feedback } : currentBubble,
+        ),
+      );
+      const panelCopy = getAIPanelCopy(language);
+      const answerText = getBubbleConversationText(bubble).trim();
+      const proposal: LearningProposal = {
+        id: `memory:feedback-${bubble.id}`,
+        kind: "memory",
+        title:
+          feedback.sentiment === "up"
+            ? "The user marked this answer helpful"
+            : "The user marked this answer unhelpful",
+        rationale: "Recorded from the per-response feedback control in the chat panel.",
+        memory: {
+          name: buildLearningSlug("feedback", bubble.id),
+          description:
+            feedback.sentiment === "up"
+              ? "Positive feedback on an assistant answer"
+              : "Negative feedback on an assistant answer",
+          body: [
+            "# User feedback",
+            "",
+            `Sentiment: ${feedback.sentiment === "up" ? "helpful" : "not helpful"}`,
+            ...(feedback.reasons?.length ? [`Reasons: ${feedback.reasons.join(", ")}`] : []),
+            ...(feedback.comment ? [`Comment: ${feedback.comment}`] : []),
+            "",
+            "## Prompt",
+            "",
+            bubble.prompt,
+            "",
+            "## Answer",
+            "",
+            answerText.length > 1500 ? `${answerText.slice(0, 1500)}…` : answerText,
+            ...(bubble.sql ? ["", "## SQL", "", "```sql", bubble.sql, "```"] : []),
+          ].join("\n"),
+        },
+      };
+      void applyLearningProposal(
+        proposal,
+        { connectionId, database: currentDatabase ?? null },
+        (command, args) => invokeMutation(command, args),
+      )
+        .then(() => {
+          invalidateAgentMemoryIndex(connectionId ?? undefined);
+          if (feedback.sentiment === "down") {
+            emitAppToast({
+              tone: "success",
+              title: panelCopy.responseActions.feedbackSaved,
+              durationMs: 3000,
+            });
+          }
+        })
+        .catch((errorValue: unknown) => {
+          console.warn("[AIWorkspace] feedback memory save failed:", errorValue);
+          if (feedback.sentiment === "down") {
+            emitAppToast({
+              tone: "error",
+              title: panelCopy.responseActions.feedbackFailed,
+              durationMs: 4000,
+            });
+          }
+        });
+    },
+    [connectionId, currentDatabase, language],
   );
 
   const handleComposerKeyDown = useCallback(
@@ -2486,6 +2670,8 @@ export function AISlidePanel({
         closeAttachmentManager: () => setIsAttachmentManagerOpen(false),
         addAttachmentFiles: (files) => void handleAddComposerAttachmentFiles(files),
         removeAttachment: handleRemoveComposerAttachment,
+        regenerateBubble: (bubble) => void handleRegenerateBubble(bubble),
+        submitBubbleFeedback: handleBubbleFeedback,
         requestDeleteThread: handleRequestDeleteThread,
         renameThread: handleRenameChatThread,
         retryBubble: (bubble) => void handleRetryBubble(bubble),

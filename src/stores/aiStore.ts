@@ -248,7 +248,7 @@ export interface AIState {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[],
     attachments?: AIRequestAttachment[],
-    options?: { correlationId?: string; unattendedReadOnly?: boolean },
+    options?: { correlationId?: string; unattendedReadOnly?: boolean; preferredModel?: string },
   ) => Promise<string>;
   askAIWithReasoning: (
     prompt: string,
@@ -257,8 +257,8 @@ export interface AIState {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[],
     attachments?: AIRequestAttachment[],
-    options?: { correlationId?: string; unattendedReadOnly?: boolean },
-  ) => Promise<{ text: string; reasoning?: string }>;
+    options?: { correlationId?: string; unattendedReadOnly?: boolean; preferredModel?: string },
+  ) => Promise<{ text: string; reasoning?: string; modelUsed?: string }>;
   /**
    * Promotes the next enabled provider (cyclic list order, skipping the
    * current primary) so a dead or rate-limited endpoint stops being tried
@@ -436,7 +436,21 @@ export const useAIStore = create<AIState>((set, get) => ({
     // enabled model of that provider, then every other enabled provider with
     // each of its enabled models — one rate-limited or broken endpoint (or one
     // broken model on a multi-model provider) no longer kills a run.
-    const chain = buildFailoverChain(get().aiConfigs, activeConfig);
+    let chain = buildFailoverChain(get().aiConfigs, activeConfig);
+
+    // Model routing: a caller may pin a preferred model on the ACTIVE provider
+    // (e.g. the configured fast_model for trivial asks). It goes first; the
+    // rest of the chain stays intact so a broken fast model still fails over.
+    const preferredModel = options?.preferredModel?.trim();
+    if (preferredModel && preferredModel !== activeConfig.model.trim()) {
+      chain = [
+        { config: activeConfig, providerId: activeConfig.id, model: preferredModel },
+        ...chain.filter(
+          (attempt) =>
+            !(attempt.providerId === activeConfig.id && attempt.model === preferredModel),
+        ),
+      ];
+    }
 
     let lastError: unknown;
     for (const [index, attempt] of chain.entries()) {
@@ -526,7 +540,12 @@ export const useAIStore = create<AIState>((set, get) => ({
                 invokeMutation<boolean>("cancel_ai_request", { requestId }).catch(() => false),
             },
           );
-          return { text: streamedText, reasoning: streamedReasoning || undefined };
+          return {
+            text: streamedText,
+            reasoning: streamedReasoning || undefined,
+            // The model that actually answered — surfaced in the run footer.
+            modelUsed: attempt.model ?? config.model ?? undefined,
+          };
         }
 
         const resp = await invokeWithTimeout<{ text: string; reasoning?: string; error?: string }>(
@@ -560,7 +579,11 @@ export const useAIStore = create<AIState>((set, get) => ({
           },
         );
         if (resp.error) throw new Error(resp.error);
-        return { text: resp.text, reasoning: resp.reasoning };
+        return {
+          text: resp.text,
+          reasoning: resp.reasoning,
+          modelUsed: attempt.model ?? config.model ?? undefined,
+        };
       } catch (errorValue) {
         lastError = errorValue;
         const requestError = normalizeAIRequestError(errorValue);

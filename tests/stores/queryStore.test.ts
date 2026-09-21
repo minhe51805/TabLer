@@ -10,6 +10,7 @@ vi.mock("@/utils/tauri-utils", () => ({
 
 import { useQueryStore } from "@/stores/queryStore";
 import { useSafeModeStore } from "@/stores/safeModeStore";
+import { clearQueryResultCache } from "@/utils/query-result-cache";
 
 const queryResult = {
   columns: [],
@@ -47,6 +48,7 @@ describe("queryStore", () => {
     });
     useSafeModeStore.getState().setGlobalLevel(1);
     useSafeModeStore.getState().clearConnectionOverrides();
+    clearQueryResultCache();
   });
 
   it("sends the active connection id when cancelling a query", async () => {
@@ -82,6 +84,32 @@ describe("queryStore", () => {
         requestId: expect.any(String),
       }),
     );
+  });
+
+  it("serves a repeat read-only query from the cache without hitting the backend", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+
+    await useQueryStore.getState().executeQuery("connection-1", "select 1");
+    const calls = invokeMutationMock.mock.calls.length;
+
+    const repeat = await useQueryStore.getState().executeQuery("connection-1", "select 1");
+    expect(repeat.cached).toBe(true);
+    expect(repeat.rows).toEqual(queryResult.rows);
+    expect(invokeMutationMock.mock.calls.length).toBe(calls);
+    expect(useQueryStore.getState().isExecutingQuery).toBe(false);
+  });
+
+  it("invalidates cached reads after a successful write on the connection", async () => {
+    invokeMutationMock.mockResolvedValue(queryResult);
+
+    await useQueryStore.getState().executeQuery("connection-1", "select 1");
+    await useQueryStore
+      .getState()
+      .executeQuery("connection-1", "DELETE FROM users", { preApproved: true });
+    const calls = invokeMutationMock.mock.calls.length;
+
+    await useQueryStore.getState().executeQuery("connection-1", "select 1");
+    expect(invokeMutationMock.mock.calls.length).toBe(calls + 1);
   });
 
   it("always clears the execution flag after a backend error", async () => {
@@ -124,9 +152,11 @@ describe("queryStore", () => {
     };
     window.addEventListener("safe-mode-confirm-request", autoApprove);
     try {
-      await useQueryStore.getState().executeSandboxQuery("connection-1", ["DELETE FROM users"], false, {
-        userInitiated: true,
-      });
+      await useQueryStore
+        .getState()
+        .executeSandboxQuery("connection-1", ["DELETE FROM users"], false, {
+          userInitiated: true,
+        });
       expect(invokeMutationMock).toHaveBeenCalledWith(
         "execute_sandboxed_query",
         expect.objectContaining({
@@ -166,9 +196,11 @@ describe("queryStore", () => {
     };
     window.addEventListener("safe-mode-confirm-request", failOnPrompt);
     try {
-      await useQueryStore.getState().executeSandboxQuery("connection-1", ["DELETE FROM users"], false, {
-        preApproved: true,
-      });
+      await useQueryStore
+        .getState()
+        .executeSandboxQuery("connection-1", ["DELETE FROM users"], false, {
+          preApproved: true,
+        });
       expect(invokeMutationMock).toHaveBeenCalledWith(
         "execute_sandboxed_query",
         expect.objectContaining({
@@ -338,10 +370,16 @@ describe("queryStore", () => {
   it("sends CSV imports as a single atomic backend request", async () => {
     invokeMutationMock.mockResolvedValue(2);
 
-    await expect(useQueryStore.getState().insertTableRowsAtomically("connection-1", [
-      { table: "users", values: [["name", "Ada"]] },
-      { table: "users", database: "app", values: [["name", "Grace"]] },
-    ], "csv-operation-1")).resolves.toBe(2);
+    await expect(
+      useQueryStore.getState().insertTableRowsAtomically(
+        "connection-1",
+        [
+          { table: "users", values: [["name", "Ada"]] },
+          { table: "users", database: "app", values: [["name", "Grace"]] },
+        ],
+        "csv-operation-1",
+      ),
+    ).resolves.toBe(2);
 
     expect(invokeMutationMock).toHaveBeenCalledWith("insert_table_rows_atomically", {
       connectionId: "connection-1",
@@ -362,14 +400,20 @@ describe("queryStore", () => {
   it("streams selected CSV files without loading rows into frontend memory", async () => {
     invokeMutationMock.mockResolvedValue(50_000);
 
-    await expect(useQueryStore.getState().importCsvFileAtomically("connection-1", {
-      filePath: "C:\\imports\\users.csv",
-      table: "users",
-      database: "app",
-      delimiter: "csv",
-      hasHeaders: true,
-      mappings: [{ sourceIndex: 0, targetColumn: "email" }],
-    }, "csv-file-1")).resolves.toBe(50_000);
+    await expect(
+      useQueryStore.getState().importCsvFileAtomically(
+        "connection-1",
+        {
+          filePath: "C:\\imports\\users.csv",
+          table: "users",
+          database: "app",
+          delimiter: "csv",
+          hasHeaders: true,
+          mappings: [{ sourceIndex: 0, targetColumn: "email" }],
+        },
+        "csv-file-1",
+      ),
+    ).resolves.toBe(50_000);
 
     expect(invokeMutationMock).toHaveBeenCalledWith("import_csv_file_atomically", {
       connectionId: "connection-1",
@@ -386,15 +430,25 @@ describe("queryStore", () => {
   });
 
   it("exports the full table through the backend instead of the loaded page", async () => {
-    invokeMutationMock.mockResolvedValue({ filePath: "C:\\exports\\users.csv", format: "csv", rowCount: 790 });
-
-    await expect(useQueryStore.getState().exportTableData("connection-1", {
-      table: "users",
-      database: "app",
+    invokeMutationMock.mockResolvedValue({
+      filePath: "C:\\exports\\users.csv",
       format: "csv",
-      orderBy: "id",
-      orderDir: "ASC",
-    }, "export-1")).resolves.toMatchObject({ rowCount: 790 });
+      rowCount: 790,
+    });
+
+    await expect(
+      useQueryStore.getState().exportTableData(
+        "connection-1",
+        {
+          table: "users",
+          database: "app",
+          format: "csv",
+          orderBy: "id",
+          orderDir: "ASC",
+        },
+        "export-1",
+      ),
+    ).resolves.toMatchObject({ rowCount: 790 });
 
     expect(invokeMutationMock).toHaveBeenCalledWith("export_table_data", {
       connectionId: "connection-1",
@@ -412,24 +466,28 @@ describe("queryStore", () => {
 
   it("sends queued updates through the single atomic backend command", async () => {
     invokeMutationMock.mockResolvedValue(2);
-    await expect(useQueryStore.getState().applyTableUpdatesAtomically("connection-1", [
-      {
-        table: "users",
-        database: "app",
-        target_column: "name",
-        value: "Ada",
-        primary_keys: [{ column: "id", value: 7 }],
-      },
-    ])).resolves.toBe(2);
+    await expect(
+      useQueryStore.getState().applyTableUpdatesAtomically("connection-1", [
+        {
+          table: "users",
+          database: "app",
+          target_column: "name",
+          value: "Ada",
+          primary_keys: [{ column: "id", value: 7 }],
+        },
+      ]),
+    ).resolves.toBe(2);
     expect(invokeMutationMock).toHaveBeenCalledWith("apply_table_updates_atomically", {
       connectionId: "connection-1",
-      updates: [{
-        table: "users",
-        database: "app",
-        target_column: "name",
-        value: "Ada",
-        primary_keys: [{ column: "id", value: 7 }],
-      }],
+      updates: [
+        {
+          table: "users",
+          database: "app",
+          target_column: "name",
+          value: "Ada",
+          primary_keys: [{ column: "id", value: 7 }],
+        },
+      ],
     });
   });
 });

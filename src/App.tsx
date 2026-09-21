@@ -1,9 +1,4 @@
-import {
-  useState,
-  useEffect,
-  lazy,
-  Suspense,
-} from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { AppStartupShell } from "./components/AppStartupShell";
 import { useTheme } from "./stores/useTheme";
 import { useEditorPreferencesStore } from "./stores/editorPreferencesStore";
@@ -21,12 +16,11 @@ import { useWorkspaceChromeState } from "./hooks/useWorkspaceChromeState";
 import { useAppCoreStores } from "./hooks/useAppCoreStores";
 import { useDesktopWindow } from "./hooks/useDesktopWindow";
 import { useSidebarResize } from "./hooks/useSidebarResize";
-import {
-  useWorkspaceEventBridge,
-} from "./hooks/useWorkspaceEventBridge";
+import { useWorkspaceEventBridge } from "./hooks/useWorkspaceEventBridge";
 import { useWorkspaceShellSync } from "./hooks/useWorkspaceShellSync";
 import { useAppNotifications } from "./hooks/useAppNotifications";
 import { useRecoverableConnectionError } from "./hooks/useRecoverableConnectionError";
+import { useCsvFileDrop } from "./hooks/useCsvFileDrop";
 import { useQueryWorkspaceState } from "./hooks/useQueryWorkspaceState";
 import { useRowInspectorEvents } from "./hooks/useRowInspectorEvents";
 import { GlobalToastRegion } from "./components/layout/GlobalToastRegion";
@@ -43,35 +37,71 @@ const ConnectionForm = lazy(() =>
   import("./components/ConnectionForm").then((module) => ({ default: module.ConnectionForm })),
 );
 
-
 function App() {
   const { language, languagePreference, setLanguage, t } = useI18n();
   const { theme: _activeTheme, activateTheme } = useTheme();
   const {
     connection: {
-      activeConnectionId, connectedIds, connections, currentDatabase, isConnecting, connectError,
-      fetchDatabases, fetchTables, fetchSchemaObjects,
+      activeConnectionId,
+      connectedIds,
+      connections,
+      currentDatabase,
+      isConnecting,
+      connectError,
+      fetchDatabases,
+      fetchTables,
+      fetchSchemaObjects,
     },
     errors: { error, clearError, setError },
     ui: { tabs, activeTabId, addTab, setActiveTab },
     modals: {
-      connectionFormIntent, showStartupConnectionManager, showAISettings, setShowAISettings,
-      showAboutModal, setShowAboutModal, showPluginManager, setShowPluginManager,
-      showMcpIntegrations, setShowMcpIntegrations, showUserRoleManagement, setShowUserRoleManagement,
-      showKeyboardShortcutsModal, setShowKeyboardShortcutsModal, showThemeCustomizer, setShowThemeCustomizer,
-      showConnectionExporter, setShowConnectionExporter, showConnectionImporter, setShowConnectionImporter,
+      connectionFormIntent,
+      showStartupConnectionManager,
+      showAISettings,
+      setShowAISettings,
+      showAboutModal,
+      setShowAboutModal,
+      showPluginManager,
+      setShowPluginManager,
+      showMcpIntegrations,
+      setShowMcpIntegrations,
+      showUserRoleManagement,
+      setShowUserRoleManagement,
+      showKeyboardShortcutsModal,
+      setShowKeyboardShortcutsModal,
+      showThemeCustomizer,
+      setShowThemeCustomizer,
+      showConnectionExporter,
+      setShowConnectionExporter,
+      showConnectionImporter,
+      setShowConnectionImporter,
     },
     layout: {
-      setShowTerminalPanel, showQueryHistory, setShowQueryHistory, showSQLFavorites, setShowSQLFavorites,
-      showQuerySchedules, setShowQuerySchedules,
-      showRowInspector, rowInspectorData, isSidebarCollapsed, sidebarWidth, setSidebarWidth,
-      isWindowMaximized, forceLauncherVisible,
+      setShowTerminalPanel,
+      showQueryHistory,
+      setShowQueryHistory,
+      showSQLFavorites,
+      setShowSQLFavorites,
+      showQuerySchedules,
+      setShowQuerySchedules,
+      showRowInspector,
+      rowInspectorData,
+      isSidebarCollapsed,
+      sidebarWidth,
+      setSidebarWidth,
+      isWindowMaximized,
+      forceLauncherVisible,
     },
   } = useAppCoreStores();
 
   const [showAISlidePanel, setShowAISlidePanel] = useState(false);
   const [aiPanelDraft, setAiPanelDraft] = useState<{ prompt: string; nonce: number } | null>(null);
-  const [aiPanelAttachment, setAiPanelAttachment] = useState<{ text: string; source: string; boardId?: string; nonce: number } | null>(null);
+  const [aiPanelAttachment, setAiPanelAttachment] = useState<{
+    text: string;
+    source: string;
+    boardId?: string;
+    nonce: number;
+  } | null>(null);
   const [workspaceActivityByConnection, setWorkspaceActivityByConnection] = useState<
     Record<string, WorkspaceActivityState>
   >({});
@@ -82,7 +112,9 @@ function App() {
   const [uiFontScale, setUiFontScale] = useState(() => {
     if (typeof window === "undefined") return 100;
     const stored = Number(window.localStorage.getItem(UI_FONT_SCALE_STORAGE_KEY));
-    return Number.isFinite(stored) && stored >= UI_FONT_SCALE_MIN && stored <= UI_FONT_SCALE_MAX ? stored : 100;
+    return Number.isFinite(stored) && stored >= UI_FONT_SCALE_MIN && stored <= UI_FONT_SCALE_MAX
+      ? stored
+      : 100;
   });
   const toggleVimMode = useEditorPreferencesStore((state) => state.toggleVimMode);
   const openCommandPalette = useCommandPaletteStore((state) => state.open);
@@ -103,7 +135,11 @@ function App() {
     handleQuerySessionChange,
     openAIWorkspaceQuery: handleOpenAIWorkspaceQuery,
   } = useQueryWorkspaceState();
-  const hasRenderableWorkspace = !!(activeConnectionId && activeConn && connectedIds.has(activeConnectionId));
+  const hasRenderableWorkspace = !!(
+    activeConnectionId &&
+    activeConn &&
+    connectedIds.has(activeConnectionId)
+  );
   const isConnected = hasRenderableWorkspace;
   const { toast: globalToast, dismissToast: dismissGlobalToast } = useAppNotifications();
   const isRecoverableErrorDelayActive = useRecoverableConnectionError({
@@ -130,16 +166,43 @@ function App() {
     setWidth: setSidebarWidth,
   });
   const {
-    showStartupShell, isMetricsWorkspace, activeWorkspaceActivity, supportsSqlFileActions,
-    queryTabCount, activeDatabaseLabel, titlebarContextTitle, titlebarContextLabel,
-    hasMountedAISlidePanel, shouldRenderGlobalModals,
+    showStartupShell,
+    isMetricsWorkspace,
+    activeWorkspaceActivity,
+    supportsSqlFileActions,
+    queryTabCount,
+    activeDatabaseLabel,
+    titlebarContextTitle,
+    titlebarContextLabel,
+    hasMountedAISlidePanel,
+    shouldRenderGlobalModals,
   } = useWorkspaceChromeState({
-    isRecoverableErrorDelayActive, isConnecting, connectionFormIntent, activeConnectionId,
-    activeConn, connectedIds, forceLauncherVisible, connectError, showStartupConnectionManager, activeTab,
-    workspaceActivityByConnection, currentDatabase, showAISettings, showAboutModal,
-    showPluginManager, showMcpIntegrations, showUserRoleManagement, showKeyboardShortcutsModal,
-    showThemeCustomizer, showConnectionExporter, showConnectionImporter, isCommandPaletteOpen,
-    isQuickSwitcherOpen, showAISlidePanel, isConnected, tabs,
+    isRecoverableErrorDelayActive,
+    isConnecting,
+    connectionFormIntent,
+    activeConnectionId,
+    activeConn,
+    connectedIds,
+    forceLauncherVisible,
+    connectError,
+    showStartupConnectionManager,
+    activeTab,
+    workspaceActivityByConnection,
+    currentDatabase,
+    showAISettings,
+    showAboutModal,
+    showPluginManager,
+    showMcpIntegrations,
+    showUserRoleManagement,
+    showKeyboardShortcutsModal,
+    showThemeCustomizer,
+    showConnectionExporter,
+    showConnectionImporter,
+    isCommandPaletteOpen,
+    isQuickSwitcherOpen,
+    showAISlidePanel,
+    isConnected,
+    tabs,
   });
   useEffect(() => {
     document.documentElement.lang = language;
@@ -155,27 +218,82 @@ function App() {
   const handleRowInspectorClose = useRowInspectorEvents();
 
   const {
-    windowMenuRef, windowMenuSections,
-    handleNewQuery, handleOpenConnectionForm, handleCloseConnectionForm, handleGoToLauncher, handleToggleWindowMenu,
-    handleRefreshWorkspace, handleFocusExplorerSearch, handleOpenMetricsBoard, handleOpenDatabaseFile, handleExportDatabase,
-    isExportingDatabase, handleOpenAIMetricsBoard, handleOpenAISlidePanel, handleToggleSidebar, handleOpenThemeCustomizer,
-    handleToggleTerminalPanel, handleShowDatabaseWorkspace, handleClearVisibleTabs, handleToggleQueryHistory,
-    handleToggleSQLFavorites, handleRunQueryFromHistory, handleRunQueryFromFavorites,
+    windowMenuRef,
+    windowMenuSections,
+    handleNewQuery,
+    handleOpenConnectionForm,
+    handleCloseConnectionForm,
+    handleGoToLauncher,
+    handleToggleWindowMenu,
+    handleRefreshWorkspace,
+    handleFocusExplorerSearch,
+    handleOpenMetricsBoard,
+    handleOpenDatabaseFile,
+    handleExportDatabase,
+    isExportingDatabase,
+    handleOpenAIMetricsBoard,
+    handleOpenAISlidePanel,
+    handleToggleSidebar,
+    handleOpenThemeCustomizer,
+    handleToggleTerminalPanel,
+    handleShowDatabaseWorkspace,
+    handleClearVisibleTabs,
+    handleToggleQueryHistory,
+    handleToggleSQLFavorites,
+    handleRunQueryFromHistory,
+    handleRunQueryFromFavorites,
   } = useWorkspaceMenuHandlers({
-    activeTab, activeConn, activeConnectionId, currentDatabase, tabs, language, isConnected,
-    addTab, setActiveTab, requestQueryRun, setError, clearError, t, setLanguage,
-    fetchDatabases, fetchTables, fetchSchemaObjects, activateTheme, applyDesktopWindowProfile,
-    handleCloseWindow, setShowUserRoleManagement,
-    showAISlidePanel, setShowAISlidePanel, aiPanelDraft, setAiPanelDraft, aiPanelAttachment, setAiPanelAttachment,
-    setIsWindowMenuOpen, setActiveWindowMenuSection, setActiveWindowMenuItemPath, setUiFontScale,
-    queryTabCount, isWindowMenuOpen,
-    setShowAISettings, setShowPluginManager, setShowMcpIntegrations, setShowAboutModal,
-    setShowKeyboardShortcutsModal, setShowConnectionExporter, setShowConnectionImporter,
-    uiFontScale, languagePreference, connections, activeWindowMenuSection, activeWindowMenuItemPath,
+    activeTab,
+    activeConn,
+    activeConnectionId,
+    currentDatabase,
+    tabs,
+    language,
+    isConnected,
+    addTab,
+    setActiveTab,
+    requestQueryRun,
+    setError,
+    clearError,
+    t,
+    setLanguage,
+    fetchDatabases,
+    fetchTables,
+    fetchSchemaObjects,
+    activateTheme,
+    applyDesktopWindowProfile,
+    handleCloseWindow,
+    setShowUserRoleManagement,
+    showAISlidePanel,
+    setShowAISlidePanel,
+    aiPanelDraft,
+    setAiPanelDraft,
+    aiPanelAttachment,
+    setAiPanelAttachment,
+    setIsWindowMenuOpen,
+    setActiveWindowMenuSection,
+    setActiveWindowMenuItemPath,
+    setUiFontScale,
+    queryTabCount,
+    isWindowMenuOpen,
+    setShowAISettings,
+    setShowPluginManager,
+    setShowMcpIntegrations,
+    setShowAboutModal,
+    setShowKeyboardShortcutsModal,
+    setShowConnectionExporter,
+    setShowConnectionImporter,
+    uiFontScale,
+    languagePreference,
+    connections,
+    activeWindowMenuSection,
+    activeWindowMenuItemPath,
     supportsSqlFileActions,
   });
 
   useAppBoot(activeConnectionId, connectedIds, isDesktopWindow);
+  // OS file drop → CSV import wizard (Tauri drag-drop event, not DOM drop).
+  useCsvFileDrop();
 
   useWorkspaceEventBridge({
     openAI: handleOpenAISlidePanel,
@@ -197,11 +315,7 @@ function App() {
   });
 
   const globalToastMarkup = (
-    <GlobalToastRegion
-      toast={globalToast}
-      language={language}
-      onDismiss={dismissGlobalToast}
-    />
+    <GlobalToastRegion toast={globalToast} language={language} onDismiss={dismissGlobalToast} />
   );
 
   if (showStartupShell) {
@@ -274,7 +388,6 @@ function App() {
       handleMouseDown={handleMouseDown}
       showAISlidePanel={showAISlidePanel}
     >
-
       <WorkspaceOverlays
         activeTab={activeTab}
         handleNewQuery={handleNewQuery}

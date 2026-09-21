@@ -63,14 +63,17 @@ describe("aiStore", () => {
 
   it("fetches provider models (with capability metadata) via list_provider_models", async () => {
     const fetched = [
-      { id: "gpt-4o", context_window: 128000, max_output_tokens: 16384, input_types: ["text", "image"] },
+      {
+        id: "gpt-4o",
+        context_window: 128000,
+        max_output_tokens: 16384,
+        input_types: ["text", "image"],
+      },
       { id: "gpt-4o-mini" },
     ];
     invokeWithTimeoutMock.mockResolvedValue(fetched);
 
-    await expect(
-      useAIStore.getState().listProviderModels("provider-1"),
-    ).resolves.toEqual(fetched);
+    await expect(useAIStore.getState().listProviderModels("provider-1")).resolves.toEqual(fetched);
 
     expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
       "list_provider_models",
@@ -91,10 +94,8 @@ describe("aiStore", () => {
     });
 
     await expect(
-      useAIStore
-        .getState()
-        .askAIWithReasoning("write SQL", "schema", "panel", "agent"),
-    ).resolves.toEqual({ text: "SELECT 1", reasoning: "private" });
+      useAIStore.getState().askAIWithReasoning("write SQL", "schema", "panel", "agent"),
+    ).resolves.toEqual({ text: "SELECT 1", reasoning: "private", modelUsed: "gpt-test" });
 
     expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
       "ask_ai",
@@ -140,18 +141,16 @@ describe("aiStore", () => {
     useAIStore.setState({ aiConfigs: [provider] });
     let rejectRequest: ((error: Error) => void) | undefined;
     invokeWithTimeoutMock.mockImplementation(
-      () => new Promise((_resolve, reject) => {
-        rejectRequest = reject;
-      }),
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRequest = reject;
+        }),
     );
     invokeMutationMock.mockResolvedValue(true);
 
-    const request = useAIStore.getState().askAIWithReasoning(
-      "summarize",
-      "schema",
-      "panel",
-      "overview",
-    );
+    const request = useAIStore
+      .getState()
+      .askAIWithReasoning("summarize", "schema", "panel", "overview");
     await vi.waitFor(() => expect(invokeWithTimeoutMock).toHaveBeenCalledOnce());
     const timeoutOptions = invokeWithTimeoutMock.mock.calls[0][4] as { onTimeout: () => void };
     timeoutOptions.onTimeout();
@@ -191,12 +190,8 @@ describe("aiStore", () => {
   it("reports configuration failures through the global error store", async () => {
     invokeWithTimeoutMock.mockRejectedValue(new Error("backend unavailable"));
 
-    await expect(useAIStore.getState().loadAIConfigs()).rejects.toThrow(
-      "backend unavailable",
-    );
-    expect(useGlobalErrorStore.getState().error).toContain(
-      "Failed to load AI configs",
-    );
+    await expect(useAIStore.getState().loadAIConfigs()).rejects.toThrow("backend unavailable");
+    expect(useGlobalErrorStore.getState().error).toContain("Failed to load AI configs");
   });
 
   it("promotes the next enabled provider cyclically or returns null when alone", () => {
@@ -214,15 +209,19 @@ describe("aiStore", () => {
       provider_type: "gemini",
       is_primary: false,
     };
-    invokeMutationMock.mockImplementation(async (command: string, args?: { providers?: AIProviderConfig[] }) => {
-      if (command === "save_ai_configs") return [args?.providers ?? [], {}];
-      return null;
-    });
+    invokeMutationMock.mockImplementation(
+      async (command: string, args?: { providers?: AIProviderConfig[] }) => {
+        if (command === "save_ai_configs") return [args?.providers ?? [], {}];
+        return null;
+      },
+    );
     useAIStore.setState({ aiConfigs: [provider, second, third] });
 
     const promoted = useAIStore.getState().promoteNextEnabledProvider();
     expect(promoted?.id).toBe("provider-2");
-    expect(useAIStore.getState().aiConfigs.find((c) => c.id === "provider-2")?.is_primary).toBe(true);
+    expect(useAIStore.getState().aiConfigs.find((c) => c.id === "provider-2")?.is_primary).toBe(
+      true,
+    );
 
     // A second promotion walks past the new primary to the next enabled one.
     const again = useAIStore.getState().promoteNextEnabledProvider();
@@ -247,24 +246,29 @@ describe("aiStore", () => {
       return null;
     });
     let streamAttempts = 0;
-    invokeWithTimeoutMock.mockImplementation(async (command: string, args?: {
-      request?: { provider_id?: string | null };
-    }) => {
-      if (command === "ask_ai_stream") {
-        streamAttempts += 1;
-        if (streamAttempts === 1) {
-          throw new Error("HTTP 429 Too Many Requests: rate limit exceeded");
+    invokeWithTimeoutMock.mockImplementation(
+      async (
+        command: string,
+        args?: {
+          request?: { provider_id?: string | null };
+        },
+      ) => {
+        if (command === "ask_ai_stream") {
+          streamAttempts += 1;
+          if (streamAttempts === 1) {
+            throw new Error("HTTP 429 Too Many Requests: rate limit exceeded");
+          }
+          failoverProviderIds.push(args?.request?.provider_id ?? null);
+          return undefined;
         }
-        failoverProviderIds.push(args?.request?.provider_id ?? null);
-        return undefined;
-      }
-      return null;
-    });
+        return null;
+      },
+    );
     const failoverProviderIds: Array<string | null> = [];
 
-    await expect(
-      useAIStore.getState().askAI("prompt", "context", "panel", "sql"),
-    ).resolves.toBe("");
+    await expect(useAIStore.getState().askAI("prompt", "context", "panel", "sql")).resolves.toBe(
+      "",
+    );
 
     // The retry went to the next enabled provider...
     expect(streamAttempts).toBe(2);
@@ -275,10 +279,7 @@ describe("aiStore", () => {
     const configs = useAIStore.getState().aiConfigs;
     expect(configs.find((config) => config.id === "provider-1")?.is_primary).toBe(true);
     expect(configs.find((config) => config.id === "provider-2")?.is_primary).toBe(false);
-    expect(invokeMutationMock).not.toHaveBeenCalledWith(
-      "save_ai_configs",
-      expect.anything(),
-    );
+    expect(invokeMutationMock).not.toHaveBeenCalledWith("save_ai_configs", expect.anything());
   });
 
   it("walks every enabled model of every enabled provider in the failover chain", async () => {
@@ -318,18 +319,23 @@ describe("aiStore", () => {
       return null;
     });
     const chainStops: Array<{ providerId: string | null; model: string | null }> = [];
-    invokeWithTimeoutMock.mockImplementation(async (command: string, args?: {
-      request?: { provider_id?: string | null; model?: string | null };
-    }) => {
-      if (command === "ask_ai_stream") {
-        chainStops.push({
-          providerId: args?.request?.provider_id ?? null,
-          model: args?.request?.model ?? null,
-        });
-        throw new Error("HTTP 503 Service Unavailable");
-      }
-      return null;
-    });
+    invokeWithTimeoutMock.mockImplementation(
+      async (
+        command: string,
+        args?: {
+          request?: { provider_id?: string | null; model?: string | null };
+        },
+      ) => {
+        if (command === "ask_ai_stream") {
+          chainStops.push({
+            providerId: args?.request?.provider_id ?? null,
+            model: args?.request?.model ?? null,
+          });
+          throw new Error("HTTP 503 Service Unavailable");
+        }
+        return null;
+      },
+    );
 
     // Every stop in the chain fails, so the run exhausts the full chain and
     // surfaces the last error instead of silently giving up early.
@@ -365,7 +371,11 @@ describe("aiStore", () => {
     // transport layer forwards it INTACT to whichever provider handles the turn,
     // so switching model/provider mid-run never loses context.
     const history: AIConversationMessage[] = [
-      { role: "user", content: "[Workspace context — keep this in mind for the task]\nMigrating dbo.taikhoan to the new schema." },
+      {
+        role: "user",
+        content:
+          "[Workspace context — keep this in mind for the task]\nMigrating dbo.taikhoan to the new schema.",
+      },
       { role: "assistant", content: "Understood. I'll keep this workspace context in mind." },
       { role: "user", content: "What tables exist?" },
       { role: "assistant", content: "There are three: users, orders, items." },
@@ -377,16 +387,21 @@ describe("aiStore", () => {
     );
     const seenHistories: unknown[] = [];
     const seenProviderIds: Array<string | null> = [];
-    invokeWithTimeoutMock.mockImplementation(async (command: string, args?: {
-      request?: { provider_id?: string | null; history?: unknown };
-    }) => {
-      if (command === "ask_ai_stream") {
-        seenHistories.push(args?.request?.history);
-        seenProviderIds.push(args?.request?.provider_id ?? null);
-        throw new Error("HTTP 503 Service Unavailable");
-      }
-      return null;
-    });
+    invokeWithTimeoutMock.mockImplementation(
+      async (
+        command: string,
+        args?: {
+          request?: { provider_id?: string | null; history?: unknown };
+        },
+      ) => {
+        if (command === "ask_ai_stream") {
+          seenHistories.push(args?.request?.history);
+          seenProviderIds.push(args?.request?.provider_id ?? null);
+          throw new Error("HTTP 503 Service Unavailable");
+        }
+        return null;
+      },
+    );
 
     await expect(
       useAIStore

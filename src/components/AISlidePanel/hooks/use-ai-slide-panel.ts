@@ -11,6 +11,9 @@ import {
   type AIRequestAttachment,
   type AIRequestIntent,
   type AIRequestMode,
+  type DatabaseType,
+  type QueryHistoryEntry,
+  type QueryResult,
 } from "../../../types";
 import {
   buildAttachmentFileBlocks,
@@ -29,6 +32,7 @@ import {
   type AIWorkspaceAgentActionName,
   type AIWorkspaceAgentStep,
   type AIWorkspaceFailoverNote,
+  type AIWorkspaceRunTraceEntry,
   type AIWorkspaceInteractionMode,
 } from "../ai-workspace-types";
 import { evaluateRunAgainstRules } from "../ai-agent-rules";
@@ -57,14 +61,26 @@ import { useUIStore } from "../../../stores/uiStore";
 import { buildInsightScope, useAgentInsightsStore } from "../../../stores/agent-insights-store";
 import { useAgentLearningStore } from "../../../stores/agent-learning-store";
 import { useSkillPrefsStore } from "../../../stores/skillPrefsStore";
-import { DEFAULT_AGENT_TOKEN_BUDGET, extractAgentUsageTokens } from "../ai-agent-cost";
+import {
+  AGENT_COMPACTION_KEEP_TAIL,
+  AGENT_COMPACTION_TOKEN_THRESHOLD,
+  DEFAULT_AGENT_TOKEN_BUDGET,
+  extractAgentUsageTokens,
+} from "../ai-agent-cost";
+import { isTrivialAssistIntent } from "../ai-assist-intent";
 import {
   buildAgentEvidenceSummary,
   buildAgentFinalRecoveryPrompt,
+  buildExplainSqlPrompt,
+  buildFixSqlPrompt,
   buildLocalAgentFallbackResponse,
+  buildOptimizeSqlPrompt,
 } from "../ai-assist-prompts";
 import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates";
-import { buildSchemaContextRequiredMessage } from "../ai-agent-grounding";
+import {
+  buildSchemaContextRequiredMessage,
+  summarizeAgentExplainPlanStructured,
+} from "../ai-agent-grounding";
 import {
   formatExecutionError,
   isHighRiskStatement,
@@ -97,6 +113,9 @@ import {
   hasSqlStartKeyword,
   stripSqlCodeBlocksFromResponse,
 } from "../ai-sql-response";
+import { parseEditorAssistCommand, type EditorAssistCommand } from "../ai-slash-commands";
+import { buildExplainQuery, parseExplainOutput } from "../../../utils/explain-parser";
+import { getIndexProposals, type IndexProposal } from "../../../utils/index-advisor";
 import { useAISqlRunner } from "./use-ai-sql-runner";
 
 // Skill catalogs rarely change mid-session; caching for a minute keeps the
@@ -133,6 +152,12 @@ export interface AIGeneratedAssistResult {
   /** Cumulative model tokens the run spent across every model call (0 when the
    *  provider reports no usage); the bubble footer shows it against the budget. */
   tokensUsed?: number;
+  /** Model id that produced the run's answer (the configured fast model when
+   *  the intent was trivial); the bubble footer shows it next to tokens. */
+  modelUsed?: string;
+  /** Ordered audit trail of the run's tool calls (name, args summary,
+   *  duration, ok/fail, SQL) for the bubble's "Run details" section. */
+  runTrace?: AIWorkspaceRunTraceEntry[];
 }
 
 const MAX_AGENT_STEPS = 10;
@@ -190,6 +215,136 @@ function formatProviderFollowUpNote(
 /** Upper bound for tables scanned per search_schema call; large catalogs are prioritized, not fully scanned. */
 /** Pause before retrying a transient provider failure inside the agent loop. */
 /** Rate limits need a longer cooldown than blips; one patient retry still beats failing the run. */
+
+export interface EditorAssistResolution {
+  command: EditorAssistCommand;
+  /** The expanded prompt that replaces the `/name` draft for the model. */
+  prompt: string;
+  /**
+   * Context the command wanted but could not get (no editor SQL, no recorded
+   * error, EXPLAIN failed). Surfaced as a toast via
+   * `describeMissingCommandContextItems` so the user knows the agent will ask
+   * instead of quietly guessing.
+   */
+  missingContext: string[];
+}
+
+/**
+ * Expand `/explain`, `/optimize`, or `/fix` into the prompt the model actually
+ * receives. The composer keeps showing the short command; this gathers the
+ * real context — the SQL in the active editor tab (or the attached selection
+ * when no query tab is focused), the last recorded query error for `/fix`,
+ * and an EXPLAIN plan plus index-advisor proposals for `/optimize`.
+ *
+ * Every lookup degrades to a note inside the prompt instead of failing the
+ * send: a missing editor or a failed EXPLAIN must never block the request.
+ */
+export async function resolveEditorAssistPrompt(params: {
+  commandLine: string;
+  connectionId: string | null;
+  dbType: DatabaseType | undefined;
+  databaseLabel: string | null;
+  /** SQL the user explicitly attached to the composer, if any. */
+  attachedSql?: string | null;
+}): Promise<EditorAssistResolution | null> {
+  const parsed = parseEditorAssistCommand(params.commandLine);
+  if (!parsed) return null;
+
+  const { tabs, activeTabId } = useUIStore.getState();
+  const activeTab = tabs.find((tab) => tab.id === activeTabId);
+  const editorSql =
+    activeTab?.type === "query" && activeTab.connectionId === params.connectionId
+      ? activeTab.content?.trim() || null
+      : null;
+  const sql = editorSql ?? params.attachedSql?.trim() ?? null;
+  const databaseLabel = params.databaseLabel?.trim() || null;
+  const hint = parsed.arguments || undefined;
+  const missing: string[] = [];
+  if (!sql) missing.push("editor SQL");
+
+  if (parsed.command === "explain") {
+    return {
+      command: parsed.command,
+      prompt: buildExplainSqlPrompt({ sql, hint, databaseLabel }),
+      missingContext: missing,
+    };
+  }
+
+  if (parsed.command === "fix") {
+    // The last error lives in query history: the editor records every failed
+    // execution there, and history is the only place the error text survives
+    // once the results pane re-renders.
+    let lastError: string | null = null;
+    let errorSql: string | null = null;
+    try {
+      const history = await invokeMutation<QueryHistoryEntry[]>("get_query_history", {
+        connectionId: params.connectionId ?? null,
+        search: null,
+        limit: 50,
+      });
+      const errored = (history ?? []).find((entry) => entry.error?.trim());
+      lastError = errored?.error?.trim() ?? null;
+      errorSql = errored?.query_text?.trim() ?? null;
+    } catch {
+      // History is enrichment, never a blocker.
+    }
+    if (!lastError) missing.push("last query error");
+    return {
+      command: parsed.command,
+      prompt: buildFixSqlPrompt({ sql, hint, databaseLabel, lastError, errorSql }),
+      missingContext: missing,
+    };
+  }
+
+  // /optimize — run a planning-only EXPLAIN through the agent read-only path
+  // (never ANALYZE, so nothing executes) and feed the parsed plan to the same
+  // index advisor the ExplainVisualizer uses.
+  let planSummary: string | null = null;
+  let indexProposals: IndexProposal[] = [];
+  let planUnavailableNote: string | null = null;
+  if (!params.connectionId) {
+    planUnavailableNote = "no database connection is active";
+  } else if (!sql) {
+    planUnavailableNote = "there is no SQL to explain";
+  } else {
+    try {
+      const dbType = params.dbType ?? "mongodb";
+      const explainResult = await useQueryStore
+        .getState()
+        .executeAgentReadonlyQuery(params.connectionId, [buildExplainQuery(sql, dbType)]);
+      planSummary = summarizeAgentExplainPlanStructured(explainResult, dbType) || null;
+      // Same extraction the SQL editor's EXPLAIN button applies before parsing.
+      const rawOutput: unknown =
+        explainResult.rows.length === 1 && explainResult.columns.length === 1
+          ? explainResult.rows[0][0]
+          : explainResult.rows.map((row) =>
+              Object.fromEntries(
+                explainResult.columns.map((column, index) => [column.name, row[index]]),
+              ),
+            );
+      const parsedPlan = parseExplainOutput(dbType, rawOutput);
+      indexProposals = getIndexProposals(parsedPlan, sql);
+      if (!planSummary) planUnavailableNote = "EXPLAIN returned no plan";
+    } catch (errorValue) {
+      planUnavailableNote = `EXPLAIN failed: ${
+        errorValue instanceof Error ? errorValue.message : String(errorValue)
+      }`;
+    }
+  }
+  if (planUnavailableNote) missing.push("query plan");
+  return {
+    command: parsed.command,
+    prompt: buildOptimizeSqlPrompt({
+      sql,
+      hint,
+      databaseLabel,
+      planSummary,
+      planUnavailableNote,
+      indexProposals,
+    }),
+    missingContext: missing,
+  };
+}
 
 export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
   const { askAIWithReasoning, cancelAIRequest, aiConfigs, requestPhase } = useAIStore(
@@ -294,6 +449,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
   // Captures the model's real reasoning from the most recent askAI call so the
   // final assistant bubble can show genuine thinking instead of fabricated steps.
   const lastReasoningRef = useRef<string | undefined>(undefined);
+  // Captures the model id that produced the most recent askAI reply so the
+  // run footer can name the model that answered (fast model included).
+  const lastModelUsedRef = useRef<string | undefined>(undefined);
 
   const askAI = useCallback(
     async (
@@ -303,9 +461,13 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       intent: AIRequestIntent = "sql",
       history: AIConversationMessage[] = [],
       attachments?: AIRequestAttachment[],
-      options?: { correlationId?: string },
+      options?: {
+        correlationId?: string;
+        unattendedReadOnly?: boolean;
+        preferredModel?: string;
+      },
     ): Promise<string> => {
-      const { text, reasoning } = await askAIWithReasoning(
+      const { text, reasoning, modelUsed } = await askAIWithReasoning(
         prompt,
         context,
         mode,
@@ -316,6 +478,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       );
       if (reasoning && reasoning.trim()) {
         lastReasoningRef.current = reasoning.trim();
+      }
+      if (modelUsed && modelUsed.trim()) {
+        lastModelUsedRef.current = modelUsed.trim();
       }
       return text;
     },
@@ -389,7 +554,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           cancelText?: string;
         }) => Promise<boolean>;
         userPrompt?: string;
-        onAgentProgress?: (steps: AIWorkspaceAgentStep[]) => void;
+        onAgentProgress?: (
+          steps: AIWorkspaceAgentStep[],
+          runTrace?: AIWorkspaceRunTraceEntry[],
+        ) => void;
         /** Files/images attached by the user for this turn (composer pipeline). */
         attachments?: AIAttachmentDraft[];
         /**
@@ -430,9 +598,22 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       // the 120k budget; this one is the honest whole-run figure (it also
       // covers the plan turn, retries, evidence loop and finish recovery).
       let runTokensUsed = 0;
+      // Model id that produced the run's answer; the bubble footer shows it
+      // next to the token total. Updated after every tracked call so a
+      // mid-run failover still reports the model that actually answered.
+      let runModelUsed: string | undefined;
+      // Model routing: trivial asks (general chat, short explains, formatting)
+      // go to the provider's configured fast_model when one is set. Assigned
+      // once the intent classifier has run, below.
+      let routedRequestModel: string | undefined;
       const trackedAskAI: typeof askAI = async (...args) => {
+        const callOptions = args[6];
+        if (routedRequestModel && !callOptions?.preferredModel) {
+          args[6] = { ...callOptions, preferredModel: routedRequestModel };
+        }
         const text = await askAI(...args);
         runTokensUsed += extractAgentUsageTokens(useAIStore.getState().streamingUsage);
+        if (lastModelUsedRef.current) runModelUsed = lastModelUsedRef.current;
         return text;
       };
       const requestId = ++requestIdRef.current;
@@ -472,6 +653,16 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         }
 
         let effectiveProvider = activeProvider;
+        // Model routing: trivial intents take the provider's fast_model when
+        // configured; agent runs stay on the primary model (they must emit
+        // valid tool JSON, where a weaker model costs more than it saves).
+        const configuredFastModel = effectiveProvider.fast_model?.trim() || undefined;
+        routedRequestModel =
+          interactionMode !== "agent" &&
+          configuredFastModel &&
+          isTrivialAssistIntent(assistIntent, normalizedPrompt)
+            ? configuredFastModel
+            : undefined;
         let schemaSharingEnabled = effectiveProvider.allow_schema_context;
 
         if (needsWorkspaceContext && modeUsesSchemaContext && !schemaSharingEnabled) {
@@ -572,6 +763,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           // Manual provider switches are kept separately because agentTraceSteps
           // is overwritten by the runner's snapshots and would drop the note.
           const manualSwitchNotes: AgentTraceStep[] = [];
+          // Assigned once the tool executor is created below; the audit trail
+          // rides every progress publish so the bubble's "Run details" section
+          // fills in live and survives a failed/cancelled run.
+          let getAgentRunTrace: () => AIWorkspaceRunTraceEntry[] = () => [];
           const publishAgentProgress = (pending?: {
             action: AIWorkspaceAgentActionName;
             message: string;
@@ -611,7 +806,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             completed.forEach((step, index) => {
               step.step = index + 1;
             });
-            onAgentProgress(completed);
+            onAgentProgress(completed, getAgentRunTrace());
           };
           const needsExtendedAgentBudget = wantsVisualization || assistIntent === "overview";
           const agentStepBudget = isLocalProvider
@@ -759,6 +954,71 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             .getState()
             .databases.map((item) => item.name);
 
+          // Context compaction: once the run's cumulative spend crosses ~70%
+          // of the token budget, older trace steps are summarized into an
+          // "Earlier context" block (one extra model call) and dropped from
+          // subsequent prompts; the last few steps always stay verbatim.
+          // `compactedThroughStep` is the highest step number already folded.
+          let compactedThroughStep = 0;
+          let compactedContext: string | undefined;
+          const compactAgentTrace = async (steps: AgentTraceStep[]) => {
+            if (runTokensUsed < AGENT_COMPACTION_TOKEN_THRESHOLD) return;
+            const toolSteps = steps.filter(
+              (step) => step.action !== "plan" && step.step > compactedThroughStep,
+            );
+            // Keep the tail verbatim; only fold when there is a real prefix
+            // worth summarizing (at least 2 steps beyond the kept tail).
+            const foldable = toolSteps.slice(
+              0,
+              Math.max(0, toolSteps.length - AGENT_COMPACTION_KEEP_TAIL),
+            );
+            if (foldable.length < 2) return;
+            const foldLines = foldable
+              .map((step) =>
+                [
+                  `Step ${step.step}`,
+                  `Action: ${step.action}`,
+                  `Message: ${step.message || "No message provided."}`,
+                  `Observation: ${step.observation || "(none)"}`,
+                ].join("\n"),
+              )
+              .join("\n\n");
+            try {
+              const summary = await trackedAskAI(
+                [
+                  "Summarize this agent run's earlier steps into a compact brief (max 8 bullet lines) for the agent's own continuation.",
+                  "Preserve: verified table/column names, executed SQL results and row counts, errors encountered, and decisions already made. Drop boilerplate.",
+                  compactedContext
+                    ? `Previous summary (merge into the new one):\n${compactedContext}`
+                    : "",
+                  `Steps to fold:\n${foldLines}`,
+                ]
+                  .filter(Boolean)
+                  .join("\n\n"),
+                context,
+                "panel",
+                "general",
+                [],
+                undefined,
+                // Compaction is a trivial summarization ask — route it to the
+                // fast model when the provider has one configured.
+                { preferredModel: configuredFastModel },
+              );
+              if (requestId !== requestIdRef.current) {
+                throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+              }
+              const trimmed = summary.trim();
+              if (trimmed) {
+                compactedContext = trimmed;
+                compactedThroughStep = foldable[foldable.length - 1].step;
+              }
+            } catch (compactionError) {
+              if (isSupersededAIRequestError(compactionError)) throw compactionError;
+              // Compaction is best-effort: a failed summary call leaves the
+              // raw trace in place (the prompt clamp still bounds it).
+            }
+          };
+
           const buildControllerPrompt = (
             forceFinish: boolean,
             extraInstruction?: string,
@@ -770,7 +1030,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               currentDatabase,
               availableTableNames:
                 agentPromptTableNames.length > 0 ? agentPromptTableNames : availableSchemaTables,
-              steps,
+              // Steps already folded into the compaction summary are dropped
+              // from the verbatim trace; the summary carries their findings.
+              steps: steps.filter((step) => step.step > compactedThroughStep),
+              earlierContext: compactedContext,
               workspaceToolsEnabled,
               knownDatabaseNames,
               workspaceBoundDatabase,
@@ -831,7 +1094,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               });
             },
           });
-          const { runAgentTool, getUnattendedBlockedTools } = createAgentToolExecutor({
+          const { runAgentTool, getUnattendedBlockedTools, getRunTrace } = createAgentToolExecutor({
             // P10: an unattended scheduled run reaches only the read tools; the
             // executor refuses everything else by name.
             unattendedReadOnly,
@@ -953,8 +1216,18 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             executeReadonlyQuery: executeAgentReadonlyQuery,
             executeParameterizedReadonlyQuery: executeAgentParameterizedQuery,
             previewWriteTransaction,
+            // Non-executing EXPLAIN dry-run for mutating edit_query_sql
+            // proposals — the backend wraps the statement as `EXPLAIN <stmt>`
+            // so the plan (or syntax error) lands on the review card before
+            // the user accepts. Never executes the write itself.
+            explainStatement: (explainConnectionId, explainSql) =>
+              invokeMutation<QueryResult>("explain_agent_statement", {
+                connectionId: explainConnectionId,
+                sql: explainSql,
+              }),
             toolAvailability,
           });
+          getAgentRunTrace = getRunTrace;
 
           const recoverAgentFinishAction = async (reason: string): Promise<AIAgentFinishAction> => {
             const allowedTables =
@@ -1179,6 +1452,12 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                     args: { query: normalizedPrompt },
                   });
                 }
+
+                // Context compaction: past ~70% of the token budget, fold the
+                // older trace into an "Earlier context" summary so this call
+                // (and every later one) stays small instead of hitting the
+                // budget wall mid-investigation.
+                await compactAgentTrace(steps);
 
                 let controllerPrompt = buildControllerPrompt(
                   forceFinish,
@@ -1669,6 +1948,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             // reached for and was refused (empty = it never tried to write).
             unattendedBlockedTools: unattendedReadOnly ? getUnattendedBlockedTools() : undefined,
             tokensUsed: runTokensUsed,
+            modelUsed: runModelUsed,
+            runTrace: getRunTrace(),
           };
         }
         const finalResponse = await recoverNonAgentAssistResponse({
@@ -1704,6 +1985,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           intent: assistIntent,
           reasoning: lastReasoningRef.current,
           tokensUsed: runTokensUsed,
+          modelUsed: runModelUsed,
         };
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) {

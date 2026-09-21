@@ -12,6 +12,11 @@ export interface AISlashCommand {
   name: string;
   /** Localized one-line description shown in the menu. */
   description: string;
+  /**
+   * Small label rendered after the name (e.g. the localized "custom" badge on
+   * user-authored command files). Absent on native and built-in commands.
+   */
+  badge?: string;
 }
 
 /** A stored DB checkpoint row (matches the Rust DatabaseCheckpoint payload). */
@@ -60,13 +65,15 @@ export function runsSlashCommandImmediately(name: string): boolean {
 }
 
 /**
- * The composer text a picked command leaves behind, e.g. `/review-sql`.
+ * The composer text a picked command leaves behind, e.g. `/review-sql `.
  *
- * Arguments stay open on purpose: `/backup nightly` and `/profile orders` are
- * reachable from the menu only because the command is inserted first.
+ * The trailing space is deliberate: the caret lands after it, so the next
+ * keystroke starts the argument (`/profile orders`) instead of gluing onto the
+ * command name. `handleGenerate` trims before parsing, so the space never
+ * reaches the resolver.
  */
 export function slashCommandDraft(name: string): string {
-  return `/${name.trim()}`;
+  return `/${name.trim()} `;
 }
 
 /** Filters the registry by the text typed after the leading "/". */
@@ -74,6 +81,41 @@ export function matchSlashCommands(query: string, commands: AISlashCommand[]): A
   const normalized = query.trim().toLowerCase();
   if (!normalized) return commands;
   return commands.filter((command) => command.name.toLowerCase().startsWith(normalized));
+}
+
+// ---------------------------------------------------------------------------
+// Editor-assist commands (/explain, /optimize, /fix)
+// ---------------------------------------------------------------------------
+
+/**
+ * Native commands that act on the SQL sitting in the active editor tab.
+ *
+ * They park in the composer like every other command (`/explain` stays
+ * `/explain` until Enter), but on send they are expanded into a contextual
+ * prompt — the editor SQL, the last recorded query error, or an EXPLAIN plan
+ * — by `resolveEditorAssistPrompt` in `use-ai-slide-panel.ts`. The composer
+ * keeps showing the short command while the model receives the full context.
+ */
+export type EditorAssistCommand = "explain" | "optimize" | "fix";
+
+const EDITOR_ASSIST_COMMANDS: Record<EditorAssistCommand, true> = {
+  explain: true,
+  optimize: true,
+  fix: true,
+};
+
+/**
+ * Parse `/explain`, `/optimize`, or `/fix` (with optional trailing hint text),
+ * or return `null` for anything else. The name is lowercased by
+ * `parseSlashCommandLine`, so `/FIX` still resolves.
+ */
+export function parseEditorAssistCommand(
+  text: string,
+): { command: EditorAssistCommand; arguments: string } | null {
+  const parsed = parseSlashCommandLine(text);
+  if (!parsed) return null;
+  if (!EDITOR_ASSIST_COMMANDS[parsed.name as EditorAssistCommand]) return null;
+  return { command: parsed.name as EditorAssistCommand, arguments: parsed.arguments };
 }
 
 // ---------------------------------------------------------------------------
@@ -143,12 +185,15 @@ export function findFileCommandName(
  * Native wins on a name collision because those three are implemented in the
  * app itself; a file command with the same name would silently replace a
  * working feature with a prompt. `isEnabled` applies the user's per-command
- * opt-out so disabling a command hides it everywhere.
+ * opt-out so disabling a command hides it everywhere. `customBadge` is the
+ * localized label stamped on user-authored files (origins `global` and
+ * `workspace`); the untouched built-in pack stays unbadged.
  */
 export function mergeSlashCommands(
   native: readonly AISlashCommand[],
   fileCommands: readonly AgentFileCommand[],
   isEnabled?: (name: string) => boolean,
+  customBadge?: string,
 ): AISlashCommand[] {
   const merged: AISlashCommand[] = [...native];
   const taken = new Set(native.map((command) => command.name.toLowerCase()));
@@ -163,6 +208,7 @@ export function mergeSlashCommands(
       description: command.argumentHint
         ? `${command.description} ${command.argumentHint}`.trim()
         : command.description,
+      badge: command.origin === "builtin" ? undefined : customBadge,
     });
   }
 
@@ -210,9 +256,13 @@ export function buildComposerCommandContext(
  * The note shown when the app could not supply context a command asked for, so
  * the user knows the agent will ask instead of quietly guessing.
  */
-export function describeMissingCommandContext(resolved: ResolvedFileCommand): string {
-  if (resolved.missingContext.length === 0) return "";
-  return `The command asked for ${resolved.missingContext.join(
+export function describeMissingCommandContextItems(missingContext: readonly string[]): string {
+  if (missingContext.length === 0) return "";
+  return `The command asked for ${missingContext.join(
     ", ",
   )}, which the app could not supply — the agent will ask for it.`;
+}
+
+export function describeMissingCommandContext(resolved: ResolvedFileCommand): string {
+  return describeMissingCommandContextItems(resolved.missingContext);
 }

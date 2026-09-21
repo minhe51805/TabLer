@@ -3,6 +3,7 @@ use crate::database::capabilities::{
     agent_sql_read_unsupported_error, agent_sql_write_preview_unsupported_error, DriverCapability,
 };
 use crate::database::manager::DatabaseManager;
+use crate::database::models::DatabaseType;
 use crate::database::models::QueryParameter;
 use crate::database::models::QueryResult;
 use crate::database::parameterized_query::{
@@ -528,12 +529,40 @@ pub async fn execute_sandboxed_query(
         return Err(AppError::from(error));
     }
 
-    let driver = db_manager.get_driver(&connection_id).await.map_err(|e| {
+    run_sandboxed_statements(
+        &connection_id,
+        &statements,
+        request_id,
+        max_rows,
+        db_manager.inner(),
+        cancellation_state.inner(),
+        "query.execute_sandboxed",
+    )
+    .await
+}
+
+/// Shared tail of the sandboxed execution path: resolve the driver, run the
+/// combined statements under the classified timeout with cancellation, and
+/// apply the agent result cap. Callers own their own validation and Safe Mode
+/// policy — this helper only executes what it is given.
+async fn run_sandboxed_statements(
+    connection_id: &str,
+    statements: &[String],
+    request_id: Option<String>,
+    max_rows: Option<usize>,
+    db_manager: &DatabaseManager,
+    cancellation_state: &QueryCancellationState,
+    operation: &str,
+) -> Result<QueryResult, AppError> {
+    let operation_id = Uuid::new_v4();
+    let db_type = db_manager
+        .connection_database_type(connection_id)
+        .await
+        .ok();
+    let driver = db_manager.get_driver(connection_id).await.map_err(|e| {
         let formatted = format_query_connection_error(e);
         log::error!(
-            "operation_id={} operation=query.execute_sandboxed status=failed stage=connection error={}",
-            operation_id,
-            formatted
+            "operation_id={operation_id} operation={operation} status=failed stage=connection error={formatted}"
         );
         formatted
     })?;
@@ -551,7 +580,7 @@ pub async fn execute_sandboxed_query(
             .await;
     }
     let exec = async {
-        if let Some(ref id) = request_id {
+        if let Some(id) = request_id.as_deref() {
             driver.execute_query_for_request(id, &combined_query).await
         } else {
             driver.execute_query(&combined_query).await
@@ -566,18 +595,14 @@ pub async fn execute_sandboxed_query(
                     timeout_window.as_secs()
                 );
                 log::error!(
-                    "operation_id={} operation=query.execute_sandboxed status=failed stage=timeout error={}",
-                    operation_id,
-                    err_msg
+                    "operation_id={operation_id} operation={operation} status=failed stage=timeout error={err_msg}"
                 );
                 err_msg
             })
             .and_then(|result| result.map_err(|e| {
                 let formatted = format_query_runtime_error(e);
                 log::error!(
-                    "operation_id={} operation=query.execute_sandboxed status=failed stage=runtime error={}",
-                    operation_id,
-                    formatted
+                    "operation_id={operation_id} operation={operation} status=failed stage=runtime error={formatted}"
                 );
                 formatted
             })),
@@ -591,13 +616,65 @@ pub async fn execute_sandboxed_query(
         cap_sandbox_result(&mut result, max_rows, SANDBOX_AGENT_MAX_RESULT_BYTES);
     }
     log::info!(
-        "operation_id={} operation=query.execute_sandboxed status=succeeded columns={} rows={} truncated={}",
-        operation_id,
+        "operation_id={operation_id} operation={operation} status=succeeded columns={} rows={} truncated={}",
         result.columns.len(),
         result.rows.len(),
         result.truncated
     );
     Ok(result)
+}
+
+/// Non-executing EXPLAIN boundary for the agent's write-proposal dry-run.
+///
+/// `execute_agent_readonly_query` deliberately refuses `EXPLAIN <write>` (a
+/// read-only surface must not plan writes) and `execute_sandboxed_query`
+/// inherits the Safe Mode write block — yet a mutating `edit_query_sql`
+/// proposal needs its plan (or its syntax error) on the review card BEFORE the
+/// user accepts. This command fills that gap: it wraps the statement as
+/// `EXPLAIN <stmt>` server-side so the wrapped statement is planned, never
+/// executed — `EXPLAIN ANALYZE` cannot be constructed here. Safe Mode is not
+/// consulted because nothing mutates; the proposal itself still goes through
+/// the normal guarded path when the user runs it.
+#[tauri::command]
+pub async fn explain_agent_statement(
+    connection_id: String,
+    sql: String,
+    db_manager: State<'_, DatabaseManager>,
+    cancellation_state: State<'_, QueryCancellationState>,
+) -> Result<QueryResult, AppError> {
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(message) = agent_sql_read_unsupported_error(database_type) {
+        return Err(message.into());
+    }
+    // Same input validation as the sandbox: capability probes and
+    // session/transaction control are refused before the driver is involved.
+    // Read-only is NOT required — planning a write is the whole point.
+    let statements = [sql];
+    if let Err(error) = validate_sandbox_batch(&statements, false, Some(database_type)) {
+        log_sandbox_denial(&connection_id, statements.len(), &error);
+        return Err(error.into());
+    }
+    let explain_sql = match database_type {
+        // SQLite-family engines expose a readable plan through EXPLAIN QUERY
+        // PLAN; a bare EXPLAIN dumps the bytecode program instead.
+        DatabaseType::SQLite | DatabaseType::LibSQL | DatabaseType::CloudflareD1 => {
+            format!("EXPLAIN QUERY PLAN {}", statements[0])
+        }
+        _ => format!("EXPLAIN {}", statements[0]),
+    };
+    run_sandboxed_statements(
+        &connection_id,
+        &[explain_sql],
+        None,
+        Some(SANDBOX_AGENT_MAX_ROWS),
+        db_manager.inner(),
+        cancellation_state.inner(),
+        "query.explain_agent_statement",
+    )
+    .await
 }
 
 /// Read-only + prepared-parameters boundary for the AI agent's

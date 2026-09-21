@@ -245,7 +245,8 @@ export function readStepFacts(step: AgentTraceStep): AgentStepFacts | null {
   return facts;
 }
 
-const AI_SCHEMA_CODEC_LEGEND = "Legend T=table C=col:type!flags I=index F=fk flags=pk|nn|df|ai";
+export const AI_SCHEMA_CODEC_LEGEND =
+  "Legend T=table C=col:type!flags I=index F=fk flags=pk|nn|df|ai";
 const MAX_SCHEMA_CAPSULE_PREVIEW_TABLES = 4;
 const MAX_AGENT_PROMPT_CHARS = 48_000;
 /** Pre-inspected summaries injected into the controller prompt to save describe_table steps. */
@@ -483,6 +484,12 @@ export function buildAgentControllerPrompt(params: {
   /** Current checklist (from update_plan), rendered near the top of the prompt. */
   planLines?: string[];
   /**
+   * Compacted summary of trace steps already folded away ("Earlier context").
+   * Rendered just before the verbatim step tail so a long run keeps its
+   * earlier findings without replaying every raw observation.
+   */
+  earlierContext?: string;
+  /**
    * P10: the run is an unattended scheduled agent task. Narrows the text catalog
    * to the read-only tool surface and states plainly that no human can answer,
    * so the model reports findings instead of asking or proposing writes.
@@ -508,6 +515,7 @@ export function buildAgentControllerPrompt(params: {
     knownDatabaseNames,
     workspaceBoundDatabase,
     planLines,
+    earlierContext,
     unattendedReadOnly,
   } = params;
   const databaseMentionMismatch = detectDatabaseMentionMismatch({
@@ -768,6 +776,12 @@ export function buildAgentControllerPrompt(params: {
     "User request:",
     userPrompt,
     "",
+    earlierContext
+      ? [
+          "Earlier context (compacted summary of steps already folded away — treat as verified findings, do not re-run them):",
+          earlierContext,
+        ].join("\n")
+      : "",
     "Tool observations so far:",
     priorSteps,
   ]

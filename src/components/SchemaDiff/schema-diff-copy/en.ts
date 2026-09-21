@@ -1,0 +1,27 @@
+import type { SchemaDiffCopy } from "./types";
+
+export const EN_COPY: SchemaDiffCopy = {
+  title: "Schema Diff",
+  close: "Close",
+  sourceConnection: "Source connection…",
+  targetConnection: "Target connection…",
+  activeSuffix: "(active)",
+  notConnectedSuffix: "(not connected)",
+  sourceDatabase: "Source database (default: current)",
+  targetDatabase: "Target database (default: current)",
+  compare: "Compare",
+  summaryAdded: (count) => `+${count} added`,
+  summaryRemoved: (count) => `-${count} removed`,
+  summaryModified: (count) => `~${count} modified`,
+  summaryUnchanged: (count) => `= ${count} unchanged`,
+  truncated: "⚠ truncated",
+  truncatedTitle: "Result capped",
+  groupAdded: (count) => `Added tables (${count})`,
+  groupRemoved: (count) => `Removed tables (${count})`,
+  groupModified: (count) => `Modified tables (${count})`,
+  noDifferences: "No differences — the two schemas are identical.",
+  dialectLabel: "Migration dialect",
+  includeDrops: "Include DROPs",
+  generateMigration: "Generate migration",
+  copyScript: "Copy",
+};

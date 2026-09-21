@@ -13,6 +13,7 @@ import { getQueryProfile } from "../../utils/query-profile";
 import { ExplainVisualizer } from "../ExplainVisualizer/ExplainVisualizer";
 import { SQLParametersPanel } from "./SQLParametersPanel";
 import { extractNamedSqlParameters, type SqlParameterDraft } from "../../utils/sql-parameters";
+import { getAiProposalCopy } from "./ai-proposal-copy";
 
 interface Props {
   connectionId: string;
@@ -62,7 +63,9 @@ export function SQLEditor({
     window.localStorage.setItem(parameterStorageKey, JSON.stringify(parameterDrafts));
   }, [parameterDrafts, parameterStorageKey]);
   const toggleResultsTitle =
-    language === "vi" ? "Bat/tat vung ket qua (Ctrl+Shift+`)" : "Toggle results pane (Ctrl+Shift+`)";
+    language === "vi"
+      ? "Bat/tat vung ket qua (Ctrl+Shift+`)"
+      : "Toggle results pane (Ctrl+Shift+`)";
   const vimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
   const toggleVimMode = useEditorPreferencesStore((state) => state.toggleVimMode);
   const toolsStorageKey = "tabler.editor-floating-tools-visible";
@@ -80,9 +83,14 @@ export function SQLEditor({
       /* storage unavailable */
     }
   }, [toolsVisible]);
-  const toggleToolsTitle = language === "vi"
-    ? toolsVisible ? "Ẩn thanh công cụ" : "Hiện thanh công cụ"
-    : toolsVisible ? "Hide toolbar" : "Show toolbar";
+  const toggleToolsTitle =
+    language === "vi"
+      ? toolsVisible
+        ? "Ẩn thanh công cụ"
+        : "Hiện thanh công cụ"
+      : toolsVisible
+        ? "Hide toolbar"
+        : "Show toolbar";
   const connections = useConnectionStore((state) => state.connections);
   const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
   const queryProfile = getQueryProfile(dbType);
@@ -145,6 +153,19 @@ export function SQLEditor({
               <span className="sql-editor-ai-proposal-reason" title={aiProposal.reason}>
                 {t("tabs.aiProposal")}: {aiProposal.reason}
               </span>
+              {aiProposal.explain ? (
+                <span
+                  className={`sql-editor-ai-proposal-explain sql-editor-ai-proposal-explain-${aiProposal.explain.status}`}
+                  title={aiProposal.explain.summary ?? aiProposal.explain.error}
+                >
+                  {getAiProposalCopy(language).explainLabel}:{" "}
+                  {aiProposal.explain.status === "ok"
+                    ? (aiProposal.explain.summary ?? "ok")
+                    : aiProposal.explain.status === "error"
+                      ? `${getAiProposalCopy(language).explainFailed}: ${aiProposal.explain.error}`
+                      : `${getAiProposalCopy(language).explainUnsupported}: ${aiProposal.explain.error}`}
+                </span>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setProposalDetailsOpen((open) => !open)}
@@ -232,7 +253,9 @@ export function SQLEditor({
           <SQLParametersPanel
             names={parameterNames}
             drafts={parameterDrafts}
-            onChange={(name, next) => setParameterDrafts((current) => ({ ...current, [name]: next }))}
+            onChange={(name, next) =>
+              setParameterDrafts((current) => ({ ...current, [name]: next }))
+            }
           />
           <div className={`sql-editor-floating-tools ${toolsVisible ? "" : "collapsed"}`}>
             <button

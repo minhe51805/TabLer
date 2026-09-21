@@ -37,6 +37,9 @@ export interface ConnectionState {
   tables: TableInfo[];
   schemaObjects: SchemaObjectInfo[];
   connectionHealth: Record<string, boolean>;
+  /** Most recently connected saved-connection ids, newest first (max 5).
+   *  Persisted to localStorage; powers the palette's Recent section. */
+  recentConnectionIds: string[];
   isConnecting: boolean;
   isLoadingDatabases: boolean;
   isSwitchingDatabase: boolean;
@@ -94,6 +97,37 @@ const SYSTEM_DATABASE_NAMES = new Set([
   "template1",
   "rdsadmin",
 ]);
+
+const RECENT_CONNECTIONS_KEY = "tabler.recentConnections";
+const MAX_RECENT_CONNECTIONS = 5;
+
+function loadRecentConnectionIds(): string[] {
+  try {
+    const raw = window.localStorage.getItem(RECENT_CONNECTIONS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((id): id is string => typeof id === "string")
+          .slice(0, MAX_RECENT_CONNECTIONS);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+function saveRecentConnectionIds(ids: string[]) {
+  try {
+    window.localStorage.setItem(
+      RECENT_CONNECTIONS_KEY,
+      JSON.stringify(ids.slice(0, MAX_RECENT_CONNECTIONS)),
+    );
+  } catch {
+    // ignore
+  }
+}
 
 export const useConnectionStore = create<ConnectionState>((set, get) => {
   type ConnectSnapshot = Pick<
@@ -155,9 +189,16 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     if (keepExistingMetadata && typeof database === "string") {
       lastCompletedDatabaseSwitchKey = metadataFetchKey(connectionId, database);
     }
+    // Successful connect → front of the recents list (deduped, capped).
+    const recentConnectionIds = [
+      connectionId,
+      ...get().recentConnectionIds.filter((id) => id !== connectionId),
+    ].slice(0, MAX_RECENT_CONNECTIONS);
+    saveRecentConnectionIds(recentConnectionIds);
     set({
       ...(connectionsPatch ?? {}),
       connectedIds,
+      recentConnectionIds,
       activeConnectionId: connectionId,
       currentDatabase: database ?? null,
       ...(keepExistingMetadata ? {} : { schemaObjects: [], tables: [] }),
@@ -217,6 +258,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     tables: [],
     schemaObjects: [],
     connectionHealth: {},
+    recentConnectionIds: loadRecentConnectionIds(),
     isConnecting: false,
     isLoadingDatabases: false,
     isSwitchingDatabase: false,
@@ -403,12 +445,15 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
         },
       );
     },
-
     deleteSavedConnection: async (connectionId) => {
       try {
         await invokeMutation("delete_saved_connection", { connectionId });
+        // A deleted connection must not linger in the palette's Recent list.
+        const recentConnectionIds = get().recentConnectionIds.filter((id) => id !== connectionId);
+        saveRecentConnectionIds(recentConnectionIds);
         set({
           connections: get().connections.filter((connection) => connection.id !== connectionId),
+          recentConnectionIds,
         });
         useUIStore.getState().removeTabsForConnection(connectionId);
       } catch (error) {

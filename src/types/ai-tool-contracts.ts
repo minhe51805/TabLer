@@ -35,6 +35,10 @@ export interface AIPreviewWriteTransactionCommandArgs extends Record<string, unk
   connectionId: string;
   statements: string[];
 }
+export interface AIExplainAgentStatementCommandArgs extends Record<string, unknown> {
+  connectionId: string;
+  sql: string;
+}
 
 export interface AIPreviewWriteTransactionResult {
   results: QueryResult[];
@@ -60,6 +64,10 @@ export interface AIWorkspaceToolCommandMap {
   };
   execute_agent_parameterized_query: {
     args: AIExecuteAgentParameterizedQueryCommandArgs;
+    result: QueryResult;
+  };
+  explain_agent_statement: {
+    args: AIExplainAgentStatementCommandArgs;
     result: QueryResult;
   };
   preview_write_transaction: {

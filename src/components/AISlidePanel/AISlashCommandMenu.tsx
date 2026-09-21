@@ -96,6 +96,7 @@ export function AISlashCommandMenu({
             }}
           >
             <span className="ai-slash-menu-name">/{command.name}</span>
+            {command.badge ? <span className="ai-slash-menu-badge">{command.badge}</span> : null}
             <span className="ai-slash-menu-description">{command.description}</span>
           </button>
         ))

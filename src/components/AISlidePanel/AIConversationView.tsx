@@ -1,13 +1,21 @@
 import {
+  AlertCircle,
   Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Copy,
   CornerDownLeft,
   ExternalLink,
   FileText,
   Info,
+  ListTree,
   Play,
+  RefreshCw,
   RotateCcw,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
 } from "lucide-react";
 import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
@@ -16,7 +24,9 @@ import {
   aiModeAllowsRun,
   type AIWorkspaceAttachment,
   type AIWorkspaceBubbleData,
+  type AIWorkspaceBubbleFeedback,
   type AIWorkspaceFailoverNote,
+  type AIWorkspaceRunTraceEntry,
 } from "./ai-workspace-types";
 import {
   getBubbleConversationText,
@@ -31,7 +41,7 @@ import { extractAgentRecordLinks, type AIAgentRecordLink } from "./ai-agent-reco
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 import { AIThinkingTrace } from "./AIThinkingTrace";
 import { useI18n } from "../../i18n";
-import { formatPanelCopy, getAIPanelCopy } from "./ai-panel-copy";
+import { formatPanelCopy, getAIPanelCopy, type AIPanelCopy } from "./ai-panel-copy";
 import { DEFAULT_AGENT_TOKEN_BUDGET } from "./ai-agent-cost";
 
 interface AIConversationViewProps {
@@ -47,6 +57,12 @@ interface AIConversationViewProps {
   /** One-click reply: sends the chosen ask_user option (or an inline
    *  free-form answer) as a new message. */
   onAskUserOptionSelect?: (option: string) => void;
+  /** Re-runs the prompt that produced this bubble and swaps the answer into
+   *  the same chat slot; the old answer stays when the run fails. */
+  onRegenerate?: (bubble: AIWorkspaceBubbleData) => void;
+  /** Records 👍/👎 on a finished answer; 👎 carries the popover's reasons and
+   *  free-text note into the learning loop. */
+  onFeedback?: (bubble: AIWorkspaceBubbleData, feedback: AIWorkspaceBubbleFeedback) => void;
   /** Legacy composer-focus fallback. Retained for backward compatibility; the
    *  custom reply now opens an inline text field via {@link AIAskUserReply}. */
   onAskUserCustomInput?: () => void;
@@ -186,6 +202,106 @@ function AIFailoverNotes({
   );
 }
 
+/** "320ms" / "1.2s" / "1m 12s" for per-call and total durations. */
+function formatRunDetailMs(ms: number): string {
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 60) {
+    const rounded = Math.round(totalSeconds * 10) / 10;
+    return `${rounded}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+/** Collapsible audit trail of a finished agent run: every tool call in order
+ *  (name, args summary, duration, ok/fail) plus the SQL each call executed.
+ *  Hidden entirely when the run recorded no tool calls. */
+function AIRunDetails({ trace, totalMs }: { trace: AIWorkspaceRunTraceEntry[]; totalMs?: number }) {
+  const { language } = useI18n();
+  const panelCopy = getAIPanelCopy(language);
+  const [expanded, setExpanded] = useState(false);
+  if (trace.length === 0) return null;
+  const showTotal = totalMs !== undefined && totalMs > 0;
+  return (
+    <div className={`ai-run-details ${expanded ? "" : "is-collapsed"}`}>
+      <button
+        type="button"
+        className="ai-run-details-head"
+        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={expanded}
+      >
+        <ListTree className="w-3.5 h-3.5" />
+        <span>{panelCopy.runDetails.label}</span>
+        <span className="ai-run-details-head-right">
+          <span>
+            {formatPanelCopy(panelCopy.runDetails.callCount, {
+              count: String(trace.length),
+            })}
+          </span>
+          {showTotal && (
+            <span>
+              {formatPanelCopy(panelCopy.runDetails.total, {
+                duration: formatRunDetailMs(totalMs as number),
+              })}
+            </span>
+          )}
+          {expanded ? (
+            <ChevronDown className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5" />
+          )}
+        </span>
+      </button>
+      {expanded && (
+        <>
+          <ol className="ai-run-details-list">
+            {trace.map((entry, index) => (
+              <li key={`${index}-${entry.tool}`} className="ai-run-details-call">
+                <div className="ai-run-details-call-line">
+                  <span className="ai-run-details-tool">{entry.tool}</span>
+                  {entry.argsSummary && (
+                    <span className="ai-run-details-args" title={entry.argsSummary}>
+                      {entry.argsSummary}
+                    </span>
+                  )}
+                  <span className="ai-run-details-ms">{formatRunDetailMs(entry.ms)}</span>
+                  <span
+                    className={`ai-run-details-status ai-run-details-status--${entry.ok ? "ok" : "fail"}`}
+                  >
+                    {entry.ok ? (
+                      <CheckCircle2 className="w-3 h-3" />
+                    ) : (
+                      <AlertCircle className="w-3 h-3" />
+                    )}
+                    {entry.ok ? panelCopy.runDetails.ok : panelCopy.runDetails.failed}
+                  </span>
+                </div>
+                {entry.sql && (
+                  <>
+                    <span className="ai-run-details-sql-label">
+                      {panelCopy.runDetails.sqlLabel}
+                    </span>
+                    <AIWorkspaceSqlBlock code={entry.sql} />
+                  </>
+                )}
+              </li>
+            ))}
+          </ol>
+          {showTotal && (
+            <div className="ai-run-details-total">
+              {formatPanelCopy(panelCopy.runDetails.total, {
+                duration: formatRunDetailMs(totalMs as number),
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 /** ask_user reply block: renders the model's options as one-click buttons and,
  *  when the user picks "type your own", reveals an inline text field right
  *  under the options so they can send a free-form answer without hunting for
@@ -274,6 +390,96 @@ function AIAskUserReply({
   );
 }
 
+/** Preset 👎 reasons, keyed so the stored feedback stays locale-independent
+ *  while the chip labels come from the panel copy pack. */
+const FEEDBACK_REASON_KEYS = ["wrongSql", "misunderstood", "tooSlow", "other"] as const;
+type FeedbackReasonKey = (typeof FEEDBACK_REASON_KEYS)[number];
+
+/** "What was wrong?" popover behind the 👎 button: preset chips plus a
+ *  free-text note. Submitting hands a structured feedback record to the
+ *  parent, which mirrors it into agent memory for the learning loop. */
+function AIFeedbackPopover({
+  copy,
+  onSubmit,
+  onClose,
+}: {
+  copy: AIPanelCopy;
+  onSubmit: (reasons: string[], comment: string) => void;
+  onClose: () => void;
+}) {
+  const [selectedReasons, setSelectedReasons] = useState<FeedbackReasonKey[]>([]);
+  const [comment, setComment] = useState("");
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  // Click-outside / Escape dismiss — the popover is a transient annotation,
+  // not a modal, so nothing it holds should trap the user.
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) onClose();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose]);
+
+  const toggleReason = (key: FeedbackReasonKey) => {
+    setSelectedReasons((current) =>
+      current.includes(key) ? current.filter((value) => value !== key) : [...current, key],
+    );
+  };
+
+  const submit = () => {
+    onSubmit(selectedReasons, comment.trim());
+    onClose();
+  };
+
+  return (
+    <div ref={rootRef} className="ai-workspace-feedback-popover" role="dialog">
+      <p className="ai-workspace-feedback-title">{copy.responseActions.feedbackTitle}</p>
+      <div className="ai-workspace-feedback-chips">
+        {FEEDBACK_REASON_KEYS.map((key) => (
+          <button
+            key={key}
+            type="button"
+            className={`ai-workspace-suggestion-chip${
+              selectedReasons.includes(key) ? " is-selected" : ""
+            }`}
+            onClick={() => toggleReason(key)}
+          >
+            {copy.responseActions.feedbackReasons[key]}
+          </button>
+        ))}
+      </div>
+      <textarea
+        className="ai-workspace-feedback-input"
+        value={comment}
+        placeholder={copy.responseActions.feedbackPlaceholder}
+        rows={2}
+        onChange={(event) => setComment(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            submit();
+          }
+        }}
+      />
+      <button
+        type="button"
+        className="ai-workspace-mode-action-btn primary ai-workspace-feedback-submit"
+        onClick={submit}
+      >
+        {copy.responseActions.feedbackSubmit}
+      </button>
+    </div>
+  );
+}
+
 export const AIConversationView = memo(function AIConversationView({
   bubbles,
   copy,
@@ -285,9 +491,13 @@ export const AIConversationView = memo(function AIConversationView({
   onOpenRecord,
   onUseSuggestion,
   onAskUserOptionSelect,
+  onRegenerate,
+  onFeedback,
 }: AIConversationViewProps) {
   const [viewerImage, setViewerImage] = useState<{ url: string; name: string } | null>(null);
   const [copiedBubbleId, setCopiedBubbleId] = useState<string | null>(null);
+  // Bubble whose 👎 popover is open; only one feedback form at a time.
+  const [feedbackBubbleId, setFeedbackBubbleId] = useState<string | null>(null);
   const hasConversation = bubbles.length > 0;
   const { language } = useI18n();
   const panelCopy = getAIPanelCopy(language);
@@ -356,6 +566,17 @@ export const AIConversationView = memo(function AIConversationView({
               const canCopy =
                 bubble.status !== "loading" &&
                 Boolean(bubble.sql || bubble.detail || bubble.preview);
+              // Regenerate + 👍/👎 only on finished answers: a loading turn is
+              // still being written, a failed/cancelled one has Retry instead.
+              // Regenerate is ready-only because partial turns already offer
+              // Retry; feedback also accepts partial (a truncated answer can
+              // still be rated).
+              const isFinishedAnswer =
+                bubble.kind !== "error" &&
+                (bubble.status === "ready" || bubble.status === "partial");
+              const canRegenerate =
+                bubble.status === "ready" && bubble.kind !== "error" && Boolean(onRegenerate);
+              const canFeedback = isFinishedAnswer && Boolean(onFeedback);
 
               return (
                 <article key={`chat-${bubble.id}`} className="ai-workspace-chat-turn">
@@ -493,7 +714,24 @@ export const AIConversationView = memo(function AIConversationView({
                     {bubble.sql && bubble.status !== "error" && (
                       <AIWorkspaceSqlBlock code={bubble.sql} />
                     )}
-                    {(canInsert || canRun || canRetry || canCopy) && (
+                    {bubble.status !== "loading" && (bubble.runTrace?.length ?? 0) > 0 && (
+                      // Audit trail: the executor recorded every tool call of
+                      // this run; collapsed by default, expand for the trace.
+                      <AIRunDetails
+                        trace={bubble.runTrace ?? []}
+                        totalMs={
+                          bubble.settledAt
+                            ? Math.max(0, bubble.settledAt - bubble.createdAt)
+                            : undefined
+                        }
+                      />
+                    )}
+                    {(canInsert ||
+                      canRun ||
+                      canRetry ||
+                      canCopy ||
+                      canRegenerate ||
+                      canFeedback) && (
                       <div className="ai-workspace-chat-actions">
                         {canRetry && (
                           <button
@@ -541,18 +779,90 @@ export const AIConversationView = memo(function AIConversationView({
                             <CornerDownLeft className="w-3.5 h-3.5" />
                           </button>
                         )}
+                        {canRegenerate && (
+                          <button
+                            type="button"
+                            className="ai-workspace-chat-action-icon"
+                            onClick={() => {
+                              setFeedbackBubbleId(null);
+                              onRegenerate?.(bubble);
+                            }}
+                            title={panelCopy.responseActions.regenerate}
+                            aria-label={panelCopy.responseActions.regenerate}
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {canFeedback && (
+                          <>
+                            <button
+                              type="button"
+                              className={`ai-workspace-chat-action-icon${
+                                bubble.feedback?.sentiment === "up" ? " is-active" : ""
+                              }`}
+                              onClick={() =>
+                                onFeedback?.(bubble, {
+                                  sentiment: "up",
+                                  recordedAt: Date.now(),
+                                })
+                              }
+                              title={panelCopy.responseActions.helpful}
+                              aria-label={panelCopy.responseActions.helpful}
+                            >
+                              <ThumbsUp className="w-3.5 h-3.5" />
+                            </button>
+                            <div
+                              className={`ai-workspace-chat-action-menu${
+                                feedbackBubbleId === bubble.id ? " is-open" : ""
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                className={`ai-workspace-chat-action-icon${
+                                  bubble.feedback?.sentiment === "down" ? " is-active" : ""
+                                }`}
+                                onClick={() =>
+                                  setFeedbackBubbleId((current) =>
+                                    current === bubble.id ? null : bubble.id,
+                                  )
+                                }
+                                title={panelCopy.responseActions.notHelpful}
+                                aria-label={panelCopy.responseActions.notHelpful}
+                              >
+                                <ThumbsDown className="w-3.5 h-3.5" />
+                              </button>
+                              {feedbackBubbleId === bubble.id && (
+                                <AIFeedbackPopover
+                                  copy={panelCopy}
+                                  onClose={() => setFeedbackBubbleId(null)}
+                                  onSubmit={(reasons, comment) =>
+                                    onFeedback?.(bubble, {
+                                      sentiment: "down",
+                                      reasons: reasons.length > 0 ? reasons : undefined,
+                                      comment: comment || undefined,
+                                      recordedAt: Date.now(),
+                                    })
+                                  }
+                                />
+                              )}
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
-                    {bubble.status !== "loading" && (bubble.tokensUsed ?? 0) > 0 && (
-                      // Run footer: what the turn actually cost, against the
-                      // per-run token budget the runner enforces.
-                      <div className="ai-workspace-chat-run-cost" title={panelCopy.runCost.title}>
-                        {formatPanelCopy(panelCopy.runCost.label, {
-                          used: (bubble.tokensUsed ?? 0).toLocaleString(),
-                          budget: DEFAULT_AGENT_TOKEN_BUDGET.toLocaleString(),
-                        })}
-                      </div>
-                    )}
+                    {bubble.status !== "loading" &&
+                      ((bubble.tokensUsed ?? 0) > 0 || bubble.modelUsed) && (
+                        // Run footer: what the turn actually cost, against the
+                        // per-run token budget the runner enforces, plus the
+                        // model that answered (the fast model on trivial asks).
+                        <div className="ai-workspace-chat-run-cost" title={panelCopy.runCost.title}>
+                          {formatPanelCopy(panelCopy.runCost.label, {
+                            used: (bubble.tokensUsed ?? 0).toLocaleString(),
+                            budget: DEFAULT_AGENT_TOKEN_BUDGET.toLocaleString(),
+                          })}
+                          {bubble.modelUsed ? ` · ${bubble.modelUsed}` : ""}
+                        </div>
+                      )}
                   </div>
                 </article>
               );

@@ -3,6 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type { ColumnInfo, QueryResult } from "../types";
+import { useConnectionStore } from "../stores/connectionStore";
+import { isProgressiveEligible } from "../stores/queryStore";
+import { notifyQueryDone } from "../utils/query-notify";
+import { getCachedQueryResult, setCachedQueryResult } from "../utils/query-result-cache";
 
 /**
  * Progressive large-read delivery (roadmap Phase 3B).
@@ -11,6 +15,10 @@ import type { ColumnInfo, QueryResult } from "../types";
  * `query-row-batch` events; rows are appended into state as batches arrive so
  * callers can render progressively instead of waiting for the whole payload.
  * `cancel` rides the existing request-cancellation registry.
+ *
+ * Read-only runs go through the shared 30s result cache (repeat runs resolve
+ * instantly with `state.cached`), and completions raise an OS notification
+ * when the window was hidden or the run took longer than 10s.
  */
 export interface ProgressiveQueryState {
   columns: ColumnInfo[];
@@ -18,6 +26,8 @@ export interface ProgressiveQueryState {
   totalRows: number;
   done: boolean;
   requestId: string | null;
+  /** True when the current result came from the local result cache. */
+  cached: boolean;
 }
 
 const INITIAL_STATE: ProgressiveQueryState = {
@@ -26,6 +36,7 @@ const INITIAL_STATE: ProgressiveQueryState = {
   totalRows: 0,
   done: true,
   requestId: null,
+  cached: false,
 };
 
 interface QueryRowBatchEvent {
@@ -55,6 +66,7 @@ export function useProgressiveQuery() {
         totalRows: batch.totalRows,
         done: batch.done,
         requestId: current.requestId,
+        cached: current.cached,
       }));
     }).then((stop) => {
       if (disposed) stop();
@@ -67,11 +79,28 @@ export function useProgressiveQuery() {
   }, []);
 
   const run = useCallback(async (connectionId: string, sql: string, chunkSize?: number) => {
+    const database = useConnectionStore.getState().currentDatabase;
+    const cacheable = isProgressiveEligible(sql);
+    if (cacheable) {
+      const cached = getCachedQueryResult(connectionId, sql, database);
+      if (cached) {
+        setState({
+          columns: cached.columns,
+          rows: cached.rows.map((row) => row),
+          totalRows: cached.rows.length,
+          done: true,
+          requestId: null,
+          cached: true,
+        });
+        return cached;
+      }
+    }
     const requestId = `${connectionId}::${crypto.randomUUID()}`;
     activeRequestIdRef.current = requestId;
     activeConnectionIdRef.current = connectionId;
     setState({ ...INITIAL_STATE, requestId, done: false });
     setIsRunning(true);
+    const startedAt = Date.now();
     try {
       const result = await invoke<QueryResult>("execute_query_progressive", {
         connectionId,
@@ -87,8 +116,17 @@ export function useProgressiveQuery() {
         totalRows: result.rows.length,
         done: true,
         requestId,
+        cached: false,
+      });
+      if (cacheable) setCachedQueryResult(connectionId, sql, database, result);
+      void notifyQueryDone({
+        durationMs: Date.now() - startedAt,
+        rowCount: result.rows.length,
       });
       return result;
+    } catch (error) {
+      void notifyQueryDone({ durationMs: Date.now() - startedAt, error });
+      throw error;
     } finally {
       setIsRunning(false);
       activeRequestIdRef.current = null;

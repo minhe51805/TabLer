@@ -87,6 +87,10 @@ pub struct AIProviderConfig {
     pub provider_type: AIProviderType,
     pub endpoint: String,
     pub model: String,
+    /// Optional cheaper/faster model id on this provider; trivial intents
+    /// (short explains, formatting, general chat) route here when set.
+    #[serde(default)]
+    pub fast_model: Option<String>,
     pub is_enabled: bool,
     #[serde(default)]
     pub is_primary: bool,

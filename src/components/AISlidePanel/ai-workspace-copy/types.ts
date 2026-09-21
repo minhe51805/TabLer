@@ -95,6 +95,10 @@ export interface AIWorkspaceCopy {
     slashBackupDescription: string;
     slashCompactDescription: string;
     slashRollbackDescription: string;
+    slashExplainDescription: string;
+    slashOptimizeDescription: string;
+    slashFixDescription: string;
+    slashCustomBadge: string;
     checkpointTitle: string;
     checkpointEmpty: string;
     checkpointHint: string;

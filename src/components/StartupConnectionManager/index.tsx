@@ -22,7 +22,7 @@ import {
   type ConnectionGroup,
 } from "../../stores/connection-group-store";
 import { getTags, type ConnectionTag } from "../../stores/connection-tag-store";
-import type { ConnectionConfig } from "./types";
+import type { ConnectionConfig, ConnectionPingResult } from "./types";
 import type { ConnectionLayoutMode, HoverPreviewState } from "./types";
 import {
   APP_VERSION,
@@ -72,6 +72,7 @@ export function StartupConnectionManager({
     createSampleDatabase,
     fetchDatabases,
     fetchTables,
+    testConnection,
   } = useConnectionStore(
     useShallow((state) => ({
       connections: state.connections,
@@ -86,6 +87,7 @@ export function StartupConnectionManager({
       createSampleDatabase: state.createSampleDatabase,
       fetchDatabases: state.fetchDatabases,
       fetchTables: state.fetchTables,
+      testConnection: state.testConnection,
     })),
   );
 
@@ -106,6 +108,8 @@ export function StartupConnectionManager({
   const [layoutMode, setLayoutMode] = useState<ConnectionLayoutMode>(getInitialLayoutMode);
   const [isCreatingSample, setIsCreatingSample] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
+  const [pingResults, setPingResults] = useState<Map<string, ConnectionPingResult>>(new Map());
+  const [isPingingAll, setIsPingingAll] = useState(false);
   const [pendingDeleteConnection, setPendingDeleteConnection] = useState<ConnectionConfig | null>(
     null,
   );
@@ -301,6 +305,35 @@ export function StartupConnectionManager({
     setPendingDeleteConnection(connection);
   };
 
+  // Probe every saved connection concurrently; each card shows a green/red
+  // badge with the round-trip latency once its probe settles.
+  const handlePingAll = async () => {
+    if (isPingingAll || connections.length === 0) return;
+    setIsPingingAll(true);
+    setPingResults(new Map());
+    try {
+      await Promise.all(
+        connections.map(async (conn) => {
+          const startedAt = performance.now();
+          let result: ConnectionPingResult;
+          try {
+            await testConnection(conn);
+            result = { ok: true, latencyMs: Math.round(performance.now() - startedAt) };
+          } catch {
+            result = { ok: false, latencyMs: null };
+          }
+          setPingResults((prev) => {
+            const next = new Map(prev);
+            next.set(conn.id, result);
+            return next;
+          });
+        }),
+      );
+    } finally {
+      setIsPingingAll(false);
+    }
+  };
+
   const confirmDeleteConnection = async () => {
     if (!pendingDeleteConnection) return;
 
@@ -494,6 +527,12 @@ export function StartupConnectionManager({
             onChangeGroupColor={handleChangeGroupColor}
             onDeleteGroup={handleDeleteGroup}
             listRef={listRef}
+            pingResults={pingResults}
+            isPingingAll={isPingingAll}
+            onPingAll={() => {
+              void handlePingAll();
+            }}
+            pingAllCopy={(STARTUP_COPY[language] ?? STARTUP_COPY.en).pingAll}
           />
         </div>
 

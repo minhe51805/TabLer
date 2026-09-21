@@ -8,6 +8,7 @@ import { CommandPalette } from "../CommandPalette/CommandPalette";
 import { QuickSwitcher } from "../QuickSwitcher/QuickSwitcher";
 import { GlobalSearchPanel } from "../GlobalSearch/GlobalSearchPanel";
 import { SchemaDiffView } from "../SchemaDiff/SchemaDiffView";
+import { ResultDiffModal } from "../ResultDiff/ResultDiffModal";
 import { ImportWizard } from "../DataImport/ImportWizard";
 import { ThemeCustomizer } from "../ThemeCustomizer/ThemeCustomizer";
 import { SafeModeConfirmDialog } from "../SafeMode/SafeModeConfirmDialog";
@@ -160,6 +161,7 @@ export function AppGlobalModals({
       />
       <GlobalSearchPanel />
       <SchemaDiffView />
+      <ResultDiffModal />
       <ImportWizard />
       <SafeModeConfirmDialog />
       <ConfirmDialog

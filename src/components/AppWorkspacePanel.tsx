@@ -39,6 +39,7 @@ import type { Tab } from "../types";
 import type { ConnectionConfig } from "../types/database";
 import type { QueryEditorSessionState } from "./SQLEditor";
 import { formatCountLabel, useI18n } from "../i18n";
+import { getQueryNotifyCopy } from "../utils/query-notify-copy";
 import { useEvent } from "../stores/event-center";
 import { useConnectionStore } from "../stores/connectionStore";
 import { useUIStore } from "../stores/uiStore";
@@ -80,6 +81,8 @@ interface QueryChromeState {
   rowCount?: number;
   affectedRows?: number;
   queryCount?: number;
+  /** True when the last result was served from the local result cache. */
+  cached?: boolean;
 }
 
 interface WorkspaceActivityState {
@@ -991,6 +994,11 @@ export function AppWorkspacePanel({
                     <span className="workspace-toolbar-status-pill">
                       {activeQueryChrome.executionTimeMs}ms
                     </span>
+                    {activeQueryChrome.cached && (
+                      <span className="workspace-toolbar-status-pill">
+                        {getQueryNotifyCopy(language).cachedBadge}
+                      </span>
+                    )}
                     {typeof activeQueryChrome.rowCount === "number" &&
                       activeQueryChrome.rowCount > 0 && (
                         <span className="workspace-toolbar-status-pill">

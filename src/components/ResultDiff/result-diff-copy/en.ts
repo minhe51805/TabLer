@@ -1,0 +1,28 @@
+import type { ResultDiffCopy } from "./types";
+
+export const EN_COPY: ResultDiffCopy = {
+  title: "Result Diff",
+  close: "Close",
+  pin: "Pin",
+  pinTitle: "Pin this result to compare it with a later one",
+  unpin: "Pinned",
+  compare: "Compare",
+  compareTitle: (label) => `Compare this result with pinned: ${label}`,
+  pinnedToast: "Result pinned — run another query and choose Compare.",
+  pinnedSide: "Pinned",
+  currentSide: "Current",
+  matchByPk: (columns) => `Rows matched by primary key: ${columns}`,
+  matchByIndex: "Rows matched by position (no shared primary key)",
+  summaryAdded: (count) => `+${count} added`,
+  summaryRemoved: (count) => `-${count} removed`,
+  summaryChanged: (count) => `~${count} changed`,
+  summaryUnchanged: (count) => `= ${count} unchanged`,
+  groupAdded: (count) => `Only in current (${count})`,
+  groupRemoved: (count) => `Only in pinned (${count})`,
+  groupChanged: (count) => `Changed rows (${count})`,
+  columnsOnlyInPinned: (columns) => `Columns only in pinned: ${columns}`,
+  columnsOnlyInCurrent: (columns) => `Columns only in current: ${columns}`,
+  noDifferences: "No differences — the two results are identical.",
+  pinnedTruncated: (limit) => `⚠ pinned snapshot capped at ${limit} rows`,
+  showingFirst: (shown, total) => `Showing first ${shown} of ${total}`,
+};

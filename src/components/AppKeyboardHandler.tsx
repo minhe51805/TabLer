@@ -43,10 +43,29 @@ export function AppKeyboardHandler({
         'input, textarea, select, [contenteditable="true"], [contenteditable=""], [role="textbox"]',
       );
 
-      if (metaPressed && key === "enter" && activeTab?.type === "query" && (isMonacoTarget || !isEditableTarget)) {
+      if (
+        metaPressed &&
+        key === "enter" &&
+        activeTab?.type === "query" &&
+        (isMonacoTarget || !isEditableTarget)
+      ) {
         e.preventDefault();
         e.stopPropagation();
         onRunActiveQuery();
+        return;
+      }
+
+      // Shortcuts overlay: F1 anywhere; Ctrl+/ (and Ctrl+Shift+/) outside the
+      // Monaco editor so the editor keeps its own Ctrl+/ line-comment binding.
+      // The CommandPalette owns the "open-keyboard-shortcuts-palette" listener
+      // and forwards it to the shortcuts modal.
+      if (
+        (e.key === "F1" && !metaPressed && !e.altKey && !e.shiftKey) ||
+        (metaPressed && e.code === "Slash" && !isMonacoTarget)
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.dispatchEvent(new CustomEvent("open-keyboard-shortcuts-palette"));
         return;
       }
 
@@ -158,7 +177,7 @@ export function AppKeyboardHandler({
         return;
       }
 
-      if (metaPressed && (e.shiftKey && key === "z") || (metaPressed && key === "y")) {
+      if ((metaPressed && e.shiftKey && key === "z") || (metaPressed && key === "y")) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("datagrid-redo"));
         return;
@@ -179,7 +198,21 @@ export function AppKeyboardHandler({
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [activeTab, onNewQuery, onOpenCommandPalette, onOpenQuickSwitcher, onRunActiveQuery, onToggleQueryHistory, onToggleSQLFavorites, onToggleSidebar, onToggleTerminalPanel, onToggleVimMode, setUiFontScale, setShowAISlidePanel, onOpenGlobalSearch]);
+  }, [
+    activeTab,
+    onNewQuery,
+    onOpenCommandPalette,
+    onOpenQuickSwitcher,
+    onRunActiveQuery,
+    onToggleQueryHistory,
+    onToggleSQLFavorites,
+    onToggleSidebar,
+    onToggleTerminalPanel,
+    onToggleVimMode,
+    setUiFontScale,
+    setShowAISlidePanel,
+    onOpenGlobalSearch,
+  ]);
 
   return null;
 }

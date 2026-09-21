@@ -6,6 +6,7 @@ import type { Command, CommandCategory } from "../../stores/commandPaletteStore"
 import "../../styles/command-palette.css";
 
 const CATEGORY_ORDER: CommandCategory[] = [
+  "Recent",
   "File",
   "Edit",
   "View",
@@ -18,6 +19,7 @@ const CATEGORY_ORDER: CommandCategory[] = [
 ];
 
 const CATEGORY_ICONS: Record<CommandCategory, string> = {
+  Recent: "R",
   File: "F",
   Edit: "E",
   View: "V",
@@ -71,13 +73,22 @@ export function CommandPalette(props: CommandPaletteProps) {
     onToggleAISlidePanel,
   } = props;
 
-  const { isOpen, searchQuery, recentCommandIds, allCommands, close, setSearchQuery, addRecentCommand, registerCommands } =
-    useCommandPaletteStore();
+  const {
+    isOpen,
+    searchQuery,
+    recentCommandIds,
+    allCommands,
+    close,
+    setSearchQuery,
+    addRecentCommand,
+    registerCommands,
+  } = useCommandPaletteStore();
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Register commands once on mount
+  // Register commands on mount and rebuild on every open so dynamic entries
+  // (recent connections) reflect the latest store state.
   useEffect(() => {
     const ctx = {
       addRecentCommand,
@@ -85,27 +96,123 @@ export function CommandPalette(props: CommandPaletteProps) {
     };
     const commands = buildCommandRegistry(ctx);
     registerCommands(commands);
-  }, [addRecentCommand, close, registerCommands]);
+  }, [addRecentCommand, close, registerCommands, isOpen]);
 
   // Wire up event listeners for CustomEvents dispatched by commands
   useEffect(() => {
     const handlers: Array<[string, () => void]> = [
-      ["toggle-sidebar-palette", () => { onToggleSidebar?.(); close(); }],
-      ["toggle-terminal-panel-palette", () => { onToggleTerminal?.(); close(); }],
-      ["execute-query-palette", () => { onRunQuery?.(); close(); }],
-      ["format-sql-palette", () => { onFormatSQL?.(); close(); }],
-      ["focus-sql-editor-palette", () => { onFocusSQL?.(); close(); }],
-      ["focus-results-palette", () => { onFocusResults?.(); close(); }],
-      ["toggle-query-history-palette", () => { onToggleQueryHistory?.(); close(); }],
-      ["toggle-sql-favorites-palette", () => { onToggleSQLFavorites?.(); close(); }],
-      ["open-keyboard-shortcuts-palette", () => { onOpenKeyboardShortcuts?.(); close(); }],
-      ["open-plugin-manager-palette", () => { onOpenPluginManager?.(); close(); }],
-      ["open-settings-palette", () => { onOpenSettings?.(); close(); }],
-      ["open-about-palette", () => { onOpenAbout?.(); close(); }],
-      ["open-sql-file-palette", () => { onOpenSQLFile?.(); close(); }],
-      ["import-sql-file-palette", () => { onImportSQLFile?.(); close(); }],
-      ["clear-ai-history-palette", () => { onClearAIHistory?.(); close(); }],
-      ["toggle-ai-panel-palette", () => { onToggleAISlidePanel?.(true); close(); }],
+      [
+        "toggle-sidebar-palette",
+        () => {
+          onToggleSidebar?.();
+          close();
+        },
+      ],
+      [
+        "toggle-terminal-panel-palette",
+        () => {
+          onToggleTerminal?.();
+          close();
+        },
+      ],
+      [
+        "execute-query-palette",
+        () => {
+          onRunQuery?.();
+          close();
+        },
+      ],
+      [
+        "format-sql-palette",
+        () => {
+          onFormatSQL?.();
+          close();
+        },
+      ],
+      [
+        "focus-sql-editor-palette",
+        () => {
+          onFocusSQL?.();
+          close();
+        },
+      ],
+      [
+        "focus-results-palette",
+        () => {
+          onFocusResults?.();
+          close();
+        },
+      ],
+      [
+        "toggle-query-history-palette",
+        () => {
+          onToggleQueryHistory?.();
+          close();
+        },
+      ],
+      [
+        "toggle-sql-favorites-palette",
+        () => {
+          onToggleSQLFavorites?.();
+          close();
+        },
+      ],
+      [
+        "open-keyboard-shortcuts-palette",
+        () => {
+          onOpenKeyboardShortcuts?.();
+          close();
+        },
+      ],
+      [
+        "open-plugin-manager-palette",
+        () => {
+          onOpenPluginManager?.();
+          close();
+        },
+      ],
+      [
+        "open-settings-palette",
+        () => {
+          onOpenSettings?.();
+          close();
+        },
+      ],
+      [
+        "open-about-palette",
+        () => {
+          onOpenAbout?.();
+          close();
+        },
+      ],
+      [
+        "open-sql-file-palette",
+        () => {
+          onOpenSQLFile?.();
+          close();
+        },
+      ],
+      [
+        "import-sql-file-palette",
+        () => {
+          onImportSQLFile?.();
+          close();
+        },
+      ],
+      [
+        "clear-ai-history-palette",
+        () => {
+          onClearAIHistory?.();
+          close();
+        },
+      ],
+      [
+        "toggle-ai-panel-palette",
+        () => {
+          onToggleAISlidePanel?.(true);
+          close();
+        },
+      ],
     ];
 
     const offs = handlers.map(([event, handler]) => {
@@ -116,10 +223,23 @@ export function CommandPalette(props: CommandPaletteProps) {
 
     return () => offs.forEach((off) => off());
   }, [
-    close, onClearAIHistory, onFocusResults, onFocusSQL, onFormatSQL, onImportSQLFile,
-    onOpenAbout, onOpenKeyboardShortcuts, onOpenPluginManager, onOpenSettings,
-    onOpenSQLFile, onRunQuery, onToggleAISlidePanel, onToggleQueryHistory,
-    onToggleSidebar, onToggleSQLFavorites, onToggleTerminal,
+    close,
+    onClearAIHistory,
+    onFocusResults,
+    onFocusSQL,
+    onFormatSQL,
+    onImportSQLFile,
+    onOpenAbout,
+    onOpenKeyboardShortcuts,
+    onOpenPluginManager,
+    onOpenSettings,
+    onOpenSQLFile,
+    onRunQuery,
+    onToggleAISlidePanel,
+    onToggleQueryHistory,
+    onToggleSidebar,
+    onToggleSQLFavorites,
+    onToggleTerminal,
   ]);
 
   // Focus input when opened
@@ -238,9 +358,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         {/* Command list */}
         <div className="command-palette-list" ref={listRef} role="listbox">
           {filteredCommands.length === 0 ? (
-            <div className="command-palette-empty">
-              No commands found
-            </div>
+            <div className="command-palette-empty">No commands found</div>
           ) : (
             groupedCommands.map((group) => (
               <div key={group.category} className="command-palette-group">
@@ -297,6 +415,7 @@ export function CommandPalette(props: CommandPaletteProps) {
 
 function getCategoryColor(category: CommandCategory): string {
   const colors: Record<CommandCategory, string> = {
+    Recent: "#FBBF24",
     File: "#6366F1",
     Edit: "#22D3EE",
     View: "#A78BFA",

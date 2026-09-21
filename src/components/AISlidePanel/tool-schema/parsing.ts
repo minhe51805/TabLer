@@ -217,7 +217,8 @@ function exampleLiteral(key: string, schema: JsonSchema): string {
         return '[{"name":"Nguyen Van A","email":"a@example.com","status":"active"}]';
       if (key === "steps")
         return '[{"title":"Locate the orders table","status":"pending|in_progress|done"}]';
-      if (key === "focusTables") return '["table_a"]';
+      if (key === "calls")
+        return '[{"action":"describe_table","args":{"table":"users"}},{"action":"run_readonly_sql","args":{"sql":"SELECT ..."}}]';
       if (key === "metricsWidgets") {
         return '[{"title":"Widget title","type":"bar|horizontal-bar|line|area|pie|donut|radial|table|scoreboard","query":"SELECT ...","dimension":"verified label column","measures":["verified numeric alias"],"transforms":["group/sort operation"],"limit":100}]';
       }

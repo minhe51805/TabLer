@@ -73,6 +73,9 @@ export type AIWorkspaceAgentActionName =
   | "restore_checkpoint"
   | "delegate"
   | "read_page"
+  // One step carrying several tool calls: read-only sub-calls run in
+  // parallel, mutating ones serialize in order (ai-agent-tool-executor).
+  | "batch"
   // Anthropic's native memory tool (memory_20250818) surfaces in the agent
   // trace like any other action; it is Anthropic-only and has no catalog spec.
   | "memory"
@@ -89,6 +92,35 @@ export interface AIWorkspaceAgentStep {
   /** Tool result; empty while the step is still running. */
   observation?: string;
   status: AIWorkspaceAgentStepStatus;
+}
+
+/** One executed tool call in an agent run, recorded by the tool executor for
+ *  the collapsible "Run details" audit section on the finished bubble. */
+export interface AIWorkspaceRunTraceEntry {
+  /** Tool/action name as dispatched (e.g. "run_readonly_sql"). */
+  tool: AIWorkspaceAgentActionName;
+  /** One-line summary of the call arguments (SQL bodies excluded — they are
+   *  carried by `sql` instead). */
+  argsSummary: string;
+  /** Wall-clock time the tool call took. */
+  ms: number;
+  /** False when the observation was a "Tool error"/"Tool blocked" result or
+   *  the dispatch threw. */
+  ok: boolean;
+  /** SQL the call ran or produced, when the tool carries one. */
+  sql?: string;
+}
+
+/** User feedback recorded on a finished assistant turn via the 👍/👎 buttons.
+ *  Persisted with the bubble so the chosen sentiment survives reloads; the
+ *  reasons/comment also feed the learning loop as a memory entry. */
+export interface AIWorkspaceBubbleFeedback {
+  sentiment: "up" | "down";
+  /** Preset chips the user picked for a 👎 (e.g. "wrong-sql"). */
+  reasons?: string[];
+  /** Free-text "what was wrong?" note for a 👎. */
+  comment?: string;
+  recordedAt: number;
 }
 
 export interface AIWorkspaceBubbleData {
@@ -143,6 +175,16 @@ export interface AIWorkspaceBubbleData {
   /** Cumulative model tokens this run spent (0 when the provider reports no
    *  usage); surfaced as the run footer next to the per-run budget. */
   tokensUsed?: number;
+  /** Model id that produced the final answer (the configured fast model when
+   *  the intent was trivial); shown in the run footer next to tokens. */
+  modelUsed?: string;
+  /** Ordered audit trace of every tool call the run executed (name, args
+   *  summary, duration, ok/fail, SQL). Powers the collapsible "Run details"
+   *  section; undefined for non-agent turns and runs that called no tools. */
+  runTrace?: AIWorkspaceRunTraceEntry[];
+  /** 👍/👎 the user left on this answer; keeps the buttons' active state
+   *  across reloads and is mirrored into agent memory for the learning loop. */
+  feedback?: AIWorkspaceBubbleFeedback;
 }
 
 /** One provider-failover footer note: a short localized summary plus the full

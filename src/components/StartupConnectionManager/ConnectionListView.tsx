@@ -1,4 +1,5 @@
 import {
+  Activity,
   Database,
   FolderOpen,
   LayoutGrid,
@@ -13,6 +14,7 @@ import type {
   ConnectionConfig,
   ConnectionGroup,
   ConnectionLayoutMode,
+  ConnectionPingResult,
   ConnectionTag,
 } from "./types";
 import type { StartupCopy } from "./startup-copy";
@@ -59,6 +61,11 @@ interface Props {
   onRenameGroup: (groupId: string, name: string) => void;
   onChangeGroupColor: (groupId: string, color: string) => void;
   onDeleteGroup: (groupId: string) => void;
+  /** Per-connection results of the last "ping all" run. */
+  pingResults: Map<string, ConnectionPingResult>;
+  isPingingAll: boolean;
+  onPingAll: () => void;
+  pingAllCopy: StartupCopy["pingAll"];
   listRef: React.RefObject<HTMLDivElement | null>;
 }
 
@@ -92,6 +99,10 @@ export function ConnectionListView({
   onChangeGroupColor,
   onDeleteGroup,
   listRef,
+  pingResults,
+  isPingingAll,
+  onPingAll,
+  pingAllCopy,
 }: Props) {
   const { t } = useI18n();
 
@@ -153,6 +164,21 @@ export function ConnectionListView({
             title={t("menu.item.openDatabaseFile")}
           >
             <FolderOpen className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            className="startup-manager-search-add secondary"
+            onClick={onPingAll}
+            disabled={isPingingAll || filteredConnections.length === 0}
+            aria-label={pingAllCopy.action}
+            title={pingAllCopy.action}
+          >
+            {isPingingAll ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Activity className="w-4 h-4" />
+            )}
           </button>
         </div>
       </div>
@@ -295,6 +321,9 @@ export function ConnectionListView({
                   tagName={tag?.name}
                   tagColor={tag?.color}
                   envBadge={envBadge}
+                  ping={pingResults.get(conn.id)}
+                  pingOkLabel={pingAllCopy.reachable}
+                  pingFailLabel={pingAllCopy.unreachable}
                 />
               );
             })

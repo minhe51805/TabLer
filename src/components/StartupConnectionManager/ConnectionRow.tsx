@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { ChevronRight, LoaderCircle, Pencil, Trash2 } from "lucide-react";
-import type { ConnectionRowProps } from "./types";
+import type { ConnectionPingResult, ConnectionRowProps } from "./types";
 
 interface Props extends ConnectionRowProps {
   tagName?: string;
   tagColor?: string;
   envBadge?: { label: string; color: string } | null;
+  /** Latest "ping all" probe result for this card, if any. */
+  ping?: ConnectionPingResult;
+  pingOkLabel?: string;
+  pingFailLabel?: string;
   onDelete: () => void;
   deleteLabel: string;
   onRename: (name: string) => void;
@@ -24,6 +28,9 @@ export function ConnectionRow({
   tagName,
   tagColor,
   envBadge,
+  ping,
+  pingOkLabel,
+  pingFailLabel,
 }: Props) {
   const {
     connection,
@@ -107,9 +114,7 @@ export function ConnectionRow({
               }}
             />
           ) : (
-          <strong className="startup-connection-title">
-            {connection.name || "Untitled"}
-          </strong>
+            <strong className="startup-connection-title">{connection.name || "Untitled"}</strong>
           )}
 
           <div className="startup-connection-title-actions">
@@ -166,6 +171,19 @@ export function ConnectionRow({
             }`}
           >
             {statusLabel}
+          </span>
+        ) : null}
+
+        {ping ? (
+          <span
+            className={`startup-connection-ping ${ping.ok ? "ok" : "fail"}`}
+            title={
+              ping.ok
+                ? `${pingOkLabel ?? "Reachable"} — ${ping.latencyMs ?? 0} ms`
+                : (pingFailLabel ?? "Unreachable")
+            }
+          >
+            {ping.ok ? `${ping.latencyMs ?? 0} ms` : (pingFailLabel ?? "Fail")}
           </span>
         ) : null}
 

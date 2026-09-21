@@ -76,6 +76,8 @@ export interface QueryResult {
   query: string;
   sandboxed: boolean;
   truncated: boolean;
+  /** Frontend-only: set when the result came from the local result cache. */
+  cached?: boolean;
 }
 
 export type QueryParameterType = "text" | "integer" | "decimal" | "boolean" | "json" | "null";
@@ -184,15 +186,7 @@ export interface TriggerInfo {
 }
 
 export type MetricsWidgetType =
-  | "table"
-  | "scoreboard"
-  | "bar"
-  | "horizontal-bar"
-  | "line"
-  | "area"
-  | "pie"
-  | "donut"
-  | "radial";
+  "table" | "scoreboard" | "bar" | "horizontal-bar" | "line" | "area" | "pie" | "donut" | "radial";
 
 export interface ChartReproductionSpec {
   version: 1;

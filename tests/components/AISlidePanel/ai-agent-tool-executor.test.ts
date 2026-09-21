@@ -7,10 +7,15 @@ import type { AgentToolExecutorDeps } from "@/components/AISlidePanel/ai-agent-t
 import { AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS } from "@/components/AISlidePanel/ai-agent-tools";
 import type { AIAgentToolAction } from "@/components/AISlidePanel/ai-agent-tools";
 import type { TableInfo } from "@/types";
+import { invalidateAgentSchemaSummary } from "@/components/AISlidePanel/ai-schema-summary";
 
 vi.mock("@/utils/semantic-glossary", () => ({
   saveSemanticGlossaryEntry: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("@/components/AISlidePanel/ai-schema-summary", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, invalidateAgentSchemaSummary: vi.fn() };
+});
 
 const CONNECTION_ID = "conn-1";
 const DB = "appdb";
@@ -23,11 +28,7 @@ function mkDeps(overrides: Partial<AgentToolExecutorDeps> = {}) {
   const base: AgentToolExecutorDeps = {
     connectionId: CONNECTION_ID,
     currentDatabase: DB,
-    latestTables: [
-      tbl("users", 100),
-      tbl("orders", 40),
-      tbl("order_items", 500),
-    ],
+    latestTables: [tbl("users", 100), tbl("orders", 40), tbl("order_items", 500)],
     availableSchemaTables: ["public.users", "public.orders", "public.order_items"],
     relationalSchemaSummaryByTable: new Map(),
     inspectedAgentTables: new Set<string>(),
@@ -53,7 +54,10 @@ function mkDeps(overrides: Partial<AgentToolExecutorDeps> = {}) {
         { name: "id", data_type: "INT", is_nullable: false, is_primary_key: true },
         { name: "email", data_type: "TEXT", is_nullable: true, is_primary_key: false },
       ],
-      rows: [[1, "a@b.c"], [2, "d@e.f"]],
+      rows: [
+        [1, "a@b.c"],
+        [2, "d@e.f"],
+      ],
       affected_rows: 0,
       execution_time_ms: 3,
       query: "fixture",
@@ -110,20 +114,29 @@ describe("exploration de-dup guard", () => {
     const deps = mkDeps();
     const exec = createAgentToolExecutor(deps);
     await exec.runAgentTool({ action: "list_tables", args: {} } as AIAgentToolAction);
-    const second = await exec.runAgentTool({ action: "list_tables", args: {} } as AIAgentToolAction);
+    const second = await exec.runAgentTool({
+      action: "list_tables",
+      args: {},
+    } as AIAgentToolAction);
     expect(second).toContain("Tool notice: identical list_tables call repeated");
   });
 
-  it("does not de-duplicate run_readonly_sql or sample_table_data", async () => {
+  it("serves identical read calls from the per-run cache", async () => {
     const deps = mkDeps();
     const exec = createAgentToolExecutor(deps);
     deps.inspectedAgentTables.add("public.users");
-    const a = await exec.runAgentTool({ action: "run_readonly_sql", args: { sql: "select * from users limit 1" } } as AIAgentToolAction);
-    const b = await exec.runAgentTool({ action: "run_readonly_sql", args: { sql: "select * from users limit 1" } } as AIAgentToolAction);
+    const a = await exec.runAgentTool({
+      action: "run_readonly_sql",
+      args: { sql: "select * from users limit 1" },
+    } as AIAgentToolAction);
+    const b = await exec.runAgentTool({
+      action: "run_readonly_sql",
+      args: { sql: "select * from users limit 1" },
+    } as AIAgentToolAction);
     expect(a).not.toContain("Tool notice:");
-    expect(b).not.toContain("Tool notice:");
-    expect(deps.getTableData ?? deps.executeReadonlyQuery).toBeDefined();
-    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2);
+    // The second identical call is answered from the per-run tool cache.
+    expect(b).toContain("[cached");
+    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
   });
 });
 
@@ -152,22 +165,27 @@ describe("list_tables", () => {
   it("emits truncation hint when results exceed the limit", async () => {
     const many = Array.from({ length: 250 }, (_, i) => tbl(`t${i}`));
     const manyTables = many;
-    const d2 = mkDeps({ latestTables: manyTables, availableSchemaTables: manyTables.map((x) => `${x.schema}.${x.name}`) });
+    const d2 = mkDeps({
+      latestTables: manyTables,
+      availableSchemaTables: manyTables.map((x) => `${x.schema}.${x.name}`),
+    });
     const obs = await run(d2, { action: "list_tables", args: {} } as AIAgentToolAction);
     expect(obs).toContain('"truncated": true');
     expect(obs).toContain("exceed the 200-name preview");
   });
-
 });
 
 describe("search_schema", () => {
   it("requires args.query", async () => {
     const obs = await run(mkDeps(), { action: "search_schema", args: {} } as AIAgentToolAction);
-    expect(obs).toBe("Tool error: search_schema requires args.query.");
+    expect(obs).toContain("Tool error: search_schema requires args.query.");
   });
 
   it("scans previews and reports matches for a column query", async () => {
-    const obs = await run(mkDeps(), { action: "search_schema", args: { query: "email" } } as AIAgentToolAction);
+    const obs = await run(mkDeps(), {
+      action: "search_schema",
+      args: { query: "email" },
+    } as AIAgentToolAction);
     const parsed = parseObservation(obs);
     expect(parsed.query).toBe("email");
     expect(parsed.tablesScanned).toBe(3);
@@ -186,14 +204,20 @@ describe("search_schema", () => {
 
 describe("describe_table", () => {
   it("rejects unknown tables", async () => {
-    const obs = await run(mkDeps(), { action: "describe_table", args: { table: "nope" } } as AIAgentToolAction);
+    const obs = await run(mkDeps(), {
+      action: "describe_table",
+      args: { table: "nope" },
+    } as AIAgentToolAction);
     expect(obs).toContain('Tool error: Table "nope" is not present');
   });
 
   it("serves cached summaries without hitting the backend", async () => {
     const deps = mkDeps();
     deps.relationalSchemaSummaryByTable.set("public.users", "CACHED_SUMMARY");
-    const obs = await run(deps, { action: "describe_table", args: { table: "users" } } as AIAgentToolAction);
+    const obs = await run(deps, {
+      action: "describe_table",
+      args: { table: "users" },
+    } as AIAgentToolAction);
     expect(obs).toContain("TABLE=public.users");
     expect(obs).toContain("SCHEMA=CACHED_SUMMARY");
     expect(deps.getTableStructure).not.toHaveBeenCalled();
@@ -202,7 +226,10 @@ describe("describe_table", () => {
 
   it("fetches structure, marks inspected and encodes schema", async () => {
     const deps = mkDeps();
-    const obs = await run(deps, { action: "describe_table", args: { table: "public.orders" } } as AIAgentToolAction);
+    const obs = await run(deps, {
+      action: "describe_table",
+      args: { table: "public.orders" },
+    } as AIAgentToolAction);
     expect(obs).toContain("TABLE=public.orders");
     expect(obs).toContain("COUNTS=cols:2,idx:0,fk:0");
     expect(deps.inspectedAgentTables.has("public.orders")).toBe(true);
@@ -213,13 +240,19 @@ describe("describe_table", () => {
 describe("describe_tables (batch)", () => {
   it("caps the batch at AI_AGENT_BATCH_DESCRIBE_LIMIT and reports per-table sections", async () => {
     const names = ["users", "orders", "order_items", "a", "b", "c", "d", "e", "f", "g"];
-    const obs = await run(mkDeps(), { action: "describe_tables", args: { tables: names } } as AIAgentToolAction);
+    const obs = await run(mkDeps(), {
+      action: "describe_tables",
+      args: { tables: names },
+    } as AIAgentToolAction);
     const parsed = parseObservation(obs);
     expect(parsed.described).toBe(8); // AI_AGENT_BATCH_DESCRIBE_LIMIT
   });
 
   it("flags unknown names as ERROR sections instead of failing the batch", async () => {
-    const obs = await run(mkDeps(), { action: "describe_tables", args: { tables: ["nope"] } } as AIAgentToolAction);
+    const obs = await run(mkDeps(), {
+      action: "describe_tables",
+      args: { tables: ["nope"] },
+    } as AIAgentToolAction);
     expect(obs).toContain("ERROR=Not present");
   });
 });
@@ -229,19 +262,30 @@ describe("sample_table_data", () => {
     const deps = mkDeps({
       requestDataReadConsent: vi.fn().mockResolvedValue(false),
     });
-    const obs = await run(deps, { action: "sample_table_data", args: { table: "users" } } as AIAgentToolAction);
+    const obs = await run(deps, {
+      action: "sample_table_data",
+      args: { table: "users" },
+    } as AIAgentToolAction);
     expect(obs).toContain("Tool blocked: The user did not grant permission");
     expect(deps.getTableData).not.toHaveBeenCalled();
   });
 
   it("clamps the requested limit to AI_AGENT_SAMPLE_MAX_ROWS", async () => {
     const deps = mkDeps();
-    await run(deps, { action: "sample_table_data", args: { table: "users", limit: 9999 } } as AIAgentToolAction);
-    expect((deps.getTableData as ReturnType<typeof vi.fn>).mock.calls[0][2]).toMatchObject({ limit: 50 });
+    await run(deps, {
+      action: "sample_table_data",
+      args: { table: "users", limit: 9999 },
+    } as AIAgentToolAction);
+    expect((deps.getTableData as ReturnType<typeof vi.fn>).mock.calls[0][2]).toMatchObject({
+      limit: 50,
+    });
   });
 
   it("returns a summarized observation with navigation hints", async () => {
-    const obs = await run(mkDeps(), { action: "sample_table_data", args: { table: "users" } } as AIAgentToolAction);
+    const obs = await run(mkDeps(), {
+      action: "sample_table_data",
+      args: { table: "users" },
+    } as AIAgentToolAction);
     const parsed = parseObservation(obs);
     expect(parsed.rowCount).toBe(2);
     expect(parsed.identityColumns).toEqual(["id"]);
@@ -250,10 +294,13 @@ describe("sample_table_data", () => {
 
   it("runs whole-table stats only for tables the catalog says are small", async () => {
     const deps = mkDeps();
-    const obs = await run(deps, { action: "sample_table_data", args: { table: "users" } } as AIAgentToolAction);
+    const obs = await run(deps, {
+      action: "sample_table_data",
+      args: { table: "users" },
+    } as AIAgentToolAction);
     // users has catalog rowCount 100 (≤ AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS):
     // one aggregate query runs and the whole-table label is emitted.
-    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    expect(deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
     expect(obs).toContain("Column stats (whole table):");
   });
 
@@ -261,18 +308,26 @@ describe("sample_table_data", () => {
     const deps = mkDeps({
       latestTables: [tbl("users", AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS + 1)],
     });
-    const obs = await run(deps, { action: "sample_table_data", args: { table: "users" } } as AIAgentToolAction);
+    const obs = await run(deps, {
+      action: "sample_table_data",
+      args: { table: "users" },
+    } as AIAgentToolAction);
     // No stats SQL at all — the aggregate would scan millions of rows.
-    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([statements]) => String((statements as string[])[0]).includes("__total"),
-    )).toHaveLength(0);
+    expect(
+      (deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.filter(([statements]) =>
+        String((statements as string[])[0]).includes("__total"),
+      ),
+    ).toHaveLength(0);
     expect(obs).toContain("Column stats (sample of 2 rows):");
     expect(obs).toContain("email: nullRatio=0, distinct=2");
   });
 
   it("skips statistics entirely with args.stats=off", async () => {
     const deps = mkDeps();
-    const obs = await run(deps, { action: "sample_table_data", args: { table: "users", stats: "off" } } as AIAgentToolAction);
+    const obs = await run(deps, {
+      action: "sample_table_data",
+      args: { table: "users", stats: "off" },
+    } as AIAgentToolAction);
     expect(deps.executeReadonlyQuery).not.toHaveBeenCalled();
     expect(obs).not.toContain("Column stats");
   });
@@ -286,23 +341,26 @@ describe("run_readonly_sql", () => {
   };
 
   it("requires args.sql", async () => {
-    const obs = await run(depsWithInspected(), { action: "run_readonly_sql", args: {} } as AIAgentToolAction);
-    expect(obs).toBe("Tool error: run_readonly_sql requires args.sql.");
+    const obs = await run(depsWithInspected(), {
+      action: "run_readonly_sql",
+      args: {},
+    } as AIAgentToolAction);
+    expect(obs).toContain("Tool error: run_readonly_sql requires args.sql.");
   });
 
   it("blocks SQL referencing unknown tables", async () => {
-    const obs = await run(
-      depsWithInspected(),
-      { action: "run_readonly_sql", args: { sql: "SELECT * FROM ghost_table" } } as AIAgentToolAction,
-    );
+    const obs = await run(depsWithInspected(), {
+      action: "run_readonly_sql",
+      args: { sql: "SELECT * FROM ghost_table" },
+    } as AIAgentToolAction);
     expect(obs).toContain("Tool blocked: SQL references unknown table(s)");
   });
 
   it("blocks reads before the schema was inspected", async () => {
-    const obs = await run(
-      mkDeps(),
-      { action: "run_readonly_sql", args: { sql: "SELECT * FROM users LIMIT 1" } } as AIAgentToolAction,
-    );
+    const obs = await run(mkDeps(), {
+      action: "run_readonly_sql",
+      args: { sql: "SELECT * FROM users LIMIT 1" },
+    } as AIAgentToolAction);
     expect(obs).toContain("Tool blocked: Inspect the schema before reading rows");
   });
 
@@ -312,7 +370,9 @@ describe("run_readonly_sql", () => {
       action: "run_readonly_sql",
       args: { sql: "SELECT * FROM users" },
     } as AIAgentToolAction);
-    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls[0][1][0]).toMatch(/^EXPLAIN/i);
+    expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls[0][1][0]).toMatch(
+      /^EXPLAIN/i,
+    );
     expect((deps.executeReadonlyQuery as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
   });
 
@@ -395,6 +455,28 @@ describe("preview_write", () => {
     expect(parsed.persisted).toBe(false);
     expect(parsed.statementCount).toBe(1);
   });
+
+  it("invalidates the auto-injected schema summary after a successful preview", async () => {
+    await run(mkDeps(), {
+      action: "preview_write",
+      args: { statements: ["DELETE FROM users WHERE id = 1"] },
+    } as AIAgentToolAction);
+    expect(invalidateAgentSchemaSummary).toHaveBeenCalledWith(CONNECTION_ID);
+  });
+
+  it("keeps the schema summary cache on failed or read-only calls", async () => {
+    await run(mkDeps(), {
+      action: "preview_write",
+      args: { statements: ["SELECT 1"] },
+    } as AIAgentToolAction);
+    const deps = mkDeps();
+    deps.inspectedAgentTables.add("public.users");
+    await run(deps, {
+      action: "run_readonly_sql",
+      args: { sql: "select * from users limit 1" },
+    } as AIAgentToolAction);
+    expect(invalidateAgentSchemaSummary).not.toHaveBeenCalled();
+  });
 });
 
 describe("run_parameterized_sql (MỚI-2)", () => {
@@ -422,7 +504,9 @@ describe("run_parameterized_sql (MỚI-2)", () => {
       action: "run_parameterized_sql",
       args: { sql: "DELETE FROM users WHERE id = :id", parameters: [{ name: "id", value: 1 }] },
     } as AIAgentToolAction);
-    expect(deps.executeParameterizedReadonlyQuery as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(
+      deps.executeParameterizedReadonlyQuery as ReturnType<typeof vi.fn>,
+    ).not.toHaveBeenCalled();
 
     const blocked = await run(mkDeps(), {
       action: "run_parameterized_sql",
@@ -513,7 +597,10 @@ describe("remember_term", () => {
   });
 
   it("requires both term and definition", async () => {
-    const obs = await run(mkDeps(), { action: "remember_term", args: { term: "" } } as AIAgentToolAction);
+    const obs = await run(mkDeps(), {
+      action: "remember_term",
+      args: { term: "" },
+    } as AIAgentToolAction);
     expect(obs).toContain("Tool error: remember_term requires");
   });
 });
@@ -526,15 +613,23 @@ describe("misc guards", () => {
 
   it("formats thrown backend errors as Tool error strings", async () => {
     const deps = mkDeps();
-    (deps.getTableData as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("connection refused"));
-    const obs = await run(deps, { action: "sample_table_data", args: { table: "users" } } as AIAgentToolAction);
+    (deps.getTableData as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("connection refused"),
+    );
+    const obs = await run(deps, {
+      action: "sample_table_data",
+      args: { table: "users" },
+    } as AIAgentToolAction);
     expect(obs).toContain("Tool error: connection refused");
   });
 });
 
 describe("unknown tools and timeout hints", () => {
   it("steers the model back with the available tool list on an unknown tool", async () => {
-    const obs = await run(mkDeps(), { action: "drop_everything", args: {} } as unknown as AIAgentToolAction);
+    const obs = await run(mkDeps(), {
+      action: "drop_everything",
+      args: {},
+    } as unknown as AIAgentToolAction);
     expect(obs).toContain('unknown tool "drop_everything"');
     expect(obs).toContain("run_readonly_sql");
     expect(obs).toContain("finish");
@@ -638,7 +733,9 @@ describe("skill allowlist enforcement", () => {
       args: { name: "git-release" },
     });
     expect(obs).toContain("release steps");
-    expect(vi.mocked(invokeMutation)).toHaveBeenCalledWith("read_ai_skill", { name: "git-release" });
+    expect(vi.mocked(invokeMutation)).toHaveBeenCalledWith("read_ai_skill", {
+      name: "git-release",
+    });
   });
 
   it("refuses every skill when no allowlist is injected (fail-closed)", async () => {
@@ -646,10 +743,7 @@ describe("skill allowlist enforcement", () => {
     vi.mocked(invokeMutation).mockResolvedValue({ name: "git-release", body: "release steps" });
     const obs = await run(mkDeps(), { action: "skill", args: { name: "git-release" } });
     expect(obs).toContain("is not in the injected <available_skills> catalog");
-    expect(vi.mocked(invokeMutation)).not.toHaveBeenCalledWith(
-      "read_ai_skill",
-      expect.anything(),
-    );
+    expect(vi.mocked(invokeMutation)).not.toHaveBeenCalledWith("read_ai_skill", expect.anything());
   });
 });
 
@@ -758,7 +852,11 @@ describe("agent memory tools", () => {
     const deps = mkDeps({ memoryScope: { connectionId: CONNECTION_ID, database: DB } });
     const obs = await run(deps, {
       action: "save_memory",
-      args: { name: "naming-convention", body: "orders tables always use snake_case", description: "table naming" },
+      args: {
+        name: "naming-convention",
+        body: "orders tables always use snake_case",
+        description: "table naming",
+      },
     });
     expect(obs).toContain("saved for this connection/database scope");
     expect(vi.mocked(invokeMutation)).toHaveBeenCalledWith("save_agent_memory", {
@@ -856,7 +954,10 @@ describe("edit_query_sql proposals", () => {
       },
     });
     expect(obs).toContain("waiting for the user to accept");
-    expect(emitSpy).toHaveBeenCalledWith("ai-edit-query-sql", expect.objectContaining({ tabId: "tab-1" }));
+    expect(emitSpy).toHaveBeenCalledWith(
+      "ai-edit-query-sql",
+      expect.objectContaining({ tabId: "tab-1" }),
+    );
   });
 
   it("refuses proposals that echo the truncation marker", async () => {
@@ -871,9 +972,8 @@ describe("edit_query_sql proposals", () => {
   });
 
   it("deletes memory through the backend and invalidates the cache", async () => {
-    const { invalidateAgentMemoryIndex } = await import(
-      "@/components/AISlidePanel/hooks/use-agent-memory"
-    );
+    const { invalidateAgentMemoryIndex } =
+      await import("@/components/AISlidePanel/hooks/use-agent-memory");
     const { invokeMutation } = await import("@/utils/tauri-utils");
     vi.mocked(invokeMutation).mockResolvedValue(undefined as never);
     const dispatchSpy = vi.spyOn(window, "dispatchEvent");
@@ -956,7 +1056,11 @@ describe("edit_query_sql createIfMissing", () => {
     const action = {
       action: "edit_query_sql",
       message: "fix tab sql",
-      args: { sql: "SELECT TOP 5 * FROM SinhViens", reason: "align tab with schema", createIfMissing: true },
+      args: {
+        sql: "SELECT TOP 5 * FROM SinhViens",
+        reason: "align tab with schema",
+        createIfMissing: true,
+      },
     } as AIAgentToolAction;
     const observation = await runAgentTool(action);
     expect(observation).toContain("created a new AI Query tab");

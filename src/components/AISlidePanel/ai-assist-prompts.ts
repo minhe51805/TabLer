@@ -8,13 +8,17 @@ export function buildAgentEvidenceSummary(steps: AgentTraceStep[]) {
     return "No verified tool observations were captured.";
   }
 
-  return steps.map((step) => [
-    `Step ${step.step}`,
-    `Action: ${step.action}`,
-    `Reason: ${step.message || "No message provided."}`,
-    "Observation:",
-    step.observation,
-  ].join("\n")).join("\n\n");
+  return steps
+    .map((step) =>
+      [
+        `Step ${step.step}`,
+        `Action: ${step.action}`,
+        `Reason: ${step.message || "No message provided."}`,
+        "Observation:",
+        step.observation,
+      ].join("\n"),
+    )
+    .join("\n\n");
 }
 
 export function buildAgentFinalRecoveryPrompt(params: {
@@ -78,7 +82,8 @@ function buildFallbackEvidenceDigest(steps: AgentTraceStep[]) {
     const describedTable = observation.match(/^TABLE=\S+/m);
     const rowCount = observation.match(/"rowCount":\s*(\d+)/);
     if (describedTable) detail = describedTable[0];
-    else if (/^Tool (error|blocked|notice)/.test(observation)) detail = observation.split("\n")[0].slice(0, 90);
+    else if (/^Tool (error|blocked|notice)/.test(observation))
+      detail = observation.split("\n")[0].slice(0, 90);
     else if (rowCount) detail = `read ${rowCount[1]} rows`;
     else if (observation.includes('"matches"')) detail = "schema search completed";
     else detail = observation.replace(/\s+/g, " ").slice(0, 80);
@@ -94,13 +99,7 @@ export function buildLocalAgentFallbackResponse(params: {
   wantsVisualization: boolean;
   steps: AgentTraceStep[];
 }) {
-  const {
-    language,
-    currentDatabase,
-    availableTableNames,
-    wantsVisualization,
-    steps,
-  } = params;
+  const { language, currentDatabase, availableTableNames, wantsVisualization, steps } = params;
   const tablePreview = availableTableNames.slice(0, 8).join(", ");
   const lastStep = steps[steps.length - 1];
   const lastStepLabel = lastStep ? `${lastStep.action}` : "";
@@ -116,7 +115,9 @@ export function buildLocalAgentFallbackResponse(params: {
       wantsVisualization
         ? "Thử lại một lần nữa là được; mình sẽ ưu tiên câu trả lời có kèm SQL dạng chart-friendly để bạn chạy xong chuyển sang Chart view."
         : "Thử lại một lần nữa là được; agent sẽ tổng hợp nốt câu trả lời từ evidence hiện có.",
-    ].filter(Boolean).join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   if (language === "zh") {
@@ -128,7 +129,9 @@ export function buildLocalAgentFallbackResponse(params: {
       wantsVisualization
         ? "再试一次即可；我会优先返回适合切换到 Chart view 的图表型 SQL。"
         : "再试一次即可；agent 会基于这些证据完成最终总结。",
-    ].filter(Boolean).join("\n\n");
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   }
 
   return [
@@ -139,7 +142,9 @@ export function buildLocalAgentFallbackResponse(params: {
     wantsVisualization
       ? "Try again and the agent will prioritize a chart-friendly SQL result that can be switched into Chart view."
       : "Try again so the agent can synthesize the verified evidence into a final response.",
-  ].filter(Boolean).join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export function buildAssistPrompt(
@@ -251,6 +256,114 @@ export function buildAssistPrompt(
   ].join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Editor-assist slash commands (/explain, /optimize, /fix)
+// ---------------------------------------------------------------------------
+
+/**
+ * `/explain [hint]` — the composer keeps the short command; the model receives
+ * the active editor SQL inline plus the user's optional hint.
+ */
+export function buildExplainSqlPrompt(params: {
+  sql: string | null;
+  hint?: string;
+  databaseLabel?: string | null;
+}) {
+  const { sql, hint, databaseLabel } = params;
+  return [
+    "Explain the SQL statement below in plain language.",
+    "Cover what it does, how it executes (joins, filters, grouping, ordering), and anything surprising or risky about it.",
+    databaseLabel ? `Database: ${databaseLabel}.` : null,
+    hint ? `Focus on: ${hint}` : null,
+    "",
+    sql?.trim()
+      ? `\`\`\`sql\n${sql.trim()}\n\`\`\``
+      : "No SQL was found in the active editor tab — ask the user to paste the statement they want explained.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * `/optimize [hint]` — carries the editor SQL plus whatever plan evidence the
+ * app could collect: a structured EXPLAIN summary and the index advisor's
+ * CREATE INDEX proposals. When the plan could not be produced, the prompt
+ * tells the agent to gather one itself instead of guessing.
+ */
+export function buildOptimizeSqlPrompt(params: {
+  sql: string | null;
+  hint?: string;
+  databaseLabel?: string | null;
+  /** Structured EXPLAIN summary, or null when the plan could not be produced. */
+  planSummary?: string | null;
+  /** Why `planSummary` is missing (no connection, EXPLAIN failed, …). */
+  planUnavailableNote?: string | null;
+  /** CREATE INDEX proposals from the local index advisor. */
+  indexProposals?: { tableName: string; columns: string[]; sql: string; reasons: string[] }[];
+}) {
+  const { sql, hint, databaseLabel, planSummary, planUnavailableNote, indexProposals } = params;
+  const proposalLines = (indexProposals ?? []).map(
+    (proposal, index) => `${index + 1}. ${proposal.sql} — ${proposal.reasons.join("; ")}`,
+  );
+  return [
+    "Optimize the SQL statement below for better performance without changing its semantics.",
+    "Propose concrete improvements: index suggestions (as reviewable CREATE INDEX statements) and/or a rewritten query, each with a short reason.",
+    "Return any rewritten SQL inside a single ```sql fenced block.",
+    databaseLabel ? `Database: ${databaseLabel}.` : null,
+    hint ? `Focus on: ${hint}` : null,
+    "",
+    sql?.trim()
+      ? `\`\`\`sql\n${sql.trim()}\n\`\`\``
+      : "No SQL was found in the active editor tab — ask the user to paste the statement they want optimized.",
+    "",
+    planSummary
+      ? `Query plan (EXPLAIN, planning only — the statement was not executed):\n${planSummary}`
+      : `No query plan is attached (${planUnavailableNote ?? "EXPLAIN was unavailable"}). Use the read-only SQL tool to run EXPLAIN yourself when a connection is available, otherwise reason from the statement alone.`,
+    proposalLines.length > 0
+      ? `Candidate indexes from the local index advisor (review before recommending):\n${proposalLines.join("\n")}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * `/fix [hint]` — pairs the last recorded query error with the SQL that
+ * produced it (or the current editor SQL when the history entry is missing).
+ */
+export function buildFixSqlPrompt(params: {
+  sql: string | null;
+  hint?: string;
+  databaseLabel?: string | null;
+  /** The last recorded query error for this connection, if any. */
+  lastError?: string | null;
+  /** The statement that produced `lastError`, when history recorded it. */
+  errorSql?: string | null;
+}) {
+  const { sql, hint, databaseLabel, lastError, errorSql } = params;
+  const errorSqlDiffers = !!errorSql?.trim() && errorSql.trim() !== (sql ?? "").trim();
+  return [
+    "Fix the SQL statement below.",
+    "Diagnose the reported error, return the corrected statement inside a single ```sql fenced block, and briefly explain what was wrong and what changed.",
+    "Do not change the query semantics beyond what the fix requires.",
+    databaseLabel ? `Database: ${databaseLabel}.` : null,
+    hint ? `Focus on: ${hint}` : null,
+    "",
+    sql?.trim()
+      ? `\`\`\`sql\n${sql.trim()}\n\`\`\``
+      : "No SQL was found in the active editor tab — ask the user to paste the failing statement.",
+    "",
+    lastError?.trim()
+      ? `Last recorded error:\n${lastError.trim()}`
+      : "No recent query error was recorded for this connection — diagnose the statement directly and ask the user for the error message if nothing is obviously wrong.",
+    errorSqlDiffers
+      ? `\nThe error was recorded against this earlier statement:\n\`\`\`sql\n${errorSql!.trim()}\n\`\`\``
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function buildAgentTraceMarkdown(steps: AgentTraceStep[]) {
   if (steps.length === 0) {
     return "";
@@ -258,12 +371,14 @@ export function buildAgentTraceMarkdown(steps: AgentTraceStep[]) {
 
   return [
     "## Agent Trace",
-    ...steps.map((step) => [
-      `### Step ${step.step}: \`${step.action}\``,
-      step.message || "No message provided.",
-      "```text",
-      step.observation,
-      "```",
-    ].join("\n")),
+    ...steps.map((step) =>
+      [
+        `### Step ${step.step}: \`${step.action}\``,
+        step.message || "No message provided.",
+        "```text",
+        step.observation,
+        "```",
+      ].join("\n"),
+    ),
   ].join("\n\n");
 }

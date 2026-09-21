@@ -1,0 +1,28 @@
+import type { ResultDiffCopy } from "./types";
+
+export const ZH_COPY: ResultDiffCopy = {
+  title: "结果对比",
+  close: "关闭",
+  pin: "固定",
+  pinTitle: "固定此结果，以便与之后的结果对比",
+  unpin: "已固定",
+  compare: "对比",
+  compareTitle: (label) => `将此结果与已固定的结果对比：${label}`,
+  pinnedToast: "结果已固定 — 运行另一个查询后选择“对比”。",
+  pinnedSide: "已固定",
+  currentSide: "当前",
+  matchByPk: (columns) => `按主键匹配行：${columns}`,
+  matchByIndex: "按位置匹配行（无共同主键）",
+  summaryAdded: (count) => `+${count} 新增`,
+  summaryRemoved: (count) => `-${count} 移除`,
+  summaryChanged: (count) => `~${count} 变更`,
+  summaryUnchanged: (count) => `= ${count} 未变`,
+  groupAdded: (count) => `仅当前结果有 (${count})`,
+  groupRemoved: (count) => `仅固定结果有 (${count})`,
+  groupChanged: (count) => `变更的行 (${count})`,
+  columnsOnlyInPinned: (columns) => `仅固定结果中的列：${columns}`,
+  columnsOnlyInCurrent: (columns) => `仅当前结果中的列：${columns}`,
+  noDifferences: "无差异 — 两个结果完全相同。",
+  pinnedTruncated: (limit) => `⚠ 固定快照已截断至 ${limit} 行`,
+  showingFirst: (shown, total) => `显示 ${total} 行中的前 ${shown} 行`,
+};

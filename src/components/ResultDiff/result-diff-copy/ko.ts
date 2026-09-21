@@ -1,0 +1,28 @@
+import type { ResultDiffCopy } from "./types";
+
+export const KO_COPY: ResultDiffCopy = {
+  title: "결과 비교",
+  close: "닫기",
+  pin: "고정",
+  pinTitle: "이 결과를 고정해 이후 결과와 비교합니다",
+  unpin: "고정됨",
+  compare: "비교",
+  compareTitle: (label) => `고정된 결과와 비교: ${label}`,
+  pinnedToast: "결과를 고정했습니다 — 다른 쿼리를 실행한 뒤 비교를 선택하세요.",
+  pinnedSide: "고정됨",
+  currentSide: "현재",
+  matchByPk: (columns) => `기본 키로 행 일치: ${columns}`,
+  matchByIndex: "행 위치로 일치 (공통 기본 키 없음)",
+  summaryAdded: (count) => `+${count} 추가`,
+  summaryRemoved: (count) => `-${count} 제거`,
+  summaryChanged: (count) => `~${count} 변경`,
+  summaryUnchanged: (count) => `= ${count} 동일`,
+  groupAdded: (count) => `현재 결과에만 있음 (${count})`,
+  groupRemoved: (count) => `고정 결과에만 있음 (${count})`,
+  groupChanged: (count) => `변경된 행 (${count})`,
+  columnsOnlyInPinned: (columns) => `고정 결과에만 있는 열: ${columns}`,
+  columnsOnlyInCurrent: (columns) => `현재 결과에만 있는 열: ${columns}`,
+  noDifferences: "차이 없음 — 두 결과가 동일합니다.",
+  pinnedTruncated: (limit) => `⚠ 고정 스냅샷이 ${limit}행으로 제한됨`,
+  showingFirst: (shown, total) => `${total}개 중 처음 ${shown}개 표시`,
+};

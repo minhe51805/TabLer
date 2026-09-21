@@ -1,0 +1,27 @@
+import type { SchemaDiffCopy } from "./types";
+
+export const VI_COPY: SchemaDiffCopy = {
+  title: "So sánh lược đồ",
+  close: "Đóng",
+  sourceConnection: "Kết nối nguồn…",
+  targetConnection: "Kết nối đích…",
+  activeSuffix: "(đang dùng)",
+  notConnectedSuffix: "(chưa kết nối)",
+  sourceDatabase: "CSDL nguồn (mặc định: hiện tại)",
+  targetDatabase: "CSDL đích (mặc định: hiện tại)",
+  compare: "So sánh",
+  summaryAdded: (count) => `+${count} thêm`,
+  summaryRemoved: (count) => `-${count} xóa`,
+  summaryModified: (count) => `~${count} sửa`,
+  summaryUnchanged: (count) => `= ${count} không đổi`,
+  truncated: "⚠ bị cắt bớt",
+  truncatedTitle: "Kết quả bị giới hạn",
+  groupAdded: (count) => `Bảng được thêm (${count})`,
+  groupRemoved: (count) => `Bảng bị xóa (${count})`,
+  groupModified: (count) => `Bảng bị sửa (${count})`,
+  noDifferences: "Không có khác biệt — hai lược đồ giống hệt nhau.",
+  dialectLabel: "Phương ngữ migration",
+  includeDrops: "Bao gồm DROP",
+  generateMigration: "Tạo migration",
+  copyScript: "Sao chép",
+};

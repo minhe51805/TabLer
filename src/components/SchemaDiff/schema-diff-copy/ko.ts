@@ -1,0 +1,27 @@
+import type { SchemaDiffCopy } from "./types";
+
+export const KO_COPY: SchemaDiffCopy = {
+  title: "스키마 비교",
+  close: "닫기",
+  sourceConnection: "소스 연결…",
+  targetConnection: "대상 연결…",
+  activeSuffix: "(활성)",
+  notConnectedSuffix: "(연결 안 됨)",
+  sourceDatabase: "소스 데이터베이스 (기본: 현재)",
+  targetDatabase: "대상 데이터베이스 (기본: 현재)",
+  compare: "비교",
+  summaryAdded: (count) => `+${count} 추가됨`,
+  summaryRemoved: (count) => `-${count} 삭제됨`,
+  summaryModified: (count) => `~${count} 수정됨`,
+  summaryUnchanged: (count) => `= ${count} 변경 없음`,
+  truncated: "⚠ 잘림",
+  truncatedTitle: "결과가 제한됨",
+  groupAdded: (count) => `추가된 테이블 (${count})`,
+  groupRemoved: (count) => `삭제된 테이블 (${count})`,
+  groupModified: (count) => `수정된 테이블 (${count})`,
+  noDifferences: "차이 없음 — 두 스키마가 동일합니다.",
+  dialectLabel: "마이그레이션 방언",
+  includeDrops: "DROP 포함",
+  generateMigration: "마이그레이션 생성",
+  copyScript: "복사",
+};

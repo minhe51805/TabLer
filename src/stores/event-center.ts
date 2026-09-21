@@ -22,7 +22,10 @@ export type EventMap = {
   "workspace-toggle-ai-panel": { prompt?: string };
 
   // Connection events
-  "connection-status-change": { connectionId: string; status: "connecting" | "connected" | "disconnected" | "error" };
+  "connection-status-change": {
+    connectionId: string;
+    status: "connecting" | "connected" | "disconnected" | "error";
+  };
   "connection-session-switch": { connectionId: string; database: string };
 
   // Tab events
@@ -32,7 +35,12 @@ export type EventMap = {
   "tab-broadcast": { tabId: string; event: string; data?: unknown };
 
   // Table data events
-  "table-data-updated": { connectionId: string; database?: string; tableName?: string; invalidateStructure?: boolean };
+  "table-data-updated": {
+    connectionId: string;
+    database?: string;
+    tableName?: string;
+    invalidateStructure?: boolean;
+  };
   "table-structure-updated": { connectionId: string; database?: string; tableName: string };
 
   // AI panel events
@@ -41,8 +49,15 @@ export type EventMap = {
   "ai-insert-sql": { sql: string; cursorOffset?: number };
   // Agent proposes an edit to one query tab's SQL. The tab shows an
   // Accept/Reject proposal — nothing is applied without user consent, and
-  // nothing is executed by the agent itself.
-  "ai-edit-query-sql": { tabId: string; sql: string; reason: string };
+  // nothing is executed by the agent itself. Mutating proposals carry a
+  // non-executing EXPLAIN dry-run result so the user sees the plan (or the
+  // syntax error) before accepting.
+  "ai-edit-query-sql": {
+    tabId: string;
+    sql: string;
+    reason: string;
+    explain?: AiProposalExplainResult;
+  };
 
   // Theme events
   "theme-change": { themeId: string };
@@ -59,7 +74,14 @@ export type EventMap = {
   "query-history-updated": { connectionId?: string };
 
   // Row inspector events
-  "row-inspector-open": { rowIndex: number; row: (string | number | boolean | null)[]; columns: import("../components/DataGrid/hooks/useDataGrid").ResolvedColumn[]; primaryKeyValues: Record<string, string | number | boolean | null>; tableName?: string; database?: string };
+  "row-inspector-open": {
+    rowIndex: number;
+    row: (string | number | boolean | null)[];
+    columns: import("../components/DataGrid/hooks/useDataGrid").ResolvedColumn[];
+    primaryKeyValues: Record<string, string | number | boolean | null>;
+    tableName?: string;
+    database?: string;
+  };
   "row-inspector-close": void;
   "row-inspector-edit-cell": { columnName: string; value: string | number | boolean | null };
 
@@ -67,6 +89,20 @@ export type EventMap = {
   "app-ready": void;
   "app-panic": { error: string; stack?: string };
 };
+
+/**
+ * Dry-run EXPLAIN outcome attached to a mutating `ai-edit-query-sql` proposal.
+ * - `ok`: the engine planned the statement; `summary` is the plan digest.
+ * - `error`: EXPLAIN failed on an explainable (DML) statement — the SQL is
+ *   almost certainly broken; `error` carries the engine message.
+ * - `unsupported`: the engine could not plan this statement kind (DDL is
+ *   best-effort); `error` carries the engine message for context.
+ */
+export interface AiProposalExplainResult {
+  status: "ok" | "error" | "unsupported";
+  summary?: string;
+  error?: string;
+}
 
 // Type-safe event names
 export type EventName = keyof EventMap;
@@ -80,7 +116,10 @@ export type EventDetail<N extends EventName> = EventMap[N];
  */
 export const EventCenter = {
   /** Subscribe to an event. Returns an unsubscribe function. */
-  on<N extends EventName>(name: N, listener: (event: CustomEvent<EventDetail<N>>) => void): () => void {
+  on<N extends EventName>(
+    name: N,
+    listener: (event: CustomEvent<EventDetail<N>>) => void,
+  ): () => void {
     const handler = (e: Event) => listener(e as CustomEvent<EventDetail<N>>);
     window.addEventListener(name, handler);
     return () => window.removeEventListener(name, handler);

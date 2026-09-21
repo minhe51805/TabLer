@@ -1,0 +1,77 @@
+/* Result diff modal — extends the schema-diff visual language. */
+
+.result-diff-panel {
+  width: min(860px, 96vw);
+}
+
+.result-diff-sides {
+  font-weight: 600;
+}
+
+.result-diff-sides span {
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-diff-meta {
+  opacity: 0.75;
+  font-size: 11px;
+}
+
+.result-diff-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.result-diff-row-key {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.result-diff-row-cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding-left: 16px;
+}
+
+.result-diff-cell {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  max-width: 100%;
+}
+
+.result-diff-cell-name {
+  color: var(--text-secondary);
+}
+
+.result-diff-cell-name::after {
+  content: ":";
+}
+
+.result-diff-cell-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.result-diff-cell.is-changed .result-diff-cell-value.is-before {
+  color: var(--error, #ef4444);
+  text-decoration: line-through;
+}
+
+.result-diff-cell.is-changed .result-diff-cell-value.is-after {
+  color: var(--fintech-green, #22c55e);
+}
+
+.result-diff-cell-arrow {
+  color: var(--text-secondary);
+}

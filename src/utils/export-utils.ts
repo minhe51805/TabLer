@@ -36,7 +36,10 @@ async function blobToBase64(blob: Blob): Promise<string> {
  */
 function buildExportFilename(tableName: string | undefined, extension: string): string {
   const base = tableName
-    ? tableName.replace(/[^a-zA-Z0-9_.-]/g, "_").split(".").pop() || tableName
+    ? tableName
+        .replace(/[^a-zA-Z0-9_.-]/g, "_")
+        .split(".")
+        .pop() || tableName
     : "table_export";
   const date = new Date().toISOString().slice(0, 10);
   return `${base}_${date}.${extension}`;
@@ -76,9 +79,7 @@ export function buildCsvContent(
   rows: (string | number | boolean | null)[][],
 ): string {
   const headerLine = columns.map(escapeCsvValue).join(",");
-  const dataLines = rows.map((row) =>
-    row.map((cell) => escapeCsvValue(cell)).join(","),
-  );
+  const dataLines = rows.map((row) => row.map((cell) => escapeCsvValue(cell)).join(","));
   return [headerLine, ...dataLines].join("\r\n");
 }
 
@@ -140,6 +141,29 @@ export function buildTsvContent(
   const lines = [columns.map(escapeTsv).join("\t")];
   for (const row of rows) {
     lines.push(row.map(escapeTsv).join("\t"));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Builds a GitHub-flavored Markdown table. Pipe characters are escaped and
+ * line breaks collapse to spaces so every row stays on one line; NULL cells
+ * render empty, matching the CSV/TSV serializers.
+ */
+export function buildMarkdownTableContent(
+  columns: string[],
+  rows: (string | number | boolean | null)[][],
+): string {
+  const escapeMd = (value: string | number | boolean | null): string =>
+    value === null || value === undefined
+      ? ""
+      : String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  const lines = [
+    `| ${columns.map(escapeMd).join(" | ")} |`,
+    `| ${columns.map(() => "---").join(" | ")} |`,
+  ];
+  for (const row of rows) {
+    lines.push(`| ${row.map(escapeMd).join(" | ")} |`);
   }
   return lines.join("\n");
 }

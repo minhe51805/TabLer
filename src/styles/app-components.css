@@ -3081,6 +3081,35 @@
   border-color: rgba(0, 122, 255, 0.2);
 }
 
+.startup-connection-ping {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  min-height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-1);
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.startup-connection-ping.ok {
+  color: var(--fintech-green);
+  border-color: rgba(34, 197, 94, 0.28);
+}
+
+.startup-connection-ping.fail {
+  color: var(--error, #f87171);
+  border-color: rgba(248, 113, 113, 0.28);
+}
+
 .startup-connection-meta {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -21245,6 +21274,130 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   text-overflow: ellipsis;
 }
 
+/* Run details: collapsible per-run audit trail (tool calls + SQL + timing). */
+.ai-run-details {
+  margin: 6px 0 2px;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-0);
+  padding: 8px 10px;
+}
+
+.ai-run-details-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ai-run-details-head:hover {
+  color: var(--text-primary);
+}
+
+.ai-run-details-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+}
+
+.ai-run-details-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-run-details-call {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--mm-surface-1);
+}
+
+.ai-run-details-call-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-run-details-tool {
+  flex-shrink: 0;
+  font-family: "IBM Plex Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ai-run-details-args {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "IBM Plex Mono", "JetBrains Mono", Consolas, monospace;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.ai-run-details-ms {
+  flex-shrink: 0;
+  font-size: var(--mm-fs-micro);
+  font-weight: 600;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+
+.ai-run-details-status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.ai-run-details-status--ok {
+  color: var(--mm-success, #30a46c);
+}
+
+.ai-run-details-status--fail {
+  color: var(--mm-danger, #e5484d);
+}
+
+.ai-run-details-sql-label {
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  color: var(--text-tertiary, var(--text-secondary));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ai-run-details-total {
+  margin-top: 8px;
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  color: var(--text-tertiary, var(--text-secondary));
+  text-align: right;
+}
+
 .ai-workspace-modal-btn {
   display: inline-flex;
   align-items: center;
@@ -26332,6 +26485,30 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   white-space: normal;
 }
 
+/* EXPLAIN dry-run line on the proposal banner: takes the full row so the plan
+   digest (or the pre-accept syntax error) never squeezes the reason text. */
+.sql-editor-ai-proposal-explain {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mm-fs-micro);
+  color: var(--text-secondary);
+}
+
+.sql-editor-ai-proposal-explain-ok {
+  color: var(--mm-success);
+}
+
+.sql-editor-ai-proposal-explain-error {
+  color: var(--mm-error);
+}
+
+.sql-editor-ai-proposal-explain-unsupported {
+  color: var(--mm-warning);
+}
+
 .sql-editor-ai-proposal > .sql-editor-tool-btn {
   flex: 0 0 auto;
 }
@@ -26400,6 +26577,106 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   border-color: var(--mm-error);
   background: var(--mm-error-soft);
   color: var(--mm-error);
+}
+
+/* ---------------------------------------------------------------------------
+   Ctrl+K inline AI edit — content widget (input / preview toolbar) plus the
+   diff decorations and removed-line ghost zones inside Monaco.
+   ------------------------------------------------------------------------- */
+
+.sql-inline-ai {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--mm-accent);
+  border-radius: var(--mm-radius-sm);
+  background: var(--mm-surface-1);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  font-size: var(--mm-fs-caption);
+  color: var(--text-primary);
+}
+
+.sql-inline-ai-input {
+  width: 260px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+  font-family: inherit;
+}
+
+.sql-inline-ai-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.sql-inline-ai-input:disabled {
+  opacity: 0.6;
+}
+
+.sql-inline-ai-status {
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-micro);
+  white-space: nowrap;
+}
+
+.sql-inline-ai-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--mm-accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: sql-inline-ai-spin 0.8s linear infinite;
+}
+
+@keyframes sql-inline-ai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sql-inline-ai-error {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mm-error);
+  font-size: var(--mm-fs-micro);
+}
+
+.sql-inline-ai-label {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-micro);
+}
+
+/* Diff preview: added lines get a soft success wash + gutter marker; removed
+   lines render as struck-through ghost rows in a view zone. */
+.sql-inline-ai-line-added {
+  background: var(--mm-success-soft);
+}
+
+.sql-inline-ai-gutter-added {
+  border-left: 2px solid var(--mm-success);
+}
+
+.sql-inline-ai-zone {
+  overflow: hidden;
+}
+
+.sql-inline-ai-line-removed {
+  padding-left: 8px;
+  background: var(--mm-error-soft);
+  color: var(--mm-error);
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 12px;
+  text-decoration: line-through;
+  white-space: pre;
+  opacity: 0.75;
 }
 
 /* Toolbar hide/show toggle — when collapsed only the eye button remains */
@@ -34098,6 +34375,77 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   border-color: color-mix(in srgb, var(--mm-accent) 35%, var(--mm-border));
   background: var(--mm-surface-2);
   color: var(--text-primary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-action-icon.is-active {
+  border-color: color-mix(in srgb, var(--mm-accent) 55%, var(--mm-border));
+  background: color-mix(in srgb, var(--mm-accent) 12%, var(--mm-surface-1));
+  color: var(--mm-accent);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-feedback-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 24;
+  width: 220px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--mm-border);
+  border-radius: 10px;
+  background: var(--mm-surface-0);
+  box-shadow: var(--mm-shadow-2);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-feedback-title {
+  margin: 0;
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-feedback-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-feedback-chips .ai-workspace-suggestion-chip {
+  min-height: 24px;
+  padding: 0 9px;
+  font-size: var(--mm-fs-micro);
+}
+
+.app-root
+  .ai-workspace-stage--sidebar
+  .ai-workspace-feedback-chips
+  .ai-workspace-suggestion-chip.is-selected {
+  border-color: color-mix(in srgb, var(--mm-accent) 55%, var(--mm-border));
+  background: color-mix(in srgb, var(--mm-accent) 12%, var(--mm-surface-1));
+  color: var(--mm-accent);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-feedback-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid var(--mm-border);
+  border-radius: 7px;
+  background: var(--mm-surface-1);
+  color: var(--text-primary);
+  font-size: var(--mm-fs-caption);
+  font-family: inherit;
+  resize: vertical;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-feedback-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--mm-accent) 55%, var(--mm-border));
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-feedback-submit {
+  justify-self: end;
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar--dock {

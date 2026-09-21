@@ -326,6 +326,10 @@ export function useAIAssistantGeneration({
         interactionMode?: AIWorkspaceInteractionMode;
         /** Files/images attached by the user for this turn (composer pipeline). */
         attachments?: AIAttachmentDraft[];
+        /** Regenerate mode: re-run this bubble's prompt and swap the result
+         *  into the SAME chat slot instead of appending a new turn. On any
+         *  failure the original bubble is restored untouched. */
+        replaceBubble?: AIWorkspaceBubbleData;
       },
     ) => {
       const normalizedPrompt = prompt.trim();
@@ -346,10 +350,19 @@ export function useAIAssistantGeneration({
         workspaceKey: targetWorkspaceKey,
         interactionMode,
       });
+      const replaceBubble = options?.replaceBubble;
+      if (replaceBubble) {
+        // Regenerate reuses the bubble's id so every downstream update lands
+        // on the same chat slot; createdAt stays so the turn keeps its place.
+        loadingBubble.id = replaceBubble.id;
+        loadingBubble.createdAt = replaceBubble.createdAt;
+        loadingBubble.attachments = replaceBubble.attachments;
+      }
       // Persist attachment bytes (base64/text) in the backend table; the bubble
       // only carries metadata so the persisted history JSON stays small.
+      // Regenerate reuses the already-persisted attachments — nothing to save.
       const attachmentDrafts = options?.attachments ?? [];
-      if (attachmentDrafts.length > 0) {
+      if (!replaceBubble && attachmentDrafts.length > 0) {
         loadingBubble.attachments = attachmentDrafts.map((draft) => ({
           id: draft.id,
           kind: draft.kind,
@@ -380,7 +393,11 @@ export function useAIAssistantGeneration({
         );
       }
       activeGenerationBubbleIdRef.current = loadingBubble.id;
-      setBubbles((current) => [...current, loadingBubble]);
+      setBubbles((current) =>
+        replaceBubble
+          ? current.map((bubble) => (bubble.id === loadingBubble.id ? loadingBubble : bubble))
+          : [...current, loadingBubble],
+      );
       setChatThreads((current) =>
         current.map((thread, index) =>
           thread.id === targetThreadId
@@ -407,9 +424,13 @@ export function useAIAssistantGeneration({
 
       await waitForUIPaint();
 
+      // Regenerate skips the deterministic dashboard shortcuts: it must only
+      // re-ask the model and swap the answer — never re-fire workspace side
+      // effects (dashboard rebuilds, tab opens, SQL auto-runs).
       const hasAttachedDashboardSelection =
-        isDashboardSelectionSource(options?.attachmentSource) ||
-        hasMetricsDashboardAttachmentContext(normalizedPrompt);
+        !replaceBubble &&
+        (isDashboardSelectionSource(options?.attachmentSource) ||
+          hasMetricsDashboardAttachmentContext(normalizedPrompt));
       const dashboardEditConversationContext =
         latestReadyAssistantBubble?.detail || latestReadyAssistantBubble?.preview || "";
       const directDashboardWidgetEdit = hasAttachedDashboardSelection
@@ -434,6 +455,7 @@ export function useAIAssistantGeneration({
         hasAttachedDashboardSelection &&
         isDashboardRebuildPrompt(requestPrompt);
       const shouldAugmentDashboardDirectly =
+        !replaceBubble &&
         supportsOverviewMetricsBoard(activeConnectionDbType) &&
         !directDashboardWidgetEdit &&
         isDashboardAugmentPrompt(requestPrompt);
@@ -580,11 +602,13 @@ export function useAIAssistantGeneration({
           requestDataDestructiveConsent: (detail) => requestDestructiveConsent(detail),
           userPrompt: requestPrompt,
           attachments: attachmentDrafts.length > 0 ? attachmentDrafts : undefined,
-          onAgentProgress: (steps) => {
+          onAgentProgress: (steps, runTrace) => {
             if (openSessionRef.current !== sessionId) return;
             setBubbles((current) =>
               current.map((bubble) =>
-                bubble.id === loadingBubble.id ? { ...bubble, agentSteps: steps } : bubble,
+                bubble.id === loadingBubble.id
+                  ? { ...bubble, agentSteps: steps, runTrace: runTrace ?? bubble.runTrace }
+                  : bubble,
               ),
             );
           },
@@ -614,13 +638,14 @@ export function useAIAssistantGeneration({
                     : aiCopy.bubbleStates.readySqlReviewSubtitle
                   : aiCopy.bubbleStates.readyNoteSubtitle;
         const readyPreview = summarizeAIResponse(result.rawResponse, result.sql);
-        const wantsVisualization = isVisualizationPrompt(requestPrompt);
+        const wantsVisualization = !replaceBubble && isVisualizationPrompt(requestPrompt);
         const agentWidgets = result.agentWidgets ?? [];
         const hasAgentWidgets = agentWidgets.length > 0;
         const wantsMetricsDashboard =
-          hasAgentWidgets ||
-          (isDashboardVisualizationPrompt(requestPrompt, result.intent) &&
-            supportsOverviewMetricsBoard(activeConnectionDbType));
+          !replaceBubble &&
+          (hasAgentWidgets ||
+            (isDashboardVisualizationPrompt(requestPrompt, result.intent) &&
+              supportsOverviewMetricsBoard(activeConnectionDbType)));
         const deterministicOverviewChartSql = isOverviewVisualizationPrompt(
           requestPrompt,
           result.intent,
@@ -729,6 +754,7 @@ export function useAIAssistantGeneration({
           isSqlBlockedBySafeMode(result.sql ?? "", safeModeLevel) &&
           !fullAutonomyPreApproved;
         const agentCanAutoRun =
+          !replaceBubble &&
           interactionMode === "agent" &&
           Boolean(result.sql) &&
           // The "agent already read live data" guard only applies to read-only
@@ -768,6 +794,8 @@ export function useAIAssistantGeneration({
                       reasoning: result.reasoning,
                       agentSteps: result.agentSteps,
                       tokensUsed: result.tokensUsed,
+                      modelUsed: result.modelUsed,
+                      runTrace: result.runTrace,
                       autoDismissAt: undefined,
                     }
                   : bubble,
@@ -798,6 +826,8 @@ export function useAIAssistantGeneration({
                       reasoning: result.reasoning,
                       agentSteps: result.agentSteps,
                       tokensUsed: result.tokensUsed,
+                      modelUsed: result.modelUsed,
+                      runTrace: result.runTrace,
                       autoDismissAt: undefined,
                     }
                   : bubble,
@@ -836,6 +866,8 @@ export function useAIAssistantGeneration({
                   askUserOptions: result.askUserOptions ?? undefined,
                   failoverNotes: result.failoverNotes,
                   tokensUsed: result.tokensUsed,
+                  modelUsed: result.modelUsed,
+                  runTrace: result.runTrace,
                 }
               : bubble,
           ),
@@ -849,8 +881,22 @@ export function useAIAssistantGeneration({
         cancelledGenerationBubbleIdsRef.current.delete(loadingBubble.id);
 
         if (isSupersededAIRequestError(errorValue) && !wasCancelled) {
-          setBubbles((current) => current.filter((bubble) => bubble.id !== loadingBubble.id));
+          setBubbles((current) =>
+            replaceBubble
+              ? current.map((bubble) => (bubble.id === loadingBubble.id ? replaceBubble : bubble))
+              : current.filter((bubble) => bubble.id !== loadingBubble.id),
+          );
           return { bubbleId: loadingBubble.id, success: false, cancelled: true };
+        }
+
+        if (replaceBubble) {
+          // Regenerate failed: the old answer stays exactly as it was — the
+          // caller announces the failure instead of rewriting the bubble.
+          setBubbles((current) =>
+            current.map((bubble) => (bubble.id === loadingBubble.id ? replaceBubble : bubble)),
+          );
+          if (wasCancelled) setError(null);
+          return { bubbleId: loadingBubble.id, success: false, cancelled: wasCancelled };
         }
 
         setBubbles((current) =>

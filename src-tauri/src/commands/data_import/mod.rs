@@ -58,12 +58,20 @@ use json::{
 use xlsx::{align_row_to_len, open_xlsx_sheet, xlsx_header_columns};
 
 #[tauri::command]
-pub async fn preview_import_csv(sample_rows: Option<usize>) -> Result<CsvPreview, String> {
-    let path = rfd::FileDialog::new()
-        .add_filter("CSV files", &["csv", "tsv"])
-        .add_filter("All files", &["*"])
-        .pick_file()
-        .ok_or_else(|| "No file selected.".to_string())?;
+pub async fn preview_import_csv(
+    path: Option<String>,
+    sample_rows: Option<usize>,
+) -> Result<CsvPreview, String> {
+    // A dropped file arrives with its path already known; otherwise fall back
+    // to the picker.
+    let path = match path {
+        Some(existing) => std::path::PathBuf::from(existing),
+        None => rfd::FileDialog::new()
+            .add_filter("CSV files", &["csv", "tsv"])
+            .add_filter("All files", &["*"])
+            .pick_file()
+            .ok_or_else(|| "No file selected.".to_string())?,
+    };
 
     let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
     if metadata.len() > MAX_PREVIEW_FILE_BYTES {

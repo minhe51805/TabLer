@@ -15,6 +15,7 @@ import {
   type AssistIntent,
 } from "./ai-agent-context";
 import { mapWithConcurrency, setBoundedCacheEntry, yieldToBrowserFrame } from "./ai-async-utils";
+import { getAgentSchemaSummary } from "./ai-schema-summary";
 import type { AIWorkspaceInteractionMode } from "./ai-workspace-types";
 
 const MAX_OVERVIEW_SCHEMA_TABLES = 12;
@@ -44,8 +45,16 @@ interface PrepareAIWorkspaceSchemaContextOptions {
   schemaCodecCache: Map<string, string>;
   schemaContextEnabled: boolean;
   tables: TableInfo[];
-  getTableColumnsPreview: (connectionId: string, table: string, database?: string) => Promise<ColumnDetail[]>;
-  getTableStructure: (connectionId: string, table: string, database?: string) => Promise<TableStructure>;
+  getTableColumnsPreview: (
+    connectionId: string,
+    table: string,
+    database?: string,
+  ) => Promise<ColumnDetail[]>;
+  getTableStructure: (
+    connectionId: string,
+    table: string,
+    database?: string,
+  ) => Promise<TableStructure>;
 }
 
 export async function prepareAIWorkspaceSchemaContext(
@@ -71,7 +80,9 @@ export async function prepareAIWorkspaceSchemaContext(
         `Current database: ${currentDatabase || "Default"}`,
         "Schema sharing enabled: yes",
       ].join("\n")
-    : ["Workspace metadata:", "No active database connection is selected for this turn."].join("\n");
+    : ["Workspace metadata:", "No active database connection is selected for this turn."].join(
+        "\n",
+      );
   const relationalSchemaSummaryByTable = new Map<string, string>();
   let availableSchemaTables: string[] = [];
   let strictRecoveryContext = "";
@@ -92,12 +103,29 @@ export async function prepareAIWorkspaceSchemaContext(
   availableSchemaTables = tables
     .map((table) => buildWorkspaceTableIdentifier(table, currentDatabase))
     .filter(Boolean);
-  const tablesToFetch = intent === "overview"
-    ? tables.slice(0, isLocalProvider ? MAX_OVERVIEW_SCHEMA_TABLES : MAX_REMOTE_AGENT_OVERVIEW_TABLES)
-    : isLocalProvider
-      ? pickRelevantTables(normalizedPrompt, tables)
-      : pickRelevantTables(normalizedPrompt, tables).slice(0, MAX_REMOTE_AGENT_SCHEMA_TABLES);
-  const schemaCodecMode = intent === "overview" ? "relational" : inferAISchemaCodecMode(normalizedPrompt);
+  const tablesToFetch =
+    intent === "overview"
+      ? tables.slice(
+          0,
+          isLocalProvider ? MAX_OVERVIEW_SCHEMA_TABLES : MAX_REMOTE_AGENT_OVERVIEW_TABLES,
+        )
+      : isLocalProvider
+        ? pickRelevantTables(normalizedPrompt, tables)
+        : pickRelevantTables(normalizedPrompt, tables).slice(0, MAX_REMOTE_AGENT_SCHEMA_TABLES);
+  // Compact whole-catalog summary (tables+columns+PK/FK, ~2k-token cap) is
+  // fetched in parallel with the capsule entries and prepended to the
+  // assembled context below, so the agent starts with real schema instead of
+  // spending its first steps on search_schema round-trips. Cached per
+  // connection+database; null when there is no connection or the fetch fails.
+  const schemaSummaryPromise = getAgentSchemaSummary({
+    connectionId,
+    currentDatabase,
+    normalizedPrompt,
+    tables,
+    getTableStructure,
+  });
+  const schemaCodecMode =
+    intent === "overview" ? "relational" : inferAISchemaCodecMode(normalizedPrompt);
   await yieldToBrowserFrame();
   const entries = await mapWithConcurrency(
     tablesToFetch,
@@ -111,21 +139,38 @@ export async function prepareAIWorkspaceSchemaContext(
         return { tableName, summary: cached };
       }
       try {
-        const structure = schemaCodecMode === "core"
-          ? {
-              columns: await getTableColumnsPreview(connectionId, tableName, currentDatabase || undefined),
-              indexes: [],
-              foreign_keys: [],
-            }
-          : await getTableStructure(connectionId, tableName, currentDatabase || undefined);
+        const structure =
+          schemaCodecMode === "core"
+            ? {
+                columns: await getTableColumnsPreview(
+                  connectionId,
+                  tableName,
+                  currentDatabase || undefined,
+                ),
+                indexes: [],
+                foreign_keys: [],
+              }
+            : await getTableStructure(connectionId, tableName, currentDatabase || undefined);
         const summary = encodeStructureForAI(tableName, structure, { mode: schemaCodecMode });
-        setBoundedCacheEntry(schemaCodecCache, cacheKey, summary, MAX_AI_SCHEMA_CODEC_CACHE_ENTRIES);
-        if (schemaCodecMode === "relational") relationalSchemaSummaryByTable.set(tableName, summary);
+        setBoundedCacheEntry(
+          schemaCodecCache,
+          cacheKey,
+          summary,
+          MAX_AI_SCHEMA_CODEC_CACHE_ENTRIES,
+        );
+        if (schemaCodecMode === "relational")
+          relationalSchemaSummaryByTable.set(tableName, summary);
         return { tableName, summary };
       } catch {
         const summary = `T:${tableName}|C:[]`;
-        setBoundedCacheEntry(schemaCodecCache, cacheKey, summary, MAX_AI_SCHEMA_CODEC_CACHE_ENTRIES);
-        if (schemaCodecMode === "relational") relationalSchemaSummaryByTable.set(tableName, summary);
+        setBoundedCacheEntry(
+          schemaCodecCache,
+          cacheKey,
+          summary,
+          MAX_AI_SCHEMA_CODEC_CACHE_ENTRIES,
+        );
+        if (schemaCodecMode === "relational")
+          relationalSchemaSummaryByTable.set(tableName, summary);
         return { tableName, summary };
       }
     },
@@ -140,13 +185,14 @@ export async function prepareAIWorkspaceSchemaContext(
     prioritizedAgentTableNames,
     isLocalProvider ? MAX_TABLE_NAMES_IN_CONTEXT : MAX_REMOTE_AGENT_VISIBLE_TABLES,
   );
-  agentPromptTableNames = interactionMode === "agent"
-    ? buildAgentVisibleTableNames(
-        availableSchemaTables,
-        prioritizedAgentTableNames,
-        isLocalProvider ? MAX_LOCAL_AGENT_VISIBLE_TABLES : MAX_REMOTE_AGENT_VISIBLE_TABLES,
-      )
-    : [];
+  agentPromptTableNames =
+    interactionMode === "agent"
+      ? buildAgentVisibleTableNames(
+          availableSchemaTables,
+          prioritizedAgentTableNames,
+          isLocalProvider ? MAX_LOCAL_AGENT_VISIBLE_TABLES : MAX_REMOTE_AGENT_VISIBLE_TABLES,
+        )
+      : [];
   context = buildSchemaCapsuleContext({
     currentDatabase,
     totalTableCount: tables.length,
@@ -156,19 +202,30 @@ export async function prepareAIWorkspaceSchemaContext(
     schemaCodecMode,
     truncatedOverview: intent === "overview" && tables.length > tablesToFetch.length,
   });
-  strictRecoveryContext = interactionMode === "agent"
-    ? buildAgentRecoveryContext({
-        currentDatabase,
-        availableTableNames: availableSchemaTables,
-        visibleTableNames: agentPromptTableNames,
-        schemaCapsulePreview,
-      })
-    : [
-        `DB=${currentDatabase || "Default"}`,
-        `TV=${(isLocalProvider ? availableSchemaTables : contextVisibleTableNames).join(",")}${!isLocalProvider && availableSchemaTables.length > contextVisibleTableNames.length ? ",..." : ""}`,
-        schemaCapsulePreview ? `SCHEMA_PREVIEW=\n${schemaCapsulePreview}` : "",
-        "RULE=Stay strictly inside the verified schema capsule.",
-      ].filter(Boolean).join("\n");
+  strictRecoveryContext =
+    interactionMode === "agent"
+      ? buildAgentRecoveryContext({
+          currentDatabase,
+          availableTableNames: availableSchemaTables,
+          visibleTableNames: agentPromptTableNames,
+          schemaCapsulePreview,
+        })
+      : [
+          `DB=${currentDatabase || "Default"}`,
+          `TV=${(isLocalProvider ? availableSchemaTables : contextVisibleTableNames).join(",")}${!isLocalProvider && availableSchemaTables.length > contextVisibleTableNames.length ? ",..." : ""}`,
+          schemaCapsulePreview ? `SCHEMA_PREVIEW=\n${schemaCapsulePreview}` : "",
+          "RULE=Stay strictly inside the verified schema capsule.",
+        ]
+          .filter(Boolean)
+          .join("\n");
+
+  const schemaSummary = await schemaSummaryPromise;
+  if (schemaSummary) {
+    context = `${schemaSummary}\n\n${context}`;
+    strictRecoveryContext = strictRecoveryContext
+      ? `${schemaSummary}\n\n${strictRecoveryContext}`
+      : strictRecoveryContext;
+  }
 
   return {
     agentPromptTableNames,

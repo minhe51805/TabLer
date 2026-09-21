@@ -52,12 +52,9 @@ export function isMetricsBoardRequest(prompt: string) {
 }
 
 export function stripTableSchemaQualifier(tableName: string) {
-  return tableName
-    .replace(/["`]/g, "")
-    .split(".")
-    .filter(Boolean)
-    .pop()
-    ?.trim() || tableName.trim();
+  return (
+    tableName.replace(/["`]/g, "").split(".").filter(Boolean).pop()?.trim() || tableName.trim()
+  );
 }
 
 export function buildKnownTableNameSet(availableTableNames: string[]) {
@@ -83,7 +80,26 @@ export function isWorkspaceScopedIntent(intent: AssistIntent) {
   return intent !== "general";
 }
 
-export function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceInteractionMode): AssistIntent {
+/**
+ * Trivial intents a provider's configured `fast_model` can serve: general
+ * chat, short explain/format asks. Workspace-heavy intents (sql, overview,
+ * optimize, fix-error) stay on the primary model — they drive tools and SQL
+ * where a weaker model costs more in retries than it saves in tokens.
+ */
+export function isTrivialAssistIntent(intent: AssistIntent, prompt: string): boolean {
+  if (intent === "general") return true;
+  if (intent !== "explain") return false;
+  const normalized = normalizeIntentText(prompt);
+  // "Explain-short" = a brief question or an explicit format/beautify ask;
+  // longer explains may need real reasoning, so they keep the primary model.
+  const formatSignals = ["format", "beautify", "pretty", "lint", "indent", "dinh dang", "格式化"];
+  return normalized.length <= 160 || formatSignals.some((signal) => normalized.includes(signal));
+}
+
+export function inferAssistIntent(
+  prompt: string,
+  interactionMode: AIWorkspaceInteractionMode,
+): AssistIntent {
   const normalizedPrompt = normalizeIntentText(prompt);
 
   const overviewSignals = [
@@ -281,8 +297,14 @@ export function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceIn
 
   const hasOptimizeSignal = optimizeSignals.some((signal) => normalizedPrompt.includes(signal));
   const hasFixErrorSignal = fixErrorSignals.some((signal) => normalizedPrompt.includes(signal));
-  let sqlScore = sqlSignals.reduce((score, signal) => score + (normalizedPrompt.includes(signal) ? 1 : 0), 0);
-  const explainScore = explainSignals.reduce((score, signal) => score + (normalizedPrompt.includes(signal) ? 1 : 0), 0);
+  let sqlScore = sqlSignals.reduce(
+    (score, signal) => score + (normalizedPrompt.includes(signal) ? 1 : 0),
+    0,
+  );
+  const explainScore = explainSignals.reduce(
+    (score, signal) => score + (normalizedPrompt.includes(signal) ? 1 : 0),
+    0,
+  );
   const workspaceSignals = [
     "database",
     " db ",
@@ -318,13 +340,11 @@ export function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceIn
 
   if (
     interactionMode !== "prompt" &&
-    (
-      normalizedPrompt.includes("ra lenh") ||
+    (normalizedPrompt.includes("ra lenh") ||
       normalizedPrompt.includes("chay thu") ||
       normalizedPrompt.includes("mau chay") ||
       normalizedPrompt.includes("give me sql") ||
-      normalizedPrompt.includes("sample query")
-    )
+      normalizedPrompt.includes("sample query"))
   ) {
     sqlScore += 2;
   }
@@ -332,17 +352,15 @@ export function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceIn
   if (
     interactionMode !== "prompt" &&
     relationSqlSignals.some((signal) => normalizedPrompt.includes(signal)) &&
-    (
-      normalizedPrompt.includes("sql") ||
+    (normalizedPrompt.includes("sql") ||
       normalizedPrompt.includes("query") ||
       normalizedPrompt.includes("cau lenh") ||
       normalizedPrompt.includes("viet") ||
       normalizedPrompt.includes("mau chay") ||
       normalizedPrompt.includes("chay thu") ||
-      normalizedPrompt.includes("run this")
-    )
+      normalizedPrompt.includes("run this"))
   ) {
-      sqlScore += 2;
+    sqlScore += 2;
   }
 
   const hasWorkspaceSignal =
@@ -357,7 +375,16 @@ export function inferAssistIntent(prompt: string, interactionMode: AIWorkspaceIn
     return "overview";
   }
 
-  if (hasFixErrorSignal && (normalizedPrompt.includes("fix") || normalizedPrompt.includes("error") || normalizedPrompt.includes("sua") || normalizedPrompt.includes("loi") || normalizedPrompt.includes("lỗi") || normalizedPrompt.includes("修复") || normalizedPrompt.includes("错误"))) {
+  if (
+    hasFixErrorSignal &&
+    (normalizedPrompt.includes("fix") ||
+      normalizedPrompt.includes("error") ||
+      normalizedPrompt.includes("sua") ||
+      normalizedPrompt.includes("loi") ||
+      normalizedPrompt.includes("lỗi") ||
+      normalizedPrompt.includes("修复") ||
+      normalizedPrompt.includes("错误"))
+  ) {
     return "fix-error";
   }
 

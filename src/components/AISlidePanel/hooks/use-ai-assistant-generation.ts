@@ -580,11 +580,13 @@ export function useAIAssistantGeneration({
           requestDataDestructiveConsent: (detail) => requestDestructiveConsent(detail),
           userPrompt: requestPrompt,
           attachments: attachmentDrafts.length > 0 ? attachmentDrafts : undefined,
-          onAgentProgress: (steps) => {
+          onAgentProgress: (steps, runTrace) => {
             if (openSessionRef.current !== sessionId) return;
             setBubbles((current) =>
               current.map((bubble) =>
-                bubble.id === loadingBubble.id ? { ...bubble, agentSteps: steps } : bubble,
+                bubble.id === loadingBubble.id
+                  ? { ...bubble, agentSteps: steps, runTrace: runTrace ?? bubble.runTrace }
+                  : bubble,
               ),
             );
           },
@@ -768,6 +770,8 @@ export function useAIAssistantGeneration({
                       reasoning: result.reasoning,
                       agentSteps: result.agentSteps,
                       tokensUsed: result.tokensUsed,
+                      modelUsed: result.modelUsed,
+                      runTrace: result.runTrace,
                       autoDismissAt: undefined,
                     }
                   : bubble,
@@ -798,6 +802,8 @@ export function useAIAssistantGeneration({
                       reasoning: result.reasoning,
                       agentSteps: result.agentSteps,
                       tokensUsed: result.tokensUsed,
+                      modelUsed: result.modelUsed,
+                      runTrace: result.runTrace,
                       autoDismissAt: undefined,
                     }
                   : bubble,
@@ -836,6 +842,8 @@ export function useAIAssistantGeneration({
                   askUserOptions: result.askUserOptions ?? undefined,
                   failoverNotes: result.failoverNotes,
                   tokensUsed: result.tokensUsed,
+                  modelUsed: result.modelUsed,
+                  runTrace: result.runTrace,
                 }
               : bubble,
           ),

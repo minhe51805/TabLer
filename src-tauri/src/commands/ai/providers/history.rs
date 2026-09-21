@@ -361,6 +361,7 @@ pub(crate) fn sample_provider(provider_type: AIProviderType) -> AIProviderConfig
         provider_type,
         endpoint: String::new(),
         model: "demo-model".to_string(),
+        fast_model: None,
         is_enabled: true,
         is_primary: true,
         allow_schema_context: true,

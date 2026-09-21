@@ -65,7 +65,53 @@ pub(super) enum ConnectionFailureStage {
     Authentication,
     DatabaseSelection,
     Timeout,
+    Driver,
     Unknown,
+}
+
+impl ConnectionFailureStage {
+    /// Stable wire value surfaced to the frontend as `ConnectionErrorInfo.stage`.
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            ConnectionFailureStage::Dns => "dns",
+            ConnectionFailureStage::Tcp => "tcp",
+            ConnectionFailureStage::Tunnel => "tunnel",
+            ConnectionFailureStage::Tls => "tls",
+            ConnectionFailureStage::Authentication => "auth",
+            ConnectionFailureStage::DatabaseSelection => "database",
+            ConnectionFailureStage::Timeout => "timeout",
+            ConnectionFailureStage::Driver => "driver",
+            ConnectionFailureStage::Unknown => "unknown",
+        }
+    }
+}
+
+/// Structured connection failure returned to the frontend so the UI can show a
+/// stage badge plus an actionable hint instead of a raw driver blob.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionErrorInfo {
+    pub stage: String,
+    pub message: String,
+    pub hint: String,
+}
+
+impl ConnectionErrorInfo {
+    /// Wrap a non-connect failure (validation, rate limit, cancellation,
+    /// storage) so every error from the connect/test commands shares one shape.
+    pub fn unclassified(message: impl Into<String>) -> Self {
+        Self {
+            stage: ConnectionFailureStage::Unknown.as_str().to_string(),
+            message: message.into(),
+            hint: String::new(),
+        }
+    }
+}
+
+impl From<String> for ConnectionErrorInfo {
+    fn from(message: String) -> Self {
+        ConnectionErrorInfo::unclassified(message)
+    }
 }
 
 pub(super) fn classify_connection_failure(
@@ -85,6 +131,12 @@ pub(super) fn classify_connection_failure(
         "name or service not known",
         "nodename nor servname",
         "no such host",
+        "temporary failure in name resolution",
+        "name resolution",
+        "getaddrinfo",
+        "enotfound",
+        "eai_again",
+        "11001",
     ]
     .iter()
     .any(|token| normalized.contains(token))
@@ -94,13 +146,28 @@ pub(super) fn classify_connection_failure(
     if normalized.contains("10061")
         || normalized.contains("actively refused")
         || normalized.contains("connection refused")
+        || normalized.contains("econnrefused")
+        || normalized.contains("econnreset")
+        || normalized.contains("connection reset")
+        || normalized.contains("broken pipe")
         || normalized.contains("network is unreachable")
+        || normalized.contains("no route to host")
+        || normalized.contains("lost connection")
+        || normalized.contains("server closed the connection")
+        || normalized.contains("could not connect")
+        || normalized.contains("failed to connect")
+        || normalized.contains("error connecting to")
+        || normalized.contains("os error 111")
     {
         return ConnectionFailureStage::Tcp;
     }
     if normalized.contains("certificate")
         || normalized.contains("tls")
         || normalized.contains("ssl")
+        || normalized.contains("x509")
+        || normalized.contains("self signed")
+        || normalized.contains("self-signed")
+        || normalized.contains("bad certificate")
     {
         return ConnectionFailureStage::Tls;
     }
@@ -108,6 +175,14 @@ pub(super) fn classify_connection_failure(
         || normalized.contains("password")
         || normalized.contains("access denied")
         || normalized.contains("auth failed")
+        || normalized.contains("login failed")
+        || normalized.contains("invalid credentials")
+        || normalized.contains("unauthorized")
+        || normalized.contains("permission denied")
+        || normalized.contains("no pg_hba.conf entry")
+        || normalized.contains("invalid username")
+        || normalized.contains("wrong password")
+        || normalized.contains("role") && normalized.contains("does not exist")
     {
         return ConnectionFailureStage::Authentication;
     }
@@ -121,43 +196,91 @@ pub(super) fn classify_connection_failure(
     if normalized.contains("timed out") || normalized.contains("timeout") {
         return ConnectionFailureStage::Timeout;
     }
+    if normalized.contains("unable to open database file")
+        || normalized.contains("file is not a database")
+        || normalized.contains("database disk image is malformed")
+        || normalized.contains("no such file")
+        || normalized.contains("driver")
+        || normalized.contains("unsupported")
+    {
+        return ConnectionFailureStage::Driver;
+    }
     ConnectionFailureStage::Unknown
 }
 
-pub(super) fn format_connection_runtime_error(
+/// Classify a driver error into a structured `{stage, message, hint}` payload.
+/// `message` stays a short human sentence; `hint` tells the user what to check
+/// next. For unclassified errors the raw driver text moves into `hint` so the
+/// headline stays readable.
+pub(super) fn connection_error_info(
     config: &ConnectionConfig,
     error: impl std::fmt::Display,
-) -> String {
+) -> ConnectionErrorInfo {
     let engine = connection_engine_label(config.db_type);
     let raw = error.to_string();
     let normalized = raw.to_ascii_lowercase();
 
-    match classify_connection_failure(config, &normalized) {
-        ConnectionFailureStage::Dns => format!(
-            "Connection failed at DNS lookup: the {} host name could not be resolved.", engine
+    let (stage, message, hint) = match classify_connection_failure(config, &normalized) {
+        ConnectionFailureStage::Dns => (
+            ConnectionFailureStage::Dns,
+            format!("Could not resolve the {} host name.", engine),
+            "Check the host name for typos and verify DNS or VPN access to the network."
+                .to_string(),
         ),
-        ConnectionFailureStage::Tcp => format!(
-            "Connection failed at TCP: the {} server refused or could not accept the host/port connection.", engine
+        ConnectionFailureStage::Tcp => (
+            ConnectionFailureStage::Tcp,
+            format!("The {} server refused the connection.", engine),
+            "Verify the host and port, that the server is running, and that no firewall blocks the port."
+                .to_string(),
         ),
-        ConnectionFailureStage::Tunnel => format!(
-            "Connection failed at SSH tunnel: verify the bastion host, SSH credentials, and forwarding settings for {}.", engine
+        ConnectionFailureStage::Tunnel => (
+            ConnectionFailureStage::Tunnel,
+            "The SSH tunnel could not be established.".to_string(),
+            "Check the bastion host, SSH credentials, and forwarding settings."
+                .to_string(),
         ),
-        ConnectionFailureStage::Tls => format!(
-            "Connection failed at TLS: {} certificate or SSL negotiation failed.", engine
+        ConnectionFailureStage::Tls => (
+            ConnectionFailureStage::Tls,
+            format!("TLS negotiation with {} failed.", engine),
+            "Review the SSL mode and certificate settings, or try disabling SSL for a local server."
+                .to_string(),
         ),
-        ConnectionFailureStage::Authentication => format!(
-            "Connection failed at authentication: verify the {} username and password.", engine
+        ConnectionFailureStage::Authentication => (
+            ConnectionFailureStage::Authentication,
+            "Authentication failed.".to_string(),
+            format!("Check the {} username and password, and that the account is allowed to connect.", engine),
         ),
-        ConnectionFailureStage::DatabaseSelection => format!(
-            "Connection failed at database selection: the requested {} database was not found.", engine
+        ConnectionFailureStage::DatabaseSelection => (
+            ConnectionFailureStage::DatabaseSelection,
+            format!("The requested {} database was not found.", engine),
+            "Check the database name, or leave it blank to connect without selecting one."
+                .to_string(),
         ),
-        ConnectionFailureStage::Timeout => format!(
-            "Connection timed out: {} did not respond before the deadline.", engine
+        ConnectionFailureStage::Timeout => (
+            ConnectionFailureStage::Timeout,
+            format!("{} did not respond before the deadline.", engine),
+            "Check that the server is reachable and not overloaded, then retry."
+                .to_string(),
         ),
-        ConnectionFailureStage::Unknown => format!(
-            "Failed to connect to {}. Please verify the host, port, credentials, and database settings. (Reason: {})",
-            engine, raw
+        ConnectionFailureStage::Driver => (
+            ConnectionFailureStage::Driver,
+            format!("The {} driver could not complete the connection.", engine),
+            format!("Reason: {}", raw),
         ),
+        ConnectionFailureStage::Unknown => (
+            ConnectionFailureStage::Unknown,
+            format!("Failed to connect to {}.", engine),
+            format!(
+                "Verify the host, port, credentials, and database settings. (Reason: {})",
+                raw
+            ),
+        ),
+    };
+
+    ConnectionErrorInfo {
+        stage: stage.as_str().to_string(),
+        message,
+        hint,
     }
 }
 

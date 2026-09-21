@@ -2,6 +2,8 @@ import type { Command } from "../../stores/commandPaletteStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useEditorPreferencesStore } from "../../stores/editorPreferencesStore";
+import { requestAppConfirmation } from "../../stores/confirmStore";
+import { translateCurrent } from "../../i18n";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../../utils/ui-scale";
 
 // Type for command action context that handlers can use
@@ -145,8 +147,15 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       category: "File",
       action: makeAction(
         "file.close-all-tabs",
-        () => {
-          useUIStore.getState().clearTabs();
+        async () => {
+          const tabCount = useUIStore.getState().tabs.length;
+          if (tabCount === 0) return;
+          const approved = await requestAppConfirmation({
+            title: translateCurrent("confirm.closeAllTabsTitle"),
+            message: translateCurrent("confirm.closeAllTabsMessage", { count: tabCount }),
+            confirmText: translateCurrent("toolbar.clear"),
+          });
+          if (approved) useUIStore.getState().clearTabs();
         },
         ctx,
       ),
@@ -375,9 +384,18 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       category: "Database",
       action: makeAction(
         "database.disconnect",
-        () => {
-          const { activeConnectionId } = useConnectionStore.getState();
-          if (activeConnectionId) {
+        async () => {
+          const { activeConnectionId, connections } = useConnectionStore.getState();
+          if (!activeConnectionId) return;
+          const name =
+            connections.find((connection) => connection.id === activeConnectionId)?.name ??
+            activeConnectionId;
+          const approved = await requestAppConfirmation({
+            title: translateCurrent("confirm.disconnectTitle"),
+            message: translateCurrent("confirm.disconnectMessage", { name }),
+            confirmText: translateCurrent("explorer.disconnect"),
+          });
+          if (approved) {
             void useConnectionStore.getState().disconnectFromDatabase(activeConnectionId);
           }
         },

@@ -1,6 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles/boot-failure.css";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  StorageRecoveryDialog,
+  type StorageHealthReport,
+} from "./components/StorageRecoveryDialog";
 
 interface BootFailureSnapshot {
   source: string;
@@ -68,20 +73,14 @@ function BootFailureScreen({ failure }: { failure: BootFailureSnapshot }) {
           The release build hit a runtime error before the main UI could render.
         </p>
 
-        <div className="boot-failure-error-box">
-          {failure.message}
-        </div>
+        <div className="boot-failure-error-box">{failure.message}</div>
 
         <div className="boot-failure-meta">
           <span>Source: {failure.source}</span>
           <span>At: {failure.at}</span>
         </div>
 
-        {failure.stack ? (
-          <pre className="boot-failure-stack">
-            {failure.stack}
-          </pre>
-        ) : null}
+        {failure.stack ? <pre className="boot-failure-stack">{failure.stack}</pre> : null}
       </div>
     </div>
   );
@@ -139,6 +138,23 @@ document.addEventListener("contextmenu", (event) => {
 
 async function startApp() {
   try {
+    // Corrupt persisted workspace files used to surface as a generic load
+    // error (or a silent abort) long after boot. Probe them up front and gate
+    // the whole UI behind the recovery dialog instead.
+    if ("__TAURI_INTERNALS__" in window) {
+      try {
+        const report = await invoke<StorageHealthReport>("check_storage_health");
+        if (!report.healthy) {
+          (globalThis as TablerBootGlobal).__TABLER_HIDE_BOOT_SCREEN__?.();
+          root.render(<StorageRecoveryDialog report={report} />);
+          return;
+        }
+      } catch (healthError) {
+        // A failed probe must never block startup — the per-store load errors
+        // still surface through the normal error paths.
+        console.error("[TableR boot] storage health check failed", healthError);
+      }
+    }
     if (import.meta.env.MODE === "e2e") {
       await import("@wdio/tauri-plugin");
     }

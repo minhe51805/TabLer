@@ -28,12 +28,8 @@ import { MetricsSidebar } from "./MetricsSidebar/MetricsSidebar";
 import { Sidebar } from "./Sidebar";
 import { TabBar } from "./TabBar";
 // Lazy-loaded components (performance optimization P1/P2)
-const DataGrid = lazy(() =>
-  import("./DataGrid/DataGrid").then((m) => ({ default: m.DataGrid })),
-);
-const ERDiagram = lazy(() =>
-  import("./ERDiagram/ERDiagram").then((m) => ({ default: m.default })),
-);
+const DataGrid = lazy(() => import("./DataGrid/DataGrid").then((m) => ({ default: m.DataGrid })));
+const ERDiagram = lazy(() => import("./ERDiagram/ERDiagram").then((m) => ({ default: m.default })));
 const TerminalDock = lazy(() =>
   import("./TerminalDock/TerminalDock").then((m) => ({
     default: m.TerminalDock,
@@ -50,10 +46,7 @@ import { useAppLayoutStore } from "../stores/appLayoutStore";
 import { useQueryStore } from "../stores/queryStore";
 import { getLastPathSegment } from "../utils/path-utils";
 import { getQueryProfile } from "../utils/query-profile";
-import {
-  readStoredBoards,
-  writeStoredBoards,
-} from "./MetricsBoard/utils/query-builder";
+import { readStoredBoards, writeStoredBoards } from "./MetricsBoard/utils/query-builder";
 import {
   readCustomERDRelationships,
   writeCustomERDRelationships,
@@ -122,10 +115,7 @@ interface AppWorkspacePanelProps {
   onOpenAISlidePanel: (prompt?: string) => void;
   onHandleShowDatabaseWorkspace: () => void;
   onHandleQueryChromeChange: (tabId: string, state: QueryChromeState) => void;
-  onHandleQuerySessionChange: (
-    tabId: string,
-    state: QueryEditorSessionState,
-  ) => void;
+  onHandleQuerySessionChange: (tabId: string, state: QueryEditorSessionState) => void;
   onRunActiveQuery: () => void;
   showTerminalPanel: boolean;
   isExportingDatabase: boolean;
@@ -218,9 +208,7 @@ export function AppWorkspacePanel({
   const capabilityProfile = useConnectionCapabilities(activeConn?.id);
   const canExportDatabase = isCapabilitySupported(capabilityProfile?.capabilities.dataExport);
   const terminalToggleTitle =
-    language === "vi"
-      ? "Bat/tat terminal (Ctrl+`)"
-      : "Toggle terminal (Ctrl+`)";
+    language === "vi" ? "Bat/tat terminal (Ctrl+`)" : "Toggle terminal (Ctrl+`)";
   const workspaceQueryProfile = getQueryProfile(activeConn?.db_type);
   const activeDatabaseTarget =
     currentDatabase ||
@@ -232,10 +220,7 @@ export function AppWorkspacePanel({
     ? {
         connectionId: activeConn.id,
         connectionName:
-          activeConn.name ||
-          activeConn.host ||
-          activeConn.file_path ||
-          activeConn.db_type,
+          activeConn.name || activeConn.host || activeConn.file_path || activeConn.db_type,
         dbType: activeConn.db_type,
         database: currentDatabase || activeConn.database,
         host: activeConn.host,
@@ -246,8 +231,7 @@ export function AppWorkspacePanel({
     : undefined;
   const isWorkspaceOverview = tabs.length === 0 || !activeTab;
   const isERDiagramWorkspace = activeTab?.type === "er-diagram";
-  const isDatabasePanelActive =
-    !isERDiagramWorkspace && leftPanel === "database";
+  const isDatabasePanelActive = !isERDiagramWorkspace && leftPanel === "database";
   const isMetricsPanelActive = !isERDiagramWorkspace && leftPanel === "metrics";
   const isERDiagramPanelActive = activeTab?.type === "er-diagram";
 
@@ -257,8 +241,7 @@ export function AppWorkspacePanel({
   // bouncing back to the launcher. Subscribe reactively so the screen flips the
   // moment the store records the error.
   const connectError = useConnectionStore((state) => state.connectError);
-  const [hasMountedTerminalDock, setHasMountedTerminalDock] =
-    useState(showTerminalPanel);
+  const [hasMountedTerminalDock, setHasMountedTerminalDock] = useState(showTerminalPanel);
   const [showToolbarMore, setShowToolbarMore] = useState(false);
   const [showWorkspaceSync, setShowWorkspaceSync] = useState(false);
   const [showStatusbarShortcuts, setShowStatusbarShortcuts] = useState(() => {
@@ -272,10 +255,7 @@ export function AppWorkspacePanel({
     setShowStatusbarShortcuts((value) => {
       const next = !value;
       try {
-        window.localStorage.setItem(
-          "tabler.statusbar.shortcutsHidden.v1",
-          next ? "0" : "1",
-        );
+        window.localStorage.setItem("tabler.statusbar.shortcutsHidden.v1", next ? "0" : "1");
       } catch {
         /* storage unavailable — state still toggles for this session */
       }
@@ -288,10 +268,7 @@ export function AppWorkspacePanel({
   useEffect(() => {
     if (!showToolbarMore) return;
     const handler = (e: MouseEvent) => {
-      if (
-        toolbarMoreRef.current &&
-        !toolbarMoreRef.current.contains(e.target as Node)
-      ) {
+      if (toolbarMoreRef.current && !toolbarMoreRef.current.contains(e.target as Node)) {
         setShowToolbarMore(false);
       }
     };
@@ -352,15 +329,11 @@ export function AppWorkspacePanel({
       connection: activeConn,
       databaseType: activeConn.db_type,
       database: currentDatabase || activeConn.database,
-      tabs: useUIStore
-        .getState()
-        .tabs.filter((tab) => tab.connectionId === activeConn.id),
+      tabs: useUIStore.getState().tabs.filter((tab) => tab.connectionId === activeConn.id),
       dashboards: readStoredBoards().filter(
         (board) =>
           board.connection_id === activeConn.id &&
-          (!currentDatabase ||
-            !board.database ||
-            board.database === currentDatabase),
+          (!currentDatabase || !board.database || board.database === currentDatabase),
       ),
       erRelationships: readCustomERDRelationships(
         activeConn.id,
@@ -399,11 +372,10 @@ export function AppWorkspacePanel({
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    const databaseLabel = (
-      currentDatabase ||
-      activeConn.database ||
-      "workspace"
-    ).replace(/[^a-z0-9_-]+/gi, "-");
+    const databaseLabel = (currentDatabase || activeConn.database || "workspace").replace(
+      /[^a-z0-9_-]+/gi,
+      "-",
+    );
     link.href = url;
     link.download = `${databaseLabel || "workspace"}.tableworkspace.json`;
     link.click();
@@ -416,8 +388,7 @@ export function AppWorkspacePanel({
   ) => {
     if (!activeConn) return;
     try {
-      const targetDatabase =
-        currentDatabase || activeConn.database || bundle.target.database;
+      const targetDatabase = currentDatabase || activeConn.database || bundle.target.database;
       const existingBoards = readStoredBoards();
       const importedBoards = bundle.dashboards.map((board) => ({
         ...board,
@@ -427,13 +398,14 @@ export function AppWorkspacePanel({
         created_at: Date.parse(board.updatedAt) || Date.now(),
         updated_at: Date.parse(board.updatedAt) || Date.now(),
       }));
-      const retainedBoards = mode === "replace"
-        ? existingBoards.filter(
-            (board) =>
-              board.connection_id !== activeConn.id ||
-              Boolean(targetDatabase && board.database !== targetDatabase),
-          )
-        : existingBoards;
+      const retainedBoards =
+        mode === "replace"
+          ? existingBoards.filter(
+              (board) =>
+                board.connection_id !== activeConn.id ||
+                Boolean(targetDatabase && board.database !== targetDatabase),
+            )
+          : existingBoards;
       writeStoredBoards([...retainedBoards, ...importedBoards]);
       window.dispatchEvent(
         new CustomEvent("metrics-boards-updated", {
@@ -441,37 +413,27 @@ export function AppWorkspacePanel({
         }),
       );
 
-      const importedRelationships = bundle.erViews.flatMap(
-        (view) => view.relationships,
-      );
+      const importedRelationships = bundle.erViews.flatMap((view) => view.relationships);
       if (importedRelationships.length || mode === "replace") {
-        const existingRelationships = readCustomERDRelationships(
-          activeConn.id,
-          targetDatabase,
-        );
-        const sourceRelationships = mode === "replace"
-          ? importedRelationships
-          : [...existingRelationships, ...importedRelationships];
+        const existingRelationships = readCustomERDRelationships(activeConn.id, targetDatabase);
+        const sourceRelationships =
+          mode === "replace"
+            ? importedRelationships
+            : [...existingRelationships, ...importedRelationships];
         const deduplicated = new Map(
-          sourceRelationships.map(
-            (relationship) => [
-              `${relationship.fromTable}|${relationship.fromColumn}|${relationship.toTable}|${relationship.toColumn}`,
-              relationship,
-            ],
-          ),
+          sourceRelationships.map((relationship) => [
+            `${relationship.fromTable}|${relationship.fromColumn}|${relationship.toTable}|${relationship.toColumn}`,
+            relationship,
+          ]),
         );
-        writeCustomERDRelationships(activeConn.id, targetDatabase, [
-          ...deduplicated.values(),
-        ]);
+        writeCustomERDRelationships(activeConn.id, targetDatabase, [...deduplicated.values()]);
       }
 
       if (mode === "replace") {
         useUIStore
           .getState()
           .tabs.filter(
-            (tab) =>
-              tab.connectionId === activeConn.id &&
-              Boolean(tab.workspaceEntityId),
+            (tab) => tab.connectionId === activeConn.id && Boolean(tab.workspaceEntityId),
           )
           .forEach((tab) => useUIStore.getState().removeTab(tab.id));
       }
@@ -490,9 +452,7 @@ export function AppWorkspacePanel({
         });
       });
 
-      useAppLayoutStore
-        .getState()
-        .setIsSidebarCollapsed(bundle.layout.sidebarCollapsed);
+      useAppLayoutStore.getState().setIsSidebarCollapsed(bundle.layout.sidebarCollapsed);
       useAppLayoutStore.getState().setSidebarWidth(bundle.layout.sidebarWidth);
       useAppLayoutStore.getState().setLeftPanel(bundle.layout.leftPanel);
       useUIStore.getState().setError(null);
@@ -527,20 +487,16 @@ export function AppWorkspacePanel({
       (isConnecting || loadingTimeoutExceeded || activeConnectError)
     ) {
       const connectionDetail =
-        currentDatabase ||
-        activeConn.database ||
-        activeConn.host ||
-        activeConn.file_path ||
-        "";
+        currentDatabase || activeConn.database || activeConn.host || activeConn.file_path || "";
       // The connecting screen owns the failure state too: a real connect failure
       // (or a 30s timeout) flips it to an in-place error (message + Try Again +
       // Go to Launcher) instead of bouncing back to the launcher or popping a
       // separate, disconnected error card in the workspace pane.
-      const connectingError = activeConnectError
-        ? activeConnectError.message
-        : loadingTimeoutExceeded
-          ? t("workspace.error.timeout")
-          : null;
+      const connectingError =
+        activeConnectError ??
+        (loadingTimeoutExceeded
+          ? { stage: "timeout" as const, message: t("workspace.error.timeout"), hint: "" }
+          : null);
       return (
         <WorkspaceConnecting
           name={activeConn.name}
@@ -579,15 +535,9 @@ export function AppWorkspacePanel({
               </div>
 
               <div className="workspace-empty-copy">
-                <span className="workspace-empty-kicker">
-                  {t("workspace.empty.kicker")}
-                </span>
-                <h2 className="workspace-empty-title">
-                  {t("workspace.empty.title")}
-                </h2>
-                <p className="workspace-empty-description">
-                  {t("workspace.empty.description")}
-                </p>
+                <span className="workspace-empty-kicker">{t("workspace.empty.kicker")}</span>
+                <h2 className="workspace-empty-title">{t("workspace.empty.title")}</h2>
+                <p className="workspace-empty-description">{t("workspace.empty.description")}</p>
               </div>
             </div>
 
@@ -636,9 +586,7 @@ export function AppWorkspacePanel({
               </div>
 
               <div className="workspace-empty-card">
-                <span className="workspace-empty-card-kicker">
-                  {t("workspace.empty.workflow")}
-                </span>
+                <span className="workspace-empty-card-kicker">{t("workspace.empty.workflow")}</span>
                 <strong className="workspace-empty-card-title">
                   {t("workspace.empty.connectToQuery")}
                 </strong>
@@ -661,15 +609,9 @@ export function AppWorkspacePanel({
                 <Sparkles className="workspace-ready-glyph w-5 h-5" />
               </div>
               <div className="workspace-ready-header-copy">
-                <span className="workspace-ready-kicker">
-                  {t("workspace.ready.kicker")}
-                </span>
-                <h2 className="workspace-ready-title">
-                  {t("workspace.ready.title")}
-                </h2>
-                <p className="workspace-ready-desc">
-                  {t("workspace.ready.description")}
-                </p>
+                <span className="workspace-ready-kicker">{t("workspace.ready.kicker")}</span>
+                <h2 className="workspace-ready-title">{t("workspace.ready.title")}</h2>
+                <p className="workspace-ready-desc">{t("workspace.ready.description")}</p>
               </div>
             </div>
             <div className="workspace-ready-header-right">
@@ -682,20 +624,12 @@ export function AppWorkspacePanel({
                 </strong>
               </div>
               <div className="workspace-ready-meta-chip">
-                <span className="workspace-ready-meta-label">
-                  {t("workspace.ready.database")}
-                </span>
-                <strong className="workspace-ready-meta-value">
-                  {activeDatabaseTarget}
-                </strong>
+                <span className="workspace-ready-meta-label">{t("workspace.ready.database")}</span>
+                <strong className="workspace-ready-meta-value">{activeDatabaseTarget}</strong>
               </div>
               <div className="workspace-ready-meta-chip">
-                <span className="workspace-ready-meta-label">
-                  {t("workspace.ready.engine")}
-                </span>
-                <strong className="workspace-ready-meta-value">
-                  {activeEngineLabel}
-                </strong>
+                <span className="workspace-ready-meta-label">{t("workspace.ready.engine")}</span>
+                <strong className="workspace-ready-meta-value">{activeEngineLabel}</strong>
               </div>
             </div>
           </div>
@@ -759,9 +693,7 @@ export function AppWorkspacePanel({
                 <Sparkles className="w-4 h-4" />
               </div>
               <div className="workspace-ready-action-body">
-                <span className="workspace-ready-action-title">
-                  {t("workspace.ready.aiTitle")}
-                </span>
+                <span className="workspace-ready-action-title">{t("workspace.ready.aiTitle")}</span>
                 <span className="workspace-ready-action-kicker">
                   {t("workspace.ready.aiKicker")}
                 </span>
@@ -807,12 +739,8 @@ export function AppWorkspacePanel({
                 tabSource={tab.source}
                 initialState={querySessionByTab[tab.id]}
                 runRequestNonce={queryRunRequestByTab[tab.id] ?? 0}
-                onChromeChange={(state) =>
-                  onHandleQueryChromeChange(tab.id, state)
-                }
-                onStateChange={(state) =>
-                  onHandleQuerySessionChange(tab.id, state)
-                }
+                onChromeChange={(state) => onHandleQueryChromeChange(tab.id, state)}
+                onStateChange={(state) => onHandleQuerySessionChange(tab.id, state)}
               />
             </Suspense>
           </ErrorBoundary>
@@ -869,11 +797,7 @@ export function AppWorkspacePanel({
         return (
           <ErrorBoundary>
             <Suspense fallback={<LazyPanelFallback />}>
-              <ERDiagram
-                key={tab.id}
-                connectionId={tab.connectionId}
-                database={tab.database}
-              />
+              <ERDiagram key={tab.id} connectionId={tab.connectionId} database={tab.database} />
             </Suspense>
           </ErrorBoundary>
         );
@@ -970,13 +894,9 @@ export function AppWorkspacePanel({
         type="button"
         className="workspace-sidebar-rail-btn"
         onClick={onToggleSidebar}
-        title={
-          compact ? t("sidebar.expandSidebar") : t("titlebar.collapseSidebar")
-        }
+        title={compact ? t("sidebar.expandSidebar") : t("titlebar.collapseSidebar")}
       >
-        <PanelRightClose
-          className={`w-3.5 h-3.5 ${compact ? "rotate-180" : ""}`}
-        />
+        <PanelRightClose className={`w-3.5 h-3.5 ${compact ? "rotate-180" : ""}`} />
         <span className="sr-only">{t("titlebar.collapseSidebar")}</span>
       </button>
     </div>
@@ -1008,11 +928,7 @@ export function AppWorkspacePanel({
         <div className="error-bar">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span className="flex-1">{error}</span>
-          <button
-            type="button"
-            onClick={onClearError}
-            className="error-bar-close"
-          >
+          <button type="button" onClick={onClearError} className="error-bar-close">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -1022,11 +938,7 @@ export function AppWorkspacePanel({
         <aside
           className={`sidebar ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isERDiagramWorkspace ? "sidebar-er-focus" : ""}`}
           style={{
-            width: isSidebarCollapsed
-              ? 50
-              : isERDiagramWorkspace
-                ? 296
-                : sidebarWidth,
+            width: isSidebarCollapsed ? 50 : isERDiagramWorkspace ? 296 : sidebarWidth,
           }}
         >
           {isSidebarCollapsed ? (
@@ -1036,10 +948,7 @@ export function AppWorkspacePanel({
               {renderSidebarNav(false)}
 
               {isERDiagramWorkspace ? (
-                <div
-                  className="workspace-sidebar-panel erd-sidebar-host"
-                  data-erd-sidebar-host
-                />
+                <div className="workspace-sidebar-panel erd-sidebar-host" data-erd-sidebar-host />
               ) : (
                 <div className="workspace-sidebar-panel">
                   <ErrorBoundary>
@@ -1066,192 +975,183 @@ export function AppWorkspacePanel({
 
         <main className="main-content">
           {!isERDiagramWorkspace && (
-          <div className="workspace-toolbar">
-            <div className="workspace-toolbar-main">
-              <span
-                className="workspace-toolbar-title"
-                title={activeTab?.title || undefined}
-              >
-                {activeTab?.title ||
-                  (isConnected
-                    ? t("workspace.readyForQueries")
-                    : t("titlebar.noActiveConnection"))}
-              </span>
-              {activeQueryChrome?.executionTimeMs !== undefined && (
-                <div className="workspace-toolbar-status">
-                  <span className="workspace-toolbar-status-pill success">
-                    {t("workspace.status.success")}
-                  </span>
-                  <span className="workspace-toolbar-status-pill">
-                    {activeQueryChrome.executionTimeMs}ms
-                  </span>
-                  {typeof activeQueryChrome.rowCount === "number" &&
-                    activeQueryChrome.rowCount > 0 && (
-                      <span className="workspace-toolbar-status-pill">
-                        {formatCountLabel(language, activeQueryChrome.rowCount, {
-                          one: "row",
-                          other: "rows",
-                          vi: "dòng",
-                          zh: "行",
-                          tr: "satir",
-                          ko: "개 행",
-                        })}
-                      </span>
-                    )}
-                  {typeof activeQueryChrome.affectedRows === "number" &&
-                    activeQueryChrome.affectedRows > 0 && (
-                      <span className="workspace-toolbar-status-pill warning">
-                        {t("workspace.status.affected", {
-                          count: activeQueryChrome.affectedRows,
-                        })}
-                      </span>
-                    )}
-                  {typeof activeQueryChrome.queryCount === "number" &&
-                    activeQueryChrome.queryCount > 1 && (
-                      <span className="workspace-toolbar-status-pill">
-                        {t("workspace.status.batch", {
-                          count: activeQueryChrome.queryCount,
-                        })}
-                      </span>
-                    )}
-                </div>
-              )}
-            </div>
+            <div className="workspace-toolbar">
+              <div className="workspace-toolbar-main">
+                <span className="workspace-toolbar-title" title={activeTab?.title || undefined}>
+                  {activeTab?.title ||
+                    (isConnected
+                      ? t("workspace.readyForQueries")
+                      : t("titlebar.noActiveConnection"))}
+                </span>
+                {activeQueryChrome?.executionTimeMs !== undefined && (
+                  <div className="workspace-toolbar-status">
+                    <span className="workspace-toolbar-status-pill success">
+                      {t("workspace.status.success")}
+                    </span>
+                    <span className="workspace-toolbar-status-pill">
+                      {activeQueryChrome.executionTimeMs}ms
+                    </span>
+                    {typeof activeQueryChrome.rowCount === "number" &&
+                      activeQueryChrome.rowCount > 0 && (
+                        <span className="workspace-toolbar-status-pill">
+                          {formatCountLabel(language, activeQueryChrome.rowCount, {
+                            one: "row",
+                            other: "rows",
+                            vi: "dòng",
+                            zh: "行",
+                            tr: "satir",
+                            ko: "개 행",
+                          })}
+                        </span>
+                      )}
+                    {typeof activeQueryChrome.affectedRows === "number" &&
+                      activeQueryChrome.affectedRows > 0 && (
+                        <span className="workspace-toolbar-status-pill warning">
+                          {t("workspace.status.affected", {
+                            count: activeQueryChrome.affectedRows,
+                          })}
+                        </span>
+                      )}
+                    {typeof activeQueryChrome.queryCount === "number" &&
+                      activeQueryChrome.queryCount > 1 && (
+                        <span className="workspace-toolbar-status-pill">
+                          {t("workspace.status.batch", {
+                            count: activeQueryChrome.queryCount,
+                          })}
+                        </span>
+                      )}
+                  </div>
+                )}
+              </div>
 
-            <div className="workspace-toolbar-actions">
-              {isConnected && (
-                <>
-                  {!isMetricsWorkspace && (
-                    <button
-                      type="button"
-                      onClick={onNewQuery}
-                      className="toolbar-btn primary icon-only"
-                      title={t("toolbar.newQueryShortcut")}
-                      aria-label={t("toolbar.newQuery")}
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-
-                  <div className="workspace-toolbar-utility">
-                    <button
-                      type="button"
-                      onClick={onToggleTerminalPanel}
-                      className={`toolbar-btn icon-only ${showTerminalPanel ? "is-active" : ""}`}
-                      title={terminalToggleTitle}
-                    >
-                      <Terminal className="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => onOpenAISlidePanel()}
-                      className="toolbar-btn icon-only"
-                      title={t("toolbar.askAiShortcut")}
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                    </button>
-
-                    <div
-                      className="workspace-toolbar-more"
-                      ref={toolbarMoreRef}
-                    >
+              <div className="workspace-toolbar-actions">
+                {isConnected && (
+                  <>
+                    {!isMetricsWorkspace && (
                       <button
                         type="button"
-                        onClick={() => setShowToolbarMore((v) => !v)}
-                        className={`toolbar-btn icon-only ${showToolbarMore ? "is-active" : ""}`}
-                        title={t("toolbar.moreActions")}
-                        aria-haspopup="menu"
-                        aria-expanded={showToolbarMore}
+                        onClick={onNewQuery}
+                        className="toolbar-btn primary icon-only"
+                        title={t("toolbar.newQueryShortcut")}
+                        aria-label={t("toolbar.newQuery")}
                       >
-                        <MoreHorizontal className="w-3.5 h-3.5" />
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    <div className="workspace-toolbar-utility">
+                      <button
+                        type="button"
+                        onClick={onToggleTerminalPanel}
+                        className={`toolbar-btn icon-only ${showTerminalPanel ? "is-active" : ""}`}
+                        title={terminalToggleTitle}
+                      >
+                        <Terminal className="w-3.5 h-3.5" />
                       </button>
 
-                      {showToolbarMore && (
-                        <div
-                          className="workspace-toolbar-more-menu"
-                          role="menu"
+                      <button
+                        type="button"
+                        onClick={() => onOpenAISlidePanel()}
+                        className="toolbar-btn icon-only"
+                        title={t("toolbar.askAiShortcut")}
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                      </button>
+
+                      <div className="workspace-toolbar-more" ref={toolbarMoreRef}>
+                        <button
+                          type="button"
+                          onClick={() => setShowToolbarMore((v) => !v)}
+                          className={`toolbar-btn icon-only ${showToolbarMore ? "is-active" : ""}`}
+                          title={t("toolbar.moreActions")}
+                          aria-haspopup="menu"
+                          aria-expanded={showToolbarMore}
                         >
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="workspace-toolbar-more-item"
-                            onClick={() => {
-                              setShowToolbarMore(false);
-                              void onRefreshWorkspace();
-                            }}
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                            <span>{t("toolbar.refreshWorkspace")}</span>
-                          </button>
+                          <MoreHorizontal className="w-3.5 h-3.5" />
+                        </button>
 
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="workspace-toolbar-more-item"
-                            onClick={() => {
-                              setShowToolbarMore(false);
-                              onExportDatabase();
-                            }}
-                            disabled={!isConnected || !canExportDatabase || isExportingDatabase}
-                          >
-                            {isExportingDatabase ? (
-                              <LoaderCircle className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
+                        {showToolbarMore && (
+                          <div className="workspace-toolbar-more-menu" role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="workspace-toolbar-more-item"
+                              onClick={() => {
+                                setShowToolbarMore(false);
+                                void onRefreshWorkspace();
+                              }}
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                              <span>{t("toolbar.refreshWorkspace")}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="workspace-toolbar-more-item"
+                              onClick={() => {
+                                setShowToolbarMore(false);
+                                onExportDatabase();
+                              }}
+                              disabled={!isConnected || !canExportDatabase || isExportingDatabase}
+                            >
+                              {isExportingDatabase ? (
+                                <LoaderCircle className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Download className="w-3.5 h-3.5" />
+                              )}
+                              <span>{t("toolbar.exportDatabase")}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="workspace-toolbar-more-item"
+                              onClick={() => {
+                                setShowToolbarMore(false);
+                                exportWorkspaceBundle();
+                              }}
+                              disabled={!activeConn}
+                            >
                               <Download className="w-3.5 h-3.5" />
-                            )}
-                            <span>{t("toolbar.exportDatabase")}</span>
-                          </button>
+                              <span>{t("workspace.bundle.export")}</span>
+                            </button>
 
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="workspace-toolbar-more-item"
-                            onClick={() => {
-                              setShowToolbarMore(false);
-                              exportWorkspaceBundle();
-                            }}
-                            disabled={!activeConn}
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>{t("workspace.bundle.export")}</span>
-                          </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="workspace-toolbar-more-item"
+                              onClick={() => {
+                                setShowToolbarMore(false);
+                                workspaceBundleInputRef.current?.click();
+                              }}
+                              disabled={!activeConn}
+                            >
+                              <Upload className="w-3.5 h-3.5" />
+                              <span>{t("workspace.bundle.import")}</span>
+                            </button>
 
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="workspace-toolbar-more-item"
-                            onClick={() => {
-                              setShowToolbarMore(false);
-                              workspaceBundleInputRef.current?.click();
-                            }}
-                            disabled={!activeConn}
-                          >
-                            <Upload className="w-3.5 h-3.5" />
-                            <span>{t("workspace.bundle.import")}</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="workspace-toolbar-more-item"
-                            onClick={() => {
-                              setShowToolbarMore(false);
-                              setShowWorkspaceSync(true);
-                            }}
-                            disabled={!activeConn}
-                          >
-                            <Cloud className="w-3.5 h-3.5" />
-                            <span>Sync workspace</span>
-                          </button>
-                        </div>
-                      )}
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="workspace-toolbar-more-item"
+                              onClick={() => {
+                                setShowToolbarMore(false);
+                                setShowWorkspaceSync(true);
+                              }}
+                              disabled={!activeConn}
+                            >
+                              <Cloud className="w-3.5 h-3.5" />
+                              <span>Sync workspace</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </>
-              )}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
           )}
 
           <TabBar
@@ -1261,9 +1161,7 @@ export function AppWorkspacePanel({
             onClearVisibleTabs={onClearVisibleTabs}
           />
 
-          <div
-            className={`tab-content ${isWorkspaceOverview ? "is-workspace-overview" : ""}`}
-          >
+          <div className={`tab-content ${isWorkspaceOverview ? "is-workspace-overview" : ""}`}>
             {isWorkspaceOverview ? (
               renderTabContent()
             ) : (
@@ -1283,9 +1181,7 @@ export function AppWorkspacePanel({
 
           {(showTerminalPanel || hasMountedTerminalDock) && (
             <ErrorBoundary>
-              <Suspense
-                fallback={showTerminalPanel ? <LazyTerminalFallback /> : null}
-              >
+              <Suspense fallback={showTerminalPanel ? <LazyTerminalFallback /> : null}>
                 <TerminalDock
                   isOpen={showTerminalPanel}
                   onClose={onToggleTerminalPanel}
@@ -1299,9 +1195,7 @@ export function AppWorkspacePanel({
 
       <footer className="statusbar">
         <div className="statusbar-left">
-          <span
-            className={`statusbar-indicator ${isConnected ? "connected" : ""}`}
-          >
+          <span className={`statusbar-indicator ${isConnected ? "connected" : ""}`}>
             <span className="statusbar-dot" />
             {isConnected ? "Connected" : "Disconnected"}
           </span>

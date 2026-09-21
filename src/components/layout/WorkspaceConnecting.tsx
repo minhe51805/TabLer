@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Database, Home, RefreshCw, X } from "lucide-react";
 import { useI18n } from "../../i18n";
+import { getConnectionErrorCopy } from "../connection-error-copy";
+import type { ConnectionErrorDetails } from "../../utils/connection-error";
 
 interface WorkspaceConnectingProps {
   /** Connection display name (panel title). */
@@ -11,10 +13,11 @@ interface WorkspaceConnectingProps {
   /**
    * When set, the SAME full-screen composition keeps its glyph + identity but
    * swaps only the area below the title: the shimmering "still connecting"
-   * skeleton becomes the connection-error message plus recovery actions — so a
-   * failed connect never detaches into a separate floating card.
+   * skeleton becomes the classified connection error (stage badge + message +
+   * hint) plus recovery actions — so a failed connect never detaches into a
+   * separate floating card.
    */
-  error?: string | null;
+  error?: ConnectionErrorDetails | null;
   /** Retry / reconnect. Rendered as the primary action when `error` is set. */
   onRetry?: () => void;
   /** Return to the main launcher. The quiet escape hatch when `error` is set. */
@@ -43,7 +46,8 @@ export function WorkspaceConnecting({
   onGoToLauncher,
   onCancel,
 }: WorkspaceConnectingProps) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const errorCopy = getConnectionErrorCopy(language);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const hasError = Boolean(error);
 
@@ -95,12 +99,23 @@ export function WorkspaceConnecting({
           )}
         </div>
 
-        {/* Below the title: loading skeleton while connecting, error + actions on failure */}
         {hasError ? (
           <div className="flex w-full flex-col items-center gap-4">
-            <p className="max-h-32 overflow-y-auto text-center text-[13px] leading-relaxed text-red-500 break-words">
-              {error || t("workspace.error.generic")}
-            </p>
+            <div className="flex w-full flex-col items-center gap-2">
+              {error?.stage ? (
+                <span className="workspace-connecting-stage">
+                  {errorCopy.stageLabels[error.stage] ?? errorCopy.stageLabels.unknown}
+                </span>
+              ) : null}
+              <p className="max-h-32 overflow-y-auto text-center text-[13px] leading-relaxed text-red-500 break-words">
+                {error?.message || t("workspace.error.generic")}
+              </p>
+              {error?.hint ? (
+                <p className="workspace-connecting-hint">
+                  <strong>{errorCopy.hintLabel}:</strong> {error.hint}
+                </p>
+              ) : null}
+            </div>
             <div className="flex w-full gap-2">
               {onRetry && (
                 <button

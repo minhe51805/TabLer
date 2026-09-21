@@ -1,4 +1,5 @@
 import { Plus, Trash2 } from "lucide-react";
+import { useI18n } from "../../i18n";
 
 export interface ColumnDraft {
   id: string;
@@ -13,11 +14,7 @@ interface ColumnEditorProps {
   columns: ColumnDraft[];
   onAddColumn: () => void;
   onRemoveColumn: (columnId: string) => void;
-  onColumnChange: (
-    columnId: string,
-    field: keyof ColumnDraft,
-    value: string | boolean,
-  ) => void;
+  onColumnChange: (columnId: string, field: keyof ColumnDraft, value: string | boolean) => void;
 }
 
 // Factory helper shared by the modal form; not a component.
@@ -39,16 +36,17 @@ export function ColumnEditor({
   onRemoveColumn,
   onColumnChange,
 }: ColumnEditorProps) {
+  const { t } = useI18n();
   return (
     <div className="schema-wizard-section">
       <div className="schema-wizard-section-head">
         <div>
-          <h3>Columns</h3>
-          <p>Define the starter shape of the table.</p>
+          <h3>{t("schemaWizard.columnsTitle")}</h3>
+          <p>{t("schemaWizard.columnsHint")}</p>
         </div>
         <button type="button" className="btn btn-secondary" onClick={onAddColumn}>
           <Plus className="w-4 h-4" />
-          Add Column
+          {t("schemaWizard.addColumn")}
         </button>
       </div>
 
@@ -57,29 +55,25 @@ export function ColumnEditor({
           <div key={column.id} className="schema-wizard-column-card">
             <div className="schema-wizard-grid compact">
               <label className="field-group">
-                <span className="field-label">Name</span>
+                <span className="field-label">{t("schemaWizard.columnName")}</span>
                 <input
                   value={column.name}
-                  onChange={(event) =>
-                    onColumnChange(column.id, "name", event.target.value)
-                  }
+                  onChange={(event) => onColumnChange(column.id, "name", event.target.value)}
                   placeholder="id"
                   className="schema-wizard-input"
                 />
               </label>
               <label className="field-group">
-                <span className="field-label">Type</span>
+                <span className="field-label">{t("schemaWizard.columnType")}</span>
                 <input
                   value={column.dataType}
-                  onChange={(event) =>
-                    onColumnChange(column.id, "dataType", event.target.value)
-                  }
+                  onChange={(event) => onColumnChange(column.id, "dataType", event.target.value)}
                   placeholder="uuid"
                   className="schema-wizard-input"
                 />
               </label>
               <label className="field-group">
-                <span className="field-label">Default</span>
+                <span className="field-label">{t("schemaWizard.columnDefault")}</span>
                 <input
                   value={column.defaultValue}
                   onChange={(event) =>
@@ -96,11 +90,9 @@ export function ColumnEditor({
                 <input
                   type="checkbox"
                   checked={!column.nullable}
-                  onChange={(event) =>
-                    onColumnChange(column.id, "nullable", !event.target.checked)
-                  }
+                  onChange={(event) => onColumnChange(column.id, "nullable", !event.target.checked)}
                 />
-                <span>Not null</span>
+                <span>{t("schemaWizard.notNull")}</span>
               </label>
               <label className="schema-wizard-checkbox">
                 <input
@@ -110,14 +102,14 @@ export function ColumnEditor({
                     onColumnChange(column.id, "primaryKey", event.target.checked)
                   }
                 />
-                <span>Primary key</span>
+                <span>{t("schemaWizard.primaryKey")}</span>
               </label>
               <button
                 type="button"
                 onClick={() => onRemoveColumn(column.id)}
                 className="schema-wizard-remove"
                 disabled={columns.length <= 1}
-                title="Remove column"
+                title={t("schemaWizard.removeColumn")}
               >
                 <Trash2 className="w-4 h-4" />
               </button>

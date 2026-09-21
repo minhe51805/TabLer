@@ -55,7 +55,10 @@ impl AIStorage {
 
     pub fn new() -> Result<Self> {
         let data_dir = crate::utils::paths::resolve_data_dir()?;
+        Self::from_data_dir(data_dir)
+    }
 
+    pub(crate) fn from_data_dir(data_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&data_dir)?;
 
         Ok(Self {

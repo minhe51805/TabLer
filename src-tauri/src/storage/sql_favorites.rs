@@ -32,7 +32,10 @@ pub struct SqlFavoritesStorage {
 impl SqlFavoritesStorage {
     pub fn new() -> Result<Self, String> {
         let data_dir = crate::utils::paths::resolve_data_dir().map_err(|e| e.to_string())?;
+        Self::from_data_dir(data_dir)
+    }
 
+    pub(crate) fn from_data_dir(data_dir: PathBuf) -> Result<Self, String> {
         fs::create_dir_all(&data_dir)
             .map_err(|e| format!("Failed to create data directory: {e}"))?;
 

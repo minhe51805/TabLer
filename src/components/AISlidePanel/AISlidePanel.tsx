@@ -1730,7 +1730,7 @@ export function AISlidePanel({
           setSlashActiveIndex((current) => Math.max(current - 1, 0));
           return;
         }
-        if (event.key === "Enter" || event.key === "Tab") {
+        if ((event.key === "Enter" || event.key === "Tab") && !event.nativeEvent.isComposing) {
           event.preventDefault();
           commitSlashCommand(slashMatches[activeIndex].name);
           return;
@@ -1741,7 +1741,16 @@ export function AISlidePanel({
           return;
         }
       }
-      if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+      // Enter sends, Shift/Ctrl/Meta+Enter inserts a newline — the chat-app
+      // convention. `isComposing` guards IME input (Vietnamese/Korean/Chinese):
+      // the Enter that commits a composed word must not send the message.
+      if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.nativeEvent.isComposing
+      ) {
         event.preventDefault();
         void handleGenerate();
       }

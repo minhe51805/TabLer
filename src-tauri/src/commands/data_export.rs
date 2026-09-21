@@ -79,6 +79,9 @@ pub struct TableDataExportResult {
 struct TableExportProgress {
     operation_id: String,
     exported_rows: u64,
+    /// 1-based index of the batch just written, so the UI can show progress
+    /// even before the first row count is meaningful.
+    batch: u64,
 }
 
 #[tauri::command]
@@ -170,6 +173,7 @@ async fn stream_table_export(
         .map_err(|e| format!("Failed to create temporary export file: {e}"))?;
     let mut wrote_header = false;
     let mut exported_rows = 0_u64;
+    let mut batch_index = 0_u64;
     let mut batches = driver.export_table_rows(
         &request.table,
         request.database.as_deref(),
@@ -200,11 +204,13 @@ async fn stream_table_export(
             .map_err(|e| format!("Failed to write export batch: {e}"))?;
         wrote_header = true;
         exported_rows += batch.rows.len() as u64;
+        batch_index += 1;
         let _ = app.emit(
             "table-export-progress",
             TableExportProgress {
                 operation_id: operation_id.to_string(),
                 exported_rows,
+                batch: batch_index,
             },
         );
     }

@@ -41,7 +41,11 @@ export function truncateQuery(sql: string, maxChars = 100): string {
   return `${compact.slice(0, maxChars - 1)}...`;
 }
 
-export function getHistoryCopy(language: string, activeConnectionId: string | null, selectedCount: number) {
+export function getHistoryCopy(
+  language: string,
+  activeConnectionId: string | null,
+  selectedCount: number,
+) {
   if (language === "vi") {
     return {
       panelTitle: "Lich su truy van",
@@ -56,11 +60,6 @@ export function getHistoryCopy(language: string, activeConnectionId: string | nu
       selectAllVisible: "Chon tat ca dang hien",
       deleteSelected: "Xoa da chon",
       selectedCount: `${selectedCount} muc da chon`,
-      clearConfirm: activeConnectionId
-        ? "Xoa toan bo lich su truy van cua connection hien tai?"
-        : "Xoa toan bo lich su truy van?",
-      deleteConfirm: "Xoa muc lich su truy van nay?",
-      deleteSelectedConfirm: `Xoa ${selectedCount} muc da chon?`,
       today: "Hom nay",
       yesterday: "Hom qua",
       unknownDay: "Khong ro ngay",
@@ -84,11 +83,6 @@ export function getHistoryCopy(language: string, activeConnectionId: string | nu
     selectAllVisible: "Select visible",
     deleteSelected: "Delete selected",
     selectedCount: `${selectedCount} selected`,
-    clearConfirm: activeConnectionId
-      ? "Clear the query history for the current connection?"
-      : "Clear the entire query history?",
-    deleteConfirm: "Delete this query history entry?",
-    deleteSelectedConfirm: `Delete ${selectedCount} selected entries?`,
     today: "Today",
     yesterday: "Yesterday",
     unknownDay: "Unknown day",

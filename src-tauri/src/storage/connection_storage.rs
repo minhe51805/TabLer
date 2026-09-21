@@ -84,7 +84,7 @@ impl ConnectionStorage {
         Self::from_data_dir(data_dir)
     }
 
-    fn from_data_dir(data_dir: PathBuf) -> Result<Self> {
+    pub(crate) fn from_data_dir(data_dir: PathBuf) -> Result<Self> {
         fs::create_dir_all(&data_dir)?;
 
         Ok(Self {

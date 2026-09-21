@@ -138,8 +138,10 @@ pub fn run() {
     }
     info!("[TableR] Application starting");
     if let Err(error) = storage::migrations::run_storage_migrations(&data_dir) {
-        error!("[TableR] SAFE STARTUP ABORT: {}", error);
-        return;
+        // Log-and-continue: the boot-time check_storage_health probe renders a
+        // recovery dialog over the affected files; aborting here would leave the
+        // user with a silent no-window exit and no way to reset.
+        error!("[TableR] storage migration failed (recovery dialog will offer reset): {error}");
     }
 
     let conn_storage = match ConnectionStorage::new() {
@@ -484,6 +486,7 @@ pub fn run() {
             // P10: an unattended agent task reports its real outcome back here
             // (the backend only dispatches; it never runs the agent).
             commands::schedule::complete_agent_schedule_run,
+            commands::schedule::acknowledge_missed_schedule_runs,
             // Semantic glossary commands
             get_semantic_entries,
             save_semantic_entry,
@@ -527,6 +530,17 @@ pub fn run() {
             download_and_install_update,
             get_app_version,
             restart_app,
+            // Storage health / recovery (boot-time dialog)
+            commands::storage_recovery::check_storage_health,
+            commands::storage_recovery::reset_corrupt_storage,
+            commands::storage_recovery::exit_app,
+            // First-run sample database
+            commands::sample_db::create_sample_database,
+            // Workspace bundle export/import (team sharing)
+            commands::workspace_bundle::export_workspace_bundle,
+            commands::workspace_bundle::import_workspace_bundle,
+            // Per-project guardrail rules
+            agent_rules::write_workspace_rule,
             // Linked folders commands
             watcher::add_linked_folder,
             watcher::remove_linked_folder,

@@ -1,9 +1,29 @@
-import { useState } from "react";
-import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, FileUp } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, FileUp, Package } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ExportableConnection } from "../../utils/connection-export";
+import {
+  importWorkspaceBundle,
+  previewWorkspaceBundle,
+  type BundleItemPreview,
+  type TeamBundleCounts,
+  type TeamBundlePreview,
+} from "../../utils/team-bundle";
+import { useI18n } from "../../i18n";
+import { getBundleCopy } from "./bundle-copy";
 import "../../styles/lazy-overlays.css";
+
+type BundleSectionKey = "connections" | "sqlFavorites" | "schedules" | "aiProviders";
+
+function bundleSections(preview: TeamBundlePreview): [BundleSectionKey, BundleItemPreview[]][] {
+  return [
+    ["connections", preview.connections],
+    ["sqlFavorites", preview.sqlFavorites],
+    ["schedules", preview.schedules],
+    ["aiProviders", preview.aiProviders],
+  ];
+}
 
 interface ConnectionImporterProps {
   onImport: () => void;
@@ -11,6 +31,8 @@ interface ConnectionImporterProps {
 }
 
 export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProps) {
+  const { language } = useI18n();
+  const bundleCopy = useMemo(() => getBundleCopy(language), [language]);
   const [filePath, setFilePath] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -19,25 +41,92 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
   const [previewConnections, setPreviewConnections] = useState<ExportableConnection[] | null>(null);
   const [selectedForImport, setSelectedForImport] = useState<Set<number>>(new Set());
   const [passwords, setPasswords] = useState<Record<number, string>>({});
-  const [result, setResult] = useState<{ success: boolean; count: number } | null>(null);
+  const [bundlePreview, setBundlePreview] = useState<TeamBundlePreview | null>(null);
+  const [bundleSelected, setBundleSelected] = useState<Set<string>>(new Set());
+  const [result, setResult] = useState<{
+    success: boolean;
+    count: number;
+    counts?: TeamBundleCounts;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const isBundleFile = filePath?.endsWith(".tabler-bundle") ?? false;
 
   const handlePickFile = async () => {
     setError(null);
     try {
       const picked = await open({
         multiple: false,
-        filters: [{ name: "TableR Connection Export", extensions: ["tabler-connections"] }],
+        filters: [
+          {
+            name: "TableR Export",
+            extensions: ["tabler-connections", "tabler-bundle"],
+          },
+        ],
       });
       if (picked && typeof picked === "string") {
         setFilePath(picked);
         setPreviewConnections(null);
         setSelectedForImport(new Set());
+        setBundlePreview(null);
+        setBundleSelected(new Set());
         setResult(null);
+        // Bundles carry no secrets — preview immediately, no password needed.
+        if (picked.endsWith(".tabler-bundle")) {
+          setIsDecrypting(true);
+          try {
+            const res = await previewWorkspaceBundle(picked);
+            setBundlePreview(res.preview);
+            const keys = new Set<string>();
+            for (const [section, items] of bundleSections(res.preview)) {
+              for (const item of items) {
+                if (!item.exists) keys.add(`${section}:${item.index}`);
+              }
+            }
+            setBundleSelected(keys);
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+          } finally {
+            setIsDecrypting(false);
+          }
+        }
       }
     } catch (e) {
       setError(`Failed to open file dialog: ${e}`);
     }
+  };
+
+  const handleBundleImport = async () => {
+    if (!bundlePreview || !filePath) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const pick = (section: string, items: BundleItemPreview[]) =>
+        items.filter((item) => bundleSelected.has(`${section}:${item.index}`)).map((i) => i.index);
+      const res = await importWorkspaceBundle(filePath, {
+        connections: pick("connections", bundlePreview.connections),
+        sqlFavorites: pick("sqlFavorites", bundlePreview.sqlFavorites),
+        schedules: pick("schedules", bundlePreview.schedules),
+        aiProviders: pick("aiProviders", bundlePreview.aiProviders),
+      });
+      onImport();
+      const counts = res.counts;
+      const total = counts
+        ? counts.connections + counts.sqlFavorites + counts.schedules + counts.aiProviders
+        : bundleSelected.size;
+      setResult({ success: true, count: total, counts });
+    } catch (e) {
+      setError(`Import failed: ${e}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const toggleBundleItem = (key: string) => {
+    const next = new Set(bundleSelected);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setBundleSelected(next);
   };
 
   const handleDecrypt = async () => {
@@ -103,8 +192,14 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
         {/* Header */}
         <div className="cex-header">
           <div className="cex-header-copy">
-            <h2 className="cex-title">Import Connections</h2>
-            <p className="cex-subtitle">Load connections from an encrypted TableR file</p>
+            <h2 className="cex-title">
+              {bundlePreview ? bundleCopy.import.title : "Import Connections"}
+            </h2>
+            <p className="cex-subtitle">
+              {bundlePreview
+                ? bundleCopy.import.subtitle
+                : "Load connections from an encrypted TableR file"}
+            </p>
           </div>
           <div className="cex-header-actions">
             {result ? (
@@ -122,7 +217,23 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                 >
                   Cancel
                 </button>
-                {previewConnections ? (
+                {bundlePreview ? (
+                  <button
+                    type="button"
+                    onClick={handleBundleImport}
+                    disabled={isLoading || bundleSelected.size === 0}
+                    className="cex-btn-primary"
+                  >
+                    {isLoading ? (
+                      bundleCopy.import.working
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4" />
+                        {bundleCopy.import.button} ({bundleSelected.size})
+                      </>
+                    )}
+                  </button>
+                ) : previewConnections ? (
                   <button
                     type="button"
                     onClick={handleImport}
@@ -143,7 +254,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                   <button
                     type="button"
                     onClick={() => void handleDecrypt()}
-                    disabled={!filePath || !password || isDecrypting}
+                    disabled={!filePath || isBundleFile || !password || isDecrypting}
                     className="cex-btn-primary"
                   >
                     {isDecrypting ? "Decrypting..." : "Open File"}
@@ -160,12 +271,71 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
             <div className="cex-success">
               <CheckCircle2 />
               <p>
-                Successfully imported {result.count} connection{result.count !== 1 ? "s" : ""}
+                {result.counts
+                  ? `${bundleCopy.import.done}: ${result.counts.connections} ${bundleCopy.import.sections.connections}, ${result.counts.sqlFavorites} ${bundleCopy.import.sections.sqlFavorites}, ${result.counts.schedules} ${bundleCopy.import.sections.schedules}, ${result.counts.aiProviders} ${bundleCopy.import.sections.aiProviders}`
+                  : `Successfully imported ${result.count} connection${result.count !== 1 ? "s" : ""}`}
               </p>
               <button onClick={handleClose} className="btn btn-primary">
                 Done
               </button>
             </div>
+          </div>
+        ) : bundlePreview ? (
+          <div className="cex-body cex-body-stacked">
+            <div className="cex-warning">
+              <Package className="w-4 h-4" />
+              <p>{bundleCopy.export.info}</p>
+            </div>
+
+            <div className="cex-preview-list">
+              {bundleSections(bundlePreview).map(([section, items]) =>
+                items.length === 0 ? null : (
+                  <div key={section} className="cex-bundle-section">
+                    <span className="cex-section-label">
+                      {bundleCopy.import.sections[section]} ({items.length})
+                    </span>
+                    {items.map((item) => {
+                      const key = `${section}:${item.index}`;
+                      return (
+                        <label
+                          key={key}
+                          className={`cex-preview-card cex-bundle-item ${item.exists ? "is-existing" : ""}`}
+                        >
+                          <div className="cex-preview-head">
+                            <input
+                              type="checkbox"
+                              checked={bundleSelected.has(key)}
+                              disabled={item.exists}
+                              onChange={() => toggleBundleItem(key)}
+                            />
+                            <span className="cex-preview-name">{item.name || item.id}</span>
+                            {item.detail && <span className="cex-preview-meta">{item.detail}</span>}
+                            {item.exists && (
+                              <span className="cex-type-pill">{bundleCopy.import.exists}</span>
+                            )}
+                            {!item.exists && item.needsPassword && (
+                              <span className="cex-type-pill cex-pill-warn">
+                                {bundleCopy.import.needsPassword}
+                              </span>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ),
+              )}
+              {bundleSections(bundlePreview).every(([, items]) => items.length === 0) && (
+                <p className="cex-rail-empty">{bundleCopy.import.empty}</p>
+              )}
+            </div>
+
+            {error && (
+              <div className="cex-error">
+                <AlertCircle className="w-4 h-4" />
+                <p>{error}</p>
+              </div>
+            )}
           </div>
         ) : previewConnections ? (
           <div className="cex-body cex-body-stacked">
@@ -239,12 +409,12 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                 <p className="cex-dropzone-title">
                   {filePath
                     ? filePath.split(/[/\\]/).pop()
-                    : "Click to select a .tabler-connections file"}
+                    : "Click to select a .tabler-connections or .tabler-bundle file"}
                 </p>
-                <p className="cex-dropzone-hint">TableR Connection File (*.tabler-connections)</p>
+                <p className="cex-dropzone-hint">{bundleCopy.import.dropzoneHint}</p>
               </div>
 
-              {filePath && (
+              {filePath && !isBundleFile && (
                 <div className="cex-fieldset">
                   <div className="connection-form-field">
                     <label className="form-label uppercase tracking-wide">

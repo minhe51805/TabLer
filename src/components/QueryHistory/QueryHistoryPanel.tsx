@@ -15,6 +15,7 @@ import { useI18n } from "../../i18n";
 import { useEvent } from "../../stores/event-center";
 import { useQueryHistoryStore } from "../../stores/queryHistoryStore";
 import type { QueryHistoryEntry } from "../../types";
+import { requestAppConfirmation } from "../../stores/confirmStore";
 import "../../styles/lazy-overlays.css";
 
 interface Props {
@@ -69,7 +70,11 @@ export function QueryHistoryEntryRow({
             onClick={() => onToggleSelected(entry)}
             title={isSelected ? "Deselect" : "Select"}
           >
-            {isSelected ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+            {isSelected ? (
+              <CheckSquare className="w-3.5 h-3.5" />
+            ) : (
+              <Square className="w-3.5 h-3.5" />
+            )}
           </button>
         )}
         <span className="qh-entry-timestamp">
@@ -131,7 +136,7 @@ export function QueryHistoryEntryRow({
 }
 
 export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQuery }: Props) {
-  const { language } = useI18n();
+  const { language, t } = useI18n();
   const { entries, isLoading, loadHistory, deleteEntries, clearHistory } = useQueryHistoryStore();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -197,10 +202,7 @@ export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQu
   }, [copy, entries]);
 
   const visibleSelectableIds = useMemo(
-    () =>
-      entries
-        .map((entry) => entry.id)
-        .filter((id): id is number => typeof id === "number"),
+    () => entries.map((entry) => entry.id).filter((id): id is number => typeof id === "number"),
     [entries],
   );
 
@@ -257,25 +259,40 @@ export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQu
   const handleDeleteOne = useCallback(
     async (entry: QueryHistoryEntry) => {
       if (typeof entry.id !== "number") return;
-      if (!window.confirm(copy.deleteConfirm)) return;
+      const approved = await requestAppConfirmation({
+        title: t("history.deleteEntryTitle"),
+        message: t("history.deleteEntryConfirm"),
+        confirmText: t("common.delete"),
+      });
+      if (!approved) return;
       await deleteEntries([entry.id], entry.connection_id);
     },
-    [copy.deleteConfirm, deleteEntries],
+    [deleteEntries, t],
   );
 
   const handleDeleteSelected = useCallback(async () => {
     if (!selectedIds.length) return;
-    if (!window.confirm(copy.deleteSelectedConfirm)) return;
+    const approved = await requestAppConfirmation({
+      title: t("history.deleteSelectedTitle"),
+      message: t("history.deleteSelectedConfirm", { count: selectedIds.length }),
+      confirmText: t("common.delete"),
+    });
+    if (!approved) return;
     await deleteEntries(selectedIds, activeConnectionId ?? undefined);
     setSelectedIds([]);
-  }, [activeConnectionId, copy.deleteSelectedConfirm, deleteEntries, selectedIds]);
+  }, [activeConnectionId, deleteEntries, selectedIds, t]);
 
   const handleClearHistory = useCallback(async () => {
     if (!entries.length) return;
-    if (!window.confirm(copy.clearConfirm)) return;
+    const approved = await requestAppConfirmation({
+      title: t("history.clearTitle"),
+      message: t(activeConnectionId ? "history.clearConnectionConfirm" : "history.clearConfirm"),
+      confirmText: t("toolbar.clear"),
+    });
+    if (!approved) return;
     await clearHistory(activeConnectionId ?? undefined);
     setSelectedIds([]);
-  }, [activeConnectionId, clearHistory, copy.clearConfirm, entries.length]);
+  }, [activeConnectionId, clearHistory, entries.length, t]);
 
   if (!isOpen) return null;
 

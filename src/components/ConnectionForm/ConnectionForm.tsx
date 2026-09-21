@@ -27,7 +27,9 @@ import {
   getBootstrapPresetSql,
   isLocalHost,
   type BootstrapPreset,
+  type ConnectionTestResult,
 } from "./connection-form-utils";
+import { parseConnectionError } from "../../utils/connection-error";
 
 interface PickerSection {
   key: string;
@@ -69,9 +71,9 @@ export function ConnectionForm({
   // Which native-crate engines this build actually compiled in (Cargo features).
   // Defaults to empty so the shipped build — which enables all of them — behaves
   // exactly as before; a lean build reports the subset it linked.
-  const [nativeDriverAvailability, setNativeDriverAvailability] = useState<
-    Record<string, boolean>
-  >({});
+  const [nativeDriverAvailability, setNativeDriverAvailability] = useState<Record<string, boolean>>(
+    {},
+  );
   useEffect(() => {
     let cancelled = false;
     void invokeWithTimeout<Record<string, boolean>>(
@@ -97,12 +99,7 @@ export function ConnectionForm({
   // native engines gate on the compiled build + installed sidecars, and every
   // other engine keeps its static flag. Both surfaces can never disagree.
   const availableDatabases = useMemo(
-    () =>
-      applyEngineRuntimeAvailability(
-        ALL_DATABASES,
-        installedPlugins,
-        nativeDriverAvailability,
-      ),
+    () => applyEngineRuntimeAvailability(ALL_DATABASES, installedPlugins, nativeDriverAvailability),
     [installedPlugins, nativeDriverAvailability],
   );
 
@@ -113,18 +110,18 @@ export function ConnectionForm({
   );
   const [pickerSearch, setPickerSearch] = useState("");
   const [selectedDb, setSelectedDb] = useState<DbEntry | null>(
-    editConnection
-      ? getDatabaseEngine(editConnection.db_type)
-      : null,
+    editConnection ? getDatabaseEngine(editConnection.db_type) : null,
   );
   const [formData, setFormData] = useState<ConnectionConfig>(
     editConnection
       ? { ...editConnection, password: undefined }
-      : createConnectionDraft(initialIntent === "bootstrap" ? DEFAULT_BOOTSTRAP_ENGINE : DEFAULT_CONNECT_ENGINE),
+      : createConnectionDraft(
+          initialIntent === "bootstrap" ? DEFAULT_BOOTSTRAP_ENGINE : DEFAULT_CONNECT_ENGINE,
+        ),
   );
   const passwordDraftRef = useRef(editConnection?.password || "");
   const [showPassword, setShowPassword] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [isCreatingDatabase, setIsCreatingDatabase] = useState(false);
   const [bootstrapPreset, setBootstrapPreset] = useState<BootstrapPreset>("none");
@@ -155,7 +152,8 @@ export function ConnectionForm({
   const additionalFields = formData.additional_fields ?? {};
   const hasBootstrapDatabaseName = !!formData.database?.trim();
   const isBootstrappingWorkspace = isCreatingDatabase || isConnecting;
-  const sqliteDatabaseName = (formData.database || "").trim() || (formData.name || "").trim() || "local-database";
+  const sqliteDatabaseName =
+    (formData.database || "").trim() || (formData.name || "").trim() || "local-database";
   const supportedCount = availableDatabases.filter((db) => db.supported).length;
   // Engines whose driver bundle is installed but not enabled yet — counted
   // separately so they are not mixed into the roadmap total.
@@ -167,20 +165,30 @@ export function ConnectionForm({
     (db) => !LOCAL_BOOTSTRAP_READY.has(db.key),
   ).length;
 
-  const suggestedUsernamePlaceholder = getSuggestedUsernamePlaceholder(selectedDb?.key || formData.db_type);
+  const suggestedUsernamePlaceholder = getSuggestedUsernamePlaceholder(
+    selectedDb?.key || formData.db_type,
+  );
   const hostPlaceholder = currentEngine?.hostPlaceholder || "127.0.0.1";
   const portPlaceholder = currentEngine?.defaultPort ? String(currentEngine.defaultPort) : "";
   const databasePlaceholder = currentEngine?.databasePlaceholder || "my_database";
 
   const connectionTitle = editConnection
-    ? language === "vi" ? "Sửa kết nối" : "Edit connection"
+    ? language === "vi"
+      ? "Sửa kết nối"
+      : "Edit connection"
     : bootstrapMode
       ? selectedDb
-        ? language === "vi" ? `Tạo Local DB ${selectedDb.label}` : `Local DB ${selectedDb.label}`
+        ? language === "vi"
+          ? `Tạo Local DB ${selectedDb.label}`
+          : `Local DB ${selectedDb.label}`
         : "Local DB"
       : selectedDb
-        ? language === "vi" ? `Kết nối mới ${selectedDb.label}` : `New ${selectedDb.label}`
-        : language === "vi" ? "Kết nối mới" : "New connection";
+        ? language === "vi"
+          ? `Kết nối mới ${selectedDb.label}`
+          : `New ${selectedDb.label}`
+        : language === "vi"
+          ? "Kết nối mới"
+          : "New connection";
 
   // --- Copy strings ---
   const copy = useMemo(() => {
@@ -199,7 +207,8 @@ export function ConnectionForm({
         ...commonCopy,
         pickerTitle: "Chọn một engine cơ sở dữ liệu",
         pickerLocalTitle: "Chọn một engine cơ sở dữ liệu local",
-        pickerSubtitle: "Chọn engine đã sẵn sàng ngay bây giờ, hoặc xem các tích hợp sắp tới đã có trong lộ trình.",
+        pickerSubtitle:
+          "Chọn engine đã sẵn sàng ngay bây giờ, hoặc xem các tích hợp sắp tới đã có trong lộ trình.",
         pickerLocalSubtitle: "Khởi tạo một workspace local PostgreSQL, MySQL/MariaDB, hoặc SQLite.",
         flowLabel: "Luồng kết nối",
         remoteSaved: "Remote & đã lưu",
@@ -216,7 +225,8 @@ export function ConnectionForm({
         installPlugin: "Cài plugin",
         installPluginSuccess: "Đã cài plugin",
         installedDisabled: "Đã cài · cần bật",
-        installedDisabledCaption: "Bundle driver đã được cài nhưng đang tắt. Bật nó trong Trình quản lý plugin để kết nối.",
+        installedDisabledCaption:
+          "Bundle driver đã được cài nhưng đang tắt. Bật nó trong Trình quản lý plugin để kết nối.",
         roadmapCaption: "Các engine sắp tới đã hiển thị trong định hướng sản phẩm.",
         localReadyCaption: "Khởi tạo và mở các engine này trực tiếp từ TableR.",
         connectOnly: "Chỉ kết nối",
@@ -233,7 +243,8 @@ export function ConnectionForm({
         fileDatabase: "Cơ sở dữ liệu theo tệp",
         serverDatabase: "Cơ sở dữ liệu máy chủ",
         createFreshLocalInstead: "Tạo một workspace local mới thay thế",
-        prismaNote: "Prisma là một ORM, vì vậy hãy chọn PostgreSQL, MySQL/MariaDB, hoặc SQLite làm engine nền.",
+        prismaNote:
+          "Prisma là một ORM, vì vậy hãy chọn PostgreSQL, MySQL/MariaDB, hoặc SQLite làm engine nền.",
         pickLocalEngine: "Chọn một engine local để bootstrap",
         pickDatabaseType: "Chọn một loại cơ sở dữ liệu để tiếp tục",
         selectionHint: "Chi tiết và bước tiếp theo sẽ xuất hiện ở đây sau khi bạn chọn một engine.",
@@ -243,7 +254,8 @@ export function ConnectionForm({
         editConnection: "Sửa kết nối",
         readyToConfigure: "Sẵn sàng cấu hình",
         configureSubtitle: "Cấu hình kết nối cơ sở dữ liệu",
-        configureLocalSubtitle: "Tạo một cơ sở dữ liệu local mới, tùy chọn bootstrap starter SQL, rồi mở ngay sau đó.",
+        configureLocalSubtitle:
+          "Tạo một cơ sở dữ liệu local mới, tùy chọn bootstrap starter SQL, rồi mở ngay sau đó.",
         profile: "Hồ sơ",
         connectionIdentity: "Nhận diện kết nối",
         identityCopy: "Đặt tên workspace và chọn màu nhấn để dễ nhận ra trong tab và badge.",
@@ -252,7 +264,8 @@ export function ConnectionForm({
         myDatabase: "Cơ sở dữ liệu của tôi",
         storage: "Lưu trữ",
         databaseFile: "Tệp cơ sở dữ liệu",
-        databaseFileBootstrapCopy: "Đặt tên cho cơ sở dữ liệu và TableR sẽ tạo tệp SQLite trong thư mục local mặc định cho bạn.",
+        databaseFileBootstrapCopy:
+          "Đặt tên cho cơ sở dữ liệu và TableR sẽ tạo tệp SQLite trong thư mục local mặc định cho bạn.",
         databaseFileConnectCopy: "Trỏ tới một tệp SQLite có sẵn hoặc nhập đường dẫn cho tệp mới.",
         databaseName: "Tên cơ sở dữ liệu",
         databaseNamePlaceholder: "co_so_du_lieu_local",
@@ -266,7 +279,8 @@ export function ConnectionForm({
         customFilePath: "Đường dẫn tệp tùy chỉnh",
         network: "Mạng",
         connectionDetails: "Chi tiết kết nối",
-        detailsCopy: "Nhập địa chỉ máy chủ, thông tin đăng nhập, và tên cơ sở dữ liệu tùy chọn cho engine này.",
+        detailsCopy:
+          "Nhập địa chỉ máy chủ, thông tin đăng nhập, và tên cơ sở dữ liệu tùy chọn cho engine này.",
         host: "Host",
         port: "Cổng",
         username: "Tên người dùng",
@@ -275,23 +289,30 @@ export function ConnectionForm({
         authToken: "Auth token",
         enterAuthToken: "Nhập auth token",
         optional: "tùy chọn",
-        localHostDetectedNamed: "Đã phát hiện host local. Tạo cơ sở dữ liệu này và vào workspace ngay.",
-        localHostDetectedBlank: "Đã phát hiện host local. Hãy nhập tên cơ sở dữ liệu để bật create-and-open bootstrap.",
+        localHostDetectedNamed:
+          "Đã phát hiện host local. Tạo cơ sở dữ liệu này và vào workspace ngay.",
+        localHostDetectedBlank:
+          "Đã phát hiện host local. Hãy nhập tên cơ sở dữ liệu để bật create-and-open bootstrap.",
         engineNotLocalBootstrap: "Engine này chưa được nối cho local bootstrap trong TableR.",
         useSsl: "Dùng SSL/TLS",
-        useSslNote: "Khuyên dùng cho các cơ sở dữ liệu cloud như Supabase, Neon, và PostgreSQL managed.",
+        useSslNote:
+          "Khuyên dùng cho các cơ sở dữ liệu cloud như Supabase, Neon, và PostgreSQL managed.",
         engineFields: "Field riêng theo engine",
-        engineFieldsCopy: "Các field này phản ánh cách engine đó thường được cấu hình trong workflow kết nối thực tế.",
+        engineFieldsCopy:
+          "Các field này phản ánh cách engine đó thường được cấu hình trong workflow kết nối thực tế.",
         bootstrap: "Bootstrap",
         starterSchemaSeedSql: "Schema khởi đầu và seed SQL",
-        starterSchemaSeedSqlCopy: "Tùy chọn. Nạp trước schema khởi đầu, import tệp .sql local, hoặc dán thêm seed SQL trước khi workspace mở.",
+        starterSchemaSeedSqlCopy:
+          "Tùy chọn. Nạp trước schema khởi đầu, import tệp .sql local, hoặc dán thêm seed SQL trước khi workspace mở.",
         starterPreset: "Preset khởi đầu",
         importSql: "Import .sql",
         replaceSqlFile: "Thay tệp SQL",
         chooseSqlFile: "Chọn tệp SQL",
         additionalSql: "SQL bổ sung",
-        additionalSqlPlaceholder: "Dán seed SQL tại đây. Nó sẽ chạy sau khi cơ sở dữ liệu được tạo.",
-        additionalSqlHint: "Preset và SQL của bạn sẽ được tách thành từng statement rồi áp dụng trước khi workspace mới mở.",
+        additionalSqlPlaceholder:
+          "Dán seed SQL tại đây. Nó sẽ chạy sau khi cơ sở dữ liệu được tạo.",
+        additionalSqlHint:
+          "Preset và SQL của bạn sẽ được tách thành từng statement rồi áp dụng trước khi workspace mới mở.",
         testConnection: "Kiểm tra kết nối",
         createAndOpen: "Tạo & Mở",
         emptyDatabase: "Cơ sở dữ liệu trống",
@@ -304,7 +325,8 @@ export function ConnectionForm({
       ...commonCopy,
       pickerTitle: "Choose a database engine",
       pickerLocalTitle: "Choose a local database engine",
-      pickerSubtitle: "Pick an engine that is ready now, or browse upcoming integrations on the roadmap.",
+      pickerSubtitle:
+        "Pick an engine that is ready now, or browse upcoming integrations on the roadmap.",
       pickerLocalSubtitle: "Bootstrap a local PostgreSQL, MySQL/MariaDB, or SQLite workspace.",
       flowLabel: "Connection flow",
       remoteSaved: "Remote & saved",
@@ -321,7 +343,8 @@ export function ConnectionForm({
       installPlugin: "Install plugin",
       installPluginSuccess: "Plugin installed",
       installedDisabled: "Installed · needs enabling",
-      installedDisabledCaption: "The driver bundle is installed but disabled. Enable it in Plugin Manager to connect.",
+      installedDisabledCaption:
+        "The driver bundle is installed but disabled. Enable it in Plugin Manager to connect.",
       roadmapCaption: "Upcoming engines visible in the product direction.",
       localReadyCaption: "Bootstrap and open these engines directly from TableR.",
       connectOnly: "Connect only",
@@ -338,7 +361,8 @@ export function ConnectionForm({
       fileDatabase: "File database",
       serverDatabase: "Server database",
       createFreshLocalInstead: "Create a fresh local workspace instead",
-      prismaNote: "Prisma is an ORM, so choose PostgreSQL, MySQL/MariaDB, or SQLite as the underlying engine.",
+      prismaNote:
+        "Prisma is an ORM, so choose PostgreSQL, MySQL/MariaDB, or SQLite as the underlying engine.",
       pickLocalEngine: "Pick a local engine to bootstrap",
       pickDatabaseType: "Pick a database type to continue",
       selectionHint: "The details and next step will appear here once you select an engine.",
@@ -348,7 +372,8 @@ export function ConnectionForm({
       editConnection: "Edit connection",
       readyToConfigure: "Ready to configure",
       configureSubtitle: "Configure database connection",
-      configureLocalSubtitle: "Create a fresh local database, optionally bootstrap starter SQL, then open it.",
+      configureLocalSubtitle:
+        "Create a fresh local database, optionally bootstrap starter SQL, then open it.",
       profile: "Profile",
       connectionIdentity: "Connection identity",
       identityCopy: "Name this workspace and choose an accent color.",
@@ -357,7 +382,8 @@ export function ConnectionForm({
       myDatabase: "My Database",
       storage: "Storage",
       databaseFile: "Database file",
-      databaseFileBootstrapCopy: "Give the database a name and TableR will place the SQLite file in its default local folder.",
+      databaseFileBootstrapCopy:
+        "Give the database a name and TableR will place the SQLite file in its default local folder.",
       databaseFileConnectCopy: "Point to an existing SQLite file or enter a path for a new one.",
       databaseName: "Database name",
       databaseNamePlaceholder: "my_local_db",
@@ -371,7 +397,8 @@ export function ConnectionForm({
       customFilePath: "Custom file path",
       network: "Network",
       connectionDetails: "Connection details",
-      detailsCopy: "Enter server endpoint, credentials, and optional database name for this engine.",
+      detailsCopy:
+        "Enter server endpoint, credentials, and optional database name for this engine.",
       host: "Host",
       port: "Port",
       username: "Username",
@@ -381,23 +408,28 @@ export function ConnectionForm({
       enterAuthToken: "Enter auth token",
       optional: "optional",
       databaseOptional: "Database",
-      localHostDetectedNamed: "Local host detected. Create this database and jump straight into the workspace.",
-      localHostDetectedBlank: "Local host detected. Enter a database name to enable create-and-open bootstrap.",
+      localHostDetectedNamed:
+        "Local host detected. Create this database and jump straight into the workspace.",
+      localHostDetectedBlank:
+        "Local host detected. Enter a database name to enable create-and-open bootstrap.",
       engineNotLocalBootstrap: "This engine is not wired for local bootstrap yet in TableR.",
       useSsl: "Use SSL/TLS",
       useSslNote: "Recommended for cloud databases like Supabase, Neon, and managed PostgreSQL.",
       engineFields: "Engine-specific fields",
-      engineFieldsCopy: "These fields mirror the extra connection metadata commonly required by this engine.",
+      engineFieldsCopy:
+        "These fields mirror the extra connection metadata commonly required by this engine.",
       bootstrap: "Bootstrap",
       starterSchemaSeedSql: "Starter schema and seed SQL",
-      starterSchemaSeedSqlCopy: "Optional. Preload a starter schema, import a local .sql file, or paste seed SQL.",
+      starterSchemaSeedSqlCopy:
+        "Optional. Preload a starter schema, import a local .sql file, or paste seed SQL.",
       starterPreset: "Starter preset",
       importSql: "Import .sql",
       replaceSqlFile: "Replace SQL File",
       chooseSqlFile: "Choose SQL File",
       additionalSql: "Additional SQL",
       additionalSqlPlaceholder: "Paste seed SQL here. It will run after the database is created.",
-      additionalSqlHint: "Preset and your SQL are split into statements, then applied before the workspace opens.",
+      additionalSqlHint:
+        "Preset and your SQL are split into statements, then applied before the workspace opens.",
       testConnection: "Test Connection",
       createAndOpen: "Create & Open",
       emptyDatabase: "Empty database",
@@ -407,7 +439,8 @@ export function ConnectionForm({
   }, [language, sqliteDatabaseName, t]);
 
   const passwordLabel = currentEngine?.passwordKind === "token" ? copy.authToken : copy.password;
-  const passwordPlaceholder = currentEngine?.passwordKind === "token" ? copy.enterAuthToken : copy.enterPassword;
+  const passwordPlaceholder =
+    currentEngine?.passwordKind === "token" ? copy.enterAuthToken : copy.enterPassword;
 
   const getConnectionFeedbackLabel = useCallback(
     (config: ConnectionConfig, databaseName?: string) => {
@@ -540,7 +573,8 @@ export function ConnectionForm({
     if (filledCredentials) {
       emitAppToast({
         tone: "info",
-        title: language === "vi" ? "Đã điền thông tin từ URL" : "Connection details filled from URL",
+        title:
+          language === "vi" ? "Đã điền thông tin từ URL" : "Connection details filled from URL",
         description:
           language === "vi"
             ? "Tên đăng nhập, database xác thực và các tùy chọn được lấy từ URL bạn dán."
@@ -566,20 +600,20 @@ export function ConnectionForm({
       return {
         ...prev,
         db_type: db.key,
-        host: db.connectionMode === "network"
-          ? (switchedEngine ? (db.defaultHost ?? "") : (prev.host ?? db.defaultHost ?? ""))
-          : "",
+        host:
+          db.connectionMode === "network"
+            ? switchedEngine
+              ? (db.defaultHost ?? "")
+              : (prev.host ?? db.defaultHost ?? "")
+            : "",
         port: db.defaultPort,
-        database: db.databaseMode === "hidden"
-          ? ""
-          : bootstrapMode && db.connectionMode === "file"
-            ? prev.database || prev.name || "local-database"
-            : prev.database,
-        username: db.usernameMode === "hidden"
-          ? ""
-          : switchedEngine
+        database:
+          db.databaseMode === "hidden"
             ? ""
-            : prev.username,
+            : bootstrapMode && db.connectionMode === "file"
+              ? prev.database || prev.name || "local-database"
+              : prev.database,
+        username: db.usernameMode === "hidden" ? "" : switchedEngine ? "" : prev.username,
         file_path: db.connectionMode === "file" ? prev.file_path : "",
         use_ssl: db.supportsSsl ? prev.use_ssl : false,
         additional_fields:
@@ -612,7 +646,13 @@ export function ConnectionForm({
       });
       setTestResult({ success: true, message: msg });
     } catch (e) {
-      setTestResult({ success: false, message: String(e) });
+      const details = parseConnectionError(e);
+      setTestResult({
+        success: false,
+        message: details.message,
+        stage: details.stage,
+        hint: details.hint,
+      });
     }
     setIsTesting(false);
   };
@@ -641,7 +681,13 @@ export function ConnectionForm({
       passwordDraftRef.current = "";
       onClose();
     } catch (e) {
-      setTestResult({ success: false, message: String(e) });
+      const details = parseConnectionError(e);
+      setTestResult({
+        success: false,
+        message: details.message,
+        stage: details.stage,
+        hint: details.hint,
+      });
     }
   };
 
@@ -653,7 +699,13 @@ export function ConnectionForm({
       setSqlitePathTouched(true);
       updateField("file_path", selectedPath);
     } catch (e) {
-      setTestResult({ success: false, message: String(e) });
+      const details = parseConnectionError(e);
+      setTestResult({
+        success: false,
+        message: details.message,
+        stage: details.stage,
+        hint: details.hint,
+      });
     }
   };
 
@@ -662,26 +714,50 @@ export function ConnectionForm({
     setTestResult(null);
     try {
       const presetSql = getBootstrapPresetSql(bootstrapPreset, formData.db_type);
-      const combinedBootstrapSql = [presetSql, bootstrapSql.trim()].filter((s) => s.trim().length > 0).join("\n\n");
+      const combinedBootstrapSql = [presetSql, bootstrapSql.trim()]
+        .filter((s) => s.trim().length > 0)
+        .join("\n\n");
       const bootstrapStatements = splitSqlStatements(combinedBootstrapSql);
       if (isSqlite) {
-        const resolvedFilePath = formData.file_path?.trim() || (await suggestSqliteDatabasePath(sqliteDatabaseName));
+        const resolvedFilePath =
+          formData.file_path?.trim() || (await suggestSqliteDatabasePath(sqliteDatabaseName));
         if (!resolvedFilePath) {
-          setTestResult({ success: false, message: language === "vi" ? "Hãy chọn tên cơ sở dữ liệu SQLite trước." : "Choose a SQLite database name first." });
+          setTestResult({
+            success: false,
+            message:
+              language === "vi"
+                ? "Hãy chọn tên cơ sở dữ liệu SQLite trước."
+                : "Choose a SQLite database name first.",
+          });
           return;
         }
         const sqliteConfig = {
           ...formData,
           database: sqliteDatabaseName,
           file_path: resolvedFilePath,
-          name: formData.name.trim() || `${selectedDb?.label || formData.db_type} ${sqliteDatabaseName}`,
+          name:
+            formData.name.trim() ||
+            `${selectedDb?.label || formData.db_type} ${sqliteDatabaseName}`,
           password: undefined,
         };
-        const message = await createLocalDatabase(sqliteConfig, sqliteDatabaseName, bootstrapStatements);
-        setTestResult({ success: true, message: language === "vi" ? `Đang tạo cơ sở dữ liệu SQLite từ ${resolvedFilePath}...` : `Creating SQLite database from ${resolvedFilePath}...` });
+        const message = await createLocalDatabase(
+          sqliteConfig,
+          sqliteDatabaseName,
+          bootstrapStatements,
+        );
         setTestResult({
           success: true,
-          message: language === "vi" ? `${message} Dang mo workspace SQLite...` : `${message} Opening the SQLite workspace...`,
+          message:
+            language === "vi"
+              ? `Đang tạo cơ sở dữ liệu SQLite từ ${resolvedFilePath}...`
+              : `Creating SQLite database from ${resolvedFilePath}...`,
+        });
+        setTestResult({
+          success: true,
+          message:
+            language === "vi"
+              ? `${message} Dang mo workspace SQLite...`
+              : `${message} Opening the SQLite workspace...`,
         });
         await connectToDatabase(sqliteConfig);
         await loadSavedConnections();
@@ -700,18 +776,35 @@ export function ConnectionForm({
 
       const requestedDatabase = formData.database?.trim();
       if (!requestedDatabase) {
-        setTestResult({ success: false, message: language === "vi" ? "Hãy nhập tên cơ sở dữ liệu trước." : "Enter a database name first." });
+        setTestResult({
+          success: false,
+          message:
+            language === "vi"
+              ? "Hãy nhập tên cơ sở dữ liệu trước."
+              : "Enter a database name first.",
+        });
         return;
       }
 
       const bootstrapConfig = {
         ...formData,
-        name: formData.name.trim() || `${selectedDb?.label || formData.db_type} ${requestedDatabase}`,
+        name:
+          formData.name.trim() || `${selectedDb?.label || formData.db_type} ${requestedDatabase}`,
         database: requestedDatabase,
         password: showPasswordField ? passwordDraftRef.current : undefined,
       };
-      const message = await createLocalDatabase(bootstrapConfig, requestedDatabase, bootstrapStatements);
-      setTestResult({ success: true, message: language === "vi" ? `${message} Đang kết nối tới ${requestedDatabase}...` : `${message} Connecting to ${requestedDatabase}...` });
+      const message = await createLocalDatabase(
+        bootstrapConfig,
+        requestedDatabase,
+        bootstrapStatements,
+      );
+      setTestResult({
+        success: true,
+        message:
+          language === "vi"
+            ? `${message} Đang kết nối tới ${requestedDatabase}...`
+            : `${message} Connecting to ${requestedDatabase}...`,
+      });
       await connectToDatabase(bootstrapConfig);
       await loadSavedConnections();
       emitAppToast({
@@ -725,7 +818,13 @@ export function ConnectionForm({
       passwordDraftRef.current = "";
       onClose();
     } catch (e) {
-      setTestResult({ success: false, message: String(e) });
+      const details = parseConnectionError(e);
+      setTestResult({
+        success: false,
+        message: details.message,
+        stage: details.stage,
+        hint: details.hint,
+      });
     } finally {
       setIsCreatingDatabase(false);
     }
@@ -740,7 +839,13 @@ export function ConnectionForm({
       setBootstrapFileName(file.name);
       setTestResult(null);
     } catch (e) {
-      setTestResult({ success: false, message: language === "vi" ? `Không thể đọc tệp SQL: ${String(e)}` : `Could not read SQL file: ${String(e)}` });
+      setTestResult({
+        success: false,
+        message:
+          language === "vi"
+            ? `Không thể đọc tệp SQL: ${String(e)}`
+            : `Could not read SQL file: ${String(e)}`,
+      });
     } finally {
       event.target.value = "";
     }
@@ -748,23 +853,49 @@ export function ConnectionForm({
 
   // --- Picker computed values ---
   const filteredDbs = pickerSearch
-    ? availableDatabases.filter((d) =>
-      d.label.toLowerCase().includes(pickerSearch.toLowerCase()) ||
-      d.key.toLowerCase().includes(pickerSearch.toLowerCase()),
-    )
+    ? availableDatabases.filter(
+        (d) =>
+          d.label.toLowerCase().includes(pickerSearch.toLowerCase()) ||
+          d.key.toLowerCase().includes(pickerSearch.toLowerCase()),
+      )
     : availableDatabases;
 
   const pickerSections = useMemo<PickerSection[]>(() => {
     if (!bootstrapMode) {
       return [
-        { key: "ready", title: copy.readyNow, caption: copy.readyNowCaption, items: filteredDbs.filter((db) => db.supported) },
-        { key: "installed-disabled", title: copy.installedDisabled, caption: copy.installedDisabledCaption, items: filteredDbs.filter((db) => !db.supported && db.pluginHttpState === "installed") },
-        { key: "roadmap", title: copy.roadmap, caption: copy.roadmapCaption, items: filteredDbs.filter((db) => !db.supported && db.pluginHttpState !== "installed") },
+        {
+          key: "ready",
+          title: copy.readyNow,
+          caption: copy.readyNowCaption,
+          items: filteredDbs.filter((db) => db.supported),
+        },
+        {
+          key: "installed-disabled",
+          title: copy.installedDisabled,
+          caption: copy.installedDisabledCaption,
+          items: filteredDbs.filter((db) => !db.supported && db.pluginHttpState === "installed"),
+        },
+        {
+          key: "roadmap",
+          title: copy.roadmap,
+          caption: copy.roadmapCaption,
+          items: filteredDbs.filter((db) => !db.supported && db.pluginHttpState !== "installed"),
+        },
       ].filter((s) => s.items.length > 0);
     }
     return [
-      { key: "local-ready", title: copy.localReady, caption: copy.localReadyCaption, items: filteredDbs.filter((db) => LOCAL_BOOTSTRAP_READY.has(db.key)) },
-      { key: "local-roadmap", title: copy.localRoadmap, caption: copy.localRoadmapCaption, items: filteredDbs.filter((db) => !LOCAL_BOOTSTRAP_READY.has(db.key)) },
+      {
+        key: "local-ready",
+        title: copy.localReady,
+        caption: copy.localReadyCaption,
+        items: filteredDbs.filter((db) => LOCAL_BOOTSTRAP_READY.has(db.key)),
+      },
+      {
+        key: "local-roadmap",
+        title: copy.localRoadmap,
+        caption: copy.localRoadmapCaption,
+        items: filteredDbs.filter((db) => !LOCAL_BOOTSTRAP_READY.has(db.key)),
+      },
     ].filter((s) => s.items.length > 0);
   }, [bootstrapMode, copy, filteredDbs]);
 
@@ -776,18 +907,26 @@ export function ConnectionForm({
   useEffect(() => {
     if (!bootstrapMode || !isSqlite || sqlitePathTouched) return;
     let cancelled = false;
-    void suggestSqliteDatabasePath(sqliteDatabaseName).then((suggestedPath) => {
-      if (cancelled) return;
-      setFormData((prev) => {
-        if (prev.db_type !== "sqlite" || prev.file_path === suggestedPath) return prev;
-        return { ...prev, file_path: suggestedPath };
+    void suggestSqliteDatabasePath(sqliteDatabaseName)
+      .then((suggestedPath) => {
+        if (cancelled) return;
+        setFormData((prev) => {
+          if (prev.db_type !== "sqlite" || prev.file_path === suggestedPath) return prev;
+          return { ...prev, file_path: suggestedPath };
+        });
+      })
+      .catch(() => {
+        /* Keep existing manual entry on failure */
       });
-    }).catch(() => { /* Keep existing manual entry on failure */ });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [bootstrapMode, isSqlite, sqliteDatabaseName, sqlitePathTouched, suggestSqliteDatabasePath]);
 
   useEffect(() => {
-    return () => { passwordDraftRef.current = ""; };
+    return () => {
+      passwordDraftRef.current = "";
+    };
   }, []);
 
   useEffect(() => {
@@ -957,9 +1096,7 @@ export function ConnectionForm({
     if (embeddedInStartupShell) {
       return (
         <div className="connection-picker-shell">
-          <div className="connection-picker-shell-viewport">
-            {pickerContent}
-          </div>
+          <div className="connection-picker-shell-viewport">{pickerContent}</div>
         </div>
       );
     }
@@ -1012,7 +1149,9 @@ export function ConnectionForm({
       onFieldChange={updateField}
       onAdditionalFieldChange={updateAdditionalField}
       onTogglePasswordVisibility={() => setShowPassword((v) => !v)}
-      onPasswordChange={(v) => { passwordDraftRef.current = v; }}
+      onPasswordChange={(v) => {
+        passwordDraftRef.current = v;
+      }}
       onBack={() => setStep("pick")}
       onClose={onClose}
       onTest={handleTest}
@@ -1020,7 +1159,10 @@ export function ConnectionForm({
       onCreateDatabase={handleCreateDatabase}
       onImportBootstrapFile={handleImportBootstrapFile}
       onToggleSqliteAdvancedPath={() => setShowSqliteAdvancedPath((v) => !v)}
-      onResetSqlitePath={() => { setSqlitePathTouched(false); setShowSqliteAdvancedPath(false); }}
+      onResetSqlitePath={() => {
+        setSqlitePathTouched(false);
+        setShowSqliteAdvancedPath(false);
+      }}
       onPickSqlitePath={handlePickSqlitePath}
       onBootstrapPresetChange={(v) => setBootstrapPreset(v as BootstrapPreset)}
       onBootstrapSqlChange={setBootstrapSql}

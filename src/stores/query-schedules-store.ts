@@ -9,6 +9,7 @@ import { invokeMutation } from "../utils/tauri-utils";
 import { emitAppToast } from "../utils/app-toast";
 import { getCurrentAppLanguage, translateLanguage } from "../i18n";
 import { useAgentScheduleStore } from "./agent-schedule-store";
+import { getScheduleCopy } from "../components/QuerySchedules/schedule-copy";
 
 export interface QuerySchedule {
   id: string;
@@ -32,12 +33,23 @@ export interface QuerySchedule {
    * `dispatched` = handed to the app, outcome not reported back yet.
    * `needs_human` = the run stopped short because only a person may do what it
    * reached for — deliberately distinct from both `ok` and `error`.
+   * `missed` = one or more occurrences elapsed while the app was closed.
    */
-  lastStatus?: "ok" | "error" | "needs_human" | "dispatched" | null;
+  lastStatus?: "ok" | "error" | "needs_human" | "dispatched" | "missed" | null;
   lastRows?: number | null;
   lastError?: string | null;
   /** Short report from the last completed agent run. */
   lastSummary?: string | null;
+  /**
+   * What to do about occurrences missed while the app was closed:
+   * `skip` (default) resumes on the next boundary; `run_once` fires a single
+   * catch-up run on the next boot.
+   */
+  catchUpPolicy?: "skip" | "run_once";
+  /** Occurrences missed while the app was closed, until acknowledged. */
+  missedCount?: number;
+  /** Explicit next-due override set when missed occurrences were skipped. */
+  nextDueAt?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -70,6 +82,7 @@ interface QuerySchedulesState {
     database?: string | null;
     intervalSeconds: number;
     enabled: boolean;
+    catchUpPolicy?: "skip" | "run_once";
   }) => Promise<QuerySchedule>;
   deleteSchedule: (id: string) => Promise<void>;
   /**
@@ -86,6 +99,11 @@ interface QuerySchedulesState {
   }) => void;
   /** Idempotent event bridge — attach once from the workspace shell. */
   attachScheduleEvents: () => () => void;
+  /**
+   * Dismisses the "runs missed while the app was closed" badge: clears every
+   * schedule's `missedCount` in the store and on disk.
+   */
+  acknowledgeMissedRuns: () => Promise<void>;
 }
 
 let eventsAttached = false;
@@ -115,6 +133,7 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
     database,
     intervalSeconds,
     enabled,
+    catchUpPolicy,
   }) => {
     const saved = await invokeMutation<QuerySchedule>("save_query_schedule", {
       id: id ?? null,
@@ -128,6 +147,7 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
       database: database ?? null,
       intervalSeconds: Math.max(60, Math.round(intervalSeconds)),
       enabled,
+      catchUpPolicy: catchUpPolicy ?? "skip",
     });
     set((state) => ({
       schedules: [saved, ...state.schedules.filter((schedule) => schedule.id !== saved.id)],
@@ -165,7 +185,21 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
   attachScheduleEvents: () => {
     if (eventsAttached) return () => {};
     eventsAttached = true;
-    let unlisten: UnlistenFn | undefined;
+    const unlisteners: UnlistenFn[] = [];
+    // Boot reconciliation reports occurrences that elapsed while the app was
+    // closed. Refresh the list so `missedCount`/`missed` statuses land, and
+    // surface the count as a toast — the panel badge carries the detail.
+    void listen<{ missedRuns: number }>("schedules-missed", (event) => {
+      void useQuerySchedulesStore.getState().loadSchedules();
+      emitAppToast({
+        title: getScheduleCopy(getCurrentAppLanguage()).missedToast(event.payload.missedRuns),
+        tone: "info",
+      });
+    })
+      .then((cleanup) => unlisteners.push(cleanup))
+      .catch(() => {
+        // Browser-only tests and previews do not expose Tauri's event bridge.
+      });
     void listen<ScheduleFiredPayload>("schedule-fired", (event) => {
       const fired = event.payload;
       // Agent tasks are dispatched, never executed by the backend: the event is
@@ -243,14 +277,23 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
       );
     })
       .then((cleanup) => {
-        unlisten = cleanup;
+        unlisteners.push(cleanup);
       })
       .catch(() => {
         // Browser-only tests and previews do not expose Tauri's event bridge.
       });
     return () => {
-      unlisten?.();
+      unlisteners.forEach((unlisten) => unlisten());
       eventsAttached = false;
     };
+  },
+
+  acknowledgeMissedRuns: async () => {
+    await invokeMutation<number>("acknowledge_missed_schedule_runs", {});
+    set((state) => ({
+      schedules: state.schedules.map((schedule) =>
+        schedule.missedCount ? { ...schedule, missedCount: 0 } : schedule,
+      ),
+    }));
   },
 }));

@@ -7,7 +7,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at top, rgba(0, 122, 255, 0.08), transparent 28%), var(--mm-surface-0);
+  background:
+    radial-gradient(circle at top, rgba(0, 122, 255, 0.08), transparent 28%), var(--mm-surface-0);
   color: var(--text-primary);
   font-family: "Segoe UI", Inter, system-ui, sans-serif;
   padding: 24px;
@@ -27,7 +28,7 @@
   font-size: var(--mm-fs-caption);
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #007AFF;
+  color: #007aff;
 }
 
 .boot-failure-title {
@@ -76,4 +77,106 @@
   word-break: break-word;
   overflow: auto;
   max-height: 42vh;
+}
+
+/* Corrupt-storage recovery dialog — same boot-stage surface as the failure
+   screen, shown before the main stylesheet exists. */
+.storage-recovery-card {
+  width: min(560px, 100%);
+}
+
+.storage-recovery-title-icon {
+  vertical-align: -4px;
+  margin-right: 8px;
+  color: #c55b00;
+}
+
+.storage-recovery-files {
+  margin-top: 18px;
+  text-align: left;
+}
+
+.storage-recovery-files-label {
+  font-size: var(--mm-fs-caption, 11px);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8ea4c3;
+}
+
+.storage-recovery-file-list {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+.storage-recovery-file {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--mm-border, rgba(0, 0, 0, 0.12));
+  background: var(--mm-surface-2, #f5f5f7);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.storage-recovery-file code {
+  font-family: "DM Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-primary, #1c1c1e);
+}
+
+.storage-recovery-file-error {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8ea4c3;
+  word-break: break-word;
+}
+
+.storage-recovery-actions {
+  margin-top: 20px;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.storage-recovery-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.storage-recovery-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.storage-recovery-btn-primary {
+  background: #007aff;
+  color: #ffffff;
+}
+
+.storage-recovery-btn-primary:hover:not(:disabled) {
+  background: #0066d6;
+}
+
+.storage-recovery-btn-secondary {
+  background: transparent;
+  border-color: var(--mm-border, rgba(0, 0, 0, 0.16));
+  color: var(--text-primary, #1c1c1e);
+}
+
+.storage-recovery-btn-secondary:hover:not(:disabled) {
+  background: var(--mm-surface-2, #f5f5f7);
 }

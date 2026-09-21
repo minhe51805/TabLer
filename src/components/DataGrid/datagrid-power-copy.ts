@@ -55,6 +55,11 @@ export interface DataGridPowerCopy {
     stagedToast: string;
     nothingToDuplicate: string;
   };
+  /** Column pinning feedback. */
+  pinning: {
+    /** Toast/menu hint when pinning would exceed the visible width. */
+    limitToast: string;
+  };
 }
 
 const EN_COPY: DataGridPowerCopy = {
@@ -100,6 +105,9 @@ const EN_COPY: DataGridPowerCopy = {
   duplicate: {
     stagedToast: "Row staged for insert",
     nothingToDuplicate: "Nothing to duplicate: every column is database-generated.",
+  },
+  pinning: {
+    limitToast: "Pinned columns would exceed the visible width — unpin or resize first.",
   },
 };
 
@@ -147,6 +155,10 @@ const VI_COPY: DataGridPowerCopy = {
     stagedToast: "Đã xếp hàng dòng để chèn",
     nothingToDuplicate: "Không có gì để nhân bản: mọi cột đều do cơ sở dữ liệu tạo.",
   },
+  pinning: {
+    limitToast:
+      "Các cột đã ghim sẽ vượt quá chiều rộng hiển thị — hãy bỏ ghim hoặc đổi kích thước trước.",
+  },
 };
 
 const KO_COPY: DataGridPowerCopy = {
@@ -192,6 +204,9 @@ const KO_COPY: DataGridPowerCopy = {
   duplicate: {
     stagedToast: "삽입할 행을 스테이징했습니다",
     nothingToDuplicate: "복제할 내용이 없습니다: 모든 열이 데이터베이스에서 생성됩니다.",
+  },
+  pinning: {
+    limitToast: "고정된 열이 표시 너비를 초과합니다 — 먼저 고정을 해제하거나 크기를 조정하세요.",
   },
 };
 
@@ -240,6 +255,10 @@ const TR_COPY: DataGridPowerCopy = {
     nothingToDuplicate:
       "Kopyalanacak bir şey yok: tüm sütunlar veritabanı tarafından oluşturuluyor.",
   },
+  pinning: {
+    limitToast:
+      "Sabitlenen sütunlar görünür genişliği aşacak — önce sabitlemeyi kaldırın veya yeniden boyutlandırın.",
+  },
 };
 
 const ZH_COPY: DataGridPowerCopy = {
@@ -283,6 +302,9 @@ const ZH_COPY: DataGridPowerCopy = {
   duplicate: {
     stagedToast: "行已暂存待插入",
     nothingToDuplicate: "没有可复制的列：所有列均由数据库生成。",
+  },
+  pinning: {
+    limitToast: "固定列将超出可见宽度 — 请先取消固定或调整列宽。",
   },
 };
 

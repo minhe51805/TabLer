@@ -7,94 +7,36 @@ import type {
   TableInfo,
   TableStructure,
 } from "../../types";
-import {
-  appendAgentFacts,
-  buildWorkspaceTableIdentifier,
-  canonicalizeAgentArgs,
-  type AgentStepEvidence,
-} from "./ai-agent-context";
-import { findAgentSchemaMatches, prioritizeSchemaScanCandidates } from "./ai-agent-schema-search";
-import {
-  formatExecutionError,
-  isHighRiskStatement,
-  isMutatingStatement,
-  isSessionSwitchStatement,
-  normalizeStatementForGuard,
-} from "../SQLEditor/SQLEditorUtils";
-import {
-  findMatchingTableName,
-  findSystemCatalogReferences,
-  getAgentSqlSchemaRequirements,
-  redactAgentSqlLiterals,
-  stringifyAgentObservationFull,
-  summarizeAgentExplainPlanStructured,
-  summarizeAgentQueryObservation,
-  summarizeAgentSchemaSummaryObservation,
-  summarizeAgentStructureObservation,
-  truncateAgentObservation,
-} from "./ai-agent-grounding";
-import { mapWithConcurrency } from "./ai-async-utils";
-import { agentSqlToolBlockedMessage, type AgentToolAvailability } from "./ai-agent-engine-gates";
+import { canonicalizeAgentArgs, type AgentPlanStep } from "./ai-agent-context";
+import { formatExecutionError } from "../SQLEditor/SQLEditorUtils";
+import { truncateAgentObservation } from "./ai-agent-grounding";
+import { type AgentToolAvailability } from "./ai-agent-engine-gates";
 import { isUnattendedAllowedTool, unattendedToolBlockReason } from "./ai-agent-unattended";
 import {
   AI_AGENT_BATCH_CALL_LIMIT,
-  AI_AGENT_BATCH_DESCRIBE_LIMIT,
-  AI_AGENT_DELEGATE_ANSWER_CHARS,
-  AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT,
-  AI_AGENT_DELEGATE_MAX_CALLS,
-  AI_AGENT_PLAN_STEP_LIMIT,
-  AI_AGENT_READ_PAGE_MAX_CHARS,
-  AI_AGENT_SAMPLE_MAX_ROWS,
-  AI_AGENT_SCHEMA_OBJECTS_LIMIT,
-  AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS,
-  AI_AGENT_SEED_DOCUMENT_LIMIT,
-  validateAIAgentReadonlySql,
-  classifyAgentExplainableStatement,
   type AIAgentToolAction,
   type AIAgentBatchArgs,
   type AIAgentBatchCall,
   type AIAgentToolName,
   AI_AGENT_TOOL_NAMES,
 } from "./ai-agent-tools";
-import type { AiProposalExplainResult } from "../../stores/event-center";
-import { getAdminQueryPreset, type AdminQueryKind } from "../../utils/admin-query-presets";
-import { generateInsertSql } from "../../utils/sql-generator";
-import { saveSemanticGlossaryEntry } from "../../utils/semantic-glossary";
-import { requestAICheckpointPick } from "./ai-checkpoint-picker";
-import { useSkillUsageStore } from "../../stores/skillUsageStore";
-import { useUIStore } from "../../stores/uiStore";
-import { invalidateAgentMemoryIndex } from "./hooks/use-agent-memory";
 import { invalidateAgentSchemaSummary, isSchemaAffectingAgentAction } from "./ai-schema-summary";
-import { invokeMutation } from "../../utils/tauri-utils";
+import { type AgentRuleVerdict } from "./ai-agent-rules";
+import type { AIWorkspaceAgentActionName, AIWorkspaceRunTraceEntry } from "./ai-workspace-types";
+import { isSupersededAIRequestError } from "./ai-agent-action-requestor";
 import {
-  formatRuleBlockMessage,
-  describeRuleVerdict,
-  isRunBlockedByRules,
-  ruleVerdictFromEngineError,
-  type AgentRuleVerdict,
-} from "./ai-agent-rules";
-import { EventCenter } from "../../stores/event-center";
-import {
-  isSupersededAIRequestError,
-  AI_REQUEST_REPLACED_MESSAGE,
-} from "./ai-agent-action-requestor";
-import type { AIWorkspaceRunTraceEntry } from "./ai-workspace-types";
-
-const MAX_AGENT_SCHEMA_SCAN_TABLES = 120;
-
-import {
-  agentQueryTimeoutHint,
   agentSqlErrorHint,
-  agentSqlQuoteIdentifier,
   agentToolError,
-  analyzeAgentSqlForAgent,
-  coerceAgentQueryParameter,
-  computeSampleColumnStats,
   isRetryableAgentToolError,
-  normalizeAgentPlanSteps,
-  resolveColumnStatsScope,
   suggestAgentTableNames,
 } from "./agent-tool-executor-helpers";
+import { AGENT_TOOL_HANDLERS } from "./agent-tools";
+import {
+  SKILL_RESTRICTION_ESSENTIAL_TOOLS,
+  type AgentToolCallFrame,
+  type AgentToolContext,
+} from "./agent-tools/shared";
+
 // Back-compat: these pure helpers were public on this module before the split
 // (and are covered by the golden-set eval), so keep re-exporting them here.
 export {
@@ -104,7 +46,7 @@ export {
   computeSampleColumnStats,
   normalizeAgentPlanSteps,
   resolveColumnStatsScope,
-};
+} from "./agent-tool-executor-helpers";
 export type { AgentColumnStatsScope } from "./agent-tool-executor-helpers";
 
 export interface AgentToolExecutorDeps {
@@ -146,12 +88,9 @@ export interface AgentToolExecutorDeps {
     confirmText?: string;
     cancelText?: string;
   }) => Promise<boolean>;
-  publishAgentProgress: (pending?: {
-    action: import("./ai-workspace-types").AIWorkspaceAgentActionName;
-    message: string;
-  }) => void;
+  publishAgentProgress: (pending?: { action: AIWorkspaceAgentActionName; message: string }) => void;
   /** Receives the normalized checklist after each update_plan call. */
-  onAgentPlanUpdate?: (plan: import("./ai-agent-context").AgentPlanStep[]) => void;
+  onAgentPlanUpdate?: (plan: AgentPlanStep[]) => void;
   /**
    * Runs one focused side-analysis model call for delegate (no tools, text
    * answer). The executor bounds the number of calls per run; the hook owns
@@ -237,29 +176,12 @@ export interface AgentToolExecutorDeps {
 }
 
 /**
- * Tool-dispatch layer of the agent runtime. Executes each workspace tool
- * and returns a textual observation for the model. Includes an exploration
- * de-dupe guard so identical non-read calls do not burn step budget.
- * Extracted verbatim from use-ai-slide-panel.
+ * Tool-dispatch layer of the agent runtime. Owns the run-level guards (skill
+ * restriction, unattended read-only, exploration de-dupe, per-run result
+ * cache, pre-write checkpoint, audit trace) and the batch scheduler; the
+ * per-tool behavior lives in agent-tools/ behind the AGENT_TOOL_HANDLERS
+ * registry. Returns a textual observation for the model.
  */
-
-// Matches the backend ceiling in ai_skills.rs (MAX_SKILL_BODY_CHARS = 8_000).
-// The backend truncates authoritatively; this FE check is a redundant backstop
-// so the two layers must not drift apart again.
-const AI_SKILL_BODY_MAX_CHARS = 8_000;
-// Matches ai_skills.rs (MAX_SKILL_RESOURCE_CHARS = 12_000) — same drift guard.
-const AI_SKILL_RESOURCE_MAX_CHARS = 12_000;
-// Tools a loaded skill's `allowed-tools:` restriction can never take away: the
-// agent always keeps the meta/answer tools so a restrictive skill cannot brick
-// the run or trap it without a way to finish or load another skill's docs.
-const SKILL_RESTRICTION_ESSENTIAL_TOOLS = new Set<AIAgentToolName>([
-  "finish",
-  "ask_user",
-  "update_plan",
-  "read_page",
-  "skill",
-  "read_skill_resource",
-]);
 
 /** One-line "key=value" args summary for the run-details audit trail. SQL
  *  bodies are skipped here — they render in the entry's own SQL block. */
@@ -304,130 +226,85 @@ function extractToolCallSql(action: AIAgentToolAction): string | null {
   return null;
 }
 
+/**
+ * Per-run result cache for deterministic read tools: an identical
+ * (tool, canonical args) call returns the archived observation instead of
+ * burning a backend round-trip and a step. Only read tools are cached —
+ * anything that can change state (or prompt the user) always re-runs.
+ */
+const CACHEABLE_AGENT_TOOLS: Record<string, true> = {
+  list_tables: true,
+  search_schema: true,
+  list_schema_objects: true,
+  describe_table: true,
+  describe_tables: true,
+  run_readonly_sql: true,
+  run_parameterized_sql: true,
+  find_value: true,
+  check_sql: true,
+  run_preset: true,
+  read_memory: true,
+  read_skill_resource: true,
+};
+/** Calls whose success can make cached reads stale (schema or memory writes). */
+const CACHE_INVALIDATING_AGENT_TOOLS: Record<string, true> = {
+  preview_write: true,
+  edit_query_sql: true,
+  propose_seed_data: true,
+  restore_checkpoint: true,
+  save_memory: true,
+  delete_memory: true,
+};
+
+/**
+ * Tools a batch may run concurrently: pure reads with no user prompt and no
+ * run-state mutation. Consent-gated reads (sample_table_data, find_value)
+ * stay serial — two parallel consent dialogs would race.
+ */
+const BATCH_PARALLEL_TOOLS: Record<string, true> = {
+  list_tables: true,
+  search_schema: true,
+  list_schema_objects: true,
+  describe_table: true,
+  describe_tables: true,
+  run_readonly_sql: true,
+  run_parameterized_sql: true,
+  check_sql: true,
+  run_preset: true,
+  read_memory: true,
+  read_skill_resource: true,
+};
+/** Tools that can never ride a batch: loop mechanics and user-facing turns. */
+const BATCH_FORBIDDEN_TOOLS: Record<string, true> = {
+  batch: true,
+  finish: true,
+  ask_user: true,
+  update_plan: true,
+  delegate: true,
+  skill: true,
+  read_page: true,
+};
+
 export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
   const {
     connectionId,
-    openQueryTab,
-    allowedSkillNames,
-    memoryScope,
-    currentDatabase,
-    dbType,
-    latestTables,
     availableSchemaTables,
-    relationalSchemaSummaryByTable,
-    inspectedAgentTables,
-    requestId,
-    requestIdRef,
-    requestDataReadConsent,
-    requestDataDestructiveConsent,
-    publishAgentProgress,
-    onAgentPlanUpdate,
-    delegateSubAnalysis,
-    getTableColumnsPreview,
-    getTableStructure,
-    getTableData,
-    executeReadonlyQuery,
-    executeParameterizedReadonlyQuery,
-    previewWriteTransaction,
-    explainStatement,
     createCheckpoint,
-    listCheckpoints,
-    restoreCheckpoint,
-    language,
-    toolAvailability,
-    evaluateGuardrailRules,
     unattendedReadOnly = false,
   } = deps;
   let lastExplorationToolKey = "";
-  /** Side-analysis calls spent this run (delegate budget). */
-  let delegateCallsUsed = 0;
-  /**
-   * Skills loaded this run mapped to the bundled resource paths each one
-   * declared. read_skill_resource is fail-closed against this: a resource is
-   * only readable when its skill was loaded this run AND the path was listed by
-   * that skill, so the agent can never fetch an arbitrary file off disk.
-   */
-  const loadedSkillResources = new Map<string, Set<string>>();
-  /**
-   * Union of `allowed-tools:` declared by loaded skills. Once any loaded skill
-   * declares a restriction, the run is confined to that set plus the essential
-   * meta/answer tools — the same guardrail Claude Code applies per skill.
-   */
-  let skillToolRestriction: Set<AIAgentToolName> | null = null;
-  /** Local checkpoint snapshots created this run (safety budget). */
-  let checkpointCallsUsed = 0;
-  /** Rollback confirmations driven this run (one per run). */
-  let restoreCallsUsed = 0;
   /**
    * P10: tools the model attempted but the unattended read-only policy refused.
    * Reported back with the run outcome so a scheduled task is never claimed to
    * have done something it was blocked from doing.
    */
   const unattendedBlockedToolsUsed = new Set<AIAgentToolName>();
-
-  /**
-   * Full (untruncated) observations from this run, 1-based-indexed in call
-   * order. The trace the model sees truncates at ~1400 chars; read_page
-   * re-reads the archived original at zero cost.
-   */
-  const observationArchive: Array<{ action: string; full: string }> = [];
-  // Mutating statements successfully previewed this run (normalized). The
-  // edit_query_sql gate only accepts proposals for statements the agent has
-  // smoke-tested through preview_write's rollback transaction.
-  const previewedMutatingStatements = new Set<string>();
   /** Audit trail: one entry per dispatched tool call, in call order. */
   const runTrace: AIWorkspaceRunTraceEntry[] = [];
 
-  /**
-   * Per-call mutable slot: the full (untruncated) observation a call produced
-   * and any SQL it built internally (find_value, run_preset). Lives in a frame
-   * object instead of closure variables so parallel batch sub-calls can never
-   * overwrite each other's pending state.
-   */
-  interface AgentToolCallFrame {
-    full: string | null;
-    sql: string | null;
-  }
-
-  /** Archives the full observation and returns the truncated trace version. */
-  const stringifyAgentObservation = (frame: AgentToolCallFrame, data: unknown) => {
-    const full = stringifyAgentObservationFull(data);
-    frame.full = full;
-    return truncateAgentObservation(full);
-  };
-
-  /**
-   * Per-run result cache for deterministic read tools: an identical
-   * (tool, canonical args) call returns the archived observation instead of
-   * burning a backend round-trip and a step. Only read tools are cached —
-   * anything that can change state (or prompt the user) always re-runs.
-   */
-  const CACHEABLE_AGENT_TOOLS = new Set<string>([
-    "list_tables",
-    "search_schema",
-    "list_schema_objects",
-    "describe_table",
-    "describe_tables",
-    "run_readonly_sql",
-    "run_parameterized_sql",
-    "find_value",
-    "check_sql",
-    "run_preset",
-    "read_memory",
-    "read_skill_resource",
-  ]);
-  /** Calls whose success can make cached reads stale (schema or memory writes). */
-  const CACHE_INVALIDATING_AGENT_TOOLS = new Set<string>([
-    "preview_write",
-    "edit_query_sql",
-    "propose_seed_data",
-    "restore_checkpoint",
-    "save_memory",
-    "delete_memory",
-  ]);
   const toolResultCache = new Map<string, { trace: string; full: string }>();
   const agentToolCacheKey = (action: AIAgentToolAction) =>
-    CACHEABLE_AGENT_TOOLS.has(action.action)
+    CACHEABLE_AGENT_TOOLS[action.action] === true
       ? `${action.action}:${canonicalizeAgentArgs(action.args ?? {})}`
       : null;
 
@@ -438,35 +315,6 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       ? `Did you mean: ${suggestions.join(", ")}? Re-run with an exact name from list_tables.`
       : "Call list_tables (optionally with args.pattern) to see the exact table names, then retry.";
   };
-
-  /**
-   * Tools a batch may run concurrently: pure reads with no user prompt and no
-   * run-state mutation. Consent-gated reads (sample_table_data, find_value)
-   * stay serial — two parallel consent dialogs would race.
-   */
-  const BATCH_PARALLEL_TOOLS = new Set<string>([
-    "list_tables",
-    "search_schema",
-    "list_schema_objects",
-    "describe_table",
-    "describe_tables",
-    "run_readonly_sql",
-    "run_parameterized_sql",
-    "check_sql",
-    "run_preset",
-    "read_memory",
-    "read_skill_resource",
-  ]);
-  /** Tools that can never ride a batch: loop mechanics and user-facing turns. */
-  const BATCH_FORBIDDEN_TOOLS = new Set<string>([
-    "batch",
-    "finish",
-    "ask_user",
-    "update_plan",
-    "delegate",
-    "skill",
-    "read_page",
-  ]);
 
   /**
    * Best-effort pre-write checkpoint: the first mutating preview_write /
@@ -496,6 +344,24 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     return preWriteCheckpoint.note;
   };
 
+  /**
+   * Shared deps + mutable run state handed to every tool handler. Handlers
+   * mutate the budget counters, skill state, previewed-statement set, and
+   * observation archive in place; the guards below read the same object.
+   */
+  const ctx: AgentToolContext = {
+    ...deps,
+    delegateCallsUsed: 0,
+    checkpointCallsUsed: 0,
+    restoreCallsUsed: 0,
+    loadedSkillResources: new Map<string, Set<string>>(),
+    skillToolRestriction: null,
+    previewedMutatingStatements: new Set<string>(),
+    observationArchive: [],
+    ensurePreWriteCheckpoint,
+    tableNotFoundHint,
+  };
+
   const dispatchAgentTool = async (
     action: AIAgentToolAction,
     frame: AgentToolCallFrame,
@@ -505,11 +371,11 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       // tool set. Essential meta/answer tools are always exempt so the agent can
       // still finish, ask, or load another skill's docs.
       if (
-        skillToolRestriction &&
-        !skillToolRestriction.has(action.action as AIAgentToolName) &&
-        !SKILL_RESTRICTION_ESSENTIAL_TOOLS.has(action.action as AIAgentToolName)
+        ctx.skillToolRestriction &&
+        !ctx.skillToolRestriction.has(action.action as AIAgentToolName) &&
+        SKILL_RESTRICTION_ESSENTIAL_TOOLS[action.action] !== true
       ) {
-        const allowed = [...skillToolRestriction].sort().join(", ");
+        const allowed = [...ctx.skillToolRestriction].sort().join(", ");
         return agentToolError(
           `the active skill restricts tools to [${allowed}] (plus finish, ask_user, update_plan, read_page, skill, read_skill_resource). "${action.action}" is disabled while that skill is loaded — use an allowed tool or finish.`,
         );
@@ -564,1789 +430,14 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
         }
       }
 
-      if (action.action === "update_plan") {
-        const plan = normalizeAgentPlanSteps(action.args?.steps, AI_AGENT_PLAN_STEP_LIMIT);
-        if (plan.length === 0) {
-          return agentToolError(
-            "update_plan requires args.steps — a non-empty array of { title, status? } entries.",
-            {
-              hint: 'Send args.steps like [{"title":"Locate the orders table","status":"in_progress"}].',
-            },
-          );
-        }
-        onAgentPlanUpdate?.(plan);
-        const done = plan.filter((step) => step.status === "done").length;
-        const inProgress = plan.filter((step) => step.status === "in_progress").length;
-        return stringifyAgentObservation(frame, {
-          planUpdated: true,
-          steps: plan.length,
-          done,
-          inProgress,
-          pending: plan.length - done - inProgress,
-          checklist: plan.map((step, index) => `${index + 1}. [${step.status}] ${step.title}`),
-        });
-      }
-
-      if (action.action === "delegate") {
-        const instruction =
-          typeof action.args?.instruction === "string" ? action.args.instruction.trim() : "";
-        if (!instruction) {
-          return agentToolError(
-            "delegate requires args.instruction — a self-contained side question.",
-            {
-              hint: "Send args.instruction as a complete question, optionally with args.focusTables.",
-            },
-          );
-        }
-        if (!delegateSubAnalysis) {
-          return "Tool notice: delegate is unavailable in this run — answer from the evidence you already have.";
-        }
-        if (delegateCallsUsed >= AI_AGENT_DELEGATE_MAX_CALLS) {
-          return `Tool notice: delegate budget exhausted (${AI_AGENT_DELEGATE_MAX_CALLS}/${AI_AGENT_DELEGATE_MAX_CALLS} used) — continue with your own tools or finish.`;
-        }
-        const focusTables = Array.isArray(action.args?.focusTables)
-          ? (action.args.focusTables as unknown[])
-              .filter(
-                (table): table is string => typeof table === "string" && Boolean(table.trim()),
-              )
-              .map((table) => table.trim())
-              .slice(0, AI_AGENT_DELEGATE_FOCUS_TABLES_LIMIT)
-          : [];
-        delegateCallsUsed += 1;
-        try {
-          const answer = await delegateSubAnalysis(instruction, focusTables);
-          const clean = answer.trim();
-          if (!clean) {
-            return "Side analysis returned nothing. Continue with your own tools.";
-          }
-          const bounded =
-            clean.length > AI_AGENT_DELEGATE_ANSWER_CHARS
-              ? `${clean.slice(0, AI_AGENT_DELEGATE_ANSWER_CHARS)}… [truncated]`
-              : clean;
-          return `Side analysis${focusTables.length > 0 ? ` (focus: ${focusTables.join(", ")})` : ""}:\n${bounded}`;
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return `Side analysis failed: ${formatExecutionError(errorValue)}. Continue with your own tools.`;
-        }
-      }
-
-      if (action.action === "list_tables") {
-        const schemaFilter =
-          typeof action.args?.schema === "string" ? action.args.schema.trim().toLowerCase() : "";
-        const patternFilter =
-          typeof action.args?.pattern === "string" ? action.args.pattern.trim().toLowerCase() : "";
-        const limitFilter =
-          typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
-            ? Math.min(200, Math.max(1, Math.floor(action.args.limit)))
-            : 200;
-        const minRowsFilter =
-          typeof action.args?.minRows === "number" && Number.isFinite(action.args.minRows)
-            ? Math.max(1, Math.floor(action.args.minRows))
-            : undefined;
-
-        const filteredTables = latestTables.filter((table) => {
-          const identifier = (
-            buildWorkspaceTableIdentifier(table, currentDatabase) || table.name
-          ).toLowerCase();
-          if (schemaFilter && (table.schema ?? "").toLowerCase() !== schemaFilter) return false;
-          if (
-            patternFilter &&
-            !identifier.includes(patternFilter) &&
-            !table.name.toLowerCase().includes(patternFilter)
-          ) {
-            return false;
-          }
-          if (minRowsFilter !== undefined && (table.row_count ?? 0) < minRowsFilter) return false;
-          return true;
-        });
-
-        return stringifyAgentObservation(frame, {
-          database: currentDatabase || "Default",
-          catalogTables: latestTables.length,
-          filtered: schemaFilter || patternFilter ? true : undefined,
-          minRows: minRowsFilter,
-          tableCount: filteredTables.length,
-          truncated: filteredTables.length > limitFilter ? true : undefined,
-          next:
-            filteredTables.length > limitFilter
-              ? `${filteredTables.length} tables exceed the ${limitFilter}-name preview. Narrow with args {"pattern":"substring"} or {"schema":"..."}, or raise {"limit":200}.`
-              : undefined,
-          tables: filteredTables.slice(0, limitFilter).map((table) => ({
-            name: table.name,
-            schema: table.schema ?? null,
-            identifier: buildWorkspaceTableIdentifier(table, currentDatabase),
-            type: table.table_type,
-            rowCount: table.row_count ?? null,
-          })),
-        });
-      }
-
-      if (action.action === "search_schema") {
-        const query = typeof action.args?.query === "string" ? action.args.query.trim() : "";
-        if (!query) {
-          return agentToolError("search_schema requires args.query.", {
-            hint: 'Send args.query with the column name or concept to locate, e.g. {"query":"email"}.',
-          });
-        }
-
-        // Column-scanning every table means hundreds of metadata queries
-        // on large catalogs, so prioritize name matches and cap the scan.
-        const catalogEntries = latestTables.map((table) => ({
-          identifier: buildWorkspaceTableIdentifier(table, currentDatabase) || table.name,
-        }));
-        const prioritizedIdentifiers = new Set(
-          prioritizeSchemaScanCandidates(
-            catalogEntries.map((entry) => entry.identifier),
-            query,
-            MAX_AGENT_SCHEMA_SCAN_TABLES,
-          ),
-        );
-        const scanEntries = catalogEntries.filter((entry) =>
-          prioritizedIdentifiers.has(entry.identifier),
-        );
-
-        let scannedCount = 0;
-        const scanned = await mapWithConcurrency(scanEntries, 4, async (entry) => {
-          try {
-            const columns = await getTableColumnsPreview(
-              connectionId!,
-              entry.identifier,
-              currentDatabase || undefined,
-            );
-            return { identifier: entry.identifier, columns, failed: false };
-          } catch {
-            return { identifier: entry.identifier, columns: [], failed: true };
-          } finally {
-            scannedCount += 1;
-            if (scanEntries.length > 24 && scannedCount % 24 === 0) {
-              publishAgentProgress({
-                action: "search_schema",
-                message: `Scanning schema (${scannedCount}/${scanEntries.length})`,
-              });
-            }
-          }
-        });
-        if (requestId !== requestIdRef.current) {
-          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-        }
-
-        const matches = findAgentSchemaMatches(query, scanned);
-        return stringifyAgentObservation(frame, {
-          query,
-          catalogTables: catalogEntries.length,
-          tablesScanned: scanned.length,
-          tablesFailed: scanned.filter((entry) => entry.failed).length,
-          truncatedCatalog:
-            scanned.length < catalogEntries.length
-              ? `Only the ${scanned.length} tables whose names best match the query were scanned; ${catalogEntries.length - scanned.length} were skipped.`
-              : undefined,
-          matches,
-          next:
-            matches.length > 0
-              ? "Call describe_table for the best matching table, then read the requested row data."
-              : "No matching columns were found in the scanned catalog. Do not claim a column is absent if tablesFailed is greater than zero.",
-        });
-      }
-
-      if (action.action === "describe_table") {
-        // Merged tool (was describe_table + describe_tables): accepts a single
-        // `table` or a `tables` array (1..AI_AGENT_BATCH_DESCRIBE_LIMIT).
-        const requestedTables: unknown[] = Array.isArray(action.args?.tables)
-          ? action.args.tables
-          : typeof action.args?.table === "string" && action.args.table.trim()
-            ? [action.args.table]
-            : [];
-        const names = [
-          ...new Set(
-            requestedTables
-              .filter(
-                (value): value is string | number =>
-                  typeof value === "string" || typeof value === "number",
-              )
-              .map((value) => String(value).trim())
-              .filter(Boolean),
-          ),
-        ].slice(0, AI_AGENT_BATCH_DESCRIBE_LIMIT);
-        if (names.length === 0) {
-          return agentToolError(
-            "describe_table requires args.table or a non-empty args.tables array.",
-            { hint: "Send args.table as one exact name, or args.tables as an array of names." },
-          );
-        }
-
-        if (names.length === 1) {
-          const matchedTable = findMatchingTableName(names[0], availableSchemaTables);
-          if (!matchedTable) {
-            return agentToolError(
-              `Table "${names[0]}" is not present in the current workspace schema.`,
-              { hint: tableNotFoundHint(names[0]) },
-            );
-          }
-
-          const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
-          if (cachedSummary) {
-            inspectedAgentTables.add(matchedTable);
-            return summarizeAgentSchemaSummaryObservation(matchedTable, cachedSummary);
-          }
-
-          const structure = await getTableStructure(
-            connectionId!,
-            matchedTable,
-            currentDatabase || undefined,
-          );
-          if (requestId !== requestIdRef.current) {
-            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-          }
-
-          inspectedAgentTables.add(matchedTable);
-          return summarizeAgentStructureObservation(matchedTable, structure);
-        }
-
-        const sections: string[] = [];
-        for (const requestedTable of names) {
-          const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
-          if (!matchedTable) {
-            sections.push(
-              `TABLE=${requestedTable} ERROR=Not present in the current workspace schema.`,
-            );
-            continue;
-          }
-          try {
-            const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
-            if (cachedSummary) {
-              inspectedAgentTables.add(matchedTable);
-              sections.push(cachedSummary);
-              continue;
-            }
-            const structure = await getTableStructure(
-              connectionId!,
-              matchedTable,
-              currentDatabase || undefined,
-            );
-            if (requestId !== requestIdRef.current) {
-              throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-            }
-            inspectedAgentTables.add(matchedTable);
-            sections.push(summarizeAgentStructureObservation(matchedTable, structure));
-          } catch (errorValue) {
-            if (isSupersededAIRequestError(errorValue)) throw errorValue;
-            sections.push(`TABLE=${matchedTable} ERROR=${formatExecutionError(errorValue)}`);
-          }
-        }
-
-        return stringifyAgentObservation(frame, {
-          described: sections.length,
-          tables: sections.join("\n\n"),
-        });
-      }
-
-      if (action.action === "describe_tables") {
-        const requestedTables: unknown[] = Array.isArray(action.args?.tables)
-          ? action.args.tables
-          : [];
-        const names = [
-          ...new Set(
-            requestedTables
-              .filter(
-                (value): value is string | number =>
-                  typeof value === "string" || typeof value === "number",
-              )
-              .map((value) => String(value).trim())
-              .filter(Boolean),
-          ),
-        ].slice(0, AI_AGENT_BATCH_DESCRIBE_LIMIT);
-        if (names.length === 0) {
-          return agentToolError("describe_tables requires a non-empty args.tables array.", {
-            hint: "Send args.tables as an array of exact table names.",
-          });
-        }
-
-        const sections: string[] = [];
-        for (const requestedTable of names) {
-          const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
-          if (!matchedTable) {
-            sections.push(
-              `TABLE=${requestedTable} ERROR=Not present in the current workspace schema.`,
-            );
-            continue;
-          }
-          try {
-            const cachedSummary = relationalSchemaSummaryByTable.get(matchedTable);
-            if (cachedSummary) {
-              inspectedAgentTables.add(matchedTable);
-              sections.push(cachedSummary);
-              continue;
-            }
-            const structure = await getTableStructure(
-              connectionId!,
-              matchedTable,
-              currentDatabase || undefined,
-            );
-            if (requestId !== requestIdRef.current) {
-              throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-            }
-            inspectedAgentTables.add(matchedTable);
-            sections.push(summarizeAgentStructureObservation(matchedTable, structure));
-          } catch (errorValue) {
-            if (isSupersededAIRequestError(errorValue)) throw errorValue;
-            sections.push(`TABLE=${matchedTable} ERROR=${formatExecutionError(errorValue)}`);
-          }
-        }
-
-        return stringifyAgentObservation(frame, {
-          described: sections.length,
-          tables: sections.join("\n\n"),
-        });
-      }
-
-      if (action.action === "sample_table_data") {
-        const requestedTable =
-          typeof action.args?.table === "string" ? action.args.table.trim() : "";
-        if (!requestedTable) {
-          return agentToolError("sample_table_data requires args.table.", {
-            hint: "Send args.table as one exact table name from list_tables.",
-          });
-        }
-
-        const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
-        if (!matchedTable) {
-          return agentToolError(
-            `Table "${requestedTable}" is not present in the current workspace schema.`,
-            { hint: tableNotFoundHint(requestedTable) },
-          );
-        }
-
-        if (requestDataReadConsent) {
-          const approved = await requestDataReadConsent();
-          if (!approved) {
-            return "Tool blocked: The user did not grant permission to read live database rows for this request.";
-          }
-        }
-
-        const requestedLimit =
-          typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
-            ? Math.min(AI_AGENT_SAMPLE_MAX_ROWS, Math.max(1, Math.floor(action.args.limit)))
-            : 10;
-        const requestedOffset =
-          typeof action.args?.offset === "number" && Number.isFinite(action.args.offset)
-            ? Math.max(0, Math.floor(action.args.offset))
-            : 0;
-        // get_table_data goes through the engine driver so identifiers are
-        // quoted per dialect; no model-supplied SQL is involved here.
-        const queryResult = await getTableData(connectionId!, matchedTable, {
-          database: currentDatabase || undefined,
-          limit: requestedLimit,
-          offset: requestedOffset || undefined,
-        });
-        if (requestId !== requestIdRef.current) {
-          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-        }
-
-        inspectedAgentTables.add(matchedTable);
-
-        // Column-statistics enrichment, GATED (audit fix: this used to run a
-        // COUNT/SUM/COUNT(DISTINCT) aggregate over the WHOLE table on every
-        // sample). Whole-table stats only run when the catalog rowCount is
-        // known and at most AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS; anything
-        // bigger — or of unknown size — computes stats from the sampled rows
-        // instead, and args.stats="off" skips them entirely. Failures are
-        // silent: the sample itself remains the source of truth.
-        const statColumns = queryResult.columns.slice(0, 12);
-        const matchedCatalogTable = latestTables.find(
-          (table) =>
-            table.name === matchedTable ||
-            buildWorkspaceTableIdentifier(table, currentDatabase) === matchedTable,
-        );
-        const knownRowCount = matchedCatalogTable?.row_count ?? null;
-        const statsScope = resolveColumnStatsScope(
-          typeof action.args?.stats === "string" ? action.args.stats : undefined,
-          knownRowCount,
-        );
-        let columnStats:
-          Array<{ column: string; nullRatio: number; distinctCount: number }> | undefined;
-        let columnStatsScopeLabel = "";
-        let insightEvidence: AgentStepEvidence | undefined;
-        if (statsScope !== "off" && statColumns.length > 0 && requestedOffset === 0) {
-          if (statsScope === "whole") {
-            try {
-              const quotedTable = agentSqlQuoteIdentifier(dbType, matchedTable);
-              const selectParts = [
-                "COUNT(*) AS __total",
-                ...statColumns.flatMap((column, index) => {
-                  const quoted = agentSqlQuoteIdentifier(dbType, column.name);
-                  return [
-                    `SUM(CASE WHEN ${quoted} IS NULL THEN 1 ELSE 0 END) AS __null_${index}`,
-                    `COUNT(DISTINCT ${quoted}) AS __distinct_${index}`,
-                  ];
-                }),
-              ];
-              const statsSql = `SELECT ${selectParts.join(", ")} FROM ${quotedTable}`;
-              const statsResult = await executeReadonlyQuery(connectionId!, [statsSql]);
-              if (requestId !== requestIdRef.current) {
-                throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-              }
-              const row = statsResult.rows[0];
-              const total = Number(row?.[0] ?? 0);
-              if (Number.isFinite(total) && total > 0) {
-                columnStats = statColumns.map((column, index) => {
-                  const nullCount = Number(row?.[1 + index * 2] ?? 0);
-                  const distinctCount = Number(row?.[2 + index * 2] ?? 0);
-                  return {
-                    column: column.name,
-                    nullRatio: Math.round((nullCount / total) * 1000) / 1000,
-                    distinctCount: Number.isFinite(distinctCount) ? distinctCount : 0,
-                  };
-                });
-                columnStatsScopeLabel = " (whole table)";
-                // This aggregate is the statement the numbers above came from,
-                // so the insight engine may cite it. Sample-scoped stats carry
-                // no evidence on purpose: that read is driver-side pagination,
-                // no SQL text for it exists here, and inventing one would
-                // fabricate the proof an insight is required to show.
-                insightEvidence = { executedSql: statsSql, rowCount: total };
-              }
-            } catch (errorValue) {
-              if (isSupersededAIRequestError(errorValue)) throw errorValue;
-              // Statistics are best-effort; engine quirks must not break sampling.
-            }
-          } else {
-            // Sample-scoped stats: computed in memory from the rows this call
-            // already fetched — no extra query, never a full-table read.
-            columnStats = computeSampleColumnStats(
-              queryResult.rows,
-              statColumns.map((column, index) => ({ name: column.name, index })),
-            );
-            if (columnStats.length > 0) {
-              columnStatsScopeLabel = ` (sample of ${queryResult.rows.length} rows)`;
-            }
-          }
-        }
-
-        const observation = summarizeAgentQueryObservation(queryResult);
-        return appendAgentFacts(
-          columnStats
-            ? `${observation}\n\nColumn stats${columnStatsScopeLabel}: ${columnStats
-                .map(
-                  (stat) =>
-                    `${stat.column}: nullRatio=${stat.nullRatio}, distinct=${stat.distinctCount}`,
-                )
-                .join(" | ")}`
-            : observation,
-          {
-            rowsReturned: queryResult.rows.length,
-            tables: [matchedTable],
-            ...(columnStats ? { columnStats } : {}),
-            ...(insightEvidence ? { insightEvidence } : {}),
-          },
-        );
-      }
-
-      if (action.action === "list_schema_objects") {
-        const objectType =
-          typeof action.args?.objectType === "string" && action.args.objectType !== "all"
-            ? action.args.objectType
-            : undefined;
-        const patternFilter =
-          typeof action.args?.pattern === "string" ? action.args.pattern.trim().toLowerCase() : "";
-        const withDefinition = action.args?.withDefinition === true;
-        const limitFilter =
-          typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
-            ? Math.min(AI_AGENT_SCHEMA_OBJECTS_LIMIT, Math.max(1, Math.floor(action.args.limit)))
-            : AI_AGENT_SCHEMA_OBJECTS_LIMIT;
-
-        try {
-          const objects = await invokeMutation<
-            Array<{
-              name: string;
-              schema: string | null;
-              object_type: string;
-              related_table: string | null;
-              definition: string | null;
-            }>
-          >("list_schema_objects", {
-            connectionId,
-            database: currentDatabase ?? null,
-          });
-          if (requestId !== requestIdRef.current) {
-            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-          }
-          const filtered = objects
-            .filter((object) =>
-              objectType ? object.object_type.toLowerCase() === objectType : true,
-            )
-            .filter((object) =>
-              patternFilter
-                ? object.name.toLowerCase().includes(patternFilter) ||
-                  (object.related_table ?? "").toLowerCase().includes(patternFilter)
-                : true,
-            );
-          const emit = (object: (typeof filtered)[number]) => ({
-            name: object.name,
-            schema: object.schema,
-            objectType: object.object_type,
-            relatedTable: object.related_table,
-            definition:
-              withDefinition && object.definition
-                ? redactAgentSqlLiterals(
-                    object.definition.length > AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS
-                      ? `${object.definition.slice(0, AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS)}\n[definition truncated]`
-                      : object.definition,
-                  )
-                : undefined,
-          });
-          return stringifyAgentObservation(frame, {
-            objectType: objectType ?? "all",
-            objectCount: filtered.length,
-            truncated: filtered.length > limitFilter ? true : undefined,
-            next:
-              filtered.length > limitFilter
-                ? `${filtered.length} objects exceed the ${limitFilter}-object preview. Narrow with args {"pattern":"substring"} or {"objectType":"view"}.`
-                : undefined,
-            objects: filtered.slice(0, limitFilter).map(emit),
-            note: withDefinition
-              ? undefined
-              : "Set args.withDefinition=true to read the SQL definition of specific objects - it is verified business logic.",
-          });
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(
-            `could not list schema objects: ${formatExecutionError(errorValue)}`,
-            {
-              retryable: isRetryableAgentToolError(errorValue),
-            },
-          );
-        }
-      }
-      if (action.action === "run_preset") {
-        if (toolAvailability && !toolAvailability.sqlRead) {
-          return `Tool blocked: run_preset is not available on ${toolAvailability.engineLabel}. Preset SQL targets SQL engines.`;
-        }
-        const wantsList = action.args?.list === true || typeof action.args?.presetId !== "string";
-        const presetKinds: AdminQueryKind[] = ["process-list", "user-management"];
-        if (wantsList) {
-          return stringifyAgentObservation(frame, {
-            engine: toolAvailability?.engineLabel ?? "current engine",
-            availablePresets: presetKinds.map((kind) => ({
-              presetId: kind,
-              ...(() => {
-                const preset = getAdminQueryPreset(dbType, kind);
-                return { supported: preset.supported, reason: preset.reason };
-              })(),
-            })),
-            note: "Call again with args.presetId to run a preset. Preset SQL is pre-vetted per engine - catalog guards do not apply to it.",
-          });
-        }
-        const presetId =
-          action.args?.presetId === "user-management" ? "user-management" : "process-list";
-        const preset = getAdminQueryPreset(dbType, presetId as AdminQueryKind);
-        if (!preset.supported) {
-          return `Tool blocked: the "${presetId}" preset is not available on this engine${preset.reason ? `: ${preset.reason}` : "."}`;
-        }
-        if (requestDataReadConsent) {
-          const approved = await requestDataReadConsent();
-          if (!approved) {
-            return "Tool blocked: The user did not grant permission to read live database rows for this request.";
-          }
-        }
-        try {
-          frame.sql = preset.content;
-          const queryResult = await executeReadonlyQuery(connectionId!, [preset.content]);
-          if (requestId !== requestIdRef.current) {
-            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-          }
-          return stringifyAgentObservation(frame, {
-            presetId,
-            note: "Executed a pre-vetted operational preset (not model-written SQL).",
-            result: summarizeAgentQueryObservation(queryResult),
-          });
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(
-            `preset "${presetId}" failed: ${formatExecutionError(errorValue)}`,
-            {
-              hint: agentSqlErrorHint(errorValue),
-              retryable: isRetryableAgentToolError(errorValue),
-            },
-          );
-        }
-      }
-
-      if (action.action === "read_page") {
-        const total = observationArchive.length;
-        if (total === 0) {
-          return agentToolError(
-            "read_page has nothing to page through - no tool observations exist in this run yet.",
-            { hint: "Run a real tool first; read_page only re-reads earlier observations." },
-          );
-        }
-        const requestedRef =
-          typeof action.args?.ref === "number" && Number.isFinite(action.args.ref)
-            ? Math.floor(action.args.ref)
-            : total;
-        if (requestedRef < 1 || requestedRef > total) {
-          return agentToolError(
-            `read_page args.ref must be between 1 and ${total} (this run produced ${total} observation(s)).`,
-            { hint: `Pick args.ref in [1, ${total}] or omit it for the latest observation.` },
-          );
-        }
-        const entry = observationArchive[requestedRef - 1];
-        const offset =
-          typeof action.args?.offset === "number" && Number.isFinite(action.args.offset)
-            ? Math.max(0, Math.floor(action.args.offset))
-            : 0;
-        const limit =
-          typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
-            ? Math.min(AI_AGENT_READ_PAGE_MAX_CHARS, Math.max(100, Math.floor(action.args.limit)))
-            : 1400;
-        if (offset >= entry.full.length) {
-          return stringifyAgentObservationFull({
-            ref: requestedRef,
-            action: entry.action,
-            totalChars: entry.full.length,
-            offset,
-            note: "Offset is past the end of this observation. Use a smaller offset.",
-          });
-        }
-        const slice = entry.full.slice(offset, offset + limit);
-        const nextOffset = offset + slice.length;
-        return stringifyAgentObservationFull({
-          ref: requestedRef,
-          action: entry.action,
-          totalChars: entry.full.length,
-          offset,
-          nextOffset: nextOffset < entry.full.length ? nextOffset : undefined,
-          hasMore: nextOffset < entry.full.length || undefined,
-          text: slice,
-        });
-      }
-      if (action.action === "run_readonly_sql") {
-        if (toolAvailability && !toolAvailability.sqlRead) {
-          return agentSqlToolBlockedMessage("run_readonly_sql", toolAvailability);
-        }
-        const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
-        if (!sql) {
-          return agentToolError("run_readonly_sql requires args.sql.", {
-            hint: 'Send args.sql as a single read-only statement, e.g. {"sql":"SELECT ... LIMIT 50"}.',
-          });
-        }
-
-        // First-line defense: reject mutations/session SQL before any backend
-        // call. The dedicated `execute_agent_readonly_query` command still pins
-        // read-only server-side; this is fail-fast UX, not the security boundary.
-        try {
-          validateAIAgentReadonlySql(sql);
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(
-            errorValue instanceof Error ? errorValue.message : String(errorValue),
-            {
-              hint: "Only SELECT/SHOW/EXPLAIN/DESCRIBE/WITH/read-only PRAGMA statements are allowed.",
-            },
-          );
-        }
-
-        // System catalogs have engine-specific columns and are the #1 source of
-        // hallucinated SQL (e.g. information_schema.tables has no row_count).
-        // The workspace tools already provide everything the catalogs would.
-        const catalogRefs = findSystemCatalogReferences(sql);
-        if (catalogRefs.length > 0) {
-          return `Tool blocked: SQL references system catalog objects (${catalogRefs.join(", ")}). Do not query information_schema/pg_catalog/sqlite_master — their columns vary per engine. For table lists and row counts use list_tables (each entry carries rowCount); for columns use search_schema or describe_table.`;
-        }
-
-        const schemaRequirements = getAgentSqlSchemaRequirements(
-          sql,
-          availableSchemaTables,
-          inspectedAgentTables,
-        );
-        if (schemaRequirements.unknown.length > 0) {
-          return `Tool blocked: SQL references unknown table(s): ${schemaRequirements.unknown.join(", ")}. Use list_tables and describe_table first.`;
-        }
-        if (schemaRequirements.uninspected.length > 0) {
-          return `Tool blocked: Inspect the schema before reading rows. Call describe_table for: ${schemaRequirements.uninspected.join(", ")}.`;
-        }
-
-        if (requestDataReadConsent) {
-          const approved = await requestDataReadConsent();
-          if (!approved) {
-            return "Tool blocked: The user did not grant permission to read live database rows for this request.";
-          }
-        }
-
-        // Heavy-read guard: an unbounded SELECT gets an automatic EXPLAIN
-        // first so the model sees scan estimates before pulling data.
-        let explainNote = "";
-        if (
-          /^(SELECT|WITH)\b/i.test(sql) &&
-          !/\bLIMIT\s+\d/i.test(sql) &&
-          !/^EXPLAIN\b/i.test(sql)
-        ) {
-          try {
-            const plan = await executeReadonlyQuery(connectionId!, [`EXPLAIN ${sql}`]);
-            const planText = summarizeAgentExplainPlanStructured(plan, dbType);
-            if (planText) {
-              explainNote = `\n\nQuery plan (EXPLAIN, not executed - structured summary with cost hotspots):\n${planText}`;
-            }
-          } catch (errorValue) {
-            if (isSupersededAIRequestError(errorValue)) throw errorValue;
-            // Engines without EXPLAIN support simply skip the cost preview.
-          }
-          if (requestId !== requestIdRef.current) {
-            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-          }
-        }
-
-        let queryResult: QueryResult;
-        try {
-          queryResult = await executeReadonlyQuery(connectionId!, [sql]);
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          // A timed-out query is actionable feedback, not a dead end: tell
-          // the model exactly how to shrink the statement.
-          return agentToolError(`readonly query failed: ${formatExecutionError(errorValue)}`, {
-            hint:
-              agentSqlErrorHint(errorValue) ??
-              (agentQueryTimeoutHint(errorValue).trim() || undefined),
-            retryable: isRetryableAgentToolError(errorValue),
-          });
-        }
-        if (requestId !== requestIdRef.current) {
-          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-        }
-
-        return appendAgentFacts(`${summarizeAgentQueryObservation(queryResult)}${explainNote}`, {
-          rowsReturned: queryResult.rows.length,
-          // The statement that ran, for the insight engine: `sql` is exactly
-          // what executeReadonlyQuery received above.
-          insightEvidence: { executedSql: sql, rowCount: queryResult.rows.length },
-        });
-      }
-
-      if (action.action === "run_parameterized_sql") {
-        if (toolAvailability && !toolAvailability.sqlRead) {
-          return agentSqlToolBlockedMessage("run_parameterized_sql", toolAvailability);
-        }
-        const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
-        if (!sql) {
-          return agentToolError("run_parameterized_sql requires args.sql.", {
-            hint: "Send args.sql with :name placeholders plus args.parameters bindings.",
-          });
-        }
-        const rawParameters = Array.isArray(action.args?.parameters) ? action.args.parameters : [];
-        const parameters: Array<{ name: string; value: unknown; dataType: QueryParameterType }> =
-          [];
-        for (const item of rawParameters) {
-          if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-          const record = item as Record<string, unknown>;
-          const name = typeof record.name === "string" ? record.name.trim() : "";
-          if (!name || !("value" in record)) {
-            return agentToolError(
-              'every parameters[] entry requires a non-empty "name" and a "value".',
-              {
-                hint: 'Each entry: {"name":"status","value":"active"} — referenced in SQL as :status.',
-              },
-            );
-          }
-          parameters.push(coerceAgentQueryParameter(name, record.value, record.dataType));
-        }
-        if (parameters.length === 0) {
-          return agentToolError(
-            'run_parameterized_sql requires bindings like [{"name":"status","value":"active"}]. Reference them in SQL as :name.',
-          );
-        }
-
-        const guard = analyzeAgentSqlForAgent(sql, availableSchemaTables, inspectedAgentTables);
-        if (!guard.ok) {
-          return `Tool blocked: ${guard.error}`;
-        }
-
-        if (requestDataReadConsent) {
-          const approved = await requestDataReadConsent();
-          if (!approved) {
-            return "Tool blocked: The user did not grant permission to read live database rows for this request.";
-          }
-        }
-
-        try {
-          const queryResult = await executeParameterizedReadonlyQuery(
-            connectionId!,
-            sql,
-            parameters,
-          );
-          if (requestId !== requestIdRef.current) {
-            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-          }
-          return appendAgentFacts(
-            stringifyAgentObservation(frame, {
-              parameterized: true,
-              parameterCount: parameters.length,
-              result: summarizeAgentQueryObservation(queryResult),
-            }),
-            {
-              rowsReturned: queryResult.rows.length,
-              insightEvidence: { executedSql: sql, rowCount: queryResult.rows.length },
-            },
-          );
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(`parameterized query failed: ${formatExecutionError(errorValue)}`, {
-            hint:
-              agentSqlErrorHint(errorValue) ??
-              (agentQueryTimeoutHint(errorValue).trim() || undefined),
-            retryable: isRetryableAgentToolError(errorValue),
-          });
-        }
-      }
-
-      if (action.action === "find_value") {
-        if (toolAvailability && !toolAvailability.sqlRead) {
-          return agentSqlToolBlockedMessage("find_value", toolAvailability);
-        }
-        const requestedTable =
-          typeof action.args?.table === "string" ? action.args.table.trim() : "";
-        const requestedColumn =
-          typeof action.args?.column === "string" ? action.args.column.trim() : "";
-        if (!requestedTable || !requestedColumn) {
-          return agentToolError("find_value requires args.table and args.column.", {
-            hint: "Send args.table (verified name), args.column (verified column) and args.value.",
-          });
-        }
-        if (!("value" in (action.args ?? {}))) {
-          return agentToolError("find_value requires args.value.", {
-            hint: "Send args.value — the exact value to match; numbers may be unquoted.",
-          });
-        }
-
-        const matchedTable = findMatchingTableName(requestedTable, availableSchemaTables);
-        if (!matchedTable) {
-          return agentToolError(
-            `Table "${requestedTable}" is not present in the current workspace schema.`,
-            { hint: tableNotFoundHint(requestedTable) },
-          );
-        }
-
-        // Verify the column against the real structure so a hallucinated column
-        // name fails here with the actual list instead of at the driver.
-        const columns = await getTableColumnsPreview(
-          connectionId!,
-          matchedTable,
-          currentDatabase || undefined,
-        );
-        if (requestId !== requestIdRef.current) {
-          throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-        }
-        const matchedColumn = columns.find(
-          (column) => column.name.toLowerCase() === requestedColumn.toLowerCase(),
-        );
-        if (!matchedColumn) {
-          return agentToolError(
-            `Column "${requestedColumn}" does not exist on ${matchedTable}. Available columns: ${columns.map((column) => column.name).join(", ")}.`,
-            { hint: "Use one of the listed column names exactly." },
-          );
-        }
-
-        if (requestDataReadConsent) {
-          const approved = await requestDataReadConsent();
-          if (!approved) {
-            return "Tool blocked: The user did not grant permission to read live database rows for this request.";
-          }
-        }
-
-        const requestedLimit =
-          typeof action.args?.limit === "number" && Number.isFinite(action.args.limit)
-            ? Math.min(AI_AGENT_SAMPLE_MAX_ROWS, Math.max(1, Math.floor(action.args.limit)))
-            : 10;
-        const quotedTable = agentSqlQuoteIdentifier(dbType, matchedTable);
-        const quotedColumn = agentSqlQuoteIdentifier(dbType, matchedColumn.name);
-        const binding = coerceAgentQueryParameter("value", action.args.value);
-        const sql =
-          dbType === "mssql"
-            ? `SELECT TOP (${requestedLimit}) * FROM ${quotedTable} WHERE ${quotedColumn} = :value`
-            : `SELECT * FROM ${quotedTable} WHERE ${quotedColumn} = :value LIMIT ${requestedLimit}`;
-
-        try {
-          frame.sql = sql;
-          const queryResult = await executeParameterizedReadonlyQuery(connectionId!, sql, [
-            binding,
-          ]);
-          if (requestId !== requestIdRef.current) {
-            throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-          }
-          inspectedAgentTables.add(matchedTable);
-          return stringifyAgentObservation(frame, {
-            table: matchedTable,
-            column: matchedColumn.name,
-            value: binding.value,
-            parameterized: true,
-            result: summarizeAgentQueryObservation(queryResult),
-          });
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(`find_value failed: ${formatExecutionError(errorValue)}`, {
-            hint:
-              agentSqlErrorHint(errorValue) ??
-              (agentQueryTimeoutHint(errorValue).trim() || undefined),
-            retryable: isRetryableAgentToolError(errorValue),
-          });
-        }
-      }
-
-      if (action.action === "check_sql") {
-        if (toolAvailability && !toolAvailability.sqlRead) {
-          return agentSqlToolBlockedMessage("check_sql", toolAvailability);
-        }
-        const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
-        if (!sql) {
-          return agentToolError("check_sql requires args.sql.", {
-            hint: "Send args.sql as the single statement to validate.",
-          });
-        }
-        const analysis = analyzeAgentSqlForAgent(sql, availableSchemaTables, inspectedAgentTables);
-        const unboundedSelect =
-          analysis.ok &&
-          /^(SELECT|WITH)\b/i.test(sql) &&
-          !/\bLIMIT\s+\d/i.test(sql) &&
-          !/^EXPLAIN\b/i.test(sql);
-        return stringifyAgentObservation(frame, {
-          ok: analysis.ok && !unboundedSelect,
-          sql: redactAgentSqlLiterals(sql),
-          issues: analysis.ok ? [] : [analysis.error],
-          ...(unboundedSelect
-            ? {
-                notes: [
-                  "The SELECT has no LIMIT - add one before finishing so it can never become a full-table pull.",
-                ],
-              }
-            : {}),
-          note:
-            analysis.ok && !unboundedSelect
-              ? "Pre-flight passed. You may now finish with this SQL."
-              : "Fix every issue (or re-check corrected SQL) before calling finish.",
-        });
-      }
-
-      if (action.action === "preview_write") {
-        if (toolAvailability && !toolAvailability.sqlWritePreview) {
-          return agentSqlToolBlockedMessage("preview_write", toolAvailability);
-        }
-        const requested = Array.isArray(action.args?.statements) ? action.args.statements : [];
-        const statements = requested
-          .filter((value): value is string => typeof value === "string")
-          .map((value) => value.trim())
-          .filter(Boolean);
-        if (statements.length === 0) {
-          return agentToolError("preview_write requires a non-empty args.statements array.", {
-            hint: "Send args.statements like [\"UPDATE orders SET status = 'x' WHERE id = 1\"].",
-          });
-        }
-
-        // Safety rails: at least one real change, no session switching,
-        // and explicit user consent before touching live rows.
-        const mutatingCount = statements.filter(
-          (statement) => isMutatingStatement(statement) || isHighRiskStatement(statement),
-        ).length;
-        if (mutatingCount === 0) {
-          return agentToolError(
-            "preview_write requires at least one INSERT/UPDATE/DELETE/ALTER/CREATE statement. Use run_readonly_sql for reads.",
-          );
-        }
-        for (const statement of statements) {
-          if (isSessionSwitchStatement(statement)) {
-            return "Tool blocked: session-switch statements are not allowed in write previews.";
-          }
-        }
-
-        // Guardrail rules (P6.1): user-authored rules in `<workspace>/rules` and
-        // the seeded built-in pack get a say before anything is previewed. A
-        // `block` rule refuses the call and the reason travels back to the model
-        // as the tool result, so it can rewrite the statement instead of
-        // guessing. An engine failure is escalated by the helper rather than
-        // silently passed, because this is the write path.
-        // Filled by the guardrail check below: a `warn` rule's reason must reach the
-        // model rather than being discarded with the verdict.
-        let ruleCaution = "";
-        if (evaluateGuardrailRules) {
-          let verdict: AgentRuleVerdict;
-          try {
-            verdict = await evaluateGuardrailRules(statements, { isMutating: true });
-          } catch (errorValue) {
-            if (isSupersededAIRequestError(errorValue)) throw errorValue;
-            verdict = ruleVerdictFromEngineError(errorValue, true);
-          }
-          if (isRunBlockedByRules(verdict)) {
-            publishAgentProgress({
-              action: "preview_write",
-              message: `Guardrail rule refused the write preview (${verdict.matched_rules
-                .map((match) => match.name)
-                .join(", ")}).`,
-            });
-            return `Tool blocked: ${formatRuleBlockMessage(verdict)}`;
-          }
-          // A `warn` / `require_approval` rule is not a refusal, but it must not be
-          // dropped either: the contract for `warn` is "surface it to the model as a
-          // caution". A discarded verdict is exactly the failure mode this subsystem
-          // exists to prevent, so the notice travels back with the preview.
-          ruleCaution = describeRuleVerdict(verdict);
-        }
-
-        if (requestDataReadConsent) {
-          const approved = await requestDataReadConsent();
-          if (!approved) {
-            return "Tool blocked: The user did not grant permission to run the write preview for this request.";
-          }
-        }
-
-        // Pre-write safety net: snapshot the database under the
-        // "agent-pre-write" label before the first mutating preview of the
-        // run. Best-effort — a failure warns inside the observation but never
-        // blocks the preview itself.
-        const preWriteNote = await ensurePreWriteCheckpoint();
-
-        try {
-          const preview = await previewWriteTransaction(connectionId!, statements);
-          for (const statement of statements) {
-            if (isMutatingStatement(statement) || isHighRiskStatement(statement)) {
-              previewedMutatingStatements.add(normalizeStatementForGuard(statement));
-            }
-          }
-          const summary = preview.results.map((result, index) => ({
-            statement: statements[index] ?? `statement ${index + 1}`,
-            affectedRows: result.affected_rows,
-            returnedRows: result.rows.length,
-            truncated: result.truncated || undefined,
-          }));
-          return stringifyAgentObservation(frame, {
-            rolledBack: true,
-            persisted: false,
-            note: "Executed inside one transaction and ROLLED BACK. Nothing was saved. Report these effects as a PREVIEW and direct the user to apply the final SQL through the approval flow.",
-            statementCount: statements.length,
-            results: summary,
-            ...(ruleCaution ? { guardrailRules: ruleCaution } : {}),
-            preWriteCheckpoint: preWriteNote,
-          });
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(formatExecutionError(errorValue), {
-            hint: agentSqlErrorHint(errorValue),
-            retryable: isRetryableAgentToolError(errorValue),
-          });
-        }
-      }
-      if (action.action === "create_checkpoint") {
-        if (checkpointCallsUsed >= 3) {
-          return agentToolError(
-            "create_checkpoint budget exhausted for this run (3 snapshots max). The user can always create one manually with /backup.",
-          );
-        }
-        checkpointCallsUsed += 1;
-        if (typeof createCheckpoint !== "function") {
-          return agentToolError("create_checkpoint is unavailable in this context.");
-        }
-        const label = typeof action.args?.label === "string" ? action.args.label.trim() : "";
-        try {
-          const result = await createCheckpoint(label || null);
-          return `Checkpoint created: ${result.tableCount} tables, ${result.rowCount} rows saved locally (label: "${result.label}"). The user can restore it with the /rollback command — suggest that command if an upcoming or just-executed change looks wrong.`;
-        } catch (errorValue) {
-          return agentToolError(
-            `create_checkpoint failed. ${errorValue instanceof Error ? errorValue.message : String(errorValue)}`,
-            { retryable: isRetryableAgentToolError(errorValue) },
-          );
-        }
-      }
-
-      if (action.action === "restore_checkpoint") {
-        if (restoreCallsUsed >= 1) {
-          return agentToolError(
-            "restore_checkpoint budget exhausted for this run (1 rollback max). The user can always run /rollback manually.",
-          );
-        }
-        restoreCallsUsed += 1;
-        if (
-          !connectionId ||
-          !dbType ||
-          typeof listCheckpoints !== "function" ||
-          typeof restoreCheckpoint !== "function"
-        ) {
-          return agentToolError("restore_checkpoint is unavailable in this context.");
-        }
-        const hint =
-          typeof action.args?.label_hint === "string"
-            ? action.args.label_hint.trim().toLowerCase()
-            : "";
-        const checkpoints = await listCheckpoints(connectionId);
-        if (!checkpoints.length) {
-          return "No checkpoints exist for this connection. The user can create one with /backup or your create_checkpoint tool.";
-        }
-        const chosen = hint
-          ? (checkpoints.find((entry) => entry.label.toLowerCase().includes(hint)) ??
-            checkpoints[0])
-          : checkpoints[0];
-        // Human confirmation is mandatory: the picker modal opens directly on
-        // this checkpoint; the run resumes only after Restore/Cancel.
-        publishAgentProgress({
-          action: "restore_checkpoint",
-          message: `Rollback to "${chosen.label}" — waiting for the user to confirm.`,
-        });
-        const fileName = await requestAICheckpointPick(
-          [chosen],
-          language || "en",
-          connectionId,
-          dbType,
-        );
-        if (!fileName) {
-          return "User cancelled the rollback. No changes were made.";
-        }
-        try {
-          await restoreCheckpoint(connectionId, fileName, dbType);
-          return `Database restored to checkpoint "${chosen.label}". Remind the user to reopen tables if a stale view remains, and continue follow-up work on the restored data.`;
-        } catch (errorValue) {
-          return agentToolError(
-            `rollback failed. ${errorValue instanceof Error ? errorValue.message : String(errorValue)}`,
-            { retryable: isRetryableAgentToolError(errorValue) },
-          );
-        }
-      }
-
-      if (action.action === "remember_term") {
-        const term = typeof action.args?.term === "string" ? action.args.term.trim() : "";
-        const definition =
-          typeof action.args?.definition === "string" ? action.args.definition.trim() : "";
-        if (!term || !definition) {
-          return agentToolError("remember_term requires args.term and args.definition.", {
-            hint: 'Send args.term and args.definition (optionally args.kind: "term"|"metric"|"relationship"|"alias").',
-          });
-        }
-        try {
-          await saveSemanticGlossaryEntry({
-            connectionId: connectionId!,
-            database: currentDatabase || undefined,
-            term,
-            definition,
-            kind: action.args?.kind,
-            source: "agent",
-          });
-          return stringifyAgentObservation(frame, {
-            saved: term,
-            definition,
-            note: "Saved to the business glossary; future runs for this database will see it automatically.",
-          });
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(
-            `could not save the glossary entry: ${formatExecutionError(errorValue)}`,
-            {
-              retryable: isRetryableAgentToolError(errorValue),
-            },
-          );
-        }
-      }
-
-      if (action.action === "skill") {
-        const skillName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
-        if (!skillName) {
-          return agentToolError(
-            "skill requires args.name taken from the <available_skills> list.",
-            {
-              hint: "Send args.name exactly as listed in <available_skills>.",
-            },
-          );
-        }
-        // Fail-closed: only names injected in this run's catalog may load.
-        if (!allowedSkillNames?.includes(skillName)) {
-          return agentToolError(
-            `skill "${skillName}" is not in the injected <available_skills> catalog. Pick one of the listed skills.`,
-            { hint: `Available skills: ${(allowedSkillNames ?? []).join(", ") || "none"}.` },
-          );
-        }
-        try {
-          const content = await invokeMutation<{
-            name: string;
-            body: string;
-            allowedTools?: string[];
-            resources?: string[];
-            version?: string | null;
-          }>("read_ai_skill", {
-            name: skillName,
-          });
-          const loadedName = content.name || skillName;
-          window.dispatchEvent(
-            new CustomEvent("workspace-activity", {
-              detail: { connectionId, label: `Skill: ${content.name}`, durationMs: 0 },
-            }),
-          );
-          useSkillUsageStore.getState().recordSkillRun(loadedName, connectionId);
-          // Register bundled resources so read_skill_resource stays fail-closed:
-          // only paths this skill listed may be pulled on demand.
-          const resources = Array.isArray(content.resources)
-            ? content.resources.filter((entry): entry is string => typeof entry === "string")
-            : [];
-          loadedSkillResources.set(loadedName, new Set(resources));
-          // allowed-tools: confine the rest of the run to the declared tools that
-          // actually exist. An unknown name is ignored so a typo can't brick a run.
-          const allowedTools = (
-            Array.isArray(content.allowedTools) ? content.allowedTools : []
-          ).filter(
-            (entry): entry is AIAgentToolName =>
-              typeof entry === "string" &&
-              (AI_AGENT_TOOL_NAMES as readonly string[]).includes(entry),
-          );
-          if (allowedTools.length > 0) {
-            if (!skillToolRestriction) skillToolRestriction = new Set<AIAgentToolName>();
-            for (const toolName of allowedTools) skillToolRestriction.add(toolName);
-          }
-          // Soft cost ceiling: a huge skill file would otherwise be re-injected
-          // into the prompt on every remaining run step.
-          const rawBody = content.body ?? "";
-          const body =
-            rawBody.length > AI_SKILL_BODY_MAX_CHARS
-              ? `${rawBody.slice(0, AI_SKILL_BODY_MAX_CHARS)}\n\n[Body cut at ${AI_SKILL_BODY_MAX_CHARS} characters — the skill file is larger. Follow the instructions above; ask the user to trim the skill if a needed section is missing.]`
-              : rawBody;
-          const resourceNote =
-            resources.length > 0
-              ? [
-                  "",
-                  `Bundled resources — load on demand with read_skill_resource, args {"name":"${loadedName}","path":"<one below>"}:`,
-                  ...resources.map((entry) => `- ${entry}`),
-                ].join("\n")
-              : "";
-          const restrictionNote =
-            allowedTools.length > 0
-              ? `\n\n[This skill restricts tools to: ${allowedTools.join(", ")} (plus finish, ask_user, update_plan, read_page, skill, read_skill_resource). Other tools are disabled for the rest of the run.]`
-              : "";
-          return [
-            `Skill "${content.name}" loaded. Follow these instructions for the remainder of the run:`,
-            "",
-            body,
-            resourceNote,
-            restrictionNote,
-          ]
-            .filter((part) => part !== "")
-            .join("\n");
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(
-            `could not load skill "${skillName}": ${formatExecutionError(errorValue)}`,
-            {
-              retryable: isRetryableAgentToolError(errorValue),
-            },
-          );
-        }
-      }
-
-      if (action.action === "read_skill_resource") {
-        const skillName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
-        const resourcePath = typeof action.args?.path === "string" ? action.args.path.trim() : "";
-        if (!skillName || !resourcePath) {
-          return agentToolError(
-            "read_skill_resource requires args.name and args.path taken from a loaded skill's Bundled resources list.",
-            {
-              hint: "Send args.name (a skill loaded this run) and args.path (one of its listed resources).",
-            },
-          );
-        }
-        // Fail-closed: the skill must have been loaded this run and the path must
-        // be one it listed — mirrors the skill tool's injected-catalog guarantee.
-        const known = loadedSkillResources.get(skillName);
-        if (!known) {
-          return agentToolError(
-            `skill "${skillName}" is not loaded this run. Call the skill tool first, then read one of its listed resources.`,
-            {
-              hint: `Loaded skills this run: ${[...loadedSkillResources.keys()].join(", ") || "none"}.`,
-            },
-          );
-        }
-        if (!known.has(resourcePath)) {
-          return agentToolError(
-            `"${resourcePath}" is not a listed resource of skill "${skillName}". Pick a path from that skill's Bundled resources list.`,
-            { hint: `Listed resources: ${[...known].join(", ") || "none"}.` },
-          );
-        }
-        try {
-          const resource = await invokeMutation<{
-            name: string;
-            resource: string;
-            content: string;
-          }>("read_ai_skill_resource", { name: skillName, resource: resourcePath });
-          window.dispatchEvent(
-            new CustomEvent("workspace-activity", {
-              detail: {
-                connectionId,
-                label: `Skill resource: ${resource.resource}`,
-                durationMs: 0,
-              },
-            }),
-          );
-          const rawContent = resource.content ?? "";
-          const clipped =
-            rawContent.length > AI_SKILL_RESOURCE_MAX_CHARS
-              ? `${rawContent.slice(0, AI_SKILL_RESOURCE_MAX_CHARS)}\n\n[Resource cut at ${AI_SKILL_RESOURCE_MAX_CHARS} characters — the file is larger.]`
-              : rawContent;
-          return [`Resource "${resource.resource}" of skill "${skillName}":`, "", clipped].join(
-            "\n",
-          );
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(
-            `could not load resource "${resourcePath}" of skill "${skillName}": ${formatExecutionError(errorValue)}`,
-            { retryable: isRetryableAgentToolError(errorValue) },
-          );
-        }
-      }
-
-      if (action.action === "propose_seed_data") {
-        // Cross-engine seed proposals. The agent NEVER writes data itself: this
-        // tool only lands a reviewable seed script in a NEW query tab with
-        // autoRun disabled, so the human applies the write (Safe Mode still
-        // confirms). SQL engines get INSERT statements; document engines get an
-        // insertMany script.
-        const isDocument = toolAvailability?.documentPropose ?? false;
-        if (
-          toolAvailability &&
-          !toolAvailability.documentPropose &&
-          !toolAvailability.sqlWritePreview
-        ) {
-          return `Tool blocked: propose_seed_data is not available on ${toolAvailability.engineLabel}. It fills a table or collection with sample data on SQL engines and MongoDB only.`;
-        }
-        const collection =
-          typeof action.args?.collection === "string" ? action.args.collection.trim() : "";
-        if (!collection) {
-          return agentToolError(
-            "propose_seed_data requires args.collection — the exact table or collection name to fill.",
-            {
-              hint: 'Send args.collection like "products" plus args.documents (array of objects).',
-            },
-          );
-        }
-        // Keep the name one bare identifier so it rides db.<name> shell syntax and
-        // quoted SQL identifiers safely — no schema/db prefix, whitespace or dots.
-        if (/[\s.$"']/.test(collection) || collection.startsWith("system.")) {
-          return agentToolError(
-            "args.collection must be a plain table or collection name (no schema/db prefix, no whitespace, dots, quotes, or $ signs).",
-          );
-        }
-        const rawDocuments = action.args?.documents;
-        if (!Array.isArray(rawDocuments) || rawDocuments.length === 0) {
-          return agentToolError(
-            "propose_seed_data requires a non-empty args.documents array of objects.",
-            {
-              hint: 'Send args.documents like [{"name":"A","price":9.99}].',
-            },
-          );
-        }
-        if (rawDocuments.length > AI_AGENT_SEED_DOCUMENT_LIMIT) {
-          return agentToolError(
-            `args.documents exceeds the ${AI_AGENT_SEED_DOCUMENT_LIMIT}-document cap. Send the most representative documents.`,
-          );
-        }
-        const documents: Array<Record<string, unknown>> = [];
-        for (const entry of rawDocuments) {
-          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-            return agentToolError(
-              "every args.documents entry must be an object ({field: value}). Strings and arrays are not valid documents.",
-            );
-          }
-          const record = entry as Record<string, unknown>;
-          if (Object.keys(record).length === 0) {
-            return agentToolError("every args.documents entry must contain at least one field.");
-          }
-          documents.push(record);
-        }
-
-        let seedScript: string;
-        let seedKind: string;
-        if (isDocument) {
-          const docLines = documents.map((document) => `  ${JSON.stringify(document)}`).join(",\n");
-          seedScript = [
-            ...(documents.some((document) => "_id" in document)
-              ? [
-                  "// NOTE: documents with an explicit _id will be rejected as duplicates if those _ids already exist.",
-                ]
-              : []),
-            `db.${collection}.insertMany([`,
-            docLines,
-            "]);",
-          ].join("\n");
-          seedKind = `db.${collection}.insertMany`;
-        } else {
-          // Union the field names across documents (ordered by first appearance)
-          // so every row lists the same columns; a document missing a field gets
-          // NULL for it. generateInsertSql handles dialect quoting and escaping.
-          const columns: string[] = [];
-          const seenColumns = new Set<string>();
-          for (const document of documents) {
-            for (const key of Object.keys(document)) {
-              if (!seenColumns.has(key)) {
-                seenColumns.add(key);
-                columns.push(key);
-              }
-            }
-          }
-          const rows = documents.map((document) =>
-            columns.map((column) => {
-              const value = document[column];
-              if (value === null || value === undefined) return null;
-              if (
-                typeof value === "string" ||
-                typeof value === "number" ||
-                typeof value === "boolean"
-              ) {
-                return value;
-              }
-              // Arrays/objects have no scalar SQL literal — store the JSON text.
-              return JSON.stringify(value);
-            }),
-          );
-          const insertSql = generateInsertSql(collection, columns, rows, dbType);
-          // SQL Server resolves an unqualified table name against the session's
-          // current database. A fresh AI Query tab can open on master, so prepend
-          // a USE for the database the user is working in — otherwise Run fails
-          // with "Invalid object name". The USE and the INSERTs execute on the
-          // same pooled connection, so the database context carries over.
-          const usePrefix =
-            dbType === "mssql" && currentDatabase
-              ? `USE [${currentDatabase.replace(/]/g, "]]")}];\n`
-              : "";
-          seedScript = `${usePrefix}${insertSql}`;
-          seedKind = `INSERT INTO ${collection}`;
-        }
-        // Keep the generated tab title short: it is a scratch query the user
-        // reviews and runs. Echoing the agent rationale produced long, noisy
-        // titles, so use a plain "Query <collection>" (aligned with the app's
-        // default "Query" tab naming).
-        const title = `Query ${collection}`;
-        const created = openQueryTab?.({ sql: seedScript, title, autoRun: false });
-        if (!created) {
-          return agentToolError("could not open a new AI Query tab (no active connection?).", {
-            retryable: true,
-          });
-        }
-        return stringifyAgentObservation(frame, {
-          collection,
-          documentCount: documents.length,
-          tabTitle: title,
-          note: `Created a NEW AI Query tab pre-filled with the ${seedKind} seed script. It is NOT auto-run: the user must review the tab and press Run (Safe Mode confirms). Never claim the data was inserted — you cannot run writes yourself. Call finish with a short summary of the proposal instead.`,
-        });
-      }
-
-      if (action.action === "edit_query_sql") {
-        const rawTabId = typeof action.args?.tabId === "string" ? action.args.tabId.trim() : "";
-        const sql = typeof action.args?.sql === "string" ? action.args.sql.trim() : "";
-        const reason = typeof action.args?.reason === "string" ? action.args.reason.trim() : "";
-        // Weak providers frequently send booleans as strings ("true"). The
-        // schema says boolean, but rejecting the call over the type would just
-        // push the model to fabricate a PASS — coerce the common shapes instead.
-        const rawCreateIfMissing: unknown = action.args?.createIfMissing;
-        const createIfMissing =
-          rawCreateIfMissing === true || rawCreateIfMissing === "true" || rawCreateIfMissing === 1;
-        if (!sql) {
-          return agentToolError("edit_query_sql requires args.sql.", {
-            hint: "Send args.sql as the full proposed statement plus args.reason explaining the change.",
-          });
-        }
-        if (sql.includes("…[TRUNCATED")) {
-          return agentToolError(
-            "do not echo the truncation marker from the context. Propose only content you have actually seen; explain anything outside your view in args.reason.",
-          );
-        }
-        // The tab must exist, be a query tab, and belong to THIS run's
-        // connection — the agent must not reach into another connection's
-        // editors.
-        const { tabs } = useUIStore.getState();
-        const target = rawTabId ? tabs.find((tab) => tab.id === rawTabId) : undefined;
-        if (rawTabId && (!target || target.type !== "query")) {
-          return agentToolError(
-            "edit_query_sql needs the exact tabId of an open query tab (see the Query tabs list in the context).",
-            {
-              hint: "Copy the tabId verbatim from the Query tabs list, or omit it and set args.createIfMissing: true.",
-            },
-          );
-        }
-        if (target && target.connectionId !== connectionId) {
-          return agentToolError(
-            `query tab "${target.title}" belongs to another connection — edit_query_sql cannot reach across connections.`,
-          );
-        }
-        // Smoke-test gate: a mutating proposal that was never previewed in
-        // THIS run is rejected. Reads go through the sandbox naturally.
-        const mutating = isMutatingStatement(sql) || isHighRiskStatement(sql);
-        if (mutating && !previewedMutatingStatements.has(normalizeStatementForGuard(sql))) {
-          return agentToolError(
-            "this proposal contains mutating SQL that was not previewed in this run. Call preview_write with the exact statement first, then re-issue edit_query_sql.",
-            {
-              hint: "preview_write runs the statement in a rolled-back transaction — it is safe and required once per mutating statement.",
-            },
-          );
-        }
-        // Pre-write safety net: a mutating proposal that passed the preview
-        // gate snapshots the database under "agent-pre-write" before the
-        // proposal is emitted. Best-effort — a failure warns, never blocks.
-        const preWriteNote = mutating ? await ensurePreWriteCheckpoint() : "";
-        // Dry-run EXPLAIN: a mutating proposal carries its plan (or its
-        // syntax error) on the review card so the user sees it BEFORE
-        // accepting. The statement is planned, never executed — the backend
-        // wraps it as `EXPLAIN <stmt>` server-side. DML is explainable on
-        // every engine, so a failure there means broken SQL; DDL is
-        // best-effort and a failure only means the engine declined to plan it.
-        let proposalExplain: AiProposalExplainResult | undefined;
-        if (mutating && explainStatement && connectionId) {
-          const explainable = classifyAgentExplainableStatement(sql);
-          if (explainable !== "none") {
-            try {
-              const plan = await explainStatement(connectionId, sql);
-              const summary = summarizeAgentExplainPlanStructured(plan, dbType);
-              proposalExplain = { status: "ok", summary: summary || undefined };
-            } catch (errorValue) {
-              if (isSupersededAIRequestError(errorValue)) throw errorValue;
-              proposalExplain = {
-                status: explainable === "dml" ? "error" : "unsupported",
-                error: formatExecutionError(errorValue),
-              };
-            }
-            if (requestId !== requestIdRef.current) {
-              throw new Error(AI_REQUEST_REPLACED_MESSAGE);
-            }
-          }
-        }
-        if (!target) {
-          if (!createIfMissing) {
-            return agentToolError(
-              "no open query tab matched. Pass the exact tabId of an open query tab, or set args.createIfMissing: true to open a new AI Query tab with this SQL.",
-            );
-          }
-          const title = (reason || "AI query proposal").slice(0, 60);
-          const created = openQueryTab?.({ sql, title, autoRun: !mutating });
-          if (!created) {
-            return agentToolError("could not open a new AI Query tab (no active connection?).", {
-              retryable: true,
-            });
-          }
-          const explainNote =
-            proposalExplain?.status === "error"
-              ? ` Warning: the EXPLAIN dry-run failed — the statement is likely broken: ${proposalExplain.error}`
-              : proposalExplain?.status === "unsupported"
-                ? ` Note: this engine could not EXPLAIN the statement (${proposalExplain.error}).`
-                : "";
-          return (
-            [
-              `No query tab was open — created a new AI Query tab "${title}" pre-filled with the proposed SQL.`,
-              mutating
-                ? "It is NOT auto-run: review the tab and press Run (Safe Mode will confirm)."
-                : "It auto-runs the read-only statement.",
-            ].join(" ") +
-            explainNote +
-            (preWriteNote ? ` ${preWriteNote}` : "")
-          );
-        }
-
-        const reasonLine = reason || "Corrected SQL proposal from the agent.";
-        // Proposal only: the tab renders Accept/Reject. The agent never
-        // writes editor content directly and never executes the proposal.
-        EventCenter.emit("ai-edit-query-sql", {
-          tabId: rawTabId,
-          sql,
-          reason: reasonLine,
-          ...(proposalExplain ? { explain: proposalExplain } : {}),
-        });
-        return [
-          `Proposal sent to query tab "${target.title}" — waiting for the user to accept or reject it in the tab.`,
-          `Fix: ${reasonLine}`,
-          mutating
-            ? "Reminder: on accept the tab content changes only; the user still runs it (an auto-checkpoint is captured first)."
-            : "On accept the tab content changes only; the user still runs it.",
-          proposalExplain?.status === "error"
-            ? `EXPLAIN dry-run failed (shown on the card): ${proposalExplain.error}`
-            : proposalExplain?.status === "unsupported"
-              ? `This engine could not EXPLAIN the statement (shown on the card): ${proposalExplain.error}`
-              : proposalExplain?.status === "ok"
-                ? "EXPLAIN dry-run succeeded — the plan is shown on the proposal card."
-                : "",
-          preWriteNote || "",
-        ]
-          .filter(Boolean)
-          .join("\n");
-      }
-
-      if (action.action === "delete_memory") {
-        const memoryName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
-        if (!memoryName) {
-          return agentToolError(
-            "delete_memory requires args.name taken from the <agent_memory> index.",
-            {
-              hint: "Send args.name exactly as listed in <agent_memory>.",
-            },
-          );
-        }
-        if (!memoryScope?.connectionId) {
-          return agentToolError("delete_memory requires an active connection scope.");
-        }
-        // Destructive and irreversible: this must be a per-call dialog that
-        // ALWAYS asks. It deliberately does NOT reuse requestDataReadConsent —
-        // that consent is a standing per-database grant which auto-approves
-        // silently, and would let deletes ride on a read permission. Fail
-        // closed when no destructive dialog is wired in this context.
-        if (!requestDataDestructiveConsent) {
-          return "Tool blocked: delete_memory requires a destructive-action confirmation dialog, which is unavailable in this context.";
-        }
-        const approved = await requestDataDestructiveConsent({
-          title: "Permanently delete this memory?",
-          message: `The agent wants to permanently delete the memory "${memoryName}" from this connection's memory store. This cannot be undone.`,
-          confirmText: "Delete memory",
-          cancelText: "Keep it",
-        });
-        if (!approved) {
-          return "Tool blocked: The user did not approve deleting this memory.";
-        }
-        try {
-          await invokeMutation("delete_agent_memory", {
-            name: memoryName,
-            connectionId: memoryScope.connectionId,
-            database: memoryScope.database ?? null,
-          });
-          // Same freshness contract as saves: the next run must not serve a
-          // deleted entry from the TTL cache.
-          invalidateAgentMemoryIndex(memoryScope.connectionId);
-          window.dispatchEvent(
-            new CustomEvent("workspace-activity", {
-              detail: { connectionId, label: `Memory deleted: ${memoryName}`, durationMs: 0 },
-            }),
-          );
-          return `Memory "${memoryName}" permanently deleted from this scope. The freed slot is available to the next save_memory.`;
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(
-            `could not delete memory "${memoryName}": ${formatExecutionError(errorValue)}`,
-            {
-              retryable: isRetryableAgentToolError(errorValue),
-            },
-          );
-        }
-      }
-
-      if (action.action === "read_memory") {
-        const memoryName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
-        if (!memoryName) {
-          return agentToolError(
-            "read_memory requires args.name taken from the <agent_memory> index.",
-            {
-              hint: "Send args.name exactly as listed in <agent_memory>.",
-            },
-          );
-        }
-        try {
-          const content = await invokeMutation<{ name: string; body: string; updatedAt?: string }>(
-            "read_agent_memory",
-            {
-              name: memoryName,
-              connectionId: memoryScope?.connectionId ?? null,
-              database: memoryScope?.database ?? null,
-            },
-          );
-          window.dispatchEvent(
-            new CustomEvent("workspace-activity", {
-              detail: { connectionId, label: `Memory: ${content.name}`, durationMs: 0 },
-            }),
-          );
-          const updatedNote = content.updatedAt ? ` (last updated ${content.updatedAt})` : "";
-          return [
-            `Memory "${content.name}" loaded${updatedNote}. Treat it as a saved observation, not a live fact — re-verify anything the schema contradicts:`,
-            "",
-            content.body ?? "",
-          ].join("\n");
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(
-            `could not load memory "${memoryName}": ${formatExecutionError(errorValue)}`,
-            {
-              retryable: isRetryableAgentToolError(errorValue),
-            },
-          );
-        }
-      }
-
-      if (action.action === "save_memory") {
-        const memoryName = typeof action.args?.name === "string" ? action.args.name.trim() : "";
-        const memoryBody = typeof action.args?.body === "string" ? action.args.body.trim() : "";
-        const memoryDescription =
-          typeof action.args?.description === "string" ? action.args.description.trim() : "";
-        if (!memoryName || !memoryBody) {
-          return agentToolError(
-            "save_memory requires non-empty args.name (short slug) and args.body (the fact worth remembering).",
-            {
-              hint: 'Send args.name like "revenue-metric" and args.body with the fact. Never store credentials.',
-            },
-          );
-        }
-        try {
-          const saved = await invokeMutation<{ name: string; updatedAt: string }>(
-            "save_agent_memory",
-            {
-              name: memoryName,
-              body: memoryBody,
-              description: memoryDescription || null,
-              connectionId: memoryScope?.connectionId ?? null,
-              database: memoryScope?.database ?? null,
-            },
-          );
-          window.dispatchEvent(
-            new CustomEvent("workspace-activity", {
-              detail: { connectionId, label: `Memory saved: ${saved.name}`, durationMs: 0 },
-            }),
-          );
-          // The injected index must not serve a stale (pre-save) view on the
-          // next run within the TTL window.
-          invalidateAgentMemoryIndex(connectionId ?? undefined);
-          return `Memory "${saved.name}" saved for this connection/database scope${saved.updatedAt ? ` at ${saved.updatedAt}` : ""}. Future runs in this scope will see it in their <agent_memory> index. Never store credentials in memory.`;
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(
-            `could not save memory "${memoryName}": ${formatExecutionError(errorValue)}`,
-            {
-              retryable: isRetryableAgentToolError(errorValue),
-            },
-          );
-        }
-      }
-
-      if (action.action === "memory") {
-        // Anthropic's NATIVE memory tool (memory_20250818). Forward the command
-        // plus filesystem args to the sandboxed backend, which returns the
-        // tool_result string the agent loop feeds back to the model. Errors are
-        // returned as observations (not thrown) so Claude can self-correct — the
-        // same contract as an `is_error` tool_result.
-        const memoryArgs = action.args;
-        try {
-          const result = await invokeMutation<string>("run_agent_memory_tool", {
-            command: memoryArgs.command,
-            path: memoryArgs.path ?? null,
-            fileText: memoryArgs.file_text ?? null,
-            oldStr: memoryArgs.old_str ?? null,
-            newStr: memoryArgs.new_str ?? null,
-            insertLine: typeof memoryArgs.insert_line === "number" ? memoryArgs.insert_line : null,
-            insertText: memoryArgs.insert_text ?? null,
-            oldPath: memoryArgs.old_path ?? null,
-            newPath: memoryArgs.new_path ?? null,
-            viewRange: Array.isArray(memoryArgs.view_range) ? memoryArgs.view_range : null,
-            connectionId: memoryScope?.connectionId ?? null,
-            database: memoryScope?.database ?? null,
-          });
-          window.dispatchEvent(
-            new CustomEvent("workspace-activity", {
-              detail: { connectionId, label: `Memory tool: ${memoryArgs.command}`, durationMs: 0 },
-            }),
-          );
-          return result;
-        } catch (errorValue) {
-          if (isSupersededAIRequestError(errorValue)) throw errorValue;
-          return agentToolError(
-            `memory ${memoryArgs.command} failed: ${formatExecutionError(errorValue)}`,
-            {
-              retryable: isRetryableAgentToolError(errorValue),
-            },
-          );
-        }
+      const handler = AGENT_TOOL_HANDLERS[action.action];
+      if (handler) {
+        return await handler(ctx, (action.args ?? {}) as Record<string, unknown>, frame);
       }
 
       // Unknown action: never say "finish" here — the model needs the list of
       // valid tools to self-correct (a bare "unknown tool" makes small models
+      // loop).
       if (action.action === "finish") {
         return agentToolError("finish does not execute a tool observation.");
       }
@@ -2379,7 +470,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     const startedAt = performance.now();
     try {
       const result = await dispatchAgentTool(action, frame);
-      observationArchive.push({
+      ctx.observationArchive.push({
         action: action.action,
         full: frame.full ?? result,
       });
@@ -2397,7 +488,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
       }
       // A successful state-changing call can stale every cached read from
       // earlier in the run — drop the whole per-run cache.
-      if (ok && CACHE_INVALIDATING_AGENT_TOOLS.has(action.action)) {
+      if (ok && CACHE_INVALIDATING_AGENT_TOOLS[action.action] === true) {
         toolResultCache.clear();
       }
       // Schema-affecting calls (write previews, user-applied SQL proposals,
@@ -2461,7 +552,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           { hint: `Use one of: ${AI_AGENT_TOOL_NAMES.join(", ")}.` },
         );
       }
-      if (BATCH_FORBIDDEN_TOOLS.has(call.action)) {
+      if (BATCH_FORBIDDEN_TOOLS[call.action] === true) {
         return agentToolError(`"${call.action}" cannot ride a batch — send it as its own step.`);
       }
       return runSingleToolCall({
@@ -2475,11 +566,11 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     let index = 0;
     while (index < calls.length) {
       const call = calls[index];
-      if (BATCH_PARALLEL_TOOLS.has(call.action)) {
+      if (BATCH_PARALLEL_TOOLS[call.action] === true) {
         // Gather the run of consecutive parallel-eligible calls and execute
         // them together; allSettled keeps one failure from cancelling siblings.
         let end = index + 1;
-        while (end < calls.length && BATCH_PARALLEL_TOOLS.has(calls[end].action)) {
+        while (end < calls.length && BATCH_PARALLEL_TOOLS[calls[end].action] === true) {
           end += 1;
         }
         const settled = await Promise.allSettled(
@@ -2506,7 +597,7 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
           `--- call ${callIndex + 1}: ${calls[callIndex].action} ---\n${result}`,
       )
       .join("\n\n");
-    observationArchive.push({ action: "batch", full });
+    ctx.observationArchive.push({ action: "batch", full });
     runTrace.push({
       tool: "batch",
       argsSummary: `${calls.length} calls`,

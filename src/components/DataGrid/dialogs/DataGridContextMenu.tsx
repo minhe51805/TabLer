@@ -83,6 +83,12 @@ interface DataGridContextMenuProps {
   onDuplicateRowByIndex: (rowIndex: number) => Promise<void>;
   onOpenRowInspector: (rowIndex: number) => void;
   onColumnAutoFit: (colId: string) => void;
+  /** Cells covered by the active multi-cell selection; >1 enables bulk edit. */
+  selectedRangeCellCount?: number;
+  /** Opens the "Set selected cells to…" dialog (staged updates). */
+  onSetRangeValue?: () => void;
+  /** Remaining px budget for pinning; non-positive disables pin actions. */
+  pinBudgetPx?: number;
 
   setColumnOrder: Dispatch<SetStateAction<ColumnOrderState>>;
   setColumnPinning: Dispatch<SetStateAction<ColumnPinningState>>;
@@ -116,6 +122,9 @@ export function DataGridContextMenu({
   onDuplicateRowByIndex,
   onOpenRowInspector,
   onColumnAutoFit,
+  selectedRangeCellCount,
+  onSetRangeValue,
+  pinBudgetPx,
 
   setColumnOrder,
   setColumnPinning,
@@ -383,33 +392,48 @@ export function DataGridContextMenu({
           </button>
           {contextMenu.colName !== "_row_num" && (
             <>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  table.getColumn(contextMenu.colName!)?.pin("left");
-                  onClose();
-                }}
-              >
-                {translateCurrent("datagrid.ctxPinLeft")}
-              </button>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  table.getColumn(contextMenu.colName!)?.pin("right");
-                  onClose();
-                }}
-              >
-                {translateCurrent("datagrid.ctxPinRight")}
-              </button>
-              <button
-                className="datagrid-context-menu-item"
-                onClick={() => {
-                  table.getColumn(contextMenu.colName!)?.pin(false);
-                  onClose();
-                }}
-              >
-                {translateCurrent("datagrid.ctxUnpin")}
-              </button>
+              {(() => {
+                const contextColumn = table.getColumn(contextMenu.colName!);
+                const isPinned = contextColumn?.getIsPinned();
+                const pinDisabled =
+                  (contextColumn?.getSize() ?? 0) > (pinBudgetPx ?? Number.MAX_SAFE_INTEGER);
+                return isPinned ? (
+                  <button
+                    className="datagrid-context-menu-item"
+                    onClick={() => {
+                      contextColumn?.pin(false);
+                      onClose();
+                    }}
+                  >
+                    {translateCurrent("datagrid.ctxUnpin")}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      className="datagrid-context-menu-item"
+                      disabled={pinDisabled}
+                      title={pinDisabled ? powerCopy.pinning.limitToast : undefined}
+                      onClick={() => {
+                        contextColumn?.pin("left");
+                        onClose();
+                      }}
+                    >
+                      {translateCurrent("datagrid.ctxPinLeft")}
+                    </button>
+                    <button
+                      className="datagrid-context-menu-item"
+                      disabled={pinDisabled}
+                      title={pinDisabled ? powerCopy.pinning.limitToast : undefined}
+                      onClick={() => {
+                        contextColumn?.pin("right");
+                        onClose();
+                      }}
+                    >
+                      {translateCurrent("datagrid.ctxPinRight")}
+                    </button>
+                  </>
+                );
+              })()}
               <button
                 className="datagrid-context-menu-item"
                 onClick={() => {
@@ -562,6 +586,17 @@ export function DataGridContextMenu({
           >
             {translateCurrent("datagrid.ctxAddRow")}
           </button>
+          {onSetRangeValue && (selectedRangeCellCount ?? 0) > 1 && (
+            <button
+              className="datagrid-context-menu-item"
+              onClick={() => {
+                onSetRangeValue();
+                onClose();
+              }}
+            >
+              {powerCopy.setCells.menuItem}
+            </button>
+          )}
           <div className="datagrid-context-menu-separator" />
           <button className="datagrid-context-menu-item" onClick={copyCellValue}>
             {translateCurrent("datagrid.ctxCopyCellValue")}

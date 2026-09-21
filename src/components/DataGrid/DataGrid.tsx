@@ -33,6 +33,7 @@ import { emitAppToast } from "../../utils/app-toast";
 import { lazy, Suspense } from "react";
 import "./DataChart.css";
 import { getDataGridChartCopy } from "./datagrid-chart-copy";
+import { getDataGridPowerCopy } from "./datagrid-power-copy";
 
 const DataChart = lazy(() => import("./DataChart").then((m) => ({ default: m.DataChart })));
 import {
@@ -61,6 +62,7 @@ import {
   selectGridCell,
   type GridSelectionModifiers,
 } from "./grid-selection";
+import { getPrimaryGridRange, isMultiCellRange } from "./grid-range-operations";
 import { buildStableRowIdentity } from "./row-identity";
 import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
 import { useAppLayoutStore } from "../../stores/appLayoutStore";
@@ -82,11 +84,17 @@ import { useDataGridTableExport } from "./hooks/useDataGridTableExport";
 import { PasteRowsDialog } from "./dialogs/PasteRowsDialog";
 import { buildRowFocusFilter } from "./row-focus";
 import { InsertRowDialog } from "./dialogs/InsertRowDialog";
+import { SetRangeValueDialog } from "./dialogs/SetRangeValueDialog";
 import { FkPreviewPopover } from "./dialogs/FkPreviewPopover";
 import { DataGridContextMenu } from "./dialogs/DataGridContextMenu";
 import { ColumnStatsPopover, type ColumnStats } from "./dialogs/ColumnStatsPopover";
 import { hasNumericValues } from "./chart-utils";
 import type { ColumnDisplayFormat } from "./editors";
+
+/** Minimum width that must remain for scrollable (unpinned) columns. Pinning
+ *  that would leave less than this is refused so the grid never becomes a
+ *  wall of frozen columns. */
+const MIN_UNPINNED_VIEWPORT_PX = 160;
 
 interface Props {
   connectionId: string;
@@ -156,6 +164,8 @@ export function DataGrid({
     stageChanges,
     unstageChange,
     undoLast,
+    openPreview,
+    closePreview,
     redoLast,
     setColumnNameMap,
     setDbType,
@@ -203,6 +213,14 @@ export function DataGrid({
   const [insertDraft, setInsertDraft] = useState<Record<string, string>>({});
   const [insertDialogError, setInsertDialogError] = useState<string | null>(null);
   const [isSubmittingInsert, setIsSubmittingInsert] = useState(false);
+  /** When true the insert dialog stages a queued insert (duplicate-row flow). */
+  const [insertDialogStages, setInsertDialogStages] = useState(false);
+  /** "Set selected cells to…" bulk-edit dialog state. */
+  const [setRangeDialog, setSetRangeDialog] = useState<{
+    open: boolean;
+    cellCount: number;
+    error: string | null;
+  }>({ open: false, cellCount: 0, error: null });
   /** Paste dialog state */
   const [isPasteDialogOpen, setIsPasteDialogOpen] = useState(false);
   const [pastePreview, setPastePreview] = useState<PastePreview | null>(null);
@@ -703,6 +721,8 @@ export function DataGrid({
       setError,
       unstageChange,
       applyTableUpdatesAtomically,
+      closePreview,
+      insertTableRowsAtomically,
       invalidateTableCaches,
       refreshTableFromStart,
       dataGridInstanceIdRef,
@@ -1234,21 +1254,41 @@ export function DataGrid({
       editorRef,
     });
 
-  const { handleRangeCopy, handleRangePaste, handleRangeDelete, handleRangeFillDown } =
-    useDataGridRangeOperations({
-      gridSelection,
-      data,
-      resolvedColumns,
-      primaryKeyColumns,
-      tableName,
-      database: database || undefined,
-      enabled: canAttemptInlineEdit,
-      stageChanges,
-      setData,
-      setStagedRowIndices,
-      patchLoadedTableCell,
-      setError,
+  const {
+    handleRangeCopy,
+    handleRangePaste,
+    handleRangeDelete,
+    handleRangeFillDown,
+    handleRangeSetValue,
+  } = useDataGridRangeOperations({
+    gridSelection,
+    data,
+    resolvedColumns,
+    primaryKeyColumns,
+    tableName,
+    database: database || undefined,
+    enabled: canAttemptInlineEdit,
+    stageChanges,
+    setData,
+    setStagedRowIndices,
+    patchLoadedTableCell,
+    setError,
+  });
+
+  /** Cells covered by the active selection — gates the bulk-edit menu item. */
+  const selectedRangeCellCount = useMemo(() => {
+    if (!data || resolvedColumns.length === 0) return 0;
+    const range = getPrimaryGridRange(gridSelection, {
+      rowCount: data.rows.length,
+      columnCount: resolvedColumns.length,
     });
+    if (!range || !isMultiCellRange(range)) return 0;
+    return (range.endRow - range.startRow + 1) * (range.endCol - range.startCol + 1);
+  }, [data, gridSelection, resolvedColumns.length]);
+
+  const handleOpenSetRangeDialog = useCallback(() => {
+    setSetRangeDialog({ open: true, cellCount: selectedRangeCellCount, error: null });
+  }, [selectedRangeCellCount]);
 
   // Range editing keys (copy / paste / fill / clear). Kept separate from the
   // early selection-key effect because these depend on the staged-edit gate,
@@ -1314,6 +1354,8 @@ export function DataGrid({
     setInsertDialogError,
     setIsInsertDialogOpen,
     setIsSubmittingInsert,
+    insertDialogStages,
+    setInsertDialogStages,
 
     pastePreview,
     isSubmittingPaste,
@@ -1344,6 +1386,8 @@ export function DataGrid({
     insertTableRowsAtomically,
     importCsvFileAtomically,
     cancelCsvImport,
+
+    stageChange,
 
     invalidateTableCaches,
     refreshTableFromStart,
@@ -1381,6 +1425,20 @@ export function DataGrid({
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [closeInsertDialog, isInsertDialogOpen]);
+
+  useEffect(() => {
+    if (!setRangeDialog.open) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSetRangeDialog((previous) => ({ ...previous, open: false }));
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [setRangeDialog.open]);
 
   useEffect(() => {
     if (!isPasteDialogOpen) return;
@@ -1630,7 +1688,28 @@ export function DataGrid({
     },
     onColumnOrderChange: setColumnOrder,
     onColumnVisibilityChange: setColumnVisibility,
-    onColumnPinningChange: setColumnPinning,
+    onColumnPinningChange: (updater) => {
+      setColumnPinning((prev) => {
+        const next = typeof updater === "function" ? updater(prev) : updater;
+        // Pin budget: pinned columns must leave a scrollable sliver, otherwise
+        // the whole viewport freezes and horizontal scrolling becomes useless.
+        const viewportWidth = tableWrapRef.current?.clientWidth ?? 0;
+        if (viewportWidth > 0) {
+          const pinnedTotal = [...(next.left ?? []), ...(next.right ?? [])].reduce(
+            (total, id) => total + (table.getColumn(id)?.getSize() ?? 0),
+            0,
+          );
+          if (pinnedTotal > viewportWidth - MIN_UNPINNED_VIEWPORT_PX) {
+            emitAppToast({
+              title: getDataGridPowerCopy(getCurrentAppLanguage()).pinning.limitToast,
+              tone: "info",
+            });
+            return prev;
+          }
+        }
+        return next;
+      });
+    },
     onColumnSizingChange: (updater) => {
       setColumnSizes((prev) => {
         const next = typeof updater === "function" ? updater(prev) : updater;
@@ -1704,6 +1783,24 @@ export function DataGrid({
       background: "var(--bg-primary)",
     };
   };
+  /** Class list for a pinned column cell: marks the pinned side and flags the
+   *  outermost pinned column so CSS can draw the freeze divider/shadow. */
+  const pinnedColumnClasses = (column: (typeof leftPinnedColumns)[number]) => {
+    const pinned = column.getIsPinned();
+    if (!pinned) return [] as string[];
+    const classes = ["datagrid-pinned", `datagrid-pinned-${pinned}`];
+    if (pinned === "left" && leftPinnedColumns[leftPinnedColumns.length - 1]?.id === column.id) {
+      classes.push("datagrid-pinned-boundary");
+    }
+    if (pinned === "right" && rightPinnedColumns[0]?.id === column.id) {
+      classes.push("datagrid-pinned-boundary");
+    }
+    return classes;
+  };
+  /** Remaining pin budget in px: viewport minus already-pinned columns minus
+   *  the reserved scrollable sliver. Non-positive disables further pinning. */
+  const pinBudgetPx =
+    (tableWrapRef.current?.clientWidth ?? 0) - pinnedWidth - MIN_UNPINNED_VIEWPORT_PX;
 
   useEffect(() => {
     if (!tableName || externalResult || isLoading || !hasMoreTableRows || virtualRows.length === 0)
@@ -1872,7 +1969,7 @@ export function DataGrid({
           autoRefreshBusy={isReloadingData || isLoading}
           undoableChanges={undoableChanges}
           stagedChangeCount={tableName ? getChangeCount(tableName) : 0}
-          onApplyChanges={applyStagedChanges}
+          onApplyChanges={openPreview}
           onDiscardChanges={discardStagedChanges}
           sortColumn={sortColumn}
           sortDir={sortDir}
@@ -1950,8 +2047,11 @@ export function DataGrid({
                       const width = columnSizes[column.id] ?? column.getSize();
                       return (
                         <th
-                          key={header.id}
-                          className={`datagrid-th${column.id === "_row_num" ? " datagrid-th-index" : ""}`}
+                          className={[
+                            "datagrid-th",
+                            column.id === "_row_num" ? "datagrid-th-index" : "",
+                            ...pinnedColumnClasses(column),
+                          ].join(" ")}
                           data-col-id={column.id}
                           style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
                         >
@@ -2015,8 +2115,7 @@ export function DataGrid({
                       const width = columnSizes[column.id] ?? column.getSize();
                       return (
                         <th
-                          key={header.id}
-                          className="datagrid-th"
+                          className={["datagrid-th", ...pinnedColumnClasses(column)].join(" ")}
                           data-col-id={column.id}
                           style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
                         >
@@ -2114,6 +2213,7 @@ export function DataGrid({
                             className={[
                               "datagrid-td",
                               column.id === "_row_num" ? "datagrid-td-index" : "",
+                              ...pinnedColumnClasses(column),
                               stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
                             ].join(" ")}
                             data-col-id={column.id}
@@ -2169,6 +2269,7 @@ export function DataGrid({
                             key={cell.id}
                             className={[
                               "datagrid-td",
+                              ...pinnedColumnClasses(column),
                               stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
                             ].join(" ")}
                             style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
@@ -2228,11 +2329,14 @@ export function DataGrid({
               onDuplicateRowByIndex={handleDuplicateRowByIndex}
               onOpenRowInspector={handleOpenRowInspector}
               onColumnAutoFit={handleColumnAutoFit}
+              selectedRangeCellCount={selectedRangeCellCount}
+              onSetRangeValue={canAttemptInlineEdit ? handleOpenSetRangeDialog : undefined}
               setColumnOrder={setColumnOrder}
               setColumnPinning={setColumnPinning}
               setColumnSizes={setColumnSizes}
               setColumnVisibility={setColumnVisibility}
               setFilterDraft={setFilterDraft}
+              pinBudgetPx={pinBudgetPx}
               setTableFilter={setTableFilter}
               setSortColumn={setSortColumn}
               setSortDir={setSortDir}
@@ -2263,6 +2367,22 @@ export function DataGrid({
           (footerPortalTarget ? createPortal(gridFooter, footerPortalTarget) : gridFooter)}
       </div>
       {insertDialogModal}
+
+      {/* "Set selected cells to…" bulk-edit dialog */}
+      {setRangeDialog.open && typeof document !== "undefined"
+        ? createPortal(
+            <SetRangeValueDialog
+              cellCount={setRangeDialog.cellCount}
+              error={setRangeDialog.error}
+              onClose={() => setSetRangeDialog((previous) => ({ ...previous, open: false }))}
+              onSubmit={handleRangeSetValue}
+              onError={(message) =>
+                setSetRangeDialog((previous) => ({ ...previous, error: message }))
+              }
+            />,
+            document.body,
+          )
+        : null}
 
       {/* Change Tracking Preview Modal */}
       {stagedChangeCount > 0 && typeof document !== "undefined"

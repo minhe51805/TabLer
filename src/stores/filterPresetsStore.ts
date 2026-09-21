@@ -49,9 +49,7 @@ const useFilterPresetsBase = create<FilterPresetsStore>()(
 
       updatePreset: (id, updates) => {
         set((state) => ({
-          presets: state.presets.map((p) =>
-            p.id === id ? { ...p, ...updates } : p
-          ),
+          presets: state.presets.map((p) => (p.id === id ? { ...p, ...updates } : p)),
         }));
       },
 
@@ -78,19 +76,33 @@ const useFilterPresetsBase = create<FilterPresetsStore>()(
 
       exportPresets: () => {
         const { presets } = get();
-        const exportData = presets.map(({ name, tableFilter, schemaFilter, objectTypes, tags, columnFilter, conditions, conditionLogic, columnMode, tableOperator, schemaOperator }) => ({
-          name,
-          tableFilter,
-          schemaFilter,
-          objectTypes,
-          tags,
-          columnFilter,
-          conditions,
-          conditionLogic,
-          columnMode,
-          tableOperator,
-          schemaOperator,
-        }));
+        const exportData = presets.map(
+          ({
+            name,
+            tableFilter,
+            schemaFilter,
+            objectTypes,
+            tags,
+            columnFilter,
+            conditions,
+            conditionLogic,
+            columnMode,
+            tableOperator,
+            schemaOperator,
+          }) => ({
+            name,
+            tableFilter,
+            schemaFilter,
+            objectTypes,
+            tags,
+            columnFilter,
+            conditions,
+            conditionLogic,
+            columnMode,
+            tableOperator,
+            schemaOperator,
+          }),
+        );
         return JSON.stringify(exportData, null, 2);
       },
 
@@ -121,7 +133,8 @@ const useFilterPresetsBase = create<FilterPresetsStore>()(
             }
           }
           return count;
-        } catch {
+        } catch (error) {
+          console.warn("[FilterPresets] Failed to import presets:", error);
           return 0;
         }
       },
@@ -133,13 +146,17 @@ const useFilterPresetsBase = create<FilterPresetsStore>()(
         presets: state.presets,
         activePresetId: null,
       }),
-    }
-  )
+    },
+  ),
 );
 
 // Re-export types for convenience
 export type { FilterPreset, FilterCondition, FilterOperator, ColumnFilter };
-export { FILTER_OPERATOR_LABELS, FILTER_OPERATOR_CATEGORIES, DEFAULT_FILTER_OPERATOR } from "../types/filter-presets";
+export {
+  FILTER_OPERATOR_LABELS,
+  FILTER_OPERATOR_CATEGORIES,
+  DEFAULT_FILTER_OPERATOR,
+} from "../types/filter-presets";
 
 // Named export to match existing store patterns
 export const useFilterPresetsStore = useFilterPresetsBase;

@@ -55,8 +55,11 @@ function loadStoredUserThemes(): ThemeDefinition[] {
     const parsed = JSON.parse(stored) as unknown;
     if (!Array.isArray(parsed)) return [];
 
-    return parsed.filter(isThemeDefinitionCandidate).filter((theme) => !BUILT_IN_THEME_IDS.has(theme.id));
-  } catch {
+    return parsed
+      .filter(isThemeDefinitionCandidate)
+      .filter((theme) => !BUILT_IN_THEME_IDS.has(theme.id));
+  } catch (error) {
+    console.warn("[ThemeEngine] Failed to load stored user themes:", error);
     return [];
   }
 }
@@ -118,8 +121,8 @@ export const ThemeEngine = {
       try {
         const parsed = JSON.parse(stored) as Partial<ThemeDefinition>;
         if (parsed.appearance) return parsed.appearance;
-      } catch {
-        // ignore
+      } catch (error) {
+        console.warn("[ThemeEngine] Failed to parse stored appearance:", error);
       }
     }
     return "light";
@@ -153,8 +156,8 @@ export const ThemeEngine = {
           return { ...MINIMAX_THEME, ...parsed };
         }
       }
-    } catch {
-      // ignore
+    } catch (error) {
+      console.warn("[ThemeEngine] Failed to load active theme:", error);
     }
     return MINIMAX_THEME;
   },
@@ -162,8 +165,8 @@ export const ThemeEngine = {
   saveActive(theme: ThemeDefinition): void {
     try {
       localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(theme));
-    } catch {
-      // ignore
+    } catch (error) {
+      console.warn("[ThemeEngine] Failed to persist active theme:", error);
     }
   },
 
@@ -174,8 +177,8 @@ export const ThemeEngine = {
   saveUserThemes(themes: ThemeDefinition[]): void {
     try {
       localStorage.setItem(THEMES_STORAGE_KEY, JSON.stringify(themes));
-    } catch {
-      // ignore
+    } catch (error) {
+      console.warn("[ThemeEngine] Failed to persist user themes:", error);
     }
   },
 };
@@ -263,10 +266,7 @@ function injectThemeAsCSSVars(theme: ThemeDefinition): void {
 
   // MiniMax-style elevation tokens (consumed by minimax-design-system.css)
   if (theme.id === "tabler.minimax") {
-    root.style.setProperty(
-      "--mmx-shadow-flat",
-      "none",
-    );
+    root.style.setProperty("--mmx-shadow-flat", "none");
     root.style.setProperty(
       "--mmx-shadow-raised",
       "rgb(255, 255, 255) 0px 0px 0px 0px, rgba(159, 159, 159, 0.30) 0px 0px 0px 1px, rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",
@@ -279,12 +279,15 @@ function injectThemeAsCSSVars(theme: ThemeDefinition): void {
       "--mmx-shadow-floating",
       "rgb(255, 255, 255) 0px 0px 0px 0px, rgba(159, 159, 159, 0.30) 0px 0px 0px 1px, rgba(0, 0, 0, 0.12) 0px 8px 16px 0px",
     );
+    root.style.setProperty("--mmx-focus-ring", "rgba(0, 0, 0, 0.05) 0px 0px 0px 3px");
     root.style.setProperty(
-      "--mmx-focus-ring",
-      "rgba(0, 0, 0, 0.05) 0px 0px 0px 3px",
+      "--mmx-font-sans",
+      "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif",
     );
-    root.style.setProperty("--mmx-font-sans", "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif");
-    root.style.setProperty("--mmx-font-mono", "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace");
+    root.style.setProperty(
+      "--mmx-font-mono",
+      "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace",
+    );
   }
 }
 

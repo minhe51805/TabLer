@@ -52,7 +52,10 @@ use commands::ai_checkpoints::{
 };
 use commands::connection::*;
 use commands::connection_export::{export_connections_to_file, import_connections_from_file};
-use commands::data_export::{cancel_table_export, export_table_data, TableExportCancellationState};
+use commands::data_export::{
+    cancel_table_export, export_table_data, export_tables_to_directory,
+    TableExportCancellationState,
+};
 use commands::data_import::{
     import_csv, import_json, import_xlsx, preview_import_csv, preview_import_json,
     preview_import_xlsx,
@@ -92,7 +95,9 @@ use commands::update::{
 use commands::users_roles::{
     apply_user_role_change, get_user_role_snapshot, review_user_role_change,
 };
-use commands::window::{apply_window_profile, apply_window_profile_to_main, WindowProfile};
+use commands::window::{
+    apply_window_profile, apply_window_profile_to_main, open_external_url, WindowProfile,
+};
 use commands::workspace_sync::{pull_workspace_sync, push_workspace_sync};
 use database::manager::DatabaseManager;
 use log::{error, info};
@@ -405,6 +410,7 @@ pub fn run() {
             import_csv_file_atomically,
             cancel_csv_import,
             export_table_data,
+            export_tables_to_directory,
             cancel_table_export,
             execute_structure_statements,
             get_foreign_key_lookup_values,
@@ -521,6 +527,7 @@ pub fn run() {
             // Tab persistence commands
             save_tabs,
             load_tabs,
+            open_external_url,
             delete_tabs,
             // Deep link commands
             parse_deep_link,

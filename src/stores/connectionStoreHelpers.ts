@@ -82,15 +82,22 @@ export function resolveConnectionConfig(config: ConnectionConfig): ConnectionCon
   // Port must survive serde as u16 (0..=65535) — a stray negative or empty
   // value from the number input would otherwise reject the whole command.
   const port =
-    config.port != null &&
-    Number.isInteger(config.port) &&
-    config.port > 0 &&
-    config.port <= 65535
+    config.port != null && Number.isInteger(config.port) && config.port > 0 && config.port <= 65535
       ? config.port
+      : undefined;
+  // Same serde guard as `port`: `query_timeout_seconds` must arrive as a
+  // positive integer (Rust `u64`) or be dropped — a stray NaN/negative would
+  // reject the whole connect command.
+  const queryTimeoutSeconds =
+    config.query_timeout_seconds != null &&
+    Number.isInteger(config.query_timeout_seconds) &&
+    config.query_timeout_seconds > 0
+      ? config.query_timeout_seconds
       : undefined;
   const resolvedConfig = {
     ...config,
     port,
+    query_timeout_seconds: queryTimeoutSeconds,
     host: config.host ? resolveEnvVars(config.host) : config.host,
     username: config.username ? resolveEnvVars(config.username) : config.username,
     password: config.password ? resolveEnvVars(config.password) : config.password,
@@ -121,7 +128,10 @@ export function isMissingConnectionError(error: unknown): boolean {
   return MISSING_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
-export async function executeStartupCommands(connectionId: string, commands: string): Promise<void> {
+export async function executeStartupCommands(
+  connectionId: string,
+  commands: string,
+): Promise<void> {
   const statements = commands
     .split(";")
     .map((statement) => statement.trim())
@@ -135,7 +145,6 @@ export async function executeStartupCommands(connectionId: string, commands: str
     }
   }
 }
-
 
 /** Computes the post-disconnect state patch for the given connection. */
 export function disconnectedPatch(

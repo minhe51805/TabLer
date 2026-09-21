@@ -7,15 +7,19 @@ import {
   Play,
   Search,
   Square,
+  Star,
   Trash2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../../i18n";
+import { useConnectionStore } from "../../stores/connectionStore";
 import { useEvent } from "../../stores/event-center";
 import { useQueryHistoryStore } from "../../stores/queryHistoryStore";
+import { useSqlFavoritesStore } from "../../stores/sql-favorites-store";
 import type { QueryHistoryEntry } from "../../types";
 import { requestAppConfirmation } from "../../stores/confirmStore";
+import { emitAppToast } from "../../utils/app-toast";
 import "../../styles/lazy-overlays.css";
 
 interface Props {
@@ -32,12 +36,18 @@ interface QueryHistoryDayGroup {
 }
 
 import {
+  filterHistoryEntries,
   formatDuration,
   formatTimestamp,
   getDayKey,
   getDayLabel,
   getHistoryCopy,
+  sortHistoryEntries,
   truncateQuery,
+  type HistoryDateFilter,
+  type HistorySort,
+  type HistoryCopy,
+  type HistoryStatusFilter,
 } from "./query-history-utils";
 
 export function QueryHistoryEntryRow({
@@ -46,14 +56,16 @@ export function QueryHistoryEntryRow({
   isSelected,
   onCopy,
   onDelete,
+  onFavorite,
   onRun,
   onToggleSelected,
 }: {
-  copy: ReturnType<typeof getHistoryCopy>;
+  copy: HistoryCopy;
   entry: QueryHistoryEntry;
   isSelected: boolean;
   onCopy: (sql: string) => void;
   onDelete: (entry: QueryHistoryEntry) => void;
+  onFavorite: (entry: QueryHistoryEntry) => void;
   onRun: (sql: string) => void;
   onToggleSelected: (entry: QueryHistoryEntry) => void;
 }) {
@@ -120,6 +132,14 @@ export function QueryHistoryEntryRow({
         >
           <Play className="w-3.5 h-3.5" />
         </button>
+        <button
+          type="button"
+          className="qh-action-btn"
+          onClick={() => onFavorite(entry)}
+          title={copy.favoriteTitle}
+        >
+          <Star className="w-3.5 h-3.5" />
+        </button>
         {typeof entry.id === "number" && (
           <button
             type="button"
@@ -135,14 +155,23 @@ export function QueryHistoryEntryRow({
   );
 }
 
-export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQuery }: Props) {
+export function QueryHistoryPanel({ isOpen, onClose, onRunQuery }: Props) {
   const { language, t } = useI18n();
   const { entries, isLoading, loadHistory, deleteEntries, clearHistory } = useQueryHistoryStore();
+  const connections = useConnectionStore((state) => state.connections);
+  const saveFavorite = useSqlFavoritesStore((state) => state.saveFavorite);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [connectionFilter, setConnectionFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>("all");
+  const [dateFilter, setDateFilter] = useState<HistoryDateFilter>("all");
+  const [sortBy, setSortBy] = useState<HistorySort>("recent");
 
-  const copy = getHistoryCopy(language, activeConnectionId, selectedIds.length);
+  // Destructive actions (clear/delete-selected) follow the visible connection scope.
+  const connectionScope = connectionFilter === "all" ? null : connectionFilter;
+
+  const copy = getHistoryCopy(language, connectionScope, selectedIds.length);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -151,10 +180,11 @@ export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQu
     return () => window.clearTimeout(timer);
   }, [search]);
 
+  // Load across all connections; the connection filter is applied client-side.
   useEffect(() => {
     if (!isOpen) return;
-    void loadHistory(activeConnectionId ?? undefined, debouncedSearch || undefined, 500);
-  }, [activeConnectionId, debouncedSearch, isOpen, loadHistory]);
+    void loadHistory(undefined, debouncedSearch || undefined, 500);
+  }, [debouncedSearch, isOpen, loadHistory]);
 
   useEffect(() => {
     setSelectedIds((current) => current.filter((id) => entries.some((entry) => entry.id === id)));
@@ -162,12 +192,11 @@ export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQu
 
   useEvent(
     "query-history-updated",
-    ({ connectionId }) => {
+    () => {
       if (!isOpen) return;
-      if (activeConnectionId && connectionId && connectionId !== activeConnectionId) return;
-      void loadHistory(activeConnectionId ?? undefined, debouncedSearch || undefined, 500);
+      void loadHistory(undefined, debouncedSearch || undefined, 500);
     },
-    [activeConnectionId, debouncedSearch, isOpen, loadHistory],
+    [debouncedSearch, isOpen, loadHistory],
   );
 
   useEffect(() => {
@@ -181,10 +210,33 @@ export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQu
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
+  // Connection options come from the loaded entries so stale/deleted
+  // connections still appear; names resolve through the connection store.
+  const connectionOptions = useMemo(() => {
+    const ids = Array.from(new Set(entries.map((entry) => entry.connection_id)));
+    return ids
+      .map((id) => ({
+        id,
+        label: connections.find((conn) => conn.id === id)?.name ?? id,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [connections, entries]);
+
+  const visibleEntries = useMemo(() => {
+    const filtered = filterHistoryEntries(
+      connectionScope
+        ? entries.filter((entry) => entry.connection_id === connectionScope)
+        : entries,
+      statusFilter,
+      dateFilter,
+    );
+    return sortHistoryEntries(filtered, sortBy);
+  }, [connectionScope, dateFilter, entries, sortBy, statusFilter]);
+
   const groupedEntries = useMemo<QueryHistoryDayGroup[]>(() => {
     const groups = new Map<string, QueryHistoryDayGroup>();
 
-    for (const entry of entries) {
+    for (const entry of visibleEntries) {
       const key = getDayKey(entry.executed_at);
       const existing = groups.get(key);
       if (existing) {
@@ -199,11 +251,12 @@ export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQu
     }
 
     return Array.from(groups.values());
-  }, [copy, entries]);
+  }, [copy, visibleEntries]);
 
   const visibleSelectableIds = useMemo(
-    () => entries.map((entry) => entry.id).filter((id): id is number => typeof id === "number"),
-    [entries],
+    () =>
+      visibleEntries.map((entry) => entry.id).filter((id): id is number => typeof id === "number"),
+    [visibleEntries],
   );
 
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -278,21 +331,42 @@ export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQu
       confirmText: t("common.delete"),
     });
     if (!approved) return;
-    await deleteEntries(selectedIds, activeConnectionId ?? undefined);
+    await deleteEntries(selectedIds, connectionScope ?? undefined);
     setSelectedIds([]);
-  }, [activeConnectionId, deleteEntries, selectedIds, t]);
+  }, [connectionScope, deleteEntries, selectedIds, t]);
 
   const handleClearHistory = useCallback(async () => {
     if (!entries.length) return;
     const approved = await requestAppConfirmation({
       title: t("history.clearTitle"),
-      message: t(activeConnectionId ? "history.clearConnectionConfirm" : "history.clearConfirm"),
+      message: t(connectionScope ? "history.clearConnectionConfirm" : "history.clearConfirm"),
       confirmText: t("toolbar.clear"),
     });
     if (!approved) return;
-    await clearHistory(activeConnectionId ?? undefined);
+    await clearHistory(connectionScope ?? undefined);
     setSelectedIds([]);
-  }, [activeConnectionId, clearHistory, entries.length, t]);
+  }, [clearHistory, connectionScope, entries.length, t]);
+
+  const handleFavorite = useCallback(
+    async (entry: QueryHistoryEntry) => {
+      try {
+        await saveFavorite({
+          name: truncateQuery(entry.query_text, 60),
+          sql: entry.query_text,
+          connectionId: entry.connection_id,
+          database: entry.database,
+        });
+        emitAppToast({ tone: "success", title: copy.favoriteSaved });
+      } catch (error) {
+        emitAppToast({
+          tone: "error",
+          title: copy.favoriteFailed,
+          description: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+    [copy.favoriteFailed, copy.favoriteSaved, saveFavorite],
+  );
 
   if (!isOpen) return null;
 
@@ -340,6 +414,53 @@ export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQu
           )}
         </div>
 
+        <div className="qh-filters">
+          <select
+            className="qh-filter-select"
+            value={connectionFilter}
+            onChange={(e) => setConnectionFilter(e.target.value)}
+            aria-label={copy.filterAllConnections}
+          >
+            <option value="all">{copy.filterAllConnections}</option>
+            {connectionOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="qh-filter-select"
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as HistoryStatusFilter)}
+            aria-label={copy.filterStatusAll}
+          >
+            <option value="all">{copy.filterStatusAll}</option>
+            <option value="ok">{copy.filterStatusOk}</option>
+            <option value="error">{copy.filterStatusError}</option>
+          </select>
+          <select
+            className="qh-filter-select"
+            value={dateFilter}
+            onChange={(e) => setDateFilter(e.target.value as HistoryDateFilter)}
+            aria-label={copy.filterDateAll}
+          >
+            <option value="all">{copy.filterDateAll}</option>
+            <option value="today">{copy.filterDateToday}</option>
+            <option value="7d">{copy.filterDate7d}</option>
+            <option value="30d">{copy.filterDate30d}</option>
+          </select>
+          <select
+            className="qh-filter-select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as HistorySort)}
+            aria-label={copy.sortRecent}
+          >
+            <option value="recent">{copy.sortRecent}</option>
+            <option value="duration">{copy.sortDuration}</option>
+            <option value="rows">{copy.sortRows}</option>
+          </select>
+        </div>
+
         <div className="qh-toolbar">
           <span className="qh-toolbar-count">{copy.selectedCount}</span>
           <div className="qh-toolbar-actions">
@@ -365,8 +486,29 @@ export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQu
         <div className="qh-list">
           {isLoading ? (
             <div className="qh-empty">{copy.loading}</div>
-          ) : groupedEntries.length === 0 ? (
-            <div className="qh-empty">{debouncedSearch ? copy.noMatches : copy.noHistory}</div>
+          ) : visibleEntries.length === 0 ? (
+            <div className="qh-empty">
+              {debouncedSearch || connectionScope || statusFilter !== "all" || dateFilter !== "all"
+                ? copy.noMatches
+                : copy.noHistory}
+            </div>
+          ) : sortBy !== "recent" ? (
+            // Non-chronological sorts render flat; day grouping would break the order.
+            <div className="qh-group-list">
+              {visibleEntries.map((entry) => (
+                <QueryHistoryEntryRow
+                  key={entry.id ?? `${entry.executed_at}-${entry.query_text}`}
+                  copy={copy}
+                  entry={entry}
+                  isSelected={typeof entry.id === "number" && selectedIdSet.has(entry.id)}
+                  onCopy={handleCopy}
+                  onDelete={handleDeleteOne}
+                  onFavorite={handleFavorite}
+                  onRun={handleRun}
+                  onToggleSelected={handleToggleSelected}
+                />
+              ))}
+            </div>
           ) : (
             groupedEntries.map((group) => {
               const groupIds = group.entries
@@ -410,6 +552,7 @@ export function QueryHistoryPanel({ isOpen, activeConnectionId, onClose, onRunQu
                         isSelected={typeof entry.id === "number" && selectedIdSet.has(entry.id)}
                         onCopy={handleCopy}
                         onDelete={handleDeleteOne}
+                        onFavorite={handleFavorite}
                         onRun={handleRun}
                         onToggleSelected={handleToggleSelected}
                       />

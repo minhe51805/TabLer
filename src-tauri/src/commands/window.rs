@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::sync::atomic::{AtomicU8, Ordering};
 use tauri::{AppHandle, LogicalSize, Manager, Size};
+use tauri_plugin_opener::OpenerExt;
 
 const LAUNCHER_WIDTH: f64 = 720.0;
 const LAUNCHER_HEIGHT: f64 = 520.0;
@@ -135,4 +136,17 @@ pub fn apply_window_profile_to_main(app: &AppHandle, profile: WindowProfile) -> 
 #[tauri::command]
 pub fn apply_window_profile(profile: WindowProfile, app: AppHandle) -> Result<(), String> {
     apply_window_profile_to_main(&app, profile)
+}
+
+/// Open an http(s) URL in the user's default browser (Help → Report an issue /
+/// Send feedback). The scheme is restricted so the command can never be used
+/// to launch local files or custom protocol handlers.
+#[tauri::command]
+pub fn open_external_url(url: String, app: AppHandle) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("Only http(s) URLs can be opened externally".to_string());
+    }
+    app.opener()
+        .open_url(&url, None::<String>)
+        .map_err(|e| format!("Failed to open external URL: {}", e))
 }

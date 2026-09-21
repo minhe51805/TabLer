@@ -1,4 +1,5 @@
 import {
+  Coins,
   History,
   Layers,
   MessageSquarePlus,
@@ -10,7 +11,7 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { KeyboardEventHandler, RefObject } from "react";
 import {
   AI_PANEL_DEFAULT_WIDTH,
@@ -45,6 +46,154 @@ import type {
   AIWorkspaceInteractionMode,
 } from "./ai-workspace-types";
 import type { SandboxPolicy } from "./ai-execution-policy";
+import {
+  formatSessionCostUsd,
+  getSessionUsageSnapshot,
+  subscribeSessionUsage,
+} from "./ai-agent-cost";
+
+/**
+ * Header chip summarizing this session's model spend. The ledger lives in
+ * ai-agent-cost (module-level, fed by every askAI call), so the chip survives
+ * thread switches and re-renders only when a call completes. Click opens a
+ * per-model breakdown popover; costs are list-price estimates, "n/a" when the
+ * model has no known rate.
+ */
+function AISessionCostChip({ language }: { language: string }) {
+  const usage = useSyncExternalStore(subscribeSessionUsage, getSessionUsageSnapshot);
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const vi = language === "vi";
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  if (usage.totalCalls === 0) return null;
+
+  const costLabel =
+    usage.estimatedCostUsd !== null
+      ? `~${formatSessionCostUsd(usage.estimatedCostUsd)}${usage.hasUnpriced ? "+" : ""}`
+      : vi
+        ? "chưa rõ giá"
+        : "n/a";
+  const summary = vi
+    ? `Phiên: ${usage.totalTokens.toLocaleString()} tokens (${costLabel})`
+    : `Session: ${usage.totalTokens.toLocaleString()} tokens (${costLabel} est)`;
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        className={`toolbar-btn${open ? " is-active" : ""}`}
+        onClick={() => setOpen((current) => !current)}
+        title={summary}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+          fontSize: "var(--mm-fs-micro, 11px)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        <Coins className="w-3.5 h-3.5" />
+        {summary}
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={vi ? "Chi phí phiên" : "Session cost"}
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            right: 0,
+            zIndex: 60,
+            minWidth: 240,
+            maxWidth: 320,
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid var(--mm-border, rgba(148, 163, 184, 0.25))",
+            background: "var(--mm-surface-elevated, var(--bg-secondary, #1b2430))",
+            boxShadow: "0 14px 32px rgba(4, 12, 20, 0.35)",
+            fontSize: "var(--mm-fs-caption, 12px)",
+            color: "var(--text-primary)",
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+            {vi ? "Mức dùng phiên" : "Session usage"}
+          </div>
+          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 4 }}>
+            {usage.entries.map((entry) => (
+              <li
+                key={`${entry.provider}/${entry.model}`}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  alignItems: "baseline",
+                }}
+              >
+                <span
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  title={`${entry.provider} · ${entry.model}`}
+                >
+                  {entry.provider} · {entry.model}
+                </span>
+                <span style={{ flex: "0 0 auto", color: "var(--text-secondary, inherit)" }}>
+                  {entry.totalTokens.toLocaleString()} tok ·{" "}
+                  {entry.estimatedCostUsd !== null
+                    ? formatSessionCostUsd(entry.estimatedCostUsd)
+                    : "n/a"}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div
+            style={{
+              marginTop: 8,
+              paddingTop: 6,
+              borderTop: "1px solid var(--mm-border, rgba(148, 163, 184, 0.2))",
+              display: "flex",
+              justifyContent: "space-between",
+              fontWeight: 600,
+            }}
+          >
+            <span>{vi ? "Tổng" : "Total"}</span>
+            <span>
+              {usage.totalTokens.toLocaleString()} tok · {costLabel}
+            </span>
+          </div>
+          {usage.hasUnpriced && (
+            <div style={{ marginTop: 6, opacity: 0.75, fontSize: "var(--mm-fs-micro, 11px)" }}>
+              {vi
+                ? "Một số model chưa có bảng giá — ước tính là mức tối thiểu."
+                : "Some models have no price table — the estimate is a floor."}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ConfirmState {
   title: string;
@@ -71,7 +220,6 @@ export interface AIWorkspacePanelViewModel {
   isCancelling: boolean;
   isGenerating: boolean;
   isAttachmentManagerOpen: boolean;
-  canAttachImages: boolean;
   composerAttachments: AIAttachmentDraft[];
   isHistoryOpen: boolean;
   isLongformComposer: boolean;
@@ -245,6 +393,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                   </div>
                 </div>
                 <div className="workspace-toolbar-actions">
+                  <AISessionCostChip language={m.language} />
                   <button
                     type="button"
                     className={`toolbar-btn icon-only ${m.isCompacting ? "is-active" : ""}`}
@@ -459,7 +608,6 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                 attachedSelectionSource={m.attachedSelection?.source}
                 hasAttachedSelectionText={Boolean(m.attachedSelection?.text.trim())}
                 attachments={m.composerAttachments}
-                canAttachImages={m.canAttachImages}
                 onAddAttachmentFiles={m.addAttachmentFiles}
                 onRemoveAttachment={m.removeAttachment}
                 onOpenAttachmentManager={m.openAttachmentManager}

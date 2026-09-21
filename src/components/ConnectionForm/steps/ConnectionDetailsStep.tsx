@@ -1019,6 +1019,41 @@ export function ConnectionDetailsStep({
                   </span>
                 </div>
               )}
+
+              {/* Per-connection query timeout — blank keeps the backend default. */}
+              <div className="connection-form-field">
+                <div className="connection-form-field-label-row">
+                  <label className="form-label uppercase tracking-wide">
+                    {isVi ? "Giới hạn thời gian truy vấn (giây)" : "Query timeout (seconds)"}{" "}
+                    <span className="opacity-60">({strings.optional})</span>
+                  </label>
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  max={600}
+                  step={1}
+                  value={formData.query_timeout_seconds ?? ""}
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    if (raw === "") {
+                      onFieldChange("query_timeout_seconds", undefined);
+                      return;
+                    }
+                    const parsed = Number.parseInt(raw, 10);
+                    if (Number.isFinite(parsed) && parsed > 0) {
+                      onFieldChange("query_timeout_seconds", parsed);
+                    }
+                  }}
+                  placeholder="180"
+                  className="input h-11"
+                />
+                <span className="connection-form-field-hint">
+                  {isVi
+                    ? "Thời gian tối đa một truy vấn được chạy trên kết nối này (giới hạn 1–600 giây). Để trống để dùng mặc định."
+                    : "Maximum time a query may run on this connection (clamped 1–600s). Leave blank to use the default."}
+                </span>
+              </div>
             </section>
           )}
 

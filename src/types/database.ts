@@ -52,6 +52,8 @@ export interface ConnectionConfig {
   tagId?: string;
   /** SQL commands to execute immediately after connecting. */
   startupCommands?: string;
+  /** Per-connection query timeout in seconds. Empty/undefined keeps the backend default. */
+  query_timeout_seconds?: number;
   /** SSH tunnel configuration */
   ssh_config?: SshConfig;
 }
@@ -284,4 +286,10 @@ export interface Tab {
    * regular manual tabs and always confirm.
    */
   source?: "ai" | "user";
+  /**
+   * Split-view pane membership. Omitted/`"primary"` tabs live in the left
+   * (default) pane; `"secondary"` tabs render in the right split pane. The
+   * split closes automatically when no secondary tabs remain.
+   */
+  pane?: "primary" | "secondary";
 }

@@ -20,6 +20,18 @@ export interface StartupCopy {
     /** Badge label/tooltip when the probe failed. */
     unreachable: string;
   };
+  groups: {
+    /** Context-menu section label above the group list. */
+    moveToGroup: string;
+    /** Context-menu item that clears the connection's group. */
+    ungrouped: string;
+    /** Context-menu item that switches the menu to the new-group input. */
+    newGroup: string;
+    /** Placeholder for the inline new-group name input. */
+    newGroupPlaceholder: string;
+    /** Confirm button next to the new-group name input. */
+    create: string;
+  };
 }
 
 const EN_COPY: StartupCopy = {
@@ -35,6 +47,13 @@ const EN_COPY: StartupCopy = {
     reachable: "Reachable",
     unreachable: "Unreachable",
   },
+  groups: {
+    moveToGroup: "Move to group",
+    ungrouped: "Ungrouped",
+    newGroup: "New group…",
+    newGroupPlaceholder: "Group name",
+    create: "Create",
+  },
 };
 
 const VI_COPY: StartupCopy = {
@@ -49,6 +68,13 @@ const VI_COPY: StartupCopy = {
     reachable: "Kết nối được",
     unreachable: "Không kết nối được",
   },
+  groups: {
+    moveToGroup: "Chuyển vào nhóm",
+    ungrouped: "Không nhóm",
+    newGroup: "Nhóm mới…",
+    newGroupPlaceholder: "Tên nhóm",
+    create: "Tạo",
+  },
 };
 
 const ZH_COPY: StartupCopy = {
@@ -62,6 +88,13 @@ const ZH_COPY: StartupCopy = {
     action: "全部 Ping",
     reachable: "可连接",
     unreachable: "无法连接",
+  },
+  groups: {
+    moveToGroup: "移动到分组",
+    ungrouped: "未分组",
+    newGroup: "新建分组…",
+    newGroupPlaceholder: "分组名称",
+    create: "创建",
   },
 };
 
@@ -78,6 +111,13 @@ const TR_COPY: StartupCopy = {
     reachable: "Ulaşılabilir",
     unreachable: "Ulaşılamıyor",
   },
+  groups: {
+    moveToGroup: "Gruba taşı",
+    ungrouped: "Gruplandırılmamış",
+    newGroup: "Yeni grup…",
+    newGroupPlaceholder: "Grup adı",
+    create: "Oluştur",
+  },
 };
 
 const KO_COPY: StartupCopy = {
@@ -92,6 +132,13 @@ const KO_COPY: StartupCopy = {
     action: "모두 핑",
     reachable: "연결 가능",
     unreachable: "연결 불가",
+  },
+  groups: {
+    moveToGroup: "그룹으로 이동",
+    ungrouped: "그룹 없음",
+    newGroup: "새 그룹…",
+    newGroupPlaceholder: "그룹 이름",
+    create: "만들기",
   },
 };
 

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { trackUsage } from "./usage-counter";
 
 export class TauriTimeoutError extends Error {
   constructor(message: string) {
@@ -31,13 +32,35 @@ export async function saveExportFile(options: {
 }): Promise<string | null> {
   const { fileName, content, contentBase64, filters } = options;
   const isBinary = typeof contentBase64 === "string";
-  return invokeMutation<string | null>("save_export_file", {
+  const savedPath = await invokeMutation<string | null>("save_export_file", {
     fileName,
-    content: isBinary ? "" : content ?? "",
+    content: isBinary ? "" : (content ?? ""),
     encoding: isBinary ? "base64" : "utf8",
     contentBase64: contentBase64 ?? null,
     filters: filters ?? null,
   });
+  // Only count exports the user actually saved — a cancelled native dialog
+  // returns null and is not a real feature use.
+  if (savedPath) trackUsage("export.file");
+  return savedPath;
+}
+
+/**
+ * Opens an http(s) URL in the system browser. On the desktop shell this goes
+ * through the Rust `open_external_url` command (tauri-plugin-opener), which is
+ * the only reliable way out of the WebView; the web build falls back to
+ * `window.open`.
+ */
+export async function openExternalUrl(url: string): Promise<void> {
+  if ("__TAURI_INTERNALS__" in window) {
+    try {
+      await invoke("open_external_url", { url });
+      return;
+    } catch (error) {
+      console.warn("[Tauri] open_external_url failed, falling back to window.open:", error);
+    }
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 /** Encodes text to UTF-8 base64 via the browser APIs available in the
@@ -65,17 +88,27 @@ export function invokeWithTimeout<T>(
       action();
     };
     const timer = window.setTimeout(() => {
-      void Promise.resolve(options?.onTimeout?.()).catch(() => undefined).finally(() => {
-        finish(() => {
-          reject(new TauriTimeoutError(
-            `${label} timed out after ${Math.round(timeoutMs / 1000)}s. The request was cancelled and can be retried.`,
-          ));
+      void Promise.resolve(options?.onTimeout?.())
+        .catch((error) => {
+          console.warn(`[Tauri] onTimeout callback for "${label}" failed:`, error);
+        })
+        .finally(() => {
+          finish(() => {
+            reject(
+              new TauriTimeoutError(
+                `${label} timed out after ${Math.round(timeoutMs / 1000)}s. The request was cancelled and can be retried.`,
+              ),
+            );
+          });
         });
-      });
     }, timeoutMs);
     invoke<T>(command, args).then(
-      (value) => { finish(() => resolve(value)); },
-      (error) => { finish(() => reject(error)); }
+      (value) => {
+        finish(() => resolve(value));
+      },
+      (error) => {
+        finish(() => reject(error));
+      },
     );
   });
 }

@@ -199,6 +199,7 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
                 <li>{bundleCopy.export.favorites}</li>
                 <li>{bundleCopy.export.schedules}</li>
                 <li>{bundleCopy.export.aiProviders}</li>
+                <li>{bundleCopy.export.uiPrefs}</li>
               </ul>
             </div>
             {error && (

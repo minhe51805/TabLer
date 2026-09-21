@@ -212,7 +212,8 @@ export interface AIWorkspaceCopy {
   };
   attachments: {
     attachButton: string;
-    imageUnsupported: string;
+    imageMaybeUnsupported: string;
+    imageLimit: string;
     removeAttachment: string;
     managerOpen: string;
     managerTitle: string;

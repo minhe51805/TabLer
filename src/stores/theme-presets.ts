@@ -604,7 +604,7 @@ export const MINIMAX_THEME: ThemeDefinition = {
       borderLight: "#E5E5EA",
       primaryText: "#000000",
       secondaryText: "#3C3C43",
-      tertiaryText: "#8E8E93",
+      tertiaryText: "#6E6E73",
       accent: "#007AFF",
       accentHover: "#0A6CFF",
       accentDim: "rgba(0, 122, 255, 0.10)",
@@ -681,11 +681,9 @@ export const MINIMAX_THEME: ThemeDefinition = {
     title2: 24,
   },
   fonts: {
-    editorFontFamily:
-      "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace",
+    editorFontFamily: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace",
     editorFontSize: 13,
-    dataGridFontFamily:
-      "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace",
+    dataGridFontFamily: "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace",
     dataGridFontSize: 13,
   },
   animations: {

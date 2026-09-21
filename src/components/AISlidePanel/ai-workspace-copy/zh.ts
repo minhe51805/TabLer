@@ -231,7 +231,8 @@ export const ZH_COPY: AIWorkspaceCopy = {
   },
   attachments: {
     attachButton: "附加文件或图片",
-    imageUnsupported: "当前模型无法读取图片。仅附加了文本文件。",
+    imageMaybeUnsupported: "当前模型可能不支持图片。",
+    imageLimit: "每条消息最多附加 4 张图片。",
     removeAttachment: "移除附件",
     managerOpen: "管理附件",
     managerTitle: "附件",

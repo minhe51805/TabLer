@@ -1,7 +1,9 @@
 import {
   Activity,
+  Check,
   Database,
   FolderOpen,
+  FolderPlus,
   LayoutGrid,
   LayoutList,
   Loader2,
@@ -9,6 +11,7 @@ import {
   Search,
   Sparkles,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import type {
   ConnectionConfig,
@@ -61,6 +64,12 @@ interface Props {
   onRenameGroup: (groupId: string, name: string) => void;
   onChangeGroupColor: (groupId: string, color: string) => void;
   onDeleteGroup: (groupId: string) => void;
+  /** Assign a connection to a group (null clears the assignment). */
+  onAssignToGroup: (connectionId: string, groupId: string | null) => void;
+  /** Create a group from the context menu and assign the connection to it. */
+  onCreateAndAssignGroup: (connectionId: string, name: string) => void;
+  /** Localized copy for the card context menu. */
+  groupsCopy: StartupCopy["groups"];
   /** Per-connection results of the last "ping all" run. */
   pingResults: Map<string, ConnectionPingResult>;
   isPingingAll: boolean;
@@ -103,8 +112,70 @@ export function ConnectionListView({
   isPingingAll,
   onPingAll,
   pingAllCopy,
+  onAssignToGroup,
+  onCreateAndAssignGroup,
+  groupsCopy,
 }: Props) {
   const { t } = useI18n();
+
+  // ── Card context menu (Move to group / Rename / Delete) ────────────────────
+
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    connectionId: string;
+  } | null>(null);
+  const [isNamingGroup, setIsNamingGroup] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  // Bumped to trigger rename mode on a specific card (see ConnectionRow).
+  const [renameRequest, setRenameRequest] = useState<{ id: string; nonce: number } | null>(null);
+
+  const closeContextMenu = () => {
+    setContextMenu(null);
+    setIsNamingGroup(false);
+    setNewGroupName("");
+  };
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeContextMenu();
+    };
+    const handleScroll = () => closeContextMenu();
+    window.addEventListener("click", closeContextMenu);
+    window.addEventListener("contextmenu", closeContextMenu);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleScroll);
+    const listEl = listRef.current;
+    listEl?.addEventListener("scroll", handleScroll);
+    return () => {
+      window.removeEventListener("click", closeContextMenu);
+      window.removeEventListener("contextmenu", closeContextMenu);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleScroll);
+      listEl?.removeEventListener("scroll", handleScroll);
+    };
+  }, [contextMenu, listRef]);
+
+  const openContextMenu = (event: React.MouseEvent<HTMLDivElement>, connectionId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onSelectConnection(connectionId);
+    setIsNamingGroup(false);
+    setNewGroupName("");
+    setContextMenu({ x: event.clientX, y: event.clientY, connectionId });
+  };
+
+  const contextMenuConnection = contextMenu
+    ? filteredConnections.find((c) => c.id === contextMenu.connectionId)
+    : undefined;
+
+  const submitNewGroup = () => {
+    const name = newGroupName.trim();
+    if (!name || !contextMenu) return;
+    onCreateAndAssignGroup(contextMenu.connectionId, name);
+    closeContextMenu();
+  };
 
   // ── Flat list ────────────────────────────────────────────────────────────────
 
@@ -324,12 +395,121 @@ export function ConnectionListView({
                   ping={pingResults.get(conn.id)}
                   pingOkLabel={pingAllCopy.reachable}
                   pingFailLabel={pingAllCopy.unreachable}
+                  onContextMenu={(e) => openContextMenu(e, conn.id)}
+                  renameNonce={renameRequest?.id === conn.id ? renameRequest.nonce : undefined}
                 />
               );
             })
           )}
         </div>
       </div>
+
+      {contextMenu && contextMenuConnection ? (
+        <div
+          className="startup-connection-context-menu"
+          style={{
+            left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 240)),
+            top: Math.max(
+              8,
+              Math.min(contextMenu.y, window.innerHeight - (groups.length * 34 + 200)),
+            ),
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          {isNamingGroup ? (
+            <div className="startup-connection-context-new-group">
+              <input
+                type="text"
+                autoFocus
+                value={newGroupName}
+                placeholder={groupsCopy.newGroupPlaceholder}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === "Enter") submitNewGroup();
+                  if (e.key === "Escape") closeContextMenu();
+                }}
+              />
+              <button type="button" disabled={!newGroupName.trim()} onClick={submitNewGroup}>
+                {groupsCopy.create}
+              </button>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="startup-connection-group-menu-item"
+                onClick={() => {
+                  setRenameRequest({
+                    id: contextMenu.connectionId,
+                    nonce: Date.now(),
+                  });
+                  closeContextMenu();
+                }}
+              >
+                {t("common.rename")}
+              </button>
+
+              <div className="startup-connection-context-label">{groupsCopy.moveToGroup}</div>
+              {groups.map((group) => (
+                <button
+                  key={group.id}
+                  type="button"
+                  className="startup-connection-group-menu-item"
+                  onClick={() => {
+                    onAssignToGroup(contextMenu.connectionId, group.id);
+                    closeContextMenu();
+                  }}
+                >
+                  <span
+                    className="startup-connection-group-dot"
+                    style={{ backgroundColor: group.color }}
+                  />
+                  <span className="startup-connection-context-item-label">{group.name}</span>
+                  {contextMenuConnection.groupId === group.id ? (
+                    <Check className="w-3.5 h-3.5" />
+                  ) : null}
+                </button>
+              ))}
+              {contextMenuConnection.groupId ? (
+                <button
+                  type="button"
+                  className="startup-connection-group-menu-item"
+                  onClick={() => {
+                    onAssignToGroup(contextMenu.connectionId, null);
+                    closeContextMenu();
+                  }}
+                >
+                  {groupsCopy.ungrouped}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="startup-connection-group-menu-item"
+                onClick={() => setIsNamingGroup(true)}
+              >
+                <FolderPlus className="w-3.5 h-3.5" />
+                <span className="startup-connection-context-item-label">{groupsCopy.newGroup}</span>
+              </button>
+
+              <button
+                type="button"
+                className="startup-connection-group-menu-item danger"
+                onClick={() => {
+                  onDeleteConnection(contextMenuConnection);
+                  closeContextMenu();
+                }}
+              >
+                {t("connections.delete")}
+              </button>
+            </>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }

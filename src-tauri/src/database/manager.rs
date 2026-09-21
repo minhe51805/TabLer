@@ -46,6 +46,10 @@ fn connection_not_found(connection_id: &str) -> anyhow::Error {
 pub struct DatabaseManager {
     connections: Arc<RwLock<HashMap<String, Arc<dyn DatabaseDriver>>>>,
     connection_types: Arc<RwLock<HashMap<String, DatabaseType>>>,
+    /// Per-connection query timeout overrides (seconds), captured at connect
+    /// time from `ConnectionConfig::query_timeout_seconds`. Absent entries mean
+    /// "use the classified default window".
+    connection_query_timeouts: Arc<RwLock<HashMap<String, u64>>>,
     ssh_tunnels: Arc<RwLock<HashMap<String, TunnelHandle>>>,
     ssh_manager: Arc<SshTunnelManager>,
     plugin_storage: PluginStorage,
@@ -194,6 +198,7 @@ impl DatabaseManager {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
             connection_types: Arc::new(RwLock::new(HashMap::new())),
+            connection_query_timeouts: Arc::new(RwLock::new(HashMap::new())),
             ssh_tunnels: Arc::new(RwLock::new(HashMap::new())),
             ssh_manager: Arc::new(SshTunnelManager::new()),
             plugin_storage,
@@ -342,6 +347,23 @@ impl DatabaseManager {
             .await
             .insert(config.id.clone(), config.db_type);
 
+        match config.query_timeout_seconds.filter(|&secs| secs > 0) {
+            Some(secs) => {
+                self.connection_query_timeouts
+                    .write()
+                    .await
+                    .insert(config.id.clone(), secs);
+            }
+            None => {
+                // Reconnecting with the override cleared must not leave a stale
+                // entry from the previous session.
+                self.connection_query_timeouts
+                    .write()
+                    .await
+                    .remove(&config.id);
+            }
+        }
+
         if let Some(pending_tunnel) = pending_tunnel {
             let handle = pending_tunnel.commit();
             let mut ssh_tunnels = self.ssh_tunnels.write().await;
@@ -363,6 +385,10 @@ impl DatabaseManager {
         let driver = conns.remove(connection_id);
         drop(conns);
         self.connection_types.write().await.remove(connection_id);
+        self.connection_query_timeouts
+            .write()
+            .await
+            .remove(connection_id);
         if let Some(driver) = driver {
             driver.disconnect().await?;
         }
@@ -384,6 +410,7 @@ impl DatabaseManager {
         }
         drop(conns);
         self.connection_types.write().await.clear();
+        self.connection_query_timeouts.write().await.clear();
 
         let mut tunnels = self.ssh_tunnels.write().await;
         for (_, handle) in tunnels.drain() {
@@ -421,6 +448,16 @@ impl DatabaseManager {
             .get(connection_id)
             .copied()
             .ok_or_else(|| connection_not_found(connection_id))
+    }
+
+    /// Per-connection query timeout override in seconds, captured at connect
+    /// time. `None` means the caller should use the classified default window.
+    pub async fn connection_query_timeout(&self, connection_id: &str) -> Option<u64> {
+        self.connection_query_timeouts
+            .read()
+            .await
+            .get(connection_id)
+            .copied()
     }
 
     pub async fn get_connection_capabilities(

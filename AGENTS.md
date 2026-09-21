@@ -135,6 +135,11 @@ plugins/                    database driver plugins
 - **Language**: all code comments, docs, commits and plan files in **English**.
 - **Naming**: `kebab-case.ts` modules, `PascalCase.tsx` components, `snake_case.rs`,
   Tauri commands exposed as `camelCase` via `#[tauri::command]`.
+- **UI strings**: new user-facing copy goes in a per-feature `*-copy.ts` module
+  next to the component (e.g. `connection-error-copy.ts`, `window-menu-copy.ts`),
+  **not** in `src/i18n/*.ts`. The i18n files are a merge-conflict hotspot for
+  parallel edits; copy modules expose a `get<Feature>Copy(language)` accessor
+  with per-language objects and an English fallback.
 - **AISlidePanel discipline**: one file per concern (context assembly, tool schema,
   tool executor, verification, cost, memory recall, …). When adding agent behaviour,
   extend the matching module instead of growing an unrelated one.

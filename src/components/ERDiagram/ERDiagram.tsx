@@ -28,6 +28,7 @@ import {
   Database,
   RefreshCw,
   Download,
+  FileImage,
   FileText,
   GitBranch,
   Link2,
@@ -69,6 +70,7 @@ import { buildERDiagramSqlExport } from "./erd-sql-export";
 import {
   buildDrawioDiagramXml,
   buildERDiagramExportSnapshot,
+  buildERDiagramSvg,
   renderERDiagramCanvas,
 } from "./erd-export";
 import {
@@ -80,13 +82,13 @@ import {
   getTableColor,
 } from "./erd-graph";
 import {
+  buildERDiagramExportFileName,
   dedupeRelationships,
   getColumnSelectOption,
   getPreferredRelationshipDraft,
   getQualifiedTableName,
   persistCustomRelationships,
   readCustomRelationships,
-  sanitizeFileName,
 } from "./erd-ui-helpers";
 import {
   ER_DIAGRAM_STRUCTURE_BATCH_SIZE,
@@ -98,17 +100,9 @@ import {
 } from "./erd-schema-cache";
 import { EditableRelationEdge } from "./EditableRelationEdge";
 import { ERDZoomLabelController } from "./ERDZoomLabelController";
-import {
-  TableNode,
-  type ERDNodeContextPayload,
-} from "./TableNode";
-import {
-  type DiagramPoint,
-} from "./layout";
-import {
-  formatERRelationshipSummary,
-  inferERRelationshipNotation,
-} from "./relationshipNotation";
+import { TableNode, type ERDNodeContextPayload } from "./TableNode";
+import { type DiagramPoint } from "./layout";
+import { formatERRelationshipSummary, inferERRelationshipNotation } from "./relationshipNotation";
 import {
   buildColumnAlterStatements,
   createEditorState,
@@ -179,15 +173,8 @@ async function fetchSchema(
     const tableSchemas: TableSchema[] = [];
     const allRelationships: ERRelationship[] = [];
 
-    for (
-      let index = 0;
-      index < tables.length;
-      index += ER_DIAGRAM_STRUCTURE_BATCH_SIZE
-    ) {
-      const batch = tables.slice(
-        index,
-        index + ER_DIAGRAM_STRUCTURE_BATCH_SIZE,
-      );
+    for (let index = 0; index < tables.length; index += ER_DIAGRAM_STRUCTURE_BATCH_SIZE) {
+      const batch = tables.slice(index, index + ER_DIAGRAM_STRUCTURE_BATCH_SIZE);
       const structures = await Promise.all(
         batch.map((table) =>
           getOrLoadTableStructure({ connectionId, database }, table.name, () =>
@@ -242,27 +229,19 @@ export function ERDiagram({ connectionId, database }: Props) {
   const shellRef = useRef<HTMLDivElement | null>(null);
   const reactFlowInstanceRef = useRef<ReactFlowInstance | null>(null);
   const hasInitializedSelectionRef = useRef(false);
-  const rememberedNodePositionsRef = useRef<Map<string, DiagramPoint>>(
-    new Map(),
-  );
+  const rememberedNodePositionsRef = useRef<Map<string, DiagramPoint>>(new Map());
   const rememberedEdgeBendsRef = useRef<Map<string, DiagramPoint>>(new Map());
   const loadRequestIdRef = useRef(0);
   const addTab = useUIStore((state) => state.addTab);
   const setActiveTab = useUIStore((state) => state.setActiveTab);
   const updateTab = useUIStore((state) => state.updateTab);
   const connections = useConnectionStore((state) => state.connections);
-  const countTableNullValues = useQueryStore(
-    (state) => state.countTableNullValues,
-  );
-  const executeStructureStatements = useQueryStore(
-    (state) => state.executeStructureStatements,
-  );
+  const countTableNullValues = useQueryStore((state) => state.countTableNullValues);
+  const executeStructureStatements = useQueryStore((state) => state.executeStructureStatements);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [schema, setSchema] = useState<ERDiagramSchema | null>(null);
-  const [customRelationships, setCustomRelationships] = useState<
-    ERRelationship[]
-  >([]);
+  const [customRelationships, setCustomRelationships] = useState<ERRelationship[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
@@ -270,33 +249,22 @@ export function ERDiagram({ connectionId, database }: Props) {
   const [showMinimap, setShowMinimap] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [isSidePanelCollapsed] = useState(false);
-  const [exportFormat, setExportFormat] = useState<"png" | "drawio" | null>(
-    null,
-  );
+  const [exportFormat, setExportFormat] = useState<"png" | "svg" | "drawio" | null>(null);
   const [tableFilter, setTableFilter] = useState("");
-  const [pendingRelationship, setPendingRelationship] =
-    useState<PendingRelationshipDraft | null>(null);
-  const [relationshipModalError, setRelationshipModalError] = useState<
-    string | null
-  >(null);
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<ERDContextMenuState | null>(
+  const [pendingRelationship, setPendingRelationship] = useState<PendingRelationshipDraft | null>(
     null,
   );
-  const [quickColumnEditor, setQuickColumnEditor] =
-    useState<QuickColumnEditorState | null>(null);
-  const [quickColumnEditorError, setQuickColumnEditorError] = useState<
-    string | null
-  >(null);
-  const [isApplyingQuickColumnEdit, setIsApplyingQuickColumnEdit] =
-    useState(false);
+  const [relationshipModalError, setRelationshipModalError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<ERDContextMenuState | null>(null);
+  const [quickColumnEditor, setQuickColumnEditor] = useState<QuickColumnEditorState | null>(null);
+  const [quickColumnEditorError, setQuickColumnEditorError] = useState<string | null>(null);
+  const [isApplyingQuickColumnEdit, setIsApplyingQuickColumnEdit] = useState(false);
   const [sidebarHost, setSidebarHost] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     const syncSidebarHost = () => {
-      setSidebarHost(
-        document.querySelector<HTMLElement>("[data-erd-sidebar-host]"),
-      );
+      setSidebarHost(document.querySelector<HTMLElement>("[data-erd-sidebar-host]"));
     };
 
     syncSidebarHost();
@@ -306,26 +274,17 @@ export function ERDiagram({ connectionId, database }: Props) {
   }, []);
 
   const nodeTypes = useMemo<NodeTypes>(() => ({ tableNode: TableNode }), []);
-  const edgeTypes = useMemo<EdgeTypes>(
-    () => ({ editableRelationEdge: EditableRelationEdge }),
-    [],
-  );
+  const edgeTypes = useMemo<EdgeTypes>(() => ({ editableRelationEdge: EditableRelationEdge }), []);
   const allRelationships = useMemo(
-    () =>
-      dedupeRelationships([
-        ...(schema?.relationships || []),
-        ...customRelationships,
-      ]),
+    () => dedupeRelationships([...(schema?.relationships || []), ...customRelationships]),
     [customRelationships, schema],
   );
   const activeConnection = useMemo(
     () => connections.find((item) => item.id === connectionId),
     [connectionId, connections],
   );
-  const activeDbType = (activeConnection?.db_type ||
-    "postgresql") as DatabaseType;
-  const activeDatabaseLabel =
-    database || schema?.tables[0]?.schema || "Current database";
+  const activeDbType = (activeConnection?.db_type || "postgresql") as DatabaseType;
+  const activeDatabaseLabel = database || schema?.tables[0]?.schema || "Current database";
 
   useEffect(() => {
     hasInitializedSelectionRef.current = false;
@@ -372,12 +331,8 @@ export function ERDiagram({ connectionId, database }: Props) {
           if (current.size === 0) return current;
 
           const availableNames = new Set(allTableNames);
-          const preservedNames = [...current].filter((tableName) =>
-            availableNames.has(tableName),
-          );
-          return preservedNames.length > 0
-            ? new Set(preservedNames)
-            : new Set(allTableNames);
+          const preservedNames = [...current].filter((tableName) => availableNames.has(tableName));
+          return preservedNames.length > 0 ? new Set(preservedNames) : new Set(allTableNames);
         });
       } catch (reason) {
         if (requestId !== loadRequestIdRef.current) return;
@@ -397,24 +352,15 @@ export function ERDiagram({ connectionId, database }: Props) {
 
   useEffect(() => {
     const handleSchemaInvalidation = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{ connectionId?: string; database?: string }>
-      ).detail;
+      const detail = (event as CustomEvent<{ connectionId?: string; database?: string }>).detail;
       if (detail?.connectionId !== connectionId) return;
       if (detail.database !== undefined && detail.database !== database) return;
       invalidateCachedERDiagramSchema(connectionId, database);
       void loadSchema();
     };
 
-    window.addEventListener(
-      "schema-cache-invalidated",
-      handleSchemaInvalidation,
-    );
-    return () =>
-      window.removeEventListener(
-        "schema-cache-invalidated",
-        handleSchemaInvalidation,
-      );
+    window.addEventListener("schema-cache-invalidated", handleSchemaInvalidation);
+    return () => window.removeEventListener("schema-cache-invalidated", handleSchemaInvalidation);
   }, [connectionId, database, loadSchema]);
 
   const handleTableExpandToggle = useCallback((tableName: string) => {
@@ -459,8 +405,7 @@ export function ERDiagram({ connectionId, database }: Props) {
   const openStructureEditor = useCallback(
     (
       tableName: string,
-      section:
-        "columns" | "indexes" | "foreign_keys" | "triggers" | "view_definition",
+      section: "columns" | "indexes" | "foreign_keys" | "triggers" | "view_definition",
       columnName?: string,
     ) => {
       const table = tableMap.get(tableName);
@@ -474,9 +419,7 @@ export function ERDiagram({ connectionId, database }: Props) {
         structureFocusColumn: columnName,
         structureFocusToken: focusToken,
       } as const;
-      const existingTab = useUIStore
-        .getState()
-        .tabs.find((tab) => tab.id === tabId);
+      const existingTab = useUIStore.getState().tabs.find((tab) => tab.id === tabId);
 
       if (existingTab) {
         updateTab(tabId, focusState);
@@ -537,23 +480,20 @@ export function ERDiagram({ connectionId, database }: Props) {
     setQuickColumnEditorError(null);
   }, [isApplyingQuickColumnEdit]);
 
-  const updateQuickColumnEditor = useCallback(
-    (updates: Partial<ColumnEditorState>) => {
-      setQuickColumnEditorError(null);
-      setQuickColumnEditor((current) =>
-        current
-          ? {
-              ...current,
-              editor: {
-                ...current.editor,
-                ...updates,
-              },
-            }
-          : current,
-      );
-    },
-    [],
-  );
+  const updateQuickColumnEditor = useCallback((updates: Partial<ColumnEditorState>) => {
+    setQuickColumnEditorError(null);
+    setQuickColumnEditor((current) =>
+      current
+        ? {
+            ...current,
+            editor: {
+              ...current.editor,
+              ...updates,
+            },
+          }
+        : current,
+    );
+  }, []);
 
   const quickColumnSqlPreview = useMemo(() => {
     if (!quickColumnEditor) {
@@ -608,9 +548,7 @@ export function ERDiagram({ connectionId, database }: Props) {
         );
 
         if (nullCount > 0) {
-          const defaultValue = getDefaultValueForType(
-            quickColumnEditor.editor.dataType,
-          );
+          const defaultValue = getDefaultValueForType(quickColumnEditor.editor.dataType);
           const confirmed = window.confirm(
             `Column "${quickColumnEditor.originalColumn.name}" has ${nullCount} NULL value(s).\n\n` +
               `To set NOT NULL, TableR can update them to ${defaultValue} first.\n\n` +
@@ -626,19 +564,13 @@ export function ERDiagram({ connectionId, database }: Props) {
             qualifiedTableName,
             database || undefined,
           );
-          const columnRef = quoteIdentifier(
-            activeDbType,
-            quickColumnEditor.originalColumn.name,
-          );
+          const columnRef = quoteIdentifier(activeDbType, quickColumnEditor.originalColumn.name);
           const fixSql = `UPDATE ${tableRef} SET ${columnRef} = ${defaultValue} WHERE ${columnRef} IS NULL`;
           await executeStructureStatements(connectionId, [fixSql]);
         }
       }
 
-      await executeStructureStatements(
-        connectionId,
-        quickColumnSqlPreview.statements,
-      );
+      await executeStructureStatements(connectionId, quickColumnSqlPreview.statements);
       invalidateCachedERDiagramSchema(connectionId, database);
       await loadSchema({ force: true });
       window.dispatchEvent(
@@ -718,9 +650,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
     setEdges((existing) => {
       existing.forEach((edge) => {
-        const bendOffset = (
-          edge.data as { bendOffset?: DiagramPoint } | undefined
-        )?.bendOffset;
+        const bendOffset = (edge.data as { bendOffset?: DiagramPoint } | undefined)?.bendOffset;
         if (bendOffset) {
           rememberedEdgeBendsRef.current.set(edge.id, { ...bendOffset });
         }
@@ -753,9 +683,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
   useEffect(() => {
     edges.forEach((edge) => {
-      const bendOffset = (
-        edge.data as { bendOffset?: DiagramPoint } | undefined
-      )?.bendOffset;
+      const bendOffset = (edge.data as { bendOffset?: DiagramPoint } | undefined)?.bendOffset;
       if (bendOffset) {
         rememberedEdgeBendsRef.current.set(edge.id, { ...bendOffset });
       }
@@ -766,12 +694,8 @@ export function ERDiagram({ connectionId, database }: Props) {
     (connection: Connection) => {
       if (!schema || !connection.source || !connection.target) return;
 
-      const sourceTable = schema.tables.find(
-        (table) => table.name === connection.source,
-      );
-      const targetTable = schema.tables.find(
-        (table) => table.name === connection.target,
-      );
+      const sourceTable = schema.tables.find((table) => table.name === connection.source);
+      const targetTable = schema.tables.find((table) => table.name === connection.target);
       if (!sourceTable || !targetTable) return;
 
       const defaults = getPreferredRelationshipDraft(sourceTable, targetTable);
@@ -793,14 +717,10 @@ export function ERDiagram({ connectionId, database }: Props) {
   }, []);
 
   const sourceTableForDraft = pendingRelationship
-    ? schema?.tables.find(
-        (table) => table.name === pendingRelationship.sourceTable,
-      ) || null
+    ? schema?.tables.find((table) => table.name === pendingRelationship.sourceTable) || null
     : null;
   const targetTableForDraft = pendingRelationship
-    ? schema?.tables.find(
-        (table) => table.name === pendingRelationship.targetTable,
-      ) || null
+    ? schema?.tables.find((table) => table.name === pendingRelationship.targetTable) || null
     : null;
   const sourceColumnOptions = useMemo(
     () => sourceTableForDraft?.columns.map(getColumnSelectOption) || [],
@@ -811,10 +731,8 @@ export function ERDiagram({ connectionId, database }: Props) {
     [targetTableForDraft],
   );
   const pendingRelationshipNotation = useMemo(() => {
-    if (!pendingRelationship || !sourceTableForDraft || !targetTableForDraft)
-      return null;
-    if (!pendingRelationship.sourceColumn || !pendingRelationship.targetColumn)
-      return null;
+    if (!pendingRelationship || !sourceTableForDraft || !targetTableForDraft) return null;
+    if (!pendingRelationship.sourceColumn || !pendingRelationship.targetColumn) return null;
 
     return inferERRelationshipNotation(
       sourceTableForDraft,
@@ -855,28 +773,17 @@ export function ERDiagram({ connectionId, database }: Props) {
     );
 
     if (alreadyExists) {
-      setRelationshipModalError(
-        "This relationship already exists in the diagram.",
-      );
+      setRelationshipModalError("This relationship already exists in the diagram.");
       return;
     }
 
-    const nextRelationships = dedupeRelationships([
-      ...customRelationships,
-      relationship,
-    ]);
+    const nextRelationships = dedupeRelationships([...customRelationships, relationship]);
     setCustomRelationships(nextRelationships);
     persistCustomRelationships(connectionId, database, nextRelationships);
     rememberedEdgeBendsRef.current.set(relationship.id, { x: 0, y: 0 });
     setPendingRelationship(null);
     setRelationshipModalError(null);
-  }, [
-    allRelationships,
-    connectionId,
-    customRelationships,
-    database,
-    pendingRelationship,
-  ]);
+  }, [allRelationships, connectionId, customRelationships, database, pendingRelationship]);
 
   const openRelationshipConfirmation = useCallback(() => {
     if (!canAdvanceRelationshipDraft || !pendingRelationship) {
@@ -885,9 +792,7 @@ export function ERDiagram({ connectionId, database }: Props) {
     }
 
     setRelationshipModalError(null);
-    setPendingRelationship((current) =>
-      current ? { ...current, step: "confirm" } : current,
-    );
+    setPendingRelationship((current) => (current ? { ...current, step: "confirm" } : current));
   }, [canAdvanceRelationshipDraft, pendingRelationship]);
 
   const handleTableToggle = (tableName: string) => {
@@ -947,17 +852,9 @@ export function ERDiagram({ connectionId, database }: Props) {
       ),
     );
     setEdges((existing) =>
-      buildEdges(
-        schema.tables,
-        allRelationships,
-        selectedTables,
-        existing,
-        new Map(),
-      ),
+      buildEdges(schema.tables, allRelationships, selectedTables, existing, new Map()),
     );
-    fitDiagram(
-      selectedTables.size > DIAGRAM_RECOMMENDED_TABLE_COUNT ? 0.62 : 0.92,
-    );
+    fitDiagram(selectedTables.size > DIAGRAM_RECOMMENDED_TABLE_COUNT ? 0.62 : 0.92);
   }, [
     allRelationships,
     expandedTables,
@@ -985,7 +882,7 @@ export function ERDiagram({ connectionId, database }: Props) {
         throw new Error("Could not prepare the ER diagram export image.");
       }
 
-      const fileName = `${sanitizeFileName(activeDatabaseLabel || "er-diagram") || "er-diagram"}.png`;
+      const fileName = buildERDiagramExportFileName(activeDatabaseLabel, "png");
       const blob = await new Promise<Blob | null>((resolve) => {
         canvas.toBlob((value) => resolve(value), "image/png");
       });
@@ -1008,9 +905,45 @@ export function ERDiagram({ connectionId, database }: Props) {
       }
     } catch (reason) {
       setExportError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not export the ER diagram PNG.",
+        reason instanceof Error ? reason.message : "Could not export the ER diagram PNG.",
+      );
+    } finally {
+      setExportFormat(null);
+    }
+  }, [activeDatabaseLabel, edges, nodes]);
+
+  const handleExportSVG = useCallback(async () => {
+    if (nodes.length === 0) {
+      setExportError("Select at least one table before exporting the diagram.");
+      return;
+    }
+
+    try {
+      setExportFormat("svg");
+      setExportError(null);
+
+      const svg = buildERDiagramSvg(nodes, edges);
+      if (!svg) {
+        throw new Error("Could not prepare the ER diagram export image.");
+      }
+
+      const fileName = buildERDiagramExportFileName(activeDatabaseLabel, "svg");
+      const blob = new Blob([svg], {
+        type: "image/svg+xml;charset=utf-8",
+      });
+      const objectUrl = URL.createObjectURL(blob);
+      const downloadLink = document.createElement("a");
+
+      downloadLink.download = fileName;
+      downloadLink.href = objectUrl;
+      downloadLink.style.display = "none";
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (reason) {
+      setExportError(
+        reason instanceof Error ? reason.message : "Could not export the ER diagram SVG.",
       );
     } finally {
       setExportFormat(null);
@@ -1033,7 +966,7 @@ export function ERDiagram({ connectionId, database }: Props) {
       }
 
       const xml = buildDrawioDiagramXml(snapshot);
-      const fileName = `${sanitizeFileName(activeDatabaseLabel || "er-diagram") || "er-diagram"}.drawio`;
+      const fileName = buildERDiagramExportFileName(activeDatabaseLabel, "drawio");
       const blob = new Blob([xml], {
         type: "application/vnd.jgraph.mxfile+xml;charset=utf-8",
       });
@@ -1049,9 +982,7 @@ export function ERDiagram({ connectionId, database }: Props) {
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } catch (reason) {
       setExportError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not export the ER diagram draw.io file.",
+        reason instanceof Error ? reason.message : "Could not export the ER diagram draw.io file.",
       );
     } finally {
       setExportFormat(null);
@@ -1059,11 +990,7 @@ export function ERDiagram({ connectionId, database }: Props) {
   }, [activeDatabaseLabel, edges, nodes]);
 
   const handleOpenRelationshipSql = useCallback(() => {
-    const sql = buildERDiagramSqlExport(
-      activeDbType,
-      allRelationships,
-      database,
-    );
+    const sql = buildERDiagramSqlExport(activeDbType, allRelationships, database);
     const tabId = `query-${crypto.randomUUID()}`;
     addTab({
       id: tabId,
@@ -1074,28 +1001,15 @@ export function ERDiagram({ connectionId, database }: Props) {
       content: sql,
     });
     setActiveTab(tabId);
-  }, [
-    activeDbType,
-    addTab,
-    allRelationships,
-    connectionId,
-    database,
-    setActiveTab,
-  ]);
+  }, [activeDbType, addTab, allRelationships, connectionId, database, setActiveTab]);
 
   const buildSelectionQuery = useCallback(
     (tableName: string, columnName?: string) => {
       const table = tableMap.get(tableName);
       if (!table) return null;
 
-      const qualifiedTable = qualifyTableName(
-        activeDbType,
-        getQualifiedTableName(table),
-        database,
-      );
-      const selectedColumns = columnName
-        ? quoteIdentifier(activeDbType, columnName)
-        : "*";
+      const qualifiedTable = qualifyTableName(activeDbType, getQualifiedTableName(table), database);
+      const selectedColumns = columnName ? quoteIdentifier(activeDbType, columnName) : "*";
       return `SELECT ${selectedColumns}\nFROM ${qualifiedTable}\nLIMIT 100;`;
     },
     [activeDbType, database, tableMap],
@@ -1124,14 +1038,7 @@ export function ERDiagram({ connectionId, database }: Props) {
       });
       setActiveTab(tabId);
     },
-    [
-      activeDbType,
-      addTab,
-      buildSelectionQuery,
-      connectionId,
-      database,
-      setActiveTab,
-    ],
+    [activeDbType, addTab, buildSelectionQuery, connectionId, database, setActiveTab],
   );
 
   const attachSelectionToAI = useCallback(
@@ -1139,9 +1046,7 @@ export function ERDiagram({ connectionId, database }: Props) {
       const query = buildSelectionQuery(tableName, columnName);
       if (!query) return;
 
-      const selectionLabel = columnName
-        ? `${tableName}.${columnName}`
-        : tableName;
+      const selectionLabel = columnName ? `${tableName}.${columnName}` : tableName;
       window.dispatchEvent(
         new CustomEvent("open-ai-slide-panel", {
           detail: {
@@ -1174,11 +1079,7 @@ export function ERDiagram({ connectionId, database }: Props) {
         {
           key: "edit-column",
           label: `Edit column ${contextMenu.columnName}`,
-          action: () =>
-            openQuickColumnEditor(
-              contextMenu.tableName,
-              contextMenu.columnName || "",
-            ),
+          action: () => openQuickColumnEditor(contextMenu.tableName, contextMenu.columnName || ""),
         },
         {
           key: "edit-columns",
@@ -1193,8 +1094,7 @@ export function ERDiagram({ connectionId, database }: Props) {
         {
           key: "edit-foreign-keys",
           label: "Edit foreign keys",
-          action: () =>
-            openStructureEditor(contextMenu.tableName, "foreign_keys"),
+          action: () => openStructureEditor(contextMenu.tableName, "foreign_keys"),
         },
         { key: "divider-open", divider: true },
         {
@@ -1205,24 +1105,17 @@ export function ERDiagram({ connectionId, database }: Props) {
         {
           key: "seed-query",
           label: "Open SELECT query",
-          action: () =>
-            openSelectionQuery(contextMenu.tableName, contextMenu.columnName),
+          action: () => openSelectionQuery(contextMenu.tableName, contextMenu.columnName),
         },
         {
           key: "seed-explain",
           label: "Open explain plan",
-          action: () =>
-            openSelectionQuery(
-              contextMenu.tableName,
-              contextMenu.columnName,
-              true,
-            ),
+          action: () => openSelectionQuery(contextMenu.tableName, contextMenu.columnName, true),
         },
         {
           key: "ask-ai",
           label: "Ask AI about selection",
-          action: () =>
-            attachSelectionToAI(contextMenu.tableName, contextMenu.columnName),
+          action: () => attachSelectionToAI(contextMenu.tableName, contextMenu.columnName),
         },
       ];
     }
@@ -1241,8 +1134,7 @@ export function ERDiagram({ connectionId, database }: Props) {
       {
         key: "edit-foreign-keys",
         label: "Edit foreign keys",
-        action: () =>
-          openStructureEditor(contextMenu.tableName, "foreign_keys"),
+        action: () => openStructureEditor(contextMenu.tableName, "foreign_keys"),
       },
       {
         key: "inspect-triggers",
@@ -1263,8 +1155,7 @@ export function ERDiagram({ connectionId, database }: Props) {
       {
         key: "seed-explain",
         label: "Open explain plan",
-        action: () =>
-          openSelectionQuery(contextMenu.tableName, undefined, true),
+        action: () => openSelectionQuery(contextMenu.tableName, undefined, true),
       },
       {
         key: "ask-ai",
@@ -1299,17 +1190,12 @@ export function ERDiagram({ connectionId, database }: Props) {
     const keyword = tableFilter.trim().toLowerCase();
     if (!keyword) return schema.tables;
 
-    return schema.tables.filter((table) =>
-      table.name.toLowerCase().includes(keyword),
-    );
+    return schema.tables.filter((table) => table.name.toLowerCase().includes(keyword));
   }, [schema, tableFilter]);
 
   const tableColorMap = useMemo(() => {
     return new Map(
-      (schema?.tables || []).map((table, index) => [
-        table.name,
-        getTableColor(index),
-      ]),
+      (schema?.tables || []).map((table, index) => [table.name, getTableColor(index)]),
     );
   }, [schema]);
 
@@ -1318,8 +1204,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
     return allRelationships.filter(
       (relationship) =>
-        selectedTables.has(relationship.fromTable) &&
-        selectedTables.has(relationship.toTable),
+        selectedTables.has(relationship.fromTable) && selectedTables.has(relationship.toTable),
     ).length;
   }, [allRelationships, schema, selectedTables]);
   const bannerError = error || exportError;
@@ -1340,9 +1225,7 @@ export function ERDiagram({ connectionId, database }: Props) {
         <div className="erd-toolbar-stats" aria-label="Diagram summary">
           <span className="erd-toolbar-stat">
             <Database className="erd-toolbar-icon" />
-            {schema
-              ? `${selectedTables.size} of ${schema.tables.length}`
-              : "Loading"}
+            {schema ? `${selectedTables.size} of ${schema.tables.length}` : "Loading"}
           </span>
           <span className="erd-toolbar-stat">
             <GitBranch className="erd-toolbar-icon" />
@@ -1352,11 +1235,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
         <div className="erd-toolbar-spacer" />
 
-        <div
-          className="erd-toolbar-group"
-          role="group"
-          aria-label="Diagram layout"
-        >
+        <div className="erd-toolbar-group" role="group" aria-label="Diagram layout">
           <button
             type="button"
             onClick={() => {
@@ -1368,9 +1247,7 @@ export function ERDiagram({ connectionId, database }: Props) {
             title={loading ? "Refreshing schema" : "Refresh schema"}
             aria-label={loading ? "Refreshing schema" : "Refresh schema"}
           >
-            <RefreshCw
-              className={`erd-toolbar-icon ${loading ? "is-spinning" : ""}`}
-            />
+            <RefreshCw className={`erd-toolbar-icon ${loading ? "is-spinning" : ""}`} />
           </button>
 
           <button
@@ -1398,11 +1275,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
         <div className="erd-toolbar-divider" />
 
-        <div
-          className="erd-toolbar-group"
-          role="group"
-          aria-label="Diagram view"
-        >
+        <div className="erd-toolbar-group" role="group" aria-label="Diagram view">
           <button
             type="button"
             onClick={() => setShowMinimap((value) => !value)}
@@ -1419,9 +1292,7 @@ export function ERDiagram({ connectionId, database }: Props) {
             onClick={() => setShowControls((value) => !value)}
             className={`erd-toolbar-button is-icon-only ${showControls ? "is-active" : ""}`}
             title={showControls ? "Hide zoom controls" : "Show zoom controls"}
-            aria-label={
-              showControls ? "Hide zoom controls" : "Show zoom controls"
-            }
+            aria-label={showControls ? "Hide zoom controls" : "Show zoom controls"}
             aria-pressed={showControls}
           >
             <SlidersHorizontal className="erd-toolbar-icon" />
@@ -1430,11 +1301,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
         <div className="erd-toolbar-divider" />
 
-        <div
-          className="erd-toolbar-group"
-          role="group"
-          aria-label="Export diagram"
-        >
+        <div className="erd-toolbar-group" role="group" aria-label="Export diagram">
           <button
             type="button"
             onClick={handleExportPNG}
@@ -1447,15 +1314,22 @@ export function ERDiagram({ connectionId, database }: Props) {
 
           <button
             type="button"
+            onClick={handleExportSVG}
+            disabled={exportFormat !== null || nodes.length === 0}
+            className="erd-toolbar-button"
+            title="Export diagram as SVG"
+          >
+            <FileImage className="erd-toolbar-icon" />
+            {exportFormat === "svg" ? "Exporting" : "SVG"}
+          </button>
+
+          <button
+            type="button"
             onClick={handleExportDrawio}
             disabled={exportFormat !== null || nodes.length === 0}
             className="erd-toolbar-button is-icon-only"
-            title={
-              exportFormat === "drawio" ? "Exporting Draw.io" : "Export Draw.io"
-            }
-            aria-label={
-              exportFormat === "drawio" ? "Exporting Draw.io" : "Export Draw.io"
-            }
+            title={exportFormat === "drawio" ? "Exporting Draw.io" : "Export Draw.io"}
+            aria-label={exportFormat === "drawio" ? "Exporting Draw.io" : "Export Draw.io"}
           >
             <FileText className="erd-toolbar-icon" />
           </button>
@@ -1479,10 +1353,7 @@ export function ERDiagram({ connectionId, database }: Props) {
           <RefreshCw className="erd-loading-icon" />
           <div className="erd-loading-copy">
             <strong>Loading diagram data</strong>
-            <span>
-              Reading tables, columns, and relationships from the current
-              database.
-            </span>
+            <span>Reading tables, columns, and relationships from the current database.</span>
           </div>
         </div>
       )}
@@ -1536,9 +1407,7 @@ export function ERDiagram({ connectionId, database }: Props) {
               {showMinimap && (
                 <MiniMap
                   className="erd-minimap"
-                  nodeColor={(node) =>
-                    (node.data as { color?: string }).color || "#84a3cd"
-                  }
+                  nodeColor={(node) => (node.data as { color?: string }).color || "#84a3cd"}
                   maskColor="rgba(248, 250, 252, 0.74)"
                   pannable
                   zoomable
@@ -1565,10 +1434,7 @@ export function ERDiagram({ connectionId, database }: Props) {
               <div className="erd-canvas-empty">
                 <Database className="erd-canvas-empty-icon" />
                 <strong>No tables on the canvas</strong>
-                <span>
-                  Select tables from the browser or restore the recommended
-                  overview.
-                </span>
+                <span>Select tables from the browser or restore the recommended overview.</span>
                 <button
                   type="button"
                   className="erd-canvas-empty-action"
@@ -1607,16 +1473,11 @@ export function ERDiagram({ connectionId, database }: Props) {
 
       {pendingRelationship && sourceTableForDraft && targetTableForDraft && (
         <div className="erd-modal-backdrop" onClick={closeRelationshipModal}>
-          <div
-            className="erd-modal-shell"
-            onClick={(event) => event.stopPropagation()}
-          >
+          <div className="erd-modal-shell" onClick={(event) => event.stopPropagation()}>
             <div className="erd-modal-header">
               <div className="erd-modal-header-copy">
                 <span className="erd-modal-kicker">
-                  {pendingRelationship.step === "select"
-                    ? "Step 1 of 2"
-                    : "Step 2 of 2"}
+                  {pendingRelationship.step === "select" ? "Step 1 of 2" : "Step 2 of 2"}
                 </span>
                 <strong className="erd-modal-title">
                   {pendingRelationship.step === "select"
@@ -1625,11 +1486,7 @@ export function ERDiagram({ connectionId, database }: Props) {
                 </strong>
               </div>
 
-              <button
-                type="button"
-                className="erd-modal-close"
-                onClick={closeRelationshipModal}
-              >
+              <button type="button" className="erd-modal-close" onClick={closeRelationshipModal}>
                 <X className="erd-modal-close-icon" />
               </button>
             </div>
@@ -1637,13 +1494,9 @@ export function ERDiagram({ connectionId, database }: Props) {
             {pendingRelationship.step === "select" ? (
               <div className="erd-modal-body">
                 <div className="erd-modal-summary">
-                  <span className="erd-modal-chip">
-                    {sourceTableForDraft.name}
-                  </span>
+                  <span className="erd-modal-chip">{sourceTableForDraft.name}</span>
                   <Link2 className="erd-modal-link-icon" />
-                  <span className="erd-modal-chip">
-                    {targetTableForDraft.name}
-                  </span>
+                  <span className="erd-modal-chip">{targetTableForDraft.name}</span>
                 </div>
 
                 <div className="erd-modal-grid">
@@ -1656,9 +1509,7 @@ export function ERDiagram({ connectionId, database }: Props) {
                       onChange={(value) => {
                         setRelationshipModalError(null);
                         setPendingRelationship((current) =>
-                          current
-                            ? { ...current, sourceColumn: value }
-                            : current,
+                          current ? { ...current, sourceColumn: value } : current,
                         );
                       }}
                     />
@@ -1673,9 +1524,7 @@ export function ERDiagram({ connectionId, database }: Props) {
                       onChange={(value) => {
                         setRelationshipModalError(null);
                         setPendingRelationship((current) =>
-                          current
-                            ? { ...current, targetColumn: value }
-                            : current,
+                          current ? { ...current, targetColumn: value } : current,
                         );
                       }}
                     />
@@ -1689,17 +1538,11 @@ export function ERDiagram({ connectionId, database }: Props) {
                 </p>
 
                 {relationshipModalError && (
-                  <div className="erd-modal-error">
-                    {relationshipModalError}
-                  </div>
+                  <div className="erd-modal-error">{relationshipModalError}</div>
                 )}
 
                 <div className="erd-modal-actions">
-                  <button
-                    type="button"
-                    className="erd-modal-btn"
-                    onClick={closeRelationshipModal}
-                  >
+                  <button type="button" className="erd-modal-btn" onClick={closeRelationshipModal}>
                     Cancel
                   </button>
                   <button
@@ -1716,16 +1559,14 @@ export function ERDiagram({ connectionId, database }: Props) {
                 <div className="erd-modal-confirm-card">
                   <span className="erd-modal-confirm-label">Source</span>
                   <strong className="erd-modal-confirm-value">
-                    {pendingRelationship.sourceTable}.
-                    {pendingRelationship.sourceColumn}
+                    {pendingRelationship.sourceTable}.{pendingRelationship.sourceColumn}
                   </strong>
                 </div>
 
                 <div className="erd-modal-confirm-card">
                   <span className="erd-modal-confirm-label">Target</span>
                   <strong className="erd-modal-confirm-value">
-                    {pendingRelationship.targetTable}.
-                    {pendingRelationship.targetColumn}
+                    {pendingRelationship.targetTable}.{pendingRelationship.targetColumn}
                   </strong>
                 </div>
 
@@ -1736,9 +1577,7 @@ export function ERDiagram({ connectionId, database }: Props) {
                 </p>
 
                 {relationshipModalError && (
-                  <div className="erd-modal-error">
-                    {relationshipModalError}
-                  </div>
+                  <div className="erd-modal-error">{relationshipModalError}</div>
                 )}
 
                 <div className="erd-modal-actions">
@@ -1753,11 +1592,7 @@ export function ERDiagram({ connectionId, database }: Props) {
                   >
                     Back
                   </button>
-                  <button
-                    type="button"
-                    className="erd-modal-btn"
-                    onClick={closeRelationshipModal}
-                  >
+                  <button type="button" className="erd-modal-btn" onClick={closeRelationshipModal}>
                     Cancel
                   </button>
                   <button

@@ -37,8 +37,7 @@ export const KO_PANEL_COPY: AIPanelCopy = {
       "<workspace>/rules의 Markdown 규칙과 내장 팩이 에이전트가 실행하는 모든 문을 검사합니다.",
     close: "닫기",
     newRule: "새 규칙",
-    noWorkspaceTitle:
-      "먼저 이 워크스페이스에 폴더를 연결하세요 — 워크스페이스 규칙은 <폴더>/rules에 저장됩니다.",
+    globalRules: "전역 규칙",
     refresh: "목록 새로고침",
     loading: "불러오는 중…",
     empty: "활성화된 규칙이 없습니다.",

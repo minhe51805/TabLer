@@ -4,11 +4,11 @@ import { persist } from "zustand/middleware";
 /** Default date formats per database engine */
 export const DEFAULT_DATE_FORMATS: Record<string, string> = {
   postgresql: "yyyy-MM-dd",
-  mysql:      "%Y-%m-%d",
-  sqlite:     "YYYY-MM-DD",
-  mssql:      "yyyy-MM-dd",
+  mysql: "%Y-%m-%d",
+  sqlite: "YYYY-MM-DD",
+  mssql: "yyyy-MM-dd",
   clickhouse: "yyyy-MM-dd",
-  default:    "yyyy-MM-dd",
+  default: "yyyy-MM-dd",
 };
 
 export type DateFormatConfig = {
@@ -32,8 +32,8 @@ function loadConfig(): DateFormatConfig {
     if (stored) {
       return { ...DEFAULT_CONFIG, ...JSON.parse(stored) };
     }
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[DateFormat] Failed to load config:", error);
   }
   return DEFAULT_CONFIG;
 }
@@ -41,8 +41,8 @@ function loadConfig(): DateFormatConfig {
 function saveConfig(config: DateFormatConfig) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[DateFormat] Failed to persist config:", error);
   }
 }
 
@@ -67,26 +67,26 @@ interface DateFormatState {
 /** Format token documentation */
 export const FORMAT_TOKENS = [
   { token: "yyyy", description: "Full year (4 digits)", example: "2026" },
-  { token: "yy",   description: "Short year (2 digits)",   example: "26" },
-  { token: "MM",   description: "Month (2 digits)",        example: "04" },
-  { token: "MMM",  description: "Month abbreviation",    example: "Apr" },
-  { token: "MMMM", description: "Full month name",         example: "April" },
-  { token: "dd",   description: "Day (2 digits)",         example: "05" },
-  { token: "d",    description: "Day (1-2 digits)",       example: "5" },
-  { token: "HH",   description: "Hours 24h (2 digits)",  example: "14" },
-  { token: "hh",   description: "Hours 12h (2 digits)",   example: "02" },
-  { token: "mm",   description: "Minutes",               example: "30" },
-  { token: "ss",   description: "Seconds",               example: "45" },
-  { token: "SSS",  description: "Milliseconds",           example: "123" },
-  { token: "a",    description: "AM/PM marker",           example: "PM" },
-  { token: "Z",    description: "Timezone offset",         example: "+07:00" },
+  { token: "yy", description: "Short year (2 digits)", example: "26" },
+  { token: "MM", description: "Month (2 digits)", example: "04" },
+  { token: "MMM", description: "Month abbreviation", example: "Apr" },
+  { token: "MMMM", description: "Full month name", example: "April" },
+  { token: "dd", description: "Day (2 digits)", example: "05" },
+  { token: "d", description: "Day (1-2 digits)", example: "5" },
+  { token: "HH", description: "Hours 24h (2 digits)", example: "14" },
+  { token: "hh", description: "Hours 12h (2 digits)", example: "02" },
+  { token: "mm", description: "Minutes", example: "30" },
+  { token: "ss", description: "Seconds", example: "45" },
+  { token: "SSS", description: "Milliseconds", example: "123" },
+  { token: "a", description: "AM/PM marker", example: "PM" },
+  { token: "Z", description: "Timezone offset", example: "+07:00" },
   // MySQL format tokens (may coexist)
-  { token: "%Y",   description: "MySQL year (4 digits)", example: "2026" },
-  { token: "%m",   description: "MySQL month (2 digits)", example: "04" },
-  { token: "%d",   description: "MySQL day (2 digits)",   example: "05" },
-  { token: "%H",   description: "MySQL hour (24h)",       example: "14" },
-  { token: "%i",   description: "MySQL minutes",          example: "30" },
-  { token: "%s",   description: "MySQL seconds",           example: "45" },
+  { token: "%Y", description: "MySQL year (4 digits)", example: "2026" },
+  { token: "%m", description: "MySQL month (2 digits)", example: "04" },
+  { token: "%d", description: "MySQL day (2 digits)", example: "05" },
+  { token: "%H", description: "MySQL hour (24h)", example: "14" },
+  { token: "%i", description: "MySQL minutes", example: "30" },
+  { token: "%s", description: "MySQL seconds", example: "45" },
 ] as const;
 
 /** Format a JavaScript Date using a custom format string */
@@ -139,7 +139,7 @@ export function parseDate(value: string): Date | null {
       Number(m[3]),
       Number(m[4] ?? 0),
       Number(m[5] ?? 0),
-      Number(m[6] ?? 0)
+      Number(m[6] ?? 0),
     );
   }
   return null;
@@ -147,12 +147,32 @@ export function parseDate(value: string): Date | null {
 
 /** Format token arrays */
 const LONG_MONTH_NAMES = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December"
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 const SHORT_MONTH_NAMES = [
-  "Jan","Feb","Mar","Apr","May","Jun",
-  "Jul","Aug","Sep","Oct","Nov","Dec"
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
 ];
 
 function pad(n: number): string {
@@ -256,6 +276,6 @@ export const useDateFormatStore = create<DateFormatState>()(
     {
       name: STORAGE_KEY,
       partialize: (state) => ({ config: state.config }),
-    }
-  )
+    },
+  ),
 );

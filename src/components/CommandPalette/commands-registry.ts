@@ -340,18 +340,8 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "query.duplicate-tab",
         () => {
-          const { activeTabId, tabs, addTab } = useUIStore.getState();
-          if (!activeTabId) return;
-          const src = tabs.find((t) => t.id === activeTabId);
-          if (!src) return;
-          addTab({
-            id: `query-${crypto.randomUUID()}`,
-            type: src.type,
-            title: `${src.title} (Copy)`,
-            connectionId: src.connectionId,
-            database: src.database,
-            content: src.content,
-          });
+          const { activeTabId, duplicateTab } = useUIStore.getState();
+          if (activeTabId) duplicateTab(activeTabId);
         },
         ctx,
       ),

@@ -37,8 +37,7 @@ export const EN_PANEL_COPY: AIPanelCopy = {
       "Markdown rules in <workspace>/rules and the built-in pack vet every statement the agent runs.",
     close: "Close",
     newRule: "New rule",
-    noWorkspaceTitle:
-      "Link a folder to this workspace first — workspace rules live in <folder>/rules.",
+    globalRules: "Global rules",
     refresh: "Reload the list",
     loading: "Loading…",
     empty: "No rules armed.",

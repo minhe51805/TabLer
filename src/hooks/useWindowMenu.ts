@@ -15,6 +15,12 @@ import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../uti
 import type { WindowMenuSectionKey, WindowMenuItem } from "../types/app-types";
 import { useConnectionCapabilities } from "./useConnectionCapabilities";
 import { isCapabilitySupported } from "../types";
+import { getWindowMenuCopy } from "./window-menu-copy";
+import { openExternalUrl } from "../utils/tauri-utils";
+
+/** GitHub targets for the Help menu's outbound links. */
+const ISSUES_NEW_URL = "https://github.com/minhe51805/TabLer/issues/new";
+const DISCUSSIONS_URL = "https://github.com/minhe51805/TabLer/discussions";
 
 // ─── Action interface ─────────────────────────────────────────────────────────
 
@@ -530,6 +536,20 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
               closeMenu();
             },
           },
+          {
+            label: getWindowMenuCopy(language).reportIssue,
+            action: () => {
+              void openExternalUrl(ISSUES_NEW_URL);
+              closeMenu();
+            },
+          },
+          {
+            label: getWindowMenuCopy(language).sendFeedback,
+            action: () => {
+              void openExternalUrl(DISCUSSIONS_URL);
+              closeMenu();
+            },
+          },
         ],
       },
     ],
@@ -545,6 +565,7 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
       themeMenuOptions,
       activeTheme.id,
       languagePreference,
+      language,
       activeTabType,
       actions,
       closeMenu,

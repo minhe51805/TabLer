@@ -238,6 +238,31 @@ export function AppWorkspacePanel({
   const isMetricsPanelActive = !isERDiagramWorkspace && leftPanel === "metrics";
   const isERDiagramPanelActive = activeTab?.type === "er-diagram";
 
+  // Split view: the right pane exists while at least one tab is assigned to
+  // it. Each pane resolves its own content tab — the primary pane also hosts
+  // chrome-less workspaces (metrics board, ER diagram) via the global active
+  // tab, matching the pre-split behavior.
+  const primaryActiveTabId = useUIStore((state) => state.primaryActiveTabId);
+  const secondaryActiveTabId = useUIStore((state) => state.secondaryActiveTabId);
+  const tabPane = (tab: Tab | undefined) => tab?.pane ?? "primary";
+  const primaryStripTabs = tabs.filter(
+    (tab) => tab.type !== "metrics" && tabPane(tab) === "primary",
+  );
+  const secondaryStripTabs = tabs.filter(
+    (tab) => tab.type !== "metrics" && tabPane(tab) === "secondary",
+  );
+  const isSplit = secondaryStripTabs.length > 0;
+  const primaryPaneTab = isWorkspaceOverview
+    ? null
+    : ((activeTab && tabPane(activeTab) === "primary" ? activeTab : null) ??
+      primaryStripTabs.find((tab) => tab.id === primaryActiveTabId) ??
+      primaryStripTabs[primaryStripTabs.length - 1] ??
+      null);
+  const secondaryPaneTab =
+    secondaryStripTabs.find((tab) => tab.id === secondaryActiveTabId) ??
+    secondaryStripTabs[secondaryStripTabs.length - 1] ??
+    null;
+
   const [loadingTimeoutExceeded, setLoadingTimeoutExceeded] = useState(false);
   // A failed saved-connection attempt is surfaced in-place on the SAME
   // connecting screen (message + Try Again + Go to Launcher) rather than
@@ -1162,31 +1187,69 @@ export function AppWorkspacePanel({
             </div>
           )}
 
-          <TabBar
-            queryChrome={activeQueryChrome}
-            onRunActiveQuery={onRunActiveQuery}
-            onCancelActiveQuery={() => void cancelQuery()}
-            onClearVisibleTabs={onClearVisibleTabs}
-          />
+          <div className={`workspace-panes${isSplit ? " is-split" : ""}`}>
+            <div className="workspace-pane">
+              <TabBar
+                pane="primary"
+                queryChrome={activeQueryChrome}
+                onRunActiveQuery={onRunActiveQuery}
+                onCancelActiveQuery={() => void cancelQuery()}
+                onClearVisibleTabs={onClearVisibleTabs}
+              />
 
-          <div className={`tab-content ${isWorkspaceOverview ? "is-workspace-overview" : ""}`}>
-            {isWorkspaceOverview ? (
-              renderTabContent()
-            ) : (
               <div
-                key={activeTab.id}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  height: "100%",
-                  width: "100%",
-                }}
+                className={`tab-content ${
+                  isWorkspaceOverview || !primaryPaneTab ? "is-workspace-overview" : ""
+                }`}
               >
-                {renderSingleTab(activeTab, true)}
+                {isWorkspaceOverview || !primaryPaneTab ? (
+                  renderTabContent()
+                ) : (
+                  <div
+                    key={primaryPaneTab.id}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      height: "100%",
+                      width: "100%",
+                    }}
+                  >
+                    {renderSingleTab(primaryPaneTab, true)}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {isSplit && (
+              <div className="workspace-pane workspace-pane--secondary">
+                <TabBar
+                  pane="secondary"
+                  queryChrome={activeQueryChrome}
+                  onRunActiveQuery={onRunActiveQuery}
+                  onCancelActiveQuery={() => void cancelQuery()}
+                  onClearVisibleTabs={() => useUIStore.getState().removeTabsForPane("secondary")}
+                />
+
+                <div className={`tab-content ${!secondaryPaneTab ? "is-workspace-overview" : ""}`}>
+                  {secondaryPaneTab ? (
+                    <div
+                      key={secondaryPaneTab.id}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        height: "100%",
+                        width: "100%",
+                      }}
+                    >
+                      {renderSingleTab(secondaryPaneTab, true)}
+                    </div>
+                  ) : (
+                    renderTabContent()
+                  )}
+                </div>
               </div>
             )}
           </div>
-
           {(showTerminalPanel || hasMountedTerminalDock) && (
             <ErrorBoundary>
               <Suspense fallback={showTerminalPanel ? <LazyTerminalFallback /> : null}>

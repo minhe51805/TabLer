@@ -57,6 +57,7 @@ fn base_config(db_type: DatabaseType) -> ConnectionConfig {
         additional_fields: Default::default(),
         pre_connect_script: None,
         startup_commands: None,
+        query_timeout_seconds: None,
         ssh_config: None,
     }
 }

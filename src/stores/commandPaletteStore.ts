@@ -44,8 +44,8 @@ function loadRecentCommandIds(): string[] {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return parsed.slice(0, MAX_RECENT);
     }
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[CommandPalette] Failed to load recent commands:", error);
   }
   return [];
 }
@@ -53,8 +53,8 @@ function loadRecentCommandIds(): string[] {
 function saveRecentCommandIds(ids: string[]) {
   try {
     window.localStorage.setItem(RECENT_COMMANDS_KEY, JSON.stringify(ids.slice(0, MAX_RECENT)));
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[CommandPalette] Failed to persist recent commands:", error);
   }
 }
 

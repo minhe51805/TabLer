@@ -80,3 +80,32 @@ describe("TabBar (Phase 3C follow-up #2 — per-tab re-render)", () => {
     expect(after[2].className).toContain("active");
   });
 });
+
+describe("TabBar split panes", () => {
+  it("each pane renders only its own tabs and reflects cross-pane moves", () => {
+    useUIStore.setState({
+      tabs: [makeQueryTab("a"), makeQueryTab("b"), { ...makeQueryTab("c"), pane: "secondary" }],
+      activeTabId: "a",
+      primaryActiveTabId: "a",
+      secondaryActiveTabId: "c",
+    });
+
+    const primary = render(<TabBar pane="primary" />);
+    const secondary = render(<TabBar pane="secondary" />);
+
+    const titles = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll<HTMLElement>(".tabbar-tab-title")).map(
+        (el) => el.textContent,
+      );
+    expect(titles(primary.container)).toEqual(["Query a", "Query b"]);
+    expect(titles(secondary.container)).toEqual(["Query c"]);
+
+    // Dragging a tab onto the other pane's strip moves it there.
+    act(() => {
+      useUIStore.getState().moveTab("b", "c");
+    });
+
+    expect(titles(primary.container)).toEqual(["Query a"]);
+    expect(titles(secondary.container)).toEqual(["Query b", "Query c"]);
+  });
+});

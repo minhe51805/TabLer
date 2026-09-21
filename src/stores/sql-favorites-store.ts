@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invokeMutation } from "../utils/tauri-utils";
 import type { SqlFavorite } from "../types/query-history";
+import { removeFavoriteAssignment } from "./favorite-folder-store";
 
 interface SqlFavoritesState {
   favorites: SqlFavorite[];
@@ -72,6 +73,9 @@ export const useSqlFavoritesStore = create<SqlFavoritesState>((set) => ({
   deleteFavorite: async (id) => {
     try {
       await invokeMutation<void>("delete_sql_favorite", { id });
+      // Folder assignments are frontend-only (localStorage); drop the stale
+      // mapping so a recreated id can't inherit an old folder.
+      removeFavoriteAssignment(id);
       set((state) => ({
         favorites: state.favorites.filter((f) => f.id !== id),
       }));

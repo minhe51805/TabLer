@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronRight, LoaderCircle, Pencil, Trash2 } from "lucide-react";
 import type { ConnectionPingResult, ConnectionRowProps } from "./types";
 
@@ -14,6 +14,10 @@ interface Props extends ConnectionRowProps {
   deleteLabel: string;
   onRename: (name: string) => void;
   renameLabel: string;
+  /** Right-click on the card opens the launcher context menu. */
+  onContextMenu?: (event: React.MouseEvent<HTMLDivElement>) => void;
+  /** Bumping this nonce puts the card into rename mode (context-menu Rename). */
+  renameNonce?: number;
 }
 
 export function ConnectionRow({
@@ -25,6 +29,8 @@ export function ConnectionRow({
   renameLabel,
   onMouseEnter,
   onMouseLeave,
+  onContextMenu,
+  renameNonce,
   tagName,
   tagColor,
   envBadge,
@@ -49,6 +55,15 @@ export function ConnectionRow({
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(connection.name);
 
+  // Context-menu "Rename" bumps renameNonce; enter rename mode on change.
+  useEffect(() => {
+    if (renameNonce) {
+      setRenameValue(connection.name);
+      setIsRenaming(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- nonce is the trigger
+  }, [renameNonce]);
+
   const commitRename = () => {
     const next = renameValue.trim();
     setIsRenaming(false);
@@ -57,25 +72,36 @@ export function ConnectionRow({
 
   return (
     <div
-      role="button"
-      tabIndex={isBusy ? -1 : 0}
-      aria-disabled={Boolean(isBusy)}
       className={`startup-connection-row ${isSelected ? "active" : ""}`}
       data-conn-id={connection.id}
       data-testid={`connection-${connection.id}`}
-      onClick={() => {
-        if (isBusy) return;
-        onClick();
-      }}
-      onKeyDown={(event) => {
-        if (isBusy) return;
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        onClick();
-      }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onContextMenu={onContextMenu}
     >
+      {/* Stretched real button: covers the card so the whole row opens the
+          connection and keyboard users get a genuine focusable control.
+          Rename/delete sit above it via z-index. A plain role=button div
+          would nest interactive descendants and fail axe. */}
+      <button
+        type="button"
+        className="startup-connection-open"
+        aria-label={connection.name || "Untitled"}
+        disabled={isBusy}
+        onClick={() => {
+          if (isBusy) return;
+          onClick();
+        }}
+      />
+
+      {connection.color ? (
+        <span
+          className="startup-connection-accent"
+          style={{ backgroundColor: connection.color }}
+          aria-hidden="true"
+        />
+      ) : null}
+
       <div className="startup-connection-side">
         <div
           className="startup-connection-avatar"

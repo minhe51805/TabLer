@@ -20,7 +20,8 @@ function readInitialPreferences(): EditorPreferencesSnapshot {
     if (!raw) return {};
     const parsed = JSON.parse(raw) as EditorPreferencesSnapshot;
     return typeof parsed === "object" && parsed ? parsed : {};
-  } catch {
+  } catch (error) {
+    console.warn("[EditorPrefs] Failed to load preferences:", error);
     return {};
   }
 }

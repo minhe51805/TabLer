@@ -37,8 +37,7 @@ export const VI_PANEL_COPY: AIPanelCopy = {
       "Các rule Markdown trong <workspace>/rules và gói built-in duyệt mọi câu lệnh agent chạy.",
     close: "Đóng",
     newRule: "Rule mới",
-    noWorkspaceTitle:
-      "Hãy liên kết một thư mục với workspace trước — rule của workspace nằm trong <thư-mục>/rules.",
+    globalRules: "Rule toàn cục",
     refresh: "Tải lại danh sách",
     loading: "Đang tải…",
     empty: "Chưa có rule nào đang bật.",

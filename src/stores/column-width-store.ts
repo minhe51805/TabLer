@@ -13,8 +13,8 @@ function loadWidths(): ColumnWidths {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) return JSON.parse(stored) as ColumnWidths;
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[ColumnWidths] Failed to load persisted widths:", error);
   }
   return {};
 }
@@ -22,8 +22,8 @@ function loadWidths(): ColumnWidths {
 function saveWidths(widths: ColumnWidths) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(widths));
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("[ColumnWidths] Failed to persist widths:", error);
   }
 }
 

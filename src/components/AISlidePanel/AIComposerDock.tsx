@@ -20,7 +20,16 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { Fragment, useEffect, useRef, useState, type DragEvent, type KeyboardEventHandler, type ClipboardEvent, type RefObject } from "react";
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEventHandler,
+  type ClipboardEvent,
+  type RefObject,
+} from "react";
 import { formatTokensCompact } from "../../utils/ai-context-compact";
 import type { AIProviderConfig } from "../../types";
 import { formatAIProviderTypeLabel } from "../../utils/ai-provider-registry";
@@ -30,10 +39,7 @@ import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import { AISlashCommandMenu } from "./AISlashCommandMenu";
 import { ConfirmDialog } from "../ConfirmDialog";
 import type { AISlashCommand } from "./ai-slash-commands";
-import type {
-  AIWorkspaceAgentAutonomy,
-  AIWorkspaceInteractionMode,
-} from "./ai-workspace-types";
+import type { AIWorkspaceAgentAutonomy, AIWorkspaceInteractionMode } from "./ai-workspace-types";
 import { describeSandboxPolicy, type SandboxPolicy } from "./ai-execution-policy";
 
 interface AIComposerDockProps {
@@ -77,8 +83,6 @@ interface AIComposerDockProps {
   contextUsage?: { used: number; limit: number };
   /** Draft attachments waiting to be sent with the next message. */
   attachments?: AIAttachmentDraft[];
-  /** Whether the active model advertises image input (`input_types`). */
-  canAttachImages?: boolean;
   onAddAttachmentFiles?: (files: File[]) => void;
   onRemoveAttachment?: (id: string) => void;
   onOpenAttachmentManager?: () => void;
@@ -181,17 +185,14 @@ export function AIComposerDock({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const commandBarRef = useRef<HTMLDivElement>(null);
   const effectiveContextUsage = contextUsage ?? { used: 0, limit: 24_000 };
-  const usagePercent = effectiveContextUsage.limit > 0
-    ? Math.min(100, Math.round((effectiveContextUsage.used / effectiveContextUsage.limit) * 100))
-    : 0;
-  const contextMeterState = usagePercent >= 90
-    ? "is-critical"
-    : usagePercent >= 70
-      ? "is-warn"
-      : "";
-  const activeProviderValue = activeProvider?.model?.trim()
-    || activeProvider?.name?.trim()
-    || copy.composer.noProvider;
+  const usagePercent =
+    effectiveContextUsage.limit > 0
+      ? Math.min(100, Math.round((effectiveContextUsage.used / effectiveContextUsage.limit) * 100))
+      : 0;
+  const contextMeterState =
+    usagePercent >= 90 ? "is-critical" : usagePercent >= 70 ? "is-warn" : "";
+  const activeProviderValue =
+    activeProvider?.model?.trim() || activeProvider?.name?.trim() || copy.composer.noProvider;
   const activeProviderCaption = activeProvider
     ? activeProvider.name?.trim() && activeProvider.name.trim() !== activeProviderValue
       ? `${activeProvider.name.trim()} / ${formatAIProviderTypeLabel(activeProvider.provider_type)}`
@@ -221,7 +222,7 @@ export function AIComposerDock({
 
   const toggleMenu = (menu: ComposerMenu) => {
     onCloseHistory();
-    setOpenMenu((current) => current === menu ? null : menu);
+    setOpenMenu((current) => (current === menu ? null : menu));
   };
 
   // The model submenu defaults to the active provider and collapses with the menu.
@@ -234,12 +235,12 @@ export function AIComposerDock({
     setExpandedProviderId((current) => current ?? activeProvider?.id ?? null);
   }, [openMenu, activeProvider?.id]);
 
-  const hiddenModelEntries = providers.flatMap((config) => (
+  const hiddenModelEntries = providers.flatMap((config) =>
     (config.disabled_models ?? [])
       .map((entry) => entry.trim())
       .filter(Boolean)
-      .map((model) => ({ config, model }))
-  ));
+      .map((model) => ({ config, model })),
+  );
 
   // Mirrors the failover consent (localStorage) and stays in sync when the
   // agent-side consent dialog records a decision.
@@ -255,9 +256,10 @@ export function AIComposerDock({
   // Guard the utility toggles (Data read, auto provider switch, Thinking)
   // behind a confirmation dialog so an accidental tap never silently flips
   // them. The pending change is applied only after the user confirms.
-  const [pendingToggle, setPendingToggle] = useState<
-    { kind: "data" | "autoSwitch" | "thinking"; next: boolean } | null
-  >(null);
+  const [pendingToggle, setPendingToggle] = useState<{
+    kind: "data" | "autoSwitch" | "thinking";
+    next: boolean;
+  } | null>(null);
 
   const requestToggle = (kind: "data" | "autoSwitch" | "thinking", next: boolean) => {
     setPendingToggle({ kind, next });
@@ -315,9 +317,16 @@ export function AIComposerDock({
       {attachments.length > 0 && (
         <div className="ai-workspace-attachment-row">
           {attachments.map((attachment) => (
-            <div key={attachment.id} className={`ai-workspace-attachment-chip ${attachment.kind === "image" ? "is-image" : "is-file"}`}>
+            <div
+              key={attachment.id}
+              className={`ai-workspace-attachment-chip ${attachment.kind === "image" ? "is-image" : "is-file"}`}
+            >
               {attachment.kind === "image" && attachment.dataUrl ? (
-                <img className="ai-workspace-attachment-thumb" src={attachment.dataUrl} alt={attachment.name} />
+                <img
+                  className="ai-workspace-attachment-thumb"
+                  src={attachment.dataUrl}
+                  alt={attachment.name}
+                />
               ) : (
                 <FileText className="w-3.5 h-3.5 ai-workspace-attachment-kind-icon" />
               )}
@@ -340,10 +349,16 @@ export function AIComposerDock({
       {attachedSelectionSource && (
         <div className="ai-workspace-selection-chip">
           <div className="ai-workspace-selection-chip-copy">
-            <span className="ai-workspace-selection-chip-kicker">{copy.composer.selectionReady}</span>
+            <span className="ai-workspace-selection-chip-kicker">
+              {copy.composer.selectionReady}
+            </span>
             <strong className="ai-workspace-selection-chip-title">{attachedSelectionSource}</strong>
           </div>
-          <button type="button" className="ai-workspace-selection-chip-dismiss" onClick={onDismissSelection}>
+          <button
+            type="button"
+            className="ai-workspace-selection-chip-dismiss"
+            onClick={onDismissSelection}
+          >
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -386,12 +401,22 @@ export function AIComposerDock({
           >
             <Paperclip className="w-3.5 h-3.5" />
           </button>
-          <div className={`ai-workspace-context-meter ${contextMeterState}`} title={`${copy.workspace.contextBadge} · ${usagePercent}% — estimated tokens (~4 chars/token) · each request sends digest + last messages only`}>
-            <span className="ai-workspace-context-meter-value">{formatTokensCompact(effectiveContextUsage.used)}</span>
+          <div
+            className={`ai-workspace-context-meter ${contextMeterState}`}
+            title={`${copy.workspace.contextBadge} · ${usagePercent}% — estimated tokens (~4 chars/token) · each request sends digest + last messages only`}
+          >
+            <span className="ai-workspace-context-meter-value">
+              {formatTokensCompact(effectiveContextUsage.used)}
+            </span>
             <div className="ai-workspace-context-meter-track">
-              <div className="ai-workspace-context-meter-fill" style={{ width: `${Math.max(2, usagePercent)}%` }} />
+              <div
+                className="ai-workspace-context-meter-fill"
+                style={{ width: `${Math.max(2, usagePercent)}%` }}
+              />
             </div>
-            <span className="ai-workspace-context-meter-limit">{formatTokensCompact(effectiveContextUsage.limit)}</span>
+            <span className="ai-workspace-context-meter-limit">
+              {formatTokensCompact(effectiveContextUsage.limit)}
+            </span>
           </div>
         </div>
 
@@ -407,7 +432,9 @@ export function AIComposerDock({
               ref={commandBarRef}
               className={`ai-workspace-commandbar ai-workspace-commandbar--dock ${interactionMode === "agent" ? "is-agent" : ""}`}
             >
-              <div className={`ai-workspace-command-dropdown ${openMenu === "mode" ? "is-open" : ""}`}>
+              <div
+                className={`ai-workspace-command-dropdown ${openMenu === "mode" ? "is-open" : ""}`}
+              >
                 <button
                   type="button"
                   className={`ai-workspace-command-trigger ${openMenu === "mode" ? "is-active" : ""}`}
@@ -416,15 +443,23 @@ export function AIComposerDock({
                   onClick={() => toggleMenu("mode")}
                   title={getInteractionModeLabel(interactionMode, copy)}
                 >
-                  <span className="ai-workspace-command-trigger-icon">{renderInteractionModeIcon(interactionMode)}</span>
+                  <span className="ai-workspace-command-trigger-icon">
+                    {renderInteractionModeIcon(interactionMode)}
+                  </span>
                   <span className="ai-workspace-command-trigger-copy">
                     <span className="ai-workspace-command-trigger-label">Mode</span>
-                    <strong className="ai-workspace-command-trigger-value">{getInteractionModeLabel(interactionMode, copy)}</strong>
+                    <strong className="ai-workspace-command-trigger-value">
+                      {getInteractionModeLabel(interactionMode, copy)}
+                    </strong>
                   </span>
                   <ChevronDown className="w-3.5 h-3.5 ai-workspace-command-trigger-caret" />
                 </button>
                 {openMenu === "mode" && (
-                  <div className="ai-workspace-command-popover" role="menu" aria-label="Choose chat mode">
+                  <div
+                    className="ai-workspace-command-popover"
+                    role="menu"
+                    aria-label="Choose chat mode"
+                  >
                     {INTERACTION_MODES.map((mode) => {
                       return (
                         <button
@@ -438,12 +473,18 @@ export function AIComposerDock({
                             onSelectInteractionMode(mode);
                           }}
                         >
-                          <span className="ai-workspace-command-item-icon">{renderInteractionModeIcon(mode)}</span>
+                          <span className="ai-workspace-command-item-icon">
+                            {renderInteractionModeIcon(mode)}
+                          </span>
                           <span className="ai-workspace-command-item-copy">
                             <strong>{getInteractionModeLabel(mode, copy)}</strong>
-                            <span className="ai-workspace-command-item-hint">{getInteractionModeHint(mode, copy)}</span>
+                            <span className="ai-workspace-command-item-hint">
+                              {getInteractionModeHint(mode, copy)}
+                            </span>
                           </span>
-                          {mode === interactionMode && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
+                          {mode === interactionMode && (
+                            <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />
+                          )}
                         </button>
                       );
                     })}
@@ -451,7 +492,9 @@ export function AIComposerDock({
                 )}
               </div>
 
-              <div className={`ai-workspace-command-dropdown ai-workspace-command-dropdown--provider ${openMenu === "provider" ? "is-open" : ""}`}>
+              <div
+                className={`ai-workspace-command-dropdown ai-workspace-command-dropdown--provider ${openMenu === "provider" ? "is-open" : ""}`}
+              >
                 <button
                   type="button"
                   className={`ai-workspace-command-trigger ai-workspace-command-trigger--provider ${openMenu === "provider" ? "is-active" : ""}`}
@@ -461,99 +504,129 @@ export function AIComposerDock({
                   title={activeProviderValue}
                 >
                   <span className="ai-workspace-command-trigger-icon">
-                    {isSwitchingProvider
-                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      : <Sparkles className="w-3.5 h-3.5" />}
+                    {isSwitchingProvider ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3.5 h-3.5" />
+                    )}
                   </span>
                   <span className="ai-workspace-command-trigger-copy">
                     <span className="ai-workspace-command-trigger-label">Model</span>
-                    <strong className="ai-workspace-command-trigger-value">{activeProviderValue}</strong>
-                    <span className="ai-workspace-command-trigger-note">{activeProviderCaption}</span>
+                    <strong className="ai-workspace-command-trigger-value">
+                      {activeProviderValue}
+                    </strong>
+                    <span className="ai-workspace-command-trigger-note">
+                      {activeProviderCaption}
+                    </span>
                   </span>
                   <ChevronDown className="w-3.5 h-3.5 ai-workspace-command-trigger-caret" />
                 </button>
                 {openMenu === "provider" && (
-                  <div className="ai-workspace-command-popover ai-workspace-command-popover--provider" role="menu" aria-label="Choose AI model">
+                  <div
+                    className="ai-workspace-command-popover ai-workspace-command-popover--provider"
+                    role="menu"
+                    aria-label="Choose AI model"
+                  >
                     <div className="ai-workspace-command-popover-head">
                       <strong>Switch model</strong>
                     </div>
                     <div className="ai-workspace-command-provider-list">
-                      {providers.length > 0 ? providers.map((config) => {
-                        const disabledModels = new Set(config.disabled_models ?? []);
-                        const models = (config.models?.length
-                          ? config.models
-                          : (config.model?.trim() ? [config.model.trim()] : []))
-                          .map((entry) => entry.trim())
-                          .filter((entry) => Boolean(entry) && !disabledModels.has(entry));
-                        // A provider whose whole catalog is disabled stays out of
-                        // the switcher; re-enable it in settings.
-                        if (models.length === 0 && (config.models?.length ?? 0) > 0) return null;
-                        const typeLabel = formatAIProviderTypeLabel(config.provider_type);
-                        const providerLabel = config.name?.trim() || typeLabel;
-                        const isActiveProvider = config.id === activeProvider?.id;
-                        const isExpanded = expandedProviderId === config.id;
-                        const hasMultipleModels = models.length > 1;
-                        const activeModelCaption = models.length === 0
-                          ? typeLabel
-                          : models.length === 1
-                            ? models[0]
-                            : models.includes(config.model)
-                              ? config.model
-                              : `${models.length} models`;
-                        // Two-level menu: the provider row expands into its own
-                        // model list instead of dumping every model in one flat wall.
-                        return (
-                          <Fragment key={config.id}>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              aria-expanded={hasMultipleModels ? isExpanded : undefined}
-                              className={`ai-workspace-command-item ai-workspace-command-item--provider ${isActiveProvider ? "is-active" : ""}`}
-                              onClick={() => {
-                                if (hasMultipleModels) {
-                                  setExpandedProviderId(isExpanded ? null : config.id);
-                                  return;
-                                }
-                                setOpenMenu(null);
-                                onActivateProvider(config.id, models[0] || undefined);
-                              }}
-                            >
-                              <span className="ai-workspace-command-item-copy">
-                                <strong>{providerLabel}</strong>
-                                <span>{activeModelCaption}</span>
-                              </span>
-                              <span className="ai-workspace-command-provider-meta">
-                                {hasMultipleModels && (
-                                  <ChevronDown className={`w-3.5 h-3.5 ai-workspace-command-model-chevron ${isExpanded ? "is-open" : ""}`} />
-                                )}
-                                {isActiveProvider && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
-                              </span>
-                            </button>
-                            {hasMultipleModels && isExpanded ? models.map((model) => {
-                              const isActiveModel = isActiveProvider && config.model === model;
-                              return (
-                                <button
-                                  key={`${config.id}:${model}`}
-                                  type="button"
-                                  role="menuitemradio"
-                                  aria-checked={isActiveModel}
-                                  className={`ai-workspace-command-item ai-workspace-command-model-item ${isActiveModel ? "is-active" : ""}`}
-                                  onClick={() => {
-                                    setOpenMenu(null);
-                                    onActivateProvider(config.id, model);
-                                  }}
-                                >
-                                  <span className="ai-workspace-command-item-copy">
-                                    <strong>{model}</strong>
-                                  </span>
-                                  {isActiveModel && <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />}
-                                </button>
-                              );
-                            }) : null}
-                          </Fragment>
-                        );
-                      }) : (
-                        <button type="button" className="ai-workspace-command-empty" onClick={onOpenSettings}>
+                      {providers.length > 0 ? (
+                        providers.map((config) => {
+                          const disabledModels = new Set(config.disabled_models ?? []);
+                          const models = (
+                            config.models?.length
+                              ? config.models
+                              : config.model?.trim()
+                                ? [config.model.trim()]
+                                : []
+                          )
+                            .map((entry) => entry.trim())
+                            .filter((entry) => Boolean(entry) && !disabledModels.has(entry));
+                          // A provider whose whole catalog is disabled stays out of
+                          // the switcher; re-enable it in settings.
+                          if (models.length === 0 && (config.models?.length ?? 0) > 0) return null;
+                          const typeLabel = formatAIProviderTypeLabel(config.provider_type);
+                          const providerLabel = config.name?.trim() || typeLabel;
+                          const isActiveProvider = config.id === activeProvider?.id;
+                          const isExpanded = expandedProviderId === config.id;
+                          const hasMultipleModels = models.length > 1;
+                          const activeModelCaption =
+                            models.length === 0
+                              ? typeLabel
+                              : models.length === 1
+                                ? models[0]
+                                : models.includes(config.model)
+                                  ? config.model
+                                  : `${models.length} models`;
+                          // Two-level menu: the provider row expands into its own
+                          // model list instead of dumping every model in one flat wall.
+                          return (
+                            <Fragment key={config.id}>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                aria-expanded={hasMultipleModels ? isExpanded : undefined}
+                                className={`ai-workspace-command-item ai-workspace-command-item--provider ${isActiveProvider ? "is-active" : ""}`}
+                                onClick={() => {
+                                  if (hasMultipleModels) {
+                                    setExpandedProviderId(isExpanded ? null : config.id);
+                                    return;
+                                  }
+                                  setOpenMenu(null);
+                                  onActivateProvider(config.id, models[0] || undefined);
+                                }}
+                              >
+                                <span className="ai-workspace-command-item-copy">
+                                  <strong>{providerLabel}</strong>
+                                  <span>{activeModelCaption}</span>
+                                </span>
+                                <span className="ai-workspace-command-provider-meta">
+                                  {hasMultipleModels && (
+                                    <ChevronDown
+                                      className={`w-3.5 h-3.5 ai-workspace-command-model-chevron ${isExpanded ? "is-open" : ""}`}
+                                    />
+                                  )}
+                                  {isActiveProvider && (
+                                    <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />
+                                  )}
+                                </span>
+                              </button>
+                              {hasMultipleModels && isExpanded
+                                ? models.map((model) => {
+                                    const isActiveModel =
+                                      isActiveProvider && config.model === model;
+                                    return (
+                                      <button
+                                        key={`${config.id}:${model}`}
+                                        type="button"
+                                        role="menuitemradio"
+                                        aria-checked={isActiveModel}
+                                        className={`ai-workspace-command-item ai-workspace-command-model-item ${isActiveModel ? "is-active" : ""}`}
+                                        onClick={() => {
+                                          setOpenMenu(null);
+                                          onActivateProvider(config.id, model);
+                                        }}
+                                      >
+                                        <span className="ai-workspace-command-item-copy">
+                                          <strong>{model}</strong>
+                                        </span>
+                                        {isActiveModel && (
+                                          <Check className="w-3.5 h-3.5 ai-workspace-command-item-check" />
+                                        )}
+                                      </button>
+                                    );
+                                  })
+                                : null}
+                            </Fragment>
+                          );
+                        })
+                      ) : (
+                        <button
+                          type="button"
+                          className="ai-workspace-command-empty"
+                          onClick={onOpenSettings}
+                        >
                           No provider configured yet. Open settings
                         </button>
                       )}
@@ -570,7 +643,9 @@ export function AIComposerDock({
                           <span className="ai-workspace-command-item-copy">
                             <strong>{copy.composer.hiddenModelsToggle}</strong>
                           </span>
-                          <ChevronDown className={`w-3.5 h-3.5 ai-workspace-command-model-chevron ${showHiddenModels ? "is-open" : ""}`} />
+                          <ChevronDown
+                            className={`w-3.5 h-3.5 ai-workspace-command-model-chevron ${showHiddenModels ? "is-open" : ""}`}
+                          />
                         </button>
                         {showHiddenModels ? (
                           <div className="ai-workspace-command-hidden-list">
@@ -584,7 +659,10 @@ export function AIComposerDock({
                               >
                                 <span className="ai-workspace-command-item-copy">
                                   <strong>{model}</strong>
-                                  <span>{config.name?.trim() || formatAIProviderTypeLabel(config.provider_type)}</span>
+                                  <span>
+                                    {config.name?.trim() ||
+                                      formatAIProviderTypeLabel(config.provider_type)}
+                                  </span>
                                 </span>
                                 <Eye className="w-3.5 h-3.5" />
                               </button>
@@ -593,11 +671,19 @@ export function AIComposerDock({
                         ) : null}
                       </>
                     ) : null}
-                    <button type="button" className="ai-workspace-command-settings-link" onClick={onOpenSettings}>
+                    <button
+                      type="button"
+                      className="ai-workspace-command-settings-link"
+                      onClick={onOpenSettings}
+                    >
                       {copy.composer.openSettings}
                     </button>
                     {onToggleSafeMode && (
-                      <div className="ai-workspace-command-safemode" role="group" aria-label={copy.composer.safeModeToggle}>
+                      <div
+                        className="ai-workspace-command-safemode"
+                        role="group"
+                        aria-label={copy.composer.safeModeToggle}
+                      >
                         <ShieldCheck className="w-3.5 h-3.5" />
                         <span>{copy.composer.safeModeToggle}</span>
                         <button
@@ -628,7 +714,9 @@ export function AIComposerDock({
                 )}
               </div>
 
-              <div className={`ai-workspace-command-dropdown ai-workspace-command-dropdown--utility ${openMenu === "utility" ? "is-open" : ""}`}>
+              <div
+                className={`ai-workspace-command-dropdown ai-workspace-command-dropdown--utility ${openMenu === "utility" ? "is-open" : ""}`}
+              >
                 <button
                   type="button"
                   className={`ai-workspace-command-settings-btn ${openMenu === "utility" ? "is-active" : ""}`}
@@ -641,7 +729,11 @@ export function AIComposerDock({
                   <SlidersHorizontal className="w-3.5 h-3.5" />
                 </button>
                 {openMenu === "utility" && (
-                  <div className="ai-workspace-command-popover ai-workspace-command-popover--utility" role="menu" aria-label="Chat tools">
+                  <div
+                    className="ai-workspace-command-popover ai-workspace-command-popover--utility"
+                    role="menu"
+                    aria-label="Chat tools"
+                  >
                     <button
                       type="button"
                       role="menuitemcheckbox"
@@ -650,7 +742,9 @@ export function AIComposerDock({
                       onClick={() => requestToggle("data", !isSessionDataReadEnabled)}
                       disabled={!isConnectionAvailable}
                     >
-                      <span className="ai-workspace-command-utility-icon"><Database className="w-3.5 h-3.5" /></span>
+                      <span className="ai-workspace-command-utility-icon">
+                        <Database className="w-3.5 h-3.5" />
+                      </span>
                       <span className="ai-workspace-command-utility-copy">
                         <strong>{sessionDataReadLabel}</strong>
                         <span>{sessionDataReadTitle}</span>
@@ -664,10 +758,14 @@ export function AIComposerDock({
                       className={`ai-workspace-command-utility-item ${autoSwitchEnabled ? "is-active" : ""}`}
                       onClick={() => requestToggle("autoSwitch", !autoSwitchEnabled)}
                     >
-                      <span className="ai-workspace-command-utility-icon"><ArrowLeftRight className="w-3.5 h-3.5" /></span>
+                      <span className="ai-workspace-command-utility-icon">
+                        <ArrowLeftRight className="w-3.5 h-3.5" />
+                      </span>
                       <span className="ai-workspace-command-utility-copy">
                         <strong>{copy.composer.autoProviderSwitchLabel}</strong>
-                        <span>{autoSwitchEnabled ? copy.composer.thinkingOn : copy.composer.thinkingOff}</span>
+                        <span>
+                          {autoSwitchEnabled ? copy.composer.thinkingOn : copy.composer.thinkingOff}
+                        </span>
                       </span>
                       {autoSwitchEnabled && <Check className="w-3.5 h-3.5" />}
                     </button>
@@ -680,10 +778,14 @@ export function AIComposerDock({
                           className={`ai-workspace-command-utility-item ${showThinking ? "is-active" : ""}`}
                           onClick={() => requestToggle("thinking", !showThinking)}
                         >
-                          <span className="ai-workspace-command-utility-icon"><Brain className="w-3.5 h-3.5" /></span>
+                          <span className="ai-workspace-command-utility-icon">
+                            <Brain className="w-3.5 h-3.5" />
+                          </span>
                           <span className="ai-workspace-command-utility-copy">
                             <strong>{copy.composer.thinkingToggleLabel}</strong>
-                            <span>{showThinking ? copy.composer.thinkingOn : copy.composer.thinkingOff}</span>
+                            <span>
+                              {showThinking ? copy.composer.thinkingOn : copy.composer.thinkingOff}
+                            </span>
                           </span>
                           {showThinking && <Check className="w-3.5 h-3.5" />}
                         </button>
@@ -700,7 +802,9 @@ export function AIComposerDock({
                             className={`ai-workspace-command-utility-item ${autonomy === agentAutonomy ? "is-active" : ""}`}
                             onClick={() => onSelectAgentAutonomy(autonomy)}
                           >
-                            <span className="ai-workspace-command-utility-icon">{renderAgentAutonomyIcon(autonomy)}</span>
+                            <span className="ai-workspace-command-utility-icon">
+                              {renderAgentAutonomyIcon(autonomy)}
+                            </span>
                             <span className="ai-workspace-command-utility-copy">
                               <strong>{getAgentAutonomyLabel(autonomy, copy)}</strong>
                               <span>{getAgentAutonomyHint(autonomy, copy)}</span>
@@ -720,8 +824,12 @@ export function AIComposerDock({
                         onOpenAttachmentManager();
                       }}
                     >
-                      <span className="ai-workspace-command-utility-icon"><Paperclip className="w-3.5 h-3.5" /></span>
-                      <span className="ai-workspace-command-utility-copy"><strong>{copy.attachments.managerOpen}</strong></span>
+                      <span className="ai-workspace-command-utility-icon">
+                        <Paperclip className="w-3.5 h-3.5" />
+                      </span>
+                      <span className="ai-workspace-command-utility-copy">
+                        <strong>{copy.attachments.managerOpen}</strong>
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -732,8 +840,12 @@ export function AIComposerDock({
                         onOpenSettings();
                       }}
                     >
-                      <span className="ai-workspace-command-utility-icon"><Settings2 className="w-3.5 h-3.5" /></span>
-                      <span className="ai-workspace-command-utility-copy"><strong>{copy.composer.openSettings}</strong></span>
+                      <span className="ai-workspace-command-utility-icon">
+                        <Settings2 className="w-3.5 h-3.5" />
+                      </span>
+                      <span className="ai-workspace-command-utility-copy">
+                        <strong>{copy.composer.openSettings}</strong>
+                      </span>
                     </button>
                   </div>
                 )}
@@ -745,7 +857,13 @@ export function AIComposerDock({
             type="button"
             className={`ai-workspace-generate-btn ${isGenerating || isCancelling ? "is-cancel" : ""}`}
             onClick={isGenerating ? onCancelGeneration : onGenerate}
-            disabled={isCancelling || (!isGenerating && !prompt.trim() && !hasAttachedSelectionText && attachments.length === 0)}
+            disabled={
+              isCancelling ||
+              (!isGenerating &&
+                !prompt.trim() &&
+                !hasAttachedSelectionText &&
+                attachments.length === 0)
+            }
             aria-label={
               isCancelling
                 ? copy.composer.cancelling
@@ -761,11 +879,13 @@ export function AIComposerDock({
                   : copy.composer.generateBubble
             }
           >
-            {isCancelling
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : isGenerating
-                ? <Square className="w-3.5 h-3.5" />
-              : <ArrowUp className="w-3.5 h-3.5" />}
+            {isCancelling ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : isGenerating ? (
+              <Square className="w-3.5 h-3.5" />
+            ) : (
+              <ArrowUp className="w-3.5 h-3.5" />
+            )}
           </button>
         </div>
       </div>

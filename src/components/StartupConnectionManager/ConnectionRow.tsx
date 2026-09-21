@@ -72,26 +72,28 @@ export function ConnectionRow({
 
   return (
     <div
-      role="button"
-      tabIndex={isBusy ? -1 : 0}
-      aria-disabled={Boolean(isBusy)}
       className={`startup-connection-row ${isSelected ? "active" : ""}`}
       data-conn-id={connection.id}
       data-testid={`connection-${connection.id}`}
-      onClick={() => {
-        if (isBusy) return;
-        onClick();
-      }}
-      onKeyDown={(event) => {
-        if (isBusy) return;
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        onClick();
-      }}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onContextMenu={onContextMenu}
     >
+      {/* Stretched real button: covers the card so the whole row opens the
+          connection and keyboard users get a genuine focusable control.
+          Rename/delete sit above it via z-index. A plain role=button div
+          would nest interactive descendants and fail axe. */}
+      <button
+        type="button"
+        className="startup-connection-open"
+        aria-label={connection.name || "Untitled"}
+        disabled={isBusy}
+        onClick={() => {
+          if (isBusy) return;
+          onClick();
+        }}
+      />
+
       {connection.color ? (
         <span
           className="startup-connection-accent"

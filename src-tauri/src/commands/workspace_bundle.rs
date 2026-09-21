@@ -2,7 +2,10 @@
 //!
 //! A `.tabler-bundle` file is a single plain-JSON document bundling the
 //! shareable parts of a workspace: saved connections, SQL favorites, saved
-//! schedules, and AI provider preferences. Secrets never leave the machine —
+//! schedules, AI provider preferences, and UI preferences. UI prefs are the
+//! webview's `tabler.*` localStorage keys — the frontend snapshots them into
+//! the bundle on export and writes the missing ones back on import, since
+//! localStorage is unreachable from Rust. Secrets never leave the machine —
 //! connection passwords/SSH material stay in the OS keyring and AI API keys
 //! stay in theirs; the bundle only carries `hasPassword`/`hasApiKey` flags so
 //! the importer knows which credentials to re-enter.
@@ -20,7 +23,7 @@ use crate::storage::connection_storage::ConnectionStorage;
 use crate::storage::schedule_storage::{QuerySchedule, ScheduleStorage};
 use crate::storage::sql_favorites::{SqlFavorite, SqlFavoritesStorage};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tauri::State;
 
 const BUNDLE_FORMAT: &str = "tabler.workspace-bundle";
@@ -62,6 +65,10 @@ pub struct WorkspaceBundle {
     pub schedules: Vec<QuerySchedule>,
     #[serde(default)]
     pub ai_providers: Vec<BundleAiProvider>,
+    /// `tabler.*` localStorage snapshot supplied by the exporting frontend.
+    /// Absent in bundles written before this section existed.
+    #[serde(default)]
+    pub ui_prefs: BTreeMap<String, String>,
 }
 
 // ─── Preview / selection / result types ─────────────────────────────────────
@@ -91,6 +98,9 @@ pub struct WorkspaceBundlePreview {
     pub sql_favorites: Vec<BundleItemPreview>,
     pub schedules: Vec<BundleItemPreview>,
     pub ai_providers: Vec<BundleItemPreview>,
+    /// One row per bundled localStorage key; `exists` means the key is already
+    /// present locally (the importer passes its current key list).
+    pub ui_prefs: Vec<BundleItemPreview>,
 }
 
 /// Per-section selection for the import phase. `None` for a section means
@@ -107,6 +117,10 @@ pub struct WorkspaceBundleSelection {
     pub schedules: Option<Vec<usize>>,
     #[serde(default)]
     pub ai_providers: Option<Vec<usize>>,
+    /// Indices into `bundle.ui_prefs` (sorted by key). The frontend offers a
+    /// single "UI preferences" checkbox that selects every index.
+    #[serde(default)]
+    pub ui_prefs: Option<Vec<usize>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +130,8 @@ pub struct WorkspaceBundleCounts {
     pub sql_favorites: usize,
     pub schedules: usize,
     pub ai_providers: usize,
+    /// localStorage keys returned for the frontend to write (missing only).
+    pub ui_prefs: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,6 +141,10 @@ pub struct WorkspaceBundleImportResult {
     /// Present only when a `selection` was supplied (real import).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub counts: Option<WorkspaceBundleCounts>,
+    /// Selected UI-pref entries that are missing locally — the frontend writes
+    /// them to localStorage. Present only when `selection.ui_prefs` was set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_prefs: Option<BTreeMap<String, String>>,
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -177,6 +197,7 @@ fn build_preview(
     existing_favorites: &[SqlFavorite],
     existing_schedules: &[QuerySchedule],
     existing_provider_ids: &HashSet<String>,
+    existing_ui_pref_keys: &HashSet<String>,
 ) -> WorkspaceBundlePreview {
     let connections = bundle
         .connections
@@ -257,12 +278,29 @@ fn build_preview(
         })
         .collect();
 
+    // One row per bundled localStorage key, sorted by key (BTreeMap order) so
+    // selection indices are stable across preview and import calls.
+    let ui_prefs = bundle
+        .ui_prefs
+        .iter()
+        .enumerate()
+        .map(|(index, (key, value))| BundleItemPreview {
+            index,
+            id: key.clone(),
+            name: key.clone(),
+            detail: value.chars().take(60).collect(),
+            exists: existing_ui_pref_keys.contains(key),
+            needs_password: false,
+        })
+        .collect();
+
     WorkspaceBundlePreview {
         exported_at: bundle.exported_at.clone(),
         connections,
         sql_favorites,
         schedules,
         ai_providers,
+        ui_prefs,
     }
 }
 
@@ -277,6 +315,7 @@ pub fn export_workspace_bundle(
     path: String,
     conn_storage: State<'_, ConnectionStorage>,
     ai_storage: State<'_, AIStorage>,
+    ui_prefs: Option<BTreeMap<String, String>>,
 ) -> Result<String, String> {
     export_workspace_bundle_core(
         &path,
@@ -284,6 +323,7 @@ pub fn export_workspace_bundle(
         &SqlFavoritesStorage::new()?,
         &ScheduleStorage::new()?,
         &ai_storage,
+        ui_prefs.unwrap_or_default(),
     )
 }
 
@@ -293,6 +333,7 @@ fn export_workspace_bundle_core(
     favorites_storage: &SqlFavoritesStorage,
     schedule_storage: &ScheduleStorage,
     ai_storage: &AIStorage,
+    ui_prefs: BTreeMap<String, String>,
 ) -> Result<String, String> {
     let connections = conn_storage
         .load_connections()
@@ -344,6 +385,7 @@ fn export_workspace_bundle_core(
         sql_favorites,
         schedules,
         ai_providers,
+        ui_prefs,
     };
 
     let json = serde_json::to_string_pretty(&bundle)
@@ -362,12 +404,15 @@ fn export_workspace_bundle_core(
 /// is skipped because an equivalent one already exists under a different id,
 /// its id is remapped so dependent favorites/schedules point at the local row.
 /// Returns the preview plus per-section imported counts.
+/// `ui_pref_keys` carries the importer's current `tabler.*` localStorage keys —
+/// used to flag existing prefs in the preview and to return only missing entries.
 #[tauri::command]
 pub fn import_workspace_bundle(
     path: String,
     selection: Option<WorkspaceBundleSelection>,
     conn_storage: State<'_, ConnectionStorage>,
     ai_storage: State<'_, AIStorage>,
+    ui_pref_keys: Option<Vec<String>>,
 ) -> Result<WorkspaceBundleImportResult, String> {
     import_workspace_bundle_core(
         &path,
@@ -376,6 +421,7 @@ pub fn import_workspace_bundle(
         &mut SqlFavoritesStorage::new()?,
         &mut ScheduleStorage::new()?,
         &ai_storage,
+        ui_pref_keys.unwrap_or_default().into_iter().collect(),
     )
 }
 
@@ -386,6 +432,7 @@ fn import_workspace_bundle_core(
     favorites_storage: &mut SqlFavoritesStorage,
     schedule_storage: &mut ScheduleStorage,
     ai_storage: &AIStorage,
+    existing_ui_pref_keys: HashSet<String>,
 ) -> Result<WorkspaceBundleImportResult, String> {
     let bundle = load_bundle(path)?;
 
@@ -408,12 +455,14 @@ fn import_workspace_bundle_core(
         &existing_favorites,
         &existing_schedules,
         &existing_provider_ids,
+        &existing_ui_pref_keys,
     );
 
     let Some(selection) = selection else {
         return Ok(WorkspaceBundleImportResult {
             preview,
             counts: None,
+            ui_prefs: None,
         });
     };
 
@@ -422,6 +471,7 @@ fn import_workspace_bundle_core(
         sql_favorites: 0,
         schedules: 0,
         ai_providers: 0,
+        ui_prefs: 0,
     };
 
     // Connections first: they produce the id remap the other sections need.
@@ -526,9 +576,30 @@ fn import_workspace_bundle_core(
             .map_err(|error| format!("Failed to save imported AI providers: {error}"))?;
     }
 
+    // UI prefs: localStorage lives in the webview, so the backend only picks
+    // the selected entries that are missing locally and hands them back for
+    // the frontend to write.
+    let mut ui_prefs_to_apply: Option<BTreeMap<String, String>> = None;
+    if let Some(indices) = &selection.ui_prefs {
+        let entries: Vec<(&String, &String)> = bundle.ui_prefs.iter().collect();
+        let mut picked = BTreeMap::new();
+        for &index in indices {
+            let Some(&(key, value)) = entries.get(index) else {
+                continue;
+            };
+            if existing_ui_pref_keys.contains(key) {
+                continue;
+            }
+            picked.insert(key.clone(), value.clone());
+            counts.ui_prefs += 1;
+        }
+        ui_prefs_to_apply = Some(picked);
+    }
+
     Ok(WorkspaceBundleImportResult {
         preview,
         counts: Some(counts),
+        ui_prefs: ui_prefs_to_apply,
     })
 }
 
@@ -547,6 +618,7 @@ mod tests {
             sql_favorites: vec![],
             schedules: vec![],
             ai_providers: vec![],
+            ui_prefs: BTreeMap::new(),
         }
     }
 
@@ -604,6 +676,13 @@ mod tests {
             &favorites,
             &schedules,
             &ai_storage,
+            BTreeMap::from([
+                (
+                    "tabler.activeTheme".to_string(),
+                    "tabler.midnight".to_string(),
+                ),
+                ("tabler.connectionGroups".to_string(), "[]".to_string()),
+            ]),
         )
         .unwrap();
 
@@ -624,6 +703,8 @@ mod tests {
             &mut favorites,
             &mut schedules,
             &ai_storage,
+            // Simulate the importer already having one of the bundled keys.
+            HashSet::from(["tabler.activeTheme".to_string()]),
         )
         .unwrap();
         assert!(preview.counts.is_none());
@@ -633,6 +714,11 @@ mod tests {
         assert_eq!(preview.preview.sql_favorites.len(), 1);
         assert!(!preview.preview.sql_favorites[0].exists);
 
+        // UI prefs: the key the importer already has is flagged, the other is not.
+        assert_eq!(preview.preview.ui_prefs.len(), 2);
+        assert!(preview.preview.ui_prefs[0].exists);
+        assert!(!preview.preview.ui_prefs[1].exists);
+        assert!(preview.ui_prefs.is_none());
         // Selective import: everything.
         let result = import_workspace_bundle_core(
             bundle_path.to_str().unwrap(),
@@ -641,17 +727,27 @@ mod tests {
                 sql_favorites: Some(vec![0]),
                 schedules: Some(vec![]),
                 ai_providers: Some(vec![]),
+                ui_prefs: Some(vec![0, 1]),
             }),
             &conn_storage,
             &mut favorites,
             &mut schedules,
             &ai_storage,
+            HashSet::from(["tabler.activeTheme".to_string()]),
         )
         .unwrap();
         let counts = result.counts.unwrap();
         assert_eq!(counts.connections, 1);
         assert_eq!(counts.sql_favorites, 1);
 
+        // Only the missing key comes back for the frontend to write.
+        assert_eq!(counts.ui_prefs, 1);
+        let prefs = result.ui_prefs.unwrap();
+        assert_eq!(prefs.len(), 1);
+        assert_eq!(
+            prefs.get("tabler.connectionGroups").map(String::as_str),
+            Some("[]")
+        );
         let restored = conn_storage.load_connections().unwrap();
         assert_eq!(restored.len(), 1);
         assert_eq!(restored[0].id, "conn-1");
@@ -670,6 +766,7 @@ mod tests {
             &mut favorites,
             &mut schedules,
             &ai_storage,
+            HashSet::from(["tabler.activeTheme".to_string()]),
         )
         .unwrap();
         assert!(again.preview.connections[0].exists);

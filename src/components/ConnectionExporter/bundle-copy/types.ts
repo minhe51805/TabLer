@@ -14,6 +14,7 @@ export interface BundleCopy {
     favorites: string;
     schedules: string;
     aiProviders: string;
+    uiPrefs: string;
     button: string;
     working: string;
     done: string;
@@ -28,11 +29,18 @@ export interface BundleCopy {
       sqlFavorites: string;
       schedules: string;
       aiProviders: string;
+      uiPrefs: string;
     };
     /** Badge on items already present locally (import would be a no-op). */
     exists: string;
     /** Badge on items whose secret was stripped and must be re-entered. */
     needsPassword: string;
+    /** uiPrefs row meta; {total} and {existing} are replaced with counts. */
+    uiPrefsMeta: string;
+    /** Done-message label for written localStorage keys. */
+    uiPrefsWritten: string;
+    /** Note appended when prefs were written (stores hydrate on startup). */
+    uiPrefsRestart: string;
     button: string;
     working: string;
     done: string;

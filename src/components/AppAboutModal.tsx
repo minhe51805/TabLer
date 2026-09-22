@@ -4,6 +4,7 @@ import { useI18n } from "../i18n";
 import { UpdateButton } from "./UpdateButton";
 import { APP_VERSION } from "../constants/version";
 import { getUsageCounters, USAGE_FEATURES } from "../utils/usage-counter";
+import { useUpdaterStatus } from "../hooks/use-updater-status";
 import { getAboutModalCopy } from "./about-modal-copy";
 
 interface AppAboutModalProps {
@@ -18,6 +19,7 @@ export function AppAboutModal({ onClose, onOpenDiagnostics }: AppAboutModalProps
   // always the current count without needing a subscription.
   const [usageCounters] = useState(() => getUsageCounters());
   const [statsCopied, setStatsCopied] = useState(false);
+  const { availability, outcome, reportCheck } = useUpdaterStatus();
   const usageEntries = USAGE_FEATURES.filter((feature) => (usageCounters[feature] ?? 0) > 0);
 
   const copyUsageStats = () => {
@@ -133,8 +135,38 @@ export function AppAboutModal({ onClose, onOpenDiagnostics }: AppAboutModalProps
           )}
         </div>
 
+        <div className="app-help-modal-section compact">
+          <span className="app-help-modal-section-label">{copy.updates.title}</span>
+          <div className="app-help-modal-tags">
+            <span className="app-help-modal-tag">v{APP_VERSION}</span>
+            <span className="app-help-modal-tag">
+              {copy.updates.updater}:{" "}
+              {availability === "enabled"
+                ? copy.updates.enabled
+                : availability === "disabled"
+                  ? copy.updates.disabled
+                  : copy.updates.unknown}
+            </span>
+            <span className="app-help-modal-tag">
+              {copy.updates.lastCheck}:{" "}
+              {outcome.kind === "never"
+                ? copy.updates.never
+                : outcome.kind === "upToDate"
+                  ? copy.updates.upToDate
+                  : outcome.kind === "available"
+                    ? copy.updates.available.replace("{version}", outcome.version ?? "?")
+                    : copy.updates.failed}
+            </span>
+          </div>
+          <UpdateButton
+            variant="ghost"
+            size="md"
+            className="app-help-modal-update-btn"
+            onChecked={reportCheck}
+          />
+        </div>
+
         <div className="app-help-modal-actions">
-          <UpdateButton variant="ghost" size="md" className="app-help-modal-update-btn" />
           {onOpenDiagnostics && (
             <button type="button" className="btn btn-secondary" onClick={onOpenDiagnostics}>
               <FileWarning size={15} />

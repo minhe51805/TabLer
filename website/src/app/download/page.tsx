@@ -11,14 +11,12 @@ import { LanguageToggle } from "../LanguageToggle";
 
 export const metadata: Metadata = {
   title: "Download TableR",
-  description:
-    "Download current and previous TableR releases for Windows, macOS, and Linux.",
+  description: "Download current and previous TableR releases for Windows, macOS, and Linux.",
 };
 
 export const revalidate = 0;
 
-const macosQuarantineCommand =
-  "xattr -dr com.apple.quarantine /Applications/TableR.app";
+const macosQuarantineCommand = "xattr -dr com.apple.quarantine /Applications/TableR.app";
 
 export default async function DownloadPage() {
   const language = await getSiteLanguage();
@@ -27,17 +25,11 @@ export default async function DownloadPage() {
   const latestRelease = releases[0];
 
   return (
-    <main className="download-page" id="main">
+    <main className="neu download-page" id="main">
       <header className="site-header">
         <div className="shell header-inner">
           <Link className="brand" href="/" aria-label="TableR home">
-            <Image
-              src="/tabler-brand-mark.png"
-              width={36}
-              height={36}
-              alt=""
-              priority
-            />
+            <Image src="/tabler-brand-mark.png" width={36} height={36} alt="" priority />
             <span>TableR</span>
           </Link>
           <div className="header-actions">
@@ -89,8 +81,7 @@ export default async function DownloadPage() {
         <aside className="download-help">
           <strong>{t.download.helpMacosTitle}</strong>
           <span>
-            {t.download.helpMacosCopyBefore}{" "}
-            <code>{macosQuarantineCommand}</code>{" "}
+            {t.download.helpMacosCopyBefore} <code>{macosQuarantineCommand}</code>{" "}
             {t.download.helpMacosCopyAfter}
           </span>
         </aside>

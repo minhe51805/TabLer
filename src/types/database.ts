@@ -54,6 +54,8 @@ export interface ConnectionConfig {
   startupCommands?: string;
   /** Per-connection query timeout in seconds. Empty/undefined keeps the backend default. */
   query_timeout_seconds?: number;
+  /** Read-only pin: the backend rejects every write path on this connection. */
+  read_only?: boolean;
   /** SSH tunnel configuration */
   ssh_config?: SshConfig;
 }

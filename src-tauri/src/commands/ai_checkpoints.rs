@@ -503,6 +503,7 @@ pub async fn restore_database_checkpoint(
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<RestoreResult, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     let dir = checkpoint_dir(&connection_id)?;
     let (sql_path, _) = checkpoint_paths(&dir, &file_name)?;
     let sql = task::spawn_blocking(move || -> Result<String, String> {

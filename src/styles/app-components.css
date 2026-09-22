@@ -3829,6 +3829,19 @@
   flex-shrink: 0;
 }
 
+/* Read-only connection pin — shown on saved-connection rows and workspace tabs. */
+.connection-ro-badge {
+  font-size: var(--mm-fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 1px 4px;
+  border: 1px solid var(--mm-border);
+  border-radius: 4px;
+  color: var(--warning);
+  background: var(--mm-warning-soft);
+  flex-shrink: 0;
+}
+
 /* ===== tag-pills.css ===== */
 /* ─── Tag Pills ─────────────────────────────────────────────────────────────── */
 

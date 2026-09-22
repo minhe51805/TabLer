@@ -22,7 +22,7 @@ use super::sqlite::SqliteDriver;
 use crate::ssh::ssh_tunnel::{SshTunnelManager, TunnelHandle};
 use crate::storage::plugin_storage::PluginStorage;
 use anyhow::{anyhow, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -50,6 +50,10 @@ pub struct DatabaseManager {
     /// time from `ConnectionConfig::query_timeout_seconds`. Absent entries mean
     /// "use the classified default window".
     connection_query_timeouts: Arc<RwLock<HashMap<String, u64>>>,
+    /// Live sessions whose `ConnectionConfig::read_only` pin is set. Captured
+    /// at connect time so every write command can reject mutations before any
+    /// statement reaches the driver.
+    read_only_connections: Arc<RwLock<HashSet<String>>>,
     ssh_tunnels: Arc<RwLock<HashMap<String, TunnelHandle>>>,
     ssh_manager: Arc<SshTunnelManager>,
     plugin_storage: PluginStorage,
@@ -199,6 +203,7 @@ impl DatabaseManager {
             connections: Arc::new(RwLock::new(HashMap::new())),
             connection_types: Arc::new(RwLock::new(HashMap::new())),
             connection_query_timeouts: Arc::new(RwLock::new(HashMap::new())),
+            read_only_connections: Arc::new(RwLock::new(HashSet::new())),
             ssh_tunnels: Arc::new(RwLock::new(HashMap::new())),
             ssh_manager: Arc::new(SshTunnelManager::new()),
             plugin_storage,
@@ -363,6 +368,15 @@ impl DatabaseManager {
                     .remove(&config.id);
             }
         }
+        if config.read_only {
+            self.read_only_connections
+                .write()
+                .await
+                .insert(config.id.clone());
+        } else {
+            // Reconnecting with the pin cleared must not leave a stale entry.
+            self.read_only_connections.write().await.remove(&config.id);
+        }
 
         if let Some(pending_tunnel) = pending_tunnel {
             let handle = pending_tunnel.commit();
@@ -389,6 +403,10 @@ impl DatabaseManager {
             .write()
             .await
             .remove(connection_id);
+        self.read_only_connections
+            .write()
+            .await
+            .remove(connection_id);
         if let Some(driver) = driver {
             driver.disconnect().await?;
         }
@@ -411,6 +429,7 @@ impl DatabaseManager {
         drop(conns);
         self.connection_types.write().await.clear();
         self.connection_query_timeouts.write().await.clear();
+        self.read_only_connections.write().await.clear();
 
         let mut tunnels = self.ssh_tunnels.write().await;
         for (_, handle) in tunnels.drain() {
@@ -458,6 +477,27 @@ impl DatabaseManager {
             .await
             .get(connection_id)
             .copied()
+    }
+    /// Whether this live session was opened with `ConnectionConfig::read_only`.
+    /// Unknown/disconnected ids report false — callers already fail those on
+    /// the driver lookup, so the flag only gates sessions that exist.
+    pub async fn is_read_only(&self, connection_id: &str) -> bool {
+        self.read_only_connections
+            .read()
+            .await
+            .contains(connection_id)
+    }
+
+    /// Earliest-guard check for every write path: a read-only connection
+    /// rejects the command before any statement reaches the driver. The
+    /// message is user-facing and stable — the frontend surfaces it verbatim.
+    pub async fn assert_write_allowed(&self, connection_id: &str) -> Result<(), String> {
+        if self.is_read_only(connection_id).await {
+            return Err(format!(
+                "Connection '{connection_id}' is read-only. Write operations are blocked."
+            ));
+        }
+        Ok(())
     }
 
     pub async fn get_connection_capabilities(

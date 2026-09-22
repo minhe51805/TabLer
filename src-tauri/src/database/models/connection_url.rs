@@ -341,6 +341,7 @@ impl ConnectionConfig {
             pre_connect_script: None,
             startup_commands: None,
             query_timeout_seconds: None,
+            read_only: false,
             ssh_config: None,
         })
     }

@@ -65,6 +65,7 @@ interface TabBarItemProps {
   dbType?: DatabaseType;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  readOnly?: boolean;
   onPin: (id: string) => void;
   onContextMenu: (id: string, event: MouseEvent<HTMLDivElement>) => void;
   onDragStart: (id: string, event: DragEvent<HTMLDivElement>) => void;
@@ -85,6 +86,7 @@ const TabBarItem = memo(function TabBarItem({
   isActive,
   isDragOver,
   dbType,
+  readOnly,
   onSelect,
   onClose,
   onPin,
@@ -119,6 +121,12 @@ const TabBarItem = memo(function TabBarItem({
       <span className="tabbar-tab-title" style={{ fontStyle: isPreview ? "italic" : "normal" }}>
         {title}
       </span>
+
+      {readOnly ? (
+        <span className="connection-ro-badge" title="Read-only connection — writes are blocked">
+          RO
+        </span>
+      ) : null}
 
       <button
         className={["tabbar-close-btn", isActive ? "visible" : ""].join(" ")}
@@ -209,6 +217,14 @@ export function TabBar({
       map.set(connection.id, connection.db_type);
     }
     return map;
+  }, [connections]);
+  // Same lookup for the read-only pin so tabs can flag RO connections.
+  const readOnlyConnectionIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const connection of connections) {
+      if (connection.read_only) set.add(connection.id);
+    }
+    return set;
   }, [connections]);
 
   // Dismiss the context menu on outside interaction.
@@ -319,6 +335,7 @@ export function TabBar({
             isActive={paneActiveTabId === tab.id}
             isDragOver={dragOverTabId === tab.id}
             dbType={tab.connectionId ? connectionDbTypeById.get(tab.connectionId) : undefined}
+            readOnly={tab.connectionId ? readOnlyConnectionIds.has(tab.connectionId) : false}
             onSelect={handleSelect}
             onClose={handleClose}
             onPin={handlePin}

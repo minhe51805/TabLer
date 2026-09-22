@@ -112,6 +112,7 @@ pub(super) async fn execute_import<I>(
 where
     I: Iterator<Item = Result<(Vec<String>, u64), String>> + Send,
 {
+    db_manager.assert_write_allowed(connection_id).await?;
     if mappings.is_empty() {
         return Err("Import requires at least one column mapping.".to_string());
     }

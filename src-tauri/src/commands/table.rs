@@ -246,6 +246,7 @@ pub async fn update_table_cell(
     request: TableCellUpdateRequest,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<u64, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::InlineEdit)
         .await
@@ -272,6 +273,7 @@ pub async fn apply_table_updates_atomically(
     updates: Vec<TableCellUpdateRequest>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<u64, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     if updates.is_empty() {
         return Ok(0);
     }
@@ -301,6 +303,7 @@ pub async fn delete_table_rows(
     request: TableRowDeleteRequest,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<u64, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::InlineEdit)
         .await
@@ -322,6 +325,7 @@ pub async fn insert_table_row(
     request: TableRowInsertRequest,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<u64, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::InlineEdit)
         .await
@@ -349,6 +353,7 @@ pub async fn execute_structure_statements(
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<u64, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     safe_mode
         .assert_sql_allowed(&connection_id, &statements.join(";\n"))
         .await?;
@@ -413,6 +418,7 @@ pub async fn insert_table_rows_atomically(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, CsvImportCancellationState>,
 ) -> Result<u64, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     if requests.is_empty() {
         return Err("CSV import requires at least one row.".to_string());
     }
@@ -451,6 +457,7 @@ pub async fn import_csv_file_atomically(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, CsvImportCancellationState>,
 ) -> Result<u64, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     if request.mappings.is_empty() {
         return Err("CSV import requires at least one mapped column.".to_string());
     }

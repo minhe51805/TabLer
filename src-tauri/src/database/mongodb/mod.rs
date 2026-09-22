@@ -684,6 +684,7 @@ mod tests {
             startup_commands: None,
             pre_connect_script: None,
             query_timeout_seconds: None,
+            read_only: false,
             ssh_config: None,
         };
         let driver = MongoDbDriver::connect(&config).await.expect("connect");

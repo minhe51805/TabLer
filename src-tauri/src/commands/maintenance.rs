@@ -169,6 +169,7 @@ pub async fn run_maintenance_command(
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<QueryResult, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await

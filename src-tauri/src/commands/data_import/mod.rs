@@ -128,6 +128,7 @@ pub async fn import_csv(
     cancellation_state: State<'_, CsvImportCancellationState>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<ImportSummary, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     let file_path = std::path::PathBuf::from(&path);
     if !file_path.exists() {
         return Err(format!("File not found: {path}"));

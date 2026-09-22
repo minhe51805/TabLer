@@ -12,6 +12,7 @@ dist
 dist-ssr
 dist-plugins/
 .artifacts/
+tmp/
 *.local
 
 # Editor directories and files

@@ -387,6 +387,17 @@ jobs:
           mkdir release-assets
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir release-assets
 
+      - name: Normalize updater manifest URLs
+        if: needs.verify.outputs.has_updater_signing == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # tauri-action emits api.github.com asset URLs while the release is a
+          # draft; rewrite them to canonical /releases/download/<tag>/<asset>
+          # links, then push the fixed manifest back to the draft.
+          node scripts/normalize-updater-manifest.mjs --file release-assets/latest.json --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
+          gh release upload "$RELEASE_TAG" release-assets/latest.json --repo "$GITHUB_REPOSITORY" --clobber
+
       - name: Validate updater metadata from draft assets
         if: needs.verify.outputs.has_updater_signing == 'true'
         run: |
